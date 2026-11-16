@@ -11,7 +11,7 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
   const status = app.get(WorkerRuntimeService).status();
   Logger.log(
-    `${status.name} worker started (billing ${status.billingMode}, queue ${status.queue})`,
+    `${status.name} worker started (billing ${status.billingMode}, queue ${status.queue}, upstream ${status.upstream})`,
     'Bootstrap',
   );
 }

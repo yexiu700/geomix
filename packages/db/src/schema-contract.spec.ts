@@ -33,6 +33,9 @@ const PHASE1_MODELS = [
   'RewriteBatch',
   'RewriteRecord',
   'AiImageJob',
+  'WorkRun',
+  'WorkUnit',
+  'ActiveWork',
 ];
 
 describe('phase-1 migration', () => {
@@ -41,8 +44,20 @@ describe('phase-1 migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
-    expect(dirs).toHaveLength(1);
-    const sql = readFileSync(resolve(migrationsDir, dirs[0] ?? '', 'migration.sql'), 'utf8');
+    expect([...dirs].sort()).toEqual(['20261116120000_init', '20261116213000_queue_work']);
+    const sql = readFileSync(
+      resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
+      'utf8',
+    );
+    const queueSql = readFileSync(
+      resolve(migrationsDir, '20261116213000_queue_work', 'migration.sql'),
+      'utf8',
+    );
+    expect(queueSql).toContain('CREATE TABLE "WorkRun"');
+    expect(queueSql).toContain('CREATE TABLE "WorkUnit"');
+    expect(queueSql).toContain('CREATE TABLE "ActiveWork"');
+    expect(queueSql.toLowerCase()).not.toContain('drop table');
+    expect(queueSql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);
