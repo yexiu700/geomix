@@ -1,0 +1,11 @@
+{
+  "extends": "@geomix/config/typescript/nestjs.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "incremental": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts"]
+}

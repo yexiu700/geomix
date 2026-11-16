@@ -1,0 +1,98 @@
+# Local dependencies for GeoMix.
+# Docker Hub removed minio/minio and minio/mc in September 2026, so object
+# storage uses the Chainguard MinIO build. The digest is the image verified
+# in this repo. Credentials below are local placeholders, not production secrets.
+
+name: geomix
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: geomix-postgres
+    environment:
+      POSTGRES_USER: geomix
+      POSTGRES_PASSWORD: geomix
+      POSTGRES_DB: geomix
+    ports:
+      - '5432:5432'
+    volumes:
+      - geomix_postgres:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U geomix -d geomix']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: geomix-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - geomix_redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-perms:
+    image: busybox:1.37
+    container_name: geomix-minio-perms
+    user: '0:0'
+    command: ['chown', '-R', '65532:65532', '/data']
+    volumes:
+      - geomix_minio:/data
+    restart: 'no'
+
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:1ec745a06a986762f89e68e855fc189f403941eff8c0a5f94767e92c8e39d3f5
+    container_name: geomix-minio
+    user: '65532:65532'
+    depends_on:
+      minio-perms:
+        condition: service_completed_successfully
+    # Bind every interface. The image otherwise listens on 127.0.0.1 only,
+    # which the published port can reach but other containers cannot.
+    command: ['server', '--address', ':9000', '--console-address', ':9001', '/data']
+    environment:
+      MINIO_ROOT_USER: geomix
+      MINIO_ROOT_PASSWORD: geomix-dev-only
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - geomix_minio:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-init:
+    image: cgr.dev/chainguard/minio@sha256:1ec745a06a986762f89e68e855fc189f403941eff8c0a5f94767e92c8e39d3f5
+    container_name: geomix-minio-init
+    user: '65532:65532'
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_CONFIG_DIR: /tmp/mc
+    entrypoint: ['/usr/bin/bash', '-c']
+    command:
+      - |
+        set -eu
+        mc alias set local http://minio:9000 geomix geomix-dev-only
+        mc mb --ignore-existing local/geomix
+    restart: 'no'
+
+volumes:
+  geomix_postgres:
+  geomix_redis:
+  geomix_minio:

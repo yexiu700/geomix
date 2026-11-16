@@ -1,0 +1,14 @@
+// GeoMix database.
+// Models, migrations, and seed data belong to the schema issue (F03).
+// This file only pins the generator and the PostgreSQL datasource.
+// `prisma validate` needs at least one model, so it stays unused until that issue.
+// Local Postgres enables pgvector from docker/postgres/init/01-vector.sql.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
