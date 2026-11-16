@@ -13,7 +13,8 @@ export function HomePanel() {
         </Typography.Title>
         <Typography.Paragraph>{HOME_LEAD}</Typography.Paragraph>
         <Typography.Paragraph type="secondary">
-          先启动数据库、Redis 和对象存储，再运行 pnpm dev。登录会校验图形验证码和租户有效期。
+          先启动数据库、Redis 和对象存储，再运行 pnpm
+          dev。登录会校验图形验证码和租户有效期。登录后进入多标签后台。
         </Typography.Paragraph>
         <Link href="/login" legacyBehavior>
           <Button type="primary">登录</Button>

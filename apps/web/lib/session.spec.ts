@@ -3,6 +3,7 @@ import {
   apiBase,
   clearSession,
   readAccessToken,
+  readRefreshToken,
   saveSession,
   type SessionStorageLike,
 } from './session';
@@ -27,7 +28,9 @@ describe('session storage', () => {
     expect(readAccessToken(storage)).toBeNull();
     saveSession(storage, 'access', 'refresh');
     expect(readAccessToken(storage)).toBe('access');
+    expect(readRefreshToken(storage)).toBe('refresh');
     clearSession(storage);
     expect(readAccessToken(storage)).toBeNull();
+    expect(readRefreshToken(storage)).toBeNull();
   });
 });
