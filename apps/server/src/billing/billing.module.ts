@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
-import { parseEnv, readReconcileConfig } from '@geomix/shared';
+import { parseEnv, readQueueConfig, readReconcileConfig } from '@geomix/shared';
+import { hasLiveActiveWork } from '../queue/active-work';
 import { PrismaModule } from '../prisma/prisma.module';
+import { PrismaService } from '../prisma/prisma.service';
 import { AdminBillingController } from './admin-billing.controller';
 import { BILLING_OPTIONS, type BillingOptions } from './billing.options';
 import { BillingController } from './billing.controller';
@@ -13,12 +15,15 @@ import { QuotaService } from './quota.service';
   providers: [
     {
       provide: BILLING_OPTIONS,
-      useFactory: (): BillingOptions => {
+      inject: [PrismaService],
+      useFactory: (prisma: PrismaService): BillingOptions => {
         const timing = readReconcileConfig(process.env);
         return {
           globalMode: () => parseEnv().BILLING_MODE,
           orphanAfterMs: timing.orphanAfterMs,
           now: () => new Date(),
+          hasActiveJob: (ref) =>
+            hasLiveActiveWork(prisma, ref, new Date(), readQueueConfig(process.env).heartbeatTtlMs),
         };
       },
     },

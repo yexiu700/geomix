@@ -1,20 +1,13 @@
 import { Module } from '@nestjs/common';
-import { readReconcileConfig } from '@geomix/shared';
 import { BillingModule } from './billing/billing.module';
 import { AdaptersModule } from './infra/adapters.module';
-import { RECONCILE_INTERVAL_MS } from './billing/billing.options';
-import { BillingReconcileScheduler } from './billing/reconcile.scheduler';
-import { WorkerRuntimeService } from './worker/worker-runtime.service';
+import { QueueModule } from './queue/queue.module';
 
+/**
+ * 对账改由 maintenance 队列定时执行，不再另起一个 setInterval。
+ * 适配层仍然注入，但队列演练不调用上游。
+ */
 @Module({
-  imports: [BillingModule, AdaptersModule],
-  providers: [
-    WorkerRuntimeService,
-    {
-      provide: RECONCILE_INTERVAL_MS,
-      useFactory: () => readReconcileConfig(process.env).intervalMs,
-    },
-    BillingReconcileScheduler,
-  ],
+  imports: [BillingModule, AdaptersModule, QueueModule.forWorker()],
 })
 export class WorkerModule {}

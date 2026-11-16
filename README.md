@@ -59,11 +59,11 @@ pnpm dev
 
 `pnpm dev` 会同时启动：
 
-| 进程   | 地址                  | 说明                                              |
-| ------ | --------------------- | ------------------------------------------------- |
-| web    | http://localhost:3000 | 站名 GeoMix。登录在 `/login`，后台在 `/dashboard` |
-| api    | http://localhost:3001 | HTTP 入口                                         |
-| worker | 无端口                | 待机进程，日志里会打印 `worker started`           |
+| 进程   | 地址                  | 说明                                                           |
+| ------ | --------------------- | -------------------------------------------------------------- |
+| web    | http://localhost:3000 | 站名 GeoMix。登录在 `/login`，后台在 `/dashboard`              |
+| api    | http://localhost:3001 | HTTP 入口                                                      |
+| worker | 无端口                | BullMQ 消费者，日志里会打印 `worker started` 和 `queue bullmq` |
 
 不复制 `.env` 也能启动。代码里的缺省值和 `.env.example` 一致。已经导出的 shell 变量优先于 `.env`。
 
@@ -140,6 +140,13 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 | GET   | `/api/v1/billing/quotas`         | 当前租户配额                                                                     |
 | POST  | `/api/v1/admin/billing/adjust`   | 管理员加点或扣点。商户访问返回 404                                               |
 | POST  | `/api/v1/admin/billing/mode`     | 管理员设置租户计费模式，`null` 表示继续继承全局                                  |
+| POST  | `/api/v1/queue/runs`             | 提交假任务。整单冻结，成功单元结算，失败或取消释放剩余冻结                       |
+| GET   | `/api/v1/queue/runs/:id`         | 查询本租户进度。其他租户返回 404                                                 |
+| POST  | `/api/v1/queue/runs/:id/pause`   | 暂停。不再领取新单元，进行中的单元做完当前这一篇                                 |
+| POST  | `/api/v1/queue/runs/:id/resume`  | 继续。重新投递驱动任务                                                           |
+| POST  | `/api/v1/queue/runs/:id/cancel`  | 终止。未产出的单元不再执行，并释放剩余冻结                                       |
+| GET   | `/api/v1/admin/queues`           | 管理员看队列计数。商户返回 404。响应里没有任务正文                               |
+| GET   | `/api/v1/admin/queues/board`     | 管理员的 bull-board。商户返回 404                                                |
 | GET   | `/api/v1/workbench/samples`      | 当前租户的列表示例。支持 `page`、`pageSize`、`sort`、`order`、`filter`、`export` |
 | POST  | `/api/v1/workbench/samples`      | 新增一条示例。不扣点                                                             |
 | PATCH | `/api/v1/workbench/samples/:id`  | 修改本租户的一条示例。其他租户返回 404                                           |
@@ -153,7 +160,7 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 新增配置写在根目录 `.env.example`。不要提交 `.env` 或真实密钥。本地 Compose 里的数据库口令、MinIO 口令都是开发占位，只供本机使用。
 
-当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`AUTH_CAPTCHA_*`、`AUTH_LOGIN_FAIL_*`、`LLM_PROVIDERS`、`DEEPSEEK_API_KEY`、`TONGYI_API_KEY`、`DOUBAO_API_KEY`、`LLM_TIMEOUT_MS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`IMAGE_BASE_URL`、`IMAGE_MODEL`、`IMAGE_API_KEY`、`IMAGE_TIMEOUT_MS`、`SEARCH_PROVIDER`、`SEARCH_REMOTE_*`、`SEARCH_TIMEOUT_MS`、`FETCH_*`、`ROBOTS_CACHE_MS`、`STORAGE_DRIVER`、`STORAGE_MAX_OBJECT_BYTES`、`BILLING_MODE`、`BILLING_RECONCILE_AFTER_MS`、`BILLING_RECONCILE_INTERVAL_MS`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
+当前键：`DATABASE_URL`、`REDIS_URL`、`QUEUE_PREFIX`、`QUEUE_HEARTBEAT_MS`、`QUEUE_HEARTBEAT_TTL_MS`、`QUEUE_LEASE_MS`、`QUEUE_UNIT_ATTEMPTS`、`QUEUE_BACKOFF_MS`、`QUEUE_RECOVER_MS`、`QUEUE_WRITE_CONCURRENCY`、`QUEUE_REWRITE_CONCURRENCY`、`QUEUE_BATCH_CONCURRENCY`、`QUEUE_KB_CONCURRENCY`、`QUEUE_IMAGE_CONCURRENCY`、`S3_*`、`JWT_*`、`AUTH_CAPTCHA_*`、`AUTH_LOGIN_FAIL_*`、`LLM_PROVIDERS`、`DEEPSEEK_API_KEY`、`TONGYI_API_KEY`、`DOUBAO_API_KEY`、`LLM_TIMEOUT_MS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`IMAGE_BASE_URL`、`IMAGE_MODEL`、`IMAGE_API_KEY`、`IMAGE_TIMEOUT_MS`、`SEARCH_PROVIDER`、`SEARCH_REMOTE_*`、`SEARCH_TIMEOUT_MS`、`FETCH_*`、`ROBOTS_CACHE_MS`、`STORAGE_DRIVER`、`STORAGE_MAX_OBJECT_BYTES`、`BILLING_MODE`、`BILLING_RECONCILE_AFTER_MS`、`BILLING_RECONCILE_INTERVAL_MS`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
 
 `SEED_*` 只用于本机种子。口令是开发占位，不要拿到共享环境里用。
 
@@ -177,7 +184,7 @@ pnpm db:seed
 
 可用点数 = `points - pointsReserved`。STRICT 预扣用条件更新增加冻结；结算同时减少账面和冻结；失败或结单只减少冻结，账面在结算前不变。SHADOW 不改钱包，明细 `delta=0`、`listPrice` 为原价，标题加「（免费期）」。冻结单记下当时的 `shadow`，之后切换模式不追溯。
 
-写作任务引用知识库时，预扣总额是篇数 ×（`ai_write` + `kb_addon`），结算写成两条明细。不挂知识库就只有写作一条。无产出或失败会释放剩余冻结，对账任务也会释放超过两小时且没有活跃任务的冻结。队列消费者还没做，这两小时内的冻结不会被对账清掉。
+写作任务引用知识库时，预扣总额是篇数 ×（`ai_write` + `kb_addon`），结算写成两条明细。不挂知识库就只有写作一条。无产出或失败会释放剩余冻结。对账会释放创建超过两小时、而且没有排队、暂停或新鲜心跳的冻结。正在跑的任务按 `QUEUE_HEARTBEAT_TTL_MS` 续心跳，长任务不会被两小时对账清掉。
 
 管理员加点写「管理员充值」，扣点写「管理员扣点」，都会改钱包，不受 SHADOW 影响。同一幂等键重放不重复入账。
 
@@ -203,12 +210,14 @@ pnpm db:seed
 
 合规扫描用的是仓库里自写的禁做行业、敏感词和极限词。命中禁做行业返回 `403` / `40302`，并写 `AuditLog.action=forbidden_blocked`，payload 只留标签和文本哈希。极限词里可替换的会替换，`绝对` 和 `永久` 只打标。`最近`、`最后` 不会被当成极限词。原站词表不在仓库里，所以这份名单需要产品再确认。
 
-还没做、也不要在本层猜的事：BullMQ 队列（#6）、抓取后的正文提取、把 token 成本落成独立表、搜索厂商的官方请求格式。后台壳和通用列表示例已经落地，关键词、写作、复刻和生图仍是占位。
+还没做、也不要在本层猜的事：抓取后的正文提取、把 token 成本落成独立表、搜索厂商的官方请求格式。队列演练不调用这些适配器。后台壳和通用列表示例已经落地，关键词、写作、复刻和生图仍是占位。
 
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider）、多标签后台壳（#7），以及通用列表、弹层、价格按钮和列表示例（#8）。
-- 未实现：BullMQ 消费者（#6）。Worker 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，不连接 Redis。健康检查不连数据库，也不调用外部 Provider。关键词、图库、知识库、写作、复刻和生图仍是占位页。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider）、BullMQ 队列框架（#6）、多标签后台壳（#7），以及通用列表、弹层、价格按钮和列表示例（#8）。
+- 未实现：写作流水线（#16）。健康检查不连数据库，也不调用外部 Provider。队列演练只写运行状态，不写文章，也不调用上游模型。
+- 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。`WorkRun`、`WorkUnit`、`ActiveWork` 和 `CrudSample` 都有 `tenantId`，请求上下文会自动加上。
+- CI 不启动数据库和 Redis，所以迁移、种子、认证、计费、队列和列表示例的集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证、计费和列表示例测试。再设置 `GEOMIX_REDIS_INTEGRATION=1` 后才会连本机 Redis 跑队列测试。计费另建 `geomix_bill_*`，队列另建 `geomix_queue_*`，列表示例另建 `geomix_crud_*`，都不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
 
 ## 后台壳
 
@@ -230,8 +239,15 @@ issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`�
 
 导出最多 1000 条，只包含编号、名称、备注、状态和更新时间。单元格里以 `=`、`+`、`-`、`@` 开头的内容会先加引号，避免表格软件把它当成公式。
 
-- 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。
-- CI 不启动数据库，所以迁移、种子、认证、计费和列表示例的集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证、计费和列表示例测试。计费测试另建 `geomix_bill_*` 库，列表示例另建 `geomix_crud_*` 库，都不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
+## 队列
+
+Worker 连接 Redis，消费 `write-article`、`rewrite-single`、`rewrite-batch`、`kb-index`、`image-gen` 和 `maintenance`。假任务走 `write-article`，同一租户最多同时跑 2 个单元。驱动任务每次领一个未开始的单元，做完再领下一个。暂停后不再领；继续会重新入队；终止后未产出的步骤不再执行。
+
+任务状态写在 PostgreSQL。BullMQ 只保存租户编号和运行编号。重复投递、重试和两个 worker 同时领到同一单元时，结算和 AI 写作配额都只记一次。没有产出的失败或取消会按单元退回剩余冻结，SHADOW 下钱包不变、明细 `delta=0`。进程重启后，租约过期的单元由维护任务重新投递。租约、开始时间和心跳都是 `timestamptz`，原始 SQL 和 Prisma 比的是同一个绝对时间，数据库会话设成上海或 UTC 都不会把还在心跳的任务当成过期。
+
+`maintenance` 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，并按 `QUEUE_RECOVER_MS` 找回卡住的任务。每天 03:00（worker 进程时区）的文章清理和孤儿文件清理只记一条跳过日志，一期不删除数据。关闭 worker 时会等当前单元写完再断开。
+
+队列演练不调用真实模型、搜索或网页。`LLM_PROVIDERS={}` 时适配层仍是假 Provider，worker 状态里的 `upstream` 固定是 `disabled`。
 
 ## 开发节奏
 

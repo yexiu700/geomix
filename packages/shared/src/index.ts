@@ -132,3 +132,17 @@ export type {
   SampleInput,
   SampleRecord,
 } from './crud';
+export {
+  QUEUE_NAMES,
+  QUEUE_TENANT_LIMIT,
+  RUN_STATUSES,
+  createRunBodySchema,
+  finishStatus,
+  isQueueName,
+  isTerminalRun,
+  nextStatus,
+  readQueueConfig,
+  runProgress,
+  shouldReleaseUnit,
+} from './queue';
+export type { CreateRunBody, QueueConfig, QueueName, RunStatus } from './queue';

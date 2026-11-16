@@ -32,6 +32,10 @@
     "./crud": {
       "types": "./dist/crud.d.ts",
       "default": "./dist/crud.js"
+    },
+    "./queue": {
+      "types": "./dist/queue.d.ts",
+      "default": "./dist/queue.js"
     }
   },
   "scripts": {
