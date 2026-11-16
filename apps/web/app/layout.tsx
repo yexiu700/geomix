@@ -5,7 +5,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: SITE_NAME,
-  description: 'GeoMix 工程骨架',
+  description: 'GeoMix 登录与工程骨架',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

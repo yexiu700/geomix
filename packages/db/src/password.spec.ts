@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { hashPassword, verifyPassword } from './password';
+import { hashPassword, verifyPassword, verifyPasswordAsync } from './password';
 
 describe('password hash', () => {
-  it('round-trips a password and rejects the wrong one', () => {
+  it('round-trips a password and rejects the wrong one', async () => {
     const encoded = hashPassword('geomix-admin-dev');
     expect(encoded.startsWith('scrypt$16384$8$1$')).toBe(true);
     expect(verifyPassword('geomix-admin-dev', encoded)).toBe(true);
     expect(verifyPassword('geomix-admin-dev ', encoded)).toBe(false);
+    expect(await verifyPasswordAsync('geomix-admin-dev', encoded)).toBe(true);
+    expect(await verifyPasswordAsync('geomix-admin-dev ', encoded)).toBe(false);
   });
 
   it('uses the supplied salt so the same password can be reproduced', () => {

@@ -1,7 +1,8 @@
 'use client';
 
 import { HOME_LEAD, homeTitle } from '../lib/site';
-import { Card, Typography } from 'antd';
+import { Button, Card, Typography } from 'antd';
+import Link from 'next/link';
 
 export function HomePanel() {
   return (
@@ -12,8 +13,11 @@ export function HomePanel() {
         </Typography.Title>
         <Typography.Paragraph>{HOME_LEAD}</Typography.Paragraph>
         <Typography.Paragraph type="secondary">
-          先启动数据库、Redis 和对象存储，再运行 pnpm dev。业务页面会在后续迭代接入。
+          先启动数据库、Redis 和对象存储，再运行 pnpm dev。登录会校验图形验证码和租户有效期。
         </Typography.Paragraph>
+        <Link href="/login" legacyBehavior>
+          <Button type="primary">登录</Button>
+        </Link>
       </Card>
     </main>
   );

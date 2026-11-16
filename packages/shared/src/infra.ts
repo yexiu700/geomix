@@ -84,6 +84,7 @@ export const envSchema = z.object({
   WEB_PORT: envNumber(3000),
   API_PORT: envNumber(3001),
   WEB_ORIGIN: envString('http://localhost:3000'),
+  NEXT_PUBLIC_API_BASE: envString('http://localhost:3001/api/v1'),
   DATABASE_URL: envString('postgresql://geomix:geomix@localhost:5432/geomix?schema=public'),
   REDIS_URL: envString('redis://localhost:6379'),
   S3_ENDPOINT: envString('http://localhost:9000'),
@@ -96,6 +97,10 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: envString('change-me-refresh'),
   JWT_ACCESS_TTL: envString('15m'),
   JWT_REFRESH_TTL: envString('7d'),
+  AUTH_CAPTCHA_MAX: envNumber(10),
+  AUTH_CAPTCHA_WINDOW_SECONDS: envNumber(600),
+  AUTH_LOGIN_FAIL_MAX: envNumber(5),
+  AUTH_LOGIN_FAIL_WINDOW_SECONDS: envNumber(900),
   LLM_PROVIDERS: z.preprocess((value) => {
     const raw = value === undefined || value === null || value === '' ? '{}' : value;
     if (typeof raw !== 'string') {

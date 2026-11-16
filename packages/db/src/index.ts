@@ -6,7 +6,15 @@ export function isPostgresUrl(url: string): boolean {
 }
 
 export { createPrismaClient } from './client';
-export { hashPassword, verifyPassword } from './password';
+export { hashPassword, verifyPassword, verifyPasswordAsync } from './password';
+export {
+  NULLABLE_TENANT_MODELS,
+  REQUIRED_TENANT_MODELS,
+  UNSCOPED_OPTIONAL_TENANT_MODELS,
+  UNSCOPED_UNOWNED_MODELS,
+  createScopedClient,
+  createTenantExtension,
+} from './tenant-scope';
 export {
   ADMIN_USER_ID,
   DEMO_TENANT_ID,
