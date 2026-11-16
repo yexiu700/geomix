@@ -19,14 +19,14 @@ GEO 优化系统一期。目标是复刻同类产品的功能和交互，品牌�
 
 前端 Next.js 15（App Router）+ Ant Design 5，后端 NestJS 10（同一个代码库的 `api` 和 `worker` 入口），PostgreSQL 16（pgvector）+ Redis 7 + MinIO。包管理用 pnpm workspace，任务编排用 Turborepo。语言是 TypeScript 5（strict）。
 
-本仓库已有工程骨架、一期 Prisma 模型和登录认证。计费服务、外部 Provider、队列消费者和后台壳仍在后续 issue。
+本仓库已有工程骨架、一期 Prisma 模型、登录认证和多标签后台壳。计费服务、外部 Provider、队列消费者和通用列表仍在后续 issue。
 
 ## 仓库结构
 
 ```
 geomix/
 ├─ apps/
-│  ├─ web/                 # Next.js 15：占位首页和登录页
+│  ├─ web/                 # Next.js 15：登录页和多标签后台壳
 │  └─ server/              # NestJS：src/main.api.ts 与 src/main.worker.ts
 ├─ packages/
 │  ├─ config/              # ESLint 与 tsconfig 预设
@@ -59,11 +59,11 @@ pnpm dev
 
 `pnpm dev` 会同时启动：
 
-| 进程   | 地址                  | 说明                                    |
-| ------ | --------------------- | --------------------------------------- |
-| web    | http://localhost:3000 | 占位首页，站名 GeoMix，登录在 `/login`  |
-| api    | http://localhost:3001 | HTTP 入口                               |
-| worker | 无端口                | 待机进程，日志里会打印 `worker started` |
+| 进程   | 地址                  | 说明                                              |
+| ------ | --------------------- | ------------------------------------------------- |
+| web    | http://localhost:3000 | 站名 GeoMix。登录在 `/login`，后台在 `/dashboard` |
+| api    | http://localhost:3001 | HTTP 入口                                         |
+| worker | 无端口                | 待机进程，日志里会打印 `worker started`           |
 
 不复制 `.env` 也能启动。代码里的缺省值和 `.env.example` 一致。已经导出的 shell 变量优先于 `.env`。
 
@@ -164,8 +164,17 @@ pnpm db:seed
 
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫，以及登录页。
-- 未实现：计费与配额服务（#4）、外部 Provider 适配层（#5）、BullMQ 消费者、后台壳。Worker 只用一个定时器保持进程，不连接 Redis。健康检查不连数据库；登录和账号接口才会连。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页，以及多标签后台壳。
+- 未实现：计费与配额服务（#4）、外部 Provider 适配层（#5）、BullMQ 消费者、通用列表和弹层（#8）。Worker 只用一个定时器保持进程，不连接 Redis。健康检查不连数据库；登录和账号接口才会连。
+
+## 后台壳
+
+登录成功后进入 `/dashboard`。顶栏是站名 GeoMix、滚动公告、有效期和账号菜单（修改密码、退出）。左侧是分组菜单。多标签默认开启：点菜单会打开或切到对应标签，右键可以刷新当前、关闭、关闭其他、关闭右侧、关闭全部。首页标签不能关闭，同时最多 15 个。不在前台的页面留在页面里，不卸载，所以输入中的草稿还在。
+
+当前标签写在地址栏。标签栈和布局开关保存在 `localStorage` 的 `geomix.shell.v1`，刷新后恢复标签，不恢复草稿。右上角「布局」可以关闭多标签，之后每次只留当前页。布局开关目前只存在这台浏览器里，还没有写回 `User.uiPrefs`。
+
+issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。业务列表页仍是占位，用来确认壳的切换和跳转。
+
 - 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。
 - CI 不启动数据库，所以迁移、种子和认证集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证接口测试。
 
