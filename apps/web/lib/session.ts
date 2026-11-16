@@ -32,3 +32,9 @@ export function readAccessToken(storage: SessionStorageLike): string | null {
   if (!value) return null;
   return value;
 }
+
+export function readRefreshToken(storage: SessionStorageLike): string | null {
+  const value = storage.getItem(REFRESH_TOKEN_KEY);
+  if (!value) return null;
+  return value;
+}
