@@ -124,22 +124,26 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 登录成功后用 `Authorization: Bearer <accessToken>` 访问：
 
-| 方法 | 路径                           | 说明                                                                |
-| ---- | ------------------------------ | ------------------------------------------------------------------- |
-| POST | `/api/v1/auth/captcha`         | 获取验证码                                                          |
-| POST | `/api/v1/auth/login`           | 校验验证码和口令，签发访问令牌和刷新令牌                            |
-| POST | `/api/v1/auth/refresh`         | 用刷新令牌换新令牌                                                  |
-| POST | `/api/v1/auth/logout`          | 撤销该用户当前全部登录                                              |
-| POST | `/api/v1/auth/password`        | 修改密码。到期账号返回 403                                          |
-| GET  | `/api/v1/account`              | 当前账号。到期后仍返回 200                                          |
-| GET  | `/api/v1/account/users/:id`    | 只查本租户用户，其他租户返回 404                                    |
-| GET  | `/api/v1/pricing`              | 价格表。写作报价按库里的单价计算                                    |
-| GET  | `/api/v1/billing/quote`        | `count` 与 `knowledgeBase=1`。总额是篇数 ×（写作单价 + 知识库加价） |
-| GET  | `/api/v1/billing/wallet`       | 当前租户点数、冻结和生效中的计费模式                                |
-| GET  | `/api/v1/billing/ledger`       | 当前租户点数明细                                                    |
-| GET  | `/api/v1/billing/quotas`       | 当前租户配额                                                        |
-| POST | `/api/v1/admin/billing/adjust` | 管理员加点或扣点。商户访问返回 404                                  |
-| POST | `/api/v1/admin/billing/mode`   | 管理员设置租户计费模式，`null` 表示继续继承全局                     |
+| 方法  | 路径                             | 说明                                                                             |
+| ----- | -------------------------------- | -------------------------------------------------------------------------------- |
+| POST  | `/api/v1/auth/captcha`           | 获取验证码                                                                       |
+| POST  | `/api/v1/auth/login`             | 校验验证码和口令，签发访问令牌和刷新令牌                                         |
+| POST  | `/api/v1/auth/refresh`           | 用刷新令牌换新令牌                                                               |
+| POST  | `/api/v1/auth/logout`            | 撤销该用户当前全部登录                                                           |
+| POST  | `/api/v1/auth/password`          | 修改密码。到期账号返回 403                                                       |
+| GET   | `/api/v1/account`                | 当前账号。到期后仍返回 200                                                       |
+| GET   | `/api/v1/account/users/:id`      | 只查本租户用户，其他租户返回 404                                                 |
+| GET   | `/api/v1/pricing`                | 价格表。写作报价按库里的单价计算                                                 |
+| GET   | `/api/v1/billing/quote`          | `count` 与 `knowledgeBase=1`。总额是篇数 ×（写作单价 + 知识库加价）              |
+| GET   | `/api/v1/billing/wallet`         | 当前租户点数、冻结和生效中的计费模式                                             |
+| GET   | `/api/v1/billing/ledger`         | 当前租户点数明细                                                                 |
+| GET   | `/api/v1/billing/quotas`         | 当前租户配额                                                                     |
+| POST  | `/api/v1/admin/billing/adjust`   | 管理员加点或扣点。商户访问返回 404                                               |
+| POST  | `/api/v1/admin/billing/mode`     | 管理员设置租户计费模式，`null` 表示继续继承全局                                  |
+| GET   | `/api/v1/workbench/samples`      | 当前租户的列表示例。支持 `page`、`pageSize`、`sort`、`order`、`filter`、`export` |
+| POST  | `/api/v1/workbench/samples`      | 新增一条示例。不扣点                                                             |
+| PATCH | `/api/v1/workbench/samples/:id`  | 修改本租户的一条示例。其他租户返回 404                                           |
+| POST  | `/api/v1/workbench/samples/bulk` | 批量删除、启用或停用。编号必须全部属于当前租户                                   |
 
 口令校验复用 `packages/db` 的 scrypt 格式，登录时用异步 scrypt。停用账号（`isActive=false`）不能登录。到期账号可以登录和读取，写接口返回 `403`，错误码 `40301`。未登录是 `401` / `40101`。用户名或密码错误、验证码错误是 `400` / `40001`，不区分用户是否存在。请求过多是 `429` / `42901`，文案同样不区分用户是否存在。
 
@@ -199,12 +203,12 @@ pnpm db:seed
 
 合规扫描用的是仓库里自写的禁做行业、敏感词和极限词。命中禁做行业返回 `403` / `40302`，并写 `AuditLog.action=forbidden_blocked`，payload 只留标签和文本哈希。极限词里可替换的会替换，`绝对` 和 `永久` 只打标。`最近`、`最后` 不会被当成极限词。原站词表不在仓库里，所以这份名单需要产品再确认。
 
-还没做、也不要在本层猜的事：BullMQ 队列（#6）、抓取后的正文提取、把 token 成本落成独立表、搜索厂商的官方请求格式。后台壳已经落地，业务列表仍是占位。
+还没做、也不要在本层猜的事：BullMQ 队列（#6）、抓取后的正文提取、把 token 成本落成独立表、搜索厂商的官方请求格式。后台壳和通用列表示例已经落地，关键词、写作、复刻和生图仍是占位。
 
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider），以及多标签后台壳（#7）。
-- 未实现：BullMQ 消费者（#6）、通用列表和弹层（#8）。Worker 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，不连接 Redis。健康检查不连数据库，也不调用外部 Provider。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider）、多标签后台壳（#7），以及通用列表、弹层、价格按钮和列表示例（#8）。
+- 未实现：BullMQ 消费者（#6）。Worker 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，不连接 Redis。健康检查不连数据库，也不调用外部 Provider。关键词、图库、知识库、写作、复刻和生图仍是占位页。
 
 ## 后台壳
 
@@ -212,10 +216,22 @@ pnpm db:seed
 
 当前标签写在地址栏。标签栈和布局开关保存在 `localStorage` 的 `geomix.shell.v1`，刷新后恢复标签，不恢复草稿。右上角「布局」可以关闭多标签，之后每次只留当前页。布局开关目前只存在这台浏览器里，还没有写回 `User.uiPrefs`。
 
-issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。业务列表页仍是占位，用来确认壳的切换和跳转。
+issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。除了「列表示例」，业务列表页仍是占位，用来确认壳的切换和跳转。
+
+## 通用列表
+
+`/workbench/samples` 用来验收通用表格、搜索、分页、勾选、批量操作、弹层和价格按钮。其它业务页还没有接上这些组件。
+
+表格左侧是刷新、添加、删除、启用、停用，需要时还有返回上一级。右侧是切换密度、列显隐、导出和搜索。空列表文案是「没有找到匹配的记录」。分页大小只有 10、25、50。搜索只提交关键字和启用状态。弹层可以最小化到右下角、最大化，底部是重置和确定；确定可以换成价格按钮。
+
+价格按钮读 `GET /pricing`，文案是「动作（X点数/篇）」。蒸馏显示「次」，生图显示「张」，数字来自价格表，不写死。示例页上的这个按钮只保存记录，不调用计费，也不调用外部模型。默认仍是 `SHADOW`。
+
+示例接口是 `/api/v1/workbench/samples`。列表参数是 `page`、`pageSize`、`sort`、`order`、`filter`（JSON，只允许 `keyword` 和 `enabled`）和 `export=csv|xlsx`。筛选里出现租户编号或其他字段会返回 `400` / `40001`。查询带当前租户的 `tenantId`，走 Prisma，不使用原始 SQL，也不读取 `KnowledgeChunk`。其它租户的记录返回 `404` / `40401`。到期账号可以查看和导出，新增、修改和批量操作返回 `403` / `40301`。名称在同一个租户内不能重复，另一个租户可以用同一个名称。
+
+导出最多 1000 条，只包含编号、名称、备注、状态和更新时间。单元格里以 `=`、`+`、`-`、`@` 开头的内容会先加引号，避免表格软件把它当成公式。
 
 - 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。
-- CI 不启动数据库，所以迁移、种子、认证和计费集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证和计费测试。计费测试会另建 `geomix_bill_*` 库，不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
+- CI 不启动数据库，所以迁移、种子、认证、计费和列表示例的集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证、计费和列表示例测试。计费测试另建 `geomix_bill_*` 库，列表示例另建 `geomix_crud_*` 库，都不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
 
 ## 开发节奏
 

@@ -5,11 +5,12 @@ import { AuthModule } from './auth/auth.module';
 import { AdaptersModule } from './infra/adapters.module';
 import { BillingModule } from './billing/billing.module';
 import { HealthController } from './health/health.controller';
+import { SamplesModule } from './samples/samples.module';
 import { HealthService } from './health/health.service';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AccountModule, BillingModule, AdaptersModule],
+  imports: [PrismaModule, AuthModule, AccountModule, BillingModule, AdaptersModule, SamplesModule],
   controllers: [HealthController],
   providers: [HealthService],
 })

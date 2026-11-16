@@ -35,6 +35,7 @@ export const REQUIRED_TENANT_MODELS = [
   'RewriteBatch',
   'RewriteRecord',
   'AiImageJob',
+  'CrudSample',
 ] as const;
 
 export const NULLABLE_TENANT_MODELS = ['PromptTemplate'] as const;

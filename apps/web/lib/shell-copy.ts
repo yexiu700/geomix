@@ -15,4 +15,4 @@ export function formatExpiry(iso: string, readOnly: boolean): string {
 }
 
 export const MODULE_PLACEHOLDER =
-  '这一页先承接后台壳。列表、弹层和计费还在后续模块，这里的草稿只用来确认切换标签时不会丢掉正在输入的内容。';
+  '这一页的业务数据还在后续模块。下面的草稿会留在当前标签里；刷新这个标签会清空草稿。';

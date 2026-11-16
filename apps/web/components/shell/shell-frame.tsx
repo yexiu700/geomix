@@ -128,6 +128,7 @@ export function ShellFrame({
                 <ModuleScreen
                   tab={tab}
                   draft={state.drafts[tab.id] ?? ''}
+                  readOnly={account.tenant.readOnly}
                   onDispatch={onDispatch}
                 />
               </div>

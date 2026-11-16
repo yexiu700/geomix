@@ -2,6 +2,7 @@
 
 import { Button, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
+import { SampleScreen } from '../crud/sample-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -9,13 +10,18 @@ import type { ShellAction, ShellTab } from '../../lib/tab-stack';
 export function ModuleScreen({
   tab,
   draft,
+  readOnly = false,
   onDispatch,
 }: {
   tab: ShellTab;
   draft: string;
+  readOnly?: boolean;
   onDispatch: (action: ShellAction) => void;
 }) {
   const path = matchRoute(tab.href)?.path ?? '';
+  if (path === '/workbench/samples') {
+    return <SampleScreen title={tab.title} readOnly={readOnly} />;
+  }
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
   return (

@@ -28,6 +28,10 @@
     "./adapters": {
       "types": "./dist/adapters.d.ts",
       "default": "./dist/adapters.js"
+    },
+    "./crud": {
+      "types": "./dist/crud.d.ts",
+      "default": "./dist/crud.js"
     }
   },
   "scripts": {
