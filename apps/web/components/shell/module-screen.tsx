@@ -2,6 +2,10 @@
 
 import { Button, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
+import { MoneyScreen } from '../account/money-screen';
+import { PointsScreen } from '../account/points-screen';
+import { RightsScreen } from '../account/rights-screen';
+import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
@@ -22,6 +26,10 @@ export function ModuleScreen({
   if (path === '/workbench/samples') {
     return <SampleScreen title={tab.title} readOnly={readOnly} />;
   }
+  if (path === '/me/points') return <PointsScreen title={tab.title} />;
+  if (path === '/me/money') return <MoneyScreen title={tab.title} />;
+  if (path === '/me/rights') return <RightsScreen title={tab.title} />;
+  if (path === '/me/verify') return <VerifyScreen title={tab.title} readOnly={readOnly} />;
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
   return (

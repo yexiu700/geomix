@@ -371,3 +371,84 @@ body {
 .gm-form-ok {
   color: #137333;
 }
+
+.gm-ledger-filter,
+.gm-verify-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.gm-verify-form {
+  display: grid;
+  max-width: 480px;
+}
+
+.gm-verify-form label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.gm-rights {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.gm-right-card {
+  padding: 14px 16px;
+  border: 1px solid #e6eaf0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.gm-right-card .label {
+  color: #5c6b80;
+  font-size: 13px;
+}
+
+.gm-right-card .value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 650;
+}
+
+.gm-models-title {
+  margin: 20px 0 12px;
+}
+
+.gm-admin-link {
+  flex: none;
+  color: #10233a;
+}
+
+.gm-admin {
+  min-height: 100vh;
+  background: #f4f6fa;
+}
+
+.gm-admin-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e6eaf0;
+}
+
+.gm-admin-bar nav {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+}
+
+.gm-admin-main {
+  padding: 20px;
+}
+
+.gm-admin-note {
+  color: #64748b;
+  font-size: 13px;
+}
