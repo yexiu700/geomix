@@ -1,8 +1,10 @@
-// GeoMix database.
-// Models, migrations, and seed data belong to the schema issue (F03).
-// This file only pins the generator and the PostgreSQL datasource.
-// `prisma validate` needs at least one model, so it stays unused until that issue.
-// Local Postgres enables pgvector from docker/postgres/init/01-vector.sql.
+// GeoMix phase-1 schema (路线 F03a–c).
+// CHECK constraints and `CREATE EXTENSION IF NOT EXISTS vector` live in the
+// migration. Prisma 5.22's `extensions = [vector]` preview never settles:
+// migrate dev keeps asking for another extension migration, so the extension
+// stays in SQL where it is idempotent.
+// The HNSW index is declared here by name. The migration builds it with
+// hnsw / vector_cosine_ops, which the schema language cannot express.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,4 +13,573 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ===================== 枚举 =====================
+enum UserRole {
+  MERCHANT
+  ADMIN
+}
+
+enum BillingMode {
+  SHADOW // 影子计费：不拦截、不实扣，完整记账原价
+  STRICT // 正式计费：校验余额并实扣
+}
+
+enum LedgerStatus {
+  RESERVED
+  SETTLED
+  RELEASED
+}
+
+enum ReservationStatus {
+  OPEN
+  CLOSED
+}
+
+enum QuotaKey {
+  MAIN_KEYWORD
+  QUESTION
+  AI_WRITE
+  STORAGE_BYTES
+  PUBLISH
+  SOCIAL_AUTH
+}
+
+enum KeywordOptStatus {
+  NONE
+  OPTIMIZING
+  INCLUDED
+}
+
+enum QuestionSource {
+  AI
+  MANUAL
+  COMBO
+}
+
+enum KbMode {
+  DETAIL
+  SUMMARY
+}
+
+enum KbIndexStatus {
+  NONE
+  INDEXING
+  READY
+  FAILED
+}
+
+enum PromptKind {
+  ARTICLE
+  TITLE
+  REWRITE
+}
+
+enum ArticleStatus {
+  PENDING
+  NORMAL
+  DISABLED
+}
+
+enum ArticleSource {
+  AI_TASK
+  MANUAL
+  REWRITE_SINGLE
+  REWRITE_BATCH
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum ItemStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum MediaOrigin {
+  UPLOAD
+  AI_IMAGE
+  EDITOR
+}
+
+// ===================== 底座 =====================
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  billingMode BillingMode? // 为空时取全局 BILLING_MODE
+  expiresAt   DateTime
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  users             User[]
+  wallet            Wallet?
+  quotas            Quota[]
+  reservations      PointReservation[]
+  pointLogs         PointLog[]
+  moneyLogs         MoneyLog[]
+  verification      Verification?
+  agreements        AgreementSignature[]
+  keywords          Keyword[]
+  questions         Question[]
+  mediaCategories   MediaCategory[]
+  mediaAssets       MediaAsset[]
+  knowledgeBases    KnowledgeBase[]
+  prompts           PromptTemplate[]
+  articleCategories ArticleCategory[]
+  aiTasks           AiTask[]
+  articles          Article[]
+  rewriteBatches    RewriteBatch[]
+  rewriteRecords    RewriteRecord[]
+  aiImages          AiImageJob[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  username     String    @unique
+  passwordHash String
+  nickname     String?
+  role         UserRole  @default(MERCHANT)
+  uiPrefs      Json? // 多标签开关、菜单折叠等
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([tenantId])
+}
+
+model Wallet {
+  tenantId       String   @id
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  points         Int      @default(0) // 账面点数（含冻结）
+  pointsReserved Int      @default(0) // 冻结中
+  money          Decimal  @default(0) @db.Decimal(12, 2)
+  updatedAt      DateTime @updatedAt
+  // 迁移追加：CHECK (points >= 0 AND "pointsReserved" >= 0 AND points >= "pointsReserved")
+}
+
+model Quota {
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  key      QuotaKey
+  limit    BigInt
+  used     BigInt   @default(0)
+
+  @@id([tenantId, key])
+}
+
+model PricingItem {
+  action     String   @id // distill | ai_write | kb_addon | rewrite_single | rewrite_batch | image_gen
+  unitPoints Int
+  enabled    Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+}
+
+// 异步任务整单冻结单
+model PointReservation {
+  id        String            @id @default(cuid())
+  tenantId  String
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refType   String // ai_task | rewrite_batch | image_job | distill | rewrite_single
+  refId     String
+  shadow    Boolean           @default(false)
+  frozen    Int
+  settled   Int               @default(0)
+  released  Int               @default(0)
+  status    ReservationStatus @default(OPEN)
+  createdAt DateTime          @default(now())
+  closedAt  DateTime?
+  logs      PointLog[]
+
+  @@unique([refType, refId])
+  @@index([status, createdAt])
+}
+
+// 点数明细（每个结算单元一条，幂等）
+model PointLog {
+  id            String            @id @default(cuid())
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservationId String?
+  reservation   PointReservation? @relation(fields: [reservationId], references: [id])
+  action        String // 同 PricingItem.action，或 admin_topup / refund
+  title         String // 展示用「项目」，如「AI写作-任务名」
+  unitKey       String // 幂等键，如 ai_task_item:<id>
+  delta         Int // 实际变动（影子模式为 0）
+  listPrice     Int // 原价（影子模式用于核算）
+  detail        Json? // {base:10, kbAddon:5}
+  balanceAfter  Int?
+  status        LedgerStatus      @default(SETTLED)
+  createdAt     DateTime          @default(now())
+
+  @@unique([unitKey, action])
+  @@index([tenantId, createdAt])
+}
+
+model MoneyLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  amount    Decimal  @db.Decimal(12, 2)
+  remark    String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model Verification {
+  tenantId    String   @id
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  companyName String
+  creditCode  String
+  contact     String?
+  phone       String?
+  licenseUrl  String?
+  status      String   @default("SUBMITTED") // SUBMITTED | APPROVED | REJECTED
+  updatedAt   DateTime @updatedAt
+}
+
+model AgreementSignature {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String
+  kind     String   @default("kb_truthfulness")
+  version  String
+  ip       String?
+  signedAt DateTime @default(now())
+
+  @@index([tenantId, kind, version])
+}
+
+model Announcement {
+  id      String  @id @default(cuid())
+  content String
+  enabled Boolean @default(true)
+  sort    Int     @default(0)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  userId    String?
+  action    String // forbidden_blocked | admin_topup | billing_mode_change ...
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+// ===================== 模块一：素材源力 =====================
+model Keyword {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  main      String // 主关键词（训练主词）
+  brands    String[] // 公司(品牌)/转化词，逗号拆分
+  optStatus KeywordOptStatus @default(NONE)
+  createdAt DateTime         @default(now())
+  questions Question[]
+  aiTasks   AiTask[]
+
+  @@unique([tenantId, main]) // 物理删除，避免软删唯一冲突
+}
+
+model Question {
+  id          String         @id @default(cuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  keywordId   String
+  keyword     Keyword        @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  text        String
+  source      QuestionSource @default(MANUAL)
+  usedCount   Int            @default(0)
+  lastUsedAt  DateTime?
+  included    Boolean        @default(false) // 收录状态（二期回写）
+  createdAt   DateTime       @default(now())
+  aiTaskItems AiTaskItem[]
+
+  @@unique([keywordId, text])
+  @@index([tenantId, keywordId, usedCount])
+}
+
+model MediaCategory {
+  id        String          @id @default(cuid())
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type      Int             @default(1) // 1=画像图库，2=视频素材(预留)
+  name      String
+  createdAt DateTime        @default(now())
+  assets    MediaAsset[]
+  aiTasks   AiTask[]
+  batches   RewriteBatch[]
+  records   RewriteRecord[]
+
+  @@unique([tenantId, type, name])
+}
+
+model MediaAsset {
+  id         String         @id @default(cuid())
+  tenantId   String
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId String? // 为空=未入库（如 AI 生图未存入）
+  category   MediaCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  origin     MediaOrigin    @default(UPLOAD)
+  aiImageId  String?
+  aiImage    AiImageJob?    @relation(fields: [aiImageId], references: [id], onDelete: SetNull)
+  objectKey  String         @unique
+  url        String
+  thumbUrl   String?
+  width      Int
+  height     Int
+  bytes      Int
+  mime       String
+  usedCount  Int            @default(0)
+  createdAt  DateTime       @default(now())
+
+  @@index([tenantId, categoryId, usedCount])
+}
+
+model KnowledgeBase {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  mode        KbMode           @default(DETAIL)
+  companyName String?
+  brandShort  String?
+  directions  String[] // 29 选 N
+  copyTypes   String[] // 15 选 M
+  fields      Json? // {productService, productFeature, brandStory, painPoint, trust, cases, other}
+  summaryText String?
+  indexStatus KbIndexStatus    @default(NONE)
+  signatureId String // 保存时引用的有效签署
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  chunks      KnowledgeChunk[]
+  aiTasks     AiTask[]
+
+  @@index([tenantId])
+}
+
+model KnowledgeChunk {
+  id        String                       @id @default(cuid())
+  kbId      String
+  kb        KnowledgeBase                @relation(fields: [kbId], references: [id], onDelete: Cascade)
+  idx       Int
+  content   String
+  embedding Unsupported("vector(1024)")?
+  // 迁移里用 HNSW（vector_cosine_ops）。这里声明同名索引，避免 migrate dev 把它当成多余对象删掉。
+
+  @@unique([kbId, idx])
+  @@index([embedding], map: "idx_kb_chunk_embedding")
+}
+
+// ===================== 模块二：文章写作 =====================
+model PromptTemplate {
+  id           String          @id @default(cuid())
+  tenantId     String? // null = 系统模板（只读）
+  tenant       Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind         PromptKind
+  name         String
+  content      String
+  randomPool   Boolean         @default(true) // 含【品牌N】槽位的系统模板置 false
+  sort         Int             @default(0)
+  clonedFrom   String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  contentTasks AiTask[]        @relation("ContentTpl")
+  titleTasks   AiTask[]        @relation("TitleTpl")
+  batches      RewriteBatch[]
+  records      RewriteRecord[]
+
+  @@index([tenantId, kind])
+}
+
+model ArticleCategory {
+  id        String          @id @default(cuid())
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime        @default(now())
+  articles  Article[]
+  aiTasks   AiTask[]
+  batches   RewriteBatch[]
+  records   RewriteRecord[]
+
+  @@unique([tenantId, name])
+}
+
+model AiTask {
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  categoryId      String
+  category        ArticleCategory @relation(fields: [categoryId], references: [id])
+  keywordId       String
+  keyword         Keyword         @relation(fields: [keywordId], references: [id])
+  mediaCategoryId String
+  mediaCategory   MediaCategory   @relation(fields: [mediaCategoryId], references: [id])
+  imageCount      Int             @default(1) // 0..5
+  kbId            String?
+  kb              KnowledgeBase?  @relation(fields: [kbId], references: [id], onDelete: SetNull)
+  contentTplId    String? // null = 随机生成文章
+  contentTpl      PromptTemplate? @relation("ContentTpl", fields: [contentTplId], references: [id], onDelete: SetNull)
+  titleTplId      String? // null = 不重写标题
+  titleTpl        PromptTemplate? @relation("TitleTpl", fields: [titleTplId], references: [id], onDelete: SetNull)
+  resultStatus    ArticleStatus   @default(PENDING)
+  target          Int // 1..100
+  doneCount       Int             @default(0)
+  failCount       Int             @default(0)
+  unitPrice       Int // 提交时快照 10 / 15
+  seed            Int // 随机偏移（洗牌袋、方向组合）
+  status          TaskStatus      @default(QUEUED)
+  lastError       String?
+  lastWrittenAt   DateTime?
+  createdAt       DateTime        @default(now())
+  items           AiTaskItem[]
+  articles        Article[]
+
+  @@index([tenantId, createdAt])
+}
+
+model AiTaskItem {
+  id         String     @id @default(cuid())
+  taskId     String
+  task       AiTask     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  seq        Int
+  questionId String?
+  question   Question?  @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  templateId String?
+  direction  String?
+  copyType   String?
+  brand      String?
+  title      String?
+  status     ItemStatus @default(PENDING)
+  attempts   Int        @default(0)
+  model      String?
+  tokensIn   Int?
+  tokensOut  Int?
+  error      String?
+  articleId  String?    @unique
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  @@unique([taskId, seq])
+}
+
+model Article {
+  id               String           @id @default(cuid())
+  tenantId         String
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId       String?
+  category         ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  title            String
+  contentHtml      String
+  contentText      String
+  coverUrl         String?
+  status           ArticleStatus    @default(NORMAL)
+  source           ArticleSource
+  aiTaskId         String?
+  aiTask           AiTask?          @relation(fields: [aiTaskId], references: [id], onDelete: SetNull)
+  rewriteRecord    RewriteRecord?
+  sourceUrl        String?
+  complianceFlags  Json?
+  sendCount        Int              @default(0) // 发送次数（二期）
+  videoCount       Int              @default(0) // 转视频次数（预留）
+  firstPublishedAt DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([tenantId, categoryId, status, sendCount])
+  @@index([tenantId, aiTaskId])
+}
+
+// ===================== 模块三：流量复刻 =====================
+model RewriteBatch {
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  keyword         String
+  maxCount        Int // 1..50
+  doneCount       Int             @default(0)
+  sourceType      String          @default("link_list") // link_list | bocha | bing ...
+  linkList        String[]
+  categoryId      String
+  category        ArticleCategory @relation(fields: [categoryId], references: [id])
+  mediaCategoryId String
+  mediaCategory   MediaCategory   @relation(fields: [mediaCategoryId], references: [id])
+  templateId      String
+  template        PromptTemplate  @relation(fields: [templateId], references: [id])
+  status          TaskStatus      @default(QUEUED)
+  note            String? // 如「候选不足」
+  createdAt       DateTime        @default(now())
+  records         RewriteRecord[]
+
+  @@index([tenantId, createdAt])
+}
+
+model RewriteRecord {
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  batchId         String?
+  batch           RewriteBatch?    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  url             String
+  urlHash         String
+  pastedText      Boolean          @default(false) // 粘贴原文兜底
+  sourceTitle     String?
+  newTitle        String?
+  categoryId      String?
+  category        ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  mediaCategoryId String
+  mediaCategory   MediaCategory    @relation(fields: [mediaCategoryId], references: [id])
+  templateId      String
+  template        PromptTemplate   @relation(fields: [templateId], references: [id])
+  status          ItemStatus       @default(PENDING)
+  error           String?
+  similarity      Float?
+  articleId       String?          @unique
+  article         Article?         @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  rewrittenAt     DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([tenantId, urlHash])
+  @@index([tenantId, batchId, createdAt])
+}
+
+// ===================== 模块四：AI生图 =====================
+model AiImageJob {
+  id             String       @id @default(cuid())
+  tenantId       String
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  prompt         String
+  style          String?
+  ratio          String       @default("1:1")
+  count          Int          @default(1) // 1..4
+  refAssetId     String?
+  saveCategoryId String?
+  status         TaskStatus   @default(QUEUED)
+  successCount   Int          @default(0)
+  error          String?
+  model          String?
+  createdAt      DateTime     @default(now())
+  assets         MediaAsset[]
+
+  @@index([tenantId, createdAt])
 }

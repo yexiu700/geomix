@@ -13,11 +13,15 @@ describe('database contract', () => {
     expect(isPostgresUrl('mysql://localhost/geomix')).toBe(false);
   });
 
-  it('pins PostgreSQL and leaves models for the schema issue', () => {
+  it('pins PostgreSQL, pgvector, and the phase-1 models', () => {
     const schema = readFileSync(resolve(repoRoot, 'packages/db/prisma/schema.prisma'), 'utf8');
     expect(schema).toContain(`provider = "${DB_PROVIDER}"`);
     expect(schema).toContain('env("DATABASE_URL")');
-    expect(schema).not.toMatch(/^model /m);
+    expect(schema).toContain('Unsupported("vector(1024)")');
+    expect(schema).toContain('idx_kb_chunk_embedding');
+    expect(schema).toMatch(/^model Tenant \{/m);
+    expect(schema).toMatch(/^model KnowledgeChunk \{/m);
+    expect(schema).toMatch(/^model AiImageJob \{/m);
   });
 
   it('brings up Postgres with pgvector, Redis, and MinIO', () => {

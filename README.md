@@ -19,7 +19,7 @@ GEO 优化系统一期。目标是复刻同类产品的功能和交互，品牌�
 
 前端 Next.js 15（App Router）+ Ant Design 5，后端 NestJS 10（同一个代码库的 `api` 和 `worker` 入口），PostgreSQL 16（pgvector）+ Redis 7 + MinIO。包管理用 pnpm workspace，任务编排用 Turborepo。语言是 TypeScript 5（strict）。
 
-本仓库目前只完成工程骨架。Prisma 模型、认证、计费服务、队列消费者和后台页面都在后续 issue。
+本仓库已有工程骨架和一期 Prisma 模型。认证、计费服务、队列消费者和后台页面仍在后续 issue。
 
 ## 仓库结构
 
@@ -30,9 +30,9 @@ geomix/
 │  └─ server/              # NestJS：src/main.api.ts 与 src/main.worker.ts
 ├─ packages/
 │  ├─ config/              # ESLint 与 tsconfig 预设
-│  ├─ shared/              # 站名、接口信封、环境变量和计费模式占位
-│  ├─ prompts/             # 提示词渲染纯函数（系统模板正文尚未写入）
-│  └─ db/                  # Prisma 数据源占位，模型在后续 schema issue
+│  ├─ shared/              # 站名、接口信封、环境变量、价格/配额/方向常量
+│  ├─ prompts/             # 提示词渲染，以及自写的 10+7+1 系统模板
+│  └─ db/                  # Prisma schema、迁移、可重复种子
 ├─ docker/postgres/init/   # 本地库启用 vector 扩展
 ├─ docker-compose.yml
 └─ .github/workflows/ci.yml
@@ -49,7 +49,9 @@ pnpm install
 pnpm dev
 ```
 
-`docker compose up -d` 启动 PostgreSQL 16（镜像 `pgvector/pgvector:pg16`，首次初始化会执行 `CREATE EXTENSION vector`）、Redis 7 和 MinIO。官方 `minio/minio` 镜像已从 Docker Hub 下架，所以这里使用 Chainguard 发布的 MinIO 构建，并用摘要固定版本。
+`docker compose up -d` 启动 PostgreSQL 16（镜像 `pgvector/pgvector:pg16`，首次初始化会执行 `CREATE EXTENSION IF NOT EXISTS vector`）、Redis 7 和 MinIO。官方 `minio/minio` 镜像已从 Docker Hub 下架，所以这里使用 Chainguard 发布的 MinIO 构建，并用摘要固定版本。
+
+迁移脚本里也有同一句扩展语句。库已经装过 pgvector 时重复执行不会失败。没有 Docker 时，本机 PostgreSQL 16 安装 `pgvector` 后，把 `DATABASE_URL` 指过去即可。
 
 `pnpm dev` 会同时启动：
 
@@ -75,13 +77,16 @@ docker compose ps
 
 ## 脚本
 
-| 命令             | 作用                         |
-| ---------------- | ---------------------------- |
-| `pnpm dev`       | 同时启动 web、api、worker    |
-| `pnpm lint`      | ESLint 与 Prettier           |
-| `pnpm typecheck` | 各包 `tsc --noEmit`          |
-| `pnpm test`      | Vitest 单元测试              |
-| `pnpm build`     | 构建 packages、server 和 web |
+| 命令               | 作用                         |
+| ------------------ | ---------------------------- |
+| `pnpm dev`         | 同时启动 web、api、worker    |
+| `pnpm lint`        | ESLint 与 Prettier           |
+| `pnpm typecheck`   | 各包 `tsc --noEmit`          |
+| `pnpm test`        | Vitest 单元测试              |
+| `pnpm build`       | 构建 packages、server 和 web |
+| `pnpm db:validate` | 校验 Prisma schema           |
+| `pnpm db:migrate`  | 把已提交的迁移应用到数据库   |
+| `pnpm db:seed`     | 写入可重复执行的种子         |
 
 只启动后端其中一个入口：
 
@@ -108,13 +113,31 @@ curl -s http://localhost:3001/api/v1/health
 
 新增配置写在根目录 `.env.example`。不要提交 `.env` 或真实密钥。本地 Compose 里的数据库口令、MinIO 口令都是开发占位，只供本机使用。
 
-当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`LLM_PROVIDERS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`SEARCH_PROVIDER`、`BILLING_MODE`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`。
+当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`LLM_PROVIDERS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`SEARCH_PROVIDER`、`BILLING_MODE`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`。
+
+`SEED_*` 只用于本机种子。口令是开发占位，不要拿到共享环境里用。
+
+## 数据库
+
+一期模型在 `packages/db/prisma/schema.prisma`，覆盖租户、用户、钱包、配额、价格、知识库向量、写作、复刻和生图。`pnpm build` 和 `pnpm typecheck` 会先执行 `prisma generate`。
+
+```bash
+pnpm db:validate
+pnpm db:migrate
+pnpm db:seed
+```
+
+种子可以重复执行。第二次会把价格和系统模板写回仓库里的默认值，不会把演示租户的 1000 点再加一次，也不会改口令、有效期、配额或已有的计费模式覆盖。新租户的 `billingMode` 为空，继承全局配置，默认 `SHADOW`。
+
+创作方向 29 项和文案类型 15 项放在 `packages/shared/src/catalog.ts`，不进数据库。系统模板 10 篇正文、7 个标题、1 个复刻，正文在 `packages/prompts`，种子写入 `PromptTemplate`。带 `【品牌N】` 槽位的模板 `randomPool` 为 false。
+
+口令哈希格式是 `scrypt$N$r$p$salt$hash`，登录功能后续直接复用 `verifyPassword`。
 
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test。
-- 未实现：Prisma 模型与迁移、认证、计费与配额、BullMQ 消费者、后台壳。Worker 只用一个定时器保持进程，不连接 Redis。API 启动时不连接数据库。
-- `packages/db` 的 `schema.prisma` 还没有 model，因此先不要运行 `prisma validate` 或 `prisma generate`。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子。
+- 未实现：认证接口、计费与配额服务、BullMQ 消费者、后台壳。Worker 只用一个定时器保持进程，不连接 Redis。API 启动时不连接数据库。
+- CI 不启动数据库，所以迁移和种子要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 的集成测试才会执行迁移和重复种子。
 
 ## 开发节奏
 
