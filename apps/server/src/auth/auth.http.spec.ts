@@ -71,10 +71,27 @@ describe('auth http without a database', () => {
     expect(captcha.code).toBe(0);
     const data = captcha.data as { captchaId: string; image: string };
     expect(data.captchaId.length).toBeGreaterThan(8);
-    expect(data.image.startsWith('data:image/svg+xml;base64,')).toBe(true);
+    expect(data.image.startsWith('data:image/png;base64,')).toBe(true);
     const service = app.get(CaptchaService);
     const code = service.readCodeForTests(data.captchaId);
     expect(code).toMatch(/^[A-Z2-9]{4}$/);
+    const body = JSON.stringify(captcha);
+    expect(body.includes('<text')).toBe(false);
+    expect(body.toLowerCase().includes(code.toLowerCase())).toBe(false);
+    const png = Buffer.from(data.image.slice('data:image/png;base64,'.length), 'base64');
+    expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(png.includes(Buffer.from(code))).toBe(false);
+
+    const accepted = await call(base, 'POST', '/api/v1/auth/login', {
+      body: {
+        username: 'nobody',
+        password: 'not-the-password',
+        captchaId: data.captchaId,
+        captchaCode: code,
+      },
+    });
+    expect(accepted.status).toBe(400);
+    expect(accepted.msg).toBe('用户名或密码错误');
 
     const login = await call(base, 'POST', '/api/v1/auth/login', { body: {} });
     expect(login.status).toBe(400);

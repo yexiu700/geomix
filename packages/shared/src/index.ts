@@ -14,6 +14,7 @@ export type { ApiEnvelope, AppEnv, BillingMode } from './infra';
 export {
   AUTH_ERROR,
   CAPTCHA_TTL_MS,
+  RATE_LIMIT_MESSAGE,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   changePasswordBodySchema,

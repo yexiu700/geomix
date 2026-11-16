@@ -3,6 +3,7 @@ import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import { ApiError } from './api-error';
 
 type ResponseLike = {
+  setHeader(name: string, value: string): void;
   status(code: number): { json(body: unknown): void };
 };
 
@@ -16,13 +17,26 @@ export class ApiExceptionFilter implements ExceptionFilter {
     if (mapped.status >= 500) {
       this.logger.error(exception instanceof Error ? exception.stack : String(exception));
     }
+    if (mapped.retryAfterSeconds !== undefined) {
+      response.setHeader('Retry-After', String(mapped.retryAfterSeconds));
+    }
     response.status(mapped.status).json({ code: mapped.code, msg: mapped.msg, data: null });
   }
 }
 
-function mapException(exception: unknown): { status: number; code: number; msg: string } {
+function mapException(exception: unknown): {
+  status: number;
+  code: number;
+  msg: string;
+  retryAfterSeconds?: number;
+} {
   if (exception instanceof ApiError) {
-    return { status: exception.status, code: exception.code, msg: exception.message };
+    return {
+      status: exception.status,
+      code: exception.code,
+      msg: exception.message,
+      retryAfterSeconds: exception.retryAfterSeconds,
+    };
   }
   if (isNotFound(exception)) {
     return { status: 404, code: AUTH_ERROR.NOT_FOUND, msg: '不存在' };

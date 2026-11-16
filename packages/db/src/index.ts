@@ -6,7 +6,7 @@ export function isPostgresUrl(url: string): boolean {
 }
 
 export { createPrismaClient } from './client';
-export { hashPassword, verifyPassword } from './password';
+export { hashPassword, verifyPassword, verifyPasswordAsync } from './password';
 export {
   NULLABLE_TENANT_MODELS,
   REQUIRED_TENANT_MODELS,

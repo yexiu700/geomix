@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { CAPTCHA_TTL_MS } from '@geomix/shared';
+import { captchaPngDataUrl } from './captcha-image';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 4;
@@ -24,7 +25,7 @@ export class CaptchaService {
     };
     if (process.env.NODE_ENV === 'test') entry.code = code;
     this.entries.set(captchaId, entry);
-    return { captchaId, image: svgDataUrl(renderCaptchaSvg(code)) };
+    return { captchaId, image: captchaPngDataUrl(code) };
   }
 
   /** 一次性消费。错误、过期、重复提交都返回 false。 */
@@ -69,35 +70,4 @@ function randomCode(): string {
   let code = '';
   for (const byte of bytes) code += ALPHABET[byte % ALPHABET.length];
   return code;
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
-}
-
-export function renderCaptchaSvg(code: string): string {
-  const chars = [...code]
-    .map((char, index) => {
-      const x = 16 + index * 28;
-      const y = index % 2 === 0 ? 30 : 36;
-      const rotate = index % 2 === 0 ? -12 : 10;
-      return `<text x="${x}" y="${y}" transform="rotate(${rotate} ${x} ${y})" font-size="24" font-family="sans-serif" fill="#1f2937">${escapeXml(char)}</text>`;
-    })
-    .join('');
-  const noise = [8, 18, 28, 38]
-    .map(
-      (y, index) =>
-        `<line x1="0" y1="${y}" x2="132" y2="${y + (index % 2 === 0 ? 6 : -4)}" stroke="#94a3b8" stroke-width="1"/>`,
-    )
-    .join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="132" height="48" viewBox="0 0 132 48"><rect width="132" height="48" fill="#f8fafc"/>${noise}${chars}</svg>`;
-}
-
-function svgDataUrl(svg: string): string {
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }

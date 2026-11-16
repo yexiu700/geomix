@@ -113,7 +113,7 @@ curl -s http://localhost:3001/api/v1/health
 
 `BILLING_MODE` 缺省为 `SHADOW`。认证不会冻结或扣减点数，计费服务仍在后续 issue。
 
-登录前先取图形验证码。验证码存在当前 API 进程的内存里，重启后失效，多个 API 进程不共享。答案只在测试进程里可读。
+登录前先取图形验证码。图片是服务端画的 PNG，响应里没有答案文本。验证码和登录失败计数存在当前 API 进程的内存里，重启后失效，多个 API 进程不共享。计数按 TCP 对端地址，不看客户端自己写的转发头。同一地址的验证码默认 10 分钟 10 次；同一地址加规范化用户名的密码失败默认 15 分钟 5 次，超出返回 429。答案只在测试进程的内存里可读，不会放进接口响应。
 
 ```bash
 curl -s -X POST http://localhost:3001/api/v1/auth/captcha
@@ -134,7 +134,7 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 | GET  | `/api/v1/account`           | 当前账号。到期后仍返回 200               |
 | GET  | `/api/v1/account/users/:id` | 只查本租户用户，其他租户返回 404         |
 
-口令校验复用 `packages/db` 的 scrypt 格式。停用账号（`isActive=false`）不能登录。到期账号可以登录和读取，写接口返回 `403`，错误码 `40301`。未登录是 `401` / `40101`。用户名或密码错误、验证码错误是 `400` / `40001`，不区分用户是否存在。
+口令校验复用 `packages/db` 的 scrypt 格式，登录时用异步 scrypt。停用账号（`isActive=false`）不能登录。到期账号可以登录和读取，写接口返回 `403`，错误码 `40301`。未登录是 `401` / `40101`。用户名或密码错误、验证码错误是 `400` / `40001`，不区分用户是否存在。请求过多是 `429` / `42901`，文案同样不区分用户是否存在。
 
 种子账号默认是 `admin` / `geomix-admin-dev` 和 `demo` / `geomix-demo-dev`，只给本机使用。需要先 `pnpm db:migrate` 和 `pnpm db:seed`。
 
@@ -142,7 +142,7 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 新增配置写在根目录 `.env.example`。不要提交 `.env` 或真实密钥。本地 Compose 里的数据库口令、MinIO 口令都是开发占位，只供本机使用。
 
-当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`LLM_PROVIDERS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`SEARCH_PROVIDER`、`BILLING_MODE`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
+当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`AUTH_CAPTCHA_*`、`AUTH_LOGIN_FAIL_*`、`LLM_PROVIDERS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`SEARCH_PROVIDER`、`BILLING_MODE`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
 
 `SEED_*` 只用于本机种子。口令是开发占位，不要拿到共享环境里用。
 

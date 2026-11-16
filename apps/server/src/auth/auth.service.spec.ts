@@ -4,6 +4,7 @@ import { ApiError } from '../common/api-error';
 import type { AuthStore, AuthUser } from './auth.types';
 import { AuthService } from './auth.service';
 import { CaptchaService } from './captcha.service';
+import { AuthRateLimiter } from './rate-limiter';
 
 class MemoryStore implements AuthStore {
   readonly users: AuthUser[] = [];
@@ -179,5 +180,74 @@ describe('AuthService', () => {
         { currentPassword: 'next-password-1', newPassword: 'next-password-1' },
       ),
     ).rejects.toMatchObject({ status: 400, message: '新密码需要和当前密码不同' });
+  });
+});
+
+describe('login throttling', () => {
+  it('locks a normalized username, ignores captcha typos, and allows the password after expiry', async () => {
+    let now = 5_000_000;
+    const store = new MemoryStore();
+    store.users.push(
+      user({ id: 'user_rate', username: 'alpha', passwordHash: hashPassword('initial-password') }),
+    );
+    const captcha = new CaptchaService(() => now);
+    const rates = new AuthRateLimiter({
+      now: () => now,
+      captchaMax: 20,
+      captchaWindowMs: 60_000,
+      loginFailMax: 2,
+      loginFailWindowMs: 60_000,
+    });
+    const auth = new AuthService(
+      store,
+      captcha,
+      {
+        accessSecret: 'access-secret',
+        refreshSecret: 'refresh-secret',
+        accessTtlSeconds: 900,
+        refreshTtlSeconds: 3600,
+      },
+      () => now,
+      rates,
+    );
+    const ip = '203.0.113.10';
+
+    function body(username: string, password: string, captchaCode = '') {
+      const created = captcha.create();
+      return {
+        username,
+        password,
+        captchaId: created.captchaId,
+        captchaCode: captchaCode || captcha.readCodeForTests(created.captchaId),
+      };
+    }
+
+    await expect(auth.login(body('Alpha', 'nope', 'ZZZZ'), ip)).rejects.toMatchObject({
+      status: 400,
+      message: '验证码错误或已过期',
+    });
+    await expect(auth.login(body('alpha', 'wrong-password'), ip)).rejects.toMatchObject({
+      status: 400,
+      message: '用户名或密码错误',
+    });
+    await expect(auth.login(body('ALPHA', 'wrong-password'), ip)).rejects.toMatchObject({
+      status: 400,
+      message: '用户名或密码错误',
+    });
+    await expect(auth.login(body('alpha', 'initial-password'), ip)).rejects.toMatchObject({
+      status: 429,
+      message: '尝试过于频繁，请稍后再试',
+    });
+    await expect(
+      auth.login(body('alpha', 'initial-password'), '203.0.113.11'),
+    ).resolves.toMatchObject({
+      user: { username: 'alpha' },
+    });
+
+    now += 60_001;
+    const session = await auth.login(body('alpha', 'initial-password'), ip);
+    expect(session.user.username).toBe('alpha');
+    rates.reset();
+    expect(rates.loginStatus(ip, 'alpha').allowed).toBe(true);
   });
 });

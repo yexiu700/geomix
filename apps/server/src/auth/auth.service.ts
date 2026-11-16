@@ -1,8 +1,15 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { API_ERROR, AUTH_ERROR, type ChangePasswordBody, type LoginBody } from '@geomix/shared';
-import { hashPassword, verifyPassword } from '@geomix/db';
+import {
+  API_ERROR,
+  AUTH_ERROR,
+  RATE_LIMIT_MESSAGE,
+  type ChangePasswordBody,
+  type LoginBody,
+} from '@geomix/shared';
+import { hashPassword, verifyPasswordAsync } from '@geomix/db';
 import { ApiError } from '../common/api-error';
 import { isReadOnly } from './access-policy';
+import { AuthRateLimiter } from './rate-limiter';
 import type {
   AccessResult,
   AuthConfig,
@@ -14,35 +21,50 @@ import type {
 import { CaptchaService } from './captcha.service';
 import { readToken, signToken, type TokenClaims, type TokenKind } from './token';
 
-let dummyHash: string | null = null;
-
-function dummyPasswordHash(): string {
-  dummyHash ??= hashPassword('geomix-dummy-timing');
-  return dummyHash;
-}
+/** 不对应任何账号。未知用户也走一次异步 scrypt，避免用耗时区分用户是否存在。 */
+const DUMMY_PASSWORD_HASH =
+  'scrypt$16384$8$1$c0ffeec0ffeec0ffeec0ffee$acb077a5396e5e1e8d2046de21126be885de5173309935749e6091b91cd4e546';
 
 export function passwordFingerprint(passwordHash: string): string {
   return createHash('sha256').update(passwordHash).digest('hex').slice(0, 32);
 }
 
 export class AuthService {
+  private readonly now: () => number;
+  private readonly rates: AuthRateLimiter;
+
   constructor(
     private readonly store: AuthStore,
     private readonly captcha: CaptchaService,
     private readonly config: AuthConfig,
-    private readonly now: () => number = Date.now,
-  ) {}
+    now?: () => number,
+    rates?: AuthRateLimiter,
+  ) {
+    this.now = now ?? Date.now;
+    this.rates = rates ?? new AuthRateLimiter({ now: this.now });
+  }
 
-  async login(input: LoginBody): Promise<IssuedSession> {
+  async login(input: LoginBody, clientIp = 'unknown'): Promise<IssuedSession> {
+    const limited = this.rates.loginStatus(clientIp, input.username);
+    if (!limited.allowed) {
+      throw new ApiError(
+        429,
+        AUTH_ERROR.TOO_MANY_REQUESTS,
+        RATE_LIMIT_MESSAGE,
+        limited.retryAfterSeconds,
+      );
+    }
     if (!this.captcha.consume(input.captchaId, input.captchaCode)) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '验证码错误或已过期');
     }
     const user = await this.store.findUserByUsername(input.username);
-    const hash = user?.passwordHash ?? dummyPasswordHash();
-    const matched = verifyPassword(input.password, hash);
+    const hash = user?.passwordHash ?? DUMMY_PASSWORD_HASH;
+    const matched = await verifyPasswordAsync(input.password, hash);
     if (!user || !matched) {
+      this.rates.recordLoginFailure(clientIp, input.username);
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '用户名或密码错误');
     }
+    this.rates.clearLoginFailures(clientIp, input.username);
     if (!user.isActive) {
       throw new ApiError(403, API_ERROR.TENANT_EXPIRED, '账号已停用');
     }
@@ -66,7 +88,7 @@ export class AuthService {
     if (!user || user.tenantId !== auth.tenantId || !user.isActive) {
       throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '登录已失效');
     }
-    if (!verifyPassword(input.currentPassword, user.passwordHash)) {
+    if (!(await verifyPasswordAsync(input.currentPassword, user.passwordHash))) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '当前密码不正确');
     }
     if (input.newPassword === input.currentPassword) {

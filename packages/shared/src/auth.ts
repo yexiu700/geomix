@@ -7,7 +7,10 @@ import { z } from 'zod';
 export const AUTH_ERROR = {
   UNAUTHORIZED: 40101,
   NOT_FOUND: 40401,
+  TOO_MANY_REQUESTS: 42901,
 } as const;
+
+export const RATE_LIMIT_MESSAGE = '尝试过于频繁，请稍后再试';
 
 export const CAPTCHA_TTL_MS = 120_000;
 export const PASSWORD_MIN_LENGTH = 8;

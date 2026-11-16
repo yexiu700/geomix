@@ -3,7 +3,7 @@ import { AUTH_ERROR, changePasswordBodySchema, loginBodySchema } from './auth';
 
 describe('auth contracts', () => {
   it('keeps the auth error codes next to the shared envelope', () => {
-    expect(AUTH_ERROR).toEqual({ UNAUTHORIZED: 40101, NOT_FOUND: 40401 });
+    expect(AUTH_ERROR).toEqual({ UNAUTHORIZED: 40101, NOT_FOUND: 40401, TOO_MANY_REQUESTS: 42901 });
   });
 
   it('rejects a short new password and accepts a normal login body', () => {

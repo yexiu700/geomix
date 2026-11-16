@@ -97,6 +97,10 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: envString('change-me-refresh'),
   JWT_ACCESS_TTL: envString('15m'),
   JWT_REFRESH_TTL: envString('7d'),
+  AUTH_CAPTCHA_MAX: envNumber(10),
+  AUTH_CAPTCHA_WINDOW_SECONDS: envNumber(600),
+  AUTH_LOGIN_FAIL_MAX: envNumber(5),
+  AUTH_LOGIN_FAIL_WINDOW_SECONDS: envNumber(900),
   LLM_PROVIDERS: z.preprocess((value) => {
     const raw = value === undefined || value === null || value === '' ? '{}' : value;
     if (typeof raw !== 'string') {
