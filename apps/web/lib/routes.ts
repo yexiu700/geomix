@@ -15,6 +15,7 @@ type StaticRoute = {
 
 export const STATIC_ROUTES: Record<string, StaticRoute> = {
   '/dashboard': { title: '首页', parent: null },
+  '/workbench/samples': { title: '列表示例', parent: null },
   '/material/keywords': { title: '关键词', parent: null },
   '/material/questions': { title: '写作标题', parent: '/material/keywords' },
   '/material/gallery': { title: '企业画像图库', parent: null },
@@ -55,6 +56,7 @@ function link(href: keyof typeof STATIC_ROUTES): MenuItem {
 
 export const MENU: MenuItem[] = [
   link('/dashboard'),
+  link('/workbench/samples'),
   {
     type: 'section',
     key: 'creation',

@@ -27,6 +27,12 @@ describe('console routes', () => {
       parent: '/material/gallery',
     });
     expect(matchRoute('/material/gallery/../keywords')).toBeNull();
+    expect(matchRoute('/workbench/samples')).toMatchObject({
+      href: '/workbench/samples',
+      title: '列表示例',
+      parent: null,
+      pinned: false,
+    });
     expect(matchRoute('/not-a-page')).toBeNull();
   });
 

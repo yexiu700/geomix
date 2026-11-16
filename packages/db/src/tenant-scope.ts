@@ -38,6 +38,7 @@ export const REQUIRED_TENANT_MODELS = [
   'WorkRun',
   'WorkUnit',
   'ActiveWork',
+  'CrudSample',
 ] as const;
 
 export const NULLABLE_TENANT_MODELS = ['PromptTemplate'] as const;

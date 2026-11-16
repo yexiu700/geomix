@@ -45,6 +45,38 @@ export async function postJson<T>(
   return readEnvelope<T>(response);
 }
 
+export async function authorizedRequest(
+  storage: SessionStorageLike,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Response> {
+  const send = (token: string) => {
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    return fetch(`${apiBase()}${path}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  };
+  const token = readAccessToken(storage);
+  if (!token) {
+    return new Response(
+      JSON.stringify({ code: AUTH_ERROR.UNAUTHORIZED, msg: '未登录', data: null }),
+      {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      },
+    );
+  }
+  const response = await send(token);
+  if (response.status !== 401) return response;
+  const refreshed = await refreshAccessToken(storage);
+  if (!refreshed) return response;
+  return send(refreshed);
+}
+
 export async function getJson<T>(path: string, token: string): Promise<Envelope<T>> {
   const response = await fetch(`${apiBase()}${path}`, {
     headers: { authorization: `Bearer ${token}` },
