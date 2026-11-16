@@ -591,25 +591,25 @@ model AiImageJob {
 // 假任务和以后的写作、复刻、生图共用这套运行记录。
 // 正文、原文和切片不放在这里。BullMQ 只存租户和运行编号。
 model WorkRun {
-  id                String     @id @default(cuid())
+  id                String      @id @default(cuid())
   tenantId          String
-  tenant            Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   queue             String
   kind              String
   refType           String
-  status            TaskStatus @default(QUEUED)
+  status            TaskStatus  @default(QUEUED)
   taskName          String
   totalUnits        Int
-  doneCount         Int        @default(0)
-  failCount         Int        @default(0)
-  skipCount         Int        @default(0)
+  doneCount         Int         @default(0)
+  failCount         Int         @default(0)
+  skipCount         Int         @default(0)
   unitAiWrite       Int
-  unitKbAddon       Int        @default(0)
-  withKnowledgeBase Boolean    @default(false)
+  unitKbAddon       Int         @default(0)
+  withKnowledgeBase Boolean     @default(false)
   quotaKey          String?
   lastError         String?
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
   finishedAt        DateTime?
   units             WorkUnit[]
   active            ActiveWork?
@@ -637,9 +637,11 @@ model WorkUnit {
   executionToken    String?
   error             String?
   leaseOwner        String?
-  leaseUntil        DateTime?
-  startedAt         DateTime?
-  finishedAt        DateTime?
+  // Absolute instants. Raw SQL and Prisma both use timestamptz so a session
+  // time zone cannot make a live lease look expired.
+  leaseUntil        DateTime?  @db.Timestamptz(3)
+  startedAt         DateTime?  @db.Timestamptz(3)
+  finishedAt        DateTime?  @db.Timestamptz(3)
 
   @@unique([runId, seq])
   @@index([tenantId, status])
@@ -654,7 +656,7 @@ model ActiveWork {
   runId    String   @unique
   run      WorkRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
   reason   String
-  beatAt   DateTime
+  beatAt   DateTime @db.Timestamptz(3)
   workerId String?
 
   @@id([refType, refId])

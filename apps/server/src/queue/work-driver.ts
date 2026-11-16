@@ -544,6 +544,8 @@ export class WorkDriver {
   private async claim(run: RunRow): Promise<ClaimRow | null> {
     if (!isQueueName(run.queue)) return null;
     const limit = QUEUE_TENANT_LIMIT[run.queue];
+    // JS Date is an absolute instant. Bind it as timestamptz. A bare timestamp
+    // would be read back in the session time zone and a live lease would look expired.
     const now = new Date();
     const until = new Date(now.getTime() + this.config.leaseMs);
     const token = randomBytes(8).toString('hex');
@@ -554,7 +556,7 @@ export class WorkDriver {
         tx,
         `
           UPDATE "WorkUnit"
-          SET "executionToken" = $1, "leaseOwner" = $2, "leaseUntil" = $3
+          SET "executionToken" = $1, "leaseOwner" = $2, "leaseUntil" = $3::timestamptz
           WHERE id = (
             SELECT id FROM "WorkUnit"
             WHERE "runId" = $4 AND "tenantId" = $5
@@ -587,12 +589,12 @@ export class WorkDriver {
         tx,
         `
           UPDATE "WorkUnit"
-          SET "executionToken" = $1, "leaseOwner" = $2, "leaseUntil" = $3
+          SET "executionToken" = $1, "leaseOwner" = $2, "leaseUntil" = $3::timestamptz
           WHERE id = (
             SELECT id FROM "WorkUnit"
             WHERE "runId" = $4 AND "tenantId" = $5
               AND status = 'RUNNING'::"ItemStatus"
-              AND ("leaseUntil" IS NULL OR "leaseUntil" < $6)
+              AND ("leaseUntil" IS NULL OR "leaseUntil" < $6::timestamptz)
             ORDER BY seq
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -612,10 +614,10 @@ export class WorkDriver {
         `
           UPDATE "WorkUnit"
           SET status = 'RUNNING'::"ItemStatus",
-              "startedAt" = COALESCE("startedAt", $6),
+              "startedAt" = COALESCE("startedAt", $6::timestamptz),
               "executionToken" = $1,
               "leaseOwner" = $2,
-              "leaseUntil" = $3
+              "leaseUntil" = $3::timestamptz
           WHERE id = (
             SELECT id FROM "WorkUnit"
             WHERE "runId" = $4 AND "tenantId" = $5

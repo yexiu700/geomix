@@ -219,7 +219,7 @@ pnpm db:seed
 
 Worker 连接 Redis，消费 `write-article`、`rewrite-single`、`rewrite-batch`、`kb-index`、`image-gen` 和 `maintenance`。假任务走 `write-article`，同一租户最多同时跑 2 个单元。驱动任务每次领一个未开始的单元，做完再领下一个。暂停后不再领；继续会重新入队；终止后未产出的步骤不再执行。
 
-任务状态写在 PostgreSQL。BullMQ 只保存租户编号和运行编号。重复投递、重试和两个 worker 同时领到同一单元时，结算和 AI 写作配额都只记一次。没有产出的失败或取消会按单元退回剩余冻结，SHADOW 下钱包不变、明细 `delta=0`。进程重启后，租约过期的单元由维护任务重新投递。
+任务状态写在 PostgreSQL。BullMQ 只保存租户编号和运行编号。重复投递、重试和两个 worker 同时领到同一单元时，结算和 AI 写作配额都只记一次。没有产出的失败或取消会按单元退回剩余冻结，SHADOW 下钱包不变、明细 `delta=0`。进程重启后，租约过期的单元由维护任务重新投递。租约、开始时间和心跳都是 `timestamptz`，原始 SQL 和 Prisma 比的是同一个绝对时间，数据库会话设成上海或 UTC 都不会把还在心跳的任务当成过期。
 
 `maintenance` 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，并按 `QUEUE_RECOVER_MS` 找回卡住的任务。每天 03:00（worker 进程时区）的文章清理和孤儿文件清理只记一条跳过日志，一期不删除数据。关闭 worker 时会等当前单元写完再断开。
 
