@@ -11,13 +11,21 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "node scripts/prisma-cli.mjs generate && tsc -p tsconfig.build.json",
+    "typecheck": "node scripts/prisma-cli.mjs generate && tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
-    "prisma:validate": "prisma validate"
+    "test": "node scripts/prisma-cli.mjs generate && vitest run",
+    "prisma:validate": "node scripts/prisma-cli.mjs validate",
+    "prisma:migrate": "node scripts/prisma-cli.mjs migrate deploy",
+    "prisma:migrate:dev": "node scripts/prisma-cli.mjs migrate dev --skip-seed",
+    "db:seed": "node scripts/prisma-cli.mjs generate && tsc -p tsconfig.build.json && node scripts/prisma-cli.mjs db seed"
+  },
+  "prisma": {
+    "seed": "node dist/seed-cli.js"
   },
   "dependencies": {
+    "@geomix/prompts": "workspace:*",
+    "@geomix/shared": "workspace:*",
     "@prisma/client": "5.22.0"
   },
   "devDependencies": {

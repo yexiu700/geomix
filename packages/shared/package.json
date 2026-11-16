@@ -12,6 +12,10 @@
     "./infra": {
       "types": "./dist/infra.d.ts",
       "default": "./dist/infra.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
     }
   },
   "scripts": {
