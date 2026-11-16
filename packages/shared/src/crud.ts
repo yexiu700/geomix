@@ -64,6 +64,14 @@ export function crudListQueryString(query: CrudListQuery): string {
   return params.toString();
 }
 
+/**
+ * PostgreSQL 的 LIKE / ILIKE 把反斜杠、百分号和下划线当模式符号。
+ * Prisma 的 contains 会再包上一对百分号，所以这里只转义用户输入本身。
+ */
+export function escapeLikeLiteral(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
 export function priceUnit(action: string): string {
   if (action === 'distill') return '次';
   if (action === 'image_gen') return '张';

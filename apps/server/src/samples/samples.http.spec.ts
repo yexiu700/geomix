@@ -281,8 +281,108 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       expect(await prisma.base.pointLog.count()).toBe(0);
       expect(await prisma.base.knowledgeChunk.count()).toBe(0);
     });
+
+    it('matches percent, underscore and backslash as literal text inside the tenant', async () => {
+      const captcha = app?.get(CaptchaService);
+      if (!captcha || !prisma) throw new Error('app was not started');
+      const future = new Date('2027-11-16T00:00:00.000Z');
+      const tenantA = `lit_a_${suffix}`;
+      const tenantB = `lit_b_${suffix}`;
+      const password = 'sample-pass-1';
+      const hash = hashPassword(password);
+      await prisma.base.tenant.createMany({
+        data: [
+          { id: tenantA, name: '字面甲', expiresAt: future },
+          { id: tenantB, name: '字面乙', expiresAt: future },
+        ],
+      });
+      await prisma.base.user.createMany({
+        data: [
+          {
+            id: `user_${tenantA}`,
+            tenantId: tenantA,
+            username: `la_${suffix}`,
+            passwordHash: hash,
+          },
+          {
+            id: `user_${tenantB}`,
+            tenantId: tenantB,
+            username: `lb_${suffix}`,
+            passwordHash: hash,
+          },
+        ],
+      });
+      const tokenA = await login(captcha, base, `la_${suffix}`, password);
+      const tokenB = await login(captcha, base, `lb_${suffix}`, password);
+      const ownRows = [
+        { name: '100%', note: '' },
+        { name: '甲十', note: '' },
+        { name: '十一', note: '' },
+        { name: '%十', note: '' },
+        { name: 'foo_bar', note: '' },
+        { name: 'fooXbar', note: '' },
+        { name: 'a\\b', note: '' },
+        { name: '50%_off', note: '' },
+        { name: '中文甲', note: 'english' },
+        { name: 'Alpha', note: '' },
+        { name: '填充一', note: '' },
+        { name: '填充二', note: '' },
+        { name: '填充三', note: '' },
+        { name: '下划备注', note: '_' },
+        { name: '斜杠备注', note: '\\' },
+      ];
+      for (const row of ownRows) {
+        const created = await call(base, 'POST', '/api/v1/workbench/samples', {
+          token: tokenA,
+          body: { name: row.name, note: row.note, enabled: true },
+        });
+        expect(created.status, created.msg).toBe(200);
+      }
+      const other = await call<{ id: string }>(base, 'POST', '/api/v1/workbench/samples', {
+        token: tokenB,
+        body: { name: '100%', note: '乙百分', enabled: true },
+      });
+      expect(other.status).toBe(200);
+      const otherBar = await call(base, 'POST', '/api/v1/workbench/samples', {
+        token: tokenB,
+        body: { name: 'foo_bar', note: '', enabled: true },
+      });
+      expect(otherBar.status).toBe(200);
+
+      expect(await names(base, tokenA, '%')).toEqual(['%十', '100%', '50%_off'].sort());
+      expect(await names(base, tokenA, '%十')).toEqual(['%十']);
+      expect(await names(base, tokenA, '甲十')).toEqual(['甲十']);
+      expect(await names(base, tokenA, '_')).toEqual(['50%_off', 'foo_bar', '下划备注']);
+      expect(await names(base, tokenA, 'foo_bar')).toEqual(['foo_bar']);
+      expect(await names(base, tokenA, '\\')).toEqual(['a\\b', '斜杠备注']);
+      expect(await names(base, tokenA, '50%_')).toEqual(['50%_off']);
+      expect(await names(base, tokenA, '中文')).toEqual(['中文甲']);
+      expect(await names(base, tokenA, 'english')).toEqual(['中文甲']);
+      expect(await names(base, tokenA, 'alpha')).toEqual(['Alpha']);
+      expect(await names(base, tokenB, '%')).toEqual(['100%']);
+      expect(await names(base, tokenB, 'foo_bar')).toEqual(['foo_bar']);
+      const leaked = await call<{ items: Array<{ id: string }> }>(
+        base,
+        'GET',
+        `/api/v1/workbench/samples?pageSize=50&filter=${encodeURIComponent(JSON.stringify({ keyword: '%' }))}`,
+        { token: tokenA },
+      );
+      expect(leaked.data.items.map((item) => item.id)).not.toContain(other.data.id);
+    });
   },
 );
+
+async function names(base: string, token: string, keyword: string): Promise<string[]> {
+  const result = await call<{ items: Array<{ name: string }>; total: number }>(
+    base,
+    'GET',
+    `/api/v1/workbench/samples?pageSize=50&filter=${encodeURIComponent(JSON.stringify({ keyword }))}`,
+    { token },
+  );
+  expect(result.status, result.msg).toBe(200);
+  expect(result.data.total).toBe(result.data.items.length);
+  return result.data.items.map((item) => item.name).sort();
+}
 
 async function call<T>(
   base: string,

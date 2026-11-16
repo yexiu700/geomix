@@ -7,6 +7,7 @@ import {
   CRUD_EMPTY_TEXT,
   CrudQueryError,
   crudListQueryString,
+  escapeLikeLiteral,
   parseCrudListQuery,
   priceButtonText,
   priceUnit,
@@ -56,6 +57,16 @@ describe('crud list query', () => {
     expect(priceButtonText('AI蒸馏拓展', 10, priceUnit('distill'))).toBe('AI蒸馏拓展（10点数/次）');
     expect(priceButtonText('AI生图', 5, priceUnit('image_gen'))).toBe('AI生图（5点数/张）');
     expect(() => priceButtonText('AI写作', -1)).toThrow(CrudQueryError);
+  });
+
+  it('escapes like metacharacters so a keyword stays literal', () => {
+    expect(escapeLikeLiteral('%')).toBe('\\%');
+    expect(escapeLikeLiteral('_')).toBe('\\_');
+    expect(escapeLikeLiteral('\\')).toBe('\\\\');
+    expect(escapeLikeLiteral('%十')).toBe('\\%十');
+    expect(escapeLikeLiteral('foo_bar')).toBe('foo\\_bar');
+    expect(escapeLikeLiteral('50%_\\甲')).toBe('50\\%\\_\\\\甲');
+    expect(escapeLikeLiteral('中文English')).toBe('中文English');
   });
 
   it('rejects unknown sample fields and exports the visible columns only', () => {

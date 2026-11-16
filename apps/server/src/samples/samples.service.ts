@@ -4,6 +4,7 @@ import {
   API_ERROR,
   AUTH_ERROR,
   CRUD_EXPORT_LIMIT,
+  escapeLikeLiteral,
   type CrudListQuery,
   type SampleInput,
   type SampleRecord,
@@ -125,9 +126,10 @@ export class SamplesService {
   private where(query: CrudListQuery): Prisma.CrudSampleWhereInput {
     const where: Prisma.CrudSampleWhereInput = { tenantId: this.tenantId() };
     if (query.keyword) {
+      const keyword = escapeLikeLiteral(query.keyword);
       where.OR = [
-        { name: { contains: query.keyword, mode: 'insensitive' } },
-        { note: { contains: query.keyword, mode: 'insensitive' } },
+        { name: { contains: keyword, mode: 'insensitive' } },
+        { note: { contains: keyword, mode: 'insensitive' } },
       ];
     }
     if (query.enabled !== undefined) where.enabled = query.enabled;

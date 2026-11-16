@@ -111,6 +111,7 @@ export {
   SAMPLE_NAME_MAX,
   SAMPLE_NOTE_MAX,
   crudListQueryString,
+  escapeLikeLiteral,
   parseCrudListQuery,
   priceButtonText,
   priceUnit,
