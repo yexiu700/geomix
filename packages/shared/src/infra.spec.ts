@@ -58,6 +58,7 @@ describe('parseEnv', () => {
     const env = parseEnv({});
     expect(env.WEB_PORT).toBe(3000);
     expect(env.API_PORT).toBe(3001);
+    expect(env.NEXT_PUBLIC_API_BASE).toBe('http://localhost:3001/api/v1');
     expect(env.DATABASE_URL.startsWith('postgresql://')).toBe(true);
     expect(env.REDIS_URL).toBe('redis://localhost:6379');
     expect(env.BILLING_MODE).toBe('SHADOW');
