@@ -1,0 +1,19 @@
+{
+  "name": "@geomix/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint/base.js",
+    "./typescript/base.json": "./typescript/base.json",
+    "./typescript/nestjs.json": "./typescript/nestjs.json",
+    "./typescript/nextjs.json": "./typescript/nextjs.json"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "eslint": "^9.39.1",
+    "typescript-eslint": "^8.46.2"
+  }
+}
