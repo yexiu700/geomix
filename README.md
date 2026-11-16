@@ -19,7 +19,7 @@ GEO 优化系统一期。目标是复刻同类产品的功能和交互，品牌�
 
 前端 Next.js 15（App Router）+ Ant Design 5，后端 NestJS 10（同一个代码库的 `api` 和 `worker` 入口），PostgreSQL 16（pgvector）+ Redis 7 + MinIO。包管理用 pnpm workspace，任务编排用 Turborepo。语言是 TypeScript 5（strict）。
 
-本仓库已有工程骨架、一期 Prisma 模型、登录认证和多标签后台壳。计费服务、外部 Provider、队列消费者和通用列表仍在后续 issue。
+本仓库已有工程骨架、一期 Prisma 模型、登录认证、计费与配额、外部适配层和多标签后台壳。队列消费者和通用列表仍在后续 issue。
 
 ## 仓库结构
 
@@ -111,7 +111,7 @@ curl -s http://localhost:3001/api/v1/health
 { "code": 0, "msg": "ok", "data": { "service": "api", "name": "GeoMix", "billingMode": "SHADOW" } }
 ```
 
-`BILLING_MODE` 缺省为 `SHADOW`。认证不会冻结或扣减点数，计费服务仍在后续 issue。
+`BILLING_MODE` 缺省为 `SHADOW`。租户 `billingMode` 为空时继承这个全局值。认证本身不扣点。计费服务见下方「计费与配额」。
 
 登录前先取图形验证码。图片是服务端画的 PNG，响应里没有答案文本。验证码和登录失败计数存在当前 API 进程的内存里，重启后失效，多个 API 进程不共享。计数按 TCP 对端地址，不看客户端自己写的转发头。同一地址的验证码默认 10 分钟 10 次；同一地址加规范化用户名的密码失败默认 15 分钟 5 次，超出返回 429。答案只在测试进程的内存里可读，不会放进接口响应。
 
@@ -124,15 +124,22 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 登录成功后用 `Authorization: Bearer <accessToken>` 访问：
 
-| 方法 | 路径                        | 说明                                     |
-| ---- | --------------------------- | ---------------------------------------- |
-| POST | `/api/v1/auth/captcha`      | 获取验证码                               |
-| POST | `/api/v1/auth/login`        | 校验验证码和口令，签发访问令牌和刷新令牌 |
-| POST | `/api/v1/auth/refresh`      | 用刷新令牌换新令牌                       |
-| POST | `/api/v1/auth/logout`       | 撤销该用户当前全部登录                   |
-| POST | `/api/v1/auth/password`     | 修改密码。到期账号返回 403               |
-| GET  | `/api/v1/account`           | 当前账号。到期后仍返回 200               |
-| GET  | `/api/v1/account/users/:id` | 只查本租户用户，其他租户返回 404         |
+| 方法 | 路径                           | 说明                                                                |
+| ---- | ------------------------------ | ------------------------------------------------------------------- |
+| POST | `/api/v1/auth/captcha`         | 获取验证码                                                          |
+| POST | `/api/v1/auth/login`           | 校验验证码和口令，签发访问令牌和刷新令牌                            |
+| POST | `/api/v1/auth/refresh`         | 用刷新令牌换新令牌                                                  |
+| POST | `/api/v1/auth/logout`          | 撤销该用户当前全部登录                                              |
+| POST | `/api/v1/auth/password`        | 修改密码。到期账号返回 403                                          |
+| GET  | `/api/v1/account`              | 当前账号。到期后仍返回 200                                          |
+| GET  | `/api/v1/account/users/:id`    | 只查本租户用户，其他租户返回 404                                    |
+| GET  | `/api/v1/pricing`              | 价格表。写作报价按库里的单价计算                                    |
+| GET  | `/api/v1/billing/quote`        | `count` 与 `knowledgeBase=1`。总额是篇数 ×（写作单价 + 知识库加价） |
+| GET  | `/api/v1/billing/wallet`       | 当前租户点数、冻结和生效中的计费模式                                |
+| GET  | `/api/v1/billing/ledger`       | 当前租户点数明细                                                    |
+| GET  | `/api/v1/billing/quotas`       | 当前租户配额                                                        |
+| POST | `/api/v1/admin/billing/adjust` | 管理员加点或扣点。商户访问返回 404                                  |
+| POST | `/api/v1/admin/billing/mode`   | 管理员设置租户计费模式，`null` 表示继续继承全局                     |
 
 口令校验复用 `packages/db` 的 scrypt 格式，登录时用异步 scrypt。停用账号（`isActive=false`）不能登录。到期账号可以登录和读取，写接口返回 `403`，错误码 `40301`。未登录是 `401` / `40101`。用户名或密码错误、验证码错误是 `400` / `40001`，不区分用户是否存在。请求过多是 `429` / `42901`，文案同样不区分用户是否存在。
 
@@ -142,7 +149,7 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 新增配置写在根目录 `.env.example`。不要提交 `.env` 或真实密钥。本地 Compose 里的数据库口令、MinIO 口令都是开发占位，只供本机使用。
 
-当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`AUTH_CAPTCHA_*`、`AUTH_LOGIN_FAIL_*`、`LLM_PROVIDERS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`SEARCH_PROVIDER`、`BILLING_MODE`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
+当前键：`DATABASE_URL`、`REDIS_URL`、`S3_*`、`JWT_*`、`AUTH_CAPTCHA_*`、`AUTH_LOGIN_FAIL_*`、`LLM_PROVIDERS`、`DEEPSEEK_API_KEY`、`TONGYI_API_KEY`、`DOUBAO_API_KEY`、`LLM_TIMEOUT_MS`、`EMBEDDING_*`、`IMAGE_PROVIDER`、`IMAGE_BASE_URL`、`IMAGE_MODEL`、`IMAGE_API_KEY`、`IMAGE_TIMEOUT_MS`、`SEARCH_PROVIDER`、`SEARCH_REMOTE_*`、`SEARCH_TIMEOUT_MS`、`FETCH_*`、`ROBOTS_CACHE_MS`、`STORAGE_DRIVER`、`STORAGE_MAX_OBJECT_BYTES`、`BILLING_MODE`、`BILLING_RECONCILE_AFTER_MS`、`BILLING_RECONCILE_INTERVAL_MS`、`FEATURE_AI_IMAGE`、`ARTICLE_RETENTION_DAYS`、`SEED_ADMIN_*`、`SEED_DEMO_*`，以及 `WEB_PORT`、`API_PORT`、`WEB_ORIGIN`、`NEXT_PUBLIC_API_BASE`。
 
 `SEED_*` 只用于本机种子。口令是开发占位，不要拿到共享环境里用。
 
@@ -162,10 +169,42 @@ pnpm db:seed
 
 口令哈希格式是 `scrypt$N$r$p$salt$hash`。登录直接复用 `verifyPassword`。
 
+## 计费与配额
+
+可用点数 = `points - pointsReserved`。STRICT 预扣用条件更新增加冻结；结算同时减少账面和冻结；失败或结单只减少冻结，账面在结算前不变。SHADOW 不改钱包，明细 `delta=0`、`listPrice` 为原价，标题加「（免费期）」。冻结单记下当时的 `shadow`，之后切换模式不追溯。
+
+写作任务引用知识库时，预扣总额是篇数 ×（`ai_write` + `kb_addon`），结算写成两条明细。不挂知识库就只有写作一条。无产出或失败会释放剩余冻结，对账任务也会释放超过两小时且没有活跃任务的冻结。队列消费者还没做，这两小时内的冻结不会被对账清掉。
+
+管理员加点写「管理员充值」，扣点写「管理员扣点」，都会改钱包，不受 SHADOW 影响。同一幂等键重放不重复入账。
+
+配额：主关键词、写作问题、存储按存量，删除时回退；AI 写作只增不减。只有写作任务的创建计入 AI 写作数量。复刻、手动文章、改状态都不计入，也不改文章发布配额。发布和自媒体授权的回退口径还没定，服务拒绝回退。
+
+原始 SQL 都带 `tenantId`。商户接口只使用登录租户。管理接口对商户返回 404。
+
+## 外部适配层
+
+适配层在 `apps/server/src/infra`，由 api 和 worker 一起注入。开发默认全部走假实现，不读取真实密钥，也不会访问外网。`LLM_PROVIDERS={}` 时，正文、改写、蒸馏、标题和生图提示词都用假模型。假输出以 `【FAKE】` 开头，只说明这是 GeoMix 占位，不复述用户提示里的品牌结论。
+
+切到真实实现时，在 `LLM_PROVIDERS` 里写 `deepseek`、`tongyi`、`doubao`。没写 `route` 的话，各场景主模型是 DeepSeek，备用按通义、豆包排列。厂商地址由配置给出，代码里不写死。调用前会做和网页抓取同一套地址校验，拒绝内网、链路本地、元数据地址和重定向。密钥只从 `DEEPSEEK_API_KEY`、`TONGYI_API_KEY`、`DOUBAO_API_KEY` 读取。
+
+`LlmService.complete` 记录 token 和占位成本（每个 token 1 微元，`costBasis=placeholder`）。这不是厂商报价，也不写点数钱包，计费模式仍是 `SHADOW`，除非管理员另行切换。同一个租户和幂等键的成功调用只记一次；换输入会冲突。账本在进程内，重启后消失。没有为它新增表。
+
+向量固定 1024 维，和已经落地的 `KnowledgeChunk.embedding vector(1024)` 一致。`EMBEDDING_DIMENSIONS` 不是 1024 时直接拒绝。假向量由文本哈希得到，相同文本结果相同。
+
+图片接受 jpg、png、webp。长边缩到 1600，输出 jpeg 不超过 1MB，去掉 EXIF。宽度小于 500 只警告。输入超过 100MB 或像素超过 1600 万会被拒绝。假生图是纯色占位图，会先过禁做行业检查再压缩入库。对象默认放在进程内存，键是 `tenants/{tenantId}/{name}`。`STORAGE_DRIVER=s3` 才连 `S3_*` 指向的 MinIO。存储幂等也只在当前进程生效。
+
+搜索默认 `link_list`：一行一个链接，去掉 `utm` / `gclid` / `fbclid`，不请求这些地址，标题和摘要留空。内网和非常规端口的链接会被丢掉。`SEARCH_PROVIDER=remote` 需要端点和密钥，契约是 `{ results: [{ url, title, snippet }] }`。摘要字段不能当正文。博查、Bing 和其他搜索厂商的原始报文没有接，避免猜接口。
+
+公开网页抓取只允许 http/https 的 80 和 443。DNS 解析后的每个 IPv4 和 IPv6 都要检查，连接钉在通过检查的地址上。每次重定向重新检查，最多 3 次。超时 10 秒，正文不超过 5MB，只收 `text/html`。不发送 Cookie。robots.txt 缓存 1 小时；404 视为允许，其他失败拒绝抓取。401、403 和很短的验证页返回「无法公开访问」。测试使用注入的解析器和传输，不访问参考站点。
+
+合规扫描用的是仓库里自写的禁做行业、敏感词和极限词。命中禁做行业返回 `403` / `40302`，并写 `AuditLog.action=forbidden_blocked`，payload 只留标签和文本哈希。极限词里可替换的会替换，`绝对` 和 `永久` 只打标。`最近`、`最后` 不会被当成极限词。原站词表不在仓库里，所以这份名单需要产品再确认。
+
+还没做、也不要在本层猜的事：BullMQ 队列（#6）、抓取后的正文提取、把 token 成本落成独立表、搜索厂商的官方请求格式。后台壳已经落地，业务列表仍是占位。
+
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页，以及多标签后台壳。
-- 未实现：计费与配额服务（#4）、外部 Provider 适配层（#5）、BullMQ 消费者、通用列表和弹层（#8）。Worker 只用一个定时器保持进程，不连接 Redis。健康检查不连数据库；登录和账号接口才会连。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider），以及多标签后台壳（#7）。
+- 未实现：BullMQ 消费者（#6）、通用列表和弹层（#8）。Worker 按 `BILLING_RECONCILE_INTERVAL_MS` 对账，不连接 Redis。健康检查不连数据库，也不调用外部 Provider。
 
 ## 后台壳
 
@@ -176,7 +215,7 @@ pnpm db:seed
 issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。业务列表页仍是占位，用来确认壳的切换和跳转。
 
 - 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。
-- CI 不启动数据库，所以迁移、种子和认证集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证接口测试。
+- CI 不启动数据库，所以迁移、种子、认证和计费集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证和计费测试。计费测试会另建 `geomix_bill_*` 库，不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
 
 ## 开发节奏
 
