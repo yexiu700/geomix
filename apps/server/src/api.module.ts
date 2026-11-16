@@ -4,12 +4,20 @@ import { AuthContextMiddleware } from './auth/auth-context.middleware';
 import { AuthModule } from './auth/auth.module';
 import { AdaptersModule } from './infra/adapters.module';
 import { BillingModule } from './billing/billing.module';
+import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AccountModule, BillingModule, AdaptersModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    AccountModule,
+    BillingModule,
+    AdaptersModule,
+    QueueModule.forApi(),
+  ],
   controllers: [HealthController],
   providers: [HealthService],
 })

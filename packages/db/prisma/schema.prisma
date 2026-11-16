@@ -143,6 +143,9 @@ model Tenant {
   rewriteBatches    RewriteBatch[]
   rewriteRecords    RewriteRecord[]
   aiImages          AiImageJob[]
+  workRuns          WorkRun[]
+  workUnits         WorkUnit[]
+  activeWorks       ActiveWork[]
 }
 
 model User {
@@ -582,4 +585,80 @@ model AiImageJob {
   assets         MediaAsset[]
 
   @@index([tenantId, createdAt])
+}
+
+// ===================== 队列框架 =====================
+// 假任务和以后的写作、复刻、生图共用这套运行记录。
+// 正文、原文和切片不放在这里。BullMQ 只存租户和运行编号。
+model WorkRun {
+  id                String      @id @default(cuid())
+  tenantId          String
+  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  queue             String
+  kind              String
+  refType           String
+  status            TaskStatus  @default(QUEUED)
+  taskName          String
+  totalUnits        Int
+  doneCount         Int         @default(0)
+  failCount         Int         @default(0)
+  skipCount         Int         @default(0)
+  unitAiWrite       Int
+  unitKbAddon       Int         @default(0)
+  withKnowledgeBase Boolean     @default(false)
+  quotaKey          String?
+  lastError         String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  finishedAt        DateTime?
+  units             WorkUnit[]
+  active            ActiveWork?
+
+  @@index([tenantId, createdAt])
+  @@index([status, updatedAt])
+}
+
+model WorkUnit {
+  id                String     @id @default(cuid())
+  runId             String
+  run               WorkRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  tenantId          String
+  tenant            Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  seq               Int
+  steps             Int
+  step              Int        @default(0)
+  status            ItemStatus @default(PENDING)
+  attempts          Int        @default(0)
+  failuresRemaining Int        @default(0)
+  outputReady       Boolean    @default(false)
+  quotaApplied      Boolean    @default(false)
+  settled           Boolean    @default(false)
+  released          Boolean    @default(false)
+  executionToken    String?
+  error             String?
+  leaseOwner        String?
+  // Absolute instants. Raw SQL and Prisma both use timestamptz so a session
+  // time zone cannot make a live lease look expired.
+  leaseUntil        DateTime?  @db.Timestamptz(3)
+  startedAt         DateTime?  @db.Timestamptz(3)
+  finishedAt        DateTime?  @db.Timestamptz(3)
+
+  @@unique([runId, seq])
+  @@index([tenantId, status])
+  @@index([status, leaseUntil])
+}
+
+model ActiveWork {
+  refType  String
+  refId    String
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId    String   @unique
+  run      WorkRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  reason   String
+  beatAt   DateTime @db.Timestamptz(3)
+  workerId String?
+
+  @@id([refType, refId])
+  @@index([tenantId, beatAt])
 }

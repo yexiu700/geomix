@@ -12,8 +12,8 @@ export type BillingOptions = {
   orphanAfterMs: number;
   now: () => Date;
   /**
-   * 返回 true 表示队列里还有这个冻结单的活跃任务，对账不会释放它。
-   * 队列消费者尚未实现时，默认没有活跃任务。调用方仍要等 orphanAfterMs。
+   * 返回 true 表示这个冻结单还有排队、暂停或心跳未过期的任务，对账不会释放它。
+   * 没人登记时按没有活跃任务处理。调用方仍要等 orphanAfterMs。
    */
   hasActiveJob?: ActiveJobProbe;
 };

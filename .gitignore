@@ -4,6 +4,7 @@ dist/
 .turbo/
 coverage/
 *.log
+dump.rdb
 .env
 .env.local
 .env.*.local

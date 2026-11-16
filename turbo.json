@@ -17,7 +17,8 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "passThroughEnv": ["GEOMIX_DB_INTEGRATION", "DATABASE_URL"]
+      "env": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"],
+      "passThroughEnv": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"]
     }
   }
 }

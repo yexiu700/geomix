@@ -33,6 +33,9 @@ const PHASE1_MODELS = [
   'RewriteBatch',
   'RewriteRecord',
   'AiImageJob',
+  'WorkRun',
+  'WorkUnit',
+  'ActiveWork',
 ];
 
 describe('phase-1 migration', () => {
@@ -41,8 +44,36 @@ describe('phase-1 migration', () => {
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
-    expect(dirs).toHaveLength(1);
-    const sql = readFileSync(resolve(migrationsDir, dirs[0] ?? '', 'migration.sql'), 'utf8');
+    expect([...dirs].sort()).toEqual([
+      '20261116120000_init',
+      '20261116213000_queue_work',
+      '20261116224500_queue_lease_timestamptz',
+    ]);
+    const sql = readFileSync(
+      resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
+      'utf8',
+    );
+    const queueSql = readFileSync(
+      resolve(migrationsDir, '20261116213000_queue_work', 'migration.sql'),
+      'utf8',
+    );
+    expect(queueSql).toContain('CREATE TABLE "WorkRun"');
+    expect(queueSql).toContain('CREATE TABLE "WorkUnit"');
+    expect(queueSql).toContain('CREATE TABLE "ActiveWork"');
+    expect(queueSql.toLowerCase()).not.toContain('drop table');
+    expect(queueSql.toLowerCase()).not.toContain('create extension');
+    const leaseSql = readFileSync(
+      resolve(migrationsDir, '20261116224500_queue_lease_timestamptz', 'migration.sql'),
+      'utf8',
+    );
+    expect(leaseSql).toContain("AT TIME ZONE 'UTC'");
+    expect(leaseSql).toContain('"leaseUntil"');
+    expect(leaseSql).toContain('"startedAt"');
+    expect(leaseSql).toContain('"finishedAt"');
+    expect(leaseSql).toContain('"beatAt"');
+    expect(leaseSql.toLowerCase()).not.toContain('drop table');
+    expect(queueSql).toContain('"leaseUntil" TIMESTAMP(3)');
+    expect(queueSql).not.toContain('WITH TIME ZONE');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);
