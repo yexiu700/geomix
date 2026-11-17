@@ -365,16 +365,26 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
 
     const batchRewriteDialog = page.getByRole('dialog', { name: '新建批量爆文复刻任务' });
     await expect(batchRewriteDialog).toBeVisible();
-    await expect(batchRewriteDialog.getByLabel('最大改写量')).toHaveValue('1');
-    await expect(batchRewriteDialog.getByLabel('文章配图图库分类')).toHaveValue('');
-    await expect(batchRewriteDialog.getByLabel('爆文改写指令')).toHaveValue('');
+    await expect(batchRewriteDialog.getByLabel('最大改写量', { exact: true })).toHaveValue('1');
+    await expect(batchRewriteDialog.getByLabel('文章配图图库分类', { exact: true })).toHaveValue(
+      '',
+    );
+    await expect(batchRewriteDialog.getByLabel('爆文改写指令', { exact: true })).toHaveValue('');
 
-    await batchRewriteDialog.getByLabel('任务名称').fill(batchRewriteName);
     await batchRewriteDialog
-      .getByLabel('公开文章链接清单')
+      .getByRole('textbox', { name: '任务名称', exact: true })
+      .fill(batchRewriteName);
+    await batchRewriteDialog
+      .getByRole('textbox', { name: '公开文章链接清单', exact: true })
       .fill(`http://public.e2e.example/articles/cnc-maintenance${urlQuery}`);
-    await selectOptionByText(batchRewriteDialog.getByLabel('文章配图图库分类'), galleryName);
-    await selectOptionByText(batchRewriteDialog.getByLabel('爆文改写指令'), '系统·参考重写');
+    await selectOptionByText(
+      batchRewriteDialog.getByLabel('文章配图图库分类', { exact: true }),
+      galleryName,
+    );
+    await selectOptionByText(
+      batchRewriteDialog.getByLabel('爆文改写指令', { exact: true }),
+      '系统·参考重写',
+    );
     await batchRewriteDialog.getByRole('button', { name: /^开始批量复刻/ }).click();
     await expect(batchRewriteDialog).toBeHidden({ timeout: 15_000 });
 
