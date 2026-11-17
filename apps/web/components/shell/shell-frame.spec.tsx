@@ -162,4 +162,28 @@ describe('admin shell', { timeout: 60_000 }, () => {
     expect(screen.queryByRole('tab', { name: '关键词' })).toBeNull();
     expect(screen.queryByRole('tab', { name: '写作指令' })).toBeNull();
   });
+
+  it('auto-collapses Sider on 375px mobile viewport and toggles overlay drawer cleanly (#67)', () => {
+    const prevWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 375 });
+    try {
+      render(<Harness initial={initialSnapshot()} />);
+      expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
+      expect(document.querySelector('.gm-sider-mask')).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
+      expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
+      expect(document.querySelector('.gm-sider-mask')).not.toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
+      expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
+      expect(document.querySelector('.gm-sider-mask')).toBeNull();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: prevWidth,
+      });
+    }
+  });
 });

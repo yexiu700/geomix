@@ -321,16 +321,25 @@ export function DashboardScreen({
           data-testid="dashboard-announcement-bar"
           style={{
             display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: 12,
+            gap: '8px 12px',
             padding: '10px 14px',
             borderRadius: 8,
             background: 'linear-gradient(90deg, #f0f5ff 0%, #f9fbff 100%)',
             border: '1px solid #d6e4ff',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              minWidth: 0,
+              flex: '1 1 200px',
+            }}
+          >
             <Tag color="blue" style={{ margin: 0, flexShrink: 0 }}>
               平台播报
             </Tag>
@@ -377,7 +386,7 @@ export function DashboardScreen({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
           gap: 14,
         }}
       >
