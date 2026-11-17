@@ -17,6 +17,7 @@ export type AccountProfile = {
   role: string;
   features?: {
     aiImage?: boolean;
+    visibility?: boolean;
   };
   tenant: {
     id: string;

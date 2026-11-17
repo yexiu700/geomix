@@ -1306,10 +1306,19 @@ export type VisibilityTrendPoint = {
   visibilityPct: number;
 };
 
+export type VisibilityEngineBreakdownItem = {
+  engine: VisibilityEngineKey;
+  completedChecks: number;
+  mentionedChecks: number;
+  visibilityPct: number;
+  avgPosition: number | null;
+};
+
 export type VisibilityOverviewResponse = {
   profileId: string | null;
   metrics: RecomputedRunMetrics;
   trend: VisibilityTrendPoint[];
+  byEngine?: VisibilityEngineBreakdownItem[];
 };
 
 export const visibilityCitationQuerySchema = z.object({

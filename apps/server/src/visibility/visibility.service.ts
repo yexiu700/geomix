@@ -9,6 +9,7 @@ import {
   VISIBILITY_BRAND_NAME_MAX,
   VISIBILITY_MAX_COMPETITORS,
   classifyCitationSource,
+  computeAvgPosition,
   computeVisibilityPct,
   escapeLikeLiteral,
   isCitationSourceKind,
@@ -26,6 +27,7 @@ import {
   type VisibilityCitationSourceBreakdown,
   type VisibilityCitationSummaryItem,
   type VisibilityCompetitor,
+  type VisibilityEngineBreakdownItem,
   type VisibilityEngineKey,
   type VisibilityObservationRecord,
   type VisibilityOverviewQuery,
@@ -995,11 +997,41 @@ export class VisibilityService {
     );
 
     const trend = this.buildDailyTrend(observations, window.keys, query.engine);
+    const engineBucket = new Map<
+      VisibilityEngineKey,
+      { completed: number; mentioned: number; positions: Array<number | null> }
+    >();
+    for (const obs of observations) {
+      if (!isVisibilityEngine(obs.engine)) continue;
+      let cell = engineBucket.get(obs.engine);
+      if (!cell) {
+        cell = { completed: 0, mentioned: 0, positions: [] };
+        engineBucket.set(obs.engine, cell);
+      }
+      cell.completed += 1;
+      if (obs.brandMentioned) {
+        cell.mentioned += 1;
+        cell.positions.push(obs.brandPosition);
+      }
+    }
+    const byEngine: VisibilityEngineBreakdownItem[] = [...engineBucket.entries()]
+      .map(([engine, cell]) => ({
+        engine,
+        completedChecks: cell.completed,
+        mentionedChecks: cell.mentioned,
+        visibilityPct: computeVisibilityPct(cell.mentioned, cell.completed),
+        avgPosition: computeAvgPosition(cell.positions),
+      }))
+      .sort((a, b) => {
+        if (b.visibilityPct !== a.visibilityPct) return b.visibilityPct - a.visibilityPct;
+        return b.completedChecks - a.completedChecks;
+      });
 
     return {
       profileId: resolvedProfileId,
       metrics,
       trend,
+      byEngine,
     };
   }
 
