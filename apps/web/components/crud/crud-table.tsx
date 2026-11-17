@@ -35,6 +35,7 @@ export function CrudTable<T extends { id: string }>({
   searchOpen,
   search,
   sortOptions,
+  statusFilter,
   emptyText = CRUD_EMPTY_TEXT,
   writeDisabled = false,
   onSearchOpenChange,
@@ -59,6 +60,7 @@ export function CrudTable<T extends { id: string }>({
   searchOpen: boolean;
   search: CrudSearch;
   sortOptions?: { value: string; label: string }[];
+  statusFilter?: boolean;
   emptyText?: string;
   writeDisabled?: boolean;
   onSearchOpenChange: (open: boolean) => void;
@@ -89,6 +91,8 @@ export function CrudTable<T extends { id: string }>({
     });
   }, [appliedKeyword, appliedEnabled, appliedSort, appliedOrder]);
   const selected = selectedIds.length > 0;
+  const showStatusFilter = statusFilter ?? Boolean(onEnable || onDisable);
+  const showSortControls = Boolean(sortOptions && sortOptions.length > 0);
   const visible = columns.filter(
     (column) => column.hideable === false || !hidden.includes(column.key),
   );
@@ -116,20 +120,16 @@ export function CrudTable<T extends { id: string }>({
           >
             删除
           </Button>
-          <Button
-            aria-label="启用"
-            disabled={writeDisabled || !selected || !onEnable}
-            onClick={onEnable}
-          >
-            启用
-          </Button>
-          <Button
-            aria-label="停用"
-            disabled={writeDisabled || !selected || !onDisable}
-            onClick={onDisable}
-          >
-            停用
-          </Button>
+          {onEnable ? (
+            <Button aria-label="启用" disabled={writeDisabled || !selected} onClick={onEnable}>
+              启用
+            </Button>
+          ) : null}
+          {onDisable ? (
+            <Button aria-label="停用" disabled={writeDisabled || !selected} onClick={onDisable}>
+              停用
+            </Button>
+          ) : null}
           {onBack ? (
             <Button aria-label="返回上一级" onClick={onBack}>
               返回上一级
@@ -193,43 +193,50 @@ export function CrudTable<T extends { id: string }>({
               setDraft((current) => ({ ...current, keyword: event.target.value }))
             }
           />
-          <Select
-            aria-label="状态筛选"
-            value={draft.enabled === undefined ? 'all' : draft.enabled ? 'on' : 'off'}
-            style={{ width: 120 }}
-            options={[
-              { value: 'all', label: '全部' },
-              { value: 'on', label: '启用' },
-              { value: 'off', label: '停用' },
-            ]}
-            onChange={(value) =>
-              setDraft((current) => ({
-                ...current,
-                enabled: value === 'on' ? true : value === 'off' ? false : undefined,
-              }))
-            }
-          />
-          {sortOptions ? (
+          {showStatusFilter ? (
             <Select
-              aria-label="排序字段"
-              value={draft.sort}
-              style={{ width: 140 }}
-              options={sortOptions}
-              onChange={(value) => setDraft((current) => ({ ...current, sort: value }))}
+              aria-label="状态筛选"
+              value={draft.enabled === undefined ? 'all' : draft.enabled ? 'on' : 'off'}
+              style={{ width: 120 }}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'on', label: '启用' },
+                { value: 'off', label: '停用' },
+              ]}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  enabled: value === 'on' ? true : value === 'off' ? false : undefined,
+                }))
+              }
             />
           ) : null}
-          <Select
-            aria-label="排序方向"
-            value={draft.order}
-            style={{ width: 100 }}
-            options={[
-              { value: 'desc', label: '降序' },
-              { value: 'asc', label: '升序' },
-            ]}
-            onChange={(value) =>
-              setDraft((current) => ({ ...current, order: value === 'asc' ? 'asc' : 'desc' }))
-            }
-          />
+          {showSortControls && sortOptions ? (
+            <>
+              <Select
+                aria-label="排序字段"
+                value={draft.sort}
+                style={{ width: 140 }}
+                options={sortOptions}
+                onChange={(value) => setDraft((current) => ({ ...current, sort: value }))}
+              />
+              <Select
+                aria-label="排序方向"
+                value={draft.order}
+                style={{ width: 100 }}
+                options={[
+                  { value: 'desc', label: '降序' },
+                  { value: 'asc', label: '升序' },
+                ]}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    order: value === 'asc' ? 'asc' : 'desc',
+                  }))
+                }
+              />
+            </>
+          ) : null}
           <Button
             aria-label="查询"
             type="primary"

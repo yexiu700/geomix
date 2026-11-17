@@ -297,7 +297,6 @@ export function GalleryCategoryScreen({
           sort: 'createdAt',
           order: 'desc',
         }}
-        sortOptions={[{ value: 'createdAt', label: '创建时间' }]}
         onSearchOpenChange={setSearchOpen}
         onSearch={(search) => {
           setSelectedIds([]);
@@ -649,10 +648,6 @@ export function GalleryAssetScreen({
           sort: 'createdAt',
           order: 'desc',
         }}
-        sortOptions={[
-          { value: 'createdAt', label: '创建时间' },
-          { value: 'usedCount', label: '使用次数' },
-        ]}
         onSearchOpenChange={setSearchOpen}
         onSearch={(search) => {
           setSelectedIds([]);
