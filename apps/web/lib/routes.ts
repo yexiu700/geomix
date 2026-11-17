@@ -135,6 +135,13 @@ export const MENU: MenuItem[] = [
   },
 ];
 
+export function buildMenu(options?: { aiImageEnabled?: boolean }): MenuItem[] {
+  if (options?.aiImageEnabled === false) {
+    return MENU.filter((item) => !(item.type === 'submenu' && item.key === 'image'));
+  }
+  return MENU;
+}
+
 export function matchRoute(input: string): RouteMatch | null {
   const url = parseLocal(input);
   if (!url) return null;

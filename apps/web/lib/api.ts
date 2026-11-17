@@ -15,6 +15,9 @@ export type AccountProfile = {
   username: string;
   nickname: string | null;
   role: string;
+  features?: {
+    aiImage?: boolean;
+  };
   tenant: {
     id: string;
     name: string;

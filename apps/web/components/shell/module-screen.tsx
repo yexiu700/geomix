@@ -6,6 +6,7 @@ import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { AiImageScreen } from '../image/ai-image-screen';
 import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
 import { KeywordScreen } from '../material/keyword-screen';
 import { KnowledgeScreen } from '../material/knowledge-screen';
@@ -24,11 +25,13 @@ export function ModuleScreen({
   tab,
   draft,
   readOnly = false,
+  aiImageEnabled = true,
   onDispatch,
 }: {
   tab: ShellTab;
   draft: string;
   readOnly?: boolean;
+  aiImageEnabled?: boolean;
   onDispatch: (action: ShellAction) => void;
 }) {
   const path = matchRoute(tab.href)?.path ?? '';
@@ -167,6 +170,20 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/image') {
+    return (
+      <div>
+        <AiImageScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          featureEnabled={aiImageEnabled}
           onDispatch={onDispatch}
         />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />

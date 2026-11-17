@@ -1,6 +1,7 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
+import { IMAGE_JOB_ENQUEUER, IMAGE_JOB_HANDLER, ImageJobRunner } from '../image/image-job.runner';
 import { AdaptersModule } from '../infra/adapters.module';
 import { KB_INDEX_HANDLER, KnowledgeIndexRunner } from '../material/knowledge-index.runner';
 import {
@@ -33,6 +34,7 @@ export class QueueModule {
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
         { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
+        { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
@@ -41,6 +43,7 @@ export class QueueModule {
         JOB_ENQUEUER,
         AI_TASK_ENQUEUER,
         REWRITE_BATCH_ENQUEUER,
+        IMAGE_JOB_ENQUEUER,
         WorkDriver,
         StepGate,
       ],
@@ -57,6 +60,7 @@ export class QueueModule {
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
         { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
+        { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
@@ -66,6 +70,8 @@ export class QueueModule {
         { provide: AI_TASK_HANDLER, useExisting: AiTaskRunner },
         RewriteBatchRunner,
         { provide: REWRITE_BATCH_HANDLER, useExisting: RewriteBatchRunner },
+        ImageJobRunner,
+        { provide: IMAGE_JOB_HANDLER, useExisting: ImageJobRunner },
         QueueRuntime,
       ],
       exports: [
@@ -75,9 +81,11 @@ export class QueueModule {
         QueueProducer,
         AI_TASK_ENQUEUER,
         REWRITE_BATCH_ENQUEUER,
+        IMAGE_JOB_ENQUEUER,
         KnowledgeIndexRunner,
         AiTaskRunner,
         RewriteBatchRunner,
+        ImageJobRunner,
         QueueRuntime,
       ],
     };

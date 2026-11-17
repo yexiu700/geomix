@@ -654,7 +654,7 @@ export class GalleryService {
   ): Promise<{ body: Buffer; contentType: string }> {
     const asset = await this.prisma.base.mediaAsset.findFirst({
       where: { id: assetId, tenantId },
-      select: { id: true, objectKey: true },
+      select: { id: true, objectKey: true, width: true, height: true },
     });
     if (!asset) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '图片素材不存在');
@@ -672,7 +672,19 @@ export class GalleryService {
       );
       if (mainFallback) return mainFallback;
     }
-    const fallbackPng = await placeholderPng(asset.id);
+    const w =
+      variant === 'thumb'
+        ? GALLERY_THUMB_MAX_EDGE
+        : Math.max(64, Math.min(IMAGE_MAX_EDGE, asset.width || 640));
+    const h =
+      variant === 'thumb'
+        ? GALLERY_THUMB_MAX_EDGE
+        : Math.max(64, Math.min(IMAGE_MAX_EDGE, asset.height || 360));
+    const basePng = await placeholderPng(asset.id);
+    const fallbackPng = await sharp(basePng)
+      .resize({ width: w, height: h, fit: 'fill' })
+      .png()
+      .toBuffer();
     return { body: fallbackPng, contentType: 'image/png' };
   }
 }

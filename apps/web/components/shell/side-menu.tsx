@@ -1,10 +1,10 @@
 'use client';
 
 import { Menu, type MenuProps } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  MENU,
   allSubmenuKeys,
+  buildMenu,
   menuSelection,
   type MenuBadge,
   type MenuItem,
@@ -14,23 +14,26 @@ import type { LayoutPrefs, ShellAction } from '../../lib/tab-stack';
 export function SideMenu({
   activeHref,
   prefs,
+  aiImageEnabled = true,
   onDispatch,
 }: {
   activeHref: string;
   prefs: LayoutPrefs;
+  aiImageEnabled?: boolean;
   onDispatch: (action: ShellAction) => void;
 }) {
+  const menuItems = useMemo(() => buildMenu({ aiImageEnabled }), [aiImageEnabled]);
   const selection = menuSelection(activeHref);
   const [openKeys, setOpenKeys] = useState<string[]>(selection.parents);
 
   useEffect(() => {
     if (!prefs.multiLevel) return;
     if (prefs.submenusAlwaysVisible) {
-      setOpenKeys(allSubmenuKeys());
+      setOpenKeys(allSubmenuKeys(menuItems));
       return;
     }
     if (prefs.autoExpand) setOpenKeys(menuSelection(activeHref).parents);
-  }, [activeHref, prefs.autoExpand, prefs.multiLevel, prefs.submenusAlwaysVisible]);
+  }, [activeHref, menuItems, prefs.autoExpand, prefs.multiLevel, prefs.submenusAlwaysVisible]);
 
   if (prefs.menuCollapsed) return null;
 
@@ -54,13 +57,13 @@ export function SideMenu({
 
   if (!prefs.multiLevel) {
     return (
-      <Menu {...menuProps} items={toAntdItems(flatten(MENU))} style={{ borderInlineEnd: 0 }} />
+      <Menu {...menuProps} items={toAntdItems(flatten(menuItems))} style={{ borderInlineEnd: 0 }} />
     );
   }
 
   return (
     <div>
-      {MENU.map((item) => {
+      {menuItems.map((item) => {
         if (item.type === 'section') {
           return (
             <div key={item.key}>

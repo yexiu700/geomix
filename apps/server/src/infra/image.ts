@@ -1,16 +1,39 @@
 import { createHash } from 'node:crypto';
-import { FAKE_MARK, resolveImageSettings, type ImageSettings } from '@geomix/shared';
+import {
+  AI_IMAGE_RATIOS,
+  FAKE_MARK,
+  resolveAiImageRatioDimensions,
+  resolveImageSettings,
+  type AiImageRatio,
+  type ImageSettings,
+} from '@geomix/shared';
+import sharp from 'sharp';
 import { z } from 'zod';
 import { ApiError } from '../common/api-error';
-import { compressImage, placeholderPng } from './compress';
+import { compressImage } from './compress';
 import { ComplianceService } from './compliance';
 import { requestOnce, type DnsResolver, type HttpTransport } from './guarded-request';
 import { ProviderError, PROVIDER_KIND } from './provider-error';
 import { fetchBinary, type FetchDeps } from './public-fetch';
 import { StorageService, type StoredObject } from './storage';
 
-const RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16'] as const;
+const RATIOS = AI_IMAGE_RATIOS;
 const COUNTS = [1, 2, 4] as const;
+
+const UPSTREAM_SAFETY_SUFFIX =
+  '；画面要求：纯商业视觉素材，禁止生成真人肖像、公众人物、第三方注册商标或Logo、禁止包含任何宣传文字海报。';
+
+export type RawGeneratedImage = {
+  body: Buffer;
+  fake: boolean;
+  model: string;
+};
+
+export type RawImageGeneration = {
+  provider: 'fake' | 'openai';
+  fake: boolean;
+  items: RawGeneratedImage[];
+};
 
 export type GeneratedImage = {
   fake: boolean;
@@ -28,14 +51,17 @@ export type ImageGeneration = {
   images: GeneratedImage[];
 };
 
-type ImageRequest = {
+type RawImageRequest = {
   tenantId: string;
   prompt: string;
   style?: string;
-  ratio?: (typeof RATIOS)[number];
+  ratio?: AiImageRatio;
   count: (typeof COUNTS)[number];
-  idempotencyKey: string;
   signal?: AbortSignal;
+};
+
+type ImageRequest = RawImageRequest & {
+  idempotencyKey: string;
 };
 
 export class ImageService {
@@ -72,6 +98,28 @@ export class ImageService {
     );
   }
 
+  async generateRaw(input: RawImageRequest): Promise<RawImageGeneration> {
+    const prompt = validateRawInput(input);
+    if (input.signal?.aborted) {
+      throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+    }
+    const report = await this.compliance.assertAllowed({
+      text: prompt,
+      action: 'image_prompt',
+      tenantId: input.tenantId,
+    });
+    const ratio: AiImageRatio = input.ratio ?? '1:1';
+    const items =
+      this.settings.provider === 'fake'
+        ? await fakeImages(prompt, input.style ?? '', ratio, input.count)
+        : await this.upstreamImages(composeUpstreamPrompt(report.text, input.style), input);
+    return {
+      provider: this.settings.provider,
+      fake: items.every((item) => item.fake),
+      items,
+    };
+  }
+
   async generate(input: ImageRequest): Promise<ImageGeneration> {
     const prompt = validatePrompt(input);
     const fingerprint = createHash('sha256')
@@ -96,20 +144,10 @@ export class ImageService {
       }
       return cached.result;
     }
-    if (input.signal?.aborted)
-      throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
-    const report = await this.compliance.assertAllowed({
-      text: prompt,
-      action: 'image_prompt',
-      tenantId: input.tenantId,
-    });
-    const raw =
-      this.settings.provider === 'fake'
-        ? await fakeImages(prompt, input.count)
-        : await this.upstreamImages(report.text, input);
+    const raw = await this.generateRaw(input);
     const images: GeneratedImage[] = [];
-    for (let index = 0; index < raw.length; index += 1) {
-      const item = raw[index];
+    for (let index = 0; index < raw.items.length; index += 1) {
+      const item = raw.items[index];
       if (!item) continue;
       const compressed = await compressImage(item.body);
       const stored = await this.storage.put({
@@ -140,7 +178,7 @@ export class ImageService {
 
   private async upstreamImages(
     prompt: string,
-    input: ImageRequest,
+    input: RawImageRequest,
   ): Promise<Array<{ body: Buffer; fake: boolean; model: string }>> {
     if (!this.settings.baseUrl || !this.transport || !this.resolver) {
       throw new ProviderError(PROVIDER_KIND.AUTH, '生图端点未配置', 'endpoint');
@@ -155,6 +193,7 @@ export class ImageService {
     const root = this.settings.baseUrl.endsWith('/')
       ? this.settings.baseUrl
       : `${this.settings.baseUrl}/`;
+    const dims = resolveAiImageRatioDimensions(input.ratio ?? '1:1');
     const response = await requestOnce({
       url: new URL('images/generations', root),
       method: 'POST',
@@ -167,7 +206,7 @@ export class ImageService {
         model: this.settings.model,
         prompt,
         n: input.count,
-        size: input.ratio ?? '1:1',
+        size: `${dims.width}x${dims.height}`,
       }),
       timeoutMs: this.settings.timeoutMs,
       maxBytes: 8_000_000,
@@ -222,14 +261,58 @@ export class ImageService {
   }
 }
 
+function composeUpstreamPrompt(prompt: string, style?: string): string {
+  const prefix = style ? `画面风格：${style}。` : '';
+  return `${prefix}${prompt}${UPSTREAM_SAFETY_SUFFIX}`;
+}
+
 async function fakeImages(
   prompt: string,
+  style: string,
+  ratio: AiImageRatio,
   count: number,
 ): Promise<Array<{ body: Buffer; fake: true; model: string }>> {
+  const { width, height } = resolveAiImageRatioDimensions(ratio);
   const images = [];
   for (let index = 0; index < count; index += 1) {
+    const hash = createHash('sha256').update(`${prompt}:${style}:${ratio}:${index}`).digest();
+    const r = 48 + ((hash[0] ?? 40) % 160);
+    const g = 56 + ((hash[1] ?? 80) % 150);
+    const b = 72 + ((hash[2] ?? 120) % 140);
+    const accentR = 40 + ((hash[3] ?? 90) % 180);
+    const accentG = 60 + ((hash[4] ?? 110) % 160);
+    const accentB = 80 + ((hash[5] ?? 140) % 150);
+    const blockW = Math.max(80, Math.floor(width * 0.42));
+    const blockH = Math.max(80, Math.floor(height * 0.42));
+    const accentBlock = await sharp({
+      create: {
+        width: blockW,
+        height: blockH,
+        channels: 3,
+        background: { r: accentR, g: accentG, b: accentB },
+      },
+    })
+      .png()
+      .toBuffer();
+    const body = await sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: { r, g, b },
+      },
+    })
+      .composite([
+        {
+          input: accentBlock,
+          left: Math.floor((width - blockW) / 2),
+          top: Math.floor((height - blockH) / 2),
+        },
+      ])
+      .png()
+      .toBuffer();
     images.push({
-      body: await placeholderPng(`${prompt}:${index}`),
+      body,
       fake: true as const,
       model: 'fake-image',
     });
@@ -237,12 +320,9 @@ async function fakeImages(
   return images;
 }
 
-function validatePrompt(input: ImageRequest): string {
+function validateRawInput(input: RawImageRequest): string {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(input.tenantId)) {
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '租户不正确', 'tenant');
-  }
-  if (!/^[A-Za-z0-9:_-]{8,128}$/.test(input.idempotencyKey)) {
-    throw new ProviderError(PROVIDER_KIND.CONTRACT, '幂等键不正确', 'idempotency');
   }
   const prompt = input.prompt?.trim() ?? '';
   if (prompt.length < 5 || prompt.length > 500) {
@@ -257,6 +337,13 @@ function validatePrompt(input: ImageRequest): string {
   return prompt;
 }
 
-export function isComplianceRejection(error: unknown): error is ApiError {
+function validatePrompt(input: ImageRequest): string {
+  if (!/^[A-Za-z0-9:_-]{8,128}$/.test(input.idempotencyKey)) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '幂等键不正确', 'idempotency');
+  }
+  return validateRawInput(input);
+}
+
+export function isComplianceRejection(error: unknown): boolean {
   return error instanceof ApiError;
 }

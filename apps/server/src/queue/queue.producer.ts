@@ -11,6 +11,7 @@ import {
 } from '@geomix/shared';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import type { ImageJobEnqueuer } from '../image/image-job.runner';
 import type { RewriteBatchEnqueuer } from '../rewrite/rewrite-batch.runner';
 import type { AiTaskEnqueuer } from '../writing/ai-task.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
@@ -30,7 +31,7 @@ type JobCounts = {
  */
 @Injectable()
 export class QueueProducer
-  implements JobEnqueuer, AiTaskEnqueuer, RewriteBatchEnqueuer, OnModuleDestroy
+  implements JobEnqueuer, AiTaskEnqueuer, RewriteBatchEnqueuer, ImageJobEnqueuer, OnModuleDestroy
 {
   private connection: IORedis | undefined;
   private readonly queues = new Map<QueueName, Queue>();
@@ -100,6 +101,21 @@ export class QueueProducer
     await queue.add(
       'rewrite-batch',
       { tenantId: job.tenantId, batchId: job.batchId },
+      {
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: { count: 200 },
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueImageJob(job: { tenantId: string; jobId: string }): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('image-gen');
+    await queue.add(
+      'image-gen',
+      { tenantId: job.tenantId, jobId: job.jobId },
       {
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },
