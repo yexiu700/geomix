@@ -7,6 +7,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AI_TASK_HANDLER, AiTaskRunner } from './ai-task.runner';
 import { AiTasksController } from './ai-tasks.controller';
 import { AiTasksService } from './ai-tasks.service';
+import { ArticlesManageController } from './articles-manage.controller';
+import { ArticlesManageService } from './articles-manage.service';
 import { ArticlesController, CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
 import { PromptsController } from './prompts.controller';
@@ -14,14 +16,21 @@ import { PromptsService } from './prompts.service';
 
 @Module({
   imports: [PrismaModule, AuthModule, BillingModule, AdaptersModule, KeywordsModule],
-  controllers: [CategoriesController, ArticlesController, PromptsController, AiTasksController],
+  controllers: [
+    CategoriesController,
+    ArticlesController,
+    ArticlesManageController,
+    PromptsController,
+    AiTasksController,
+  ],
   providers: [
     CategoriesService,
+    ArticlesManageService,
     PromptsService,
     AiTasksService,
     AiTaskRunner,
     { provide: AI_TASK_HANDLER, useExisting: AiTaskRunner },
   ],
-  exports: [CategoriesService, PromptsService, AiTasksService, AiTaskRunner],
+  exports: [CategoriesService, ArticlesManageService, PromptsService, AiTasksService, AiTaskRunner],
 })
 export class WritingModule {}

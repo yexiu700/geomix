@@ -10,11 +10,10 @@ import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-s
 import { KeywordScreen } from '../material/keyword-screen';
 import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
-import { ArticleListScreen } from '../writing/article-list-screen';
+import { ArticleManageScreen } from '../writing/article-manage-screen';
 import { AiTaskScreen } from '../writing/ai-task-screen';
 import { CategoryScreen } from '../writing/category-screen';
 import { PromptScreen } from '../writing/prompt-screen';
-import { categoryIdFromHref } from '../../lib/categories';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -46,12 +45,16 @@ export function ModuleScreen({
   }
   if (path === '/writing/articles') {
     return (
-      <ArticleListScreen
-        title={tab.title}
-        tabId={tab.id}
-        categoryId={categoryIdFromHref(tab.href)}
-        onDispatch={onDispatch}
-      />
+      <div>
+        <ArticleManageScreen
+          title={tab.title}
+          tabId={tab.id}
+          href={tab.href}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
     );
   }
   if (path === '/me/points') return <PointsScreen title={tab.title} />;
