@@ -155,7 +155,7 @@ describe('DashboardScreen (Issue #22)', () => {
     ]);
   });
 
-  it('navigates Phase-1 entry cards, marks Phase-2 cards as 即将上线 without navigation, and respects aiImageEnabled', async () => {
+  it('navigates active entry cards including AI数据 & AI可见度诊断, marks remaining Phase-2 cards as 即将上线, and respects feature flags (#92)', async () => {
     const actions: ShellAction[] = [];
     const gateway: DashboardGateway = {
       async getSummary() {
@@ -168,6 +168,7 @@ describe('DashboardScreen (Issue #22)', () => {
         title="首页"
         tabId="/dashboard"
         aiImageEnabled
+        visibilityEnabled
         gateway={gateway}
         autoRotateAnnouncements={false}
         onDispatch={(act) => actions.push(act)}
@@ -177,30 +178,50 @@ describe('DashboardScreen (Issue #22)', () => {
     await screen.findByText('18 篇文章');
     expect(screen.getByTestId('dashboard-card-image')).toBeTruthy();
 
-    // Click Phase-1 card -> dispatches open
-    fireEvent.click(screen.getByTestId('dashboard-card-tasks'));
-    expect(actions).toEqual([{ type: 'open', href: '/writing/tasks', sourceId: '/dashboard' }]);
+    // Stale coming-soon visibility cards must be gone
+    expect(screen.queryByTestId('dashboard-card-aidata-soon')).toBeNull();
+    expect(screen.queryByTestId('dashboard-card-visibility-soon')).toBeNull();
 
-    // Phase-2 cards show 即将上线 and are non-navigable
-    for (const key of ['publish-soon', 'aidata-soon', 'visibility-soon', 'tools-soon']) {
+    // Active AI数据 & AI可见度诊断 cards are clickable and not aria-disabled
+    const aidataCard = screen.getByTestId('dashboard-card-aidata');
+    const visibilityCard = screen.getByTestId('dashboard-card-visibility');
+    expect(aidataCard.getAttribute('aria-disabled')).toBeNull();
+    expect(visibilityCard.getAttribute('aria-disabled')).toBeNull();
+    expect(aidataCard.textContent).not.toContain('即将上线');
+    expect(visibilityCard.textContent).not.toContain('即将上线');
+
+    fireEvent.click(screen.getByTestId('dashboard-card-tasks'));
+    fireEvent.click(aidataCard);
+    fireEvent.click(visibilityCard);
+    expect(actions).toEqual([
+      { type: 'open', href: '/writing/tasks', sourceId: '/dashboard' },
+      { type: 'open', href: '/visibility/overview', sourceId: '/dashboard' },
+      { type: 'open', href: '/visibility/monitors', sourceId: '/dashboard' },
+    ]);
+
+    // Remaining Phase-2 cards show 即将上线 and are non-navigable
+    for (const key of ['publish-soon', 'tools-soon']) {
       const card = screen.getByTestId(`dashboard-card-${key}`);
       expect(card.textContent).toContain('即将上线');
       expect(card.getAttribute('aria-disabled')).toBe('true');
       fireEvent.click(card);
     }
-    expect(actions).toHaveLength(1);
+    expect(actions).toHaveLength(3);
 
-    // Turning off aiImageEnabled hides the AI生图 entry card
+    // Turning off aiImageEnabled / visibilityEnabled hides respective entry cards
     rerender(
       <DashboardScreen
         title="首页"
         tabId="/dashboard"
         aiImageEnabled={false}
+        visibilityEnabled={false}
         gateway={gateway}
         autoRotateAnnouncements={false}
         onDispatch={(act) => actions.push(act)}
       />,
     );
     expect(screen.queryByTestId('dashboard-card-image')).toBeNull();
+    expect(screen.queryByTestId('dashboard-card-aidata')).toBeNull();
+    expect(screen.queryByTestId('dashboard-card-visibility')).toBeNull();
   });
 });

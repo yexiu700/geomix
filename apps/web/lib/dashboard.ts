@@ -26,6 +26,7 @@ export type DashboardGateway = {
 export function createEmptyDashboardSummary(
   aiImageEnabled = true,
   now: Date = new Date(),
+  visibilityEnabled = true,
 ): DashboardSummary {
   const monthWin = shanghaiCurrentMonthWindowUtc(now);
   return {
@@ -40,6 +41,7 @@ export function createEmptyDashboardSummary(
     },
     features: {
       aiImage: aiImageEnabled,
+      visibility: visibilityEnabled,
     },
     balanceCard: {
       balance: '0.00',

@@ -21,6 +21,7 @@ const ENTRY_GROUP_ORDER: ReadonlyArray<DashboardEntryCardDef['group']> = [
   '文章写作',
   '流量复刻',
   'AI生图/视频',
+  'AI数据与诊断',
   '二期规划',
 ];
 
@@ -181,6 +182,7 @@ export function DashboardScreen({
   title,
   tabId,
   aiImageEnabled = true,
+  visibilityEnabled = true,
   storage,
   gateway,
   autoRotateAnnouncements = true,
@@ -189,6 +191,7 @@ export function DashboardScreen({
   title: string;
   tabId?: string;
   aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
   storage?: SessionStorageLike;
   gateway?: DashboardGateway;
   autoRotateAnnouncements?: boolean;
@@ -215,7 +218,7 @@ export function DashboardScreen({
   );
 
   const [summary, setSummary] = useState<DashboardSummary>(() =>
-    createEmptyDashboardSummary(aiImageEnabled),
+    createEmptyDashboardSummary(aiImageEnabled, new Date(), visibilityEnabled),
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,9 +254,14 @@ export function DashboardScreen({
   }, [announcements.length, autoRotateAnnouncements]);
 
   const effectiveAiImage = aiImageEnabled && summary.features.aiImage;
+  const effectiveVisibility = visibilityEnabled && summary.features.visibility !== false;
   const entryCards = useMemo(
-    () => visibleDashboardEntryCards({ aiImageEnabled: effectiveAiImage }),
-    [effectiveAiImage],
+    () =>
+      visibleDashboardEntryCards({
+        aiImageEnabled: effectiveAiImage,
+        visibilityEnabled: effectiveVisibility,
+      }),
+    [effectiveAiImage, effectiveVisibility],
   );
 
   const groupedEntries = useMemo(() => {

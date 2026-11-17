@@ -49,7 +49,7 @@ export type DashboardModuleStats = Record<DashboardStatKey, number>;
 
 export type DashboardEntryCardDef = {
   key: string;
-  group: '素材源力' | '文章写作' | '流量复刻' | 'AI生图/视频' | '二期规划';
+  group: '素材源力' | '文章写作' | '流量复刻' | 'AI生图/视频' | 'AI数据与诊断' | '二期规划';
   title: string;
   desc: string;
   href: string | null;
@@ -57,7 +57,7 @@ export type DashboardEntryCardDef = {
   badge?: '新上' | '即将上线';
   statKey?: DashboardStatKey;
   statUnit?: string;
-  featureFlag?: 'aiImage';
+  featureFlag?: 'aiImage' | 'visibility';
 };
 
 /**
@@ -180,30 +180,33 @@ export const DASHBOARD_ENTRY_CARDS: readonly DashboardEntryCardDef[] = [
     statUnit: '笔订单',
     featureFlag: 'aiImage',
   },
+  // AI数据与可见度诊断（受 FEATURE_VISIBILITY 控制）
+  {
+    key: 'aidata',
+    group: 'AI数据与诊断',
+    title: 'AI数据',
+    desc: 'AI数据看板：AI 搜索收录监测、声量份额与引用缺口报表',
+    href: '/visibility/overview',
+    comingSoon: false,
+    badge: '新上',
+    featureFlag: 'visibility',
+  },
+  {
+    key: 'visibility',
+    group: 'AI数据与诊断',
+    title: 'AI可见度诊断',
+    desc: '主流大模型问答提及率、竞品对比与品牌可见度评估',
+    href: '/visibility/monitors',
+    comingSoon: false,
+    badge: '新上',
+    featureFlag: 'visibility',
+  },
   // 二期规划模块（与侧边栏即将上线项严格对应，不编造额外入口）
   {
     key: 'publish-soon',
     group: '二期规划',
     title: '文章发布',
     desc: '多平台账号授权与定时分发回执管理',
-    href: null,
-    comingSoon: true,
-    badge: '即将上线',
-  },
-  {
-    key: 'aidata-soon',
-    group: '二期规划',
-    title: 'AI数据',
-    desc: 'AI 搜索收录监测与多维投放效果报表',
-    href: null,
-    comingSoon: true,
-    badge: '即将上线',
-  },
-  {
-    key: 'visibility-soon',
-    group: '二期规划',
-    title: 'AI可见度诊断',
-    desc: '主流大模型问答提及率与品牌可见度评估',
     href: null,
     comingSoon: true,
     badge: '即将上线',
@@ -250,6 +253,7 @@ export type DashboardSummary = {
   };
   features: {
     aiImage: boolean;
+    visibility?: boolean;
   };
   balanceCard: {
     balance: string;
@@ -476,9 +480,13 @@ export function summarizeMonthMoney(logs: ReadonlyArray<{ amount: string }>): {
  */
 export function visibleDashboardEntryCards(options?: {
   aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
 }): DashboardEntryCardDef[] {
   return DASHBOARD_ENTRY_CARDS.filter((card) => {
     if (card.featureFlag === 'aiImage' && options?.aiImageEnabled === false) {
+      return false;
+    }
+    if (card.featureFlag === 'visibility' && options?.visibilityEnabled === false) {
       return false;
     }
     return true;
