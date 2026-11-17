@@ -56,5 +56,25 @@ describe('production deployment & auto-merge CD configuration (#63)', () => {
     expect(workflow).toContain('--head "$HEAD_BRANCH"');
     expect(workflow).toContain('uses: ./.github/workflows/cd.yml');
     expect(workflow).toContain("needs.merge-on-ci.outputs.should_deploy == 'true'");
+    expect(workflow).toContain('"$MERGE_STATUS" = "CLEAN"');
+    expect(workflow).toContain('"$MERGE_STATUS" = "DIRTY"');
+  });
+
+  it('grants writable cache-mode and non-fatal Buildx cache-to export in cd.yml for workflow_run deploys', () => {
+    const cdWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/cd.yml'), 'utf8');
+    const buildSection = cdWorkflow.slice(
+      cdWorkflow.indexOf('  build-and-push:'),
+      cdWorkflow.indexOf('  deploy:'),
+    );
+
+    expect(buildSection).toContain('cache-mode: write');
+    const cacheToLines = buildSection
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('cache-to:'));
+    expect(cacheToLines).toEqual([
+      'cache-to: type=gha,mode=max,scope=web,ignore-error=true',
+      'cache-to: type=gha,mode=max,scope=server,ignore-error=true',
+    ]);
   });
 });

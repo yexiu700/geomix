@@ -25,7 +25,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --merge "$PR_URL"
+        run: |
+          if gh pr merge --auto --merge "$PR_URL"; then
+            exit 0
+          fi
+
+          PR_INFO=$(gh pr view "$PR_URL" --json state,isDraft,mergeStateStatus)
+          STATE=$(echo "$PR_INFO" | jq -r .state)
+          IS_DRAFT=$(echo "$PR_INFO" | jq -r .isDraft)
+          MERGE_STATUS=$(echo "$PR_INFO" | jq -r .mergeStateStatus)
+
+          if [ "$STATE" != "OPEN" ] || [ "$IS_DRAFT" = "true" ]; then
+            echo "PR state is $STATE (isDraft=$IS_DRAFT); skipping auto-merge enablement."
+            exit 0
+          fi
+          if [ "$MERGE_STATUS" = "CLEAN" ]; then
+            echo "PR is already CLEAN; merging directly."
+            gh pr merge --merge "$PR_URL"
+            exit 0
+          fi
+          echo "Failed to enable auto-merge (state=$STATE, mergeStateStatus=$MERGE_STATUS)."
+          exit 1
 
   merge-on-ci:
     name: Merge PR After CI Green
@@ -64,7 +84,9 @@ jobs:
           fi
 
           for attempt in 1 2 3 4 5; do
-            STATE=$(gh pr view "$PR_NUM" --repo "$REPO" --json state --jq .state)
+            PR_VIEW=$(gh pr view "$PR_NUM" --repo "$REPO" --json state,mergeStateStatus)
+            STATE=$(echo "$PR_VIEW" | jq -r .state)
+            MERGE_STATUS=$(echo "$PR_VIEW" | jq -r .mergeStateStatus)
             if [ "$STATE" = "MERGED" ]; then
               echo "PR #$PR_NUM is merged. Scheduling CD deploy."
               SHOULD_DEPLOY="true"
@@ -72,6 +94,10 @@ jobs:
             fi
             if [ "$STATE" != "OPEN" ]; then
               echo "PR #$PR_NUM state is $STATE; skipping."
+              exit 0
+            fi
+            if [ "$MERGE_STATUS" = "DIRTY" ]; then
+              echo "PR #$PR_NUM has merge conflicts (DIRTY); skipping auto-merge."
               exit 0
             fi
             if gh pr merge "$PR_NUM" --repo "$REPO" --merge; then
