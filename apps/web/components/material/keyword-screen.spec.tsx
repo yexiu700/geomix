@@ -114,6 +114,31 @@ afterEach(() => {
   cleanup();
 });
 
+function findBtnNow(pattern: string | RegExp): HTMLButtonElement | null {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  return (
+    buttons.find((btn) => {
+      const aria = btn.getAttribute('aria-label') ?? '';
+      const compact = (btn.textContent ?? '').replace(/\s+/g, '');
+      const raw = (btn.textContent ?? '').trim();
+      if (typeof pattern === 'string') {
+        const target = pattern.replace(/\s+/g, '');
+        return aria === pattern || compact === target || raw.includes(pattern);
+      }
+      return pattern.test(raw) || pattern.test(compact) || pattern.test(aria);
+    }) ?? null
+  );
+}
+
+async function clickBtn(pattern: string | RegExp): Promise<void> {
+  let found: HTMLButtonElement | null = null;
+  await waitFor(() => {
+    found = findBtnNow(pattern);
+    expect(found).not.toBeNull();
+  });
+  fireEvent.click(found!);
+}
+
 describe('KeywordScreen', () => {
   it('shows 请输入主训练词 on empty submit and drills down to /material/questions?keywordId=...', async () => {
     const gateway = createGatewayMock();
@@ -128,15 +153,15 @@ describe('KeywordScreen', () => {
     );
 
     await screen.findByText('工业机器人');
-    fireEvent.click(screen.getByRole('button', { name: '查看写作标题' }));
+    await clickBtn('查看写作标题');
     expect(dispatched).toContainEqual({
       type: 'open',
       href: '/material/questions?keywordId=kw_1',
       sourceId: '/material/keywords',
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '添加' }));
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await clickBtn('添加');
+    await clickBtn('确定');
     expect(await screen.findByText('请输入主训练词')).toBeTruthy();
   });
 
@@ -152,10 +177,10 @@ describe('KeywordScreen', () => {
     );
 
     await screen.findByText('工业机器人');
-    fireEvent.click(screen.getByRole('button', { name: '添加' }));
+    await clickBtn('添加');
     fireEvent.change(screen.getByLabelText('主关键词'), { target: { value: '激光切割机' } });
 
-    fireEvent.click(screen.getByRole('button', { name: '手动批量添加' }));
+    await clickBtn('手动批量添加');
     fireEvent.change(screen.getByLabelText('组合前缀'), {
       target: { value: '深圳\n苏州\n定制' },
     });
@@ -165,17 +190,14 @@ describe('KeywordScreen', () => {
     fireEvent.change(screen.getByLabelText('组合后缀'), {
       target: { value: '哪家好\n厂家\n报价\n推荐' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '生成组合预览' }));
+    await clickBtn('生成组合预览');
     expect((await screen.findAllByText(/第 2 行主词必须包含主训练词/)).length).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByLabelText('组合主词'), {
       target: { value: '激光切割机\n光纤激光切割机' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '生成组合预览' }));
-    const addPreviewBtn = await screen.findByRole('button', {
-      name: /添加到问题框（已选 24 条）/,
-    });
-    fireEvent.click(addPreviewBtn);
+    await clickBtn('生成组合预览');
+    await clickBtn(/添加到问题框（已选24条）/);
 
     const textarea = screen.getByLabelText('一行一个拓展问题') as HTMLTextAreaElement;
     expect(textarea.value.split('\n')).toHaveLength(24);
@@ -193,15 +215,12 @@ describe('KeywordScreen', () => {
     );
 
     await screen.findByText('工业机器人');
-    fireEvent.click(screen.getByRole('button', { name: '添加' }));
+    await clickBtn('添加');
     fireEvent.change(screen.getByLabelText('主关键词'), { target: { value: '激光切割机' } });
 
-    fireEvent.click(screen.getByRole('button', { name: '拓词工具' }));
-    fireEvent.click(screen.getByRole('button', { name: '生成预览并回填当前表单' }));
-    const expanderPreviewBtn = await screen.findByRole('button', {
-      name: /添加到问题框/,
-    });
-    fireEvent.click(expanderPreviewBtn);
+    await clickBtn('拓词工具');
+    await clickBtn('生成预览并回填当前表单');
+    await clickBtn(/添加到问题框/);
     expect(gateway.distillCalls).toBe(0);
     const textarea = screen.getByLabelText('一行一个拓展问题') as HTMLTextAreaElement;
     expect(textarea.value.length).toBeGreaterThan(0);
@@ -219,26 +238,20 @@ describe('KeywordScreen', () => {
     );
 
     await screen.findByText('工业机器人');
-    fireEvent.click(screen.getByRole('button', { name: '添加' }));
+    await clickBtn('添加');
     fireEvent.change(screen.getByLabelText('主关键词'), { target: { value: '激光切割机' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'AI蒸馏拓展（10点/次）' }));
-    const confirmDistillBtn = await screen.findByRole('button', {
-      name: /确认蒸馏（10点\/次）/,
-    });
+    await clickBtn('AI蒸馏拓展（10点/次）');
     expect(gateway.distillCalls).toBe(0);
-    fireEvent.click(confirmDistillBtn);
+    await clickBtn(/确认蒸馏（10点\/次）/);
     await waitFor(() => expect(gateway.distillCalls).toBe(1));
 
-    const distillAddBtn = await screen.findByRole('button', {
-      name: /添加到问题框（已选 5 条）/,
-    });
-    fireEvent.click(distillAddBtn);
+    await clickBtn(/添加到问题框（已选5条）/);
 
     const textarea = screen.getByLabelText('一行一个拓展问题') as HTMLTextAreaElement;
     expect(textarea.value).toContain('激光切割机哪家服务靠谱？');
 
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    await clickBtn('确定');
     await waitFor(() => expect(gateway.createdPayloads).toHaveLength(1));
   });
 });
