@@ -1,19 +1,19 @@
 'use client';
 
-import type { CreateTenantInput } from '@geomix/shared';
-import { Alert, Button, Input, Select, Space, Table, Typography } from 'antd';
+import type { CreateTenantInput, QuotaKeyName } from '@geomix/shared';
+import { Alert, Button, Input, Select, Space, Switch, Table, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
 import { CrudModal } from '../crud/crud-modal';
 
-const QUOTA_FIELDS = [
+const QUOTA_FIELDS: ReadonlyArray<readonly [QuotaKeyName, string]> = [
   ['MAIN_KEYWORD', '主关键词'],
   ['QUESTION', '写作问题'],
   ['AI_WRITE', 'AI写作数量'],
-  ['STORAGE_BYTES', '图片存储空间'],
+  ['STORAGE_BYTES', '图片存储空间(字节)'],
   ['PUBLISH', '文章发布'],
   ['SOCIAL_AUTH', '自媒体授权'],
-] as const;
+];
 
 export function TenantAdmin({
   client,
@@ -21,10 +21,12 @@ export function TenantAdmin({
   client: Pick<
     AdminClient,
     'listTenants' | 'createTenant' | 'updateTenant' | 'updateQuotas' | 'adjust' | 'setMode'
-  >;
+  > &
+    Partial<Pick<AdminClient, 'getTenant'>>;
 }) {
   const [rows, setRows] = useState<TenantRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
@@ -32,7 +34,11 @@ export function TenantAdmin({
   const [target, setTarget] = useState<TenantRow | null>(null);
   const [edit, setEdit] = useState<TenantRow | null>(null);
   const [editName, setEditName] = useState('');
+  const [editExpiresAt, setEditExpiresAt] = useState('');
+  const [editActive, setEditActive] = useState(true);
   const [quotaFor, setQuotaFor] = useState<TenantRow | null>(null);
+  const [quotaKey, setQuotaKey] = useState<QuotaKeyName>('MAIN_KEYWORD');
+  const [quotaMap, setQuotaMap] = useState<Record<string, string>>({});
   const [quotaLimit, setQuotaLimit] = useState('100');
   const [delta, setDelta] = useState('500');
   const [saving, setSaving] = useState(false);
@@ -73,7 +79,13 @@ export function TenantAdmin({
         租户
       </Typography.Title>
       <Space style={{ marginBottom: 12 }}>
-        <Button type="primary" onClick={() => setOpen(true)}>
+        <Button
+          type="primary"
+          onClick={() => {
+            setModalError(null);
+            setOpen(true);
+          }}
+        >
           开户
         </Button>
       </Space>
@@ -84,7 +96,7 @@ export function TenantAdmin({
       <Table<TenantRow>
         rowKey="id"
         dataSource={rows}
-        pagination={false}
+        pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '25', '50'] }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '用户名', dataIndex: 'username' },
@@ -98,14 +110,21 @@ export function TenantAdmin({
             render: (_value, row) => row.expiresAt.slice(0, 10),
           },
           {
+            title: '状态',
+            render: (_value, row) => (row.isActive ? '正常' : '已停用'),
+          },
+          {
             title: '操作',
             render: (_value, row) => (
               <Space>
                 <Button
                   aria-label={`编辑 ${row.name}`}
                   onClick={() => {
+                    setModalError(null);
                     setEdit(row);
                     setEditName(row.name);
+                    setEditExpiresAt(row.expiresAt);
+                    setEditActive(row.isActive);
                   }}
                 >
                   编辑
@@ -113,6 +132,7 @@ export function TenantAdmin({
                 <Button
                   aria-label={`加点 ${row.name}`}
                   onClick={() => {
+                    setModalError(null);
                     setTarget(row);
                     setDelta('500');
                   }}
@@ -122,8 +142,26 @@ export function TenantAdmin({
                 <Button
                   aria-label={`配额 ${row.name}`}
                   onClick={() => {
+                    setModalError(null);
                     setQuotaFor(row);
-                    setQuotaLimit('100');
+                    setQuotaKey('MAIN_KEYWORD');
+                    const initial = Object.fromEntries(
+                      (row.quotas ?? []).map((q) => [q.key, q.limit]),
+                    );
+                    setQuotaMap(initial);
+                    setQuotaLimit(initial.MAIN_KEYWORD ?? '100');
+                    if (client.getTenant) {
+                      void client.getTenant(row.id).then(
+                        (detail) => {
+                          const nextMap = Object.fromEntries(
+                            (detail.quotas ?? []).map((q) => [q.key, q.limit]),
+                          );
+                          setQuotaMap(nextMap);
+                          setQuotaLimit(nextMap.MAIN_KEYWORD ?? '100');
+                        },
+                        () => undefined,
+                      );
+                    }
                   }}
                 >
                   配额
@@ -139,6 +177,7 @@ export function TenantAdmin({
                   ]}
                   onChange={(value: string) => {
                     const mode = value === 'SHADOW' || value === 'STRICT' ? value : null;
+                    setError(null);
                     void client.setMode(row.id, mode).then(
                       () => {
                         setNotice(
@@ -162,12 +201,16 @@ export function TenantAdmin({
         title="开户"
         minimized={minimized}
         maximized={maximized}
-        error={error}
+        error={modalError}
         onMinimize={() => setMinimized(true)}
         onRestore={() => setMinimized(false)}
         onMaximize={() => setMaximized((value) => !value)}
-        onClose={() => setOpen(false)}
-        onReset={() =>
+        onClose={() => {
+          setModalError(null);
+          setOpen(false);
+        }}
+        onReset={() => {
+          setModalError(null);
           setDraft({
             name: '',
             username: '',
@@ -175,8 +218,8 @@ export function TenantAdmin({
             expiresAt: '2027-11-16T00:00:00.000Z',
             billingMode: null,
             initialPoints: 0,
-          })
-        }
+          });
+        }}
         ok={
           <Button
             type="primary"
@@ -184,6 +227,7 @@ export function TenantAdmin({
             loading={saving}
             onClick={() => {
               setSaving(true);
+              setModalError(null);
               void client.createTenant(draft).then(
                 () => {
                   setOpen(false);
@@ -192,7 +236,7 @@ export function TenantAdmin({
                   return reload();
                 },
                 (reason: unknown) => {
-                  setError(messageOf(reason));
+                  setModalError(messageOf(reason));
                   setSaving(false);
                 },
               );
@@ -239,47 +283,86 @@ export function TenantAdmin({
         title="编辑租户"
         minimized={false}
         maximized={false}
+        error={modalError}
         onMinimize={() => undefined}
         onRestore={() => undefined}
         onMaximize={() => undefined}
-        onClose={() => setEdit(null)}
-        onReset={() => setEditName(edit?.name ?? '')}
+        onClose={() => {
+          setModalError(null);
+          setEdit(null);
+        }}
+        onReset={() => {
+          setModalError(null);
+          setEditName(edit?.name ?? '');
+          setEditExpiresAt(edit?.expiresAt ?? '');
+          setEditActive(edit?.isActive ?? true);
+        }}
         ok={
           <Button
             type="primary"
             aria-label="保存租户"
             onClick={() => {
               if (!edit) return;
-              void client.updateTenant(edit.id, { name: editName.trim() }).then(
-                () => {
-                  setNotice('租户已更新');
-                  setEdit(null);
-                  return reload();
-                },
-                (reason: unknown) => setError(messageOf(reason)),
-              );
+              if (!editName.trim()) {
+                setModalError('租户名称不能为空');
+                return;
+              }
+              setModalError(null);
+              void client
+                .updateTenant(edit.id, {
+                  name: editName.trim(),
+                  expiresAt: editExpiresAt.trim() || undefined,
+                  isActive: editActive,
+                })
+                .then(
+                  () => {
+                    setNotice('租户已更新');
+                    setEdit(null);
+                    return reload();
+                  },
+                  (reason: unknown) => setModalError(messageOf(reason)),
+                );
             }}
           >
             保存租户
           </Button>
         }
       >
-        <Input
-          aria-label="租户名称"
-          value={editName}
-          onChange={(event) => setEditName(event.target.value)}
-        />
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Input
+            aria-label="租户名称"
+            value={editName}
+            onChange={(event) => setEditName(event.target.value)}
+          />
+          <Input
+            aria-label="租户有效期"
+            placeholder="ISO 时间，如 2027-11-16T00:00:00.000Z"
+            value={editExpiresAt}
+            onChange={(event) => setEditExpiresAt(event.target.value)}
+          />
+          <Space>
+            <span>启用状态</span>
+            <Switch aria-label="启用状态" checked={editActive} onChange={setEditActive} />
+          </Space>
+        </Space>
       </CrudModal>
       <CrudModal
         open={target !== null}
         title="加点"
         minimized={false}
         maximized={false}
+        error={modalError}
         onMinimize={() => undefined}
         onRestore={() => undefined}
         onMaximize={() => undefined}
-        onClose={() => setTarget(null)}
-        onReset={() => setDelta('500')}
+        onClose={() => {
+          setModalError(null);
+          setTarget(null);
+        }}
+        onReset={() => {
+          setModalError(null);
+          setDelta('500');
+        }}
         ok={
           <Button
             type="primary"
@@ -287,9 +370,10 @@ export function TenantAdmin({
             onClick={() => {
               if (!target) return;
               if (!/^-?\d+$/.test(delta) || Number(delta) === 0) {
-                setError('调整点数不正确');
+                setModalError('调整点数不正确');
                 return;
               }
+              setModalError(null);
               void client.adjust(target.id, Number(delta)).then(
                 () => {
                   const amount = Number(delta);
@@ -297,7 +381,7 @@ export function TenantAdmin({
                   setTarget(null);
                   return reload();
                 },
-                (reason: unknown) => setError(messageOf(reason)),
+                (reason: unknown) => setModalError(messageOf(reason)),
               );
             }}
           >
@@ -316,11 +400,18 @@ export function TenantAdmin({
         title="配额上限"
         minimized={false}
         maximized={false}
+        error={modalError}
         onMinimize={() => undefined}
         onRestore={() => undefined}
         onMaximize={() => undefined}
-        onClose={() => setQuotaFor(null)}
-        onReset={() => setQuotaLimit('100')}
+        onClose={() => {
+          setModalError(null);
+          setQuotaFor(null);
+        }}
+        onReset={() => {
+          setModalError(null);
+          setQuotaLimit(quotaMap[quotaKey] ?? '100');
+        }}
         ok={
           <Button
             type="primary"
@@ -328,12 +419,13 @@ export function TenantAdmin({
             onClick={() => {
               if (!quotaFor) return;
               if (!/^[0-9]{1,15}$/.test(quotaLimit)) {
-                setError('配额上限不正确');
+                setModalError('配额上限不正确');
                 return;
               }
+              setModalError(null);
               void client
                 .updateQuotas(quotaFor.id, {
-                  items: [{ key: 'MAIN_KEYWORD', limit: quotaLimit }],
+                  items: [{ key: quotaKey, limit: quotaLimit }],
                 })
                 .then(
                   () => {
@@ -341,7 +433,7 @@ export function TenantAdmin({
                     setQuotaFor(null);
                     return reload();
                   },
-                  (reason: unknown) => setError(messageOf(reason)),
+                  (reason: unknown) => setModalError(messageOf(reason)),
                 );
             }}
           >
@@ -349,15 +441,27 @@ export function TenantAdmin({
           </Button>
         }
       >
-        <Input
-          aria-label="主关键词上限"
-          value={quotaLimit}
-          onChange={(event) => setQuotaLimit(event.target.value)}
-        />
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Select
+            aria-label="配额项"
+            value={quotaKey}
+            style={{ width: '100%' }}
+            options={QUOTA_FIELDS.map(([value, label]) => ({ value, label }))}
+            onChange={(nextKey: QuotaKeyName) => {
+              setQuotaKey(nextKey);
+              setQuotaLimit(quotaMap[nextKey] ?? '100');
+            }}
+          />
+          <Input
+            aria-label="配额上限"
+            value={quotaLimit}
+            onChange={(event) => setQuotaLimit(event.target.value)}
+          />
+        </Space>
       </CrudModal>
       <p className="gm-admin-note">
         配额项包括{QUOTA_FIELDS.map((item) => item[1]).join('、')}
-        。这里修改主关键词上限，不能低于已用量。
+        。修改配额上限不能低于当前已用量。
       </p>
     </section>
   );

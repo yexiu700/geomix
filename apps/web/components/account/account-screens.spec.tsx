@@ -147,4 +147,28 @@ describe('personal center screens', () => {
     );
     expect(screen.getByRole('button', { name: '提交资料' })).toHaveProperty('disabled', true);
   });
+
+  it('validates amount format, resets filters, and exports money ledger', async () => {
+    const load = vi.fn(async () => moneyPage([]));
+    const exportFile = vi.fn(async () => ({
+      filename: 'geomix-money.csv',
+      mime: 'text/csv',
+      body: new Uint8Array([1, 2]),
+    }));
+    render(<MoneyScreen title="余额明细" load={load} exportFile={exportFile} />);
+    expect(await screen.findByText('没有找到匹配的记录')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('textbox', { name: '金额' }), {
+      target: { value: 'abc' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+    expect(await screen.findByText('金额格式不正确')).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '重置' }));
+    expect(screen.queryByText('金额格式不正确')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
+    expect(exportFile).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), 'csv');
+  });
 });

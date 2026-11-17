@@ -71,6 +71,7 @@ export function httpAdmin(storage: SessionStorageLike) {
       );
       return data.items;
     },
+    getTenant: (id: string) => readJson<TenantRow>(storage, 'GET', `/admin/tenants/${id}`),
     createTenant: (input: CreateTenantInput) =>
       readJson<TenantRow>(storage, 'POST', '/admin/tenants', input, freshKey()),
     updateTenant: (id: string, input: UpdateTenantInput) =>

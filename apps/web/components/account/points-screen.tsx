@@ -5,6 +5,7 @@ import { Alert, Button, Input, Table, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AccountApiError,
+  httpDownloadPoints,
   httpPoints,
   type LedgerPage,
   type PointItem,
@@ -22,23 +23,48 @@ const EMPTY: PointListQuery = {
   export: undefined,
 };
 
+function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
+  if (typeof URL.createObjectURL !== 'function') return;
+  const copy = new Uint8Array(file.body.byteLength);
+  copy.set(file.body);
+  const blob = new Blob([copy], { type: file.mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function PointsScreen({
   title,
   load,
+  exportFile,
 }: {
   title: string;
   load?: (query: PointListQuery) => Promise<LedgerPage<PointItem>>;
+  exportFile?: (
+    query: PointListQuery,
+    format: 'csv' | 'xlsx',
+  ) => Promise<{ filename: string; mime: string; body: Uint8Array }>;
 }) {
   const fallback = useMemo(
     () => (query: PointListQuery) => httpPoints(window.sessionStorage, query),
     [],
   );
+  const fallbackExport = useMemo(
+    () => (query: PointListQuery, format: 'csv' | 'xlsx') =>
+      httpDownloadPoints(window.sessionStorage, query, format),
+    [],
+  );
   const read = load ?? fallback;
+  const download = exportFile ?? fallbackExport;
   const [query, setQuery] = useState<PointListQuery>(EMPTY);
   const [draft, setDraft] = useState({ title: '', delta: '', from: '', to: '' });
   const [page, setPage] = useState<LedgerPage<PointItem> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -60,6 +86,19 @@ export function PointsScreen({
       live = false;
     };
   }, [read, query]);
+
+  async function handleExport(format: 'csv' | 'xlsx'): Promise<void> {
+    setExporting(true);
+    setError(null);
+    try {
+      const file = await download(query, format);
+      triggerDownload(file);
+    } catch (reason) {
+      setError(reason instanceof AccountApiError ? reason.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <section aria-label="点数明细">
@@ -100,16 +139,43 @@ export function PointsScreen({
               setError('点数变动不正确');
               return;
             }
+            const fromIso = draft.from ? new Date(draft.from).toISOString() : undefined;
+            const toIso = draft.to ? new Date(draft.to).toISOString() : undefined;
+            if (fromIso && toIso && fromIso > toIso) {
+              setError('开始时间不能晚于结束时间');
+              return;
+            }
+            setError(null);
             setQuery({
               ...EMPTY,
               title: draft.title.trim(),
               delta: delta === '' ? undefined : Number(delta),
-              from: draft.from ? new Date(draft.from).toISOString() : undefined,
-              to: draft.to ? new Date(draft.to).toISOString() : undefined,
+              from: fromIso,
+              to: toIso,
             });
           }}
         >
           查询
+        </Button>
+        <Button
+          aria-label="重置"
+          onClick={() => {
+            setError(null);
+            setDraft({ title: '', delta: '', from: '', to: '' });
+            setQuery(EMPTY);
+          }}
+        >
+          重置
+        </Button>
+        <Button aria-label="导出 CSV" loading={exporting} onClick={() => void handleExport('csv')}>
+          导出 CSV
+        </Button>
+        <Button
+          aria-label="导出 XLSX"
+          loading={exporting}
+          onClick={() => void handleExport('xlsx')}
+        >
+          导出 XLSX
         </Button>
       </div>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
