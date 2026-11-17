@@ -15,6 +15,7 @@ import {
 } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { readVisibilityConfig } from '../visibility/visibility.config';
 
 @Injectable()
 export class DashboardService {
@@ -135,6 +136,17 @@ export class DashboardService {
         ? announcementRows
         : DASHBOARD_DEFAULT_ANNOUNCEMENTS.map((item) => ({ ...item }));
 
+    const visibilityEnabled =
+      process.env.FEATURE_VISIBILITY?.trim().toLowerCase() === 'false'
+        ? false
+        : (() => {
+            try {
+              return readVisibilityConfig(process.env).featureEnabled;
+            } catch {
+              return true;
+            }
+          })();
+
     return {
       generatedAt: now.toISOString(),
       monthKey: monthWin.monthKey,
@@ -147,6 +159,7 @@ export class DashboardService {
       },
       features: {
         aiImage: env.FEATURE_AI_IMAGE,
+        visibility: visibilityEnabled,
       },
       balanceCard: {
         balance: formatMoney(wallet.money.toString()),

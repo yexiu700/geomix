@@ -94,22 +94,36 @@ describe('dashboard shared helpers', () => {
     });
   });
 
-  it('marks phase-2 entries with 即将上线 and hides AI生图 card when aiImageEnabled is false', () => {
+  it('promotes AI数据 & AI可见度诊断 to active navigable cards, marks remaining phase-2 entries with 即将上线, and respects feature flags (#92)', () => {
     const comingSoon = DASHBOARD_ENTRY_CARDS.filter((c) => c.comingSoon);
-    expect(comingSoon.map((c) => c.title)).toEqual([
-      '文章发布',
-      'AI数据',
-      'AI可见度诊断',
-      'AI工具',
-    ]);
+    expect(comingSoon.map((c) => c.title)).toEqual(['文章发布', 'AI工具']);
     for (const card of comingSoon) {
       expect(card.badge).toBe('即将上线');
       expect(card.href).toBeNull();
     }
 
+    const aidata = DASHBOARD_ENTRY_CARDS.find((c) => c.key === 'aidata');
+    const visibility = DASHBOARD_ENTRY_CARDS.find((c) => c.key === 'visibility');
+    expect(aidata).toMatchObject({
+      title: 'AI数据',
+      href: '/visibility/overview',
+      comingSoon: false,
+      featureFlag: 'visibility',
+    });
+    expect(visibility).toMatchObject({
+      title: 'AI可见度诊断',
+      href: '/visibility/monitors',
+      comingSoon: false,
+      featureFlag: 'visibility',
+    });
+
     const withAiImage = visibleDashboardEntryCards({ aiImageEnabled: true });
     const withoutAiImage = visibleDashboardEntryCards({ aiImageEnabled: false });
     expect(withAiImage.some((c) => c.key === 'image')).toBe(true);
     expect(withoutAiImage.some((c) => c.key === 'image')).toBe(false);
+
+    const withoutVisibility = visibleDashboardEntryCards({ visibilityEnabled: false });
+    expect(withoutVisibility.some((c) => c.key === 'aidata')).toBe(false);
+    expect(withoutVisibility.some((c) => c.key === 'visibility')).toBe(false);
   });
 });

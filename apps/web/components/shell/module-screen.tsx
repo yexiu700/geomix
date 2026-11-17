@@ -50,6 +50,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           aiImageEnabled={aiImageEnabled}
+          visibilityEnabled={visibilityEnabled}
           onDispatch={onDispatch}
         />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
