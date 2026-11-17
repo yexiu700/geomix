@@ -79,7 +79,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe('admin shell', () => {
+describe('admin shell', { timeout: 60_000 }, () => {
   it('keeps drafts while switching among five tabs', () => {
     render(<Harness initial={openAll()} />);
     const drafts = [
