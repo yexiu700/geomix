@@ -45,7 +45,7 @@ cd /opt/geomix
 docker compose -f docker-compose.prod.yml run --rm migrate pnpm --filter @geomix/db db:seed
 ```
 
-4. 建议在宿主机使用 Nginx 或 Caddy 做 HTTPS 反向代理：
+4. 建议在宿主机使用 Nginx 或 Caddy 做 HTTPS 反向代理（并透传 `X-Real-IP` / `X-Forwarded-For` 请求头，以便后端按客户端真实 IP 独立计算验证码与登录限流）：
    * `/api/` → `http://127.0.0.1:3001`
    * `/` → `http://127.0.0.1:3000`
 

@@ -110,6 +110,7 @@ services:
       - .env
     environment:
       API_PORT: 3001
+      AUTH_TRUST_PROXY: ${AUTH_TRUST_PROXY:-true}
       DATABASE_URL: postgresql://${POSTGRES_USER:-geomix}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geomix}?schema=public
       REDIS_URL: redis://redis:6379
       STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}

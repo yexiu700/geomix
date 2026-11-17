@@ -10,8 +10,8 @@ export type RateLimiterOptions = {
 };
 
 /**
- * 内存滑动窗口。键是连接地址，或「连接地址 + 规范化用户名」。
- * 不读取转发头。过期记录会删掉，键的数量有上限。
+ * 内存滑动窗口。键是已解析的客户端地址（默认取 TCP 对端，受信任反代下由 clientAddress 解析真实 IP），
+ * 或「客户端地址 + 规范化用户名」。过期记录会删掉，键的数量有上限。
  */
 export class AuthRateLimiter {
   private readonly buckets = new Map<string, number[]>();

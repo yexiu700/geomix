@@ -12,11 +12,12 @@ type Envelope = { code: number; msg: string; data: { captchaId?: string; image?:
 async function call(
   base: string,
   path: string,
-  options?: { body?: unknown; forwardedFor?: string },
+  options?: { body?: unknown; forwardedFor?: string; realIp?: string },
 ): Promise<Envelope & { status: number; retryAfter: string | null }> {
   const headers: Record<string, string> = {};
   if (options?.body !== undefined) headers['content-type'] = 'application/json';
   if (options?.forwardedFor) headers['x-forwarded-for'] = options.forwardedFor;
+  if (options?.realIp) headers['x-real-ip'] = options.realIp;
   const response = await fetch(`${base}${path}`, {
     method: 'POST',
     headers,
@@ -31,6 +32,7 @@ describe('auth rate limits over http', () => {
   let base = '';
 
   beforeAll(async () => {
+    delete process.env.AUTH_TRUST_PROXY;
     app = await createApiApp();
     vi.spyOn(app.get(PrismaAuthStore), 'findUserByUsername').mockResolvedValue(null);
     await app.listen(0);
@@ -39,6 +41,7 @@ describe('auth rate limits over http', () => {
   });
 
   afterAll(async () => {
+    delete process.env.AUTH_TRUST_PROXY;
     await app.close();
     vi.restoreAllMocks();
   });
@@ -88,5 +91,29 @@ describe('auth rate limits over http', () => {
     expect(limited.status).toBe(429);
     expect(limited.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
     expect(Number(limited.retryAfter)).toBeGreaterThan(0);
+  });
+
+  it('isolates captcha rate-limit buckets per real client IP when AUTH_TRUST_PROXY=true', async () => {
+    process.env.AUTH_TRUST_PROXY = 'true';
+    try {
+      for (let i = 0; i < 10; i += 1) {
+        const okRes = await call(base, '/api/v1/auth/captcha', { realIp: '198.51.100.10' });
+        expect(okRes.status).toBe(200);
+      }
+      const clientABlocked = await call(base, '/api/v1/auth/captcha', { realIp: '198.51.100.10' });
+      expect(clientABlocked.status).toBe(429);
+      expect(clientABlocked.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+
+      // Distinct visitors behind the same reverse proxy gateway are unaffected
+      const clientBOk = await call(base, '/api/v1/auth/captcha', { realIp: '198.51.100.11' });
+      expect(clientBOk.status).toBe(200);
+
+      const clientCOk = await call(base, '/api/v1/auth/captcha', {
+        forwardedFor: '203.0.113.88',
+      });
+      expect(clientCOk.status).toBe(200);
+    } finally {
+      delete process.env.AUTH_TRUST_PROXY;
+    }
   });
 });

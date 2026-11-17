@@ -2,7 +2,7 @@
 
 import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadAccount, postJson } from '../lib/api';
 import { safeConsoleHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
@@ -19,18 +19,35 @@ export function LoginPanel() {
   const preset = NOTICES[searchParams.get('notice') ?? ''] ?? '';
   const [captchaId, setCaptchaId] = useState('');
   const [captchaImage, setCaptchaImage] = useState('');
+  const [captchaLoading, setCaptchaLoading] = useState(true);
   const [error, setError] = useState(preset);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
+  const inFlightCaptchaRef = useRef<Promise<void> | null>(null);
 
   const loadCaptcha = useCallback(async () => {
-    const result = await postJson<{ captchaId: string; image: string }>('/auth/captcha', {});
-    if (result.code !== 0 || !result.data?.captchaId || !result.data.image) {
-      setError(result.msg || '验证码获取失败');
-      return;
+    if (inFlightCaptchaRef.current) {
+      return inFlightCaptchaRef.current;
     }
-    setCaptchaId(result.data.captchaId);
-    setCaptchaImage(result.data.image);
+    setCaptchaLoading(true);
+    setCaptchaId('');
+    const task = (async () => {
+      try {
+        const result = await postJson<{ captchaId: string; image: string }>('/auth/captcha', {});
+        if (result.code !== 0 || !result.data?.captchaId || !result.data.image) {
+          setCaptchaImage('');
+          setError(result.msg || '验证码获取失败');
+          return;
+        }
+        setCaptchaId(result.data.captchaId);
+        setCaptchaImage(result.data.image);
+      } finally {
+        inFlightCaptchaRef.current = null;
+        setCaptchaLoading(false);
+      }
+    })();
+    inFlightCaptchaRef.current = task;
+    return task;
   }, []);
 
   useEffect(() => {
@@ -60,7 +77,13 @@ export function LoginPanel() {
     };
   }, [loadCaptcha, nextHref, router]);
 
+  const captchaReady = Boolean(captchaId) && !captchaLoading;
+
   async function onLogin(values: { username: string; password: string; captchaCode: string }) {
+    if (!captchaId || captchaLoading) {
+      setError('验证码加载中，请稍候再试');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -111,7 +134,11 @@ export function LoginPanel() {
             >
               <Input autoComplete="off" />
             </Form.Item>
-            {captchaImage ? (
+            {captchaLoading ? (
+              <Typography.Paragraph type="secondary" role="status" style={{ marginBottom: 12 }}>
+                正在加载验证码...
+              </Typography.Paragraph>
+            ) : captchaImage ? (
               <div
                 role="img"
                 aria-label="验证码"
@@ -126,10 +153,14 @@ export function LoginPanel() {
               />
             ) : null}
             <div>
-              <Button type="primary" htmlType="submit" loading={busy}>
+              <Button type="primary" htmlType="submit" loading={busy} disabled={!captchaReady}>
                 登录
               </Button>
-              <Button style={{ marginLeft: 8 }} onClick={() => void loadCaptcha()}>
+              <Button
+                style={{ marginLeft: 8 }}
+                disabled={busy || captchaLoading}
+                onClick={() => void loadCaptcha()}
+              >
                 换一张
               </Button>
             </div>
