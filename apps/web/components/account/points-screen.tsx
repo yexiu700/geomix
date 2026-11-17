@@ -192,6 +192,13 @@ export function PointsScreen({
           onChange: (next) => setQuery((current) => ({ ...current, page: next })),
         }}
         columns={[
+          {
+            title: '序号',
+            key: 'seq',
+            width: 80,
+            render: (_value, _row, index) =>
+              ((page?.page ?? 1) - 1) * (page?.pageSize ?? 10) + index + 1,
+          },
           { title: '项目', dataIndex: 'title', key: 'title' },
           {
             title: '点数',
