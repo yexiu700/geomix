@@ -5,14 +5,21 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
+  LLM_COST_AUDIT_ACTION,
   QUOTA_DEFAULTS,
+  aggregateLlmDailyReport,
   escapeLikeLiteral,
   formatMoney,
   isQuotaKeyName,
   parseEnv,
+  parseLlmCostQuery,
+  parseLlmCostRates,
   resolveTenantBillingMode,
+  shanghaiDayWindowUtc,
   type AnnouncementInput,
   type CreateTenantInput,
+  type LlmDailyCostReport,
+  type LlmUsageEventInput,
   type PricingUpdateInput,
   type QuotaUpdateInput,
   type TemplateWriteInput,
@@ -396,6 +403,165 @@ export class AdminOfficeService {
       tenantId: id,
     });
     return presentTemplate(row);
+  }
+
+  async llmCostReport(
+    actor: Actor,
+    rawQuery: Record<string, unknown>,
+    now: Date = new Date(),
+  ): Promise<LlmDailyCostReport> {
+    assertAdmin(actor);
+    let query: ReturnType<typeof parseLlmCostQuery>;
+    try {
+      query = parseLlmCostQuery(rawQuery);
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : '查询参数不正确');
+    }
+
+    const { startUtc, endUtc } = shanghaiDayWindowUtc(query.days, now);
+    const [auditRows, taskItems, visObs] = await Promise.all([
+      this.prisma.base.auditLog.findMany({
+        where: {
+          action: LLM_COST_AUDIT_ACTION,
+          createdAt: { gte: startUtc, lte: endUtc },
+          ...(query.tenantId ? { tenantId: query.tenantId } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50_000,
+      }),
+      this.prisma.base.aiTaskItem.findMany({
+        where: {
+          status: 'SUCCESS',
+          finishedAt: { gte: startUtc, lte: endUtc },
+          tokensIn: { not: null },
+          ...(query.tenantId ? { task: { tenantId: query.tenantId } } : {}),
+        },
+        select: {
+          id: true,
+          model: true,
+          tokensIn: true,
+          tokensOut: true,
+          finishedAt: true,
+          task: { select: { tenantId: true } },
+        },
+        take: 20_000,
+      }),
+      this.prisma.base.visibilityObservation.findMany({
+        where: {
+          status: 'SUCCESS',
+          checkedAt: { gte: startUtc, lte: endUtc },
+          tokensIn: { not: null },
+          ...(query.tenantId ? { tenantId: query.tenantId } : {}),
+        },
+        select: {
+          id: true,
+          tenantId: true,
+          judgeModel: true,
+          tokensIn: true,
+          tokensOut: true,
+          checkedAt: true,
+        },
+        take: 20_000,
+      }),
+    ]);
+
+    const coveredItemPrefixes = new Set<string>();
+    const rawEvents: LlmUsageEventInput[] = [];
+    const tenantIds = new Set<string>();
+
+    for (const row of auditRows) {
+      const p =
+        row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+          ? (row.payload as Record<string, unknown>)
+          : {};
+      const idem = typeof p.idempotencyKey === 'string' ? p.idempotencyKey : '';
+      if (idem.startsWith('ai_body:')) {
+        const parts = idem.split(':');
+        if (parts[1]) coveredItemPrefixes.add(`item:${parts[1]}`);
+      } else if (idem.includes('vis') && idem.includes(':')) {
+        const parts = idem.split(':');
+        if (parts[1]) coveredItemPrefixes.add(`obs:${parts[1]}`);
+      }
+
+      if (row.tenantId) tenantIds.add(row.tenantId);
+      const model = typeof p.model === 'string' && p.model ? p.model : 'unknown';
+      const provider = typeof p.provider === 'string' && p.provider ? p.provider : 'unknown';
+      const fake = typeof p.fake === 'boolean' ? p.fake : model.startsWith('fake');
+
+      rawEvents.push({
+        tenantId: row.tenantId,
+        scene: typeof p.scene === 'string' ? p.scene : 'other',
+        provider,
+        model,
+        fake,
+        tokensIn: typeof p.tokensIn === 'number' ? p.tokensIn : 0,
+        tokensOut: typeof p.tokensOut === 'number' ? p.tokensOut : 0,
+        ...(typeof p.costMicro === 'number' ? { costMicro: p.costMicro } : {}),
+        createdAt: row.createdAt,
+      });
+    }
+
+    for (const item of taskItems) {
+      if (coveredItemPrefixes.has(`item:${item.id}`) || !item.finishedAt) continue;
+      tenantIds.add(item.task.tenantId);
+      const model = item.model ?? 'fake-quality';
+      const fake = model.startsWith('fake');
+      rawEvents.push({
+        tenantId: item.task.tenantId,
+        scene: 'body',
+        provider: fake ? 'fake' : 'openai',
+        model,
+        fake,
+        tokensIn: item.tokensIn ?? 0,
+        tokensOut: item.tokensOut ?? 0,
+        createdAt: item.finishedAt,
+      });
+    }
+
+    for (const obs of visObs) {
+      if (coveredItemPrefixes.has(`obs:${obs.id}`) || !obs.checkedAt) continue;
+      tenantIds.add(obs.tenantId);
+      const model = obs.judgeModel ?? 'fake-cheap';
+      const fake = model.startsWith('fake');
+      rawEvents.push({
+        tenantId: obs.tenantId,
+        scene: 'visibility_judge',
+        provider: fake ? 'fake' : 'openai',
+        model,
+        fake,
+        tokensIn: obs.tokensIn ?? 0,
+        tokensOut: obs.tokensOut ?? 0,
+        createdAt: obs.checkedAt,
+      });
+    }
+
+    const tenants =
+      tenantIds.size > 0
+        ? await this.prisma.base.tenant.findMany({
+            where: { id: { in: [...tenantIds] } },
+            select: { id: true, name: true },
+          })
+        : [];
+    const tenantNameById = new Map(tenants.map((t) => [t.id, t.name]));
+
+    const enriched = rawEvents.map((ev) => ({
+      ...ev,
+      tenantName: ev.tenantId ? (tenantNameById.get(ev.tenantId) ?? ev.tenantId) : '系统任务',
+    }));
+
+    let rates = {};
+    try {
+      rates = parseLlmCostRates(process.env.LLM_COST_RATES_JSON);
+    } catch {
+      rates = {};
+    }
+
+    return aggregateLlmDailyReport(enriched, {
+      days: query.days,
+      includeFake: query.includeFake,
+      rates,
+      now,
+    });
   }
 
   private async oneAnnouncement(id: string) {

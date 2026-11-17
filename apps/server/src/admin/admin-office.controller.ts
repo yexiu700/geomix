@@ -158,6 +158,11 @@ export class AdminOfficeController {
       ),
     );
   }
+
+  @Get('llm-costs')
+  async llmCosts(@Req() request: unknown, @Query() query: Record<string, unknown>) {
+    return ok(await this.office.llmCostReport(requireActor(request), query));
+  }
 }
 
 function requireActor(request: unknown): { userId: string; role: 'ADMIN' | 'MERCHANT' } {

@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { resolveFetchSettings } from '@geomix/shared';
+import { LLM_COST_AUDIT_ACTION, resolveFetchSettings } from '@geomix/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { ComplianceService, type AuditWriter } from './compliance';
 import { EmbeddingService } from './embedding';
 import { ImageService } from './image';
-import { LlmService } from './llm';
+import { LlmService, type LlmCostSink } from './llm';
 import { fetchPublicPage, type FetchDeps } from './public-fetch';
 import { SearchService } from './search';
 import { StorageService } from './storage';
@@ -26,7 +26,9 @@ export class PublicFetchService {
     },
     {
       provide: LlmService,
-      useFactory: () => LlmService.fromEnv(process.env),
+      inject: [PrismaService],
+      useFactory: (prisma: PrismaService) =>
+        LlmService.fromEnv(process.env, { costSink: prismaLlmCostSink(prisma) }),
     },
     {
       provide: EmbeddingService,
@@ -85,6 +87,32 @@ function prismaAudit(prisma: PrismaService): AuditWriter {
           userId: entry.userId,
           action: entry.action,
           payload: entry.payload,
+        },
+      });
+    },
+  };
+}
+
+function prismaLlmCostSink(prisma: PrismaService): LlmCostSink {
+  return {
+    async write(record) {
+      await prisma.base.auditLog.create({
+        data: {
+          tenantId: record.tenantId,
+          action: LLM_COST_AUDIT_ACTION,
+          payload: {
+            recordId: record.recordId,
+            idempotencyKey: record.idempotencyKey,
+            scene: record.scene,
+            provider: record.provider,
+            model: record.model,
+            fake: record.fake,
+            tokensIn: record.tokensIn,
+            tokensOut: record.tokensOut,
+            costMicro: record.costMicro,
+            costBasis: record.costBasis,
+            latencyMs: record.latencyMs,
+          },
         },
       });
     },

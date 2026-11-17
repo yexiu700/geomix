@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   FAKE_MARK,
-  FAKE_TOKEN_COST_MICRO,
   LLM_MAX_RETRIES,
   LLM_TIMEOUT_MS,
   QUALITY_LLM_SCENES,
+  estimateLlmCallCostMicro,
+  parseLlmCostRates,
   readLlmDocument,
+  type LlmCostRateMap,
   type LlmProviderConfig,
   type LlmRouteConfig,
   type LlmScene,
@@ -48,10 +50,14 @@ export type LlmCostRecord = {
   tokensIn: number;
   tokensOut: number;
   costMicro: number;
-  costBasis: 'placeholder';
+  costBasis: 'placeholder' | 'configured';
   latencyMs: number;
   fingerprint: string;
 };
+
+export interface LlmCostSink {
+  write(record: LlmCostRecord): Promise<void> | void;
+}
 
 export type LlmCallResult = LlmCompletion & { cost: LlmCostRecord };
 
@@ -440,6 +446,8 @@ export class LlmService {
     private readonly router: LlmRouter,
     private readonly ledger: MemoryCostLedger = new MemoryCostLedger(),
     private readonly now: () => number = Date.now,
+    private readonly costSink?: LlmCostSink,
+    private readonly rates: LlmCostRateMap = {},
   ) {}
 
   static fromEnv(
@@ -449,10 +457,12 @@ export class LlmService {
       resolver?: DnsResolver;
       retryDelayMs?: number;
       timeoutMs?: number;
+      costSink?: LlmCostSink;
     },
   ): LlmService {
     const route = readLlmDocument(env);
     const timeoutMs = overrides?.timeoutMs ?? positive(env.LLM_TIMEOUT_MS, LLM_TIMEOUT_MS);
+    const rates = parseLlmCostRates(env.LLM_COST_RATES_JSON);
     const providers: Record<string, LlmProvider> = {};
     for (const [name, config] of Object.entries(route.providers)) {
       if (config.kind === 'fake') {
@@ -487,6 +497,10 @@ export class LlmService {
         timeoutMs,
         retryDelayMs: overrides?.retryDelayMs ?? 50,
       }),
+      new MemoryCostLedger(),
+      Date.now,
+      overrides?.costSink,
+      rates,
     );
   }
 
@@ -550,6 +564,14 @@ export class LlmService {
   private async run(input: LlmCompleteInput, fingerprint: string): Promise<LlmCallResult> {
     const started = this.now();
     const completion = await this.router.complete(input);
+    const estimated = estimateLlmCallCostMicro({
+      provider: completion.provider,
+      model: completion.model,
+      fake: completion.fake,
+      tokensIn: completion.tokensIn,
+      tokensOut: completion.tokensOut,
+      rates: this.rates,
+    });
     const record: LlmCostRecord = {
       recordId: randomUUID(),
       tenantId: input.tenantId,
@@ -560,12 +582,15 @@ export class LlmService {
       fake: completion.fake,
       tokensIn: completion.tokensIn,
       tokensOut: completion.tokensOut,
-      costMicro: (completion.tokensIn + completion.tokensOut) * FAKE_TOKEN_COST_MICRO,
-      costBasis: 'placeholder',
+      costMicro: estimated.costMicro,
+      costBasis: estimated.costBasis,
       latencyMs: Math.max(0, this.now() - started),
       fingerprint,
     };
     this.ledger.put(record);
+    if (this.costSink) {
+      void Promise.resolve(this.costSink.write(record)).catch(() => undefined);
+    }
     return { ...completion, cost: record };
   }
 }

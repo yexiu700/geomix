@@ -12,3 +12,6 @@ dump.rdb
 .pnpm-store/
 *.tsbuildinfo
 next-env.d.ts
+backups/
+docker/nginx/certs/
+docker/nginx/certbot-www/
