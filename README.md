@@ -124,38 +124,53 @@ curl -s -X POST http://localhost:3001/api/v1/auth/login \
 
 登录成功后用 `Authorization: Bearer <accessToken>` 访问：
 
-| 方法  | 路径                              | 说明                                                                             |
-| ----- | --------------------------------- | -------------------------------------------------------------------------------- |
-| POST  | `/api/v1/auth/captcha`            | 获取验证码                                                                       |
-| POST  | `/api/v1/auth/login`              | 校验验证码和口令，签发访问令牌和刷新令牌                                         |
-| POST  | `/api/v1/auth/refresh`            | 用刷新令牌换新令牌                                                               |
-| POST  | `/api/v1/auth/logout`             | 撤销该用户当前全部登录                                                           |
-| POST  | `/api/v1/auth/password`           | 修改密码。到期账号返回 403                                                       |
-| GET   | `/api/v1/account`                 | 当前账号。到期后仍返回 200                                                       |
-| GET   | `/api/v1/account/users/:id`       | 只查本租户用户，其他租户返回 404                                                 |
-| GET   | `/api/v1/pricing`                 | 价格表。写作报价按库里的单价计算                                                 |
-| GET   | `/api/v1/billing/quote`           | `count` 与 `knowledgeBase=1`。总额是篇数 ×（写作单价 + 知识库加价）              |
-| GET   | `/api/v1/billing/wallet`          | 当前租户点数、冻结和生效中的计费模式                                             |
-| GET   | `/api/v1/billing/ledger`          | 当前租户点数明细                                                                 |
-| GET   | `/api/v1/billing/quotas`          | 当前租户配额                                                                     |
-| POST  | `/api/v1/admin/billing/adjust`    | 管理员加点或扣点。商户访问返回 404                                               |
-| POST  | `/api/v1/admin/billing/mode`      | 管理员设置租户计费模式，`null` 表示继续继承全局                                  |
-| POST  | `/api/v1/queue/runs`              | 提交假任务。整单冻结，成功单元结算，失败或取消释放剩余冻结                       |
-| GET   | `/api/v1/queue/runs/:id`          | 查询本租户进度。其他租户返回 404                                                 |
-| POST  | `/api/v1/queue/runs/:id/pause`    | 暂停。不再领取新单元，进行中的单元做完当前这一篇                                 |
-| POST  | `/api/v1/queue/runs/:id/resume`   | 继续。重新投递驱动任务                                                           |
-| POST  | `/api/v1/queue/runs/:id/cancel`   | 终止。未产出的单元不再执行，并释放剩余冻结                                       |
-| GET   | `/api/v1/admin/queues`            | 管理员看队列计数。商户返回 404。响应里没有任务正文                               |
-| GET   | `/api/v1/admin/queues/board`      | 管理员的 bull-board。商户返回 404                                                |
-| GET   | `/api/v1/workbench/samples`       | 当前租户的列表示例。支持 `page`、`pageSize`、`sort`、`order`、`filter`、`export` |
-| POST  | `/api/v1/workbench/samples`       | 新增一条示例。不扣点                                                             |
-| PATCH | `/api/v1/workbench/samples/:id`   | 修改本租户的一条示例。其他租户返回 404                                           |
-| POST  | `/api/v1/workbench/samples/bulk`  | 批量删除、启用或停用。编号必须全部属于当前租户                                   |
-| GET   | `/api/v1/writing/categories`      | 当前租户的文章分类。文章数量和剩余量用 SQL 实时聚合                              |
-| POST  | `/api/v1/writing/categories`      | 添加分类。请求体只有 `name`（文章分类）                                          |
-| PATCH | `/api/v1/writing/categories/:id`  | 修改本租户分类名。其他租户返回 404                                               |
-| POST  | `/api/v1/writing/categories/bulk` | 删除所选分类。被写作任务或复刻任务占用时拒绝                                     |
-| GET   | `/api/v1/writing/articles`        | 按 `categoryId` 查看该分类下的文章。只读，不提供添加和导出                       |
+| 方法  | 路径                               | 说明                                                                             |
+| ----- | ---------------------------------- | -------------------------------------------------------------------------------- |
+| POST  | `/api/v1/auth/captcha`             | 获取验证码                                                                       |
+| POST  | `/api/v1/auth/login`               | 校验验证码和口令，签发访问令牌和刷新令牌                                         |
+| POST  | `/api/v1/auth/refresh`             | 用刷新令牌换新令牌                                                               |
+| POST  | `/api/v1/auth/logout`              | 撤销该用户当前全部登录                                                           |
+| POST  | `/api/v1/auth/password`            | 修改密码。到期账号返回 403                                                       |
+| GET   | `/api/v1/account`                  | 当前账号。到期后仍返回 200                                                       |
+| GET   | `/api/v1/account/users/:id`        | 只查本租户用户，其他租户返回 404                                                 |
+| GET   | `/api/v1/pricing`                  | 价格表。写作报价按库里的单价计算                                                 |
+| GET   | `/api/v1/billing/quote`            | `count` 与 `knowledgeBase=1`。总额是篇数 ×（写作单价 + 知识库加价）              |
+| GET   | `/api/v1/billing/wallet`           | 当前租户点数、冻结和生效中的计费模式                                             |
+| GET   | `/api/v1/billing/ledger`           | 当前租户点数明细                                                                 |
+| GET   | `/api/v1/billing/quotas`           | 当前租户配额                                                                     |
+| GET   | `/api/v1/me/points`                | 当前租户点数明细。可按项目、点数变动和时间筛选                                   |
+| GET   | `/api/v1/me/money`                 | 当前租户余额明细。字段是项目、金额、说明、消耗时间                               |
+| GET   | `/api/v1/me/rights`                | 账号权益。配额读 Quota 表，图片空间同时给出已用量和上限                          |
+| GET   | `/api/v1/me/verification`          | 实名资料。没有提交过时 data 为 null                                              |
+| POST  | `/api/v1/me/verification`          | 实名占位提交，状态只记为 SUBMITTED                                               |
+| GET   | `/api/v1/announcements`            | 已启用公告                                                                       |
+| GET   | `/api/v1/admin/tenants`            | 管理员租户列表。商户返回 404                                                     |
+| POST  | `/api/v1/admin/tenants`            | 管理员开户。初始点数大于 0 时走 adminAdjust                                      |
+| PATCH | `/api/v1/admin/tenants/:id`        | 修改名称、停用状态或有效期                                                       |
+| PUT   | `/api/v1/admin/tenants/:id/quotas` | 修改配额上限，不能低于已用量                                                     |
+| PATCH | `/api/v1/admin/pricing`            | 修改已有价格项                                                                   |
+| GET   | `/api/v1/admin/announcements`      | 管理员公告列表                                                                   |
+| POST  | `/api/v1/admin/announcements`      | 新增公告                                                                         |
+| GET   | `/api/v1/admin/templates`          | 系统模板（tenantId 为空）                                                        |
+| POST  | `/api/v1/admin/templates`          | 新增系统模板，正文需自写                                                         |
+| POST  | `/api/v1/admin/billing/adjust`     | 管理员加点或扣点。商户访问返回 404                                               |
+| POST  | `/api/v1/admin/billing/mode`       | 管理员设置租户计费模式，`null` 表示继续继承全局                                  |
+| POST  | `/api/v1/queue/runs`               | 提交假任务。整单冻结，成功单元结算，失败或取消释放剩余冻结                       |
+| GET   | `/api/v1/queue/runs/:id`           | 查询本租户进度。其他租户返回 404                                                 |
+| POST  | `/api/v1/queue/runs/:id/pause`     | 暂停。不再领取新单元，进行中的单元做完当前这一篇                                 |
+| POST  | `/api/v1/queue/runs/:id/resume`    | 继续。重新投递驱动任务                                                           |
+| POST  | `/api/v1/queue/runs/:id/cancel`    | 终止。未产出的单元不再执行，并释放剩余冻结                                       |
+| GET   | `/api/v1/admin/queues`             | 管理员看队列计数。商户返回 404。响应里没有任务正文                               |
+| GET   | `/api/v1/admin/queues/board`       | 管理员的 bull-board。商户返回 404                                                |
+| GET   | `/api/v1/workbench/samples`        | 当前租户的列表示例。支持 `page`、`pageSize`、`sort`、`order`、`filter`、`export` |
+| POST  | `/api/v1/workbench/samples`        | 新增一条示例。不扣点                                                             |
+| PATCH | `/api/v1/workbench/samples/:id`    | 修改本租户的一条示例。其他租户返回 404                                           |
+| POST  | `/api/v1/workbench/samples/bulk`   | 批量删除、启用或停用。编号必须全部属于当前租户                                   |
+| GET   | `/api/v1/writing/categories`       | 当前租户的文章分类。文章数量和剩余量用 SQL 实时聚合                              |
+| POST  | `/api/v1/writing/categories`       | 添加分类。请求体只有 `name`（文章分类）                                          |
+| PATCH | `/api/v1/writing/categories/:id`   | 修改本租户分类名。其他租户返回 404                                               |
+| POST  | `/api/v1/writing/categories/bulk`  | 删除所选分类。被写作任务或复刻任务占用时拒绝                                     |
+| GET   | `/api/v1/writing/articles`         | 按 `categoryId` 查看该分类下的文章。只读，不提供添加和导出                       |
 
 口令校验复用 `packages/db` 的 scrypt 格式，登录时用异步 scrypt。停用账号（`isActive=false`）不能登录。到期账号可以登录和读取，写接口返回 `403`，错误码 `40301`。未登录是 `401` / `40101`。用户名或密码错误、验证码错误是 `400` / `40001`，不区分用户是否存在。请求过多是 `429` / `42901`，文案同样不区分用户是否存在。
 
@@ -219,10 +234,10 @@ pnpm db:seed
 
 ## 当前范围
 
-- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider）、BullMQ 队列框架（#6）、多标签后台壳（#7）、通用列表、弹层、价格按钮和列表示例（#8），以及文章分类（#15）。
-- 未实现：写作任务流水线（#16）、写作任务表单（#17）、文章编辑与导出（#18）。文章列表目前只按分类下钻查看。健康检查不连数据库，也不调用外部 Provider。队列演练只写运行状态，不写文章，也不调用上游模型。
+- 已完成：monorepo、两个 Nest 入口、四个 package、本地 Compose、CI 的 lint / typecheck / test、一期 Prisma 模型、初始迁移和种子、登录 / 刷新 / 退出 / 修改密码、图形验证码、租户查询隔离、到期只读守卫、登录页、计费与配额（#4）、外部适配层（#5，假 Provider）、BullMQ 队列框架（#6）、多标签后台壳（#7）、通用列表、弹层、价格按钮和列表示例（#8）、个人中心和管理员后台（#9）、关键词与拓词（#10）、写作标题（#11），以及文章分类（#15）。
+- 未实现：图库、知识库、写作指令、写作任务流水线（#16）、写作任务表单（#17）、文章编辑与导出（#18）。文章列表目前只按分类下钻查看。健康检查不连数据库，也不调用外部 Provider。队列演练只写运行状态，不写文章，也不调用上游模型。
 - 没有 `tenantId` 的子表（知识库切片、写作子任务）不会被扩展自动过滤，调用方必须先确认父记录属于当前租户。系统模板可以读，不能被租户改掉。`WorkRun`、`WorkUnit`、`ActiveWork` 和 `CrudSample` 都有 `tenantId`，请求上下文会自动加上。
-- CI 不启动数据库和 Redis，所以迁移、种子、认证、计费、队列、列表示例和文章分类的集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证、计费、列表示例和文章分类测试。再设置 `GEOMIX_REDIS_INTEGRATION=1` 后才会连本机 Redis 跑队列测试。计费另建 `geomix_bill_*`，队列另建 `geomix_queue_*`，列表示例另建 `geomix_crud_*`，文章分类另建 `geomix_wcat_*`，都不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
+- CI 不启动数据库和 Redis，所以迁移、种子、认证、计费、队列、列表示例、个人中心和文章分类的集成测试要在本机跑。`pnpm test` 默认不连数据库；设置 `GEOMIX_DB_INTEGRATION=1` 后，`@geomix/db` 会执行迁移、重复种子和租户隔离测试，`@geomix/server` 会跑认证、计费、列表示例、个人中心和文章分类测试。再设置 `GEOMIX_REDIS_INTEGRATION=1` 后才会连本机 Redis 跑队列测试。计费另建 `geomix_bill_*`，队列另建 `geomix_queue_*`，列表示例另建 `geomix_crud_*`，个人中心另建 `geomix_acct_*`，文章分类另建 `geomix_wcat_*`，都不改种子演示钱包。种子集成测试会把演示钱包改成 42 点，所以不要把它指到还要继续使用的库。
 
 ## 后台壳
 
@@ -230,7 +245,7 @@ pnpm db:seed
 
 当前标签写在地址栏。标签栈和布局开关保存在 `localStorage` 的 `geomix.shell.v1`，刷新后恢复标签，不恢复草稿。右上角「布局」可以关闭多标签，之后每次只留当前页。布局开关目前只存在这台浏览器里，还没有写回 `User.uiPrefs`。
 
-issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。文章分类和按分类查看文章已经接上列表；其余业务列表页仍是占位，用来确认壳的切换和跳转。
+issue #7 已经点名的旧入口 `/user/zhiling` 会跳到 `/writing/prompts`。别的旧地址不会跳转。个人中心四页已经接上账本和配额；文章分类和按分类查看文章已经接上列表。管理员从顶栏「管理后台」进入 `/admin/tenants`、`/admin/pricing`、`/admin/announcements`、`/admin/templates`。商户打开这些地址会看到「没有这个页面」。其余业务列表页仍是占位。
 
 ## 通用列表
 

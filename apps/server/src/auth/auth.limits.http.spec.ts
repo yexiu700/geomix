@@ -1,10 +1,11 @@
 import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { AUTH_ERROR, RATE_LIMIT_MESSAGE } from '@geomix/shared';
 import { createApiApp } from '../common/create-api-app';
 import { CaptchaService } from './captcha.service';
+import { PrismaAuthStore } from './prisma-auth.store';
 
 type Envelope = { code: number; msg: string; data: { captchaId?: string; image?: string } | null };
 
@@ -31,6 +32,7 @@ describe('auth rate limits over http', () => {
 
   beforeAll(async () => {
     app = await createApiApp();
+    vi.spyOn(app.get(PrismaAuthStore), 'findUserByUsername').mockResolvedValue(null);
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     base = `http://127.0.0.1:${address.port}`;
@@ -38,6 +40,7 @@ describe('auth rate limits over http', () => {
 
   afterAll(async () => {
     await app.close();
+    vi.restoreAllMocks();
   });
 
   it('returns 429 for password failures and captcha bursts without trusting forwarding headers', async () => {

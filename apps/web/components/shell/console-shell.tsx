@@ -4,7 +4,9 @@ import { SITE_NAME } from '@geomix/shared';
 import { Button } from 'antd';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { httpAnnouncements } from '../../lib/account-client';
 import { changePassword, loadAccount, logoutSession, type AccountProfile } from '../../lib/api';
+import { SHELL_ANNOUNCEMENT } from '../../lib/shell-copy';
 import { safeConsoleHref } from '../../lib/route-map';
 import { useShellStore } from '../../lib/shell-store';
 import { clearSession, readAccessToken } from '../../lib/session';
@@ -38,6 +40,7 @@ export function ConsoleShell() {
   hrefRef.current = href;
   const state = useShellStore();
   const [account, setAccount] = useState<AccountProfile | null>(null);
+  const [announcement, setAnnouncement] = useState(SHELL_ANNOUNCEMENT);
   const [offline, setOffline] = useState(false);
   const [booting, setBooting] = useState(true);
   const persistEnabled = useRef(true);
@@ -84,6 +87,21 @@ export function ConsoleShell() {
       live = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    void httpAnnouncements(window.sessionStorage).then(
+      (items) => {
+        if (!live || items.length === 0) return;
+        setAnnouncement(items.join('    '));
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [account]);
 
   useEffect(() => {
     if (!state.hydrated || !account) return;
@@ -163,6 +181,7 @@ export function ConsoleShell() {
     <ShellFrame
       account={account}
       state={state}
+      announcement={announcement}
       onDispatch={onDispatch}
       onLogout={() => void onLogout()}
       onChangePassword={async (values) => {

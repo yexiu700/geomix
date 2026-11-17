@@ -1,10 +1,11 @@
 import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import { createApiApp } from '../common/create-api-app';
 import { CaptchaService } from './captcha.service';
+import { PrismaAuthStore } from './prisma-auth.store';
 
 type Envelope = { code: number; msg: string; data: unknown };
 
@@ -32,6 +33,7 @@ describe('auth http without a database', () => {
 
   beforeAll(async () => {
     app = await createApiApp();
+    vi.spyOn(app.get(PrismaAuthStore), 'findUserByUsername').mockResolvedValue(null);
     await app.listen(0);
     const address = app.getHttpServer().address() as AddressInfo;
     base = `http://127.0.0.1:${address.port}`;
@@ -39,6 +41,7 @@ describe('auth http without a database', () => {
 
   afterAll(async () => {
     await app.close();
+    vi.restoreAllMocks();
   });
 
   it('keeps health public and on the shadow billing default', async () => {
