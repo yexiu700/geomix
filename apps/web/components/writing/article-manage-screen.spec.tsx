@@ -343,7 +343,12 @@ describe('ArticleManageScreen (Issue #18)', () => {
     expect(vi.mocked(gw.list).mock.calls.length).toBe(initialListCallCount);
   });
 
-  it('defaults manual article status to NORMAL, shows red tip & live word count, and supports gallery cover replace/remove', async () => {
+  it('defaults manual article status to NORMAL and category/cover to 不选择, shows 抖音/小红书 1000-char tip + >1000 warning + plain-text copy, and supports gallery cover replace/remove (#75)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
     const gw = makeGateway();
 
     render(<ArticleManageScreen title="文章列表" tabId="tab_articles" gateway={gw} />);
@@ -357,23 +362,33 @@ describe('ArticleManageScreen (Issue #18)', () => {
     const dialog = await screen.findByRole('dialog', { name: '手动添加文章' });
     expect(dialog).toBeTruthy();
 
-    // Red formatting notice & word count
+    // Red formatting notice & word count (#75)
     expect(dialog.textContent).toContain('排版提示：');
+    expect(dialog.textContent).toContain('抖音、小红书类文字建议控制在1000字之内');
     expect(screen.getByLabelText('字数统计').textContent).toContain('0 字');
 
-    // Default status radio is NORMAL ('正常')
+    // Default status radio is NORMAL ('正常'), while category & cover group default to unselected ('不选择')
     const normalRadio = dialog.querySelector(
       'input[type="radio"][value="NORMAL"]',
     ) as HTMLInputElement;
     expect(normalRadio.checked).toBe(true);
 
-    // Auto-populated cover from gallery category previewAssets[0]
-    expect(dialog.textContent).toContain('/uploads/tenant_1/cover_auto.jpg');
+    const catSelect = screen.getByLabelText('归属分类') as HTMLSelectElement;
+    const mediaCatSelect = screen.getByLabelText('画像封面分组') as HTMLSelectElement;
+    expect(catSelect.value).toBe('');
+    expect(mediaCatSelect.value).toBe('');
+    expect(dialog.textContent).toContain('未设置封面');
 
-    // Pick second candidate cover from gallery
+    // Explicitly select category and gallery group -> loads candidate covers and picks first cover
+    fireEvent.change(catSelect, { target: { value: 'cat_laser_000000000001' } });
+    fireEvent.change(mediaCatSelect, { target: { value: 'gal_1' } });
+
     await waitFor(() => {
       expect(screen.getByLabelText('选择封面图 2')).toBeTruthy();
     });
+    expect(dialog.textContent).toContain('/uploads/tenant_1/cover_auto.jpg');
+
+    // Pick second candidate cover from gallery
     fireEvent.click(screen.getByLabelText('选择封面图 2'));
     expect(dialog.textContent).toContain('/uploads/tenant_1/cover_alt.jpg');
 
@@ -381,7 +396,13 @@ describe('ArticleManageScreen (Issue #18)', () => {
     fireEvent.click(findButton('移除封面'));
     expect(dialog.textContent).toContain('未设置封面');
 
-    // Fill title and rich content, check live word count update
+    // Entering >1000 plain-text chars triggers live >1000 warning
+    fireEvent.change(screen.getByLabelText('文章富文本内容'), {
+      target: { value: `<p>${'精'.repeat(1005)}</p>` },
+    });
+    expect(dialog.textContent).toContain('超过抖音、小红书建议的 1000 字上限');
+
+    // Fill title and rich content, check live word count update & plain-text copy without HTML tags
     fireEvent.change(screen.getByLabelText('文章标题'), {
       target: { value: '手动撰写的激光打标维护手册' },
     });
@@ -389,6 +410,16 @@ describe('ArticleManageScreen (Issue #18)', () => {
       target: { value: '<h2>每日点检</h2><p>开机前先检查冷水机水位与镜片洁净度。</p>' },
     });
     expect(screen.getByLabelText('字数统计').textContent).not.toContain('0 字');
+    expect(dialog.textContent).not.toContain('超过抖音、小红书建议的 1000 字上限');
+
+    fireEvent.click(findButton('复制纯文本'));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+    });
+    const copiedText = writeText.mock.calls[0]?.[0] as string;
+    expect(copiedText).toContain('每日点检');
+    expect(copiedText).toContain('开机前先检查冷水机水位与镜片洁净度。');
+    expect(copiedText).not.toContain('<h2>');
 
     fireEvent.click(findButton('保存文章'));
 

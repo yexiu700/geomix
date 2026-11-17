@@ -57,15 +57,19 @@ function StorageQuotaBanner({ storage }: { storage: MediaStorageSummary | null }
   );
 }
 
+const GALLERY_MUTATED_EVENT = 'geomix:gallery-mutated';
+
 export function GalleryCategoryScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   onDispatch,
   gateway: injectedGateway,
 }: {
   title: string;
   tabId: string;
+  active?: boolean;
   readOnly?: boolean;
   onDispatch: (action: ShellAction) => void;
   gateway?: GalleryGateway;
@@ -96,6 +100,7 @@ export function GalleryCategoryScreen({
 
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const wasActiveRef = useRef(active);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,6 +123,23 @@ export function GalleryCategoryScreen({
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const becameActive = !wasActiveRef.current && active;
+    wasActiveRef.current = active;
+    if (becameActive) {
+      void load();
+    }
+  }, [active, load]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onMutated = () => {
+      void load();
+    };
+    window.addEventListener(GALLERY_MUTATED_EVENT, onMutated);
+    return () => window.removeEventListener(GALLERY_MUTATED_EVENT, onMutated);
   }, [load]);
 
   function openCreate() {
@@ -510,6 +532,9 @@ export function GalleryAssetScreen({
       setPendingFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
       await load();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(GALLERY_MUTATED_EVENT, { detail: { categoryId } }));
+      }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : '上传图片失败');
     } finally {
@@ -525,6 +550,9 @@ export function GalleryAssetScreen({
       setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
       setPendingDeleteIds(null);
       await load();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(GALLERY_MUTATED_EVENT, { detail: { categoryId } }));
+      }
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : '删除图片失败');
       setPendingDeleteIds(null);

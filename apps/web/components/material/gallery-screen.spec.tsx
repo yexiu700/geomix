@@ -251,4 +251,134 @@ describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
     clickBtn('返回上一级');
     expect(dispatched).toContainEqual({ type: 'back', id: '/material/gallery/cat_1' });
   });
+
+  it('auto-refreshes category assetCount, 3 preview thumbnails, and storage quota after uploading in child tab and returning (#71)', async () => {
+    let uploaded = false;
+    const initialStorage = buildStorageSummary(0n, 100n * 1024n * 1024n);
+    const updatedStorage = buildStorageSummary(512n * 1024n, 100n * 1024n * 1024n);
+
+    const gateway = makeGateway({
+      listCategories: vi.fn(async () => ({
+        items: [
+          {
+            id: 'cat_empty',
+            name: '精密注塑车间实拍图库',
+            type: 1,
+            assetCount: uploaded ? 3 : 0,
+            previewAssets: uploaded
+              ? [1, 2, 3].map((idx) => ({
+                  id: `med_new_${idx}`,
+                  url: `/api/v1/media-assets/med_new_${idx}/file`,
+                  thumbUrl: `/api/v1/media-assets/med_new_${idx}/thumb`,
+                  width: 1200,
+                  height: 800,
+                }))
+              : [],
+            createdAt: '2026-11-17T04:00:00.000Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+        storage: uploaded ? updatedStorage : initialStorage,
+      })),
+      uploadAssets: vi.fn(async (_categoryId: string, files: File[]) => {
+        uploaded = true;
+        return {
+          items: files.map((_f, idx) => ({
+            asset: {
+              id: `med_new_${idx + 1}`,
+              categoryId: 'cat_empty',
+              categoryName: '精密注塑车间实拍图库',
+              origin: 'UPLOAD' as const,
+              objectKey: `tenants/t1/med_new_${idx + 1}.jpg`,
+              url: `/api/v1/media-assets/med_new_${idx + 1}/file`,
+              thumbUrl: `/api/v1/media-assets/med_new_${idx + 1}/thumb`,
+              width: 1200,
+              height: 800,
+              bytes: 170000,
+              mime: 'image/jpeg',
+              usedCount: 0,
+              createdAt: '2026-11-17T04:20:00.000Z',
+            },
+            warning: undefined,
+          })),
+          warnings: [],
+          storage: updatedStorage,
+        };
+      }),
+    });
+
+    const { rerender } = render(
+      <div>
+        <div hidden>
+          <GalleryCategoryScreen
+            title="企业画像图库"
+            tabId="/material/gallery"
+            active={false}
+            onDispatch={vi.fn()}
+            gateway={gateway}
+          />
+        </div>
+        <div>
+          <GalleryAssetScreen
+            title="企业画像图库 · cat_empty"
+            tabId="/material/gallery/cat_empty"
+            categoryId="cat_empty"
+            onDispatch={vi.fn()}
+            gateway={gateway}
+          />
+        </div>
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('精密注塑车间实拍图库')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('cat-thumb-med_new_1')).toBeNull();
+
+    // Upload 3 images in child tab
+    const addButtons = Array.from(document.querySelectorAll('button')).filter(
+      (b) => (b.textContent ?? '').replace(/\s+/g, '') === '添加',
+    );
+    fireEvent.click(addButtons[addButtons.length - 1]!);
+
+    const fileInput = document.querySelector('[aria-label="选择图片文件"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: {
+        files: [
+          new File(['1'], 'a.jpg', { type: 'image/jpeg' }),
+          new File(['2'], 'b.jpg', { type: 'image/jpeg' }),
+          new File(['3'], 'c.jpg', { type: 'image/jpeg' }),
+        ],
+      },
+    });
+    clickBtn('确定');
+
+    await waitFor(() => {
+      expect(gateway.uploadAssets).toHaveBeenCalledTimes(1);
+    });
+
+    // Simulate returning to parent tab (active false -> true, child tab closed) without manual 刷新
+    rerender(
+      <div>
+        <div>
+          <GalleryCategoryScreen
+            title="企业画像图库"
+            tabId="/material/gallery"
+            active={true}
+            onDispatch={vi.fn()}
+            gateway={gateway}
+          />
+        </div>
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cat-thumb-med_new_1')).toBeTruthy();
+      expect(screen.getByTestId('cat-thumb-med_new_2')).toBeTruthy();
+      expect(screen.getByTestId('cat-thumb-med_new_3')).toBeTruthy();
+      expect(screen.getByText(/已用 512 KB \/ 上限 100 MB/)).toBeTruthy();
+    });
+  });
 });

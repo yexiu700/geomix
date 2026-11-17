@@ -20,26 +20,20 @@ afterEach(() => {
   cleanup();
 });
 
-function findButton(labelOrText: string): HTMLButtonElement {
-  const byAria = document.querySelector(`button[aria-label="${labelOrText}"]`);
-  if (byAria instanceof HTMLButtonElement) return byAria;
+function queryButton(labelOrText: string): HTMLButtonElement | null {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  const visibleButtons = buttons.filter((btn) => !btn.closest('[hidden]'));
+  const pool = visibleButtons.length > 0 ? visibleButtons : buttons;
+  const byAria = pool.find((btn) => btn.getAttribute('aria-label') === labelOrText);
+  if (byAria) return byAria;
   const normalized = labelOrText.replace(/\s+/g, '');
-  const found = Array.from(document.querySelectorAll('button')).find(
-    (btn) => (btn.textContent ?? '').replace(/\s+/g, '') === normalized,
-  );
-  if (!found) throw new Error(`Missing button: ${labelOrText}`);
-  return found;
+  return pool.find((btn) => (btn.textContent ?? '').replace(/\s+/g, '') === normalized) ?? null;
 }
 
-function queryButton(labelOrText: string): HTMLButtonElement | null {
-  const byAria = document.querySelector(`button[aria-label="${labelOrText}"]`);
-  if (byAria instanceof HTMLButtonElement) return byAria;
-  const normalized = labelOrText.replace(/\s+/g, '');
-  return (
-    Array.from(document.querySelectorAll('button')).find(
-      (btn) => (btn.textContent ?? '').replace(/\s+/g, '') === normalized,
-    ) ?? null
-  );
+function findButton(labelOrText: string): HTMLButtonElement {
+  const found = queryButton(labelOrText);
+  if (!found) throw new Error(`Missing button: ${labelOrText}`);
+  return found;
 }
 
 function category(name = '测试分类'): ArticleCategoryRecord {
@@ -106,12 +100,14 @@ describe('article categories', () => {
       />,
     );
     expect(await screen.findByText('测试分类')).toBeTruthy();
+    expect(screen.getByText('序号')).toBeTruthy();
     expect(screen.getByText('分组名')).toBeTruthy();
     expect(screen.getByText('文章数量')).toBeTruthy();
     expect(screen.getByText('文章剩余量')).toBeTruthy();
     expect(screen.getAllByText('查看文章').length).toBeGreaterThan(0);
     expect(screen.getByText('创建时间')).toBeTruthy();
     expect(screen.getByText('操作')).toBeTruthy();
+    expect(findButton('返回上一级')).toBeTruthy();
     const row = screen.getByText('测试分类').closest('tr');
     expect(row?.textContent).toContain('2');
     expect(row?.textContent).toContain('1');
@@ -136,44 +132,57 @@ describe('article categories', () => {
     });
   });
 
-  it('blocks writes for a read-only account and deletes the selection', async () => {
+  it('blocks writes for a read-only account and supports both toolbar and row-level delete (#73)', async () => {
+    const dispatched: ShellAction[] = [];
     const client = categoryGateway();
     const view = render(
       <CategoryScreen
         title="文章分类"
         tabId="/writing/categories"
         gateway={client}
-        onDispatch={() => undefined}
+        onDispatch={(act) => dispatched.push(act)}
       />,
     );
     expect(await screen.findByText('测试分类')).toBeTruthy();
+    fireEvent.click(findButton('返回上一级'));
+    expect(dispatched).toEqual([{ type: 'back', id: '/writing/categories' }]);
+
     view.rerender(
       <CategoryScreen
         title="文章分类"
         tabId="/writing/categories"
         readOnly
         gateway={client}
-        onDispatch={() => undefined}
+        onDispatch={(act) => dispatched.push(act)}
       />,
     );
     expect(findButton('添加')).toHaveProperty('disabled', true);
     expect(findButton('编辑 测试分类')).toHaveProperty('disabled', true);
+    expect(findButton('删除 测试分类')).toHaveProperty('disabled', true);
 
     view.rerender(
       <CategoryScreen
         title="文章分类"
         tabId="/writing/categories"
         gateway={client}
-        onDispatch={() => undefined}
+        onDispatch={(act) => dispatched.push(act)}
       />,
     );
+    // Row-level delete confirmation (#73)
+    fireEvent.click(findButton('删除 测试分类'));
+    fireEvent.click(findButton('确定'));
+    await waitFor(() => {
+      expect(client.remove).toHaveBeenCalledWith([CATEGORY]);
+    });
+
+    // Toolbar batch delete confirmation
     const box = document.querySelector('input[type="checkbox"]');
     if (!(box instanceof HTMLInputElement)) throw new Error('missing selection');
     fireEvent.click(box);
     fireEvent.click(findButton('删除'));
     fireEvent.click(findButton('确定'));
     await waitFor(() => {
-      expect(client.remove).toHaveBeenCalledWith([CATEGORY]);
+      expect(client.remove).toHaveBeenCalledTimes(2);
     });
   });
 

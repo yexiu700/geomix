@@ -6,6 +6,7 @@ import {
   AUTH_ERROR,
   BILLING_ERROR,
   LLM_COST_AUDIT_ACTION,
+  PRICING_DEFAULTS,
   QUOTA_DEFAULTS,
   aggregateLlmDailyReport,
   escapeLikeLiteral,
@@ -244,14 +245,39 @@ export class AdminOfficeService {
 
   async listPrices() {
     const rows = await this.prisma.base.pricingItem.findMany({ orderBy: { action: 'asc' } });
-    return {
-      items: rows.map((row) => ({
+    const existingActions = new Set(rows.map((row) => row.action));
+    const missingDefaults = PRICING_DEFAULTS.filter((item) => !existingActions.has(item.action));
+    if (
+      missingDefaults.length > 0 &&
+      typeof this.prisma.base.pricingItem.createMany === 'function'
+    ) {
+      await this.prisma.base.pricingItem
+        .createMany({
+          data: missingDefaults.map((item) => ({
+            action: item.action,
+            unitPoints: item.unitPoints,
+            enabled: true,
+          })),
+          skipDuplicates: true,
+        })
+        .catch(() => undefined);
+    }
+    const nowIso = new Date().toISOString();
+    const items = [
+      ...rows.map((row) => ({
         action: row.action,
         unitPoints: row.unitPoints,
         enabled: row.enabled,
         updatedAt: row.updatedAt.toISOString(),
       })),
-    };
+      ...missingDefaults.map((item) => ({
+        action: item.action,
+        unitPoints: item.unitPoints,
+        enabled: true,
+        updatedAt: nowIso,
+      })),
+    ].sort((a, b) => a.action.localeCompare(b.action));
+    return { items };
   }
 
   async updatePrice(actor: Actor, input: PricingUpdateInput, idempotencyKey?: string) {
@@ -266,12 +292,24 @@ export class AdminOfficeService {
     const current = await this.prisma.base.pricingItem.findUnique({
       where: { action: input.action },
     });
-    if (!current) throw notFound('价格项不存在');
+    const fallbackDefault = PRICING_DEFAULTS.find((item) => item.action === input.action);
+    if (!current && !fallbackDefault) throw notFound('价格项不存在');
+    const priorValues = current
+      ? { unitPoints: current.unitPoints, enabled: current.enabled }
+      : { unitPoints: fallbackDefault!.unitPoints, enabled: true };
     await this.prisma.base.$transaction(async (tx) => {
-      await tx.pricingItem.update({
-        where: { action: input.action },
-        data: { unitPoints: input.unitPoints, enabled: input.enabled },
-      });
+      if (current) {
+        await tx.pricingItem.update({
+          where: { action: input.action },
+          data: { unitPoints: input.unitPoints, enabled: input.enabled },
+        });
+      } else {
+        await tx.pricingItem.upsert({
+          where: { action: input.action },
+          create: { action: input.action, unitPoints: input.unitPoints, enabled: input.enabled },
+          update: { unitPoints: input.unitPoints, enabled: input.enabled },
+        });
+      }
       await tx.auditLog.create({
         data: {
           userId: actor.userId,
@@ -280,7 +318,7 @@ export class AdminOfficeService {
             idempotencyKey: idempotencyKey ?? null,
             tenantId: input.action,
             action: input.action,
-            from: { unitPoints: current.unitPoints, enabled: current.enabled },
+            from: priorValues,
             to: { unitPoints: input.unitPoints, enabled: input.enabled },
           },
         },

@@ -95,12 +95,12 @@ function defaultCreateDraft(
   const matchedKw =
     preferredKeywordId && options?.keywords.some((kw) => kw.id === preferredKeywordId)
       ? preferredKeywordId
-      : (options?.keywords[0]?.id ?? '');
+      : '';
   return {
     name: '',
     categoryId: '',
     keywordId: matchedKw,
-    mediaCategoryId: options?.mediaCategories[0]?.id ?? '',
+    mediaCategoryId: '',
     imageCount: 1,
     kbId: '',
     contentTplId: '',
@@ -890,7 +890,7 @@ export function AiTaskScreen({
                     )
                   }
                 >
-                  <option value="">请选择蒸馏训练词</option>
+                  <option value="">不选择</option>
                   {(formOptions?.keywords ?? []).map((kw) => (
                     <option key={kw.id} value={kw.id}>
                       {kw.main}（{kw.questionCount} 条问题）
@@ -917,7 +917,7 @@ export function AiTaskScreen({
                     )
                   }
                 >
-                  <option value="">请选择画像图库分类</option>
+                  <option value="">不选择</option>
                   {(formOptions?.mediaCategories ?? []).map((gal) => (
                     <option key={gal.id} value={gal.id}>
                       {gal.name}（{gal.assetCount} 张图片）
