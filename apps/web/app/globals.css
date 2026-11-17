@@ -460,19 +460,77 @@ body {
 .gm-content,
 .gm-page {
   min-width: 0;
+  max-width: 100%;
+}
+
+.gm-page,
+.ant-table-wrapper .ant-table-content {
+  overflow-x: auto;
+}
+
+.gm-sider-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 34;
+  background: rgba(16, 35, 58, 0.35);
 }
 
 @media (max-width: 768px) {
+  .ant-layout-sider {
+    position: fixed !important;
+    inset: 0 auto 0 0;
+    z-index: 35;
+    height: 100vh;
+    padding-top: 104px;
+    box-sizing: border-box;
+    overflow-y: auto;
+  }
+
   .ant-layout-header.gm-header {
+    position: relative;
+    z-index: 36;
     flex-wrap: wrap;
     height: auto;
     min-height: 56px;
     padding: 8px 12px;
-    gap: 8px;
+    gap: 6px 8px;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .gm-marquee {
-    display: none;
+    order: 10;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .gm-marquee-track {
+    display: block;
+    max-width: 100%;
+    padding-left: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+  }
+
+  .gm-expiry {
+    padding: 2px 8px;
+    font-size: 12px;
+    max-width: 100%;
+  }
+
+  .gm-mode,
+  .gm-admin-link {
+    font-size: 12px;
+  }
+
+  .ant-layout-header.gm-header .ant-btn {
+    padding-inline: 8px;
+    font-size: 13px;
+    max-width: 100%;
   }
 
   .gm-content {

@@ -2,7 +2,7 @@
 
 import { SITE_NAME } from '@geomix/shared';
 import { Alert, Button, Dropdown, Layout } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PasswordForm } from '../password-form';
 import { SHELL_ANNOUNCEMENT, displayName, formatExpiry } from '../../lib/shell-copy';
 import type { AccountProfile } from '../../lib/api';
@@ -13,6 +13,7 @@ import { SideMenu } from './side-menu';
 import { TabBar } from './tab-bar';
 
 const { Header, Sider, Content } = Layout;
+const MOBILE_BREAKPOINT = 768;
 
 export function ShellFrame({
   account,
@@ -34,6 +35,24 @@ export function ShellFrame({
 }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
+  );
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const syncViewport = () => {
+      const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setMobileMenuOpen(false);
+      }
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    return () => window.removeEventListener('resize', syncViewport);
+  }, []);
+
   const active = state.tabs.find((tab) => tab.id === state.activeId) ?? state.tabs[0];
   const panes = state.prefs.multiTab
     ? state.tabs
@@ -41,22 +60,30 @@ export function ShellFrame({
   const name = displayName(account);
   const aiImageEnabled = account.features?.aiImage !== false;
   const visibilityEnabled = account.features?.visibility !== false;
+  const siderCollapsed = isMobile ? !mobileMenuOpen : state.prefs.menuCollapsed;
+  const menuToggleLabel = siderCollapsed ? '展开菜单' : '收起菜单';
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider
-        width={248}
-        collapsed={state.prefs.menuCollapsed}
-        collapsedWidth={0}
-        trigger={null}
-        theme="dark"
-      >
+      {isMobile && mobileMenuOpen ? (
+        <div
+          className="gm-sider-mask"
+          aria-hidden="true"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      ) : null}
+      <Sider width={248} collapsed={siderCollapsed} collapsedWidth={0} trigger={null} theme="dark">
         <SideMenu
           activeHref={active?.href ?? '/dashboard'}
           prefs={state.prefs}
           aiImageEnabled={aiImageEnabled}
           visibilityEnabled={visibilityEnabled}
-          onDispatch={onDispatch}
+          onDispatch={(action) => {
+            if (isMobile && action.type === 'open') {
+              setMobileMenuOpen(false);
+            }
+            onDispatch(action);
+          }}
         />
       </Sider>
       <Layout>
@@ -83,15 +110,19 @@ export function ShellFrame({
             布局
           </Button>
           <Button
-            aria-label={state.prefs.menuCollapsed ? '展开菜单' : '收起菜单'}
-            onClick={() =>
+            aria-label={menuToggleLabel}
+            onClick={() => {
+              if (isMobile) {
+                setMobileMenuOpen((open) => !open);
+                return;
+              }
               onDispatch({
                 type: 'prefs',
                 patch: { menuCollapsed: !state.prefs.menuCollapsed },
-              })
-            }
+              });
+            }}
           >
-            {state.prefs.menuCollapsed ? '展开菜单' : '收起菜单'}
+            {menuToggleLabel}
           </Button>
           <Dropdown
             menu={{
