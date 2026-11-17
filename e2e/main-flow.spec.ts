@@ -436,7 +436,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(pane.locator('.gm-right-card[aria-label="主关键词"]')).toContainText(
       /[1-9]\d* \/ 100/,
     );
-    await expect(pane.locator('.gm-right-card[aria-label="可用点数"]')).toContainText('1000');
+    await expect(pane.locator('.gm-right-card[aria-label="点数"]')).toContainText('1000');
     await expect(pane.locator('.gm-right-card[aria-label="DeepSeek"]')).toBeVisible();
     await expect(pane.locator('.gm-right-card[aria-label="豆包"]')).toBeVisible();
     await saveGeoMixScreenshot(page, '10-ledger-and-rights.png');
