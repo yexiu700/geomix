@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,6 +50,24 @@ const args = process.argv.slice(2);
 if (args.length === 0) {
   console.error('usage: node scripts/prisma-cli.mjs <prisma args...>');
   process.exit(1);
+}
+
+if (args.length === 1 && args[0] === 'generate') {
+  try {
+    const req = createRequire(resolve(packageRoot, 'package.json'));
+    const clientEntry = req.resolve('@prisma/client');
+    const generatedDefault = resolve(dirname(clientEntry), '../../.prisma/client/default.js');
+    const schemaPath = resolve(packageRoot, 'prisma/schema.prisma');
+    if (
+      existsSync(generatedDefault) &&
+      existsSync(schemaPath) &&
+      statSync(generatedDefault).mtimeMs >= statSync(schemaPath).mtimeMs
+    ) {
+      process.exit(0);
+    }
+  } catch {
+    // Fall through to full prisma generate.
+  }
 }
 
 const bin = resolve(packageRoot, 'node_modules/.bin/prisma');
