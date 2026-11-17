@@ -2,11 +2,13 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
 import { readReconcileConfig } from '@geomix/shared';
 import { Worker } from 'bullmq';
+import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
 import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
@@ -29,6 +31,7 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Inject(WorkDriver) private readonly driver: WorkDriver,
     @Inject(MaintenanceRunner) private readonly maintenance: MaintenanceRunner,
     @Inject(WorkerRuntimeService) private readonly runtime: WorkerRuntimeService,
+    @Optional() @Inject(KB_INDEX_HANDLER) private readonly kbIndexer?: KbIndexHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -47,6 +50,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       const worker = new Worker(
         name,
         async (job) => {
+          if (name === 'kb-index' && job.name === 'kb-index') {
+            const kbData = readKbPayload(job.data);
+            if (kbData && this.kbIndexer) {
+              await this.kbIndexer.process(kbData);
+            }
+            return;
+          }
           const data = readPayload(job.data);
           if (!data) return;
           await this.driver.handle(data);
@@ -129,6 +139,16 @@ function readPayload(data: unknown): { tenantId: string; runId: string } | null 
   if (!ID.test(tenantId) || !ID.test(runId)) return null;
   if (tenantId === 'system' || runId === 'system') return null;
   return { tenantId, runId };
+}
+
+function readKbPayload(data: unknown): { tenantId: string; kbId: string } | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const kbId = (data as { kbId?: unknown }).kbId;
+  if (typeof tenantId !== 'string' || typeof kbId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(kbId)) return null;
+  if (tenantId === 'system' || kbId === 'system') return null;
+  return { tenantId, kbId };
 }
 
 function readKind(name: string, data: unknown): string {

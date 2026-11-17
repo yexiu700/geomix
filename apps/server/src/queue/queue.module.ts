@@ -1,6 +1,8 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
+import { AdaptersModule } from '../infra/adapters.module';
+import { KB_INDEX_HANDLER, KnowledgeIndexRunner } from '../material/knowledge-index.runner';
 import { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { BullBoardMount } from './bull-board.mount';
 import { JOB_ENQUEUER } from './job-enqueuer';
@@ -15,6 +17,7 @@ import { WorkDriver } from './work-driver';
 export class QueueModule {
   static forApi(): DynamicModule {
     return {
+      global: true,
       module: QueueModule,
       imports: [BillingModule, AuthModule],
       controllers: [QueueController, QueueAdminController],
@@ -25,13 +28,14 @@ export class QueueModule {
         WorkDriver,
         BullBoardMount,
       ],
+      exports: [QueueProducer, JOB_ENQUEUER, WorkDriver, StepGate],
     };
   }
 
   static forWorker(): DynamicModule {
     return {
       module: QueueModule,
-      imports: [BillingModule],
+      imports: [BillingModule, AdaptersModule],
       providers: [
         StepGate,
         QueueProducer,
@@ -39,9 +43,18 @@ export class QueueModule {
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
+        KnowledgeIndexRunner,
+        { provide: KB_INDEX_HANDLER, useExisting: KnowledgeIndexRunner },
         QueueRuntime,
       ],
-      exports: [WorkerRuntimeService, WorkDriver, StepGate, QueueProducer, QueueRuntime],
+      exports: [
+        WorkerRuntimeService,
+        WorkDriver,
+        StepGate,
+        QueueProducer,
+        KnowledgeIndexRunner,
+        QueueRuntime,
+      ],
     };
   }
 }

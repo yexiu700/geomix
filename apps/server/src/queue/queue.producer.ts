@@ -60,6 +60,21 @@ export class QueueProducer implements JobEnqueuer, OnModuleDestroy {
     );
   }
 
+  async enqueueKbIndex(job: { tenantId: string; kbId: string }): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('kb-index');
+    await queue.add(
+      'kb-index',
+      { tenantId: job.tenantId, kbId: job.kbId },
+      {
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: { count: 200 },
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
   async counts(): Promise<JobCounts[]> {
     await this.connect();
     const rows: JobCounts[] = [];

@@ -8,6 +8,7 @@ import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
 import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
 import { KeywordScreen } from '../material/keyword-screen';
+import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
 import { ArticleListScreen } from '../writing/article-list-screen';
 import { CategoryScreen } from '../writing/category-screen';
@@ -106,6 +107,14 @@ export function ModuleScreen({
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/material/knowledge') {
+    return (
+      <div>
+        <KnowledgeScreen title={tab.title} readOnly={readOnly} />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
       </div>
     );

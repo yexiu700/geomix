@@ -56,6 +56,10 @@
     "./gallery": {
       "types": "./dist/gallery.d.ts",
       "default": "./dist/gallery.js"
+    },
+    "./knowledge": {
+      "types": "./dist/knowledge.d.ts",
+      "default": "./dist/knowledge.js"
     }
   },
   "scripts": {
