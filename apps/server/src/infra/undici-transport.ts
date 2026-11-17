@@ -11,16 +11,17 @@ export function createUndiciTransport(): HttpTransport {
   return async (request) => {
     const pinned = request.pinned[0];
     if (!pinned) throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'unpinned');
+    const timeoutMs = Math.max(1_000, request.timeoutMs ?? 60_000);
     const agent = new Agent({
       connect: {
-        timeout: 10_000,
+        timeout: Math.min(10_000, timeoutMs),
         servername: isIP(request.url.hostname.replace(/^\[|\]$/g, ''))
           ? undefined
           : request.url.hostname,
         lookup: (_hostname, options, callback) => pinLookup(pinned, options, callback),
       },
-      headersTimeout: 60_000,
-      bodyTimeout: 60_000,
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
     });
     try {
       const response = await undiciFetch(request.url, {

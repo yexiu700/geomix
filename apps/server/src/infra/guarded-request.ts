@@ -21,6 +21,7 @@ export type TransportRequest = {
   pinned: ResolvedAddress[];
   signal: AbortSignal;
   maxBytes: number;
+  timeoutMs?: number;
 };
 
 export type TransportResponse = {
@@ -85,7 +86,9 @@ export async function requestOnce(input: {
   }
   const pinned = await resolvePinned(url, input.resolver);
   if (input.signal?.aborted) {
-    throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+    throw isTimeoutReason(input.signal.reason)
+      ? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout')
+      : new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
   }
   const headers = publicHeaders(input.headers);
   const signal = combineSignal(input.signal, input.timeoutMs);
@@ -99,6 +102,7 @@ export async function requestOnce(input: {
       pinned,
       signal,
       maxBytes: input.maxBytes,
+      timeoutMs: input.timeoutMs,
     });
   } catch (error) {
     throw normalizeTransportError(error, signal, input.signal);
@@ -173,9 +177,10 @@ function normalizeTransportError(
   userSignal: AbortSignal | undefined,
 ): ProviderError {
   if (error instanceof ProviderError) return error;
-  if (userSignal?.aborted)
+  if (userSignal?.aborted && !isTimeoutReason(userSignal.reason)) {
     return new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
-  if (signal.aborted || isTimeoutReason(signal.reason)) {
+  }
+  if (signal.aborted || isTimeoutReason(signal.reason) || isTimeoutReason(userSignal?.reason)) {
     return new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
   }
   return new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'transport');

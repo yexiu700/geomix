@@ -77,4 +77,18 @@ describe('production deployment & auto-merge CD configuration (#63)', () => {
       'cache-to: type=gha,mode=max,scope=server,ignore-error=true',
     ]);
   });
+
+  it('bounds production LLM_TIMEOUT_MS to 25s and sets fast QUEUE_RECOVER_MS on worker (#79)', () => {
+    const compose = readFileSync(resolve(repoRoot, 'docker-compose.prod.yml'), 'utf8');
+    const apiSection = compose.slice(compose.indexOf('\n  api:'), compose.indexOf('\n  worker:'));
+    const workerSection = compose.slice(
+      compose.indexOf('\n  worker:'),
+      compose.indexOf('\n  web:'),
+    );
+
+    expect(apiSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-25000}');
+    expect(workerSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-25000}');
+    expect(workerSection).toContain('QUEUE_RECOVER_MS: ${QUEUE_RECOVER_MS:-15000}');
+    expect(compose).not.toContain('90000');
+  });
 });
