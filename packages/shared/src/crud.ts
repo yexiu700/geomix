@@ -73,7 +73,7 @@ export function escapeLikeLiteral(value: string): string {
 }
 
 export function priceUnit(action: string): string {
-  if (action === 'distill') return '次';
+  if (action === 'distill' || action === 'visibility_check') return '次';
   if (action === 'image_gen') return '张';
   return '篇';
 }

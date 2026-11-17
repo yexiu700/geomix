@@ -50,6 +50,7 @@ describe('queue rules', () => {
   it('caps writing tasks at two units per tenant', () => {
     expect(QUEUE_TENANT_LIMIT['write-article']).toBe(2);
     expect(QUEUE_TENANT_LIMIT['rewrite-batch']).toBe(1);
+    expect(QUEUE_TENANT_LIMIT['visibility-check']).toBe(2);
   });
 
   it('rejects extra fields and reads local defaults', () => {
@@ -60,6 +61,10 @@ describe('queue rules', () => {
     expect(config.redisUrl).toBe('redis://localhost:6379');
     expect(config.unitAttempts).toBe(3);
     expect(config.concurrency['write-article']).toBe(4);
+    expect(config.concurrency['visibility-check']).toBe(2);
+    expect(
+      readQueueConfig({ QUEUE_VISIBILITY_CONCURRENCY: '6' }).concurrency['visibility-check'],
+    ).toBe(6);
     expect(config.concurrency.maintenance).toBe(1);
   });
 

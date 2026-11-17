@@ -3,6 +3,8 @@ import {
   articleQuotaEffect,
   countsTowardAiWrite,
   evaluateLedger,
+  isChargeAction,
+  isReservationRefType,
   ledgerTitle,
   quoteAiWrite,
   quotaReleasePolicy,
@@ -12,6 +14,12 @@ import {
 } from './billing';
 
 describe('billing rules', () => {
+  it('registers visibility_run reservation refType and visibility_check charge action', () => {
+    expect(isReservationRefType('visibility_run')).toBe(true);
+    expect(isChargeAction('visibility_check')).toBe(true);
+    expect(ledgerTitle('AI可见性监测-核心词巡检', true)).toBe('AI可见性监测-核心词巡检（免费期）');
+  });
+
   it('inherits the global mode when the tenant override is null', () => {
     expect(resolveTenantBillingMode(null, 'SHADOW')).toEqual({
       mode: 'SHADOW',

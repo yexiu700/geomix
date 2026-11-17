@@ -24,6 +24,7 @@ export const RESERVATION_REF_TYPES = [
   'image_job',
   'distill',
   'rewrite_single',
+  'visibility_run',
 ] as const;
 export type ReservationRefType = (typeof RESERVATION_REF_TYPES)[number];
 
@@ -34,6 +35,7 @@ export const CHARGE_ACTIONS = [
   'rewrite_single',
   'rewrite_batch',
   'image_gen',
+  'visibility_check',
 ] as const;
 export type ChargeAction = (typeof CHARGE_ACTIONS)[number];
 

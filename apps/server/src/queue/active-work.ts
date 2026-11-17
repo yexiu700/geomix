@@ -80,5 +80,29 @@ export async function hasLiveActiveWork(
     }
   }
 
+  if (ref.refType === 'visibility_run') {
+    const run = await prisma.base.visibilityRun.findFirst({
+      where: { id: ref.refId, tenantId: ref.tenantId },
+      select: {
+        status: true,
+        updatedAt: true,
+        createdAt: true,
+        observations: {
+          where: { status: { in: ['RUNNING', 'SUCCESS', 'FAILED'] } },
+          orderBy: { checkedAt: 'desc' },
+          take: 1,
+          select: { checkedAt: true, createdAt: true },
+        },
+      },
+    });
+    if (!run) return false;
+    if (run.status === 'QUEUED' || run.status === 'PAUSED') return true;
+    if (run.status === 'RUNNING') {
+      const latestObs = run.observations[0];
+      const beatAt = latestObs?.checkedAt ?? run.updatedAt ?? latestObs?.createdAt ?? run.createdAt;
+      return now.getTime() - beatAt.getTime() <= ttlMs;
+    }
+  }
+
   return false;
 }

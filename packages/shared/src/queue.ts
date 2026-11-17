@@ -12,6 +12,7 @@ export const QUEUE_NAMES = [
   'rewrite-batch',
   'kb-index',
   'image-gen',
+  'visibility-check',
   'maintenance',
 ] as const;
 
@@ -30,6 +31,7 @@ export const QUEUE_TENANT_LIMIT: Record<QueueName, number> = {
   'rewrite-batch': 1,
   'kb-index': 2,
   'image-gen': 2,
+  'visibility-check': 2,
   maintenance: 1,
 };
 
@@ -192,6 +194,13 @@ export function readQueueConfig(
       'rewrite-batch': integerEnv(env.QUEUE_BATCH_CONCURRENCY, 2, 'QUEUE_BATCH_CONCURRENCY', 1, 32),
       'kb-index': integerEnv(env.QUEUE_KB_CONCURRENCY, 2, 'QUEUE_KB_CONCURRENCY', 1, 32),
       'image-gen': integerEnv(env.QUEUE_IMAGE_CONCURRENCY, 2, 'QUEUE_IMAGE_CONCURRENCY', 1, 32),
+      'visibility-check': integerEnv(
+        env.QUEUE_VISIBILITY_CONCURRENCY,
+        2,
+        'QUEUE_VISIBILITY_CONCURRENCY',
+        1,
+        32,
+      ),
       maintenance: 1,
     },
   };

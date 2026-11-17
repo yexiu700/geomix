@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AUTH_ERROR,
+  MODEL_INCLUSION_CARDS,
   buildRightsCards,
   emptyModelInclusions,
   escapeLikeLiteral,
@@ -11,6 +12,7 @@ import {
   parseEnv,
   pointLedgerPhrase,
   resolveTenantBillingMode,
+  type ModelInclusionKey,
   type MoneyListQuery,
   type PointListQuery,
   type VerificationInput,
@@ -112,10 +114,13 @@ export class MeService {
     if (!tenant) throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '账号不存在');
     const wallet = await this.prisma.base.wallet.findUnique({ where: { tenantId } });
     if (!wallet) throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '钱包不存在');
-    const quotas = await this.prisma.base.quota.findMany({ where: { tenantId } });
-    const included = await this.prisma.base.question.count({
-      where: { tenantId, included: true },
-    });
+    const [quotas, included, models] = await Promise.all([
+      this.prisma.base.quota.findMany({ where: { tenantId } }),
+      this.prisma.base.question.count({
+        where: { tenantId, included: true },
+      }),
+      this.computeModelInclusions(tenantId),
+    ]);
     const resolved = resolveTenantBillingMode(tenant.billingMode, parseEnv().BILLING_MODE);
     const readOnly = !tenant.isActive || tenant.expiresAt.getTime() <= Date.now();
     return {
@@ -139,8 +144,67 @@ export class MeService {
         points: wallet.points,
         money: wallet.money.toString(),
       }),
-      models: emptyModelInclusions(),
+      models,
     };
+  }
+
+  private async computeModelInclusions(
+    tenantId: string,
+  ): Promise<Array<{ key: ModelInclusionKey; label: string; count: number }>> {
+    const delegate = (
+      this.prisma.base as unknown as {
+        visibilityObservation?: {
+          findMany?: (args: {
+            where: {
+              tenantId: string;
+              status: 'SUCCESS';
+              brandMentioned: true;
+              engine: { in: string[] };
+            };
+            select: { engine: true; questionId: true; promptText: true };
+          }) => Promise<Array<{ engine: string; questionId: string | null; promptText: string }>>;
+        };
+      }
+    ).visibilityObservation;
+
+    if (!delegate?.findMany) {
+      return emptyModelInclusions();
+    }
+
+    const engineKeys = MODEL_INCLUSION_CARDS.map((card) => card.key);
+    const rows = await delegate.findMany({
+      where: {
+        tenantId,
+        status: 'SUCCESS',
+        brandMentioned: true,
+        engine: { in: engineKeys },
+      },
+      select: {
+        engine: true,
+        questionId: true,
+        promptText: true,
+      },
+    });
+
+    const dedupedByEngine = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const engineKey = row.engine.trim().toLowerCase();
+      const questionKey = row.questionId
+        ? `q:${row.questionId}`
+        : `p:${row.promptText.replace(/\s+/g, ' ').trim().toLowerCase()}`;
+      let set = dedupedByEngine.get(engineKey);
+      if (!set) {
+        set = new Set<string>();
+        dedupedByEngine.set(engineKey, set);
+      }
+      set.add(questionKey);
+    }
+
+    return MODEL_INCLUSION_CARDS.map((card) => ({
+      key: card.key,
+      label: card.label,
+      count: dedupedByEngine.get(card.key)?.size ?? 0,
+    }));
   }
 
   async verification(tenantId: string) {

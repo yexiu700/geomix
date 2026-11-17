@@ -152,6 +152,22 @@ export class BillingService {
     }));
   }
 
+  async unitPrice(action: ChargeAction): Promise<number> {
+    if (!isChargeAction(action)) throw badRequest('计费动作不正确');
+    const def = PRICING_DEFAULTS.find((item) => item.action === action);
+    const label = def?.label ?? action;
+    const row = await this.prisma.base.pricingItem.findUnique({ where: { action } });
+    if (row) {
+      if (!row.enabled) throw badRequest(`${label}价格未启用`);
+      if (!isPositivePoints(row.unitPoints)) throw badRequest(`${label}单价配置不正确`);
+      return row.unitPoints;
+    }
+    if (def && isPositivePoints(def.unitPoints)) {
+      return def.unitPoints;
+    }
+    throw badRequest(`${label}价格未配置`);
+  }
+
   async wallet(tenantId: string): Promise<{
     points: number;
     pointsReserved: number;

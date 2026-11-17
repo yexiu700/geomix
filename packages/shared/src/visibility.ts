@@ -1018,7 +1018,50 @@ export const visibilityProfileUpdateSchema = visibilityProfileCreateSchema
   .partial()
   .refine((body) => Object.keys(body).length > 0, '至少提供一个待修改字段');
 
+export const visibilityProfileCreateWithPrefillSchema = z
+  .object({
+    name: z
+      .string({ required_error: '请填写监测档案名称' })
+      .trim()
+      .min(1, '请填写监测档案名称')
+      .max(VISIBILITY_PROFILE_NAME_MAX, `档案名称不超过 ${VISIBILITY_PROFILE_NAME_MAX} 字`),
+    brandName: z
+      .string()
+      .trim()
+      .max(VISIBILITY_BRAND_NAME_MAX, `主品牌名称不超过 ${VISIBILITY_BRAND_NAME_MAX} 字`)
+      .optional(),
+    brandAliases: aliasListSchema,
+    ownedDomains: domainListSchema,
+    competitors: z
+      .array(visibilityCompetitorSchema)
+      .max(VISIBILITY_MAX_COMPETITORS, `最多配置 ${VISIBILITY_MAX_COMPETITORS} 个竞品`)
+      .default([]),
+    importFromKeywordId: z
+      .string()
+      .trim()
+      .regex(VISIBILITY_ID_PATTERN, '训练主词编号不合法')
+      .optional(),
+    importFromKbId: z
+      .string()
+      .trim()
+      .regex(VISIBILITY_ID_PATTERN, '企业知识库编号不合法')
+      .optional(),
+  })
+  .refine(
+    (val) =>
+      (typeof val.brandName === 'string' && val.brandName.length > 0) ||
+      Boolean(val.importFromKeywordId) ||
+      Boolean(val.importFromKbId),
+    {
+      path: ['brandName'],
+      message: '请填写主品牌名称，或选择要导入品牌词的关键词/知识库',
+    },
+  );
+
 export type VisibilityProfileCreateInput = z.input<typeof visibilityProfileCreateSchema>;
+export type VisibilityProfileCreateWithPrefillInput = z.input<
+  typeof visibilityProfileCreateWithPrefillSchema
+>;
 export type VisibilityProfileUpdateInput = z.input<typeof visibilityProfileUpdateSchema>;
 
 export type VisibilityProfileRecord = {
@@ -1031,6 +1074,25 @@ export type VisibilityProfileRecord = {
   runCount?: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type VisibilityPrefillSources = {
+  keywords: Array<{
+    id: string;
+    main: string;
+    brands: string[];
+  }>;
+  knowledgeBases: Array<{
+    id: string;
+    name: string;
+    companyName: string | null;
+    brandShort: string | null;
+  }>;
+};
+
+export type VisibilityProfileListResponse = {
+  items: VisibilityProfileRecord[];
+  prefillSources?: VisibilityPrefillSources;
 };
 
 const optionalVisibilityIdSchema = z
@@ -1133,7 +1195,11 @@ export type VisibilityRunRecord = {
   totalChecks: number;
   doneCount: number;
   failCount: number;
+  skipCount?: number;
   unitPrice: number;
+  frozenPoints?: number;
+  settledPoints?: number;
+  releasedPoints?: number;
   reservationId: string | null;
   status: TaskStatusName;
   lastError: string | null;
@@ -1141,6 +1207,13 @@ export type VisibilityRunRecord = {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+};
+
+export type VisibilityRunListResponse = {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: VisibilityRunRecord[];
 };
 
 export type VisibilityRunDetailRecord = VisibilityRunRecord & {
@@ -1254,6 +1327,8 @@ export const visibilityCitationQuerySchema = z.object({
     .transform((val) => (val && val.length > 0 ? val : undefined))
     .refine((val) => val === undefined || isCitationSourceKind(val), '来源分类参数不合法'),
   days: z.coerce.number().int().min(1).max(365).default(30),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce
     .number()
@@ -1269,6 +1344,8 @@ export type VisibilityCitationQuery = {
   engine?: VisibilityEngineKey;
   sourceKind?: CitationSourceKind;
   days: number;
+  from?: string;
+  to?: string;
   page: number;
   pageSize: CrudPageSize;
 };
@@ -1285,6 +1362,8 @@ export function parseVisibilityCitationQuery(
     engine: parsed.data.engine as VisibilityEngineKey | undefined,
     sourceKind: parsed.data.sourceKind as CitationSourceKind | undefined,
     days: parsed.data.days,
+    ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
+    ...(parsed.data.to !== undefined ? { to: parsed.data.to } : {}),
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
   };
@@ -1298,10 +1377,14 @@ export type VisibilityCitationSummaryItem = {
   topUrls: Array<{ url: string; title: string | null; count: number }>;
 };
 
+export type VisibilityCitationSourceBreakdown = Record<CitationSourceKind, number>;
+
 export type VisibilityCitationListResponse = {
   page: number;
   pageSize: number;
   total: number;
+  totalCitations?: number;
+  sourceBreakdown?: VisibilityCitationSourceBreakdown;
   items: VisibilityCitationSummaryItem[];
 };
 
