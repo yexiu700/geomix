@@ -2,10 +2,12 @@
 
 import type {
   CitationSourceKind,
+  ImportQuestionsInput,
   KeywordRecord,
   QuestionRecord,
   VisibilityCitationListResponse,
   VisibilityCitationQuery,
+  VisibilityOpportunitiesResponse,
   VisibilityOverviewQuery,
   VisibilityOverviewResponse,
   VisibilityProfileCreateWithPrefillInput,
@@ -267,6 +269,7 @@ function buildMockGateway() {
   const cancelledIds: string[] = [];
   const overviewQueries: VisibilityOverviewQuery[] = [];
   const citationQueries: VisibilityCitationQuery[] = [];
+  const importedOpportunityCalls: ImportQuestionsInput[] = [];
 
   const allCitationItems = [
     {
@@ -548,6 +551,43 @@ function buildMockGateway() {
         items: filtered,
       };
     },
+    async listOpportunities(): Promise<VisibilityOpportunitiesResponse> {
+      return {
+        gaps: [
+          {
+            promptText: '差旅办公便携屏哪个品牌性价比最高？',
+            questionId: null,
+            competitors: ['领航视界', '极光屏显'],
+            engines: ['deepseek', 'doubao'],
+            observationCount: 3,
+          },
+        ],
+        fanOutQueries: [
+          {
+            query: 'Type-C一线通便携屏实测',
+            frequency: 5,
+            sourcePrompts: ['商务出差4K便携显示器哪个品牌色彩准且轻薄？'],
+            engines: ['deepseek'],
+            brandMentionedPct: 40,
+          },
+          {
+            query: '4K便携显示器色准对比',
+            frequency: 2,
+            sourcePrompts: ['差旅办公便携屏哪个品牌性价比最高？'],
+            engines: ['doubao'],
+            brandMentionedPct: 0,
+          },
+        ],
+      };
+    },
+    async importOpportunityQuestions(input: ImportQuestionsInput) {
+      importedOpportunityCalls.push(input);
+      return {
+        insertedCount: input.titles.length,
+        skippedCount: 0,
+        keywordId: input.keywordId,
+      };
+    },
   };
 
   return {
@@ -558,6 +598,7 @@ function buildMockGateway() {
     cancelledIds,
     overviewQueries,
     citationQueries,
+    importedOpportunityCalls,
   };
 }
 
@@ -891,5 +932,62 @@ describe('VisibilityOverviewScreen', () => {
       expect(screen.queryByText('zhihu.com')).toBeNull();
     });
     expect(screen.getByText('docs.starview.cn')).toBeTruthy();
+  });
+
+  it('switches to opportunities tab, imports selected gaps & fanOutQueries into Keyword, and dispatches /writing/tasks?keywordId=...', async () => {
+    const { gateway, importedOpportunityCalls } = buildMockGateway();
+    const dispatched: Array<{ type: string; href?: string }> = [];
+
+    render(
+      <VisibilityOverviewScreen
+        title="AI数据看板"
+        href="/visibility/overview?profileId=vprof_starview"
+        gateway={gateway}
+        onDispatch={(action) => dispatched.push(action as { type: string; href?: string })}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId('kpi-visibility')).getByText('65.0%')).toBeTruthy();
+    });
+
+    const oppTab = await screen.findByRole('tab', { name: /优化机会 & 搜索拆解词（Query Fan-Out/ });
+    fireEvent.click(oppTab);
+    await waitFor(() => {
+      expect(oppTab.getAttribute('aria-selected')).toBe('true');
+    });
+
+    expect(
+      (await screen.findAllByText('差旅办公便携屏哪个品牌性价比最高？')).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Type-C一线通便携屏实测')).toBeTruthy();
+
+    // Select target Keyword
+    const kwSelect = screen.getByLabelText('目标主词') as HTMLSelectElement;
+    fireEvent.change(kwSelect, { target: { value: 'kw_projector_02' } });
+    expect(kwSelect.value).toBe('kw_projector_02');
+
+    // Select 1 gap + 1 fan-out query
+    fireEvent.click(screen.getByLabelText('勾选缺口问题-差旅办公便携屏哪个品牌性价比最高？'));
+    fireEvent.click(screen.getByLabelText('勾选拆解词-Type-C一线通便携屏实测'));
+    expect(screen.getByText('已选 2 条')).toBeTruthy();
+
+    // Click 一键加入写作标题
+    fireEvent.click(screen.getByRole('button', { name: '一键加入写作标题' }));
+    await waitFor(() => {
+      expect(importedOpportunityCalls).toHaveLength(1);
+    });
+    expect(importedOpportunityCalls[0]).toEqual({
+      keywordId: 'kw_projector_02',
+      titles: ['差旅办公便携屏哪个品牌性价比最高？', 'Type-C一线通便携屏实测'],
+    });
+    expect(await screen.findByText(/已导入「写作标题」：新增 2 条，跳过重复 0 条/)).toBeTruthy();
+
+    // Click 去创建写作任务 -> dispatches /writing/tasks?keywordId=kw_projector_02
+    fireEvent.click(screen.getByRole('button', { name: '去创建写作任务' }));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/writing/tasks?keywordId=kw_projector_02',
+    });
   });
 });

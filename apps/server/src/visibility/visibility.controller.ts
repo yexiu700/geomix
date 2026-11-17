@@ -17,10 +17,12 @@ import {
   AUTH_ERROR,
   AccountQueryError,
   VISIBILITY_ID_PATTERN,
+  importQuestionsInputSchema,
   ok,
   parseVisibilityRunListQuery,
   readIdempotencyKey,
   visibilityCitationQuerySchema,
+  visibilityOpportunitiesQuerySchema,
   visibilityOverviewQuerySchema,
   visibilityProfileCreateWithPrefillSchema,
   visibilityProfileUpdateSchema,
@@ -29,6 +31,7 @@ import {
   type CitationSourceKind,
   type VisibilityCitationQuery,
   type VisibilityEngineKey,
+  type VisibilityOpportunitiesQuery,
   type VisibilityOverviewQuery,
 } from '@geomix/shared';
 import { AuthGuard } from '../auth/auth.guard';
@@ -201,5 +204,27 @@ export class VisibilityController {
       pageSize: parsed.pageSize,
     };
     return ok(await this.visibility.citations(normalized));
+  }
+
+  @Get('opportunities')
+  async opportunities(@Query() query: Record<string, string | string[] | undefined>) {
+    const parsed = parseBody(visibilityOpportunitiesQuerySchema, flattenQuery(query));
+    const normalized: VisibilityOpportunitiesQuery = {
+      profileId: parsed.profileId,
+      engine: parsed.engine as VisibilityEngineKey | undefined,
+      days: parsed.days,
+      ...(parsed.from !== undefined ? { from: parsed.from } : {}),
+      ...(parsed.to !== undefined ? { to: parsed.to } : {}),
+      limit: parsed.limit,
+    };
+    return ok(await this.visibility.opportunities(normalized));
+  }
+
+  @Post('opportunities/import-questions')
+  @HttpCode(200)
+  async importOpportunityQuestions(@Body() body: unknown, @Req() req: unknown) {
+    const userId = requireUserId(req);
+    const parsed = parseBody(importQuestionsInputSchema, body);
+    return ok(await this.visibility.importOpportunityQuestions(parsed, userId));
   }
 }

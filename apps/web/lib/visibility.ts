@@ -112,6 +112,8 @@ export function buildVisibilityOpportunitiesQueryString(
   params.set('limit', String(query.limit));
   if (query.profileId?.trim()) params.set('profileId', query.profileId.trim());
   if (query.engine) params.set('engine', query.engine);
+  if (query.from?.trim()) params.set('from', query.from.trim());
+  if (query.to?.trim()) params.set('to', query.to.trim());
   return params.toString();
 }
 

@@ -79,11 +79,27 @@ type EditorState = {
   maximized: boolean;
 };
 
-function defaultCreateDraft(options: AiTaskFormOptions | null): CreateDraft {
+function readInitialKeywordId(href?: string): string | undefined {
+  if (!href) return undefined;
+  const qIndex = href.indexOf('?');
+  if (qIndex < 0) return undefined;
+  const params = new URLSearchParams(href.slice(qIndex + 1));
+  const val = params.get('keywordId')?.trim();
+  return val || undefined;
+}
+
+function defaultCreateDraft(
+  options: AiTaskFormOptions | null,
+  preferredKeywordId?: string,
+): CreateDraft {
+  const matchedKw =
+    preferredKeywordId && options?.keywords.some((kw) => kw.id === preferredKeywordId)
+      ? preferredKeywordId
+      : (options?.keywords[0]?.id ?? '');
   return {
     name: '',
     categoryId: '',
-    keywordId: options?.keywords[0]?.id ?? '',
+    keywordId: matchedKw,
     mediaCategoryId: options?.mediaCategories[0]?.id ?? '',
     imageCount: 1,
     kbId: '',
@@ -159,6 +175,7 @@ function triggerDownload(file: { filename: string; mime: string; body: Uint8Arra
 export function AiTaskScreen({
   title,
   tabId,
+  href,
   readOnly = false,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   gateway,
@@ -167,12 +184,15 @@ export function AiTaskScreen({
 }: {
   title: string;
   tabId: string;
+  href?: string;
   readOnly?: boolean;
   pollIntervalMs?: number;
   gateway?: AiTaskGateway;
   storage?: SessionStorageLike;
   onDispatch?: (action: ShellAction) => void;
 }) {
+  const initialKeywordId = useMemo(() => readInitialKeywordId(href), [href]);
+  const [prefilledHref, setPrefilledHref] = useState<string | null>(null);
   const client = useMemo(
     () => gateway ?? httpAiTaskGateway(storage ?? window.sessionStorage),
     [gateway, storage],
@@ -298,28 +318,37 @@ export function AiTaskScreen({
     });
   }, [editor?.draft.target, editor?.draft.kbId, baseAiWritePoints, kbAddonPoints]);
 
-  async function openCreateModal() {
-    setFormError(null);
-    setOptionsLoading(true);
-    try {
-      const opts = await client.loadFormOptions();
-      setFormOptions(opts);
-      const init = defaultCreateDraft(opts);
-      setEditor({
-        initial: init,
-        draft: init,
-        minimized: false,
-        maximized: false,
-      });
-    } catch (err: unknown) {
-      setBanner({
-        type: 'error',
-        text: err instanceof Error ? err.message : '加载表单选项失败',
-      });
-    } finally {
-      setOptionsLoading(false);
-    }
-  }
+  const openCreateModal = useCallback(
+    async (preferredKeywordId?: string) => {
+      setFormError(null);
+      setOptionsLoading(true);
+      try {
+        const opts = await client.loadFormOptions();
+        setFormOptions(opts);
+        const init = defaultCreateDraft(opts, preferredKeywordId ?? initialKeywordId);
+        setEditor({
+          initial: init,
+          draft: init,
+          minimized: false,
+          maximized: false,
+        });
+      } catch (err: unknown) {
+        setBanner({
+          type: 'error',
+          text: err instanceof Error ? err.message : '加载表单选项失败',
+        });
+      } finally {
+        setOptionsLoading(false);
+      }
+    },
+    [client, initialKeywordId],
+  );
+
+  useEffect(() => {
+    if (!initialKeywordId || readOnly || !href || prefilledHref === href) return;
+    setPrefilledHref(href);
+    void openCreateModal(initialKeywordId);
+  }, [initialKeywordId, readOnly, href, prefilledHref, openCreateModal]);
 
   async function handleSubmitCreate() {
     if (!editor) return;

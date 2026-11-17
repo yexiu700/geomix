@@ -37,6 +37,7 @@ export const STATIC_ROUTES: Record<string, StaticRoute> = {
 
 const QUERY_KEYS: Record<string, readonly string[]> = {
   '/material/questions': ['keywordId'],
+  '/writing/tasks': ['keywordId'],
   '/writing/articles': ['categoryId', 'taskId'],
   '/visibility/overview': ['profileId'],
   '/visibility/monitors': ['profileId', 'runId'],

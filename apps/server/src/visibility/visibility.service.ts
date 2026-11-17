@@ -6,6 +6,7 @@ import {
   AUTH_ERROR,
   BILLING_ERROR,
   CITATION_SOURCE_KINDS,
+  QUESTION_TEXT_MAX,
   VISIBILITY_BRAND_NAME_MAX,
   VISIBILITY_MAX_COMPETITORS,
   classifyCitationSource,
@@ -15,11 +16,14 @@ import {
   isCitationSourceKind,
   isVisibilityEngine,
   isVisibilitySentiment,
+  normalizeQuestionKey,
   normalizeVisibilityDomain,
   recomputeRunMetrics,
   toShanghaiDateKey,
   type CitationSourceKind,
   type CompetitorHit,
+  type ImportQuestionsInput,
+  type ImportQuestionsResult,
   type ProfileForMetrics,
   type VisibilityCitationListResponse,
   type VisibilityCitationQuery,
@@ -29,7 +33,11 @@ import {
   type VisibilityCompetitor,
   type VisibilityEngineBreakdownItem,
   type VisibilityEngineKey,
+  type VisibilityFanOutItem,
   type VisibilityObservationRecord,
+  type VisibilityOpportunitiesQuery,
+  type VisibilityOpportunitiesResponse,
+  type VisibilityOpportunityGapItem,
   type VisibilityOverviewQuery,
   type VisibilityOverviewResponse,
   type VisibilityProfileCreateWithPrefillInput,
@@ -45,6 +53,7 @@ import {
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS, isUniqueViolation } from '../billing/billing.sql';
+import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
 import { PrismaService } from '../prisma/prisma.service';
@@ -225,6 +234,7 @@ export class VisibilityService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(BillingService) private readonly billing: BillingService,
+    @Inject(QuotaService) private readonly quota: QuotaService,
     @Inject(ComplianceService) private readonly compliance: ComplianceService,
     @Inject(VISIBILITY_RUN_ENQUEUER) private readonly enqueuer: VisibilityRunEnqueuer,
     @Optional() @Inject(VISIBILITY_CONFIG) config?: VisibilityConfig,
@@ -1177,6 +1187,292 @@ export class VisibilityService {
       sourceBreakdown,
       items: paged,
     };
+  }
+
+  async opportunities(
+    query: VisibilityOpportunitiesQuery,
+  ): Promise<VisibilityOpportunitiesResponse> {
+    this.assertFeatureEnabled();
+    const tenantId = requireTenant();
+
+    if (query.profileId) {
+      await this.resolveProfileContext(tenantId, query.profileId);
+    }
+
+    const window = shanghaiWindowFromQuery({
+      days: query.days,
+      from: query.from,
+      to: query.to,
+    });
+
+    const observations = await this.prisma.base.visibilityObservation.findMany({
+      where: {
+        tenantId,
+        status: 'SUCCESS',
+        ...(query.profileId ? { profileId: query.profileId } : {}),
+        ...(query.engine ? { engine: query.engine } : {}),
+        OR: [
+          { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
+          { checkedAt: null, createdAt: { gte: window.startUtc, lte: window.endUtc } },
+        ],
+      },
+      orderBy: [{ checkedAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        questionId: true,
+        promptText: true,
+        engine: true,
+        brandMentioned: true,
+        competitorHits: true,
+        fanOutQueries: true,
+        checkedAt: true,
+        createdAt: true,
+      },
+    });
+
+    const gapMap = new Map<
+      string,
+      {
+        promptText: string;
+        questionId: string | null;
+        competitors: Set<string>;
+        engines: Set<VisibilityEngineKey>;
+        observationCount: number;
+        latestCheckedAtMs: number;
+      }
+    >();
+
+    const fanOutMap = new Map<
+      string,
+      {
+        query: string;
+        frequency: number;
+        mentionedCount: number;
+        sourcePrompts: Set<string>;
+        engines: Set<VisibilityEngineKey>;
+      }
+    >();
+
+    for (const obs of observations) {
+      const cleanedPrompt = obs.promptText.replace(/\s+/g, ' ').trim();
+      const engineKey = isVisibilityEngine(obs.engine) ? obs.engine : null;
+      const obsTimeMs = (obs.checkedAt ?? obs.createdAt).getTime();
+
+      if (!obs.brandMentioned && cleanedPrompt) {
+        const hits = parseStoredCompetitorHits(obs.competitorHits);
+        const mentionedComps = hits.filter((h) => h.mentioned).map((h) => h.name);
+        if (mentionedComps.length > 0) {
+          const promptKey = normalizeQuestionKey(cleanedPrompt);
+          if (promptKey) {
+            let bucket = gapMap.get(promptKey);
+            if (!bucket) {
+              bucket = {
+                promptText: cleanedPrompt,
+                questionId: obs.questionId ?? null,
+                competitors: new Set<string>(),
+                engines: new Set<VisibilityEngineKey>(),
+                observationCount: 0,
+                latestCheckedAtMs: obsTimeMs,
+              };
+              gapMap.set(promptKey, bucket);
+            } else {
+              if (!bucket.questionId && obs.questionId) {
+                bucket.questionId = obs.questionId;
+              }
+              if (obsTimeMs > bucket.latestCheckedAtMs) {
+                bucket.latestCheckedAtMs = obsTimeMs;
+              }
+            }
+            for (const comp of mentionedComps) {
+              bucket.competitors.add(comp);
+            }
+            if (engineKey) {
+              bucket.engines.add(engineKey);
+            }
+            bucket.observationCount += 1;
+          }
+        }
+      }
+
+      for (const rawQuery of obs.fanOutQueries ?? []) {
+        if (typeof rawQuery !== 'string') continue;
+        const cleanedQuery = rawQuery.replace(/\s+/g, ' ').trim();
+        if (!cleanedQuery) continue;
+        const qKey = cleanedQuery.toLowerCase();
+
+        let bucket = fanOutMap.get(qKey);
+        if (!bucket) {
+          bucket = {
+            query: cleanedQuery,
+            frequency: 0,
+            mentionedCount: 0,
+            sourcePrompts: new Set<string>(),
+            engines: new Set<VisibilityEngineKey>(),
+          };
+          fanOutMap.set(qKey, bucket);
+        }
+        bucket.frequency += 1;
+        if (obs.brandMentioned) {
+          bucket.mentionedCount += 1;
+        }
+        if (cleanedPrompt && bucket.sourcePrompts.size < 3) {
+          bucket.sourcePrompts.add(cleanedPrompt);
+        }
+        if (engineKey) {
+          bucket.engines.add(engineKey);
+        }
+      }
+    }
+
+    const gaps: VisibilityOpportunityGapItem[] = [...gapMap.values()]
+      .map((bucket) => ({
+        promptText: bucket.promptText,
+        questionId: bucket.questionId,
+        competitors: [...bucket.competitors],
+        engines: [...bucket.engines],
+        observationCount: bucket.observationCount,
+        latestCheckedAt: new Date(bucket.latestCheckedAtMs).toISOString(),
+      }))
+      .sort((left, right) => {
+        if (right.competitors.length !== left.competitors.length) {
+          return right.competitors.length - left.competitors.length;
+        }
+        if (right.observationCount !== left.observationCount) {
+          return right.observationCount - left.observationCount;
+        }
+        return left.promptText.localeCompare(right.promptText, 'zh-CN');
+      })
+      .slice(0, query.limit);
+
+    const fanOutQueries: VisibilityFanOutItem[] = [...fanOutMap.values()]
+      .map((bucket) => ({
+        query: bucket.query,
+        frequency: bucket.frequency,
+        sourcePrompts: [...bucket.sourcePrompts],
+        engines: [...bucket.engines],
+        brandMentionedPct: computeVisibilityPct(bucket.mentionedCount, bucket.frequency),
+      }))
+      .sort((left, right) => {
+        if (right.frequency !== left.frequency) {
+          return right.frequency - left.frequency;
+        }
+        return left.query.localeCompare(right.query, 'zh-CN');
+      })
+      .slice(0, query.limit);
+
+    return { gaps, fanOutQueries };
+  }
+
+  async importOpportunityQuestions(
+    input: ImportQuestionsInput,
+    userId: string,
+  ): Promise<ImportQuestionsResult> {
+    this.assertFeatureEnabled();
+    const tenantId = requireTenant();
+
+    const keywordRow = await this.prisma.base.keyword.findFirst({
+      where: { id: input.keywordId, tenantId },
+      select: { id: true, main: true },
+    });
+    if (!keywordRow) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '训练主词不存在');
+    }
+
+    const seenInput = new Set<string>();
+    const uniqueTitles: string[] = [];
+    let duplicateInInputCount = 0;
+
+    for (const rawTitle of input.titles) {
+      const cleaned = rawTitle.replace(/\s+/g, ' ').trim();
+      if (!cleaned) continue;
+      if (cleaned.length > QUESTION_TEXT_MAX) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          `导入标题长度超过 ${QUESTION_TEXT_MAX} 个字符`,
+        );
+      }
+      const key = normalizeQuestionKey(cleaned);
+      if (!key) continue;
+      if (seenInput.has(key)) {
+        duplicateInInputCount += 1;
+        continue;
+      }
+      seenInput.add(key);
+      uniqueTitles.push(cleaned);
+    }
+
+    if (uniqueTitles.length === 0) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少选择一条有效的待导入标题');
+    }
+
+    await this.compliance.assertAllowed({
+      text: uniqueTitles.join('\n'),
+      action: 'visibility_gap_import',
+      tenantId,
+      userId,
+    });
+
+    return this.prisma.base.$transaction(async (tx) => {
+      const existing = await tx.question.findMany({
+        where: { tenantId, keywordId: keywordRow.id },
+        select: { text: true },
+      });
+      const existingKeys = new Set(existing.map((q) => normalizeQuestionKey(q.text)));
+
+      const toInsert: string[] = [];
+      let existingDupCount = 0;
+      for (const title of uniqueTitles) {
+        const key = normalizeQuestionKey(title);
+        if (existingKeys.has(key)) {
+          existingDupCount += 1;
+          continue;
+        }
+        existingKeys.add(key);
+        toInsert.push(title);
+      }
+
+      const skippedCount = duplicateInInputCount + existingDupCount;
+      if (toInsert.length === 0) {
+        return {
+          insertedCount: 0,
+          skippedCount,
+          keywordId: keywordRow.id,
+        };
+      }
+
+      const quotaRow = await tx.quota.findUnique({
+        where: { tenantId_key: { tenantId, key: 'QUESTION' } },
+      });
+      if (quotaRow && quotaRow.used + BigInt(toInsert.length) > quotaRow.limit) {
+        const remaining = Math.max(0, Number(quotaRow.limit - quotaRow.used));
+        throw new ApiError(
+          409,
+          API_ERROR.QUOTA_EXCEEDED,
+          `问题额度不足，当前还可添加 ${remaining} 条`,
+        );
+      }
+
+      await this.quota.consume(tenantId, 'QUESTION', toInsert.length, tx);
+
+      for (const text of toInsert) {
+        await tx.question.create({
+          data: {
+            tenantId,
+            keywordId: keywordRow.id,
+            text,
+            source: 'AI',
+            included: false,
+          },
+        });
+      }
+
+      return {
+        insertedCount: toInsert.length,
+        skippedCount,
+        keywordId: keywordRow.id,
+      };
+    }, TX_OPTIONS);
   }
 
   // ===================== Private Helpers =====================

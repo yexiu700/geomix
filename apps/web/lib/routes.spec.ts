@@ -57,6 +57,12 @@ describe('console routes', () => {
       title: '写作标题 · demo',
       parent: '/material/keywords',
     });
+    expect(matchRoute('/writing/tasks?keywordId=kw_1')).toMatchObject({
+      href: '/writing/tasks?keywordId=kw_1',
+      path: '/writing/tasks',
+      title: 'AI写作任务 · kw_1',
+      parent: null,
+    });
     expect(matchRoute('/writing/articles?taskId=t2&categoryId=c1')).toMatchObject({
       href: '/writing/articles?categoryId=c1&taskId=t2',
       title: '文章列表 · 分类 c1 · 任务 t2',

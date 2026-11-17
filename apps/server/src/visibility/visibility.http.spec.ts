@@ -9,7 +9,9 @@ import {
   PRICING_DEFAULTS,
   QUOTA_DEFAULTS,
   parseEnv,
+  type ImportQuestionsResult,
   type VisibilityCitationListResponse,
+  type VisibilityOpportunitiesResponse,
   type VisibilityOverviewResponse,
   type VisibilityProfileListResponse,
   type VisibilityProfileRecord,
@@ -107,7 +109,7 @@ type QuestionRec = {
   tenantId: string;
   keywordId: string;
   text: string;
-  source: 'MANUAL' | 'DISTILL' | 'COMBO';
+  source: 'MANUAL' | 'DISTILL' | 'COMBO' | 'AI';
   usedCount: number;
   lastUsedAt: Date | null;
   included: boolean;
@@ -432,10 +434,26 @@ class InMemoryVisibilityStore {
           const r = this.reservations.get(reservationId);
           return r && r.tenantId === tenantId ? [{ ...r }] : [];
         }
+        if (sql.includes('FROM "Quota"')) {
+          const tenantId = String(values[0]);
+          const key = String(values[1]);
+          const q = this.quotas.find((row) => row.tenantId === tenantId && row.key === key);
+          return q ? [{ used: q.used, limit: q.limit }] : [];
+        }
         return [];
       },
       $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.join(' ');
+        if (sql.includes('UPDATE "Quota"') && sql.includes('SET used = used +')) {
+          const delta = BigInt(values[0] as number | bigint);
+          const tenantId = String(values[1]);
+          const key = String(values[2]);
+          const deltaCheck = BigInt(values[3] as number | bigint);
+          const q = this.quotas.find((row) => row.tenantId === tenantId && row.key === key);
+          if (!q || q.used + deltaCheck > q.limit) return 0;
+          q.used += delta;
+          return 1;
+        }
         if (
           sql.includes('UPDATE "Wallet"') &&
           sql.includes('"pointsReserved" = "pointsReserved" +')
@@ -552,6 +570,14 @@ class InMemoryVisibilityStore {
       quota: {
         findMany: async ({ where }: { where?: { tenantId?: string } }) =>
           this.quotas.filter((q) => !where?.tenantId || q.tenantId === where.tenantId),
+        findUnique: async ({
+          where,
+        }: {
+          where: { tenantId_key: { tenantId: string; key: string } };
+        }) =>
+          this.quotas.find(
+            (q) => q.tenantId === where.tenantId_key.tenantId && q.key === where.tenantId_key.key,
+          ) ?? null,
       },
       pricingItem: {
         findUnique: async ({ where }: { where: { action: string } }) =>
@@ -807,6 +833,31 @@ class InMemoryVisibilityStore {
           if (!q) throw new Error('Question missing');
           Object.assign(q, data);
           return { ...q };
+        },
+        create: async ({
+          data,
+        }: {
+          data: {
+            tenantId: string;
+            keywordId: string;
+            text: string;
+            source: QuestionRec['source'];
+            included: boolean;
+          };
+        }) => {
+          const row: QuestionRec = {
+            id: this.nextId('q'),
+            tenantId: data.tenantId,
+            keywordId: data.keywordId,
+            text: data.text,
+            source: data.source,
+            usedCount: 0,
+            lastUsedAt: null,
+            included: data.included,
+            createdAt: new Date(),
+          };
+          this.questions.set(row.id, row);
+          return { ...row };
         },
       },
       knowledgeBase: {
@@ -1962,5 +2013,245 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     });
     expect(expiredCreateRun.status).toBe(403);
     expect(expiredCreateRun.code).toBe(API_ERROR.TENANT_EXPIRED);
+  });
+
+  it('aggregates competitor gaps & query fan-out opportunities, imports AI questions with deduplication & QUESTION quota guard', async () => {
+    const keywordId = store.nextId('kw');
+    store.keywords.set(keywordId, {
+      id: keywordId,
+      tenantId: tenantA,
+      main: 'AI可见性监测工具',
+      brands: ['GeoMix'],
+      optStatus: 'INCLUDED',
+      createdAt: new Date(),
+    });
+
+    const otherTenantKwId = store.nextId('kw');
+    store.keywords.set(otherTenantKwId, {
+      id: otherTenantKwId,
+      tenantId: tenantB,
+      main: '竞品租户主词',
+      brands: ['OtherBrand'],
+      optStatus: 'NONE',
+      createdAt: new Date(),
+    });
+
+    const profileId = store.nextId('vprof');
+    const now = new Date();
+    store.profiles.set(profileId, {
+      id: profileId,
+      tenantId: tenantA,
+      name: '机会闭环测试档案',
+      brandName: 'GeoMix',
+      brandAliases: [],
+      ownedDomains: ['geomix.cn'],
+      competitors: [
+        { name: '竞品Alpha', aliases: [], domains: ['alpha.cn'] },
+        { name: '竞品Beta', aliases: [], domains: ['beta.cn'] },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const runId = store.nextId('vrun');
+    store.runs.set(runId, {
+      id: runId,
+      tenantId: tenantA,
+      profileId,
+      keywordId,
+      name: '机会测试任务',
+      engines: ['deepseek', 'doubao'],
+      questionIds: [],
+      totalChecks: 3,
+      doneCount: 3,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+
+    const obs1Id = store.nextId('vobs');
+    store.observations.set(obs1Id, {
+      id: obs1Id,
+      tenantId: tenantA,
+      runId,
+      profileId,
+      questionId: null,
+      promptText: '企业级 GEO 品牌监测平台哪家好？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '推荐竞品Alpha 与竞品Beta。',
+      brandMentioned: false,
+      brandPosition: null,
+      brandSentiment: null,
+      brandPassage: null,
+      competitorHits: [
+        { name: '竞品Alpha', mentioned: true, position: 1, sentiment: 'positive' },
+        { name: '竞品Beta', mentioned: true, position: 2, sentiment: 'neutral' },
+      ],
+      fanOutQueries: ['GEO 品牌监测平台评测', 'AI 引用溯源工具对比', '大模型可见率怎么提升'],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 200,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const obs2Id = store.nextId('vobs');
+    store.observations.set(obs2Id, {
+      id: obs2Id,
+      tenantId: tenantA,
+      runId,
+      profileId,
+      questionId: null,
+      promptText: '国内大模型引用排名怎么看？',
+      engine: 'doubao',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: 'GeoMix 表现不错。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'GeoMix 表现不错',
+      competitorHits: [{ name: '竞品Alpha', mentioned: false, position: null, sentiment: null }],
+      fanOutQueries: ['GEO 品牌监测平台评测'],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 200,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    // 1. GET /api/v1/visibility/opportunities
+    const oppRes = await httpJson<VisibilityOpportunitiesResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/opportunities?profileId=${profileId}`,
+      { token: tokenStrictA },
+    );
+    expect(oppRes.status).toBe(200);
+    expect(oppRes.data.gaps).toHaveLength(1);
+    expect(oppRes.data.gaps[0]).toMatchObject({
+      promptText: '企业级 GEO 品牌监测平台哪家好？',
+      competitors: ['竞品Alpha', '竞品Beta'],
+      engines: ['deepseek'],
+      observationCount: 1,
+    });
+    expect(oppRes.data.fanOutQueries).toHaveLength(3);
+    expect(oppRes.data.fanOutQueries[0]).toMatchObject({
+      query: 'GEO 品牌监测平台评测',
+      frequency: 2,
+      brandMentionedPct: 50,
+    });
+
+    // 2. Import 3 fanOutQueries -> creates 3 Question rows with source='AI' and increments QUESTION quota by 3
+    const quotaBefore = store.quotas.find((q) => q.tenantId === tenantA && q.key === 'QUESTION')!;
+    const usedBefore = quotaBefore.used;
+
+    const importRes = await httpJson<ImportQuestionsResult>(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenStrictA,
+        body: {
+          keywordId,
+          titles: oppRes.data.fanOutQueries.map((f) => f.query),
+        },
+      },
+    );
+    expect(importRes.status).toBe(200);
+    expect(importRes.data).toMatchObject({
+      insertedCount: 3,
+      skippedCount: 0,
+      keywordId,
+    });
+    expect(quotaBefore.used).toBe(usedBefore + 3n);
+
+    const createdQuestions = [...store.questions.values()].filter(
+      (q) => q.tenantId === tenantA && q.keywordId === keywordId,
+    );
+    expect(createdQuestions).toHaveLength(3);
+    expect(createdQuestions.every((q) => q.source === 'AI' && q.included === false)).toBe(true);
+
+    // 3. Re-importing with duplicates skips existing titles and returns accurate skippedCount
+    const dupRes = await httpJson<ImportQuestionsResult>(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenStrictA,
+        body: {
+          keywordId,
+          titles: ['GEO 品牌监测平台评测', '企业级 GEO 品牌监测平台哪家好？'],
+        },
+      },
+    );
+    expect(dupRes.status).toBe(200);
+    expect(dupRes.data).toMatchObject({
+      insertedCount: 1,
+      skippedCount: 1,
+    });
+    expect(quotaBefore.used).toBe(usedBefore + 4n);
+
+    // 4. Exceeding QUESTION quota returns 409 (QUOTA_EXCEEDED) with 0 partial writes
+    const prevLimit = quotaBefore.limit;
+    quotaBefore.limit = quotaBefore.used + 1n; // only 1 slot left
+    const countBeforeQuotaErr = store.questions.size;
+    const quotaErrRes = await httpJson(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenStrictA,
+        body: {
+          keywordId,
+          titles: ['配额超限测试问题A', '配额超限测试问题B'],
+        },
+      },
+    );
+    expect(quotaErrRes.status).toBe(409);
+    expect(quotaErrRes.code).toBe(API_ERROR.QUOTA_EXCEEDED);
+    expect(store.questions.size).toBe(countBeforeQuotaErr);
+    quotaBefore.limit = prevLimit;
+
+    // 5. Cross-tenant keywordId returns 404
+    const crossTenantRes = await httpJson(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenStrictA,
+        body: {
+          keywordId: otherTenantKwId,
+          titles: ['跨租户写入测试'],
+        },
+      },
+    );
+    expect(crossTenantRes.status).toBe(404);
+    expect(crossTenantRes.code).toBe(AUTH_ERROR.NOT_FOUND);
+
+    // 6. Expired tenant returns 403 (40301)
+    const expiredImportRes = await httpJson(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenExpiredC,
+        body: {
+          keywordId,
+          titles: ['到期租户导入测试'],
+        },
+      },
+    );
+    expect(expiredImportRes.status).toBe(403);
+    expect(expiredImportRes.code).toBe(API_ERROR.TENANT_EXPIRED);
   });
 });

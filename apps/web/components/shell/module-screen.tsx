@@ -164,6 +164,7 @@ export function ModuleScreen({
         <AiTaskScreen
           title={tab.title}
           tabId={tab.id}
+          href={tab.href}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
