@@ -16,7 +16,34 @@ export async function hasLiveActiveWork(
   const row = await prisma.base.activeWork.findUnique({
     where: { refType_refId: { refType: ref.refType, refId: ref.refId } },
   });
-  if (!row || row.tenantId !== ref.tenantId) return false;
-  if (row.reason === 'paused' || row.reason === 'queued') return true;
-  return now.getTime() - row.beatAt.getTime() <= ttlMs;
+  if (row) {
+    if (row.tenantId !== ref.tenantId) return false;
+    if (row.reason === 'paused' || row.reason === 'queued') return true;
+    return now.getTime() - row.beatAt.getTime() <= ttlMs;
+  }
+
+  if (ref.refType === 'ai_task') {
+    const task = await prisma.base.aiTask.findFirst({
+      where: { id: ref.refId, tenantId: ref.tenantId },
+      select: {
+        status: true,
+        lastWrittenAt: true,
+        createdAt: true,
+        items: {
+          where: { status: 'RUNNING' },
+          orderBy: { startedAt: 'desc' },
+          take: 1,
+          select: { startedAt: true },
+        },
+      },
+    });
+    if (!task) return false;
+    if (task.status === 'QUEUED' || task.status === 'PAUSED') return true;
+    if (task.status === 'RUNNING') {
+      const beatAt = task.items[0]?.startedAt ?? task.lastWrittenAt ?? task.createdAt;
+      return now.getTime() - beatAt.getTime() <= ttlMs;
+    }
+  }
+
+  return false;
 }

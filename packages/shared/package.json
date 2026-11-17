@@ -64,6 +64,10 @@
     "./prompts": {
       "types": "./dist/prompts.d.ts",
       "default": "./dist/prompts.js"
+    },
+    "./writing-tasks": {
+      "types": "./dist/writing-tasks.d.ts",
+      "default": "./dist/writing-tasks.js"
     }
   },
   "scripts": {
