@@ -270,7 +270,7 @@ describe('AiImageScreen', () => {
         onChangePassword={async () => null}
       />,
     );
-    expect(screen.queryByText('AI生图/视频')).toBeTruthy();
+    expect(screen.queryAllByText('AI生图/视频').length).toBeGreaterThan(0);
 
     rerender(
       <ShellFrame

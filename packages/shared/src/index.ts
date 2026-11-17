@@ -648,4 +648,25 @@ export type {
   AiImageSaveToGalleryInput,
   AiImageStyle,
 } from './ai-images';
+export {
+  DASHBOARD_DEFAULT_ANNOUNCEMENTS,
+  DASHBOARD_ENTRY_CARDS,
+  DASHBOARD_RECHARGE_NOTICE,
+  DASHBOARD_TREND_DAYS,
+  aggregateCreationTrend5Days,
+  shanghaiCurrentMonthWindowUtc,
+  shanghaiFiveDayWindowUtc,
+  summarizeMonthMoney,
+  summarizeMonthPoints,
+  toShanghaiDateKey,
+  visibleDashboardEntryCards,
+} from './dashboard';
+export type {
+  DashboardAnnouncementItem,
+  DashboardEntryCardDef,
+  DashboardModuleStats,
+  DashboardStatKey,
+  DashboardSummary,
+  DashboardTrendDay,
+} from './dashboard';
 export * from './visibility';

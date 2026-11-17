@@ -2,20 +2,87 @@ name: Auto Merge
 
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened, synchronize]
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
 
 permissions:
   contents: write
+  packages: write
   pull-requests: write
 
 jobs:
   enable-auto-merge:
     name: Enable Auto-Merge
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
     steps:
       - name: Enable auto-merge for PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --merge "$PR_URL"
+
+  merge-on-ci:
+    name: Merge PR After CI Green
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.merge.outputs.should_deploy }}
+    steps:
+      - name: Merge matching PR targeting main
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          PR_JSON=$(gh pr list --repo "$REPO" --state all --head "${OWNER}:${HEAD_BRANCH}" --base main --json number,state,isDraft,headRefOid --limit 10)
+          PR_NUM=$(echo "$PR_JSON" | jq -r --arg sha "$HEAD_SHA" '.[] | select(.headRefOid == $sha and (.isDraft | not)) | .number' | head -n 1)
+          if [ -z "$PR_NUM" ] || [ "$PR_NUM" = "null" ]; then
+            echo "No non-draft PR targeting main found for branch $HEAD_BRANCH ($HEAD_SHA)."
+            exit 0
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            STATE=$(gh pr view "$PR_NUM" --repo "$REPO" --json state --jq .state)
+            if [ "$STATE" = "MERGED" ]; then
+              echo "PR #$PR_NUM is merged. Scheduling CD deploy."
+              sed -i 's/should_deploy=false/should_deploy=true/' "$GITHUB_OUTPUT" || echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$STATE" != "OPEN" ]; then
+              echo "PR #$PR_NUM state is $STATE; skipping."
+              exit 0
+            fi
+            if gh pr merge "$PR_NUM" --repo "$REPO" --merge; then
+              echo "Merged PR #$PR_NUM. Scheduling CD deploy."
+              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 3
+          done
+
+          STATE=$(gh pr view "$PR_NUM" --repo "$REPO" --json state --jq .state)
+          if [ "$STATE" = "MERGED" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-after-merge:
+    needs: merge-on-ci
+    if: needs.merge-on-ci.outputs.should_deploy == 'true'
+    uses: ./.github/workflows/cd.yml
+    with:
+      ref: main
+    secrets: inherit
