@@ -10,6 +10,7 @@ import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-s
 import { KeywordScreen } from '../material/keyword-screen';
 import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
+import { RewriteBatchScreen } from '../rewrite/rewrite-batch-screen';
 import { RewriteSingleScreen } from '../rewrite/rewrite-single-screen';
 import { ArticleManageScreen } from '../writing/article-manage-screen';
 import { AiTaskScreen } from '../writing/ai-task-screen';
@@ -150,6 +151,19 @@ export function ModuleScreen({
     return (
       <div>
         <RewriteSingleScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/rewrite/batch') {
+    return (
+      <div>
+        <RewriteBatchScreen
           title={tab.title}
           tabId={tab.id}
           readOnly={readOnly}

@@ -45,6 +45,12 @@ export class SearchService {
     );
   }
 
+  isRemoteReady(): boolean {
+    if (this.settings.provider !== 'remote' || !this.settings.endpoint) return false;
+    const apiKey = this.env[this.settings.apiKeyEnv]?.trim() ?? '';
+    return apiKey.length > 0;
+  }
+
   async search(input: {
     keyword: string;
     limit: number;

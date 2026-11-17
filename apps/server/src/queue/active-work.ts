@@ -45,5 +45,28 @@ export async function hasLiveActiveWork(
     }
   }
 
+  if (ref.refType === 'rewrite_batch') {
+    const batch = await prisma.base.rewriteBatch.findFirst({
+      where: { id: ref.refId, tenantId: ref.tenantId },
+      select: {
+        status: true,
+        createdAt: true,
+        records: {
+          where: { status: { in: ['RUNNING', 'SUCCESS'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { rewrittenAt: true, createdAt: true },
+        },
+      },
+    });
+    if (!batch) return false;
+    if (batch.status === 'QUEUED' || batch.status === 'PAUSED') return true;
+    if (batch.status === 'RUNNING') {
+      const lastRec = batch.records[0];
+      const beatAt = lastRec?.rewrittenAt ?? lastRec?.createdAt ?? batch.createdAt;
+      return now.getTime() - beatAt.getTime() <= ttlMs;
+    }
+  }
+
   return false;
 }

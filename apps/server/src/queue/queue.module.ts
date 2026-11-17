@@ -3,6 +3,11 @@ import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
 import { AdaptersModule } from '../infra/adapters.module';
 import { KB_INDEX_HANDLER, KnowledgeIndexRunner } from '../material/knowledge-index.runner';
+import {
+  REWRITE_BATCH_ENQUEUER,
+  REWRITE_BATCH_HANDLER,
+  RewriteBatchRunner,
+} from '../rewrite/rewrite-batch.runner';
 import { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { AI_TASK_ENQUEUER, AI_TASK_HANDLER, AiTaskRunner } from '../writing/ai-task.runner';
 import { BullBoardMount } from './bull-board.mount';
@@ -27,10 +32,18 @@ export class QueueModule {
         QueueProducer,
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
+        { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
-      exports: [QueueProducer, JOB_ENQUEUER, AI_TASK_ENQUEUER, WorkDriver, StepGate],
+      exports: [
+        QueueProducer,
+        JOB_ENQUEUER,
+        AI_TASK_ENQUEUER,
+        REWRITE_BATCH_ENQUEUER,
+        WorkDriver,
+        StepGate,
+      ],
     };
   }
 
@@ -43,6 +56,7 @@ export class QueueModule {
         QueueProducer,
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
+        { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
@@ -50,6 +64,8 @@ export class QueueModule {
         { provide: KB_INDEX_HANDLER, useExisting: KnowledgeIndexRunner },
         AiTaskRunner,
         { provide: AI_TASK_HANDLER, useExisting: AiTaskRunner },
+        RewriteBatchRunner,
+        { provide: REWRITE_BATCH_HANDLER, useExisting: RewriteBatchRunner },
         QueueRuntime,
       ],
       exports: [
@@ -58,8 +74,10 @@ export class QueueModule {
         StepGate,
         QueueProducer,
         AI_TASK_ENQUEUER,
+        REWRITE_BATCH_ENQUEUER,
         KnowledgeIndexRunner,
         AiTaskRunner,
+        RewriteBatchRunner,
         QueueRuntime,
       ],
     };

@@ -9,6 +9,7 @@ import {
 import { readReconcileConfig } from '@geomix/shared';
 import { Worker } from 'bullmq';
 import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
+import { REWRITE_BATCH_HANDLER, type RewriteBatchHandler } from '../rewrite/rewrite-batch.runner';
 import { AI_TASK_HANDLER, type AiTaskHandler } from '../writing/ai-task.runner';
 import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
@@ -34,6 +35,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Inject(WorkerRuntimeService) private readonly runtime: WorkerRuntimeService,
     @Optional() @Inject(KB_INDEX_HANDLER) private readonly kbIndexer?: KbIndexHandler,
     @Optional() @Inject(AI_TASK_HANDLER) private readonly aiTaskRunner?: AiTaskHandler,
+    @Optional()
+    @Inject(REWRITE_BATCH_HANDLER)
+    private readonly rewriteBatchRunner?: RewriteBatchHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -63,6 +67,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const taskData = readAiTaskPayload(job.data);
             if (taskData && this.aiTaskRunner) {
               await this.aiTaskRunner.process(taskData);
+            }
+            return;
+          }
+          if (name === 'rewrite-batch' && job.name === 'rewrite-batch') {
+            const batchData = readRewriteBatchPayload(job.data);
+            if (batchData && this.rewriteBatchRunner) {
+              await this.rewriteBatchRunner.process(batchData);
             }
             return;
           }
@@ -168,6 +179,16 @@ function readAiTaskPayload(data: unknown): { tenantId: string; taskId: string } 
   if (!ID.test(tenantId) || !ID.test(taskId)) return null;
   if (tenantId === 'system' || taskId === 'system') return null;
   return { tenantId, taskId };
+}
+
+function readRewriteBatchPayload(data: unknown): { tenantId: string; batchId: string } | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const batchId = (data as { batchId?: unknown }).batchId;
+  if (typeof tenantId !== 'string' || typeof batchId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(batchId)) return null;
+  if (tenantId === 'system' || batchId === 'system') return null;
+  return { tenantId, batchId };
 }
 
 function readKind(name: string, data: unknown): string {
