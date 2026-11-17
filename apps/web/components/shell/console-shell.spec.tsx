@@ -35,8 +35,8 @@ vi.mock('../../lib/account-client', () => ({
   httpAnnouncements: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('../dashboard/dashboard-screen', () => ({
-  DashboardScreen: ({ title }: { title: string }) => <h1>{title}</h1>,
+vi.mock('./module-screen', () => ({
+  ModuleScreen: ({ tab }: { tab: { title: string } }) => <h1>{tab.title}</h1>,
 }));
 
 const merchantAccount: AccountProfile = {

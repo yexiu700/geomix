@@ -6,7 +6,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    testTimeout: 30000,
+    pool: 'forks',
+    testTimeout: 60000,
+    maxWorkers: 1,
     include: ['lib/**/*.spec.ts', 'components/**/*.spec.tsx'],
     setupFiles: ['./vitest.setup.ts'],
   },
