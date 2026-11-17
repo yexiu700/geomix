@@ -434,6 +434,7 @@ export class AiTaskRunner implements AiTaskHandler {
         tenantId: input.tenantId,
         taskId: task.id,
         itemId: input.itemId,
+        keywordId: task.keywordId,
         categoryId: task.categoryId,
         resultStatus: task.resultStatus,
         questionId: question.id,
@@ -873,6 +874,7 @@ export class AiTaskRunner implements AiTaskHandler {
     tenantId: string;
     taskId: string;
     itemId: string;
+    keywordId: string;
     categoryId: string;
     resultStatus: 'PENDING' | 'NORMAL' | 'DISABLED';
     questionId: string;
@@ -949,6 +951,15 @@ export class AiTaskRunner implements AiTaskHandler {
       });
 
       await this.quota.applyArticleEvent(input.tenantId, 'AI_TASK', 'create', tx);
+
+      await tx.keyword.updateMany({
+        where: {
+          id: input.keywordId,
+          tenantId: input.tenantId,
+          optStatus: 'NONE',
+        },
+        data: { optStatus: 'OPTIMIZING' },
+      });
 
       await tx.aiTask.update({
         where: { id: input.taskId },

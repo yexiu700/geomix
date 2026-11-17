@@ -324,6 +324,15 @@ export class AiTasksService {
       throw new ApiError(503, API_ERROR.UPSTREAM_UNAVAILABLE, '任务队列暂不可用，未扣减点数');
     }
 
+    await this.prisma.base.keyword.updateMany({
+      where: {
+        id: input.keywordId,
+        tenantId,
+        optStatus: 'NONE',
+      },
+      data: { optStatus: 'OPTIMIZING' },
+    });
+
     return this.detailForTenant(tenantId, created.id);
   }
 

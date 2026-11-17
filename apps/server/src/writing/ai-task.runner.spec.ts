@@ -172,6 +172,9 @@ function buildInMemoryHarness() {
         return created;
       }),
     },
+    keyword: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
   };
 
   const prisma = {
