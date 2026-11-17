@@ -50,9 +50,13 @@ export async function authorizedRequest(
   method: string,
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const send = (token: string) => {
-    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${token}`,
+      ...(extraHeaders ?? {}),
+    };
     if (body !== undefined) headers['content-type'] = 'application/json';
     return fetch(`${apiBase()}${path}`, {
       method,

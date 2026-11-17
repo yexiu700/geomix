@@ -20,6 +20,7 @@ export function ShellFrame({
   onDispatch,
   onLogout,
   onChangePassword,
+  announcement = SHELL_ANNOUNCEMENT,
 }: {
   account: AccountProfile;
   state: ShellSnapshot;
@@ -29,6 +30,7 @@ export function ShellFrame({
     currentPassword: string;
     newPassword: string;
   }) => Promise<string | null>;
+  announcement?: string;
 }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -60,8 +62,13 @@ export function ShellFrame({
             <span>{SITE_NAME}</span>
           </div>
           <div className="gm-marquee" aria-label="公告">
-            <div className="gm-marquee-track">{SHELL_ANNOUNCEMENT}</div>
+            <div className="gm-marquee-track">{announcement}</div>
           </div>
+          {account.role === 'ADMIN' ? (
+            <a className="gm-admin-link" href="/admin/tenants">
+              管理后台
+            </a>
+          ) : null}
           <span className={account.tenant.readOnly ? 'gm-expiry warn' : 'gm-expiry'}>
             {formatExpiry(account.tenant.expiresAt, account.tenant.readOnly)}
           </span>

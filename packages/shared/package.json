@@ -36,6 +36,10 @@
     "./queue": {
       "types": "./dist/queue.d.ts",
       "default": "./dist/queue.js"
+    },
+    "./account": {
+      "types": "./dist/account.d.ts",
+      "default": "./dist/account.js"
     }
   },
   "scripts": {

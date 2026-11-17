@@ -1,0 +1,85 @@
+'use client';
+
+import { SITE_NAME } from '@geomix/shared';
+import { Button } from 'antd';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
+import { loadAccount, logoutSession, type AccountProfile } from '../../lib/api';
+import { clearSession } from '../../lib/session';
+
+const LINKS = [
+  { href: '/admin/tenants', title: '租户' },
+  { href: '/admin/pricing', title: '价格' },
+  { href: '/admin/announcements', title: '公告' },
+  { href: '/admin/templates', title: '系统模板' },
+];
+
+export function AdminGate({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [account, setAccount] = useState<AccountProfile | null>(null);
+  const [phase, setPhase] = useState<'boot' | 'ok' | 'deny' | 'offline'>('boot');
+
+  useEffect(() => {
+    let live = true;
+    void loadAccount(window.sessionStorage).then((result) => {
+      if (!live) return;
+      if (result.status === 'offline') {
+        setPhase('offline');
+        return;
+      }
+      if (result.status !== 'ok' || result.account.role !== 'ADMIN') {
+        if (result.status !== 'ok') clearSession(window.sessionStorage);
+        setPhase('deny');
+        return;
+      }
+      setAccount(result.account);
+      setPhase('ok');
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (phase === 'boot') return <main className="gm-boot">正在确认登录</main>;
+  if (phase === 'offline') return <main className="gm-boot">无法连接接口</main>;
+  if (phase === 'deny' || !account) {
+    return (
+      <main className="gm-boot">
+        <p>没有这个页面</p>
+        <Button type="primary" onClick={() => router.push('/dashboard')}>
+          回首页
+        </Button>
+      </main>
+    );
+  }
+
+  return (
+    <div className="gm-admin">
+      <header className="gm-admin-bar">
+        <strong>{SITE_NAME} 管理</strong>
+        <nav aria-label="管理菜单">
+          {LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              aria-current={pathname === link.href ? 'page' : undefined}
+            >
+              {link.title}
+            </Link>
+          ))}
+        </nav>
+        <Link href="/dashboard">返回后台</Link>
+        <Button
+          onClick={() => {
+            void logoutSession(window.sessionStorage).then(() => router.replace('/login'));
+          }}
+        >
+          退出
+        </Button>
+      </header>
+      <main className="gm-admin-main">{children}</main>
+    </div>
+  );
+}
