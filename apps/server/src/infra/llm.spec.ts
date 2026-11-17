@@ -381,6 +381,88 @@ describe('llm routing', () => {
     expect(res.text).toBe('快速非推理模型正文输出');
     expect(elapsed).toBeLessThan(400);
   });
+
+  it('reserves deadline budget for backup OpenAI provider when primary reasoner and cheapModel both time out (#96)', async () => {
+    const requestedModels: string[] = [];
+    const transport: HttpTransport = async (req) => {
+      const payload = JSON.parse(req.body ?? '{}') as { model: string };
+      requestedModels.push(payload.model);
+      if (payload.model.startsWith('deepseek-')) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 800);
+          req.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          });
+        });
+      }
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content: '# 通义备用改写标题\n\n通义备用模型成功返回正文。' } }],
+            usage: { prompt_tokens: 18, completion_tokens: 24 },
+          }),
+        ),
+      };
+    };
+
+    const service = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'ds-key',
+        DASHSCOPE_API_KEY: 'ty-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-reasoner',
+            },
+            tongyi: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.11/v1',
+              apiKeyEnv: 'DASHSCOPE_API_KEY',
+              cheapModel: 'qwen-turbo',
+              qualityModel: 'qwen-plus',
+            },
+          },
+          route: Object.fromEntries(
+            LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: ['tongyi'] }]),
+          ),
+        }),
+      },
+      {
+        transport,
+        resolver: {
+          async resolve(host) {
+            return [{ address: host.includes('11') ? '192.0.2.11' : '192.0.2.10', family: 4 }];
+          },
+        },
+        timeoutMs: 10_000,
+        retryDelayMs: 0,
+      },
+    );
+
+    const startedAt = Date.now();
+    const res = await service.complete({
+      tenantId: 'tenant_demo',
+      scene: 'rewrite',
+      messages: [{ role: 'user', content: '改写单篇爆文测试' }],
+      idempotencyKey: 'idem-rewrite-backup-96',
+      timeoutMs: 240,
+      maxRetries: 0,
+    });
+    const elapsed = Date.now() - startedAt;
+
+    expect(requestedModels).toEqual(['deepseek-reasoner', 'deepseek-chat', 'qwen-plus']);
+    expect(res.provider).toBe('tongyi');
+    expect(res.model).toBe('qwen-plus');
+    expect(res.text).toContain('通义备用改写标题');
+    expect(elapsed).toBeLessThan(600);
+  });
 });
 
 function router(

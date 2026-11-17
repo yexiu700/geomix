@@ -273,4 +273,22 @@ describe('RewriteSingleScreen', () => {
     expect(submitted[0]?.pastedText).toBe(true);
     expect(submitted[0]?.url).toBe('https://zhuanlan.zhihu.com/p/blocked');
   });
+
+  it('converts HTML 504/502 gateway errors into clean Chinese RewriteApiError messages without JSON SyntaxError (#96)', async () => {
+    const { unwrapRewriteResponseText, RewriteApiError } = await import('../../lib/rewrites');
+
+    expect(() =>
+      unwrapRewriteResponseText(
+        504,
+        false,
+        '<html>\n<head><title>504 Gateway Time-out</title></head>\n<body><center><h1>504 Gateway Time-out</h1></center></body>\n</html>',
+      ),
+    ).toThrowError(new RewriteApiError(504, -1, '改写服务响应超时，请稍后重试（本次未扣点数）'));
+
+    expect(() =>
+      unwrapRewriteResponseText(502, false, '<html><body>502 Bad Gateway</body></html>'),
+    ).toThrowError(
+      new RewriteApiError(502, -1, '改写服务暂时繁忙（HTTP 502），请稍后重试（本次未扣点数）'),
+    );
+  });
 });

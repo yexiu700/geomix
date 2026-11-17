@@ -312,12 +312,16 @@ export class LlmRouter {
     const providerConfig = this.route.route[input.scene];
     const chain = [providerConfig.primary, ...providerConfig.backup];
     let last: ProviderError | null = null;
-    for (const name of chain) {
+    for (let cIdx = 0; cIdx < chain.length; cIdx += 1) {
+      const name = chain[cIdx]!;
       const provider = this.providers[name];
       const config = this.route.providers[name];
       if (!provider || !config) {
         throw new ProviderError(PROVIDER_KIND.CONTRACT, '模型路由未配置', 'route');
       }
+      const hasLaterOpenAi = chain
+        .slice(cIdx + 1)
+        .some((laterName) => this.route.providers[laterName]?.kind === 'openai');
       const primaryModel =
         config.kind === 'fake'
           ? QUALITY.has(input.scene)
@@ -345,10 +349,13 @@ export class LlmRouter {
               last = last ?? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
               continue;
             }
-            callTimeoutMs =
-              models.length > 1 && mIdx === 0
-                ? Math.max(1, Math.floor(remainingMs * 0.55))
-                : remainingMs;
+            if (models.length > 1 && mIdx === 0) {
+              callTimeoutMs = Math.max(1, Math.min(10_000, Math.floor(remainingMs * 0.4)));
+            } else if (hasLaterOpenAi) {
+              callTimeoutMs = Math.max(1, Math.floor(remainingMs * 0.65));
+            } else {
+              callTimeoutMs = remainingMs;
+            }
           }
         }
         try {

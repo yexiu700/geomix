@@ -13,7 +13,7 @@ import { authorizedRequest, type Envelope } from './api';
 import { httpCategoryGateway } from './categories';
 import { httpGalleryGateway } from './gallery';
 import { httpPromptGateway } from './prompts';
-import { RewriteApiError, type RewriteDownloadFile } from './rewrites';
+import { RewriteApiError, unwrapRewriteResponseText, type RewriteDownloadFile } from './rewrites';
 import type { SessionStorageLike } from './session';
 
 export type RewriteBatchFormOptions = {
@@ -55,12 +55,7 @@ export function buildRewriteBatchListQueryString(
 
 async function unwrap<T>(response: Response): Promise<T> {
   const text = await response.text();
-  if (!text) throw new RewriteApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new RewriteApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
+  return unwrapRewriteResponseText<T>(response.status, response.ok, text);
 }
 
 function filenameFromDisposition(header: string | null, fallback: string): string {

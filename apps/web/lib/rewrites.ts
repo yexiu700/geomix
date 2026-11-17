@@ -70,14 +70,36 @@ export function buildRewriteListQueryString(
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new RewriteApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new RewriteApiError(response.status, json.code ?? -1, json.msg || '操作失败');
+export function unwrapRewriteResponseText<T>(status: number, ok: boolean, text: string): T {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new RewriteApiError(status, -1, '服务响应为空');
+  }
+  let json: Envelope<T>;
+  try {
+    json = JSON.parse(trimmed) as Envelope<T>;
+  } catch {
+    if (status === 504 || status === 408) {
+      throw new RewriteApiError(status, -1, '改写服务响应超时，请稍后重试（本次未扣点数）');
+    }
+    if (status >= 500) {
+      throw new RewriteApiError(
+        status,
+        -1,
+        `改写服务暂时繁忙（HTTP ${status}），请稍后重试（本次未扣点数）`,
+      );
+    }
+    throw new RewriteApiError(status, -1, '服务返回格式异常，请稍后重试');
+  }
+  if (!ok || json.code !== 0 || json.data === null || json.data === undefined) {
+    throw new RewriteApiError(status, json.code ?? -1, json.msg || '操作失败');
   }
   return json.data;
+}
+
+async function unwrap<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  return unwrapRewriteResponseText<T>(response.status, response.ok, text);
 }
 
 function filenameFromDisposition(header: string | null, fallback: string): string {

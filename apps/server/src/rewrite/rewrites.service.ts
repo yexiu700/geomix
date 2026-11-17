@@ -53,6 +53,15 @@ function requireTenant(): string {
   return tenantId;
 }
 
+export function readRewriteSyncTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.REWRITE_SYNC_TIMEOUT_MS?.trim();
+  if (!raw || !/^[0-9]+$/.test(raw)) return 30_000;
+  const val = Number(raw);
+  return Number.isSafeInteger(val) && val >= 100 && val <= 50_000 ? val : 30_000;
+}
+
 type LoadedRewriteRow = Prisma.RewriteRecordGetPayload<{
   include: {
     category: { select: { id: true; name: true } };
@@ -468,8 +477,11 @@ export class RewritesService {
         userId,
       });
 
-      // 8. Rewrite via LLM + 5-gram Jaccard check (1 retry if > simMax)
+      // 8. Rewrite via LLM + 5-gram Jaccard check (bounded within HTTP gateway timeout)
+      const syncStartedAt = Date.now();
+      const syncBudgetMs = readRewriteSyncTimeoutMs(process.env);
       const runPass = async (retryHighSimilarity: boolean, passIdx: number) => {
+        const remainingMs = Math.max(100, syncBudgetMs - (Date.now() - syncStartedAt));
         const messages = assembleRewriteMessages({
           templateContent: template.content,
           sourceTitle: extracted.title,
@@ -483,7 +495,9 @@ export class RewritesService {
           messages,
           idempotencyKey: `${unitKey}:p${passIdx}`,
           temperature: retryHighSimilarity ? 0.85 : 0.75,
-          maxTokens: 3200,
+          maxTokens: 2200,
+          timeoutMs: remainingMs,
+          maxRetries: 0,
         });
         const rawMd =
           completion.fake && completion.text.startsWith(FAKE_MARK)
@@ -532,11 +546,23 @@ export class RewritesService {
 
       let best = await runPass(false, 0);
       let retriedSimilarity = false;
-      if (best.similarity > simMax) {
+      const remainingAfterFirstPassMs = syncBudgetMs - (Date.now() - syncStartedAt);
+      if (
+        best.similarity > simMax &&
+        remainingAfterFirstPassMs >= Math.min(8_000, Math.floor(syncBudgetMs * 0.4))
+      ) {
         retriedSimilarity = true;
-        const second = await runPass(true, 1);
-        if (second.similarity <= best.similarity) {
-          best = second;
+        try {
+          const second = await runPass(true, 1);
+          if (second.similarity <= best.similarity) {
+            best = second;
+          }
+        } catch (retryErr) {
+          this.logger.warn(
+            `optional high-similarity retry skipped after error, keeping pass 0 result: ${
+              retryErr instanceof Error ? retryErr.message : 'unknown'
+            }`,
+          );
         }
       }
 
