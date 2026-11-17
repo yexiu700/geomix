@@ -530,6 +530,18 @@ describe.skipIf(
         cancelTaskId = cancelCreate.data.id;
 
         await waitForTaskStatus(tenant.token, cancelTaskId, ['PAUSED']);
+
+        // Deleting an active/paused task must be rejected with 409
+        const blockedDel = await httpCall<{ deleted: number }>(
+          ctx.base,
+          'POST',
+          '/api/v1/ai-tasks/bulk-delete',
+          {
+            token: tenant.token,
+            body: { ids: [cancelTaskId] },
+          },
+        );
+        expect(blockedDel.status).toBe(409);
       } finally {
         holdSpy.mockRestore();
       }
@@ -544,6 +556,19 @@ describe.skipIf(
       expect(cancelRes.data.status).toBe('CANCELLED');
       expect(cancelRes.data.skipCount).toBeGreaterThanOrEqual(1);
       expect(cancelRes.data.releasedPoints).toBe(60);
+
+      // Once terminal (CANCELLED), bulk-delete succeeds
+      const okDel = await httpCall<{ deleted: number }>(
+        ctx.base,
+        'POST',
+        '/api/v1/ai-tasks/bulk-delete',
+        {
+          token: tenant.token,
+          body: { ids: [cancelTaskId] },
+        },
+      );
+      expect(okDel.status).toBe(200);
+      expect(okDel.data.deleted).toBe(1);
 
       const finalWallet = await ctx.prisma.base.wallet.findUnique({
         where: { tenantId: tenant.tenantId },

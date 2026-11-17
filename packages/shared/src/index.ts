@@ -450,6 +450,7 @@ export {
   ITEM_STATUS_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
+  aiTaskBulkDeleteSchema,
   aiTaskCreateSchema,
   aiTaskExportTable,
   assembleArticleMessages,
@@ -457,6 +458,8 @@ export {
   buildFakeArticleMarkdown,
   buildFakeTitleText,
   cleanTitleText,
+  formatAiTaskFreezeSummary,
+  formatAiTaskSubmitLabel,
   injectGalleryImages,
   isTaskStatus,
   markdownToSanitizedHtml,
@@ -470,6 +473,7 @@ export {
   stripHtmlToText,
 } from './writing-tasks';
 export type {
+  AiTaskBulkDeleteInput,
   AiTaskCreateInput,
   AiTaskDetailRecord,
   AiTaskItemRecord,

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
@@ -16,6 +17,7 @@ import {
   API_ERROR,
   AUTH_ERROR,
   CrudQueryError,
+  aiTaskBulkDeleteSchema,
   aiTaskCreateSchema,
   aiTaskExportTable,
   ok,
@@ -107,6 +109,13 @@ export class AiTasksController {
     return ok(await this.tasks.create(parsed, userId));
   }
 
+  @Post('bulk-delete')
+  @HttpCode(200)
+  async bulkDelete(@Body() body: unknown) {
+    const parsed = parseBody(aiTaskBulkDeleteSchema, body);
+    return ok(await this.tasks.bulkDelete(parsed.ids));
+  }
+
   @Post(':id/pause')
   @HttpCode(200)
   async pause(@Param('id') id: string) {
@@ -123,5 +132,10 @@ export class AiTasksController {
   @HttpCode(200)
   async cancel(@Param('id') id: string) {
     return ok(await this.tasks.cancel(readTaskId(id)));
+  }
+
+  @Delete(':id')
+  async deleteOne(@Param('id') id: string) {
+    return ok(await this.tasks.bulkDelete([readTaskId(id)]));
   }
 }

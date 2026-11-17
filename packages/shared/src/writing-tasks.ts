@@ -111,6 +111,39 @@ export const aiTaskCreateSchema = z.object({
 
 export type AiTaskCreateInput = z.infer<typeof aiTaskCreateSchema>;
 
+export const aiTaskBulkDeleteSchema = z.object({
+  ids: z
+    .array(z.string().trim().regex(AI_TASK_ID_PATTERN, '任务编号不合法'))
+    .min(1, '请至少选择一条任务')
+    .max(100),
+});
+
+export type AiTaskBulkDeleteInput = z.infer<typeof aiTaskBulkDeleteSchema>;
+
+export function formatAiTaskSubmitLabel(unitPrice: number): string {
+  return `开始写作（${unitPrice}点数/篇）`;
+}
+
+export function formatAiTaskFreezeSummary(input: {
+  target: number;
+  basePoints: number;
+  kbAddonPoints: number;
+  withKnowledgeBase: boolean;
+}): { unitPrice: number; totalFrozen: number; text: string } {
+  const safeTarget =
+    Number.isFinite(input.target) && input.target >= 1 ? Math.floor(input.target) : 1;
+  const unitPrice = input.basePoints + (input.withKnowledgeBase ? input.kbAddonPoints : 0);
+  const totalFrozen = safeTarget * unitPrice;
+  const kbPart = input.withKnowledgeBase
+    ? `已选用企业知识库（+${input.kbAddonPoints} 点/篇），`
+    : '';
+  return {
+    unitPrice,
+    totalFrozen,
+    text: `${kbPart}预计整单预冻 ${totalFrozen} 点数（${safeTarget} 篇 × ${unitPrice} 点/篇），按成功产出逐篇结算，失败或终止未用部分自动退还。`,
+  };
+}
+
 export const AI_TASK_SORTS = ['createdAt', 'lastWrittenAt', 'name'] as const;
 export type AiTaskSort = (typeof AI_TASK_SORTS)[number];
 

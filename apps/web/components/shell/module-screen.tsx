@@ -11,6 +11,7 @@ import { KeywordScreen } from '../material/keyword-screen';
 import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
 import { ArticleListScreen } from '../writing/article-list-screen';
+import { AiTaskScreen } from '../writing/ai-task-screen';
 import { CategoryScreen } from '../writing/category-screen';
 import { PromptScreen } from '../writing/prompt-screen';
 import { categoryIdFromHref } from '../../lib/categories';
@@ -124,6 +125,19 @@ export function ModuleScreen({
     return (
       <div>
         <PromptScreen title={tab.title} readOnly={readOnly} />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/writing/tasks') {
+    return (
+      <div>
+        <AiTaskScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
       </div>
     );

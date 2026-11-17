@@ -414,6 +414,33 @@ export class AiTasksService {
     return this.detailForTenant(tenantId, id);
   }
 
+  async bulkDelete(ids: readonly string[]): Promise<{ deleted: number }> {
+    const tenantId = requireTenant();
+    const uniqueIds = Array.from(new Set(ids));
+    const activeCount = await this.prisma.base.aiTask.count({
+      where: {
+        tenantId,
+        id: { in: uniqueIds },
+        status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] },
+      },
+    });
+    if (activeCount > 0) {
+      throw new ApiError(
+        409,
+        API_ERROR.BAD_REQUEST,
+        '排队中、创作中或已暂停的任务请先点击「终止」释放冻结后再删除',
+      );
+    }
+    const res = await this.prisma.base.aiTask.deleteMany({
+      where: {
+        tenantId,
+        id: { in: uniqueIds },
+        status: { in: ['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'] },
+      },
+    });
+    return { deleted: res.count };
+  }
+
   private async resolveCategoryId(
     tenantId: string,
     explicitCategoryId: string | null,
