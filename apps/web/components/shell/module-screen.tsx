@@ -6,6 +6,7 @@ import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { DashboardScreen } from '../dashboard/dashboard-screen';
 import { AiImageScreen } from '../image/ai-image-screen';
 import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
 import { KeywordScreen } from '../material/keyword-screen';
@@ -35,6 +36,19 @@ export function ModuleScreen({
   onDispatch: (action: ShellAction) => void;
 }) {
   const path = matchRoute(tab.href)?.path ?? '';
+  if (path === '/dashboard') {
+    return (
+      <div>
+        <DashboardScreen
+          title={tab.title}
+          tabId={tab.id}
+          aiImageEnabled={aiImageEnabled}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
   if (path === '/workbench/samples') {
     return <SampleScreen title={tab.title} readOnly={readOnly} />;
   }
