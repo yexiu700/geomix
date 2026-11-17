@@ -56,6 +56,18 @@
     "./gallery": {
       "types": "./dist/gallery.d.ts",
       "default": "./dist/gallery.js"
+    },
+    "./knowledge": {
+      "types": "./dist/knowledge.d.ts",
+      "default": "./dist/knowledge.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts.d.ts",
+      "default": "./dist/prompts.js"
+    },
+    "./writing-tasks": {
+      "types": "./dist/writing-tasks.d.ts",
+      "default": "./dist/writing-tasks.js"
     }
   },
   "scripts": {

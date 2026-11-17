@@ -15,6 +15,9 @@ import {
 } from './gallery.service';
 import { KeywordsController } from './keywords.controller';
 import { KEYWORDS_MIN_VALID_TOKEN, KeywordsService, readDistillMinValid } from './keywords.service';
+import { KnowledgeIndexRunner } from './knowledge-index.runner';
+import { AgreementsController, KnowledgeController } from './knowledge.controller';
+import { KnowledgeService } from './knowledge.service';
 import { QuestionsController } from './questions.controller';
 import { QuestionsService } from './questions.service';
 
@@ -26,6 +29,8 @@ import { QuestionsService } from './questions.service';
     GalleryCategoriesController,
     GalleryAssetsController,
     GalleryPublicAssetsController,
+    AgreementsController,
+    KnowledgeController,
   ],
   providers: [
     {
@@ -39,7 +44,15 @@ import { QuestionsService } from './questions.service';
     KeywordsService,
     QuestionsService,
     GalleryService,
+    KnowledgeService,
+    KnowledgeIndexRunner,
   ],
-  exports: [KeywordsService, QuestionsService, GalleryService],
+  exports: [
+    KeywordsService,
+    QuestionsService,
+    GalleryService,
+    KnowledgeService,
+    KnowledgeIndexRunner,
+  ],
 })
 export class KeywordsModule {}
