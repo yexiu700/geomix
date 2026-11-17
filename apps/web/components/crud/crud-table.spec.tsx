@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CrudTable, type CrudSearch } from './crud-table';
 
 afterEach(() => {
+  window.localStorage.clear();
   cleanup();
 });
 

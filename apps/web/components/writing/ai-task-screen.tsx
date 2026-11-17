@@ -502,6 +502,8 @@ export function AiTaskScreen({
   }
 
   function openCreatedArticles(row: { id: string; categoryId: string; name: string }) {
+    setDrawerOpen(false);
+    setActiveDetail(null);
     onDispatch?.({
       type: 'open',
       href: `/writing/articles?categoryId=${encodeURIComponent(row.categoryId)}&taskId=${encodeURIComponent(row.id)}`,
@@ -701,7 +703,7 @@ export function AiTaskScreen({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="AI 写作任务按整单预冻点数、逐篇落库结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章保留 30 天，到期后系统自动删除清理，请及时发布或导出保存。"
+        message="AI 写作任务按整单预冻点数、逐篇落库结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章保留 30 天，到期后系统自动删除清理；注意：文章成功发布后会在一段时间后自动删除，请及时导出保存。"
       />
 
       {banner ? (

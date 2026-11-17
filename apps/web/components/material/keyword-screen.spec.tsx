@@ -153,7 +153,7 @@ describe('KeywordScreen', () => {
     );
 
     await screen.findByText('工业机器人');
-    await clickBtn('查看写作标题');
+    await clickBtn('查看问题');
     expect(dispatched).toContainEqual({
       type: 'open',
       href: '/material/questions?keywordId=kw_1',

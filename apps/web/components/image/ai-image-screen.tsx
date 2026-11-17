@@ -99,15 +99,24 @@ type ModalState = {
 };
 
 type ColumnKey =
-  'orderNo' | 'content' | 'prompt' | 'cost' | 'status' | 'remark' | 'createdAt' | 'actions';
+  | 'thumb'
+  | 'prompt'
+  | 'styleRatio'
+  | 'count'
+  | 'category'
+  | 'status'
+  | 'points'
+  | 'createdAt'
+  | 'actions';
 
 const ALL_COLUMN_KEYS: { key: ColumnKey; label: string }[] = [
-  { key: 'orderNo', label: '订单号' },
-  { key: 'content', label: '内容' },
+  { key: 'thumb', label: '缩略图' },
   { key: 'prompt', label: '提示词' },
-  { key: 'cost', label: '费用' },
+  { key: 'styleRatio', label: '风格/比例' },
+  { key: 'count', label: '张数' },
+  { key: 'category', label: '归属分类' },
   { key: 'status', label: '状态' },
-  { key: 'remark', label: '备注' },
+  { key: 'points', label: '消耗点数' },
   { key: 'createdAt', label: '创建时间' },
   { key: 'actions', label: '操作' },
 ];
@@ -525,8 +534,8 @@ export function AiImageScreen({
     );
   }
 
-  const draftQuote = quoteAiImagePoints(modalState?.draft.count ?? 2, unitPoints);
-  const submitButtonLabel = formatAiImageSubmitLabel(modalState?.draft.count ?? 2, unitPoints);
+  const draftQuote = quoteAiImagePoints(modalState?.draft.count ?? 1, unitPoints);
+  const submitButtonLabel = formatAiImageSubmitLabel(modalState?.draft.count ?? 1, unitPoints);
 
   const columns = [
     {
@@ -536,27 +545,12 @@ export function AiImageScreen({
       render: (_: unknown, __: AiImageJobItem, idx: number) =>
         (query.page - 1) * query.pageSize + idx + 1,
     },
-    ...(visibleCols.includes('orderNo')
+    ...(visibleCols.includes('thumb')
       ? [
           {
-            title: '订单号',
-            dataIndex: 'orderNo',
-            key: 'orderNo',
-            width: 165,
-            render: (val: string) => (
-              <Typography.Text code style={{ fontSize: 12 }}>
-                {val}
-              </Typography.Text>
-            ),
-          },
-        ]
-      : []),
-    ...(visibleCols.includes('content')
-      ? [
-          {
-            title: '内容',
-            key: 'content',
-            width: 190,
+            title: '缩略图',
+            key: 'thumb',
+            width: 185,
             render: (_: unknown, row: AiImageJobItem) => {
               if (row.assets.length === 0) {
                 if (row.status === 'QUEUED' || row.status === 'RUNNING') {
@@ -617,48 +611,79 @@ export function AiImageScreen({
             key: 'prompt',
             render: (_: unknown, row: AiImageJobItem) => (
               <div>
+                <div style={{ marginBottom: 2 }}>
+                  <Typography.Text code style={{ fontSize: 12 }}>
+                    {row.orderNo}
+                  </Typography.Text>
+                </div>
                 <div
                   style={{
                     fontSize: 13,
                     lineHeight: 1.5,
                     color: '#1f1f1f',
-                    marginBottom: 4,
                     wordBreak: 'break-word',
                   }}
                 >
                   {row.prompt}
                 </div>
-                <Space size={4} wrap>
-                  <Tag color="geekblue">{row.ratio}</Tag>
-                  <Tag>{row.style ?? '默认风格'}</Tag>
-                  <Tag color="cyan">
-                    成功 {row.successCount}/{row.count} 张
-                  </Tag>
-                </Space>
+                {row.error ? (
+                  <div
+                    style={{
+                      color: '#cf1322',
+                      fontSize: 12,
+                      marginTop: 2,
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {row.error}
+                  </div>
+                ) : null}
               </div>
             ),
           },
         ]
       : []),
-    ...(visibleCols.includes('cost')
+    ...(visibleCols.includes('styleRatio')
       ? [
           {
-            title: '费用',
-            key: 'cost',
-            width: 145,
+            title: '风格/比例',
+            key: 'styleRatio',
+            width: 150,
             render: (_: unknown, row: AiImageJobItem) => (
-              <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                <div style={{ fontWeight: 600, color: '#1d39c4' }}>
-                  {row.status === 'QUEUED' || row.status === 'RUNNING'
-                    ? `预冻 ${row.reservedPoints} 点`
-                    : `实结 ${row.settledPoints} 点`}
-                </div>
-                <div style={{ color: '#8c8c8c' }}>
-                  标价 {row.unitPoints} 点/张
-                  {row.releasedPoints > 0 ? ` · 已退 ${row.releasedPoints} 点` : ''}
-                </div>
-              </div>
+              <Space size={4} wrap>
+                <Tag>{row.style ?? '默认风格'}</Tag>
+                <Tag color="geekblue">{row.ratio}</Tag>
+              </Space>
             ),
+          },
+        ]
+      : []),
+    ...(visibleCols.includes('count')
+      ? [
+          {
+            title: '张数',
+            key: 'count',
+            width: 95,
+            render: (_: unknown, row: AiImageJobItem) => (
+              <Tag color="cyan">
+                {row.successCount}/{row.count} 张
+              </Tag>
+            ),
+          },
+        ]
+      : []),
+    ...(visibleCols.includes('category')
+      ? [
+          {
+            title: '归属分类',
+            key: 'category',
+            width: 145,
+            render: (_: unknown, row: AiImageJobItem) =>
+              row.saveCategoryName ? (
+                <span style={{ fontSize: 12, color: '#389e0d' }}>{row.saveCategoryName}</span>
+              ) : (
+                <span style={{ fontSize: 12, color: '#8c8c8c' }}>未转存图库</span>
+              ),
           },
         ]
       : []),
@@ -676,26 +701,23 @@ export function AiImageScreen({
           },
         ]
       : []),
-    ...(visibleCols.includes('remark')
+    ...(visibleCols.includes('points')
       ? [
           {
-            title: '备注',
-            key: 'remark',
-            width: 185,
+            title: '消耗点数',
+            key: 'points',
+            width: 145,
             render: (_: unknown, row: AiImageJobItem) => (
-              <div style={{ fontSize: 12 }}>
-                {row.saveCategoryName ? (
-                  <div style={{ color: '#389e0d', marginBottom: row.error ? 2 : 0 }}>
-                    已转存：{row.saveCategoryName}
-                  </div>
-                ) : (
-                  <div style={{ color: '#8c8c8c', marginBottom: row.error ? 2 : 0 }}>
-                    未转存图库
-                  </div>
-                )}
-                {row.error ? (
-                  <div style={{ color: '#cf1322', wordBreak: 'break-word' }}>{row.error}</div>
-                ) : null}
+              <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 600, color: '#1d39c4' }}>
+                  {row.status === 'QUEUED' || row.status === 'RUNNING'
+                    ? `预冻 ${row.reservedPoints} 点`
+                    : `实结 ${row.settledPoints} 点`}
+                </div>
+                <div style={{ color: '#8c8c8c' }}>
+                  标价 {row.unitPoints} 点/张
+                  {row.releasedPoints > 0 ? ` · 已退 ${row.releasedPoints} 点` : ''}
+                </div>
               </div>
             ),
           },

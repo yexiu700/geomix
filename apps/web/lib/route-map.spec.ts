@@ -19,6 +19,7 @@ describe('legacy redirects (#7 / #72)', () => {
       '/user/user_score_log': '/me/points',
       '/user/user_money_log': '/me/money',
       '/user/quanyi': '/me/rights',
+      '/user/account_rights': '/me/rights',
     };
 
     expect(LEGACY_REDIRECTS).toEqual(expected);

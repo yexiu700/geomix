@@ -186,13 +186,13 @@ describe('KnowledgeScreen', () => {
     expect(document.body.textContent).toContain('汇总模式');
     expect(document.body.textContent).toContain('可用');
 
-    // Summary row cell for companyName is empty
+    // Summary row cell for companyName displays '-'
     const rows = Array.from(document.querySelectorAll('tbody tr'));
     const summaryRow = rows.find((tr) => (tr.textContent ?? '').includes('两万字工艺总览'));
     expect(summaryRow).toBeTruthy();
     const summaryCells = Array.from(summaryRow!.querySelectorAll('td'));
     // td[0]=checkbox, td[1]=名称, td[2]=类型, td[3]=公司名
-    expect(summaryCells[3]?.textContent?.trim()).toBe('');
+    expect(summaryCells[3]?.textContent?.trim()).toBe('-');
 
     const toolbarDelete = document.querySelector('button[aria-label="删除"]') as HTMLButtonElement;
     expect(toolbarDelete.disabled).toBe(true);

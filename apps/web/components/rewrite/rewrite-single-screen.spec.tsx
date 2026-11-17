@@ -201,9 +201,9 @@ describe('RewriteSingleScreen', () => {
     expect(templateSelect.value).toBe('');
     expect(templateSelect.options[0]?.textContent).toBe('不选择');
 
-    // Editable timestamped auto-category input is pre-filled and editable
+    // Editable auto-category input defaults to "爆文复刻" and is editable
     const autoCatInput = screen.getByLabelText('新建分类名称') as HTMLInputElement;
-    expect(autoCatInput.value).toMatch(/^爆文复刻-\d{8}-\d{4}$/);
+    expect(autoCatInput.value).toBe('爆文复刻');
     fireEvent.change(autoCatInput, { target: { value: '爆文复刻-20261117-传感器专题' } });
 
     // Enter URL and trigger blur duplicate check

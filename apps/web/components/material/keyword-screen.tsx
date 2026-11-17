@@ -563,8 +563,16 @@ export function KeywordScreen({
                 });
               }
         }
+        toolbarOrder="create-first"
         onDelete={writeLocked ? undefined : () => setConfirmDeleteIds(selectedIds)}
         columns={[
+          {
+            key: 'seq',
+            title: '序号',
+            width: 72,
+            hideable: false,
+            render: (_row, index) => (query.page - 1) * query.pageSize + index + 1,
+          },
           {
             key: 'main',
             title: '主词',
@@ -638,7 +646,7 @@ export function KeywordScreen({
                     })
                   }
                 >
-                  查看写作标题
+                  查看问题
                 </Button>
                 <Button size="small" disabled={writeLocked} onClick={() => void openEdit(row)}>
                   编辑
@@ -691,7 +699,7 @@ export function KeywordScreen({
             <span>主关键词（必填，不少于 3 个字，只能填一个）</span>
             <Input
               aria-label="主关键词"
-              placeholder="例如：工业机器人"
+              placeholder="主关键词，只能一个，不低于3个字"
               value={editor?.draft.main ?? ''}
               onChange={(e) =>
                 setEditor((curr) =>
@@ -704,7 +712,7 @@ export function KeywordScreen({
             <span>公司或品牌（选填，多个品牌用逗号分隔）</span>
             <Input
               aria-label="公司或品牌"
-              placeholder="例如：智造科技，GeoMix智造"
+              placeholder="输入达标命中信息，逗号隔开..."
               value={editor?.draft.brands ?? ''}
               onChange={(e) =>
                 setEditor((curr) =>

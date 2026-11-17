@@ -70,7 +70,7 @@ const ARCHIVE_FORMAT_LABELS: Record<ArticleArchiveFormat, string> = {
 const SHORT_VIDEO_WORD_LIMIT = 1000;
 
 const RED_TYPOGRAPHY_TIP =
-  '排版提示：抖音、小红书类文字建议控制在1000字之内；建议采用二级/三级小标题与短段落结构排版，请勿粘贴外部追踪脚本、诱导外链或联系方式水印，保存时系统将自动清洗不安全标签。';
+  '排版提示：抖音、小红书类文字建议控制在1000字之内，会自动清除展示排版；建议采用二级/三级小标题与短段落结构排版，请勿粘贴外部追踪脚本、诱导外链或联系方式水印，保存时系统将自动清洗不安全标签。';
 
 type FilterDraft = {
   categoryId: string;
@@ -345,7 +345,7 @@ export function ArticleManageScreen({
     setEditorLoading(true);
     try {
       const opts = (await refreshFormOptions()) ?? formOptions;
-      const initial = buildDefaultCreateDraft(opts, query.categoryId);
+      const initial = buildDefaultCreateDraft(opts);
       setEditor({
         mode: 'create',
         initial,
@@ -983,6 +983,12 @@ export function ArticleManageScreen({
           },
         }}
         columns={[
+          {
+            key: 'index',
+            title: '序号',
+            width: 68,
+            render: (_, __, index) => (query.page - 1) * query.pageSize + index + 1,
+          },
           {
             key: 'categoryName',
             title: '分类名',

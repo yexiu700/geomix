@@ -474,7 +474,7 @@ export function KnowledgeScreen({
     {
       key: 'companyName',
       title: '公司名',
-      render: (row) => (row.mode === 'DETAIL' ? (row.companyName ?? '') : ''),
+      render: (row) => (row.mode === 'DETAIL' ? row.companyName || '-' : '-'),
     },
     {
       key: 'createdAt',
@@ -534,6 +534,7 @@ export function KnowledgeScreen({
         searchOpen={searchOpen}
         search={search}
         writeDisabled={readOnly}
+        toolbarOrder="create-first"
         onSearchOpenChange={setSearchOpen}
         onSearch={(next) => {
           setPage(1);

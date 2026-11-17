@@ -68,15 +68,17 @@ body {
   flex: none;
   padding: 4px 10px;
   border-radius: 999px;
-  background: #e8f7ee;
-  color: #137333;
+  background: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
   font-size: 13px;
   line-height: 20px;
 }
 
 .gm-expiry.warn {
-  background: #fff4e5;
-  color: #ad6800;
+  background: #fff1f0;
+  color: #cf1322;
+  border-color: #ffa39e;
 }
 
 .gm-mode {
