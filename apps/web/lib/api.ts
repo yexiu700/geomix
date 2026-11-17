@@ -10,11 +10,20 @@ import {
 
 export type Envelope<T> = { code: number; msg: string; data: T };
 
+export type AccountUiPrefs = {
+  multiTab?: boolean;
+  menuCollapsed?: boolean;
+  submenusAlwaysVisible?: boolean;
+  autoExpand?: boolean;
+  multiLevel?: boolean;
+};
+
 export type AccountProfile = {
   id: string;
   username: string;
   nickname: string | null;
   role: string;
+  uiPrefs?: AccountUiPrefs | null;
   features?: {
     aiImage?: boolean;
     visibility?: boolean;
@@ -145,6 +154,20 @@ export async function changePassword(
     return { ok: true };
   } catch {
     return { ok: false, message: '无法连接接口' };
+  }
+}
+
+export async function saveAccountUiPrefs(
+  storage: SessionStorageLike,
+  prefs: AccountUiPrefs,
+): Promise<boolean> {
+  try {
+    const response = await authorizedRequest(storage, 'PATCH', '/account/ui-prefs', prefs);
+    if (!response.ok) return false;
+    const envelope = await readEnvelope<{ uiPrefs: AccountUiPrefs }>(response);
+    return envelope.code === 0;
+  } catch {
+    return false;
   }
 }
 

@@ -1,6 +1,5 @@
-import { Controller, Get, Inject, Param, Req, UseGuards } from '@nestjs/common';
-import { ok } from '@geomix/shared';
-import { AUTH_ERROR } from '@geomix/shared';
+import { Body, Controller, Get, Inject, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { AUTH_ERROR, ok } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
 import { AuthGuard } from '../auth/auth.guard';
 import { asHttpRequest } from '../auth/http-request';
@@ -17,6 +16,13 @@ export class AccountController {
     const http = asHttpRequest(request);
     if (!http.auth) throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '未登录');
     return ok(await this.accounts.profile(http.auth.userId));
+  }
+
+  @Patch('ui-prefs')
+  async updateUiPrefs(@Req() request: unknown, @Body() body: unknown) {
+    const http = asHttpRequest(request);
+    if (!http.auth) throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '未登录');
+    return ok(await this.accounts.updateUiPrefs(http.auth.userId, body));
   }
 
   @Get('users/:id')

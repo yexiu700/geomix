@@ -5,9 +5,16 @@ import { Button } from 'antd';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { httpAnnouncements } from '../../lib/account-client';
-import { changePassword, loadAccount, logoutSession, type AccountProfile } from '../../lib/api';
+import {
+  changePassword,
+  loadAccount,
+  logoutSession,
+  saveAccountUiPrefs,
+  type AccountProfile,
+} from '../../lib/api';
 import { SHELL_ANNOUNCEMENT } from '../../lib/shell-copy';
 import { safeConsoleHref } from '../../lib/route-map';
+import { isConsoleRouteAccessible } from '../../lib/routes';
 import { useShellStore } from '../../lib/shell-store';
 import { clearSession, readAccessToken } from '../../lib/session';
 import {
@@ -45,6 +52,21 @@ export function ConsoleShell() {
   const [booting, setBooting] = useState(true);
   const persistEnabled = useRef(true);
 
+  function applyLoadedAccount(nextAccount: AccountProfile) {
+    if (nextAccount.role !== 'ADMIN') {
+      const store = useShellStore.getState();
+      if (store.tabs.some((tab) => !isConsoleRouteAccessible(tab.href, nextAccount.role))) {
+        store.dispatch({ type: 'close', id: '/workbench/samples' });
+      }
+    }
+    if (nextAccount.uiPrefs) {
+      useShellStore.getState().dispatch({ type: 'prefs', patch: nextAccount.uiPrefs });
+    }
+    setAccount(nextAccount);
+    setOffline(false);
+    setBooting(false);
+  }
+
   useEffect(() => {
     const storage = window.localStorage;
     const loaded = loadShell(storage);
@@ -65,9 +87,7 @@ export function ConsoleShell() {
     void loadAccount(window.sessionStorage).then((result) => {
       if (!live) return;
       if (result.status === 'ok') {
-        setAccount(result.account);
-        setOffline(false);
-        setBooting(false);
+        applyLoadedAccount(result.account);
         return;
       }
       if (result.status === 'offline') {
@@ -106,7 +126,7 @@ export function ConsoleShell() {
   useEffect(() => {
     if (!state.hydrated || !account) return;
     const match = tabFromHref(href);
-    if (!match) return;
+    if (!match || !isConsoleRouteAccessible(match.href, account.role)) return;
     if (match.href !== href) router.replace(match.href);
     if (useShellStore.getState().activeId === match.href) return;
     useShellStore.getState().dispatch({ type: 'open', href: match.href });
@@ -120,6 +140,11 @@ export function ConsoleShell() {
 
   function onDispatch(action: ShellAction) {
     useShellStore.getState().dispatch(action);
+    if (action.type === 'prefs') {
+      const nextPrefs = useShellStore.getState().prefs;
+      setAccount((curr) => (curr ? { ...curr, uiPrefs: nextPrefs } : curr));
+      void saveAccountUiPrefs(window.sessionStorage, nextPrefs);
+    }
     if (!NAVIGATING.has(action.type)) return;
     const next = useShellStore.getState();
     const active = next.tabs.find((tab) => tab.id === next.activeId);
@@ -145,8 +170,7 @@ export function ConsoleShell() {
             setBooting(true);
             void loadAccount(window.sessionStorage).then((result) => {
               if (result.status === 'ok') {
-                setAccount(result.account);
-                setBooting(false);
+                applyLoadedAccount(result.account);
                 return;
               }
               if (result.status === 'offline') {
@@ -166,7 +190,7 @@ export function ConsoleShell() {
     return <main className="gm-boot">正在确认登录</main>;
   }
 
-  if (!tabFromHref(href)) {
+  if (!tabFromHref(href) || !isConsoleRouteAccessible(href, account.role)) {
     return (
       <main className="gm-boot">
         <p>没有这个页面</p>

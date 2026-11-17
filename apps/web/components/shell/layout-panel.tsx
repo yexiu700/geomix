@@ -24,7 +24,9 @@ export function LayoutPanel({
 }) {
   return (
     <Drawer title="布局设置" placement="right" open={open} onClose={onClose} width={320}>
-      <p className="gm-panel-lead">这些开关保存在这台浏览器里。多标签默认开启。</p>
+      <p className="gm-panel-lead">
+        布局偏好会自动同步至当前账号，跨设备登录时自动还原。多标签默认开启。
+      </p>
       <ul className="gm-pref-list">
         {FIELDS.map((field) => (
           <li key={field.key}>

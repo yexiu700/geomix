@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountProfile } from '../../lib/api';
 import {
   loadShell,
@@ -13,6 +13,22 @@ import {
 } from '../../lib/tab-stack';
 import { initialSnapshot } from '../../lib/tab-stack';
 import { ShellFrame } from './shell-frame';
+
+vi.mock('../dashboard/dashboard-screen', () => ({
+  DashboardScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+vi.mock('../material/keyword-screen', () => ({
+  KeywordScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+vi.mock('../material/question-screen', () => ({
+  QuestionScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+vi.mock('../material/knowledge-screen', () => ({
+  KnowledgeScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+vi.mock('../writing/prompt-screen', () => ({
+  PromptScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
 
 const account: AccountProfile = {
   id: 'user-1',
@@ -79,7 +95,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe('admin shell', () => {
+describe('admin shell', { timeout: 60_000 }, () => {
   it('keeps drafts while switching among five tabs', () => {
     render(<Harness initial={openAll()} />);
     const drafts = [

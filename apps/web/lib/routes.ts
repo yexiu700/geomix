@@ -93,14 +93,14 @@ export const MENU: MenuItem[] = [
         title: '流量复刻',
         children: [link('/rewrite/single'), link('/rewrite/batch')],
       },
+      {
+        type: 'submenu',
+        key: 'image',
+        title: 'AI生图/视频',
+        badge: 'new',
+        children: [link('/image')],
+      },
     ],
-  },
-  {
-    type: 'submenu',
-    key: 'image',
-    title: 'AI生图/视频',
-    badge: 'new',
-    children: [link('/image')],
   },
   {
     type: 'section',
@@ -142,7 +142,10 @@ export function buildMenu(options?: {
   aiImageEnabled?: boolean;
   visibilityEnabled?: boolean;
 }): MenuItem[] {
-  return MENU.filter((item) => {
+  if (options?.aiImageEnabled !== false && options?.visibilityEnabled !== false) {
+    return MENU;
+  }
+  return filterMenuItems(MENU, (item) => {
     if (options?.aiImageEnabled === false && item.type === 'submenu' && item.key === 'image') {
       return false;
     }
@@ -155,6 +158,32 @@ export function buildMenu(options?: {
     }
     return true;
   });
+}
+
+export function isConsoleRouteAccessible(href: string, role?: string): boolean {
+  const matched = matchRoute(href);
+  if (!matched) return false;
+  if (matched.path === '/workbench/samples') {
+    return role === 'ADMIN';
+  }
+  return true;
+}
+
+function filterMenuItems(items: MenuItem[], predicate: (item: MenuItem) => boolean): MenuItem[] {
+  const next: MenuItem[] = [];
+  for (const item of items) {
+    if (!predicate(item)) continue;
+    if (item.type === 'section') {
+      next.push({ ...item, children: filterMenuItems(item.children, predicate) });
+      continue;
+    }
+    if (item.type === 'submenu') {
+      next.push({ ...item, children: filterMenuItems(item.children, predicate) });
+      continue;
+    }
+    next.push(item);
+  }
+  return next;
 }
 
 export function matchRoute(input: string): RouteMatch | null {
