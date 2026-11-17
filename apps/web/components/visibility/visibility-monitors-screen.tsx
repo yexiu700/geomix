@@ -1530,7 +1530,6 @@ export function VisibilityMonitorsScreen({
                       sort: 'createdAt',
                       order: 'desc',
                     }}
-                    sortOptions={[{ value: 'createdAt', label: '创建时间' }]}
                     onSearchOpenChange={setSearchOpen}
                     onSearch={(search) => {
                       setKeywordDraft(search.keyword);

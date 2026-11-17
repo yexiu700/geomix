@@ -247,8 +247,9 @@ export function SampleScreen({
               }
         }
         onDelete={writeLocked ? undefined : () => setConfirmDelete(true)}
-        onEnable={writeLocked ? undefined : () => void runBulk('enable')}
-        onDisable={writeLocked ? undefined : () => void runBulk('disable')}
+        statusFilter
+        onEnable={() => void runBulk('enable')}
+        onDisable={() => void runBulk('disable')}
         columns={[
           {
             key: 'index',
