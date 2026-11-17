@@ -62,9 +62,22 @@ export async function openMenuLink(
 ): Promise<void> {
   const sider = page.locator('aside.ant-layout-sider');
   const menuItem = sider.getByRole('menuitem', { name: options.itemTitle, exact: true });
-  if (options.submenu && !(await menuItem.isVisible().catch(() => false))) {
-    await sider.getByText(options.submenu, { exact: true }).click();
-    await expect(menuItem).toBeVisible();
+  if (options.submenu) {
+    const submenuRoot = sider
+      .locator('.ant-menu-submenu')
+      .filter({ has: page.locator('.ant-menu-submenu-title', { hasText: options.submenu }) })
+      .first();
+    const isOpen = await submenuRoot
+      .evaluate((el) => el.classList.contains('ant-menu-submenu-open'))
+      .catch(() => false);
+    if (!isOpen || !(await menuItem.isVisible().catch(() => false))) {
+      await submenuRoot.locator('.ant-menu-submenu-title').first().click();
+    }
+    await expect(
+      submenuRoot
+        .locator('.ant-menu-sub:not(.ant-menu-hidden)')
+        .getByRole('menuitem', { name: options.itemTitle, exact: true }),
+    ).toBeVisible();
   }
   await menuItem.click();
   await expect(page).toHaveURL(options.expectedUrl);
@@ -74,6 +87,7 @@ export async function saveGeoMixScreenshot(page: Page, filename: string): Promis
   mkdirSync(screenshotDir, { recursive: true });
   const target = resolve(screenshotDir, filename);
   await page.screenshot({ path: target, fullPage: true });
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
   return target;
 }
 
@@ -115,10 +129,13 @@ export async function selectAntdMultipleOption(
   ariaLabel: string,
   optionTitle: string,
 ): Promise<void> {
-  const trigger = container
-    .locator(`.ant-select[aria-label="${ariaLabel}"], input[aria-label="${ariaLabel}"]`)
+  const selectorBox = container
+    .locator(
+      `.ant-select[aria-label="${ariaLabel}"] .ant-select-selector, .ant-select:has([aria-label="${ariaLabel}"]) .ant-select-selector`,
+    )
     .first();
-  await trigger.click();
+  await expect(selectorBox).toBeVisible();
+  await selectorBox.click();
   const option = page.locator(
     `.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option[title="${optionTitle}"]`,
   );
