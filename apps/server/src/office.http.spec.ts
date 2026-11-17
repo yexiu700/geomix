@@ -500,6 +500,33 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       expect(audits).toBeGreaterThanOrEqual(4);
     });
 
+    it('searches tenant names as literals for percent, underscore, and backslash', async () => {
+      const started = app;
+      const database = prisma;
+      if (!started || !database) throw new Error('app was not started');
+      await database.base.tenant.createMany({
+        data: [
+          { id: `acct_pct_${suffix}`, name: '平台100%', expiresAt: future },
+          { id: `acct_bar_${suffix}`, name: '商户乙foo_bar', expiresAt: future },
+          { id: `acct_slash_${suffix}`, name: '路径a\\b', expiresAt: future },
+        ],
+      });
+      const captcha = started.get(CaptchaService);
+      const adminToken = await login(captcha, base, `admin_${suffix}`, password);
+      const all = await tenantNames(base, adminToken, '');
+      expect(all.length).toBeGreaterThan(3);
+      expect(all).toEqual(
+        expect.arrayContaining(['商户甲', '平台100%', '商户乙foo_bar', '路径a\\b']),
+      );
+
+      const percent = await tenantNames(base, adminToken, '%');
+      expect(percent).toEqual(['平台100%']);
+      const underscore = await tenantNames(base, adminToken, '_');
+      expect(underscore).toEqual(['商户乙foo_bar']);
+      const slash = await tenantNames(base, adminToken, '\\');
+      expect(slash).toEqual(['路径a\\b']);
+    });
+
     it('keeps verification as a placeholder and blocks expired writes', async () => {
       const started = app;
       if (!started) throw new Error('app was not started');
@@ -541,6 +568,20 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
     });
   },
 );
+
+async function tenantNames(base: string, token: string, keyword: string): Promise<string[]> {
+  const query = new URLSearchParams({ pageSize: '50' });
+  if (keyword) query.set('keyword', keyword);
+  const result = await call<{ items: Array<{ name: string }>; total: number }>(
+    base,
+    'GET',
+    `/api/v1/admin/tenants?${query.toString()}`,
+    { token },
+  );
+  expect(result.status, result.msg).toBe(200);
+  expect(result.data.total).toBe(result.data.items.length);
+  return result.data.items.map((item) => item.name).sort();
+}
 
 async function call<T>(
   base: string,

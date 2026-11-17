@@ -6,6 +6,7 @@ import {
   AUTH_ERROR,
   BILLING_ERROR,
   QUOTA_DEFAULTS,
+  escapeLikeLiteral,
   formatMoney,
   isQuotaKeyName,
   parseEnv,
@@ -46,7 +47,7 @@ export class AdminOfficeService {
 
   async listTenants(page: number, pageSize: number, keyword: string) {
     const where: Prisma.TenantWhereInput = keyword
-      ? { name: { contains: keyword, mode: 'insensitive' } }
+      ? { name: { contains: escapeLikeLiteral(keyword), mode: 'insensitive' } }
       : {};
     const [total, rows] = await Promise.all([
       this.prisma.base.tenant.count({ where }),
