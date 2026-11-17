@@ -10,9 +10,9 @@ import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
 import { KeywordsModule } from './material/keywords.module';
 import { SamplesModule } from './samples/samples.module';
+import { WritingModule } from './writing/writing.module';
 import { HealthService } from './health/health.service';
 import { PrismaModule } from './prisma/prisma.module';
-import { WritingModule } from './writing/writing.module';
 
 @Module({
   imports: [
