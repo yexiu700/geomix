@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,16 +53,23 @@ if (args.length === 0) {
   process.exit(1);
 }
 
-if (args.length === 1 && args[0] === 'generate') {
+const isPlainGenerate = args.length === 1 && args[0] === 'generate';
+let markerPath = '';
+let schemaHash = '';
+
+if (isPlainGenerate) {
   try {
     const req = createRequire(resolve(packageRoot, 'package.json'));
     const clientEntry = req.resolve('@prisma/client');
-    const generatedDefault = resolve(dirname(clientEntry), '../../.prisma/client/default.js');
+    const prismaDir = resolve(dirname(clientEntry), '../../.prisma/client');
+    const generatedDefault = resolve(prismaDir, 'default.js');
+    markerPath = resolve(prismaDir, '.geomix-schema.sha256');
     const schemaPath = resolve(packageRoot, 'prisma/schema.prisma');
+    schemaHash = createHash('sha256').update(readFileSync(schemaPath)).digest('hex');
     if (
       existsSync(generatedDefault) &&
-      existsSync(schemaPath) &&
-      statSync(generatedDefault).mtimeMs >= statSync(schemaPath).mtimeMs
+      existsSync(markerPath) &&
+      readFileSync(markerPath, 'utf8').trim() === schemaHash
     ) {
       process.exit(0);
     }
@@ -82,6 +90,13 @@ child.on('exit', (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);
     return;
+  }
+  if (code === 0 && isPlainGenerate && markerPath && schemaHash) {
+    try {
+      writeFileSync(markerPath, `${schemaHash}\n`, 'utf8');
+    } catch {
+      // Ignore marker write error.
+    }
   }
   process.exit(code ?? 1);
 });
