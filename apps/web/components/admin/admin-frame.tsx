@@ -13,6 +13,7 @@ const LINKS = [
   { href: '/admin/pricing', title: '价格' },
   { href: '/admin/announcements', title: '公告' },
   { href: '/admin/templates', title: '系统模板' },
+  { href: '/admin/llm-costs', title: 'LLM成本日报' },
 ];
 
 export function AdminGate({ children }: { children: ReactNode }) {

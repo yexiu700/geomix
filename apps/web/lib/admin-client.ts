@@ -1,6 +1,7 @@
 import type {
   AnnouncementInput,
   CreateTenantInput,
+  LlmDailyCostReport,
   PricingUpdateInput,
   QuotaUpdateInput,
   TemplateWriteInput,
@@ -112,6 +113,18 @@ export function httpAdmin(storage: SessionStorageLike) {
       readJson<TemplateRow>(storage, 'POST', '/admin/templates', input, freshKey()),
     updateTemplate: (id: string, input: TemplateWriteInput) =>
       readJson<TemplateRow>(storage, 'PATCH', `/admin/templates/${id}`, input, freshKey()),
+    llmCosts: (query?: { days?: number; includeFake?: boolean; tenantId?: string }) => {
+      const params = new URLSearchParams();
+      if (query?.days !== undefined) params.set('days', String(query.days));
+      if (query?.includeFake !== undefined) params.set('includeFake', String(query.includeFake));
+      if (query?.tenantId) params.set('tenantId', query.tenantId);
+      const qs = params.toString();
+      return readJson<LlmDailyCostReport>(
+        storage,
+        'GET',
+        qs ? `/admin/llm-costs?${qs}` : '/admin/llm-costs',
+      );
+    },
   };
 }
 

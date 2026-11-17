@@ -670,3 +670,4 @@ export type {
   DashboardTrendDay,
 } from './dashboard';
 export * from './visibility';
+export * from './ops';
