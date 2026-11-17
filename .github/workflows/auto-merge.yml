@@ -44,12 +44,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          EVENT_PR_NUM: ${{ github.event.workflow_run.pull_requests[0].number || '' }}
           REPO: ${{ github.repository }}
-          OWNER: ${{ github.repository_owner }}
         run: |
-          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-          PR_JSON=$(gh pr list --repo "$REPO" --state all --head "${OWNER}:${HEAD_BRANCH}" --base main --json number,state,isDraft,headRefOid --limit 10)
+          SHOULD_DEPLOY="false"
+          trap 'echo "should_deploy=${SHOULD_DEPLOY}" >> "$GITHUB_OUTPUT"' EXIT
+
+          PR_JSON=$(gh pr list --repo "$REPO" --state all --head "$HEAD_BRANCH" --base main --json number,state,isDraft,headRefOid --limit 10)
           PR_NUM=$(echo "$PR_JSON" | jq -r --arg sha "$HEAD_SHA" '.[] | select(.headRefOid == $sha and (.isDraft | not)) | .number' | head -n 1)
+          if [ -z "$PR_NUM" ] || [ "$PR_NUM" = "null" ]; then
+            PR_NUM=$(echo "$PR_JSON" | jq -r '.[] | select(.state == "OPEN" and (.isDraft | not)) | .number' | head -n 1)
+          fi
+          if ( [ -z "$PR_NUM" ] || [ "$PR_NUM" = "null" ] ) && [ -n "$EVENT_PR_NUM" ]; then
+            PR_NUM="$EVENT_PR_NUM"
+          fi
           if [ -z "$PR_NUM" ] || [ "$PR_NUM" = "null" ]; then
             echo "No non-draft PR targeting main found for branch $HEAD_BRANCH ($HEAD_SHA)."
             exit 0
@@ -59,7 +67,7 @@ jobs:
             STATE=$(gh pr view "$PR_NUM" --repo "$REPO" --json state --jq .state)
             if [ "$STATE" = "MERGED" ]; then
               echo "PR #$PR_NUM is merged. Scheduling CD deploy."
-              sed -i 's/should_deploy=false/should_deploy=true/' "$GITHUB_OUTPUT" || echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              SHOULD_DEPLOY="true"
               exit 0
             fi
             if [ "$STATE" != "OPEN" ]; then
@@ -68,7 +76,7 @@ jobs:
             fi
             if gh pr merge "$PR_NUM" --repo "$REPO" --merge; then
               echo "Merged PR #$PR_NUM. Scheduling CD deploy."
-              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              SHOULD_DEPLOY="true"
               exit 0
             fi
             sleep 3
@@ -76,7 +84,7 @@ jobs:
 
           STATE=$(gh pr view "$PR_NUM" --repo "$REPO" --json state --jq .state)
           if [ "$STATE" = "MERGED" ]; then
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            SHOULD_DEPLOY="true"
           fi
 
   deploy-after-merge:
