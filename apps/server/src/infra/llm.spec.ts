@@ -310,6 +310,77 @@ describe('llm routing', () => {
     expect(bareUrls).toEqual(['https://192.0.2.10/v1/chat/completions']);
     expect(bareOrigin.text).toBe('ok');
   });
+
+  it('honors per-call maxRetries=0 and falls back from slow reasoner qualityModel to cheapModel within timeoutMs (#79)', async () => {
+    const requestedModels: string[] = [];
+    const transport: HttpTransport = async (req) => {
+      const payload = JSON.parse(req.body ?? '{}') as { model: string };
+      requestedModels.push(payload.model);
+      if (payload.model === 'deepseek-reasoner') {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 500);
+          req.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          });
+        });
+      }
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content: '快速非推理模型正文输出' } }],
+            usage: { prompt_tokens: 10, completion_tokens: 12 },
+          }),
+        ),
+      };
+    };
+
+    const service = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-reasoner',
+            },
+          },
+          route: Object.fromEntries(
+            LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: [] }]),
+          ),
+        }),
+      },
+      {
+        transport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        timeoutMs: 5_000,
+        retryDelayMs: 0,
+      },
+    );
+
+    const startedAt = Date.now();
+    const res = await service.complete({
+      ...input,
+      idempotencyKey: 'idem-reasoner-fallback-79',
+      timeoutMs: 120,
+      maxRetries: 0,
+    });
+    const elapsed = Date.now() - startedAt;
+
+    expect(requestedModels).toEqual(['deepseek-reasoner', 'deepseek-chat']);
+    expect(res.model).toBe('deepseek-chat');
+    expect(res.text).toBe('快速非推理模型正文输出');
+    expect(elapsed).toBeLessThan(400);
+  });
 });
 
 function router(

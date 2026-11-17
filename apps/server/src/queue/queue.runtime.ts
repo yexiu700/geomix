@@ -113,6 +113,7 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
           connection: this.producer.duplicate(),
           prefix: this.producer.prefix(),
           concurrency: this.producer.concurrency(name),
+          lockDuration: 120_000,
         },
       );
       worker.on('failed', (job, error) => {
@@ -131,12 +132,18 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
         connection: this.producer.duplicate(),
         prefix: this.producer.prefix(),
         concurrency: 1,
+        lockDuration: 120_000,
       },
     );
     this.workers.push(maintenance);
     await this.registerSchedules();
     this.started = true;
     this.runtime.markConnected();
+    void this.maintenance.run('recover').catch((err: unknown) => {
+      this.logger.warn(
+        `initial recover sweep skipped: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    });
   }
 
   async stop(): Promise<void> {

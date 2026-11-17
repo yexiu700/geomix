@@ -28,7 +28,7 @@ import { TX_OPTIONS } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ComplianceService } from '../infra/compliance';
 import { LlmService, type LlmCallResult, type LlmMessage } from '../infra/llm';
-import { ProviderError } from '../infra/provider-error';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { KnowledgeIndexRunner } from '../material/knowledge-index.runner';
 import { PrismaService } from '../prisma/prisma.service';
 import { ensureBuiltInSystemTemplates } from './system-templates.helper';
@@ -38,6 +38,7 @@ export const AI_TASK_ENQUEUER = Symbol('AI_TASK_ENQUEUER');
 
 export interface AiTaskHandler {
   process(payload: { tenantId: string; taskId: string }): Promise<void>;
+  recoverStuckTasks?(): Promise<number>;
 }
 
 export interface AiTaskEnqueuer {
@@ -88,6 +89,20 @@ function readRetryDelayMs(env: Record<string, string | undefined>): number {
   return Number.isSafeInteger(val) && val >= 0 && val <= 10_000 ? val : 50;
 }
 
+export function readTaskLlmTimeoutMs(env: Record<string, string | undefined>): number {
+  const raw = env.AI_TASK_LLM_TIMEOUT_MS?.trim();
+  if (!raw || !/^[0-9]+$/.test(raw)) return 20_000;
+  const val = Number(raw);
+  return Number.isSafeInteger(val) && val >= 100 && val <= 120_000 ? val : 20_000;
+}
+
+export function readStaleRunningMs(env: Record<string, string | undefined>): number {
+  const raw = env.AI_TASK_STALE_RUNNING_MS?.trim();
+  if (!raw || !/^[0-9]+$/.test(raw)) return 60_000;
+  const val = Number(raw);
+  return Number.isSafeInteger(val) && val >= 1_000 && val <= 600_000 ? val : 60_000;
+}
+
 function safeErrorText(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message
@@ -113,7 +128,11 @@ export class AiTaskRunner implements AiTaskHandler {
   ) {}
 
   async process(payload: { tenantId: string; taskId: string }): Promise<void> {
-    await ensureBuiltInSystemTemplates(this.prisma);
+    await ensureBuiltInSystemTemplates(this.prisma).catch((err: unknown) => {
+      this.logger.warn(
+        `ensureBuiltInSystemTemplates skipped: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    });
 
     for (;;) {
       const claimed = await this.claimNextItem(payload.tenantId, payload.taskId);
@@ -145,6 +164,63 @@ export class AiTaskRunner implements AiTaskHandler {
     }
   }
 
+  async recoverStuckTasks(): Promise<number> {
+    const now = Date.now();
+    const queuedCutoff = new Date(now - 10_000);
+    const staleRunningCutoff = new Date(now - readStaleRunningMs(process.env));
+
+    const candidates = await this.prisma.base.aiTask.findMany({
+      where: {
+        OR: [{ status: 'QUEUED', createdAt: { lt: queuedCutoff } }, { status: 'RUNNING' }],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 25,
+      select: {
+        id: true,
+        tenantId: true,
+        status: true,
+        items: {
+          select: { status: true, startedAt: true },
+        },
+      },
+    });
+
+    let recovered = 0;
+    for (const task of candidates) {
+      const pendingCount = task.items.filter((i) => i.status === 'PENDING').length;
+      const runningItems = task.items.filter((i) => i.status === 'RUNNING');
+      const freshRunningCount = runningItems.filter(
+        (i) => i.startedAt && i.startedAt >= staleRunningCutoff,
+      ).length;
+      const staleRunningCount = runningItems.length - freshRunningCount;
+
+      const needsDrive =
+        task.status === 'QUEUED' ||
+        staleRunningCount > 0 ||
+        (pendingCount > 0 && freshRunningCount === 0) ||
+        (pendingCount === 0 && runningItems.length === 0);
+
+      if (!needsDrive) continue;
+
+      if (this.enqueuer) {
+        await this.enqueuer
+          .enqueueAiTask({ tenantId: task.tenantId, taskId: task.id })
+          .then(() => {
+            recovered += 1;
+          })
+          .catch((err: unknown) => {
+            this.logger.warn(
+              `recoverStuckTasks enqueue failed for ${task.id}: ${err instanceof Error ? err.message : 'unknown'}`,
+            );
+          });
+      } else {
+        await this.process({ tenantId: task.tenantId, taskId: task.id });
+        recovered += 1;
+      }
+    }
+    return recovered;
+  }
+
   private async claimNextItem(tenantId: string, taskId: string): Promise<ClaimOutcome> {
     return this.prisma.base.$transaction(async (tx) => {
       const taskRows = await tx.$queryRaw<
@@ -172,8 +248,8 @@ export class AiTaskRunner implements AiTaskHandler {
         return { kind: 'drain' };
       }
 
-      // Recover stale RUNNING items (> 10 minutes) from crashed workers
-      const staleCutoff = new Date(Date.now() - 10 * 60_000);
+      // Recover stale RUNNING items from crashed/restarted workers
+      const staleCutoff = new Date(Date.now() - readStaleRunningMs(process.env));
       await tx.aiTaskItem.updateMany({
         where: {
           task: { tenantId },
@@ -528,8 +604,12 @@ export class AiTaskRunner implements AiTaskHandler {
     maxTokens: number;
   }): Promise<LlmCallResult> {
     const baseDelay = readRetryDelayMs(process.env);
+    const configuredTimeoutMs = readTaskLlmTimeoutMs(process.env);
+    const sceneTimeoutMs =
+      input.scene === 'title' ? Math.min(10_000, configuredTimeoutMs) : configuredTimeoutMs;
+    const startedAt = Date.now();
     let lastErr: unknown;
-    for (let attempt = 0; attempt <= 2; attempt += 1) {
+    for (let attempt = 0; attempt <= 1; attempt += 1) {
       try {
         return await this.llm.complete({
           tenantId: input.tenantId,
@@ -539,11 +619,20 @@ export class AiTaskRunner implements AiTaskHandler {
             attempt === 0 ? input.idempotencyKey : `${input.idempotencyKey}:r${attempt}`,
           temperature: input.temperature,
           maxTokens: input.maxTokens,
+          timeoutMs: sceneTimeoutMs,
+          maxRetries: 0,
         });
       } catch (err) {
         lastErr = err;
+        const isTimeout = err instanceof ProviderError && err.kind === PROVIDER_KIND.TIMEOUT;
         const retryable = err instanceof ProviderError ? err.retryable : true;
-        if (!retryable || attempt === 2) {
+        const elapsedMs = Date.now() - startedAt;
+        if (
+          !retryable ||
+          isTimeout ||
+          attempt >= 1 ||
+          elapsedMs >= Math.max(500, Math.floor(sceneTimeoutMs / 2))
+        ) {
           throw err;
         }
         if (baseDelay > 0) {
@@ -601,7 +690,7 @@ export class AiTaskRunner implements AiTaskHandler {
         messages: assembled.messages,
         idempotencyKey: `ai_body:${input.itemId}:a${input.attempts}:p${lengthPass}`,
         temperature: 0.8,
-        maxTokens: 3500,
+        maxTokens: 2000,
       });
 
       totalTokensIn += completion.tokensIn;

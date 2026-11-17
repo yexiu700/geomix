@@ -63,6 +63,8 @@ export type LlmCompleteInput = {
   signal?: AbortSignal;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
+  maxRetries?: number;
 };
 
 type ProviderCall = {
@@ -71,6 +73,7 @@ type ProviderCall = {
   messages: LlmMessage[];
   temperature: number;
   maxTokens: number;
+  timeoutMs?: number;
   signal: AbortSignal;
 };
 
@@ -207,6 +210,7 @@ export class OpenAiLlm implements LlmProvider {
     input: ProviderCall,
     promptText: string,
   ): Promise<LlmCompletion> {
+    const requestTimeoutMs = input.timeoutMs ?? this.timeoutMs;
     const send = (payload: Record<string, unknown>) =>
       requestOnce({
         url,
@@ -217,15 +221,16 @@ export class OpenAiLlm implements LlmProvider {
           accept: 'application/json',
         },
         body: JSON.stringify(payload),
-        timeoutMs: this.timeoutMs,
+        timeoutMs: requestTimeoutMs,
         maxBytes: 2_000_000,
         signal: input.signal,
         resolver: this.resolver,
         transport: this.transport,
       });
 
-    const effectiveMaxTokens = /reasoner|thinking|qwq|\br1\b/i.test(input.model)
-      ? Math.max(input.maxTokens, 4096)
+    const isReasoner = /reasoner|thinking|qwq|\br1\b/i.test(input.model);
+    const effectiveMaxTokens = isReasoner
+      ? Math.max(input.maxTokens, requestTimeoutMs <= 25_000 ? 3000 : 4096)
       : input.maxTokens;
     let response = await send({
       model: input.model,
@@ -295,6 +300,9 @@ export class LlmRouter {
     if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, 'maxTokens 超出范围', 'max_tokens');
     }
+    const effectiveTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const effectiveMaxRetries = input.maxRetries ?? this.options.maxRetries;
+    const deadline = input.timeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined;
     const providerConfig = this.route.route[input.scene];
     const chain = [providerConfig.primary, ...providerConfig.backup];
     let last: ProviderError | null = null;
@@ -304,7 +312,7 @@ export class LlmRouter {
       if (!provider || !config) {
         throw new ProviderError(PROVIDER_KIND.CONTRACT, '模型路由未配置', 'route');
       }
-      const model =
+      const primaryModel =
         config.kind === 'fake'
           ? QUALITY.has(input.scene)
             ? 'fake-quality'
@@ -312,27 +320,57 @@ export class LlmRouter {
           : QUALITY.has(input.scene)
             ? config.qualityModel
             : config.cheapModel;
-      try {
-        return await withRetry(
-          () =>
-            this.call(provider, {
-              scene: input.scene,
-              model,
-              messages,
-              temperature,
-              maxTokens,
+      const canFallbackToCheap =
+        config.kind === 'openai' &&
+        QUALITY.has(input.scene) &&
+        config.cheapModel !== config.qualityModel &&
+        !/reasoner|thinking|qwq|\br1\b/i.test(config.cheapModel) &&
+        /reasoner|thinking|qwq|\br1\b/i.test(config.qualityModel);
+      const models = canFallbackToCheap ? [primaryModel, config.cheapModel] : [primaryModel];
+      for (let mIdx = 0; mIdx < models.length; mIdx += 1) {
+        const model = models[mIdx]!;
+        let callTimeoutMs = effectiveTimeoutMs;
+        if (deadline !== undefined) {
+          if (config.kind === 'fake') {
+            callTimeoutMs = Math.max(100, deadline - Date.now());
+          } else {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) {
+              last = last ?? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+              continue;
+            }
+            callTimeoutMs =
+              models.length > 1 && mIdx === 0
+                ? Math.max(1, Math.floor(remainingMs * 0.55))
+                : remainingMs;
+          }
+        }
+        try {
+          return await withRetry(
+            () =>
+              this.call(provider, {
+                scene: input.scene,
+                model,
+                messages,
+                temperature,
+                maxTokens,
+                timeoutMs: callTimeoutMs,
+                signal: input.signal,
+              }),
+            {
+              maxRetries: mIdx === 0 ? effectiveMaxRetries : 0,
+              delayMs: this.options.retryDelayMs,
               signal: input.signal,
-            }),
-          {
-            maxRetries: this.options.maxRetries,
-            delayMs: this.options.retryDelayMs,
-            signal: input.signal,
-          },
-        );
-      } catch (error) {
-        if (!(error instanceof ProviderError)) throw error;
-        if (error.kind === PROVIDER_KIND.CANCELLED) throw error;
-        last = error;
+            },
+          );
+        } catch (error) {
+          if (!(error instanceof ProviderError)) throw error;
+          if (error.kind === PROVIDER_KIND.CANCELLED) throw error;
+          last = error;
+          if (error.kind === PROVIDER_KIND.AUTH || error.kind === PROVIDER_KIND.SSRF) {
+            break;
+          }
+        }
       }
     }
     throw last ?? new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'no_provider');
@@ -344,10 +382,13 @@ export class LlmRouter {
   ): Promise<LlmCompletion> {
     if (input.signal?.aborted)
       throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
-    const timeout = AbortSignal.timeout(this.options.timeoutMs);
+    const callTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const timeout = AbortSignal.timeout(callTimeoutMs);
     const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     try {
-      const result = completionSchema.parse(await provider.complete({ ...input, signal }));
+      const result = completionSchema.parse(
+        await provider.complete({ ...input, timeoutMs: callTimeoutMs, signal }),
+      );
       if (result.provider === 'fake' || result.model.startsWith('fake') || result.fake) {
         if (!result.fake || !result.text.startsWith(FAKE_MARK)) {
           throw new ProviderError(PROVIDER_KIND.CONTRACT, '假输出缺少占位标记', 'fake_mark');

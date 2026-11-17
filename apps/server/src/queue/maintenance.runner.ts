@@ -1,5 +1,6 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { BillingService } from '../billing/billing.service';
+import { AI_TASK_HANDLER, type AiTaskHandler } from '../writing/ai-task.runner';
 import { WorkDriver } from './work-driver';
 
 /**
@@ -13,6 +14,7 @@ export class MaintenanceRunner {
   constructor(
     @Inject(BillingService) private readonly billing: BillingService,
     @Inject(WorkDriver) private readonly driver: WorkDriver,
+    @Optional() @Inject(AI_TASK_HANDLER) private readonly aiTaskRunner?: AiTaskHandler,
   ) {}
 
   async run(kind: string): Promise<string> {
@@ -24,8 +26,11 @@ export class MaintenanceRunner {
       return 'reconcile';
     }
     if (kind === 'recover') {
-      const queued = await this.driver.recover();
-      return `recover:${queued}`;
+      const [queued, aiRecovered] = await Promise.all([
+        this.driver.recover(),
+        this.aiTaskRunner?.recoverStuckTasks ? this.aiTaskRunner.recoverStuckTasks() : 0,
+      ]);
+      return `recover:${queued + aiRecovered}`;
     }
     if (kind === 'retention') {
       this.logger.log('article retention skipped; phase 1 does not delete published articles');
