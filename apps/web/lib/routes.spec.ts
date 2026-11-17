@@ -1,14 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { MENU, STATIC_ROUTES, collectHrefs, matchRoute, menuSelection } from './routes';
+import {
+  MENU,
+  STATIC_ROUTES,
+  buildMenu,
+  collectHrefs,
+  isConsoleRouteAccessible,
+  matchRoute,
+  menuSelection,
+} from './routes';
 
 describe('console routes', () => {
-  it('puts every phase-1 page on the grouped menu', () => {
-    expect(new Set(collectHrefs())).toEqual(new Set(Object.keys(STATIC_ROUTES)));
-    const image = MENU.find((item) => item.type === 'submenu' && item.key === 'image');
-    expect(image?.type === 'submenu' ? image.badge : undefined).toBe('new');
-    expect(MENU.some((item) => item.type === 'section' && item.title === 'AI创作-文章&素材')).toBe(
-      true,
+  it('hides /workbench/samples from merchant menu and nests AI生图/视频 inside AI创作-文章&素材', () => {
+    const menuHrefs = new Set(collectHrefs());
+    expect(menuHrefs.has('/workbench/samples')).toBe(false);
+    const expectedMerchantRoutes = Object.keys(STATIC_ROUTES).filter(
+      (route) => route !== '/workbench/samples',
     );
+    expect(menuHrefs).toEqual(new Set(expectedMerchantRoutes));
+
+    const creation = MENU.find((item) => item.type === 'section' && item.key === 'creation');
+    expect(creation?.type === 'section' ? creation.title : undefined).toBe('AI创作-文章&素材');
+    const creationKeys =
+      creation?.type === 'section'
+        ? creation.children.map((child) => (child.type === 'submenu' ? child.key : ''))
+        : [];
+    expect(creationKeys).toEqual(['material', 'writing', 'rewrite', 'image']);
+
+    const image =
+      creation?.type === 'section'
+        ? creation.children.find((child) => child.type === 'submenu' && child.key === 'image')
+        : undefined;
+    expect(image?.type === 'submenu' ? image.title : undefined).toBe('AI生图/视频');
+    expect(image?.type === 'submenu' ? image.badge : undefined).toBe('new');
+
+    expect(collectHrefs(buildMenu({ aiImageEnabled: false })).includes('/image')).toBe(false);
+    expect(isConsoleRouteAccessible('/workbench/samples', 'MERCHANT')).toBe(false);
+    expect(isConsoleRouteAccessible('/workbench/samples', 'ADMIN')).toBe(true);
   });
 
   it('canonicalizes query tabs and gallery detail', () => {
