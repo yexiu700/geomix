@@ -48,6 +48,10 @@
     "./keywords": {
       "types": "./dist/keywords.d.ts",
       "default": "./dist/keywords.js"
+    },
+    "./questions": {
+      "types": "./dist/questions.d.ts",
+      "default": "./dist/questions.js"
     }
   },
   "scripts": {
