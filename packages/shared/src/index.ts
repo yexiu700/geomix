@@ -669,3 +669,4 @@ export type {
   DashboardSummary,
   DashboardTrendDay,
 } from './dashboard';
+export * from './visibility';

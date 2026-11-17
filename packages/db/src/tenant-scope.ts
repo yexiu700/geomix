@@ -39,6 +39,10 @@ export const REQUIRED_TENANT_MODELS = [
   'WorkUnit',
   'ActiveWork',
   'CrudSample',
+  'VisibilityProfile',
+  'VisibilityRun',
+  'VisibilityObservation',
+  'VisibilityCitation',
 ] as const;
 
 export const NULLABLE_TENANT_MODELS = ['PromptTemplate'] as const;

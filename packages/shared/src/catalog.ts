@@ -13,6 +13,7 @@ export const PRICING_DEFAULTS = [
   { action: 'rewrite_single', unitPoints: 5, label: '单篇复刻' },
   { action: 'rewrite_batch', unitPoints: 5, label: '批量复刻' },
   { action: 'image_gen', unitPoints: 5, label: 'AI生图' },
+  { action: 'visibility_check', unitPoints: 2, label: 'AI可见性监测' },
 ] as const;
 
 export type PricingAction = (typeof PRICING_DEFAULTS)[number]['action'];

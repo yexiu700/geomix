@@ -37,6 +37,10 @@ const PHASE1_MODELS = [
   'WorkUnit',
   'ActiveWork',
   'CrudSample',
+  'VisibilityProfile',
+  'VisibilityRun',
+  'VisibilityObservation',
+  'VisibilityCitation',
 ];
 
 describe('phase-1 migration', () => {
@@ -50,6 +54,7 @@ describe('phase-1 migration', () => {
       '20261116213000_queue_work',
       '20261116224500_queue_lease_timestamptz',
       '20261117010000_crud_sample',
+      '20261117120000_visibility',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -86,6 +91,17 @@ describe('phase-1 migration', () => {
     expect(sampleSql).not.toContain('DROP TABLE');
     expect(sampleSql.toLowerCase()).not.toContain('knowledgechunk');
     expect(sampleSql).not.toContain('WorkUnit');
+    const visibilitySql = readFileSync(
+      resolve(migrationsDir, '20261117120000_visibility', 'migration.sql'),
+      'utf8',
+    );
+    expect(visibilitySql).toContain('CREATE TABLE "VisibilityProfile"');
+    expect(visibilitySql).toContain('CREATE TABLE "VisibilityRun"');
+    expect(visibilitySql).toContain('CREATE TABLE "VisibilityObservation"');
+    expect(visibilitySql).toContain('CREATE TABLE "VisibilityCitation"');
+    expect(visibilitySql).toContain('VisibilityObservation_runId_promptText_engine_key');
+    expect(visibilitySql.toLowerCase()).not.toContain('drop table');
+    expect(visibilitySql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);

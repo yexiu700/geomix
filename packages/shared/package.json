@@ -68,6 +68,14 @@
     "./writing-tasks": {
       "types": "./dist/writing-tasks.d.ts",
       "default": "./dist/writing-tasks.js"
+    },
+    "./ai-images": {
+      "types": "./dist/ai-images.d.ts",
+      "default": "./dist/ai-images.js"
+    },
+    "./visibility": {
+      "types": "./dist/visibility.d.ts",
+      "default": "./dist/visibility.js"
     }
   },
   "scripts": {
