@@ -67,70 +67,40 @@ jobs:
           cache-to: type=gha,mode=max,scope=server
 
   deploy:
-    name: Deploy to Server
+    name: Deploy to Server (Self-Hosted)
     needs: build-and-push
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - name: Check deploy secrets
-        id: check
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-        run: |
-          if [ -n "$DEPLOY_HOST" ] && [ -n "$DEPLOY_USER" ] && [ -n "$DEPLOY_SSH_KEY" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Deploy secrets not configured; skipping SSH deployment."
-          fi
-
       - name: Checkout compose files
-        if: steps.check.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            docker-compose.prod.yml
-            docker/postgres/init
-
-      - name: Setup SSH agent
-        if: steps.check.outputs.enabled == 'true'
-        uses: webfactory/ssh-agent@v0.9.1
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Add server host key
-        if: steps.check.outputs.enabled == 'true'
-        env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          clean: true
 
       - name: Sync compose files & deploy
-        if: steps.check.outputs.enabled == 'true'
         env:
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/geomix' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/geomix' }}
           GHCR_OWNER: ${{ needs.build-and-push.outputs.owner }}
           IMAGE_TAG: ${{ needs.build-and-push.outputs.tag }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_READ_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/docker/postgres/init'"
-          scp -P "$DEPLOY_PORT" docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
-          scp -P "$DEPLOY_PORT" -r docker/postgres/init/. "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker/postgres/init/"
+          mkdir -p "$DEPLOY_PATH/docker/postgres/init"
+          cp -f docker-compose.prod.yml "$DEPLOY_PATH/docker-compose.prod.yml"
+          cp -rf docker/postgres/init/. "$DEPLOY_PATH/docker/postgres/init/"
 
-          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<EOF
-            set -euo pipefail
-            cd "$DEPLOY_PATH"
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-            export GHCR_OWNER="$GHCR_OWNER"
-            export IMAGE_TAG="$IMAGE_TAG"
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            docker image prune -f --filter "until=168h" || true
-          EOF
+          cd "$DEPLOY_PATH"
+          if [ ! -f .env ]; then
+            echo "ERROR: $DEPLOY_PATH/.env not found. Please create it before deploying."
+            exit 1
+          fi
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+          export GHCR_OWNER
+          export IMAGE_TAG
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker image prune -f --filter "until=168h" || true
