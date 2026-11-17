@@ -26,6 +26,7 @@ export type AccountProfile = {
   uiPrefs?: AccountUiPrefs | null;
   features?: {
     aiImage?: boolean;
+    visibility?: boolean;
   };
   tenant: {
     id: string;

@@ -4,6 +4,7 @@ import { API_ERROR, AUTH_ERROR, parseEnv } from '@geomix/shared';
 import { z } from 'zod';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { readVisibilityConfig } from '../visibility/visibility.config';
 
 export const uiPrefsPatchSchema = z
   .object({
@@ -106,6 +107,16 @@ function present(user: {
 }) {
   const readOnly = !user.tenant.isActive || user.tenant.expiresAt.getTime() <= Date.now();
   const env = parseEnv(process.env);
+  const visibilityEnabled =
+    process.env.FEATURE_VISIBILITY?.trim().toLowerCase() === 'false'
+      ? false
+      : (() => {
+          try {
+            return readVisibilityConfig(process.env).featureEnabled;
+          } catch {
+            return true;
+          }
+        })();
   return {
     id: user.id,
     username: user.username,
@@ -114,6 +125,7 @@ function present(user: {
     uiPrefs: sanitizeUiPrefs(user.uiPrefs),
     features: {
       aiImage: env.FEATURE_AI_IMAGE,
+      visibility: visibilityEnabled,
     },
     tenant: {
       id: user.tenant.id,

@@ -452,3 +452,34 @@ body {
   color: #64748b;
   font-size: 13px;
 }
+
+.ant-layout {
+  min-width: 0;
+}
+
+.gm-content,
+.gm-page {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .ant-layout-header.gm-header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 56px;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .gm-marquee {
+    display: none;
+  }
+
+  .gm-content {
+    padding: 10px;
+  }
+
+  .gm-page {
+    padding: 14px 12px 20px;
+  }
+}

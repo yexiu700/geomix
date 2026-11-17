@@ -40,6 +40,7 @@ export function ShellFrame({
     : state.tabs.filter((tab) => tab.id === state.activeId);
   const name = displayName(account);
   const aiImageEnabled = account.features?.aiImage !== false;
+  const visibilityEnabled = account.features?.visibility !== false;
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -54,6 +55,7 @@ export function ShellFrame({
           activeHref={active?.href ?? '/dashboard'}
           prefs={state.prefs}
           aiImageEnabled={aiImageEnabled}
+          visibilityEnabled={visibilityEnabled}
           onDispatch={onDispatch}
         />
       </Sider>
@@ -139,6 +141,7 @@ export function ShellFrame({
                   draft={state.drafts[tab.id] ?? ''}
                   readOnly={account.tenant.readOnly}
                   aiImageEnabled={aiImageEnabled}
+                  visibilityEnabled={visibilityEnabled}
                   onDispatch={onDispatch}
                 />
               </div>

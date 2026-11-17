@@ -27,6 +27,8 @@ export const STATIC_ROUTES: Record<string, StaticRoute> = {
   '/rewrite/single': { title: '全网爆文复刻', parent: null },
   '/rewrite/batch': { title: '批量爆文复刻', parent: null },
   '/image': { title: 'AI生图', parent: null },
+  '/visibility/overview': { title: 'AI数据看板', parent: null },
+  '/visibility/monitors': { title: 'AI可见度诊断', parent: null },
   '/me/points': { title: '点数明细', parent: null },
   '/me/money': { title: '余额明细', parent: null },
   '/me/rights': { title: '账号权益', parent: null },
@@ -36,6 +38,8 @@ export const STATIC_ROUTES: Record<string, StaticRoute> = {
 const QUERY_KEYS: Record<string, readonly string[]> = {
   '/material/questions': ['keywordId'],
   '/writing/articles': ['categoryId', 'taskId'],
+  '/visibility/overview': ['profileId'],
+  '/visibility/monitors': ['profileId', 'runId'],
 };
 
 const GALLERY_DETAIL = /^\/material\/gallery\/([A-Za-z0-9_-]{1,64})$/;
@@ -108,13 +112,13 @@ export const MENU: MenuItem[] = [
     type: 'section',
     key: 'aidata',
     title: 'AI数据',
-    children: [{ type: 'soon', key: 'aidata-soon', title: '即将上线' }],
+    children: [link('/visibility/overview')],
   },
   {
     type: 'section',
     key: 'visibility',
     title: 'AI可见度诊断',
-    children: [{ type: 'soon', key: 'visibility-soon', title: '即将上线' }],
+    children: [link('/visibility/monitors')],
   },
   {
     type: 'submenu',
@@ -134,11 +138,26 @@ export const MENU: MenuItem[] = [
   },
 ];
 
-export function buildMenu(options?: { aiImageEnabled?: boolean }): MenuItem[] {
-  if (options?.aiImageEnabled === false) {
-    return filterMenuItems(MENU, (item) => !(item.type === 'submenu' && item.key === 'image'));
+export function buildMenu(options?: {
+  aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
+}): MenuItem[] {
+  if (options?.aiImageEnabled !== false && options?.visibilityEnabled !== false) {
+    return MENU;
   }
-  return MENU;
+  return filterMenuItems(MENU, (item) => {
+    if (options?.aiImageEnabled === false && item.type === 'submenu' && item.key === 'image') {
+      return false;
+    }
+    if (
+      options?.visibilityEnabled === false &&
+      item.type === 'section' &&
+      (item.key === 'aidata' || item.key === 'visibility')
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 export function isConsoleRouteAccessible(href: string, role?: string): boolean {
@@ -283,5 +302,7 @@ function cleanParam(value: string | null): string {
 function paramLabel(key: string, value: string): string {
   if (key === 'categoryId') return `分类 ${value}`;
   if (key === 'taskId') return `任务 ${value}`;
+  if (key === 'profileId') return `档案 ${value}`;
+  if (key === 'runId') return `任务 ${value}`;
   return value;
 }
