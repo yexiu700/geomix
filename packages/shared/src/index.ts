@@ -197,3 +197,36 @@ export {
   shouldReleaseUnit,
 } from './queue';
 export type { CreateRunBody, QueueConfig, QueueName, RunStatus } from './queue';
+export {
+  ARTICLE_STATUS_LABEL,
+  ARTICLE_STATUS_NORMAL,
+  ARTICLE_STATUSES,
+  CATEGORY_ID,
+  CATEGORY_NAME_MAX,
+  CATEGORY_REMAINING_EXPR,
+  CATEGORY_SORTS,
+  CategoryQueryError,
+  REMAINING_SEND_COUNT,
+  articleCategoryBulkSchema,
+  articleCategoryInputSchema,
+  articleCountsAsRemaining,
+  articleListQueryString,
+  categoryExportFilename,
+  categoryExportMime,
+  categoryExportTable,
+  categoryListQueryString,
+  categoryNameLikePattern,
+  isArticleStatus,
+  parseArticleListQuery,
+  parseCategoryListQuery,
+} from './writing-categories';
+export type {
+  ArticleCategoryBulkInput,
+  ArticleCategoryInput,
+  ArticleCategoryRecord,
+  ArticleListItem,
+  ArticleListQuery,
+  ArticleStatusName,
+  CategoryListQuery,
+  CategorySort,
+} from './writing-categories';

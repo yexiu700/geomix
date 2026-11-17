@@ -7,6 +7,9 @@ import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { ArticleListScreen } from '../writing/article-list-screen';
+import { CategoryScreen } from '../writing/category-screen';
+import { categoryIdFromHref } from '../../lib/categories';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -25,6 +28,26 @@ export function ModuleScreen({
   const path = matchRoute(tab.href)?.path ?? '';
   if (path === '/workbench/samples') {
     return <SampleScreen title={tab.title} readOnly={readOnly} />;
+  }
+  if (path === '/writing/categories') {
+    return (
+      <CategoryScreen
+        title={tab.title}
+        tabId={tab.id}
+        readOnly={readOnly}
+        onDispatch={onDispatch}
+      />
+    );
+  }
+  if (path === '/writing/articles') {
+    return (
+      <ArticleListScreen
+        title={tab.title}
+        tabId={tab.id}
+        categoryId={categoryIdFromHref(tab.href)}
+        onDispatch={onDispatch}
+      />
+    );
   }
   if (path === '/me/points') return <PointsScreen title={tab.title} />;
   if (path === '/me/money') return <MoneyScreen title={tab.title} />;

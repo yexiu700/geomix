@@ -9,6 +9,7 @@ import { BillingModule } from './billing/billing.module';
 import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
 import { SamplesModule } from './samples/samples.module';
+import { WritingModule } from './writing/writing.module';
 import { HealthService } from './health/health.service';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -23,6 +24,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AdaptersModule,
     QueueModule.forApi(),
     SamplesModule,
+    WritingModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],
