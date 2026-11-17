@@ -11,17 +11,21 @@ import {
   isVisibilityEngine,
   type CitationSourceKind,
   type CrudPageSize,
+  type KeywordRecord,
   type RecomputedRunMetrics,
   type VisibilityCitationListResponse,
   type VisibilityCitationSourceBreakdown,
   type VisibilityCitationSummaryItem,
   type VisibilityEngineBreakdownItem,
   type VisibilityEngineKey,
+  type VisibilityFanOutItem,
+  type VisibilityOpportunitiesResponse,
+  type VisibilityOpportunityGapItem,
   type VisibilityOverviewResponse,
   type VisibilityProfileRecord,
   type VisibilityTrendPoint,
 } from '@geomix/shared';
-import { Alert, Button, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Checkbox, Space, Table, Tabs, Tag, Typography, message } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionStorageLike } from '../../lib/session';
@@ -396,6 +400,21 @@ export function VisibilityOverviewScreen({
   }));
   const [expandedDomains, setExpandedDomains] = useState<Record<string, boolean>>({});
 
+  // Opportunities & Query Fan-Out state
+  const [opportunitiesLoading, setOpportunitiesLoading] = useState<boolean>(false);
+  const [opportunitiesData, setOpportunitiesData] = useState<VisibilityOpportunitiesResponse>({
+    gaps: [],
+    fanOutQueries: [],
+  });
+  const [keywords, setKeywords] = useState<KeywordRecord[]>([]);
+  const [selectedKeywordId, setSelectedKeywordId] = useState<string>('');
+  const [selectedOpportunityTitles, setSelectedOpportunityTitles] = useState<string[]>([]);
+  const [importingQuestions, setImportingQuestions] = useState<boolean>(false);
+  const [opportunityFeedback, setOpportunityFeedback] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+
   // Sync URL ?profileId=... if changed
   useEffect(() => {
     if (!urlProfileId) return;
@@ -521,6 +540,103 @@ export function VisibilityOverviewScreen({
       cancelled = true;
     };
   }, [appliedFilter, citationPage, citationPageSize, citationSourceKind, client, featureEnabled]);
+
+  // Load tenant keywords for target keyword selection in opportunities tab
+  useEffect(() => {
+    if (!featureEnabled) return;
+    let cancelled = false;
+    void client
+      .listKeywords()
+      .then((list) => {
+        if (cancelled) return;
+        setKeywords(list);
+        setSelectedKeywordId((curr) =>
+          curr && list.some((k) => k.id === curr) ? curr : (list[0]?.id ?? ''),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, featureEnabled]);
+
+  // Load opportunities (competitor gaps + fan-out queries) when appliedFilter changes
+  useEffect(() => {
+    if (!featureEnabled || !client.listOpportunities) {
+      setOpportunitiesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setOpportunitiesLoading(true);
+
+    const engine = isVisibilityEngine(appliedFilter.engine) ? appliedFilter.engine : undefined;
+    const fromIso = appliedFilter.from ? `${appliedFilter.from}T00:00:00+08:00` : undefined;
+    const toIso = appliedFilter.to ? `${appliedFilter.to}T23:59:59.999+08:00` : undefined;
+
+    void client
+      .listOpportunities({
+        ...(appliedFilter.profileId ? { profileId: appliedFilter.profileId } : {}),
+        ...(engine ? { engine } : {}),
+        days: appliedFilter.days,
+        ...(fromIso ? { from: fromIso } : {}),
+        ...(toIso ? { to: toIso } : {}),
+        limit: 50,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setOpportunitiesData(res);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOpportunitiesData({ gaps: [], fanOutQueries: [] });
+      })
+      .finally(() => {
+        if (!cancelled) setOpportunitiesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [appliedFilter, client, featureEnabled]);
+
+  const toggleOpportunityTitle = useCallback((titleText: string, checked: boolean) => {
+    setSelectedOpportunityTitles((curr) => {
+      if (checked) {
+        return curr.includes(titleText) ? curr : [...curr, titleText];
+      }
+      return curr.filter((item) => item !== titleText);
+    });
+  }, []);
+
+  const handleImportOpportunityQuestions = useCallback(async () => {
+    if (readOnly || !selectedKeywordId || selectedOpportunityTitles.length === 0) return;
+    if (!client.importOpportunityQuestions) return;
+    setImportingQuestions(true);
+    setOpportunityFeedback(null);
+    try {
+      const result = await client.importOpportunityQuestions({
+        keywordId: selectedKeywordId,
+        titles: selectedOpportunityTitles,
+      });
+      const feedbackText = `已导入「写作标题」：新增 ${result.insertedCount} 条，跳过重复 ${result.skippedCount} 条`;
+      setOpportunityFeedback({ type: 'success', text: feedbackText });
+      void message.success(feedbackText);
+      setSelectedOpportunityTitles([]);
+    } catch (err: unknown) {
+      const errText = err instanceof Error ? err.message : '导入写作标题失败';
+      setOpportunityFeedback({ type: 'error', text: errText });
+      void message.error(errText);
+    } finally {
+      setImportingQuestions(false);
+    }
+  }, [client, readOnly, selectedKeywordId, selectedOpportunityTitles]);
+
+  const goToWritingTasks = useCallback(() => {
+    const targetHref = selectedKeywordId
+      ? `/writing/tasks?keywordId=${encodeURIComponent(selectedKeywordId)}`
+      : '/writing/tasks';
+    onDispatch?.({ type: 'open', href: targetHref });
+  }, [onDispatch, selectedKeywordId]);
 
   const handleApplySearch = useCallback(() => {
     if (filterDraft.from && filterDraft.to && filterDraft.from > filterDraft.to) {
@@ -1352,6 +1468,264 @@ export function VisibilityOverviewScreen({
                         },
                       ]}
                     />
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'opportunities',
+              label: `优化机会 & 搜索拆解词（Query Fan-Out · ${opportunitiesData.gaps.length + opportunitiesData.fanOutQueries.length}）`,
+              children: (
+                <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+                  {/* Feedback Banner */}
+                  {opportunityFeedback ? (
+                    <Alert
+                      type={opportunityFeedback.type}
+                      message={opportunityFeedback.text}
+                      showIcon
+                      closable
+                      onClose={() => setOpportunityFeedback(null)}
+                    />
+                  ) : null}
+
+                  {/* Action Bar */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: '1px solid #e6eaf0',
+                      background: '#f8fafc',
+                    }}
+                  >
+                    <Space wrap size={8}>
+                      <Typography.Text style={{ fontSize: 13 }}>目标主词：</Typography.Text>
+                      <select
+                        aria-label="目标主词"
+                        style={{ ...COMPACT_SELECT_STYLE, minWidth: 180 }}
+                        value={selectedKeywordId}
+                        disabled={keywords.length === 0 || readOnly}
+                        onChange={(e) => setSelectedKeywordId(e.target.value)}
+                      >
+                        {keywords.length === 0 ? (
+                          <option value="">暂无可用主词</option>
+                        ) : (
+                          keywords.map((kw) => (
+                            <option key={kw.id} value={kw.id}>
+                              {kw.main}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <Tag color={selectedOpportunityTitles.length > 0 ? 'blue' : 'default'}>
+                        已选 {selectedOpportunityTitles.length} 条
+                      </Tag>
+                      {selectedOpportunityTitles.length > 0 ? (
+                        <Button
+                          size="small"
+                          onClick={() => setSelectedOpportunityTitles([])}
+                          disabled={importingQuestions}
+                        >
+                          清空勾选
+                        </Button>
+                      ) : null}
+                    </Space>
+
+                    <Space wrap size={8}>
+                      <Button
+                        type="primary"
+                        loading={importingQuestions}
+                        disabled={
+                          readOnly ||
+                          selectedOpportunityTitles.length === 0 ||
+                          !selectedKeywordId ||
+                          importingQuestions
+                        }
+                        onClick={() => void handleImportOpportunityQuestions()}
+                      >
+                        一键加入写作标题
+                      </Button>
+                      <Button onClick={goToWritingTasks}>去创建写作任务</Button>
+                    </Space>
+                  </div>
+
+                  {/* Section 1: Competitor Gaps */}
+                  <div style={{ minWidth: 0 }}>
+                    <Typography.Text
+                      strong
+                      style={{ fontSize: 14, display: 'block', marginBottom: 8 }}
+                    >
+                      竞品命中但本品牌未提及（内容缺口问题）
+                    </Typography.Text>
+                    <div style={{ width: '100%', overflowX: 'auto' }}>
+                      <Table<VisibilityOpportunityGapItem>
+                        rowKey="promptText"
+                        size="small"
+                        loading={opportunitiesLoading}
+                        dataSource={opportunitiesData.gaps}
+                        pagination={false}
+                        scroll={{ x: 680 }}
+                        locale={{
+                          emptyText: '当前筛选条件下暂无竞品命中但本品牌未提及的缺口问题',
+                        }}
+                        columns={[
+                          {
+                            key: 'select',
+                            title: '选择',
+                            width: 56,
+                            render: (_val, row) => (
+                              <Checkbox
+                                aria-label={`勾选缺口问题-${row.promptText}`}
+                                checked={selectedOpportunityTitles.includes(row.promptText)}
+                                disabled={readOnly}
+                                onChange={(e) =>
+                                  toggleOpportunityTitle(row.promptText, e.target.checked)
+                                }
+                              />
+                            ),
+                          },
+                          {
+                            key: 'promptText',
+                            dataIndex: 'promptText',
+                            title: '缺口问题（Prompt）',
+                            render: (text: string) => (
+                              <Typography.Text strong>{text}</Typography.Text>
+                            ),
+                          },
+                          {
+                            key: 'competitors',
+                            dataIndex: 'competitors',
+                            title: '命中竞品',
+                            width: 200,
+                            render: (comps: string[]) => (
+                              <Space size={[4, 4]} wrap>
+                                {comps.map((c) => (
+                                  <Tag key={c} color="orange" style={{ marginInlineEnd: 0 }}>
+                                    {c}
+                                  </Tag>
+                                ))}
+                              </Space>
+                            ),
+                          },
+                          {
+                            key: 'engines',
+                            dataIndex: 'engines',
+                            title: '出现引擎',
+                            width: 180,
+                            render: (engines: VisibilityEngineKey[]) => (
+                              <Space size={[4, 4]} wrap>
+                                {engines.map((eng) => (
+                                  <Tag key={eng} style={{ marginInlineEnd: 0 }}>
+                                    {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
+                                  </Tag>
+                                ))}
+                              </Space>
+                            ),
+                          },
+                          {
+                            key: 'observationCount',
+                            dataIndex: 'observationCount',
+                            title: '出现次数',
+                            width: 96,
+                            render: (count: number) => `${count} 次`,
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Section 2: Query Fan-Out */}
+                  <div style={{ minWidth: 0 }}>
+                    <Typography.Text
+                      strong
+                      style={{ fontSize: 14, display: 'block', marginBottom: 8 }}
+                    >
+                      高频搜索拆解词（Query Fan-Out）
+                    </Typography.Text>
+                    <div style={{ width: '100%', overflowX: 'auto' }}>
+                      <Table<VisibilityFanOutItem>
+                        rowKey="query"
+                        size="small"
+                        loading={opportunitiesLoading}
+                        dataSource={opportunitiesData.fanOutQueries}
+                        pagination={false}
+                        scroll={{ x: 680 }}
+                        locale={{
+                          emptyText: '当前筛选条件下暂无 AI 引擎搜索拆解词（Query Fan-Out）记录',
+                        }}
+                        columns={[
+                          {
+                            key: 'select',
+                            title: '选择',
+                            width: 56,
+                            render: (_val, row) => (
+                              <Checkbox
+                                aria-label={`勾选拆解词-${row.query}`}
+                                checked={selectedOpportunityTitles.includes(row.query)}
+                                disabled={readOnly}
+                                onChange={(e) =>
+                                  toggleOpportunityTitle(row.query, e.target.checked)
+                                }
+                              />
+                            ),
+                          },
+                          {
+                            key: 'query',
+                            dataIndex: 'query',
+                            title: '搜索拆解词（Fan-Out Query）',
+                            width: 240,
+                            render: (q: string) => <Typography.Text strong>{q}</Typography.Text>,
+                          },
+                          {
+                            key: 'frequency',
+                            dataIndex: 'frequency',
+                            title: '出现频次',
+                            width: 96,
+                            render: (freq: number) => <Tag color="blue">{freq} 次</Tag>,
+                          },
+                          {
+                            key: 'brandMentionedPct',
+                            dataIndex: 'brandMentionedPct',
+                            title: '品牌覆盖率',
+                            width: 110,
+                            render: (pct?: number) =>
+                              typeof pct === 'number' ? `${pct.toFixed(1)}%` : '—',
+                          },
+                          {
+                            key: 'engines',
+                            dataIndex: 'engines',
+                            title: '引擎',
+                            width: 160,
+                            render: (engines: VisibilityEngineKey[]) => (
+                              <Space size={[4, 4]} wrap>
+                                {engines.map((eng) => (
+                                  <Tag key={eng} style={{ marginInlineEnd: 0 }}>
+                                    {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
+                                  </Tag>
+                                ))}
+                              </Space>
+                            ),
+                          },
+                          {
+                            key: 'sourcePrompts',
+                            dataIndex: 'sourcePrompts',
+                            title: '来源问题预览',
+                            render: (prompts: string[]) =>
+                              prompts.length > 0 ? (
+                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                  {prompts.join('；')}
+                                </Typography.Text>
+                              ) : (
+                                '—'
+                              ),
+                          },
+                        ]}
+                      />
+                    </div>
                   </div>
                 </div>
               ),

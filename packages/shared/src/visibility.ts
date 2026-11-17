@@ -1406,6 +1406,8 @@ export const visibilityOpportunitiesQuerySchema = z.object({
     .transform((val) => (val && val.length > 0 ? val : undefined))
     .refine((val) => val === undefined || isVisibilityEngine(val), 'AI 引擎参数不合法'),
   days: z.coerce.number().int().min(1).max(365).default(30),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 
@@ -1413,6 +1415,8 @@ export type VisibilityOpportunitiesQuery = {
   profileId?: string;
   engine?: VisibilityEngineKey;
   days: number;
+  from?: string;
+  to?: string;
   limit: number;
 };
 
@@ -1427,6 +1431,8 @@ export function parseVisibilityOpportunitiesQuery(
     profileId: parsed.data.profileId,
     engine: parsed.data.engine as VisibilityEngineKey | undefined,
     days: parsed.data.days,
+    ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
+    ...(parsed.data.to !== undefined ? { to: parsed.data.to } : {}),
     limit: parsed.data.limit,
   };
 }
@@ -1437,6 +1443,7 @@ export type VisibilityOpportunityGapItem = {
   competitors: string[];
   engines: VisibilityEngineKey[];
   observationCount: number;
+  latestCheckedAt?: string | null;
 };
 
 export type VisibilityFanOutItem = {
@@ -1444,6 +1451,7 @@ export type VisibilityFanOutItem = {
   frequency: number;
   sourcePrompts: string[];
   engines: VisibilityEngineKey[];
+  brandMentionedPct?: number;
 };
 
 export type VisibilityOpportunitiesResponse = {
@@ -1468,4 +1476,5 @@ export type ImportQuestionsInput = z.input<typeof importQuestionsInputSchema>;
 export type ImportQuestionsResult = {
   insertedCount: number;
   skippedCount: number;
+  keywordId?: string;
 };
