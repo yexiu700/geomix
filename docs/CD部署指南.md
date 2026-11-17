@@ -1,13 +1,12 @@
-# GeoMix CD 部署指南（方案 A：GHCR + SSH）
+# GeoMix CD 部署指南（GHCR + Self-Hosted Runner）
 
-合入 `main` 后，[cd.yml](../.github/workflows/cd.yml) 会自动构建 `geomix-web` 与 `geomix-server` 镜像并推送到 `ghcr.io`。  
-在未配置服务器 Secrets 之前，部署步骤会自动跳过，不影响日常开发与 CI。
+合入 `main` 后，[cd.yml](../.github/workflows/cd.yml) 会先在 GitHub 云端构建 `geomix-web` 与 `geomix-server` 镜像并推送到 `ghcr.io`，随后由服务器上的 **Self-Hosted Runner** 主动拉取镜像并重启服务（**无需开放公网 SSH 22 端口**）。
 
 ---
 
 ## 1. 服务器准备（一次性）
 
-1. 安装 Docker 与 Docker Compose（v2）。
+1. 安装 **Docker** 与 **Docker Compose (v2)**，并确保运行 Runner 的用户有权限执行 `docker` 命令（如加入 `docker` 用户组或使用 `root`）。
 2. 创建部署目录和生产环境配置文件：
 
 ```bash
@@ -31,7 +30,10 @@ JWT_ACCESS_SECRET=请替换为随机长密钥
 JWT_REFRESH_SECRET=请替换为随机长密钥
 WEB_ORIGIN=https://你的域名
 
-# 如需接入真实模型/存储，按 .env.example 补充对应密钥
+# 大模型配置（不填或 {} 则使用本地假 Provider）
+# DEEPSEEK_API_KEY=sk-你的密钥
+# LLM_PROVIDERS={"providers":{"deepseek":{"kind":"openai","baseUrl":"https://api.deepseek.com/v1","apiKeyEnv":"DEEPSEEK_API_KEY","cheapModel":"deepseek-chat","qualityModel":"deepseek-chat"}}}
+
 BILLING_MODE=SHADOW
 ```
 
@@ -48,17 +50,23 @@ docker compose -f docker-compose.prod.yml run --rm migrate pnpm --filter @geomix
 
 ---
 
-## 2. GitHub 仓库配置（一次性）
+## 2. 在服务器上注册 Self-Hosted Runner（一次性）
 
-在仓库 **Settings → Secrets and variables → Actions** 中添加以下 Secrets：
+1. 打开 GitHub 仓库：**Settings → Actions → Runners → New self-hosted runner**，系统选择 **Linux**。
+2. 按页面给出的命令在服务器上下载并配置 Runner（注意不要放在 `/opt/geomix` 里面，建议放 `/opt/actions-runner`）。
+3. 配置完成后，安装为系统后台服务并启动（这样服务器重启后也会自动在线）：
 
-| Secret 名称 | 必填 | 说明 |
-| --- | --- | --- |
-| `DEPLOY_HOST` | 是 | 服务器公网 IP 或域名 |
-| `DEPLOY_USER` | 是 | SSH 登录用户名（如 `root` 或 `deploy`） |
-| `DEPLOY_SSH_KEY` | 是 | 对应的 SSH 私钥全文 |
-| `DEPLOY_PORT` | 否 | SSH 端口，默认 `22` |
-| `DEPLOY_PATH` | 否 | 服务器部署目录，默认 `/opt/geomix` |
-| `GHCR_READ_TOKEN` | 否 | 如果仓库为私有且服务器需要长期拉取 GHCR 镜像，建议配置带 `read:packages` 的 PAT |
+```bash
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
 
-如需自定义前端构建时的接口前缀，可在 **Variables** 中设置 `NEXT_PUBLIC_API_BASE`（默认 `/api/v1`）。
+4. 回到 GitHub **Settings → Actions → Runners** 页面，看到状态变成绿色 **Idle** 即表示连接成功。
+
+---
+
+## 3. 可选 Variables / Secrets
+
+* 之前如果填过 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`，现在可以直接删掉，不再需要。
+* 如需自定义部署目录（默认 `/opt/geomix`），可在 **Variables** 中添加 `DEPLOY_PATH`。
+* 如需自定义前端构建时的接口前缀（默认 `/api/v1`），可在 **Variables** 中添加 `NEXT_PUBLIC_API_BASE`。
