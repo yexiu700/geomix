@@ -10,6 +10,7 @@ import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-s
 import { KeywordScreen } from '../material/keyword-screen';
 import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
+import { PromptScreen } from '../writing/prompt-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -92,6 +93,14 @@ export function ModuleScreen({
     return (
       <div>
         <KnowledgeScreen title={tab.title} readOnly={readOnly} />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/writing/prompts') {
+    return (
+      <div>
+        <PromptScreen title={tab.title} readOnly={readOnly} />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
       </div>
     );
