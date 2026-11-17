@@ -11,7 +11,7 @@ export function displayName(account: { nickname: string | null; username: string
 export function formatExpiry(iso: string, readOnly: boolean): string {
   const date = iso.slice(0, 10);
   if (readOnly) return `已到期 · 只读 · ${date}`;
-  return `有效期至 ${date}`;
+  return `有效期：${date}`;
 }
 
 export const MODULE_PLACEHOLDER =

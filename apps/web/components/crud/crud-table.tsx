@@ -38,6 +38,8 @@ export function CrudTable<T extends { id: string }>({
   statusFilter,
   emptyText = CRUD_EMPTY_TEXT,
   writeDisabled = false,
+  toolbarOrder = 'default',
+  storageKey,
   onSearchOpenChange,
   onSearch,
   onPageChange,
@@ -63,6 +65,8 @@ export function CrudTable<T extends { id: string }>({
   statusFilter?: boolean;
   emptyText?: string;
   writeDisabled?: boolean;
+  toolbarOrder?: 'default' | 'create-first';
+  storageKey?: string;
   onSearchOpenChange: (open: boolean) => void;
   onSearch: (search: CrudSearch) => void;
   onPageChange: (page: number, pageSize: CrudPageSize) => void;
@@ -75,8 +79,45 @@ export function CrudTable<T extends { id: string }>({
   onDisable?: () => void;
   onBack?: () => void;
 }) {
-  const [compact, setCompact] = useState(false);
-  const [hidden, setHidden] = useState<string[]>([]);
+  const resolvedKey =
+    storageKey ??
+    (typeof window !== 'undefined'
+      ? `geomix.crud.table:${window.location.pathname}`
+      : 'geomix.crud.table:default');
+
+  const [compact, setCompact] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = window.localStorage.getItem(resolvedKey);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as { compact?: unknown };
+      return parsed.compact === true;
+    } catch {
+      return false;
+    }
+  });
+  const [hidden, setHidden] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem(resolvedKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { hidden?: unknown };
+      return Array.isArray(parsed.hidden)
+        ? parsed.hidden.filter((k): k is string => typeof k === 'string')
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(resolvedKey, JSON.stringify({ compact, hidden }));
+    } catch {
+      return;
+    }
+  }, [resolvedKey, compact, hidden]);
+
   const [draft, setDraft] = useState(search);
   const appliedKeyword = search.keyword;
   const appliedEnabled = search.enabled;
@@ -97,21 +138,28 @@ export function CrudTable<T extends { id: string }>({
     (column) => column.hideable === false || !hidden.includes(column.key),
   );
 
+  const refreshBtn = (
+    <Button key="refresh" aria-label="刷新" onClick={onRefresh}>
+      刷新
+    </Button>
+  );
+  const createBtn = (
+    <Button
+      key="create"
+      aria-label="添加"
+      type="primary"
+      disabled={writeDisabled || !onCreate}
+      onClick={onCreate}
+    >
+      添加
+    </Button>
+  );
+
   return (
     <div className="gm-crud">
       <div className="gm-crud-toolbar">
         <Space wrap>
-          <Button aria-label="刷新" onClick={onRefresh}>
-            刷新
-          </Button>
-          <Button
-            aria-label="添加"
-            type="primary"
-            disabled={writeDisabled || !onCreate}
-            onClick={onCreate}
-          >
-            添加
-          </Button>
+          {toolbarOrder === 'create-first' ? [createBtn, refreshBtn] : [refreshBtn, createBtn]}
           <Button
             aria-label="删除"
             danger

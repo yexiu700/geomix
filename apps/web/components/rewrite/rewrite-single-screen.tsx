@@ -11,7 +11,6 @@ import {
   REWRITE_IMAGE_MIN,
   REWRITE_MIN_SOURCE_CHARS,
   REWRITE_RESULT_STATUS_LABELS,
-  buildDefaultRewriteCategoryName,
   countSourceNonWhitespaceChars,
   type ArticleStatusName,
   type CrudExportFormat,
@@ -90,7 +89,7 @@ function buildInitialDraft(
     imageCount: seed?.imageCount ?? REWRITE_IMAGE_DEFAULT,
     templateId: seed?.templateId ?? '',
     categoryId: seed?.categoryId ?? '',
-    autoCategoryName: seed?.autoCategoryName ?? buildDefaultRewriteCategoryName(),
+    autoCategoryName: seed?.autoCategoryName ?? '爆文复刻',
     resultStatus: seed?.resultStatus ?? 'PENDING',
     brand: seed?.brand ?? '',
   };
@@ -641,6 +640,13 @@ export function RewriteSingleScreen({
         }}
         columns={[
           {
+            title: '序号',
+            key: 'seq',
+            width: 68,
+            render: (_val: unknown, _row: RewriteRecordItem, idx: number) =>
+              (query.page - 1) * query.pageSize + idx + 1,
+          },
+          {
             title: '文章分类',
             dataIndex: 'categoryName',
             width: 170,
@@ -864,8 +870,13 @@ export function RewriteSingleScreen({
                     aria-label="粘贴原文开关"
                     checked={modalState.draft.pastedText}
                     onChange={(checked) => {
+                      const hadError = Boolean(modalError);
                       setModalError(null);
-                      updateDraft({ pastedText: checked });
+                      updateDraft(
+                        checked && hadError
+                          ? { pastedText: checked, url: '' }
+                          : { pastedText: checked },
+                      );
                     }}
                   />
                 </span>

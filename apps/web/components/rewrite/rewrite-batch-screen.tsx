@@ -317,6 +317,8 @@ export function RewriteBatchScreen({
   const navigateTo = useCallback(
     (href: string) => {
       if (!onDispatch) return;
+      setDrawerOpen(false);
+      setDrawerDetail(null);
       onDispatch({
         type: 'open',
         href,
@@ -789,6 +791,13 @@ export function RewriteBatchScreen({
               })),
           }}
           columns={[
+            {
+              title: '序号',
+              key: 'seq',
+              width: 68,
+              render: (_val: unknown, _row: RewriteBatchItem, idx: number) =>
+                (query.page - 1) * query.pageSize + idx + 1,
+            },
             {
               title: '任务名',
               dataIndex: 'name',

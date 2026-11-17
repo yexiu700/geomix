@@ -464,7 +464,7 @@ export function DashboardScreen({
               color: '#64748b',
             }}
           >
-            充值提示：{summary.balanceCard.rechargeNotice}
+            充值提示：{summary.balanceCard.rechargeNotice}（充值请联系客服）
           </div>
         </div>
 
@@ -565,7 +565,7 @@ export function DashboardScreen({
               color: '#475569',
             }}
           >
-            充值提示：{summary.pointsCard.rechargeNotice}
+            充值提示：{summary.pointsCard.rechargeNotice}（充值请联系客服）
           </div>
         </div>
       </div>

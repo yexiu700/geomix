@@ -183,6 +183,7 @@ export function PointsScreen({
         rowKey="id"
         loading={loading}
         dataSource={page?.items ?? []}
+        rowSelection={{}}
         locale={{ emptyText: '没有找到匹配的记录' }}
         pagination={{
           current: page?.page ?? 1,

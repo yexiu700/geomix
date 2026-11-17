@@ -21,6 +21,7 @@ export const LEGACY_REDIRECTS = {
   '/user/user_score_log': '/me/points',
   '/user/user_money_log': '/me/money',
   '/user/quanyi': '/me/rights',
+  '/user/account_rights': '/me/rights',
 } as const;
 
 const SORTED_LEGACY_ENTRIES = (
