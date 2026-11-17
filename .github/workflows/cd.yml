@@ -78,9 +78,7 @@ jobs:
       - name: Checkout compose files
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            docker-compose.prod.yml
-            docker/postgres/init
+          clean: true
 
       - name: Sync compose files & deploy
         env:
