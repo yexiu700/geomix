@@ -1,12 +1,12 @@
 'use client';
 
-import { Button, Input, Space, Typography } from 'antd';
-import { useState } from 'react';
+import { Button, Input, Typography } from 'antd';
 import { MoneyScreen } from '../account/money-screen';
 import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
 import { KeywordScreen } from '../material/keyword-screen';
 import { QuestionScreen } from '../material/question-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
@@ -59,6 +59,34 @@ export function ModuleScreen({
       </div>
     );
   }
+  if (path === '/material/gallery') {
+    return (
+      <div>
+        <GalleryCategoryScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path.startsWith('/material/gallery/')) {
+    const categoryId = path.slice('/material/gallery/'.length);
+    return (
+      <div>
+        <GalleryAssetScreen
+          title={tab.title}
+          tabId={tab.id}
+          categoryId={categoryId}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
   return (
@@ -74,9 +102,6 @@ export function ModuleScreen({
         placeholder="在这里写的内容会随标签保留"
         onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
-      {path === '/material/gallery' ? (
-        <GalleryDrill tabId={tab.id} onDispatch={onDispatch} />
-      ) : null}
       {canGoBack ? (
         <Button style={{ marginTop: 16 }} onClick={() => onDispatch({ type: 'back', id: tab.id })}>
           返回上一级
@@ -105,38 +130,5 @@ export function TabDraftNote({
         onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
     </div>
-  );
-}
-
-function GalleryDrill({
-  tabId,
-  onDispatch,
-}: {
-  tabId: string;
-  onDispatch: (action: ShellAction) => void;
-}) {
-  const [assetId, setAssetId] = useState('pic_1');
-  return (
-    <Space style={{ marginTop: 16 }} wrap>
-      <Input
-        aria-label="图片编号"
-        value={assetId}
-        onChange={(event) => setAssetId(event.target.value)}
-        style={{ width: 180 }}
-      />
-      <Button
-        onClick={() => {
-          const value = assetId.trim();
-          if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) return;
-          onDispatch({
-            type: 'open',
-            href: `/material/gallery/${value}`,
-            sourceId: tabId,
-          });
-        }}
-      >
-        查看图片
-      </Button>
-    </Space>
   );
 }

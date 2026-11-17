@@ -52,6 +52,10 @@
     "./questions": {
       "types": "./dist/questions.d.ts",
       "default": "./dist/questions.js"
+    },
+    "./gallery": {
+      "types": "./dist/gallery.d.ts",
+      "default": "./dist/gallery.js"
     }
   },
   "scripts": {
