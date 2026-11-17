@@ -8,6 +8,7 @@ import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
 import { KeywordScreen } from '../material/keyword-screen';
+import { QuestionScreen } from '../material/question-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -37,6 +38,20 @@ export function ModuleScreen({
         <KeywordScreen
           title={tab.title}
           tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/material/questions') {
+    return (
+      <div>
+        <QuestionScreen
+          title={tab.title}
+          tabId={tab.id}
+          href={tab.href}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />

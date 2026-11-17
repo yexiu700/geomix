@@ -245,3 +245,27 @@ export type {
   KeywordRecord,
   QuestionSourceName,
 } from './keywords';
+export {
+  QUESTION_EMPTY_KEYWORD_MSG,
+  QUESTION_EMPTY_LINES_MSG,
+  QUESTION_ID_PATTERN,
+  QUESTION_SORTS,
+  QUESTION_SOURCE_LABELS,
+  QUESTION_TEXT_MAX,
+  parseBatchQuestionLines,
+  parseQuestionListQuery,
+  questionBatchCreateSchema,
+  questionBulkSchema,
+  questionExportTable,
+  questionListQueryString,
+  questionUpdateSchema,
+} from './questions';
+export type {
+  QuestionBatchCreateInput,
+  QuestionBatchResult,
+  QuestionBulkInput,
+  QuestionListQuery,
+  QuestionRecord,
+  QuestionSort,
+  QuestionUpdateInput,
+} from './questions';
