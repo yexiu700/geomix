@@ -6,3 +6,5 @@ pnpm-lock.yaml
 .turbo
 *.tsbuildinfo
 docs
+playwright-report
+test-results

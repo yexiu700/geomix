@@ -11,13 +11,16 @@
     "build": "turbo run build",
     "lint": "turbo run lint && prettier --check .",
     "format": "prettier --write .",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "turbo run typecheck && tsc -p e2e/tsconfig.json --noEmit",
     "test": "turbo run test",
+    "test:e2e": "playwright test",
     "db:validate": "pnpm --filter @geomix/db prisma:validate",
     "db:migrate": "pnpm --filter @geomix/db prisma:migrate",
     "db:seed": "pnpm --filter @geomix/db db:seed"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^22.20.5",
     "prettier": "^3.6.2",
     "turbo": "^2.11.11",
     "typescript": "^5.9.3"

@@ -40,3 +40,6 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  e2e:
+    uses: ./.github/workflows/e2e.yml
