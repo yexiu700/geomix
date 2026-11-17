@@ -12,6 +12,7 @@ import { KnowledgeScreen } from '../material/knowledge-screen';
 import { QuestionScreen } from '../material/question-screen';
 import { ArticleListScreen } from '../writing/article-list-screen';
 import { CategoryScreen } from '../writing/category-screen';
+import { PromptScreen } from '../writing/prompt-screen';
 import { categoryIdFromHref } from '../../lib/categories';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
@@ -115,6 +116,14 @@ export function ModuleScreen({
     return (
       <div>
         <KnowledgeScreen title={tab.title} readOnly={readOnly} />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/writing/prompts') {
+    return (
+      <div>
+        <PromptScreen title={tab.title} readOnly={readOnly} />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
       </div>
     );
