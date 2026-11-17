@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { readReconcileConfig } from '@geomix/shared';
 import { Worker } from 'bullmq';
+import { IMAGE_JOB_HANDLER, type ImageJobHandler } from '../image/image-job.runner';
 import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
 import { REWRITE_BATCH_HANDLER, type RewriteBatchHandler } from '../rewrite/rewrite-batch.runner';
 import { AI_TASK_HANDLER, type AiTaskHandler } from '../writing/ai-task.runner';
@@ -38,6 +39,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(REWRITE_BATCH_HANDLER)
     private readonly rewriteBatchRunner?: RewriteBatchHandler,
+    @Optional()
+    @Inject(IMAGE_JOB_HANDLER)
+    private readonly imageJobRunner?: ImageJobHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -74,6 +78,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const batchData = readRewriteBatchPayload(job.data);
             if (batchData && this.rewriteBatchRunner) {
               await this.rewriteBatchRunner.process(batchData);
+            }
+            return;
+          }
+          if (name === 'image-gen' && job.name === 'image-gen') {
+            const imgData = readImageJobPayload(job.data);
+            if (imgData && this.imageJobRunner) {
+              await this.imageJobRunner.process(imgData);
             }
             return;
           }
@@ -189,6 +200,16 @@ function readRewriteBatchPayload(data: unknown): { tenantId: string; batchId: st
   if (!ID.test(tenantId) || !ID.test(batchId)) return null;
   if (tenantId === 'system' || batchId === 'system') return null;
   return { tenantId, batchId };
+}
+
+function readImageJobPayload(data: unknown): { tenantId: string; jobId: string } | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const jobId = (data as { jobId?: unknown }).jobId;
+  if (typeof tenantId !== 'string' || typeof jobId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(jobId)) return null;
+  if (tenantId === 'system' || jobId === 'system') return null;
+  return { tenantId, jobId };
 }
 
 function readKind(name: string, data: unknown): string {

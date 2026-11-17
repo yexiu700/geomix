@@ -8,6 +8,7 @@ import { AdaptersModule } from './infra/adapters.module';
 import { BillingModule } from './billing/billing.module';
 import { QueueModule } from './queue/queue.module';
 import { HealthController } from './health/health.controller';
+import { AiImagesModule } from './image/ai-images.module';
 import { KeywordsModule } from './material/keywords.module';
 import { RewriteModule } from './rewrite/rewrite.module';
 import { SamplesModule } from './samples/samples.module';
@@ -29,6 +30,7 @@ import { PrismaModule } from './prisma/prisma.module';
     KeywordsModule,
     WritingModule,
     RewriteModule,
+    AiImagesModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

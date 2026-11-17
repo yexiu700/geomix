@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { AUTH_ERROR } from '@geomix/shared';
+import { AUTH_ERROR, parseEnv } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -39,15 +39,19 @@ function present(user: {
   id: string;
   username: string;
   nickname: string | null;
-  role: 'MERCHANT' | 'ADMIN';
+  role: 'ADMIN' | 'MERCHANT';
   tenant: { id: string; name: string; expiresAt: Date; isActive: boolean };
 }) {
   const readOnly = !user.tenant.isActive || user.tenant.expiresAt.getTime() <= Date.now();
+  const env = parseEnv(process.env);
   return {
     id: user.id,
     username: user.username,
     nickname: user.nickname,
     role: user.role,
+    features: {
+      aiImage: env.FEATURE_AI_IMAGE,
+    },
     tenant: {
       id: user.tenant.id,
       name: user.tenant.name,

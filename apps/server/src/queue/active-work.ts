@@ -68,5 +68,17 @@ export async function hasLiveActiveWork(
     }
   }
 
+  if (ref.refType === 'image_job') {
+    const job = await prisma.base.aiImageJob.findFirst({
+      where: { id: ref.refId, tenantId: ref.tenantId },
+      select: { status: true, createdAt: true },
+    });
+    if (!job) return false;
+    if (job.status === 'QUEUED' || job.status === 'PAUSED') return true;
+    if (job.status === 'RUNNING') {
+      return now.getTime() - job.createdAt.getTime() <= ttlMs;
+    }
+  }
+
   return false;
 }
