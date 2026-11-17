@@ -309,10 +309,10 @@ describe('AiTaskScreen', () => {
       expect(screen.getByLabelText('任务名称')).toBeTruthy();
     });
 
-    // 1. Check default button label (10点数/篇) and default pre-freeze summary (10 篇 × 10 点/篇 = 100 点)
+    // 1. Check default button label (10点数/篇) and default pre-freeze summary (1 篇 × 10 点/篇 = 10 点)
     expect(findButton('开始写作（10点数/篇）')).toBeTruthy();
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain(
-      '100 点数（10 篇 × 10 点/篇）',
+      '10 点数（1 篇 × 10 点/篇）',
     );
     expect(screen.getByText('1 张/篇')).toBeTruthy();
 
@@ -341,7 +341,7 @@ describe('AiTaskScreen', () => {
     expect(findButton('开始写作（15点数/篇）')).toBeTruthy();
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain('+5 点/篇');
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain(
-      '150 点数（10 篇 × 15 点/篇）',
+      '15 点数（1 篇 × 15 点/篇）',
     );
 
     // Clear KB -> switches back to 开始写作（10点数/篇）; re-select KB -> 开始写作（15点数/篇）

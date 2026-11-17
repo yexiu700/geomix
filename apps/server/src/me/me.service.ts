@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   AUTH_ERROR,
@@ -18,6 +18,7 @@ import {
   type VerificationInput,
 } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
+import { ComplianceService } from '../infra/compliance';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type PointItem = {
@@ -52,7 +53,12 @@ export type LedgerPage<T> = {
  */
 @Injectable()
 export class MeService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional()
+    @Inject(ComplianceService)
+    private readonly compliance: ComplianceService = new ComplianceService(),
+  ) {}
 
   async points(tenantId: string, query: PointListQuery): Promise<LedgerPage<PointItem>> {
     const where = pointWhere(tenantId, query);
@@ -215,6 +221,12 @@ export class MeService {
 
   /** 占位提交。只把资料记成 SUBMITTED，不调用外部核验，也不会写成已通过。 */
   async submitVerification(tenantId: string, userId: string, input: VerificationInput) {
+    await this.compliance.assertAllowed({
+      text: [input.companyName, input.contact].filter(Boolean).join('\n'),
+      action: 'verification_submit',
+      tenantId,
+      userId,
+    });
     const row = await this.prisma.base.verification.upsert({
       where: { tenantId },
       create: {

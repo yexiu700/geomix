@@ -106,4 +106,37 @@ describe('tenant admin', () => {
       items: [{ key: 'QUESTION', limit: '25000' }],
     });
   });
+
+  it('creates a new tenant with 1000 default initial points', async () => {
+    const client = {
+      listTenants: vi.fn(async () => [tenant(1000)]),
+      createTenant: vi.fn(async () => tenant(1000)),
+      updateTenant: vi.fn(),
+      updateQuotas: vi.fn(),
+      adjust: vi.fn(),
+      setMode: vi.fn(),
+    };
+    render(<TenantAdmin client={client} />);
+    expect(await screen.findByText('商户甲')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /开\s*户/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: '租户名称' }), {
+      target: { value: '商户乙' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '登录用户名' }), {
+      target: { value: 'merchant_b' },
+    });
+    fireEvent.change(screen.getByLabelText('初始密码'), {
+      target: { value: 'Passw0rd123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /确\s*定/ }));
+
+    expect(client.createTenant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: '商户乙',
+        username: 'merchant_b',
+        initialPoints: 1000,
+      }),
+    );
+  });
 });

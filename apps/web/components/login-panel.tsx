@@ -142,10 +142,17 @@ export function LoginPanel() {
               <div
                 role="img"
                 aria-label="验证码"
+                title="点击刷新验证码"
+                onClick={() => {
+                  if (!busy && !captchaLoading) {
+                    void loadCaptcha();
+                  }
+                }}
                 style={{
                   width: 132,
                   height: 48,
                   marginBottom: 12,
+                  cursor: busy || captchaLoading ? 'not-allowed' : 'pointer',
                   backgroundImage: `url("${captchaImage}")`,
                   backgroundRepeat: 'no-repeat',
                   backgroundSize: 'contain',

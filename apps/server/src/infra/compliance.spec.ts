@@ -24,11 +24,18 @@ describe('compliance scan', () => {
     expect(JSON.stringify(writes[0]?.payload)).not.toContain(text);
     expect(writes[0]?.payload.labels).toEqual(['赌博']);
     const clean = await service.assertAllowed({
-      text: '介绍一下 GeoMix 的占位流程',
+      text: '苏州华信精密机械制造有限公司工业医疗级洁净结构件注塑制造',
       action: 'image_prompt',
     });
     expect(clean.blocked).toBe(false);
     expect(writes).toHaveLength(1);
+    await expect(
+      service.assertAllowed({ text: '民营男科医院网贷推广', action: 'keyword_create' }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: API_ERROR.FORBIDDEN_INDUSTRY,
+    });
+    expect(writes).toHaveLength(2);
   });
 
   it('replaces explicit extreme claims and leaves ordinary words alone', () => {

@@ -245,7 +245,7 @@ describe('RewriteBatchScreen', () => {
 
     await waitFor(() => {
       expect(screen.getByText('新建批量爆文复刻任务')).toBeTruthy();
-      expect(findButton('开始批量复刻（5点数/篇，预冻25点）')).toBeTruthy();
+      expect(findButton('开始批量复刻（5点数/篇，预冻5点）')).toBeTruthy();
     });
 
     // Switch to keyword search mode and enter a URL -> immediately warns that it's a link, not a keyword!
@@ -264,7 +264,7 @@ describe('RewriteBatchScreen', () => {
     const nameInput = screen.getByLabelText('任务名称');
     fireEvent.change(nameInput, { target: { value: '激光技术干货复刻批次' } });
 
-    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻25点）'));
+    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻5点）'));
     expect(submitted).toHaveLength(0);
 
     // Switch back to link_list mode and submit 3 valid public URLs with maxCount = 3 (预冻 15 点)

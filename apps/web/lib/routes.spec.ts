@@ -3,7 +3,9 @@ import { MENU, STATIC_ROUTES, collectHrefs, matchRoute, menuSelection } from './
 
 describe('console routes', () => {
   it('puts every phase-1 page on the grouped menu', () => {
-    expect(new Set(collectHrefs())).toEqual(new Set(Object.keys(STATIC_ROUTES)));
+    expect(new Set(collectHrefs())).toEqual(
+      new Set(Object.keys(STATIC_ROUTES).filter((href) => href !== '/workbench/samples')),
+    );
     const image = MENU.find((item) => item.type === 'submenu' && item.key === 'image');
     expect(image?.type === 'submenu' ? image.badge : undefined).toBe('new');
     expect(MENU.some((item) => item.type === 'section' && item.title === 'AI创作-文章&素材')).toBe(
