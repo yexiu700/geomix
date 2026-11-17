@@ -3,6 +3,9 @@
 import { Button, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
 import { SampleScreen } from '../crud/sample-screen';
+import { ArticleListScreen } from '../writing/article-list-screen';
+import { CategoryScreen } from '../writing/category-screen';
+import { categoryIdFromHref } from '../../lib/categories';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -21,6 +24,26 @@ export function ModuleScreen({
   const path = matchRoute(tab.href)?.path ?? '';
   if (path === '/workbench/samples') {
     return <SampleScreen title={tab.title} readOnly={readOnly} />;
+  }
+  if (path === '/writing/categories') {
+    return (
+      <CategoryScreen
+        title={tab.title}
+        tabId={tab.id}
+        readOnly={readOnly}
+        onDispatch={onDispatch}
+      />
+    );
+  }
+  if (path === '/writing/articles') {
+    return (
+      <ArticleListScreen
+        title={tab.title}
+        tabId={tab.id}
+        categoryId={categoryIdFromHref(tab.href)}
+        onDispatch={onDispatch}
+      />
+    );
   }
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
