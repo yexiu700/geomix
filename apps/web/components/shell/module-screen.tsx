@@ -18,8 +18,11 @@ import { ArticleManageScreen } from '../writing/article-manage-screen';
 import { AiTaskScreen } from '../writing/ai-task-screen';
 import { CategoryScreen } from '../writing/category-screen';
 import { PromptScreen } from '../writing/prompt-screen';
+import { VisibilityMonitorsScreen } from '../visibility/visibility-monitors-screen';
+import { VisibilityOverviewScreen } from '../visibility/visibility-overview-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
+import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
 
 export function ModuleScreen({
@@ -27,12 +30,16 @@ export function ModuleScreen({
   draft,
   readOnly = false,
   aiImageEnabled = true,
+  visibilityEnabled = true,
+  storage,
   onDispatch,
 }: {
   tab: ShellTab;
   draft: string;
   readOnly?: boolean;
   aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
+  storage?: SessionStorageLike;
   onDispatch: (action: ShellAction) => void;
 }) {
   const path = matchRoute(tab.href)?.path ?? '';
@@ -198,6 +205,38 @@ export function ModuleScreen({
           tabId={tab.id}
           readOnly={readOnly}
           featureEnabled={aiImageEnabled}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/visibility/monitors') {
+    return (
+      <div>
+        <VisibilityMonitorsScreen
+          title={tab.title}
+          tabId={tab.id}
+          href={tab.href}
+          readOnly={readOnly}
+          featureEnabled={visibilityEnabled}
+          storage={storage}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/visibility/overview') {
+    return (
+      <div>
+        <VisibilityOverviewScreen
+          title={tab.title}
+          tabId={tab.id}
+          href={tab.href}
+          readOnly={readOnly}
+          featureEnabled={visibilityEnabled}
+          storage={storage}
           onDispatch={onDispatch}
         />
         <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />

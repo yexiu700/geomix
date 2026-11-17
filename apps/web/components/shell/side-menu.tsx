@@ -15,14 +15,19 @@ export function SideMenu({
   activeHref,
   prefs,
   aiImageEnabled = true,
+  visibilityEnabled = true,
   onDispatch,
 }: {
   activeHref: string;
   prefs: LayoutPrefs;
   aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
   onDispatch: (action: ShellAction) => void;
 }) {
-  const menuItems = useMemo(() => buildMenu({ aiImageEnabled }), [aiImageEnabled]);
+  const menuItems = useMemo(
+    () => buildMenu({ aiImageEnabled, visibilityEnabled }),
+    [aiImageEnabled, visibilityEnabled],
+  );
   const selection = menuSelection(activeHref);
   const [openKeys, setOpenKeys] = useState<string[]>(selection.parents);
 
