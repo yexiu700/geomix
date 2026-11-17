@@ -1,0 +1,153 @@
+name: geomix-prod
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: geomix-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-geomix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-geomix}
+    volumes:
+      - geomix_postgres:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-geomix} -d ${POSTGRES_DB:-geomix}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: geomix-redis
+    volumes:
+      - geomix_redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-perms:
+    image: busybox:1.37
+    container_name: geomix-minio-perms
+    user: '0:0'
+    command: ['chown', '-R', '65532:65532', '/data']
+    volumes:
+      - geomix_minio:/data
+    restart: 'no'
+
+  minio:
+    image: cgr.dev/chainguard/minio@sha256:1ec745a06a986762f89e68e855fc189f403941eff8c0a5f94767e92c8e39d3f5
+    container_name: geomix-minio
+    user: '65532:65532'
+    depends_on:
+      minio-perms:
+        condition: service_completed_successfully
+    command: ['server', '--address', ':9000', '--console-address', ':9001', '/data']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-geomix}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - geomix_minio:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-init:
+    image: cgr.dev/chainguard/minio@sha256:1ec745a06a986762f89e68e855fc189f403941eff8c0a5f94767e92c8e39d3f5
+    container_name: geomix-minio-init
+    user: '65532:65532'
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_CONFIG_DIR: /tmp/mc
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-geomix}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      S3_BUCKET: ${S3_BUCKET:-geomix}
+    entrypoint: ['/usr/bin/bash', '-c']
+    command:
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+    restart: 'no'
+
+  migrate:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/geomix-server:${IMAGE_TAG:-latest}
+    container_name: geomix-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-geomix}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geomix}?schema=public
+    command: ['pnpm', '--filter', '@geomix/db', 'prisma:migrate']
+    restart: 'no'
+
+  api:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/geomix-server:${IMAGE_TAG:-latest}
+    container_name: geomix-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      API_PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-geomix}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geomix}?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+    ports:
+      - '127.0.0.1:${API_PORT:-3001}:3001'
+    command: ['node', 'apps/server/dist/main.api.js']
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/geomix-server:${IMAGE_TAG:-latest}
+    container_name: geomix-worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-geomix}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geomix}?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+    command: ['node', 'apps/server/dist/main.worker.js']
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER is required}/geomix-web:${IMAGE_TAG:-latest}
+    container_name: geomix-web
+    depends_on:
+      - api
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - '127.0.0.1:${WEB_PORT:-3000}:3000'
+    restart: unless-stopped
+
+volumes:
+  geomix_postgres:
+  geomix_redis:
+  geomix_minio:
