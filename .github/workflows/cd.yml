@@ -62,7 +62,7 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.owner }}/geomix-web:latest
             ghcr.io/${{ steps.meta.outputs.owner }}/geomix-web:${{ steps.meta.outputs.tag }}
           cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
+          cache-to: ${{ github.event_name != 'workflow_run' && 'type=gha,mode=max,scope=web,ignore-error=true' || '' }}
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -74,7 +74,7 @@ jobs:
             ghcr.io/${{ steps.meta.outputs.owner }}/geomix-server:latest
             ghcr.io/${{ steps.meta.outputs.owner }}/geomix-server:${{ steps.meta.outputs.tag }}
           cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
+          cache-to: ${{ github.event_name != 'workflow_run' && 'type=gha,mode=max,scope=server,ignore-error=true' || '' }}
 
   deploy:
     name: Deploy to Server (Self-Hosted)
