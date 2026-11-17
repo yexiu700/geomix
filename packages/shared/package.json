@@ -40,6 +40,14 @@
     "./account": {
       "types": "./dist/account.d.ts",
       "default": "./dist/account.js"
+    },
+    "./combo": {
+      "types": "./dist/combo.d.ts",
+      "default": "./dist/combo.js"
+    },
+    "./keywords": {
+      "types": "./dist/keywords.d.ts",
+      "default": "./dist/keywords.js"
     }
   },
   "scripts": {

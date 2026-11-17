@@ -7,6 +7,7 @@ import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { KeywordScreen } from '../material/keyword-screen';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
@@ -30,6 +31,19 @@ export function ModuleScreen({
   if (path === '/me/money') return <MoneyScreen title={tab.title} />;
   if (path === '/me/rights') return <RightsScreen title={tab.title} />;
   if (path === '/me/verify') return <VerifyScreen title={tab.title} readOnly={readOnly} />;
+  if (path === '/material/keywords') {
+    return (
+      <div>
+        <KeywordScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
   return (
@@ -45,9 +59,6 @@ export function ModuleScreen({
         placeholder="在这里写的内容会随标签保留"
         onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
-      {path === '/material/keywords' ? (
-        <KeywordDrill tabId={tab.id} onDispatch={onDispatch} />
-      ) : null}
       {path === '/material/gallery' ? (
         <GalleryDrill tabId={tab.id} onDispatch={onDispatch} />
       ) : null}
@@ -60,37 +71,25 @@ export function ModuleScreen({
   );
 }
 
-function KeywordDrill({
-  tabId,
+export function TabDraftNote({
+  tab,
+  draft,
   onDispatch,
 }: {
-  tabId: string;
+  tab: ShellTab;
+  draft: string;
   onDispatch: (action: ShellAction) => void;
 }) {
-  const [keywordId, setKeywordId] = useState('demo');
   return (
-    <Space style={{ marginTop: 16 }} wrap>
-      <Input
-        aria-label="主词编号"
-        value={keywordId}
-        onChange={(event) => setKeywordId(event.target.value)}
-        style={{ width: 180 }}
+    <div style={{ marginTop: 16 }}>
+      <Input.TextArea
+        aria-label={`${tab.title}草稿`}
+        value={draft}
+        rows={2}
+        placeholder="本页草稿便签（切换标签页自动保留）"
+        onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
-      <Button
-        type="primary"
-        onClick={() => {
-          const value = keywordId.trim();
-          if (!value) return;
-          onDispatch({
-            type: 'open',
-            href: `/material/questions?keywordId=${encodeURIComponent(value)}`,
-            sourceId: tabId,
-          });
-        }}
-      >
-        查看写作标题
-      </Button>
-    </Space>
+    </div>
   );
 }
 
