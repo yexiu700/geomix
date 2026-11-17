@@ -9,7 +9,6 @@ import {
   buildFakeDistillCandidates,
   cleanDistilledQuestions,
   escapeLikeLiteral,
-  extractJsonStringArray,
   normalizeQuestionKey,
   parseBrandsInput,
   parseQuestionsLines,
@@ -26,8 +25,10 @@ import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService, scanCompliance } from '../infra/compliance';
 import { LlmService } from '../infra/llm';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
+import { extractDistillCandidates } from './distill-parser';
 
 export const KEYWORDS_MIN_VALID_TOKEN = 'KEYWORDS_MIN_VALID_TOKEN';
 
@@ -161,34 +162,13 @@ export class KeywordsService {
 
     let rawCandidates: string[] = [];
     try {
-      const completion = await this.llm.complete({
+      rawCandidates = await this.requestDistillCandidates({
         tenantId,
-        scene: 'distill',
-        temperature: 0.8,
-        maxTokens: 1500,
-        idempotencyKey: unitKey,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是中文AI搜索用户行为分析师。请围绕用户给出的主关键词，生成30条潜在客户会向AI提出的咨询类问题，覆盖推荐类、价格类、对比类、地域类、厂家与服务商类。要求：每条必须包含主关键词，长度8到30字，不使用极限词，不出现任何品牌名称，仅输出JSON字符串数组。',
-          },
-          {
-            role: 'user',
-            content: [
-              `主关键词：${main}`,
-              brands.length > 0 ? `业务背景品牌（切勿出现在问题里）：${brands.join('、')}` : '',
-              region ? `目标地域参考：${region}` : '',
-              '请直接返回 JSON 字符串数组。',
-            ]
-              .filter(Boolean)
-              .join('\n'),
-          },
-        ],
+        main,
+        brands,
+        region,
+        unitKey,
       });
-      rawCandidates = completion.fake
-        ? buildFakeDistillCandidates(main)
-        : extractJsonStringArray(completion.text);
     } catch (error) {
       await this.refundDistill(tenantId, reservation.id, unitKey, unitPoints, 'AI蒸馏调用失败退还');
       throw new ApiError(
@@ -476,6 +456,75 @@ export class KeywordsService {
       );
     }
     await this.quota.consume(tenantId, 'QUESTION', count, tx);
+  }
+
+  private async requestDistillCandidates(input: {
+    tenantId: string;
+    main: string;
+    brands: string[];
+    region: string;
+    unitKey: string;
+  }): Promise<string[]> {
+    const baseUserLines = [
+      `主关键词：${input.main}`,
+      input.brands.length > 0 ? `业务背景品牌（切勿出现在问题里）：${input.brands.join('、')}` : '',
+      input.region ? `目标地域参考：${input.region}` : '',
+    ].filter(Boolean);
+
+    try {
+      const first = await this.llm.complete({
+        tenantId: input.tenantId,
+        scene: 'distill',
+        temperature: 0.7,
+        maxTokens: 4096,
+        idempotencyKey: input.unitKey,
+        messages: [
+          {
+            role: 'system',
+            content:
+              '你是中文AI搜索用户行为分析师。请围绕用户给出的主关键词，生成30条潜在客户会向AI提出的咨询类问题，覆盖推荐类、价格类、对比类、地域类、厂家与服务商类。要求：每条必须包含主关键词，长度8到30字，不使用极限词，不出现任何品牌名称。请只输出标准JSON字符串数组（例如 ["问题1","问题2"]），不要输出任何解释、思考过程或Markdown前后缀。',
+          },
+          {
+            role: 'user',
+            content: [...baseUserLines, '请直接输出 JSON 字符串数组。'].join('\n'),
+          },
+        ],
+      });
+      if (first.fake) return buildFakeDistillCandidates(input.main);
+      const parsed = extractDistillCandidates(first.text);
+      if (parsed.length > 0) return parsed;
+    } catch (error) {
+      if (!(error instanceof ProviderError) || error.kind !== PROVIDER_KIND.CONTRACT) {
+        throw error;
+      }
+    }
+
+    const retryKey = `${input.unitKey.slice(0, 120)}:retry1`;
+    const second = await this.llm.complete({
+      tenantId: input.tenantId,
+      scene: 'distill',
+      temperature: 0.3,
+      maxTokens: 4096,
+      idempotencyKey: retryKey,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是严格的JSON生成器。围绕给定主关键词生成20到30条中文咨询问题，每条必须完整包含主关键词，8到30字，不含极限词与品牌词。响应内容只能是一个合法的JSON字符串数组，必须以 [ 开头、以 ] 结尾，禁止任何额外文字。',
+        },
+        {
+          role: 'user',
+          content: [
+            ...baseUserLines,
+            `示例格式：["${input.main}一般怎么收费？","如何选择靠谱的${input.main}厂家？"]`,
+            '请立即输出纯 JSON 字符串数组：',
+          ].join('\n'),
+        },
+      ],
+    });
+    return second.fake
+      ? buildFakeDistillCandidates(input.main)
+      : extractDistillCandidates(second.text);
   }
 
   private async refundDistill(

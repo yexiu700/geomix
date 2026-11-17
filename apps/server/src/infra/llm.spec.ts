@@ -223,6 +223,93 @@ describe('llm routing', () => {
     expect(calls).toBe(0);
     expect(service.listCosts('tenant_demo')).toHaveLength(0);
   });
+
+  it('normalizes OpenAI-compatible endpoints and parses omitted usage, content arrays, reasoning_content, and SSE chunks', async () => {
+    const requestedUrls: string[] = [];
+    const call = callTo();
+
+    // 1) Missing usage + content array + baseUrl already ending with /chat/completions
+    const arrayAndNoUsage = await openai(async (req) => {
+      requestedUrls.push(req.url.toString());
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: [{ type: 'text', text: '["工业注塑模具哪家好？"]' }],
+                },
+              },
+            ],
+            usage: null,
+          }),
+        ),
+      };
+    }, 'https://192.0.2.10/v1/chat/completions').complete(call);
+    expect(requestedUrls[0]).toBe('https://192.0.2.10/v1/chat/completions');
+    expect(arrayAndNoUsage.text).toBe('["工业注塑模具哪家好？"]');
+    expect(arrayAndNoUsage.tokensIn).toBeGreaterThan(0);
+    expect(arrayAndNoUsage.tokensOut).toBeGreaterThan(0);
+
+    // 2) Reasoning model returning null content with non-empty reasoning_content
+    const reasoningFallback = await openai(async () => {
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  reasoning_content: '["定制工业注塑模具周期多久？"]',
+                },
+              },
+            ],
+          }),
+        ),
+      };
+    }, 'https://192.0.2.10/v1').complete(call);
+    expect(reasoningFallback.text).toBe('["定制工业注塑模具周期多久？"]');
+
+    // 3) Upstream gateway returning SSE frames despite stream: false
+    const sseFallback = await openai(async () => {
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: Buffer.from(
+          [
+            'data: {"choices":[{"delta":{"content":"[\\"工业注塑"}}]}',
+            'data: {"choices":[{"delta":{"content":"模具报价多少？\\"]"}}],"usage":{"prompt_tokens":12,"completion_tokens":8}}',
+            'data: [DONE]',
+          ].join('\n\n'),
+        ),
+      };
+    }, 'https://192.0.2.10/v1').complete(call);
+    expect(sseFallback.text).toBe('["工业注塑模具报价多少？"]');
+    expect(sseFallback.tokensIn).toBe(12);
+    expect(sseFallback.tokensOut).toBe(8);
+
+    // 4) Bare origin baseUrl prefers /v1/chat/completions and avoids HTML SPA root
+    const bareUrls: string[] = [];
+    const bareOrigin = await openai(async (req) => {
+      bareUrls.push(req.url.toString());
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content: 'ok' } }],
+            usage: { prompt_tokens: 3, completion_tokens: 1 },
+          }),
+        ),
+      };
+    }, 'https://192.0.2.10').complete(call);
+    expect(bareUrls).toEqual(['https://192.0.2.10/v1/chat/completions']);
+    expect(bareOrigin.text).toBe('ok');
+  });
 });
 
 function router(

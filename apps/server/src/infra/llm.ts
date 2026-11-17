@@ -88,19 +88,57 @@ const completionSchema = z.object({
   tokensOut: z.number().int().nonnegative(),
 });
 
-const upstreamSchema = z.object({
-  choices: z
-    .array(
-      z.object({
-        message: z.object({ content: z.string().min(1) }),
-      }),
-    )
-    .min(1),
-  usage: z.object({
-    prompt_tokens: z.number().int().nonnegative(),
-    completion_tokens: z.number().int().nonnegative(),
-  }),
-});
+const contentPartSchema = z.union([
+  z.string(),
+  z
+    .object({
+      text: z.string().optional(),
+      content: z.string().optional(),
+    })
+    .passthrough(),
+]);
+
+const choiceSchema = z
+  .object({
+    text: z.string().nullable().optional(),
+    message: z
+      .object({
+        content: z
+          .union([z.string(), z.array(contentPartSchema)])
+          .nullable()
+          .optional(),
+        reasoning_content: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
+    delta: z
+      .object({
+        content: z
+          .union([z.string(), z.array(contentPartSchema)])
+          .nullable()
+          .optional(),
+        reasoning_content: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+const usageSchema = z
+  .object({
+    prompt_tokens: z.number().nonnegative().nullable().optional(),
+    completion_tokens: z.number().nonnegative().nullable().optional(),
+    input_tokens: z.number().nonnegative().nullable().optional(),
+    output_tokens: z.number().nonnegative().nullable().optional(),
+  })
+  .passthrough();
+
+const upstreamEnvelopeSchema = z
+  .object({
+    choices: z.array(choiceSchema).min(1),
+    usage: usageSchema.nullable().optional(),
+  })
+  .passthrough();
 
 export class FakeLlm implements LlmProvider {
   constructor(readonly name = 'fake') {}
@@ -136,27 +174,75 @@ export class OpenAiLlm implements LlmProvider {
 
   async complete(input: ProviderCall): Promise<LlmCompletion> {
     const apiKey = readKey(this.env, this.config.apiKeyEnv);
-    const url = joinUrl(this.config.baseUrl, 'chat/completions');
-    const response = await requestOnce({
-      url,
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
+    const urls = resolveChatCompletionsUrls(this.config.baseUrl);
+    const promptText = input.messages.map((message) => message.content).join('\n');
+    let lastContractError: ProviderError | null = null;
+
+    for (let index = 0; index < urls.length; index += 1) {
+      const url = urls[index]!;
+      try {
+        return await this.requestCompletion(url, apiKey, input, promptText);
+      } catch (error) {
+        if (
+          error instanceof ProviderError &&
+          error.kind === PROVIDER_KIND.CONTRACT &&
+          index + 1 < urls.length
+        ) {
+          lastContractError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw (
+      lastContractError ??
+      new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status')
+    );
+  }
+
+  private async requestCompletion(
+    url: URL,
+    apiKey: string,
+    input: ProviderCall,
+    promptText: string,
+  ): Promise<LlmCompletion> {
+    const send = (payload: Record<string, unknown>) =>
+      requestOnce({
+        url,
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+        timeoutMs: this.timeoutMs,
+        maxBytes: 2_000_000,
+        signal: input.signal,
+        resolver: this.resolver,
+        transport: this.transport,
+      });
+
+    let response = await send({
+      model: input.model,
+      messages: input.messages,
+      temperature: input.temperature,
+      max_tokens: input.maxTokens,
+      stream: false,
+    });
+
+    if (
+      (response.status === 400 || response.status === 422) &&
+      isUnsupportedParamError(response.body.toString('utf8'))
+    ) {
+      response = await send({
         model: input.model,
         messages: input.messages,
-        temperature: input.temperature,
-        max_tokens: input.maxTokens,
-      }),
-      timeoutMs: this.timeoutMs,
-      maxBytes: 2_000_000,
-      signal: input.signal,
-      resolver: this.resolver,
-      transport: this.transport,
-    });
+        stream: false,
+      });
+    }
+
     if (response.status >= 300 && response.status < 400) {
       throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'redirect_refused');
     }
@@ -174,26 +260,15 @@ export class OpenAiLlm implements LlmProvider {
     if (response.status < 200 || response.status >= 300) {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
     }
-    let json: unknown;
-    try {
-      json = JSON.parse(response.body.toString('utf8')) as unknown;
-    } catch {
-      throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'json');
-    }
-    const parsed = upstreamSchema.safeParse(json);
-    if (!parsed.success) {
-      throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
-    }
-    const choice = parsed.data.choices[0];
-    if (!choice)
-      throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+
+    const parsed = parseUpstreamCompletion(response.body.toString('utf8'), promptText);
     return {
       provider: this.name,
       model: input.model,
       fake: false,
-      text: choice.message.content,
-      tokensIn: parsed.data.usage.prompt_tokens,
-      tokensOut: parsed.data.usage.completion_tokens,
+      text: parsed.text,
+      tokensIn: parsed.tokensIn,
+      tokensOut: parsed.tokensOut,
     };
   }
 }
@@ -514,9 +589,179 @@ function readKey(env: Record<string, string | undefined>, name: string): string 
   return value;
 }
 
-function joinUrl(base: string, path: string): URL {
-  const root = base.endsWith('/') ? base : `${base}/`;
-  return new URL(path, root);
+function resolveChatCompletionsUrls(base: string): URL[] {
+  let parsed: URL;
+  try {
+    parsed = new URL(base.trim());
+  } catch {
+    throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'invalid_url');
+  }
+  const cleanPath = parsed.pathname.replace(/\/+$/, '');
+  if (/\/chat\/completions$/i.test(cleanPath)) {
+    parsed.pathname = cleanPath;
+    return [parsed];
+  }
+  if (cleanPath === '') {
+    const v1 = new URL(parsed.toString());
+    v1.pathname = '/v1/chat/completions';
+    const root = new URL(parsed.toString());
+    root.pathname = '/chat/completions';
+    return [v1, root];
+  }
+  parsed.pathname = `${cleanPath}/chat/completions`;
+  return [parsed];
+}
+
+function isUnsupportedParamError(rawBody: string): boolean {
+  const lower = rawBody.toLowerCase();
+  return (
+    (lower.includes('temperature') ||
+      lower.includes('max_tokens') ||
+      lower.includes('max_completion_tokens')) &&
+    (lower.includes('unsupported') ||
+      lower.includes('not supported') ||
+      lower.includes('invalid') ||
+      lower.includes('unknown'))
+  );
+}
+
+function parseUpstreamCompletion(
+  rawBody: string,
+  promptText: string,
+): { text: string; tokensIn: number; tokensOut: number } {
+  const trimmed = rawBody.replace(/^\uFEFF/, '').trim();
+  if (!trimmed) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'json');
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(trimmed) as unknown;
+  } catch {
+    const sse = parseSseCompletion(trimmed, promptText);
+    if (sse) return sse;
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'json');
+  }
+
+  const candidate =
+    json &&
+    typeof json === 'object' &&
+    !('choices' in json) &&
+    'data' in json &&
+    typeof (json as { data?: unknown }).data === 'object' &&
+    (json as { data?: unknown }).data !== null
+      ? (json as { data: unknown }).data
+      : json;
+
+  const parsed = upstreamEnvelopeSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+  }
+
+  const choice = parsed.data.choices[0];
+  if (!choice) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+  }
+
+  const text = extractChoiceText(choice);
+  if (!text) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+  }
+
+  const usage = parsed.data.usage;
+  const tokensIn =
+    nonNegativeInt(usage?.prompt_tokens ?? usage?.input_tokens) ?? countTokens(promptText);
+  const tokensOut =
+    nonNegativeInt(usage?.completion_tokens ?? usage?.output_tokens) ?? countTokens(text);
+
+  return { text, tokensIn, tokensOut };
+}
+
+function parseSseCompletion(
+  raw: string,
+  promptText: string,
+): { text: string; tokensIn: number; tokensOut: number } | null {
+  if (!raw.startsWith('data:') && !raw.includes('\ndata:')) return null;
+  const contentChunks: string[] = [];
+  const reasoningChunks: string[] = [];
+  let promptTokens: number | undefined;
+  let completionTokens: number | undefined;
+  let parsedFrames = 0;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    let frame: unknown;
+    try {
+      frame = JSON.parse(payload) as unknown;
+    } catch {
+      continue;
+    }
+    const parsed = upstreamEnvelopeSchema.safeParse(frame);
+    if (!parsed.success) continue;
+    parsedFrames += 1;
+    const choice = parsed.data.choices[0];
+    if (choice) {
+      const deltaText =
+        flattenContent(choice.delta?.content) ||
+        flattenContent(choice.message?.content) ||
+        (choice.text ?? '');
+      if (deltaText) contentChunks.push(deltaText);
+      const reasoning = choice.delta?.reasoning_content ?? choice.message?.reasoning_content ?? '';
+      if (reasoning) reasoningChunks.push(reasoning);
+    }
+    if (parsed.data.usage) {
+      promptTokens =
+        nonNegativeInt(parsed.data.usage.prompt_tokens ?? parsed.data.usage.input_tokens) ??
+        promptTokens;
+      completionTokens =
+        nonNegativeInt(parsed.data.usage.completion_tokens ?? parsed.data.usage.output_tokens) ??
+        completionTokens;
+    }
+  }
+
+  if (parsedFrames === 0) return null;
+  const text = (contentChunks.join('') || reasoningChunks.join('')).trim();
+  if (!text) {
+    throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+  }
+  return {
+    text,
+    tokensIn: promptTokens ?? countTokens(promptText),
+    tokensOut: completionTokens ?? countTokens(text),
+  };
+}
+
+function extractChoiceText(choice: z.infer<typeof choiceSchema>): string {
+  const messageContent = flattenContent(choice.message?.content).trim();
+  if (messageContent) return messageContent;
+  const deltaContent = flattenContent(choice.delta?.content).trim();
+  if (deltaContent) return deltaContent;
+  const legacyText = (choice.text ?? '').trim();
+  if (legacyText) return legacyText;
+  const reasoning = (
+    choice.message?.reasoning_content ??
+    choice.delta?.reasoning_content ??
+    ''
+  ).trim();
+  return reasoning;
+}
+
+function flattenContent(
+  content: z.infer<typeof contentPartSchema>[] | string | null | undefined,
+): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => (typeof part === 'string' ? part : (part.text ?? part.content ?? '')))
+    .join('');
+}
+
+function nonNegativeInt(value: number | null | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.floor(value);
 }
 
 function positive(raw: string | undefined, fallback: number): number {
