@@ -19,8 +19,8 @@ export function createUndiciTransport(): HttpTransport {
           : request.url.hostname,
         lookup: (_hostname, options, callback) => pinLookup(pinned, options, callback),
       },
-      headersTimeout: 10_000,
-      bodyTimeout: 10_000,
+      headersTimeout: 60_000,
+      bodyTimeout: 60_000,
     });
     try {
       const response = await undiciFetch(request.url, {

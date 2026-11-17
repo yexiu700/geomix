@@ -58,7 +58,7 @@ import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
-const DEFAULT_BATCH_MAX_COUNT = 5;
+const DEFAULT_BATCH_MAX_COUNT = 1;
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',

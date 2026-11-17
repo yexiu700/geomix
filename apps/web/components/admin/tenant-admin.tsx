@@ -48,7 +48,7 @@ export function TenantAdmin({
     password: '',
     expiresAt: '2027-11-16T00:00:00.000Z',
     billingMode: null,
-    initialPoints: 0,
+    initialPoints: 1000,
   });
 
   async function reload(): Promise<void> {
@@ -217,7 +217,7 @@ export function TenantAdmin({
             password: '',
             expiresAt: '2027-11-16T00:00:00.000Z',
             billingMode: null,
-            initialPoints: 0,
+            initialPoints: 1000,
           });
         }}
         ok={
@@ -275,6 +275,20 @@ export function TenantAdmin({
             onChange={(event) =>
               setDraft((current) => ({ ...current, expiresAt: event.target.value }))
             }
+          />
+          <Input
+            aria-label="初始点数"
+            type="number"
+            min={0}
+            placeholder="初始点数（默认 1000）"
+            value={String(draft.initialPoints ?? 1000)}
+            onChange={(event) => {
+              const parsed = Number.parseInt(event.target.value, 10);
+              setDraft((current) => ({
+                ...current,
+                initialPoints: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
+              }));
+            }}
           />
         </Space>
       </CrudModal>

@@ -409,6 +409,13 @@ export function PromptScreen({
         <Button onClick={() => setDrawerOpen(true)}>系统默认指令</Button>
       </div>
 
+      <Alert
+        style={{ marginBottom: 12 }}
+        type="warning"
+        showIcon
+        message="编写指令时请合理嵌入 {训练词占位符} 与 {转化词占位符} 以保障主题聚焦与品牌转化，严禁包含医疗、网贷、博彩、违禁品等禁做行业及绝对化极限宣传用语。"
+      />
+
       {banner ? (
         <Alert
           style={{ marginBottom: 12 }}

@@ -3,7 +3,9 @@ import { MENU, STATIC_ROUTES, buildMenu, collectHrefs, matchRoute, menuSelection
 
 describe('console routes', () => {
   it('puts every active console page on the grouped menu', () => {
-    expect(new Set(collectHrefs())).toEqual(new Set(Object.keys(STATIC_ROUTES)));
+    expect(new Set(collectHrefs())).toEqual(
+      new Set(Object.keys(STATIC_ROUTES).filter((href) => href !== '/workbench/samples')),
+    );
     expect(collectHrefs()).toContain('/visibility/overview');
     expect(collectHrefs()).toContain('/visibility/monitors');
     const image = MENU.find((item) => item.type === 'submenu' && item.key === 'image');

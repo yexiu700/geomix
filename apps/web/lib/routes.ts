@@ -60,7 +60,6 @@ function link(href: keyof typeof STATIC_ROUTES): MenuItem {
 
 export const MENU: MenuItem[] = [
   link('/dashboard'),
-  link('/workbench/samples'),
   {
     type: 'section',
     key: 'creation',

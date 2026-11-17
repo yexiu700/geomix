@@ -38,6 +38,7 @@ describe('personal center screens', () => {
     );
     render(<PointsScreen title="点数明细" load={load} />);
     expect(await screen.findByText('+500 管理员充值')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '序号' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '项目' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '点数' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '消耗时间' })).toBeTruthy();
