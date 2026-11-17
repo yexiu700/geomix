@@ -197,3 +197,51 @@ export {
   shouldReleaseUnit,
 } from './queue';
 export type { CreateRunBody, QueueConfig, QueueName, RunStatus } from './queue';
+export {
+  COMBO_MAX,
+  EMPTY_MAIN_KEYWORD_MSG,
+  EXPANDER_WORD_PACKS,
+  buildKeywordCombos,
+} from './combo';
+export type {
+  ComboBuildFailure,
+  ComboBuildInput,
+  ComboBuildResult,
+  ComboBuildSuccess,
+  ExpanderWordPack,
+} from './combo';
+export {
+  DISTILL_MAX_KEEP,
+  DISTILL_MIN_VALID_DEFAULT,
+  KEYWORD_BRANDS_LIMIT,
+  KEYWORD_BRAND_MAX,
+  KEYWORD_EMPTY_MAIN_MSG,
+  KEYWORD_ID_PATTERN,
+  KEYWORD_MAIN_MAX,
+  KEYWORD_MAIN_MIN,
+  KEYWORD_OPT_LABELS,
+  KEYWORD_OPT_STATUSES,
+  QUESTION_SOURCES,
+  buildFakeDistillCandidates,
+  cleanDistilledQuestions,
+  cleanQuestionDisplay,
+  extractJsonStringArray,
+  keywordBulkSchema,
+  keywordDistillSchema,
+  keywordExportTable,
+  keywordQuestionSourceItemSchema,
+  keywordSaveSchema,
+  normalizeQuestionKey,
+  parseBrandsInput,
+  parseKeywordListQuery,
+  parseQuestionsLines,
+  validateMainKeyword,
+} from './keywords';
+export type {
+  KeywordDetailRecord,
+  KeywordListQuery,
+  KeywordOptStatusName,
+  KeywordQuestionInputItem,
+  KeywordRecord,
+  QuestionSourceName,
+} from './keywords';
