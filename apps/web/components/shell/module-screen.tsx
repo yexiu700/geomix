@@ -28,6 +28,7 @@ import type { ShellAction, ShellTab } from '../../lib/tab-stack';
 export function ModuleScreen({
   tab,
   draft,
+  active = true,
   readOnly = false,
   aiImageEnabled = true,
   visibilityEnabled = true,
@@ -36,6 +37,7 @@ export function ModuleScreen({
 }: {
   tab: ShellTab;
   draft: string;
+  active?: boolean;
   readOnly?: boolean;
   aiImageEnabled?: boolean;
   visibilityEnabled?: boolean;
@@ -121,6 +123,7 @@ export function ModuleScreen({
         <GalleryCategoryScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />

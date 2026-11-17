@@ -309,8 +309,13 @@ describe('AiTaskScreen', () => {
       expect(screen.getByLabelText('任务名称')).toBeTruthy();
     });
 
-    // 1. Check default button label (10点数/篇) and default pre-freeze summary (1 篇 × 10 点/篇 = 10 点)
+    // 1. Check default button label (10点数/篇), target=1, unselected keyword/gallery (#74), and default pre-freeze summary (1 篇 × 10 点/篇 = 10 点)
     expect(findButton('开始写作（10点数/篇）')).toBeTruthy();
+    expect((screen.getByLabelText('AI 创作数量') as HTMLInputElement).value).toBe('1');
+    const kwSelect = screen.getByLabelText('蒸馏训练词') as HTMLSelectElement;
+    const galSelect = screen.getByLabelText('画像图库') as HTMLSelectElement;
+    expect(kwSelect.value).toBe('');
+    expect(galSelect.value).toBe('');
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain(
       '10 点数（1 篇 × 10 点/篇）',
     );
@@ -350,10 +355,12 @@ describe('AiTaskScreen', () => {
     fireEvent.change(kbSelect, { target: { value: 'kb_1' } });
     expect(findButton('开始写作（15点数/篇）')).toBeTruthy();
 
-    // Fill name, adjust target to 8 -> banner updates to 120 点数（8 篇 × 15 点/篇） and submit!
+    // Fill name, explicitly select keyword & gallery (#74), adjust target to 8 -> banner updates to 120 点数（8 篇 × 15 点/篇） and submit!
     fireEvent.change(screen.getByLabelText('任务名称'), {
       target: { value: '春季钣金获客任务' },
     });
+    fireEvent.change(kwSelect, { target: { value: 'kw_1' } });
+    fireEvent.change(galSelect, { target: { value: 'gal_1' } });
     fireEvent.change(screen.getByLabelText('AI 创作数量'), {
       target: { value: '8' },
     });

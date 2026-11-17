@@ -170,6 +170,7 @@ export function ShellFrame({
                 <ModuleScreen
                   tab={tab}
                   draft={state.drafts[tab.id] ?? ''}
+                  active={!inactive}
                   readOnly={account.tenant.readOnly}
                   aiImageEnabled={aiImageEnabled}
                   visibilityEnabled={visibilityEnabled}

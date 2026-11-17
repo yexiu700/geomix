@@ -67,8 +67,10 @@ const ARCHIVE_FORMAT_LABELS: Record<ArticleArchiveFormat, string> = {
   docx: 'Word (.docx)',
 };
 
+const SHORT_VIDEO_WORD_LIMIT = 1000;
+
 const RED_TYPOGRAPHY_TIP =
-  '排版提示：建议单篇字数控制在 1000 字左右，采用二级/三级小标题与短段落结构排版；请勿粘贴外部追踪脚本、诱导外链或联系方式水印，保存时系统将自动清洗不安全标签。';
+  '排版提示：抖音、小红书类文字建议控制在1000字之内；建议采用二级/三级小标题与短段落结构排版，请勿粘贴外部追踪脚本、诱导外链或联系方式水印，保存时系统将自动清洗不安全标签。';
 
 type FilterDraft = {
   categoryId: string;
@@ -145,16 +147,13 @@ function buildDefaultCreateDraft(
 ): ArticleEditorDraft {
   const defaultCategory =
     (preferredCategoryId && options?.categories.find((c) => c.id === preferredCategoryId)?.id) ||
-    options?.categories[0]?.id ||
     '';
-  const firstMediaCat = options?.mediaCategories[0];
-  const autoCover = firstMediaCat?.previewAssets[0]?.url ?? null;
 
   return {
     title: '',
     categoryId: defaultCategory,
-    mediaCategoryId: firstMediaCat?.id ?? '',
-    coverUrl: autoCover,
+    mediaCategoryId: '',
+    coverUrl: null,
     status: 'NORMAL',
     contentHtml: '<p></p>',
   };
@@ -663,15 +662,35 @@ export function ArticleManageScreen({
     }
   };
 
+  const [plainCopied, setPlainCopied] = useState(false);
+
   const editorWordCount = useMemo(
     () => (editor ? countArticleWords(editor.draft.contentHtml) : 0),
     [editor],
   );
 
-  const sanitizedPreviewHtml = useMemo(
-    () => (editor ? sanitizeRichArticleHtml(editor.draft.contentHtml).contentHtml : ''),
+  const sanitizedEditorContent = useMemo(
+    () => (editor ? sanitizeRichArticleHtml(editor.draft.contentHtml) : null),
     [editor],
   );
+  const sanitizedPreviewHtml = sanitizedEditorContent?.contentHtml ?? '';
+  const editorPlainText = sanitizedEditorContent?.contentText ?? '';
+
+  const handleCopyPlainText = async () => {
+    const text = editorPlainText.trim();
+    if (!text) return;
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+      setPlainCopied(true);
+      setTimeout(() => {
+        setPlainCopied(false);
+      }, 2_000);
+    } catch {
+      setFormError('当前浏览器环境不支持自动复制，请切换预览后手动复制');
+    }
+  };
 
   return (
     <section aria-label={title}>
@@ -1172,7 +1191,7 @@ export function ArticleManageScreen({
                     )
                   }
                 >
-                  <option value="">请选择分类</option>
+                  <option value="">不选择</option>
                   {(formOptions?.categories ?? []).map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.name}（共 {cat.total} 篇 / 剩余 {cat.remaining} 篇）
@@ -1200,7 +1219,7 @@ export function ArticleManageScreen({
                     void loadAssetsForMediaCategory(nextMediaCatId, true);
                   }}
                 >
-                  <option value="">不关联图库分组</option>
+                  <option value="">不选择</option>
                   {(formOptions?.mediaCategories ?? []).map((mc) => (
                     <option key={mc.id} value={mc.id}>
                       {mc.name}（{mc.assetCount} 张图片）
@@ -1395,6 +1414,15 @@ export function ArticleManageScreen({
                 {RED_TYPOGRAPHY_TIP}
               </div>
 
+              {editorWordCount > SHORT_VIDEO_WORD_LIMIT ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 6 }}
+                  message={`当前正文字数已达 ${editorWordCount} 字，超过抖音、小红书建议的 ${SHORT_VIDEO_WORD_LIMIT} 字上限，建议精简篇幅或点击「复制纯文本」粘贴后按平台字数微调。`}
+                />
+              ) : null}
+
               <div
                 style={{
                   border: '1px solid #d9d9d9',
@@ -1441,7 +1469,7 @@ export function ArticleManageScreen({
                     </Button>
                   </Space>
 
-                  <Space size={8}>
+                  <Space size={8} wrap>
                     <Button
                       size="small"
                       type={editor.editorTab === 'edit' ? 'primary' : 'default'}
@@ -1460,9 +1488,21 @@ export function ArticleManageScreen({
                     >
                       排版预览
                     </Button>
+                    <Button
+                      size="small"
+                      aria-label="复制纯文本"
+                      disabled={!editorPlainText.trim()}
+                      onClick={() => void handleCopyPlainText()}
+                    >
+                      {plainCopied ? '已复制纯文本' : '复制纯文本'}
+                    </Button>
                     <span
                       aria-label="字数统计"
-                      style={{ fontSize: 12, color: '#595959', fontWeight: 500 }}
+                      style={{
+                        fontSize: 12,
+                        color: editorWordCount > SHORT_VIDEO_WORD_LIMIT ? '#cf1322' : '#595959',
+                        fontWeight: 500,
+                      }}
                     >
                       字数统计：{editorWordCount} 字
                     </span>

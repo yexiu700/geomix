@@ -248,6 +248,13 @@ describe('RewriteBatchScreen', () => {
       expect(findButton('开始批量复刻（5点数/篇，预冻5点）')).toBeTruthy();
     });
 
+    // Baseline defaults (#76): maxCount = 1, gallery & rewrite prompt unselected ('不选择')
+    expect((screen.getByLabelText('最大改写量') as HTMLInputElement).value).toBe('1');
+    const gallerySelect = screen.getByLabelText('文章配图图库分类') as HTMLSelectElement;
+    const promptSelect = screen.getByLabelText('爆文改写指令') as HTMLSelectElement;
+    expect(gallerySelect.value).toBe('');
+    expect(promptSelect.value).toBe('');
+
     // Switch to keyword search mode and enter a URL -> immediately warns that it's a link, not a keyword!
     const remoteRadio = screen.getByDisplayValue('remote');
     fireEvent.click(remoteRadio);
@@ -292,6 +299,13 @@ describe('RewriteBatchScreen', () => {
         ].join('\n'),
       },
     });
+
+    // Submitting before selecting gallery/template is blocked
+    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻15点）'));
+    expect(submitted).toHaveLength(0);
+
+    fireEvent.change(gallerySelect, { target: { value: 'mcat_001' } });
+    fireEvent.change(promptSelect, { target: { value: 'sys_rewrite_01' } });
 
     fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻15点）'));
 

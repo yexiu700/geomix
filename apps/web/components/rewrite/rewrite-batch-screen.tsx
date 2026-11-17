@@ -104,21 +104,15 @@ type ModalState = {
   maximized: boolean;
 };
 
-function buildInitialDraft(options: RewriteBatchFormOptions | null): CreateDraft {
-  const firstMediaWithAssets =
-    options?.mediaCategories.find((cat) => cat.assetCount > 0) ?? options?.mediaCategories[0];
-  const defaultTemplate =
-    options?.rewriteTemplates.find((tpl) => tpl.id === 'sys_rewrite_01') ??
-    options?.rewriteTemplates[0];
-
+function buildInitialDraft(_options: RewriteBatchFormOptions | null): CreateDraft {
   return {
     name: '',
     maxCount: DEFAULT_BATCH_MAX_COUNT,
     sourceType: 'link_list',
     keyword: '',
     linksText: '',
-    mediaCategoryId: firstMediaWithAssets?.id ?? '',
-    templateId: defaultTemplate?.id ?? 'sys_rewrite_01',
+    mediaCategoryId: '',
+    templateId: '',
     categoryId: '',
     autoCategoryName: buildDefaultBatchCategoryName('批量爆文'),
     resultStatus: 'PENDING',
@@ -1237,7 +1231,7 @@ export function RewriteBatchScreen({
                     )
                   }
                 >
-                  <option value="">请选择图库分类</option>
+                  <option value="">不选择</option>
                   {(formOptions?.mediaCategories ?? []).map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.name}（{cat.assetCount} 张可用）
@@ -1287,6 +1281,7 @@ export function RewriteBatchScreen({
                     )
                   }
                 >
+                  <option value="">不选择</option>
                   {(formOptions?.rewriteTemplates ?? []).map((tpl) => (
                     <option key={tpl.id} value={tpl.id}>
                       {tpl.isSystem ? `[系统] ${tpl.name}` : tpl.name}

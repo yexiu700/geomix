@@ -144,12 +144,38 @@ export class BillingService {
     Array<{ action: string; unitPoints: number; enabled: boolean; label: string }>
   > {
     const rows = await this.prisma.base.pricingItem.findMany({ orderBy: { action: 'asc' } });
-    return rows.map((row) => ({
-      action: row.action,
-      unitPoints: row.unitPoints,
-      enabled: row.enabled,
-      label: PRICING_DEFAULTS.find((item) => item.action === row.action)?.label ?? row.action,
-    }));
+    const existingActions = new Set(rows.map((row) => row.action));
+    const missingDefaults = PRICING_DEFAULTS.filter((item) => !existingActions.has(item.action));
+    if (
+      missingDefaults.length > 0 &&
+      typeof this.prisma.base.pricingItem.createMany === 'function'
+    ) {
+      await this.prisma.base.pricingItem
+        .createMany({
+          data: missingDefaults.map((item) => ({
+            action: item.action,
+            unitPoints: item.unitPoints,
+            enabled: true,
+          })),
+          skipDuplicates: true,
+        })
+        .catch(() => undefined);
+    }
+    const merged = [
+      ...rows.map((row) => ({
+        action: row.action,
+        unitPoints: row.unitPoints,
+        enabled: row.enabled,
+        label: PRICING_DEFAULTS.find((item) => item.action === row.action)?.label ?? row.action,
+      })),
+      ...missingDefaults.map((item) => ({
+        action: item.action,
+        unitPoints: item.unitPoints,
+        enabled: true,
+        label: item.label,
+      })),
+    ];
+    return merged.sort((a, b) => a.action.localeCompare(b.action));
   }
 
   async unitPrice(action: ChargeAction): Promise<number> {

@@ -7,7 +7,7 @@ import {
   type CategoryListQuery,
   type CategorySort,
 } from '@geomix/shared';
-import { Alert, Button, Input, Typography } from 'antd';
+import { Alert, Button, Input, Space, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { CategoryApiError, httpCategoryGateway, type CategoryGateway } from '../../lib/categories';
 import type { SessionStorageLike } from '../../lib/session';
@@ -63,7 +63,7 @@ export function CategoryScreen({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [locked, setLocked] = useState(false);
   const writeLocked = readOnly || locked;
@@ -115,16 +115,16 @@ export function CategoryScreen({
     }
   }
 
-  async function removeSelected(): Promise<void> {
-    if (writeLocked || selectedIds.length === 0) return;
+  async function removePending(): Promise<void> {
+    if (writeLocked || !pendingDeleteIds || pendingDeleteIds.length === 0) return;
     setError(null);
     try {
-      await client.remove(selectedIds);
-      setSelectedIds([]);
-      setConfirmDelete(false);
+      await client.remove(pendingDeleteIds);
+      setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
+      setPendingDeleteIds(null);
       setReloadKey((value) => value + 1);
     } catch (reason) {
-      setConfirmDelete(false);
+      setPendingDeleteIds(null);
       setError(messageOf(reason));
       noteLock(reason, setLocked);
     }
@@ -215,8 +215,16 @@ export function CategoryScreen({
                 });
               }
         }
-        onDelete={writeLocked ? undefined : () => setConfirmDelete(true)}
+        onDelete={writeLocked ? undefined : () => setPendingDeleteIds(selectedIds)}
+        onBack={() => onDispatch({ type: 'back', id: tabId })}
         columns={[
+          {
+            key: 'seq',
+            title: '序号',
+            width: 68,
+            hideable: false,
+            render: (_row, index) => (query.page - 1) * query.pageSize + index + 1,
+          },
           {
             key: 'name',
             title: '分组名',
@@ -255,26 +263,37 @@ export function CategoryScreen({
             title: '操作',
             hideable: false,
             render: (row) => (
-              <Button
-                type="link"
-                aria-label={`编辑 ${row.name}`}
-                disabled={writeLocked}
-                onClick={() => {
-                  const initial = { name: row.name };
-                  setFormError(null);
-                  setSubmitted(false);
-                  setEditor({
-                    mode: 'edit',
-                    id: row.id,
-                    initial,
-                    draft: initial,
-                    minimized: false,
-                    maximized: false,
-                  });
-                }}
-              >
-                编辑
-              </Button>
+              <Space size={4}>
+                <Button
+                  type="link"
+                  aria-label={`编辑 ${row.name}`}
+                  disabled={writeLocked}
+                  onClick={() => {
+                    const initial = { name: row.name };
+                    setFormError(null);
+                    setSubmitted(false);
+                    setEditor({
+                      mode: 'edit',
+                      id: row.id,
+                      initial,
+                      draft: initial,
+                      minimized: false,
+                      maximized: false,
+                    });
+                  }}
+                >
+                  编辑
+                </Button>
+                <Button
+                  type="link"
+                  danger
+                  aria-label={`删除 ${row.name}`}
+                  disabled={writeLocked}
+                  onClick={() => setPendingDeleteIds([row.id])}
+                >
+                  删除
+                </Button>
+              </Space>
             ),
           },
         ]}
@@ -339,22 +358,24 @@ export function CategoryScreen({
         </form>
       </CrudModal>
       <CrudModal
-        open={confirmDelete}
+        open={Boolean(pendingDeleteIds && pendingDeleteIds.length > 0)}
         title="删除所选分类"
         minimized={false}
         maximized={false}
         onMinimize={() => undefined}
         onRestore={() => undefined}
         onMaximize={() => undefined}
-        onClose={() => setConfirmDelete(false)}
-        onReset={() => setConfirmDelete(false)}
+        onClose={() => setPendingDeleteIds(null)}
+        onReset={() => setPendingDeleteIds(null)}
         ok={
-          <Button aria-label="确定" type="primary" danger onClick={() => void removeSelected()}>
+          <Button aria-label="确定" type="primary" danger onClick={() => void removePending()}>
             确定
           </Button>
         }
       >
-        <p>将删除 {selectedIds.length} 个当前账号的文章分类。分类下的文章会变为未分类。</p>
+        <p>
+          将删除 {pendingDeleteIds?.length ?? 0} 个当前账号的文章分类。分类下的文章会变为未分类。
+        </p>
       </CrudModal>
     </section>
   );
