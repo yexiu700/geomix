@@ -1,6 +1,6 @@
 'use client';
 
-import { Alert, Button, Input, Space, Switch, Table, Typography } from 'antd';
+import { Alert, Button, Input, Select, Space, Switch, Table, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import {
   AdminApiError,
@@ -9,6 +9,7 @@ import {
   type PriceRow,
   type TemplateRow,
 } from '../../lib/admin-client';
+import { CrudModal } from '../crud/crud-modal';
 
 export function PricingAdmin({
   client,
@@ -68,9 +69,15 @@ export function PricingAdmin({
                 aria-label={`${row.action} 启用`}
                 checked={row.enabled}
                 onChange={(enabled) => {
-                  const unitPoints = Number(drafts[row.action] ?? row.unitPoints);
+                  const parsed = Number(drafts[row.action] ?? row.unitPoints);
+                  const unitPoints =
+                    Number.isInteger(parsed) && parsed >= 1 ? parsed : row.unitPoints;
+                  setError(null);
                   void client.updatePrice({ action: row.action, unitPoints, enabled }).then(
-                    (next) => setRows(next.items),
+                    (next) => {
+                      setError(null);
+                      setRows(next.items);
+                    },
                     (reason: unknown) => setError(messageOf(reason)),
                   );
                 }}
@@ -87,10 +94,14 @@ export function PricingAdmin({
                     setError('价格不正确');
                     return;
                   }
+                  setError(null);
                   void client
                     .updatePrice({ action: row.action, unitPoints, enabled: row.enabled })
                     .then(
-                      (next) => setRows(next.items),
+                      (next) => {
+                        setError(null);
+                        setRows(next.items);
+                      },
                       (reason: unknown) => setError(messageOf(reason)),
                     );
                 }}
@@ -146,8 +157,10 @@ export function AnnouncementAdmin({
         <Button
           type="primary"
           onClick={() => {
+            setError(null);
             void client.createAnnouncement({ content, enabled: true, sort: rows.length }).then(
               (row) => {
+                setError(null);
                 setRows((current) => [...current, row]);
                 setContent('');
               },
@@ -191,14 +204,28 @@ export function AnnouncementAdmin({
   );
 }
 
+const TEMPLATE_KINDS: Array<{ value: TemplateRow['kind']; label: string }> = [
+  { value: 'ARTICLE', label: '文章模板 (ARTICLE)' },
+  { value: 'TITLE', label: '标题模板 (TITLE)' },
+  { value: 'REWRITE', label: '复刻模板 (REWRITE)' },
+];
+
 export function TemplateAdmin({
   client,
 }: {
   client: Pick<AdminClient, 'listTemplates' | 'createTemplate' | 'updateTemplate'>;
 }) {
   const [rows, setRows] = useState<TemplateRow[]>([]);
+  const [kind, setKind] = useState<TemplateRow['kind']>('ARTICLE');
   const [name, setName] = useState('');
   const [content, setContent] = useState('');
+  const [randomPool, setRandomPool] = useState(true);
+  const [editing, setEditing] = useState<TemplateRow | null>(null);
+  const [editKind, setEditKind] = useState<TemplateRow['kind']>('ARTICLE');
+  const [editName, setEditName] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editRandomPool, setEditRandomPool] = useState(true);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -227,6 +254,19 @@ export function TemplateAdmin({
         这里只管理系统模板。正文请自行编写，不要粘贴外部站点的模板原文。
       </Typography.Paragraph>
       <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
+        <Space wrap>
+          <Select
+            aria-label="模板类型"
+            value={kind}
+            style={{ width: 200 }}
+            options={TEMPLATE_KINDS}
+            onChange={(value: TemplateRow['kind']) => setKind(value)}
+          />
+          <Space>
+            <span>随机池</span>
+            <Switch aria-label="随机池" checked={randomPool} onChange={setRandomPool} />
+          </Space>
+        </Space>
         <Input
           aria-label="模板名称"
           placeholder="模板名称"
@@ -242,16 +282,18 @@ export function TemplateAdmin({
         <Button
           type="primary"
           onClick={() => {
+            setError(null);
             void client
               .createTemplate({
-                kind: 'ARTICLE',
+                kind,
                 name,
                 content,
-                randomPool: true,
+                randomPool,
                 sort: rows.length + 1,
               })
               .then(
                 (row) => {
+                  setError(null);
                   setRows((current) => [...current, row]);
                   setName('');
                   setContent('');
@@ -275,8 +317,108 @@ export function TemplateAdmin({
             title: '随机池',
             render: (_value, row) => (row.randomPool ? '是' : '否'),
           },
+          {
+            title: '操作',
+            render: (_value, row) => (
+              <Button
+                aria-label={`编辑模板 ${row.name}`}
+                onClick={() => {
+                  setModalError(null);
+                  setEditing(row);
+                  setEditKind(row.kind);
+                  setEditName(row.name);
+                  setEditContent(row.content);
+                  setEditRandomPool(row.randomPool);
+                }}
+              >
+                编辑
+              </Button>
+            ),
+          },
         ]}
       />
+      <CrudModal
+        open={editing !== null}
+        title="编辑模板"
+        minimized={false}
+        maximized={false}
+        error={modalError}
+        onMinimize={() => undefined}
+        onRestore={() => undefined}
+        onMaximize={() => undefined}
+        onClose={() => {
+          setModalError(null);
+          setEditing(null);
+        }}
+        onReset={() => {
+          setModalError(null);
+          if (!editing) return;
+          setEditKind(editing.kind);
+          setEditName(editing.name);
+          setEditContent(editing.content);
+          setEditRandomPool(editing.randomPool);
+        }}
+        ok={
+          <Button
+            type="primary"
+            aria-label="保存模板"
+            onClick={() => {
+              if (!editing) return;
+              setModalError(null);
+              void client
+                .updateTemplate(editing.id, {
+                  kind: editKind,
+                  name: editName,
+                  content: editContent,
+                  randomPool: editRandomPool,
+                  sort: editing.sort,
+                })
+                .then(
+                  (updated) => {
+                    setRows((current) =>
+                      current.map((item) => (item.id === updated.id ? updated : item)),
+                    );
+                    setEditing(null);
+                  },
+                  (reason: unknown) => setModalError(messageOf(reason)),
+                );
+            }}
+          >
+            保存模板
+          </Button>
+        }
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Space wrap>
+            <Select
+              aria-label="编辑模板类型"
+              value={editKind}
+              style={{ width: 200 }}
+              options={TEMPLATE_KINDS}
+              onChange={(value: TemplateRow['kind']) => setEditKind(value)}
+            />
+            <Space>
+              <span>随机池</span>
+              <Switch
+                aria-label="编辑随机池"
+                checked={editRandomPool}
+                onChange={setEditRandomPool}
+              />
+            </Space>
+          </Space>
+          <Input
+            aria-label="编辑模板名称"
+            value={editName}
+            onChange={(event) => setEditName(event.target.value)}
+          />
+          <Input.TextArea
+            aria-label="编辑模板正文"
+            rows={4}
+            value={editContent}
+            onChange={(event) => setEditContent(event.target.value)}
+          />
+        </Space>
+      </CrudModal>
     </section>
   );
 }

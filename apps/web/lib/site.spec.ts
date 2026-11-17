@@ -6,6 +6,6 @@ describe('home copy', () => {
   it('uses the GeoMix placeholder', () => {
     expect(homeTitle()).toBe('GeoMix');
     expect(homeTitle()).toBe(SITE_NAME);
-    expect(HOME_LEAD).toContain('工程骨架');
+    expect(HOME_LEAD).toContain('GEO');
   });
 });

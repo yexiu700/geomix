@@ -70,11 +70,35 @@ export function httpPoints(
   return readJson(storage, 'GET', `/me/points?${pointListQueryString(query)}`);
 }
 
+export function httpDownloadPoints(
+  storage: SessionStorageLike,
+  query: PointListQuery,
+  format: 'csv' | 'xlsx',
+): Promise<{ filename: string; mime: string; body: Uint8Array }> {
+  return downloadTable(
+    storage,
+    `/me/points?${pointListQueryString({ ...query, export: format })}`,
+    `geomix-points.${format}`,
+  );
+}
+
 export function httpMoney(
   storage: SessionStorageLike,
   query: MoneyListQuery,
 ): Promise<LedgerPage<MoneyItem>> {
   return readJson(storage, 'GET', `/me/money?${moneyListQueryString(query)}`);
+}
+
+export function httpDownloadMoney(
+  storage: SessionStorageLike,
+  query: MoneyListQuery,
+  format: 'csv' | 'xlsx',
+): Promise<{ filename: string; mime: string; body: Uint8Array }> {
+  return downloadTable(
+    storage,
+    `/me/money?${moneyListQueryString({ ...query, export: format })}`,
+    `geomix-money.${format}`,
+  );
 }
 
 export function httpRights(storage: SessionStorageLike): Promise<RightsView> {
@@ -120,4 +144,28 @@ async function readJson<T>(
     throw new AccountApiError(payload.code, payload.msg || '请求失败');
   }
   return payload.data;
+}
+
+async function downloadTable(
+  storage: SessionStorageLike,
+  path: string,
+  fallbackFilename: string,
+): Promise<{ filename: string; mime: string; body: Uint8Array }> {
+  let response: Response;
+  try {
+    response = await authorizedRequest(storage, 'GET', path);
+  } catch {
+    throw new AccountApiError(0, '无法连接接口');
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    if (text) {
+      const payload = JSON.parse(text) as Envelope<unknown>;
+      throw new AccountApiError(payload.code, payload.msg || '导出失败');
+    }
+    throw new AccountApiError(response.status, '导出失败');
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const mime = response.headers.get('content-type') ?? 'application/octet-stream';
+  return { filename: fallbackFilename, mime, body: bytes };
 }
