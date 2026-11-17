@@ -68,7 +68,7 @@ const ARCHIVE_FORMAT_LABELS: Record<ArticleArchiveFormat, string> = {
 };
 
 const RED_TYPOGRAPHY_TIP =
-  '排版提示：请勿粘贴外部追踪脚本、诱导外链或联系方式水印；建议使用二级/三级标题与短段落结构排版，保存时系统将自动清洗不安全标签。';
+  '排版提示：建议单篇字数控制在 1000 字左右，采用二级/三级小标题与短段落结构排版；请勿粘贴外部追踪脚本、诱导外链或联系方式水印，保存时系统将自动清洗不安全标签。';
 
 type FilterDraft = {
   categoryId: string;

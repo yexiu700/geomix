@@ -224,11 +224,14 @@ export class OpenAiLlm implements LlmProvider {
         transport: this.transport,
       });
 
+    const effectiveMaxTokens = /reasoner|thinking|qwq|\br1\b/i.test(input.model)
+      ? Math.max(input.maxTokens, 4096)
+      : input.maxTokens;
     let response = await send({
       model: input.model,
       messages: input.messages,
       temperature: input.temperature,
-      max_tokens: input.maxTokens,
+      max_tokens: effectiveMaxTokens,
       stream: false,
     });
 
@@ -423,6 +426,19 @@ export class LlmService {
         overrides?.resolver ?? createDnsResolver(),
         timeoutMs,
       );
+    }
+    if (env.LLM_FALLBACK_FAKE?.trim() === 'true') {
+      const fallbackName = '__fake_fallback__';
+      route.providers[fallbackName] = { kind: 'fake' };
+      providers[fallbackName] = new FakeLlm('fake');
+      for (const entry of Object.values(route.route)) {
+        const hasFake = [entry.primary, ...entry.backup].some(
+          (name) => route.providers[name]?.kind === 'fake',
+        );
+        if (!hasFake) {
+          entry.backup = [...entry.backup, fallbackName];
+        }
+      }
     }
     return new LlmService(
       new LlmRouter(route, providers, {
@@ -723,7 +739,7 @@ function parseSseCompletion(
   }
 
   if (parsedFrames === 0) return null;
-  const text = (contentChunks.join('') || reasoningChunks.join('')).trim();
+  const text = stripThinkingTags((contentChunks.join('') || reasoningChunks.join('')).trim());
   if (!text) {
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
   }
@@ -734,18 +750,23 @@ function parseSseCompletion(
   };
 }
 
+function stripThinkingTags(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const stripped = trimmed.replace(/^<think>[\s\S]*?<\/think>\s*/i, '').trim();
+  return stripped || trimmed;
+}
+
 function extractChoiceText(choice: z.infer<typeof choiceSchema>): string {
-  const messageContent = flattenContent(choice.message?.content).trim();
+  const messageContent = stripThinkingTags(flattenContent(choice.message?.content));
   if (messageContent) return messageContent;
-  const deltaContent = flattenContent(choice.delta?.content).trim();
+  const deltaContent = stripThinkingTags(flattenContent(choice.delta?.content));
   if (deltaContent) return deltaContent;
-  const legacyText = (choice.text ?? '').trim();
+  const legacyText = stripThinkingTags(choice.text ?? '');
   if (legacyText) return legacyText;
-  const reasoning = (
-    choice.message?.reasoning_content ??
-    choice.delta?.reasoning_content ??
-    ''
-  ).trim();
+  const reasoning = stripThinkingTags(
+    choice.message?.reasoning_content ?? choice.delta?.reasoning_content ?? '',
+  );
   return reasoning;
 }
 
