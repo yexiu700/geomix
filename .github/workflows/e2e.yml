@@ -1,0 +1,92 @@
+name: E2E
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: playwright e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: geomix
+          POSTGRES_PASSWORD: geomix
+          POSTGRES_DB: geomix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U geomix -d geomix"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+      DATABASE_URL: postgresql://geomix:geomix@127.0.0.1:5432/geomix?schema=public
+      REDIS_URL: redis://127.0.0.1:6379
+      JWT_ACCESS_SECRET: e2e-ci-access-secret-value
+      JWT_REFRESH_SECRET: e2e-ci-refresh-secret-value
+      BILLING_MODE: SHADOW
+      LLM_PROVIDERS: '{}'
+      EMBEDDING_PROVIDER: fake
+      IMAGE_PROVIDER: fake
+      VISIBILITY_COLLECTOR: fake
+      STORAGE_DRIVER: memory
+      SEARCH_PROVIDER: link_list
+      FEATURE_AI_IMAGE: 'true'
+      FEATURE_VISIBILITY: 'true'
+      NEXT_PUBLIC_API_BASE: http://127.0.0.1:3001/api/v1
+      E2E_BASE_URL: http://127.0.0.1:3000
+      E2E_API_BASE: http://127.0.0.1:3001/api/v1
+      E2E_PUBLIC_FIXTURE_HOST: public.e2e.example
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build packages and apps
+        run: pnpm build
+
+      - name: Apply database migrations and seed demo data
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+
+      - name: Run Playwright end-to-end suite
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report and GeoMix screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14

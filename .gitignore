@@ -15,3 +15,5 @@ next-env.d.ts
 backups/
 docker/nginx/certs/
 docker/nginx/certbot-www/
+playwright-report/
+test-results/
