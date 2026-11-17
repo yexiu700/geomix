@@ -25,6 +25,7 @@ describe('phase-1 catalog', () => {
       ['rewrite_single', 5],
       ['rewrite_batch', 5],
       ['image_gen', 5],
+      ['visibility_check', 2],
     ]);
     expect(unique(PRICING_DEFAULTS.map((item) => item.action))).toBe(true);
   });

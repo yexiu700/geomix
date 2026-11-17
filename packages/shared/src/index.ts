@@ -648,3 +648,4 @@ export type {
   AiImageSaveToGalleryInput,
   AiImageStyle,
 } from './ai-images';
+export * from './visibility';

@@ -144,9 +144,13 @@ model Tenant {
   rewriteRecords    RewriteRecord[]
   aiImages          AiImageJob[]
   workRuns          WorkRun[]
-  workUnits         WorkUnit[]
-  activeWorks       ActiveWork[]
-  crudSamples       CrudSample[]
+  workUnits              WorkUnit[]
+  activeWorks            ActiveWork[]
+  crudSamples            CrudSample[]
+  visibilityProfiles     VisibilityProfile[]
+  visibilityRuns         VisibilityRun[]
+  visibilityObservations VisibilityObservation[]
+  visibilityCitations    VisibilityCitation[]
 }
 
 model User {
@@ -289,32 +293,34 @@ model AuditLog {
 
 // ===================== 模块一：素材源力 =====================
 model Keyword {
-  id        String           @id @default(cuid())
-  tenantId  String
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  main      String // 主关键词（训练主词）
-  brands    String[] // 公司(品牌)/转化词，逗号拆分
-  optStatus KeywordOptStatus @default(NONE)
-  createdAt DateTime         @default(now())
-  questions Question[]
-  aiTasks   AiTask[]
+  id             String           @id @default(cuid())
+  tenantId       String
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  main           String // 主关键词（训练主词）
+  brands         String[] // 公司(品牌)/转化词，逗号拆分
+  optStatus      KeywordOptStatus @default(NONE)
+  createdAt      DateTime         @default(now())
+  questions      Question[]
+  aiTasks        AiTask[]
+  visibilityRuns VisibilityRun[]
 
   @@unique([tenantId, main]) // 物理删除，避免软删唯一冲突
 }
 
 model Question {
-  id          String         @id @default(cuid())
-  tenantId    String
-  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  keywordId   String
-  keyword     Keyword        @relation(fields: [keywordId], references: [id], onDelete: Cascade)
-  text        String
-  source      QuestionSource @default(MANUAL)
-  usedCount   Int            @default(0)
-  lastUsedAt  DateTime?
-  included    Boolean        @default(false) // 收录状态（二期回写）
-  createdAt   DateTime       @default(now())
-  aiTaskItems AiTaskItem[]
+  id                     String                  @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  keywordId              String
+  keyword                Keyword                 @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  text                   String
+  source                 QuestionSource          @default(MANUAL)
+  usedCount              Int                     @default(0)
+  lastUsedAt             DateTime?
+  included               Boolean                 @default(false) // 收录状态（二期回写）
+  createdAt              DateTime                @default(now())
+  aiTaskItems            AiTaskItem[]
+  visibilityObservations VisibilityObservation[]
 
   @@unique([keywordId, text])
   @@index([tenantId, keywordId, usedCount])
@@ -678,3 +684,103 @@ model CrudSample {
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
 }
+
+// ===================== 模块五：AI可见性监测 =====================
+model VisibilityProfile {
+  id           String                  @id @default(cuid())
+  tenantId     String
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  brandName    String
+  brandAliases String[]                @default([])
+  ownedDomains String[]                @default([])
+  competitors  Json
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  runs         VisibilityRun[]
+  observations VisibilityObservation[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model VisibilityRun {
+  id            String                  @id @default(cuid())
+  tenantId      String
+  tenant        Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profileId     String
+  profile       VisibilityProfile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  keywordId     String?
+  keyword       Keyword?                @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  name          String
+  engines       String[]                @default([])
+  questionIds   String[]                @default([])
+  totalChecks   Int
+  doneCount     Int                     @default(0)
+  failCount     Int                     @default(0)
+  unitPrice     Int
+  reservationId String?
+  status        TaskStatus              @default(QUEUED)
+  lastError     String?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  finishedAt    DateTime?
+  observations  VisibilityObservation[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, profileId, createdAt])
+}
+
+model VisibilityObservation {
+  id             String               @id @default(cuid())
+  tenantId       String
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId          String
+  run            VisibilityRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  profileId      String
+  profile        VisibilityProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  questionId     String?
+  question       Question?            @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  promptText     String
+  engine         String
+  status         ItemStatus           @default(PENDING)
+  collectorKind  String               @default("fake")
+  answerText     String?
+  brandMentioned Boolean              @default(false)
+  brandPosition  Int?
+  brandSentiment String?
+  brandPassage   String?
+  competitorHits Json?
+  fanOutQueries  String[]             @default([])
+  judgeModel     String?
+  tokensIn       Int?
+  tokensOut      Int?
+  error          String?
+  checkedAt      DateTime?
+  createdAt      DateTime             @default(now())
+  citations      VisibilityCitation[]
+
+  @@unique([runId, promptText, engine])
+  @@index([tenantId, profileId, checkedAt])
+  @@index([tenantId, engine, brandMentioned])
+  @@index([tenantId, questionId, brandMentioned])
+}
+
+model VisibilityCitation {
+  id            String                @id @default(cuid())
+  tenantId      String
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  observationId String
+  observation   VisibilityObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  url           String
+  domain        String
+  title         String?
+  snippet       String?
+  sourceKind    String
+  position      Int
+  createdAt     DateTime              @default(now())
+
+  @@index([tenantId, domain, sourceKind])
+  @@index([observationId, position])
+}
+

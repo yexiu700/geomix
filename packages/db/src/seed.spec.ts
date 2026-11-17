@@ -42,6 +42,7 @@ describe('seed plan', () => {
       ['rewrite_single', 5],
       ['rewrite_batch', 5],
       ['image_gen', 5],
+      ['visibility_check', 2],
     ]);
     expect(writes.templates.map((item) => item.id)).toEqual(
       SYSTEM_TEMPLATES.map((item) => item.id),

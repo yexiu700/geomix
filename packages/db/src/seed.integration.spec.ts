@@ -26,7 +26,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
 
     const first = await applySeed(prisma, { now: new Date('2026-11-16T00:00:00.000Z') });
     expect(first).toEqual({
-      pricing: 6,
+      pricing: 7,
       tenants: 2,
       wallets: 2,
       quotas: 12,
