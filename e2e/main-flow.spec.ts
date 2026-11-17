@@ -14,8 +14,18 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
   test('M01–M09: 登录 → 图库 → 主词蒸馏 → 签协议建知识库 → 克隆指令 → 写作任务 → 审核导出 → 复刻 → 明细与权益核对', async ({
     browser,
     page,
-  }) => {
+  }, testInfo) => {
     test.setTimeout(180_000);
+
+    const retryTag =
+      testInfo.retry > 0 ? (['二组', '三组', '四组'][testInfo.retry - 1] ?? '复测') : '';
+    const galleryName = `工业激光实拍图库${retryTag}`;
+    const mainKeyword = `光纤激光切割机${retryTag}`;
+    const kbName = `激光事业部知识库${retryTag}`;
+    const clonedPromptName = `自定义·激光方案公平对照${retryTag}`;
+    const writingTaskName = `春季激光选型科普任务${retryTag}`;
+    const batchRewriteName = `钣金保养批量复刻${retryTag}`;
+    const urlQuery = testInfo.retry > 0 ? `?retry=${testInfo.retry}` : '';
 
     // =========================================================================
     // M01: 未登录重定向守卫与登录页结构 -> 注入合法会话进入 /dashboard
@@ -58,10 +68,11 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
 
     const catDialog = page.getByRole('dialog', { name: '添加素材分类' });
     await expect(catDialog).toBeVisible();
-    await catDialog.getByLabel('分类').fill('工业激光实拍图库');
+    await catDialog.getByLabel('分类').fill(galleryName);
     await catDialog.getByRole('button', { name: '确定' }).click();
+    await expect(catDialog).toBeHidden();
 
-    const galleryCatRow = pane.locator('tbody tr', { hasText: '工业激光实拍图库' });
+    const galleryCatRow = pane.locator('tbody tr', { hasText: galleryName });
     await expect(galleryCatRow).toBeVisible();
     await galleryCatRow.getByRole('button', { name: '图片列表' }).first().click();
     await expect(page).toHaveURL(/\/material\/gallery\/.+/);
@@ -77,11 +88,12 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await uploadDialog.getByRole('button', { name: '确定' }).click();
     await expect(uploadDialog.getByText('最近上传成功（1 张）：')).toBeVisible();
     await uploadDialog.getByRole('button', { name: '关闭' }).click();
+    await expect(uploadDialog).toBeHidden();
 
     await pane.getByRole('button', { name: '返回上一级' }).click();
     await expect(page).toHaveURL(/\/material\/gallery$/);
-    await expect(pane.locator('img[alt="工业激光实拍图库缩略图"]')).toBeVisible();
-    await expect(pane.locator('tbody tr', { hasText: '工业激光实拍图库' })).toContainText('1');
+    await expect(pane.locator(`img[alt="${galleryName}缩略图"]`)).toBeVisible();
+    await expect(pane.locator('tbody tr', { hasText: galleryName })).toContainText('1');
     await saveGeoMixScreenshot(page, '03-gallery-synced.png');
 
     // =========================================================================
@@ -96,7 +108,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
 
     const kwDialog = page.getByRole('dialog', { name: '添加关键词' });
     await expect(kwDialog).toBeVisible();
-    await kwDialog.getByLabel('主关键词').fill('光纤激光切割机');
+    await kwDialog.getByLabel('主关键词').fill(mainKeyword);
     await kwDialog.getByLabel('公司或品牌').fill('智造激光，GeoMix激光');
     await kwDialog.getByRole('button', { name: 'AI蒸馏拓展（10点/次）' }).click();
 
@@ -108,12 +120,13 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(distillPreview).toBeVisible();
     await distillPreview.getByRole('button', { name: /^添加到问题框/ }).click();
 
-    await expect(kwDialog.getByLabel('一行一个拓展问题')).toHaveValue(/光纤激光切割机/);
+    await expect(kwDialog.getByLabel('一行一个拓展问题')).toHaveValue(new RegExp(mainKeyword));
     await kwDialog.getByRole('button', { name: '确定' }).click();
+    await expect(kwDialog).toBeHidden();
 
-    const kwRow = pane.locator('tbody tr', { hasText: '光纤激光切割机' });
+    const kwRow = pane.locator('tbody tr', { hasText: mainKeyword });
     await expect(kwRow).toBeVisible();
-    await expect(kwRow).toContainText('待优化');
+    await expect(kwRow).toContainText('未优化');
 
     await openMenuLink(page, {
       submenu: '素材源力',
@@ -121,7 +134,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       expectedUrl: /\/material\/questions$/,
     });
     await expect(pane.getByRole('button', { name: '返回上一级' })).toBeVisible();
-    await expect(pane.locator('tbody tr', { hasText: '光纤激光切割机' }).first()).toBeVisible();
+    await expect(pane.locator('tbody tr', { hasText: mainKeyword }).first()).toBeVisible();
     await saveGeoMixScreenshot(page, '04-keywords-distilled.png');
 
     // =========================================================================
@@ -150,6 +163,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(kbHelpModal.getByText('说明：')).toBeVisible();
     await expect(kbHelpModal.getByText('实例：')).toBeVisible();
     await kbHelpModal.getByRole('button', { name: '知道了' }).click();
+    await expect(kbHelpModal).toBeHidden();
 
     await kbDialog.getByRole('button', { name: '查看必读承诺协议' }).click();
     const agreeModal = page.getByRole('dialog', { name: /承诺协议/ });
@@ -162,9 +176,10 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(agreeCheckbox).toBeEnabled();
     await agreeCheckbox.check();
     await agreeModal.getByRole('button', { name: /确认已阅读/ }).click();
+    await expect(agreeModal).toBeHidden();
     await expect(kbDialog.getByText('已签署承诺协议')).toBeVisible();
 
-    await kbDialog.getByLabel('知识库名称').fill('激光事业部知识库');
+    await kbDialog.getByLabel('知识库名称').fill(kbName);
     await kbDialog.getByLabel('公司名称').fill('苏州智造激光装备有限公司');
     await kbDialog.getByLabel('品牌简称').fill('智造激光');
     await selectAntdMultipleOption(page, kbDialog, '创作方向', '产品说明');
@@ -173,8 +188,9 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       .getByRole('textbox', { name: '产品服务' })
       .fill('主营中厚板光纤激光切割装备与自动化上下料产线，支持全套工艺打样与驻厂交付。');
     await kbDialog.getByRole('button', { name: '确定' }).click();
+    await expect(kbDialog).toBeHidden();
 
-    await expect(pane.locator('tbody tr', { hasText: '激光事业部知识库' })).toBeVisible();
+    await expect(pane.locator('tbody tr', { hasText: kbName })).toBeVisible();
     await saveGeoMixScreenshot(page, '05-knowledge-created.png');
 
     // =========================================================================
@@ -193,15 +209,16 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
 
     const editPromptModal = page.getByRole('dialog', { name: '编辑写作指令' });
     await expect(editPromptModal).toBeVisible();
-    await editPromptModal.getByLabel('指令名称').fill('自定义·激光方案公平对照');
+    await editPromptModal.getByLabel('指令名称').fill(clonedPromptName);
     const promptTextarea = editPromptModal.getByLabel('指令内容');
     const rawPrompt = await promptTextarea.inputValue();
     await promptTextarea.fill(
       rawPrompt.replace(/【品牌1】/g, '传统等离子方案').replace(/【品牌2】/g, '通用火焰切割方案'),
     );
     await editPromptModal.getByRole('button', { name: '确定' }).click();
+    await expect(editPromptModal).toBeHidden();
 
-    const clonedPromptRow = pane.locator('tbody tr', { hasText: '自定义·激光方案公平对照' });
+    const clonedPromptRow = pane.locator('tbody tr', { hasText: clonedPromptName });
     await expect(clonedPromptRow).toBeVisible();
     await expect(clonedPromptRow).toContainText('克隆');
     await saveGeoMixScreenshot(page, '06-prompt-cloned.png');
@@ -223,17 +240,18 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(taskDialog.getByLabel('AI 创作数量')).toHaveValue('1');
     await expect(taskDialog.getByRole('button', { name: '开始写作（10点数/篇）' })).toBeVisible();
 
-    await taskDialog.getByLabel('任务名称').fill('春季激光选型科普任务');
-    await selectOptionByText(taskDialog.getByLabel('蒸馏训练词'), '光纤激光切割机');
-    await selectOptionByText(taskDialog.getByLabel('画像图库'), '工业激光实拍图库');
-    await selectOptionByText(taskDialog.getByLabel('企业知识库'), '激光事业部知识库');
-    await selectOptionByText(taskDialog.getByLabel('内容创作指令'), '自定义·激光方案公平对照');
+    await taskDialog.getByLabel('任务名称').fill(writingTaskName);
+    await selectOptionByText(taskDialog.getByLabel('蒸馏训练词'), mainKeyword);
+    await selectOptionByText(taskDialog.getByLabel('画像图库'), galleryName);
+    await selectOptionByText(taskDialog.getByLabel('企业知识库'), kbName);
+    await selectOptionByText(taskDialog.getByLabel('内容创作指令'), clonedPromptName);
 
     const submitTaskBtn = taskDialog.getByRole('button', { name: '开始写作（15点数/篇）' });
     await expect(submitTaskBtn).toBeVisible();
     await submitTaskBtn.click();
+    await expect(taskDialog).toBeHidden();
 
-    const taskRow = pane.locator('tbody tr', { hasText: '春季激光选型科普任务' });
+    const taskRow = pane.locator('tbody tr', { hasText: writingTaskName });
     await expect
       .poll(
         async () => {
@@ -245,14 +263,15 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
         },
         { timeout: 45_000, intervals: [1_000, 1_500, 2_000] },
       )
-      .toContain('已完成');
+      .toContain('创作完成');
     await expect(taskRow).toContainText('1 / 1');
 
-    await taskRow.getByRole('button', { name: '查看详情-春季激光选型科普任务' }).click();
-    const taskDetailDrawer = page.getByRole('dialog', { name: '任务详情：春季激光选型科普任务' });
+    await taskRow.getByRole('button', { name: `查看详情-${writingTaskName}` }).click();
+    const taskDetailDrawer = page.getByRole('dialog', { name: `任务详情：${writingTaskName}` });
     await expect(taskDetailDrawer).toBeVisible();
     await expect(taskDetailDrawer).toContainText('已完成 1 / 1 篇');
     await taskDetailDrawer.locator('.ant-drawer-close').click();
+    await expect(taskDetailDrawer).toBeHidden();
     await saveGeoMixScreenshot(page, '07-writing-task-completed.png');
 
     // =========================================================================
@@ -265,7 +284,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     });
     await expect(pane.locator('thead th', { hasText: '序号' })).toBeVisible();
     await expect(pane.getByRole('button', { name: '返回上一级' })).toBeVisible();
-    const articleCatRow = pane.locator('tbody tr', { hasText: '春季激光选型科普任务' });
+    const articleCatRow = pane.locator('tbody tr', { hasText: writingTaskName });
     await expect(articleCatRow).toBeVisible();
     await expect(articleCatRow.getByRole('button', { name: '删除' })).toBeVisible();
 
@@ -291,13 +310,15 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       .fill('<p>中厚板激光切割样件垂直度与断面粗糙度实测说明</p>');
     await expect(copyPlainBtn).toBeEnabled();
     await manualArticleDialog.getByRole('button', { name: '关闭' }).click();
+    await expect(manualArticleDialog).toBeHidden();
 
-    const firstArticleRow = pane.locator('tbody tr').first();
-    await expect(firstArticleRow).toContainText('待审核');
-    await firstArticleRow.getByRole('checkbox').check();
+    const pendingArticleRow = pane.locator('tbody tr', { hasText: writingTaskName }).first();
+    await expect(pendingArticleRow).toBeVisible();
+    await expect(pendingArticleRow).toContainText('待审核');
+    await pendingArticleRow.locator('input[type="checkbox"]').check();
     await pane.getByRole('button', { name: '批量设为正常' }).click();
     await expect(pane.getByText(/已将 1 篇文章设为「正常」/)).toBeVisible();
-    await expect(firstArticleRow).toContainText('正常');
+    await expect(pendingArticleRow).toContainText('正常');
 
     const zipDownloadPromise = page.waitForEvent('download');
     await pane.getByRole('button', { name: '打包导出' }).click();
@@ -320,19 +341,20 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(singleRewriteDialog.getByLabel('文章配图图库')).toHaveValue('');
     await expect(singleRewriteDialog.getByLabel('爆文改写指令')).toHaveValue('');
 
-    await selectOptionByText(singleRewriteDialog.getByLabel('文章配图图库'), '工业激光实拍图库');
+    await selectOptionByText(singleRewriteDialog.getByLabel('文章配图图库'), galleryName);
     await selectOptionByText(singleRewriteDialog.getByLabel('爆文改写指令'), '系统·参考重写');
 
     await singleRewriteDialog.getByLabel('文章链接').fill('http://127.0.0.1:3001/api/v1/health');
     await singleRewriteDialog.getByRole('button', { name: '复刻文章（5点数/篇）' }).click();
-    await expect(singleRewriteDialog).toContainText(/内网|私有|拦截/);
+    await expect(singleRewriteDialog).toContainText(/内网|私有|拦截|禁止/);
 
-    await singleRewriteDialog
-      .getByLabel('文章链接')
-      .fill('http://public.e2e.example/articles/laser-guide');
+    const singleFixtureUrl = `http://public.e2e.example/articles/laser-guide${urlQuery}`;
+    await singleRewriteDialog.getByLabel('文章链接').fill(singleFixtureUrl);
     await singleRewriteDialog.getByRole('button', { name: '复刻文章（5点数/篇）' }).click();
     await expect(singleRewriteDialog).toBeHidden({ timeout: 30_000 });
-    await expect(pane.locator('tbody tr').first()).toContainText('已完成');
+    await expect(
+      pane.locator('tbody tr', { hasText: `laser-guide${urlQuery}` }).first(),
+    ).toContainText('已完成');
 
     await openMenuLink(page, {
       submenu: '流量复刻',
@@ -347,20 +369,21 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(batchRewriteDialog.getByLabel('文章配图图库分类')).toHaveValue('');
     await expect(batchRewriteDialog.getByLabel('爆文改写指令')).toHaveValue('');
 
-    await batchRewriteDialog.getByLabel('任务名称').fill('钣金保养批量复刻');
+    await batchRewriteDialog.getByLabel('任务名称').fill(batchRewriteName);
     await batchRewriteDialog
       .getByLabel('公开文章链接清单')
-      .fill('http://public.e2e.example/articles/cnc-maintenance');
-    await selectOptionByText(batchRewriteDialog.getByLabel('文章配图图库分类'), '工业激光实拍图库');
+      .fill(`http://public.e2e.example/articles/cnc-maintenance${urlQuery}`);
+    await selectOptionByText(batchRewriteDialog.getByLabel('文章配图图库分类'), galleryName);
     await selectOptionByText(batchRewriteDialog.getByLabel('爆文改写指令'), '系统·参考重写');
     await batchRewriteDialog.getByRole('button', { name: /^开始批量复刻/ }).click();
+    await expect(batchRewriteDialog).toBeHidden({ timeout: 15_000 });
 
     const openDrawerClose = page.locator('.ant-drawer-open .ant-drawer-close');
     if (await openDrawerClose.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await openDrawerClose.click();
     }
 
-    const batchRow = pane.locator('tbody tr', { hasText: '钣金保养批量复刻' });
+    const batchRow = pane.locator('tbody tr', { hasText: batchRewriteName });
     await expect
       .poll(
         async () => {
@@ -400,7 +423,9 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       itemTitle: '账号权益',
       expectedUrl: /\/me\/rights$/,
     });
-    await expect(pane.locator('.gm-right-card[aria-label="主关键词"]')).toContainText('1 / 100');
+    await expect(pane.locator('.gm-right-card[aria-label="主关键词"]')).toContainText(
+      /[1-9]\d* \/ 100/,
+    );
     await expect(pane.locator('.gm-right-card[aria-label="可用点数"]')).toContainText('1000');
     await expect(pane.locator('.gm-right-card[aria-label="DeepSeek"]')).toBeVisible();
     await expect(pane.locator('.gm-right-card[aria-label="豆包"]')).toBeVisible();

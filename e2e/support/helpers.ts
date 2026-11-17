@@ -115,10 +115,13 @@ export async function selectAntdMultipleOption(
   ariaLabel: string,
   optionTitle: string,
 ): Promise<void> {
-  const trigger = container
-    .locator(`.ant-select[aria-label="${ariaLabel}"], input[aria-label="${ariaLabel}"]`)
+  const selectorBox = container
+    .locator(
+      `.ant-select[aria-label="${ariaLabel}"] .ant-select-selector, .ant-select:has([aria-label="${ariaLabel}"]) .ant-select-selector`,
+    )
     .first();
-  await trigger.click();
+  await expect(selectorBox).toBeVisible();
+  await selectorBox.click();
   const option = page.locator(
     `.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option[title="${optionTitle}"]`,
   );
