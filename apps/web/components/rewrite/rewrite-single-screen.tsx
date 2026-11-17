@@ -78,23 +78,17 @@ type ModalState = {
 };
 
 function buildInitialDraft(
-  options: RewriteFormOptions | null,
+  _options: RewriteFormOptions | null,
   seed?: Partial<CreateDraft>,
 ): CreateDraft {
-  const firstMediaWithAssets =
-    options?.mediaCategories.find((cat) => cat.assetCount > 0) ?? options?.mediaCategories[0];
-  const defaultTemplate =
-    options?.rewriteTemplates.find((tpl) => tpl.id === 'sys_rewrite_01') ??
-    options?.rewriteTemplates[0];
-
   return {
     pastedText: seed?.pastedText ?? false,
     url: seed?.url ?? '',
     pastedTitle: seed?.pastedTitle ?? '',
     pastedContent: seed?.pastedContent ?? '',
-    mediaCategoryId: seed?.mediaCategoryId ?? firstMediaWithAssets?.id ?? '',
+    mediaCategoryId: seed?.mediaCategoryId ?? '',
     imageCount: seed?.imageCount ?? REWRITE_IMAGE_DEFAULT,
-    templateId: seed?.templateId ?? defaultTemplate?.id ?? 'sys_rewrite_01',
+    templateId: seed?.templateId ?? '',
     categoryId: seed?.categoryId ?? '',
     autoCategoryName: seed?.autoCategoryName ?? buildDefaultRewriteCategoryName(),
     resultStatus: seed?.resultStatus ?? 'PENDING',
@@ -952,6 +946,7 @@ export function RewriteSingleScreen({
                     value={modalState.draft.mediaCategoryId}
                     onChange={(e) => updateDraft({ mediaCategoryId: e.target.value })}
                   >
+                    <option value="">不选择</option>
                     {mediaCategoriesWithImages.map((mc) => (
                       <option key={mc.id} value={mc.id}>
                         {mc.name}（{mc.assetCount} 张可用）
@@ -1022,6 +1017,7 @@ export function RewriteSingleScreen({
                   value={modalState.draft.templateId}
                   onChange={(e) => updateDraft({ templateId: e.target.value })}
                 >
+                  <option value="">不选择</option>
                   {(formOptions?.rewriteTemplates ?? []).map((tpl) => (
                     <option key={tpl.id} value={tpl.id}>
                       {tpl.isSystem ? `[系统] ${tpl.name}` : tpl.name}

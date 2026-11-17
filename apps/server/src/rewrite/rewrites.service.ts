@@ -440,6 +440,7 @@ export class RewritesService {
 
     const simMax = resolveRewriteSimMax(process.env);
 
+    const syncStartedAt = Date.now();
     try {
       // 7. Fetch or normalize source text
       const extracted = input.pastedText
@@ -468,7 +469,7 @@ export class RewritesService {
         userId,
       });
 
-      // 8. Rewrite via LLM + 5-gram Jaccard check (1 retry if > simMax)
+      // 8. Rewrite via LLM + 5-gram Jaccard check (1 retry if > simMax and within HTTP budget)
       const runPass = async (retryHighSimilarity: boolean, passIdx: number) => {
         const messages = assembleRewriteMessages({
           templateContent: template.content,
@@ -483,7 +484,10 @@ export class RewritesService {
           messages,
           idempotencyKey: `${unitKey}:p${passIdx}`,
           temperature: retryHighSimilarity ? 0.85 : 0.75,
-          maxTokens: 3200,
+          maxTokens: 2400,
+          timeoutMs: retryHighSimilarity ? 14_000 : 22_000,
+          maxRetries: 0,
+          preferFastModel: true,
         });
         const rawMd =
           completion.fake && completion.text.startsWith(FAKE_MARK)
@@ -532,11 +536,15 @@ export class RewritesService {
 
       let best = await runPass(false, 0);
       let retriedSimilarity = false;
-      if (best.similarity > simMax) {
+      if (best.similarity > simMax && Date.now() - syncStartedAt < 12_000) {
         retriedSimilarity = true;
-        const second = await runPass(true, 1);
-        if (second.similarity <= best.similarity) {
-          best = second;
+        try {
+          const second = await runPass(true, 1);
+          if (second.similarity <= best.similarity) {
+            best = second;
+          }
+        } catch {
+          // Keep first pass result if optional similarity-reduction retry times out or fails
         }
       }
 

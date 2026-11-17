@@ -381,6 +381,67 @@ describe('llm routing', () => {
     expect(res.text).toBe('快速非推理模型正文输出');
     expect(elapsed).toBeLessThan(400);
   });
+
+  it('routes synchronous preferFastModel quality calls directly to non-reasoning cheapModel without waiting for reasoner timeout (#96)', async () => {
+    const requestedModels: string[] = [];
+    const transport: HttpTransport = async (req) => {
+      const payload = JSON.parse(req.body ?? '{}') as { model: string };
+      requestedModels.push(payload.model);
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content: '# 重组新标题\n\n快速改写正文段落。' } }],
+            usage: { prompt_tokens: 18, completion_tokens: 24 },
+          }),
+        ),
+      };
+    };
+
+    const service = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-reasoner',
+            },
+          },
+          route: Object.fromEntries(
+            LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: [] }]),
+          ),
+        }),
+      },
+      {
+        transport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        timeoutMs: 25_000,
+        retryDelayMs: 0,
+      },
+    );
+
+    const res = await service.complete({
+      tenantId: 'tenant_demo',
+      scene: 'rewrite',
+      messages: [{ role: 'user', content: '请参考事实重组长文' }],
+      idempotencyKey: 'idem-prefer-fast-96',
+      timeoutMs: 22_000,
+      maxRetries: 0,
+      preferFastModel: true,
+    });
+
+    expect(requestedModels).toEqual(['deepseek-chat']);
+    expect(res.model).toBe('deepseek-chat');
+  });
 });
 
 function router(

@@ -241,11 +241,26 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       );
       expect(delNonEmptyCat.status).toBe(409);
 
-      // 7. Deleting referenced asset (usedCount > 0) blocked, while unreferenced asset deletes & releases STORAGE_BYTES
+      // 7. Deleting live-referenced asset blocked (409), while orphaned usedCount > 0 with 0 live articles deletes & releases STORAGE_BYTES (#94)
       const firstAsset = multipartJson.data.items[0]!.asset;
       const secondAsset = multipartJson.data.items[1]!.asset;
+      const refArtCat = await ctx.prisma.base.articleCategory.create({
+        data: { tenantId: tenantA.tenantId, name: '关联测试分类' },
+      });
+      await ctx.prisma.base.article.create({
+        data: {
+          tenantId: tenantA.tenantId,
+          categoryId: refArtCat.id,
+          title: '引用图库素材的测试文章',
+          contentHtml: `<p>正文配图</p><img src="${firstAsset.url}" alt="测试图" />`,
+          contentText: '正文配图',
+          coverUrl: firstAsset.url,
+          status: 'NORMAL',
+          source: 'MANUAL',
+        },
+      });
       await ctx.prisma.base.mediaAsset.update({
-        where: { id: firstAsset.id },
+        where: { id: secondAsset.id },
         data: { usedCount: 2 },
       });
 

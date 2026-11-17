@@ -70,6 +70,25 @@ function parseDateCeil(iso: string): Date {
   return new Date(iso);
 }
 
+export function extractReferencedMediaAssetIds(row: {
+  coverUrl: string | null;
+  contentHtml: string;
+}): string[] {
+  const ids = new Set<string>();
+  const scan = (raw: string | null | undefined) => {
+    if (!raw) return;
+    const re = /\/media-assets\/([A-Za-z0-9_-]+)\//g;
+    let m: RegExpExecArray | null = re.exec(raw);
+    while (m) {
+      if (m[1]) ids.add(m[1]);
+      m = re.exec(raw);
+    }
+  };
+  scan(row.coverUrl);
+  scan(row.contentHtml);
+  return Array.from(ids);
+}
+
 @Injectable()
 export class ArticlesManageService {
   constructor(
@@ -349,16 +368,45 @@ export class ArticlesManageService {
   async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
     const tenantId = requireTenantId();
     const uniqueIds = Array.from(new Set(ids));
-    const found = await this.prisma.base.article.count({
+    const rows = await this.prisma.base.article.findMany({
       where: { tenantId, id: { in: uniqueIds } },
+      select: { id: true, coverUrl: true, contentHtml: true },
     });
-    if (found !== uniqueIds.length) {
+    if (rows.length !== uniqueIds.length) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分文章不存在或无权删除');
     }
-    const res = await this.prisma.base.article.deleteMany({
-      where: { tenantId, id: { in: uniqueIds } },
+
+    const decrementByAssetId = new Map<string, number>();
+    for (const row of rows) {
+      for (const assetId of extractReferencedMediaAssetIds(row)) {
+        decrementByAssetId.set(assetId, (decrementByAssetId.get(assetId) ?? 0) + 1);
+      }
+    }
+
+    const deleted = await this.prisma.base.$transaction(async (tx) => {
+      const res = await tx.article.deleteMany({
+        where: { tenantId, id: { in: uniqueIds } },
+      });
+      if (decrementByAssetId.size > 0) {
+        const assetIds = Array.from(decrementByAssetId.keys());
+        const assets = await tx.mediaAsset.findMany({
+          where: { tenantId, id: { in: assetIds } },
+          select: { id: true, usedCount: true },
+        });
+        for (const asset of assets) {
+          const dec = decrementByAssetId.get(asset.id) ?? 0;
+          if (dec > 0 && asset.usedCount > 0) {
+            await tx.mediaAsset.update({
+              where: { id: asset.id },
+              data: { usedCount: Math.max(0, asset.usedCount - dec) },
+            });
+          }
+        }
+      }
+      return res.count;
     });
-    return { deleted: res.count };
+
+    return { deleted };
   }
 
   /**

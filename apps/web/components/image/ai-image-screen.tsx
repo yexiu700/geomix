@@ -117,7 +117,7 @@ function buildInitialDraft(): CreateDraft {
     prompt: '',
     ratio: AI_IMAGE_DEFAULT_RATIO,
     style: AI_IMAGE_STYLES[0],
-    count: 2,
+    count: 1,
     refMode: 'none',
     refAssetId: '',
     refImageBase64: '',

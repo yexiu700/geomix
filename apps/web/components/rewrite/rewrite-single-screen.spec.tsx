@@ -193,6 +193,14 @@ describe('RewriteSingleScreen', () => {
       expect(screen.getByLabelText('文章链接')).toBeTruthy();
     });
 
+    // Both gallery and rewrite prompt dropdowns default to empty ("不选择") (#95)
+    const gallerySelect = screen.getByLabelText('文章配图图库') as HTMLSelectElement;
+    const templateSelect = screen.getByLabelText('爆文改写指令') as HTMLSelectElement;
+    expect(gallerySelect.value).toBe('');
+    expect(gallerySelect.options[0]?.textContent).toBe('不选择');
+    expect(templateSelect.value).toBe('');
+    expect(templateSelect.options[0]?.textContent).toBe('不选择');
+
     // Editable timestamped auto-category input is pre-filled and editable
     const autoCatInput = screen.getByLabelText('新建分类名称') as HTMLInputElement;
     expect(autoCatInput.value).toMatch(/^爆文复刻-\d{8}-\d{4}$/);
@@ -207,6 +215,19 @@ describe('RewriteSingleScreen', () => {
     await waitFor(() => {
       expect(screen.getByText(/24 小时内已成功复刻过/)).toBeTruthy();
     });
+
+    // Submitting without choosing gallery/template validates cleanly
+    fireEvent.click(findButton('复刻文章（5点数/篇）'));
+    await waitFor(() => {
+      expect(screen.getByText('请选择文章配图的企业图库分类')).toBeTruthy();
+    });
+    fireEvent.change(gallerySelect, { target: { value: 'mcat_001' } });
+
+    fireEvent.click(findButton('复刻文章（5点数/篇）'));
+    await waitFor(() => {
+      expect(screen.getByText('请选择爆文改写指令')).toBeTruthy();
+    });
+    fireEvent.change(templateSelect, { target: { value: 'sys_rewrite_01' } });
 
     fireEvent.change(screen.getByLabelText('融入品牌词'), { target: { value: '精测工控' } });
     fireEvent.click(findButton('复刻文章（5点数/篇）'));
