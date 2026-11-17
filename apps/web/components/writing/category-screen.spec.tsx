@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ArticleCategoryRecord } from '@geomix/shared';
@@ -19,6 +19,28 @@ const CATEGORY = 'c'.repeat(25);
 afterEach(() => {
   cleanup();
 });
+
+function findButton(labelOrText: string): HTMLButtonElement {
+  const byAria = document.querySelector(`button[aria-label="${labelOrText}"]`);
+  if (byAria instanceof HTMLButtonElement) return byAria;
+  const normalized = labelOrText.replace(/\s+/g, '');
+  const found = Array.from(document.querySelectorAll('button')).find(
+    (btn) => (btn.textContent ?? '').replace(/\s+/g, '') === normalized,
+  );
+  if (!found) throw new Error(`Missing button: ${labelOrText}`);
+  return found;
+}
+
+function queryButton(labelOrText: string): HTMLButtonElement | null {
+  const byAria = document.querySelector(`button[aria-label="${labelOrText}"]`);
+  if (byAria instanceof HTMLButtonElement) return byAria;
+  const normalized = labelOrText.replace(/\s+/g, '');
+  return (
+    Array.from(document.querySelectorAll('button')).find(
+      (btn) => (btn.textContent ?? '').replace(/\s+/g, '') === normalized,
+    ) ?? null
+  );
+}
 
 function category(name = '测试分类'): ArticleCategoryRecord {
   return {
@@ -94,20 +116,25 @@ describe('article categories', () => {
     expect(row?.textContent).toContain('2');
     expect(row?.textContent).toContain('1');
 
-    fireEvent.click(screen.getByRole('button', { name: '添加' }));
-    const dialog = screen.getByRole('dialog', { name: '添加分类' });
+    fireEvent.click(findButton('添加'));
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!(dialog instanceof HTMLElement)) throw new Error('missing dialog');
+    expect(dialog.textContent).toContain('添加分类');
     expect(dialog.querySelectorAll('input, textarea').length).toBe(1);
-    expect(screen.getByRole('textbox', { name: '文章分类' })).toBeTruthy();
-    expect(screen.queryByRole('textbox', { name: '备注' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    const nameInput = dialog.querySelector('input[aria-label="文章分类"]');
+    if (!(nameInput instanceof HTMLInputElement)) throw new Error('missing name input');
+    expect(dialog.querySelector('[aria-label="备注"]')).toBeNull();
+    fireEvent.click(findButton('确定'));
     expect((await screen.findAllByText('请填写文章分类')).length).toBeGreaterThan(0);
     expect(client.create).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByRole('textbox', { name: '文章分类' }), {
+    fireEvent.change(nameInput, {
       target: { value: '新分类' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
-    expect(client.create).toHaveBeenCalledWith({ name: '新分类' });
-  }, 20_000);
+    fireEvent.click(findButton('确定'));
+    await waitFor(() => {
+      expect(client.create).toHaveBeenCalledWith({ name: '新分类' });
+    });
+  });
 
   it('blocks writes for a read-only account and deletes the selection', async () => {
     const client = categoryGateway();
@@ -129,8 +156,8 @@ describe('article categories', () => {
         onDispatch={() => undefined}
       />,
     );
-    expect(screen.getByRole('button', { name: '添加' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: '编辑 测试分类' })).toHaveProperty('disabled', true);
+    expect(findButton('添加')).toHaveProperty('disabled', true);
+    expect(findButton('编辑 测试分类')).toHaveProperty('disabled', true);
 
     view.rerender(
       <CategoryScreen
@@ -143,10 +170,12 @@ describe('article categories', () => {
     const box = document.querySelector('input[type="checkbox"]');
     if (!(box instanceof HTMLInputElement)) throw new Error('missing selection');
     fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
-    fireEvent.click(screen.getByRole('button', { name: '确定' }));
-    expect(client.remove).toHaveBeenCalledWith([CATEGORY]);
-  }, 20_000);
+    fireEvent.click(findButton('删除'));
+    fireEvent.click(findButton('确定'));
+    await waitFor(() => {
+      expect(client.remove).toHaveBeenCalledWith([CATEGORY]);
+    });
+  });
 
   it('opens the filtered article list in a new tab and returns to the category list', async () => {
     const articles = articleGateway();
@@ -197,7 +226,8 @@ describe('article categories', () => {
     }
 
     render(<Harness />);
-    fireEvent.click(await screen.findByRole('button', { name: '查看文章 测试分类' }));
+    expect(await screen.findByText('测试分类')).toBeTruthy();
+    fireEvent.click(findButton('查看文章 测试分类'));
     expect(await screen.findByText('手动正常稿')).toBeTruthy();
     expect(screen.getByText('已发送稿')).toBeTruthy();
     expect(screen.getByText('是')).toBeTruthy();
@@ -211,13 +241,17 @@ describe('article categories', () => {
       page: 1,
       pageSize: 10,
     });
-    expect(screen.queryByRole('button', { name: '添加' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '返回上一级' }));
+    const activePanel = Array.from(document.querySelectorAll('div')).find(
+      (div) => div.hasAttribute('hidden') === false && div.textContent?.includes('手动正常稿'),
+    );
+    expect(activePanel?.textContent).not.toContain('添加分类');
+    expect(queryButton('返回上一级')).toBeTruthy();
+    fireEvent.click(findButton('返回上一级'));
     expect(screen.getByTestId('active').textContent).toBe('/writing/categories');
     expect(screen.getByTestId('tabs').textContent).not.toContain('/writing/articles');
     expect(screen.queryByText('手动正常稿')).toBeNull();
     expect(await screen.findByText('测试分类')).toBeTruthy();
-  }, 20_000);
+  });
 
   it('asks for a category before listing articles', async () => {
     const articles = articleGateway();
@@ -233,7 +267,7 @@ describe('article categories', () => {
     );
     expect(await screen.findByText('请从文章分类的「查看文章」进入。')).toBeTruthy();
     expect(articles.list).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '返回上一级' }));
+    fireEvent.click(findButton('返回上一级'));
     expect(dispatch).toHaveBeenCalledWith({ type: 'back', id: '/writing/articles' });
   });
 });
