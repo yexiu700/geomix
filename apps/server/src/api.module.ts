@@ -13,6 +13,7 @@ import { AiImagesModule } from './image/ai-images.module';
 import { KeywordsModule } from './material/keywords.module';
 import { RewriteModule } from './rewrite/rewrite.module';
 import { SamplesModule } from './samples/samples.module';
+import { VisibilityModule } from './visibility/visibility.module';
 import { WritingModule } from './writing/writing.module';
 import { HealthService } from './health/health.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -33,6 +34,7 @@ import { PrismaModule } from './prisma/prisma.module';
     RewriteModule,
     AiImagesModule,
     DashboardModule,
+    VisibilityModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

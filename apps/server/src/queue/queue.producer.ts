@@ -13,8 +13,14 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import type { ImageJobEnqueuer } from '../image/image-job.runner';
 import type { RewriteBatchEnqueuer } from '../rewrite/rewrite-batch.runner';
+import type {
+  VisibilityCheckJobData,
+  VisibilityRunEnqueuer,
+} from '../visibility/visibility-run.runner';
 import type { AiTaskEnqueuer } from '../writing/ai-task.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
+
+export type { VisibilityCheckJobData };
 
 export const BOARD_PATH = '/api/v1/admin/queues/board';
 
@@ -31,7 +37,13 @@ type JobCounts = {
  */
 @Injectable()
 export class QueueProducer
-  implements JobEnqueuer, AiTaskEnqueuer, RewriteBatchEnqueuer, ImageJobEnqueuer, OnModuleDestroy
+  implements
+    JobEnqueuer,
+    AiTaskEnqueuer,
+    RewriteBatchEnqueuer,
+    ImageJobEnqueuer,
+    VisibilityRunEnqueuer,
+    OnModuleDestroy
 {
   private connection: IORedis | undefined;
   private readonly queues = new Map<QueueName, Queue>();
@@ -120,6 +132,22 @@ export class QueueProducer
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },
         removeOnComplete: { count: 200 },
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueVisibilityRun(data: VisibilityCheckJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('visibility-check');
+    await queue.add(
+      'visibility-check',
+      { tenantId: data.tenantId, runId: data.runId },
+      {
+        jobId: `visibility-run-${data.runId}`,
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: true,
         removeOnFail: { count: 200 },
       },
     );

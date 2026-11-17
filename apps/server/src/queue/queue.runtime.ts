@@ -11,11 +11,18 @@ import { Worker } from 'bullmq';
 import { IMAGE_JOB_HANDLER, type ImageJobHandler } from '../image/image-job.runner';
 import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
 import { REWRITE_BATCH_HANDLER, type RewriteBatchHandler } from '../rewrite/rewrite-batch.runner';
+import {
+  VISIBILITY_RUN_ENQUEUER,
+  VISIBILITY_RUN_HANDLER,
+  type VisibilityRunHandler,
+} from '../visibility/visibility-run.runner';
 import { AI_TASK_HANDLER, type AiTaskHandler } from '../writing/ai-task.runner';
 import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
 import { WorkerRuntimeService } from '../worker/worker-runtime.service';
+
+export { VISIBILITY_RUN_ENQUEUER, VISIBILITY_RUN_HANDLER };
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -42,6 +49,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(IMAGE_JOB_HANDLER)
     private readonly imageJobRunner?: ImageJobHandler,
+    @Optional()
+    @Inject(VISIBILITY_RUN_HANDLER)
+    private readonly visibilityRunner?: VisibilityRunHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -85,6 +95,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const imgData = readImageJobPayload(job.data);
             if (imgData && this.imageJobRunner) {
               await this.imageJobRunner.process(imgData);
+            }
+            return;
+          }
+          if (name === 'visibility-check' && job.name === 'visibility-check') {
+            const visData = readPayload(job.data);
+            if (visData && this.visibilityRunner) {
+              await this.visibilityRunner.process(visData);
             }
             return;
           }

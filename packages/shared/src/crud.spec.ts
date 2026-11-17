@@ -56,6 +56,9 @@ describe('crud list query', () => {
     expect(priceButtonText('AI写作', 10, priceUnit('ai_write'))).toBe('AI写作（10点数/篇）');
     expect(priceButtonText('AI蒸馏拓展', 10, priceUnit('distill'))).toBe('AI蒸馏拓展（10点数/次）');
     expect(priceButtonText('AI生图', 5, priceUnit('image_gen'))).toBe('AI生图（5点数/张）');
+    expect(priceButtonText('AI可见性监测', 2, priceUnit('visibility_check'))).toBe(
+      'AI可见性监测（2点数/次）',
+    );
     expect(() => priceButtonText('AI写作', -1)).toThrow(CrudQueryError);
   });
 

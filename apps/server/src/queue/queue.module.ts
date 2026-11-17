@@ -9,6 +9,14 @@ import {
   REWRITE_BATCH_HANDLER,
   RewriteBatchRunner,
 } from '../rewrite/rewrite-batch.runner';
+import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
+import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
+import { VisibilityJudgeService } from '../visibility/visibility-judge.service';
+import {
+  VISIBILITY_RUN_ENQUEUER,
+  VISIBILITY_RUN_HANDLER,
+  VisibilityRunRunner,
+} from '../visibility/visibility-run.runner';
 import { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { AI_TASK_ENQUEUER, AI_TASK_HANDLER, AiTaskRunner } from '../writing/ai-task.runner';
 import { BullBoardMount } from './bull-board.mount';
@@ -35,6 +43,7 @@ export class QueueModule {
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
         { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
         { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
+        { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
@@ -44,6 +53,7 @@ export class QueueModule {
         AI_TASK_ENQUEUER,
         REWRITE_BATCH_ENQUEUER,
         IMAGE_JOB_ENQUEUER,
+        VISIBILITY_RUN_ENQUEUER,
         WorkDriver,
         StepGate,
       ],
@@ -61,6 +71,7 @@ export class QueueModule {
         { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
         { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
         { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
+        { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
@@ -72,6 +83,14 @@ export class QueueModule {
         { provide: REWRITE_BATCH_HANDLER, useExisting: RewriteBatchRunner },
         ImageJobRunner,
         { provide: IMAGE_JOB_HANDLER, useExisting: ImageJobRunner },
+        {
+          provide: VISIBILITY_CONFIG,
+          useFactory: () => readVisibilityConfig(process.env),
+        },
+        VisibilityCollectorService,
+        VisibilityJudgeService,
+        VisibilityRunRunner,
+        { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
         QueueRuntime,
       ],
       exports: [
@@ -82,10 +101,12 @@ export class QueueModule {
         AI_TASK_ENQUEUER,
         REWRITE_BATCH_ENQUEUER,
         IMAGE_JOB_ENQUEUER,
+        VISIBILITY_RUN_ENQUEUER,
         KnowledgeIndexRunner,
         AiTaskRunner,
         RewriteBatchRunner,
         ImageJobRunner,
+        VisibilityRunRunner,
         QueueRuntime,
       ],
     };
