@@ -15,8 +15,16 @@
     "typecheck": {
       "dependsOn": ["^build"]
     },
+    "@geomix/db#typecheck": {
+      "dependsOn": ["build", "^build"]
+    },
     "test": {
       "dependsOn": ["^build"],
+      "env": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"],
+      "passThroughEnv": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"]
+    },
+    "@geomix/db#test": {
+      "dependsOn": ["build", "^build"],
       "env": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"],
       "passThroughEnv": ["GEOMIX_DB_INTEGRATION", "GEOMIX_REDIS_INTEGRATION", "DATABASE_URL"]
     }

@@ -40,6 +40,22 @@
     "./account": {
       "types": "./dist/account.d.ts",
       "default": "./dist/account.js"
+    },
+    "./combo": {
+      "types": "./dist/combo.d.ts",
+      "default": "./dist/combo.js"
+    },
+    "./keywords": {
+      "types": "./dist/keywords.d.ts",
+      "default": "./dist/keywords.js"
+    },
+    "./questions": {
+      "types": "./dist/questions.d.ts",
+      "default": "./dist/questions.js"
+    },
+    "./gallery": {
+      "types": "./dist/gallery.d.ts",
+      "default": "./dist/gallery.js"
     }
   },
   "scripts": {

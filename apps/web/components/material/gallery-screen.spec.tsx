@@ -1,0 +1,254 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  GALLERY_CATEGORY_EMPTY_MSG,
+  GALLERY_FILE_TOO_LARGE_MSG,
+  IMAGE_MAX_INPUT_BYTES,
+  buildStorageSummary,
+  type MediaAssetRecord,
+  type MediaCategoryRecord,
+} from '@geomix/shared';
+import type { GalleryGateway } from '../../lib/gallery';
+import type { ShellAction } from '../../lib/tab-stack';
+import { GalleryAssetScreen, GalleryCategoryScreen } from './gallery-screen';
+
+function clickBtn(pattern: RegExp | string, index = 0): void {
+  const buttons = Array.from(document.querySelectorAll('button'));
+  const matches = buttons.filter((btn) => {
+    const label = btn.getAttribute('aria-label') ?? '';
+    const text = (btn.textContent ?? '').replace(/\s+/g, '');
+    if (typeof pattern === 'string') {
+      const needle = pattern.replace(/\s+/g, '');
+      return label === pattern || text.includes(needle);
+    }
+    return pattern.test(label) || pattern.test(text);
+  });
+  const target = matches[index];
+  if (!target) {
+    throw new Error(`Button not found: ${String(pattern)}`);
+  }
+  fireEvent.click(target);
+}
+
+function makeGateway(overrides: Partial<GalleryGateway> = {}): GalleryGateway {
+  const storage = buildStorageSummary(256n * 1024n, 100n * 1024n * 1024n);
+  const sampleCategories: MediaCategoryRecord[] = [
+    {
+      id: 'cat_1',
+      name: '车间实拍',
+      type: 1,
+      assetCount: 4,
+      previewAssets: [
+        {
+          id: 'med_1',
+          url: '/api/v1/media-assets/med_1/file',
+          thumbUrl: '/api/v1/media-assets/med_1/thumb',
+          width: 1200,
+          height: 800,
+        },
+        {
+          id: 'med_2',
+          url: '/api/v1/media-assets/med_2/file',
+          thumbUrl: '/api/v1/media-assets/med_2/thumb',
+          width: 1200,
+          height: 800,
+        },
+        {
+          id: 'med_3',
+          url: '/api/v1/media-assets/med_3/file',
+          thumbUrl: '/api/v1/media-assets/med_3/thumb',
+          width: 1200,
+          height: 800,
+        },
+      ],
+      createdAt: '2026-11-17T04:00:00.000Z',
+    },
+  ];
+
+  const sampleAssets: MediaAssetRecord[] = [
+    {
+      id: 'med_1',
+      categoryId: 'cat_1',
+      categoryName: '车间实拍',
+      origin: 'UPLOAD',
+      objectKey: 'tenants/t1/media-med_1.jpg',
+      url: '/api/v1/media-assets/med_1/file',
+      thumbUrl: '/api/v1/media-assets/med_1/thumb',
+      width: 1200,
+      height: 800,
+      bytes: 65536,
+      mime: 'image/jpeg',
+      usedCount: 2,
+      createdAt: '2026-11-17T04:00:00.000Z',
+    },
+  ];
+
+  return {
+    listCategories: vi.fn(async () => ({
+      items: sampleCategories,
+      total: 1,
+      page: 1,
+      pageSize: 10,
+      storage,
+    })),
+    createCategory: vi.fn(async ({ name }) => ({
+      id: 'cat_new',
+      name,
+      type: 1,
+      assetCount: 0,
+      previewAssets: [],
+      createdAt: '2026-11-17T04:10:00.000Z',
+    })),
+    updateCategory: vi.fn(async (id, { name }) => ({
+      id,
+      name,
+      type: 1,
+      assetCount: 4,
+      previewAssets: sampleCategories[0]!.previewAssets,
+      createdAt: '2026-11-17T04:00:00.000Z',
+    })),
+    deleteCategories: vi.fn(async () => ({ deleted: 1 })),
+    downloadCategories: vi.fn(async () => ({
+      filename: 'media-categories.csv',
+      mime: 'text/csv',
+      body: new Uint8Array([1, 2]),
+    })),
+    listAssets: vi.fn(async () => ({
+      category: { id: 'cat_1', name: '车间实拍' },
+      items: sampleAssets,
+      total: 1,
+      page: 1,
+      pageSize: 10,
+      storage,
+    })),
+    uploadAssets: vi.fn(async (_categoryId: string, files: File[]) => ({
+      items: files.map((f: File, idx: number) => ({
+        asset: {
+          id: `med_up_${idx}`,
+          categoryId: 'cat_1',
+          categoryName: '车间实拍',
+          origin: 'UPLOAD' as const,
+          objectKey: `tenants/t1/media-up-${idx}.jpg`,
+          url: `/api/v1/media-assets/med_up_${idx}/file`,
+          thumbUrl: `/api/v1/media-assets/med_up_${idx}/thumb`,
+          width: 360,
+          height: 260,
+          bytes: 24576,
+          mime: 'image/jpeg',
+          usedCount: 0,
+          createdAt: '2026-11-17T04:15:00.000Z',
+        },
+        warning: `${f.name}：图片宽度 360px 小于建议值 500px（仅提示，已完成上传）`,
+      })),
+      warnings: ['small.png：图片宽度 360px 小于建议值 500px（仅提示，已完成上传）'],
+      storage,
+    })),
+    deleteAssets: vi.fn(async () => ({ deleted: 1, releasedBytes: 65536 })),
+    downloadAssets: vi.fn(async () => ({
+      filename: 'media-assets.csv',
+      mime: 'text/csv',
+      body: new Uint8Array([1, 2]),
+    })),
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  cleanup();
+});
+
+describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
+  it('renders 3 preview thumbnails, storage usage, single-field category validation, and opens /material/gallery/:id in new tab', async () => {
+    const dispatched: ShellAction[] = [];
+    const gateway = makeGateway();
+
+    render(
+      <GalleryCategoryScreen
+        title="企业画像图库"
+        tabId="/material/gallery"
+        onDispatch={(a) => dispatched.push(a)}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('车间实拍')).toBeTruthy();
+    });
+
+    // Shows used storage & 3 thumbnails
+    expect(screen.getByText(/已用 256 KB \/ 上限 100 MB/)).toBeTruthy();
+    expect(screen.getByTestId('cat-thumb-med_1')).toBeTruthy();
+    expect(screen.getByTestId('cat-thumb-med_2')).toBeTruthy();
+    expect(screen.getByTestId('cat-thumb-med_3')).toBeTruthy();
+
+    // Open add modal -> empty submit blocked -> valid submit calls createCategory
+    clickBtn('添加');
+    clickBtn('确定');
+    expect(screen.getByText(GALLERY_CATEGORY_EMPTY_MSG)).toBeTruthy();
+    expect(gateway.createCategory).not.toHaveBeenCalled();
+
+    const input = document.querySelector('[aria-label="分类"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '产品细节图' } });
+    clickBtn('确定');
+    await waitFor(() => {
+      expect(gateway.createCategory).toHaveBeenCalledWith({ name: '产品细节图' });
+    });
+
+    // Clicking 图片列表 opens subpage tab
+    clickBtn('图片列表', 0);
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/material/gallery/cat_1',
+      sourceId: '/material/gallery',
+    });
+  });
+
+  it('rejects >100MB file selection, surfaces <500px warning without blocking multi-upload, has delete-only row action, and dispatches back', async () => {
+    const dispatched: ShellAction[] = [];
+    const gateway = makeGateway();
+
+    render(
+      <GalleryAssetScreen
+        title="企业画像图库 · cat_1"
+        tabId="/material/gallery/cat_1"
+        categoryId="cat_1"
+        onDispatch={(a) => dispatched.push(a)}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('图片列表 · 车间实拍')).toBeTruthy();
+    });
+
+    // Row actions have 删除 and NO 编辑 button
+    expect(screen.queryByText('编辑')).toBeNull();
+
+    // Open upload modal -> select >100MB file -> rejected with 100MB message
+    clickBtn('添加');
+    const fileInput = document.querySelector('[aria-label="选择图片文件"]') as HTMLInputElement;
+    const hugeFile = new File(['x'], 'huge.jpg', { type: 'image/jpeg' });
+    Object.defineProperty(hugeFile, 'size', { value: IMAGE_MAX_INPUT_BYTES + 10 });
+    fireEvent.change(fileInput, { target: { files: [hugeFile] } });
+    expect(screen.getByText(`huge.jpg：${GALLERY_FILE_TOO_LARGE_MSG}`)).toBeTruthy();
+    expect(gateway.uploadAssets).not.toHaveBeenCalled();
+
+    // Select 2 valid files -> upload succeeds and shows <500px warning banner
+    const smallFile1 = new File(['a'], 'small.png', { type: 'image/png' });
+    const smallFile2 = new File(['b'], 'ok.jpg', { type: 'image/jpeg' });
+    fireEvent.change(fileInput, { target: { files: [smallFile1, smallFile2] } });
+    clickBtn('确定');
+
+    await waitFor(() => {
+      expect(gateway.uploadAssets).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('图片清晰度提示（不影响使用）')).toBeTruthy();
+    });
+
+    // 返回上一级 dispatches back
+    clickBtn('关闭');
+    clickBtn('返回上一级');
+    expect(dispatched).toContainEqual({ type: 'back', id: '/material/gallery/cat_1' });
+  });
+});

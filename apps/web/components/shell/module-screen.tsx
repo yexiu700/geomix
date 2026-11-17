@@ -1,12 +1,14 @@
 'use client';
 
-import { Button, Input, Space, Typography } from 'antd';
-import { useState } from 'react';
+import { Button, Input, Typography } from 'antd';
 import { MoneyScreen } from '../account/money-screen';
 import { PointsScreen } from '../account/points-screen';
 import { RightsScreen } from '../account/rights-screen';
 import { VerifyScreen } from '../account/verify-screen';
 import { SampleScreen } from '../crud/sample-screen';
+import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
+import { KeywordScreen } from '../material/keyword-screen';
+import { QuestionScreen } from '../material/question-screen';
 import { ArticleListScreen } from '../writing/article-list-screen';
 import { CategoryScreen } from '../writing/category-screen';
 import { categoryIdFromHref } from '../../lib/categories';
@@ -53,6 +55,61 @@ export function ModuleScreen({
   if (path === '/me/money') return <MoneyScreen title={tab.title} />;
   if (path === '/me/rights') return <RightsScreen title={tab.title} />;
   if (path === '/me/verify') return <VerifyScreen title={tab.title} readOnly={readOnly} />;
+  if (path === '/material/keywords') {
+    return (
+      <div>
+        <KeywordScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/material/questions') {
+    return (
+      <div>
+        <QuestionScreen
+          title={tab.title}
+          tabId={tab.id}
+          href={tab.href}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path === '/material/gallery') {
+    return (
+      <div>
+        <GalleryCategoryScreen
+          title={tab.title}
+          tabId={tab.id}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
+  if (path.startsWith('/material/gallery/')) {
+    const categoryId = path.slice('/material/gallery/'.length);
+    return (
+      <div>
+        <GalleryAssetScreen
+          title={tab.title}
+          tabId={tab.id}
+          categoryId={categoryId}
+          readOnly={readOnly}
+          onDispatch={onDispatch}
+        />
+        <TabDraftNote tab={tab} draft={draft} onDispatch={onDispatch} />
+      </div>
+    );
+  }
   const canGoBack = Boolean(tab.sourceId || matchRoute(tab.href)?.parent);
 
   return (
@@ -68,12 +125,6 @@ export function ModuleScreen({
         placeholder="在这里写的内容会随标签保留"
         onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
-      {path === '/material/keywords' ? (
-        <KeywordDrill tabId={tab.id} onDispatch={onDispatch} />
-      ) : null}
-      {path === '/material/gallery' ? (
-        <GalleryDrill tabId={tab.id} onDispatch={onDispatch} />
-      ) : null}
       {canGoBack ? (
         <Button style={{ marginTop: 16 }} onClick={() => onDispatch({ type: 'back', id: tab.id })}>
           返回上一级
@@ -83,69 +134,24 @@ export function ModuleScreen({
   );
 }
 
-function KeywordDrill({
-  tabId,
+export function TabDraftNote({
+  tab,
+  draft,
   onDispatch,
 }: {
-  tabId: string;
+  tab: ShellTab;
+  draft: string;
   onDispatch: (action: ShellAction) => void;
 }) {
-  const [keywordId, setKeywordId] = useState('demo');
   return (
-    <Space style={{ marginTop: 16 }} wrap>
-      <Input
-        aria-label="主词编号"
-        value={keywordId}
-        onChange={(event) => setKeywordId(event.target.value)}
-        style={{ width: 180 }}
+    <div style={{ marginTop: 16 }}>
+      <Input.TextArea
+        aria-label={`${tab.title}草稿`}
+        value={draft}
+        rows={2}
+        placeholder="本页草稿便签（切换标签页自动保留）"
+        onChange={(event) => onDispatch({ type: 'draft', id: tab.id, value: event.target.value })}
       />
-      <Button
-        type="primary"
-        onClick={() => {
-          const value = keywordId.trim();
-          if (!value) return;
-          onDispatch({
-            type: 'open',
-            href: `/material/questions?keywordId=${encodeURIComponent(value)}`,
-            sourceId: tabId,
-          });
-        }}
-      >
-        查看写作标题
-      </Button>
-    </Space>
-  );
-}
-
-function GalleryDrill({
-  tabId,
-  onDispatch,
-}: {
-  tabId: string;
-  onDispatch: (action: ShellAction) => void;
-}) {
-  const [assetId, setAssetId] = useState('pic_1');
-  return (
-    <Space style={{ marginTop: 16 }} wrap>
-      <Input
-        aria-label="图片编号"
-        value={assetId}
-        onChange={(event) => setAssetId(event.target.value)}
-        style={{ width: 180 }}
-      />
-      <Button
-        onClick={() => {
-          const value = assetId.trim();
-          if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) return;
-          onDispatch({
-            type: 'open',
-            href: `/material/gallery/${value}`,
-            sourceId: tabId,
-          });
-        }}
-      >
-        查看图片
-      </Button>
-    </Space>
+    </div>
   );
 }
