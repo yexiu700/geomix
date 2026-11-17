@@ -600,9 +600,6 @@ export class GalleryService {
     }
 
     for (const asset of assets) {
-      if (asset.usedCount > 0) {
-        throw new ApiError(409, API_ERROR.BAD_REQUEST, '所选图片已被文章使用，禁止删除');
-      }
       const [articleRefCount, imageJobRefCount] = await Promise.all([
         this.prisma.base.article.count({
           where: {
@@ -617,7 +614,10 @@ export class GalleryService {
           where: { tenantId, refAssetId: asset.id },
         }),
       ]);
-      if (articleRefCount > 0 || imageJobRefCount > 0) {
+      if (articleRefCount > 0) {
+        throw new ApiError(409, API_ERROR.BAD_REQUEST, '所选图片已被文章使用，禁止删除');
+      }
+      if (imageJobRefCount > 0) {
         throw new ApiError(409, API_ERROR.BAD_REQUEST, '所选图片存在关联引用，禁止删除');
       }
     }

@@ -81,6 +81,7 @@ export class AdaptersModule {}
 function prismaAudit(prisma: PrismaService): AuditWriter {
   return {
     async write(entry) {
+      if (!process.env.DATABASE_URL?.trim()) return;
       await prisma.base.auditLog.create({
         data: {
           tenantId: entry.tenantId,
@@ -96,25 +97,30 @@ function prismaAudit(prisma: PrismaService): AuditWriter {
 function prismaLlmCostSink(prisma: PrismaService): LlmCostSink {
   return {
     async write(record) {
-      await prisma.base.auditLog.create({
-        data: {
-          tenantId: record.tenantId,
-          action: LLM_COST_AUDIT_ACTION,
-          payload: {
-            recordId: record.recordId,
-            idempotencyKey: record.idempotencyKey,
-            scene: record.scene,
-            provider: record.provider,
-            model: record.model,
-            fake: record.fake,
-            tokensIn: record.tokensIn,
-            tokensOut: record.tokensOut,
-            costMicro: record.costMicro,
-            costBasis: record.costBasis,
-            latencyMs: record.latencyMs,
+      if (!process.env.DATABASE_URL?.trim()) return;
+      try {
+        await prisma.base.auditLog.create({
+          data: {
+            tenantId: record.tenantId,
+            action: LLM_COST_AUDIT_ACTION,
+            payload: {
+              recordId: record.recordId,
+              idempotencyKey: record.idempotencyKey,
+              scene: record.scene,
+              provider: record.provider,
+              model: record.model,
+              fake: record.fake,
+              tokensIn: record.tokensIn,
+              tokensOut: record.tokensOut,
+              costMicro: record.costMicro,
+              costBasis: record.costBasis,
+              latencyMs: record.latencyMs,
+            },
           },
-        },
-      });
+        });
+      } catch {
+        // Best-effort cost audit sink; never block or fail request/teardown
+      }
     },
   };
 }

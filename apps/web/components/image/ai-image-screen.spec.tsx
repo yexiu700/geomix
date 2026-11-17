@@ -190,11 +190,13 @@ describe('AiImageScreen', () => {
     fireEvent.click(screen.getByLabelText('添加'));
     await screen.findByText('添加 AI 生图任务');
 
-    // Upfront price banner + dynamic submit button visible before submission
+    // Upfront price banner + dynamic submit button default to 1张 / 5点 (#93)
     expect(screen.getByTestId('ai-image-price-banner').textContent).toContain(
-      '单价 5 点数/张 × 生成 2 张 ＝ 合计预冻结 10 点数',
+      '单价 5 点数/张 × 生成 1 张 ＝ 合计预冻结 5 点数',
     );
-    expect(screen.getByText('生成图片（5点数/张，合计预冻 10 点）')).toBeTruthy();
+    expect(screen.getByText('生成图片（5点数/张，合计预冻 5 点）')).toBeTruthy();
+    const defaultCountBtn = screen.getByText('1 张（5 点）').closest('button')!;
+    expect(defaultCountBtn.getAttribute('aria-checked')).toBe('true');
 
     // Verify all 9 aspect ratios exist and 21:9 is selected by default
     for (const ratio of AI_IMAGE_RATIOS) {

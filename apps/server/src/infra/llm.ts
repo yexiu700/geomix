@@ -71,6 +71,7 @@ export type LlmCompleteInput = {
   maxTokens?: number;
   timeoutMs?: number;
   maxRetries?: number;
+  preferFastModel?: boolean;
 };
 
 type ProviderCall = {
@@ -332,7 +333,11 @@ export class LlmRouter {
         config.cheapModel !== config.qualityModel &&
         !/reasoner|thinking|qwq|\br1\b/i.test(config.cheapModel) &&
         /reasoner|thinking|qwq|\br1\b/i.test(config.qualityModel);
-      const models = canFallbackToCheap ? [primaryModel, config.cheapModel] : [primaryModel];
+      const models = canFallbackToCheap
+        ? input.preferFastModel
+          ? [config.cheapModel]
+          : [primaryModel, config.cheapModel]
+        : [primaryModel];
       for (let mIdx = 0; mIdx < models.length; mIdx += 1) {
         const model = models[mIdx]!;
         let callTimeoutMs = effectiveTimeoutMs;

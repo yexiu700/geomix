@@ -56,7 +56,16 @@ export function buildRewriteBatchListQueryString(
 async function unwrap<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) throw new RewriteApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
+  let json: Envelope<T>;
+  try {
+    json = JSON.parse(text) as Envelope<T>;
+  } catch {
+    const message =
+      response.status === 502 || response.status === 504
+        ? '服务响应超时，请稍后重试'
+        : '服务返回异常响应，请稍后重试';
+    throw new RewriteApiError(response.status, -1, message);
+  }
   if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
     throw new RewriteApiError(response.status, json.code ?? -1, json.msg || '操作失败');
   }

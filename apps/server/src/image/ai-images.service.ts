@@ -745,7 +745,7 @@ export class AiImagesService {
 
     const unsavedAssets = jobs
       .flatMap((job) => job.assets)
-      .filter((asset) => asset.categoryId === null && asset.usedCount === 0);
+      .filter((asset) => asset.categoryId === null);
 
     const removableAssets: typeof unsavedAssets = [];
     for (const asset of unsavedAssets) {

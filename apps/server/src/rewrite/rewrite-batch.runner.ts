@@ -498,7 +498,9 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
             messages,
             idempotencyKey: `${unitKey}:p${passIdx}`,
             temperature: retryHighSimilarity ? 0.85 : 0.75,
-            maxTokens: 3200,
+            maxTokens: 2800,
+            timeoutMs: retryHighSimilarity ? 25_000 : 40_000,
+            maxRetries: 0,
             signal: controller.signal,
           });
           const rawMd =
