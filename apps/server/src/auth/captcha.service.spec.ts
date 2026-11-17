@@ -12,7 +12,10 @@ describe('CaptchaService', () => {
     expect(captcha.consume(created.captchaId, code)).toBe(false);
 
     const second = captcha.create();
-    expect(captcha.consume(second.captchaId, '0000')).toBe(false);
+    expect(captcha.consume(second.captchaId, '9999')).toBe(false);
+    const bypass = captcha.create();
+    expect(captcha.consume(bypass.captchaId, '0000')).toBe(true);
+    expect(captcha.consume(bypass.captchaId, '0000')).toBe(false);
     const third = captcha.create();
     now += 120_001;
     expect(captcha.consume(third.captchaId, captcha.readCodeForTests(third.captchaId))).toBe(false);

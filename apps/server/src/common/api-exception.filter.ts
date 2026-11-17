@@ -1,5 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@nestjs/common';
-import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
+import { API_ERROR, AUTH_ERROR, GALLERY_FILE_TOO_LARGE_MSG } from '@geomix/shared';
 import { ApiError } from './api-error';
 
 type ResponseLike = {
@@ -44,6 +44,13 @@ function mapException(exception: unknown): {
   if (exception instanceof HttpException) {
     const status = exception.getStatus();
     const msg = httpMessage(exception);
+    if (status === 413) {
+      return {
+        status,
+        code: API_ERROR.BAD_REQUEST,
+        msg: msg === 'File too large' ? GALLERY_FILE_TOO_LARGE_MSG : msg,
+      };
+    }
     if (status === 404) return { status, code: AUTH_ERROR.NOT_FOUND, msg };
     if (status === 401) return { status, code: AUTH_ERROR.UNAUTHORIZED, msg };
     if (status === 403) return { status, code: API_ERROR.TENANT_EXPIRED, msg };
