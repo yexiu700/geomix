@@ -445,8 +445,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       itemTitle: 'AI可见度诊断',
       expectedUrl: /\/visibility\/monitors$/,
     });
-    const visPriceBtn = pane.getByRole('button', { name: 'AI可见性监测（2点数/次）' });
-    await expect(visPriceBtn).toBeVisible();
-    await expect(visPriceBtn).toBeEnabled();
+    await expect(pane.getByText('AI可见性监测 · 2 点数/次')).toBeVisible();
+    await expect(pane.getByRole('button', { name: /AI可见性监测/ })).toHaveCount(0);
   });
 });
