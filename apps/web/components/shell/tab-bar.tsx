@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
 
 export function TabBar({
@@ -13,6 +13,11 @@ export function TabBar({
   onDispatch: (action: ShellAction) => void;
 }) {
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [activeId, tabs.length]);
 
   useEffect(() => {
     if (!menu) return;
@@ -46,10 +51,6 @@ export function TabBar({
         scrollbarWidth: 'none',
         display: 'flex',
         alignItems: 'center',
-        maskImage:
-          'linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%)',
-        WebkitMaskImage:
-          'linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%)',
       }}
     >
       <style>{`
@@ -103,6 +104,7 @@ export function TabBar({
       {tabs.map((tab) => (
         <div key={tab.id} className={tab.id === activeId ? 'gm-tab active' : 'gm-tab'}>
           <button
+            ref={tab.id === activeId ? activeTabRef : undefined}
             type="button"
             role="tab"
             title={tab.title}
