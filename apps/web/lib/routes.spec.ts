@@ -10,7 +10,7 @@ import {
 } from './routes';
 
 describe('console routes', () => {
-  it('hides /workbench/samples from merchant menu and nests AI生图/视频 inside AI创作-文章&素材', () => {
+  it('hides /workbench/samples from merchant menu and nests AI生图 inside AI创作-文章&素材', () => {
     const menuHrefs = new Set(collectHrefs());
     expect(menuHrefs.has('/workbench/samples')).toBe(false);
     const expectedMerchantRoutes = Object.keys(STATIC_ROUTES).filter(
@@ -32,7 +32,7 @@ describe('console routes', () => {
       creation?.type === 'section'
         ? creation.children.find((child) => child.type === 'submenu' && child.key === 'image')
         : undefined;
-    expect(image?.type === 'submenu' ? image.title : undefined).toBe('AI生图/视频');
+    expect(image?.type === 'submenu' ? image.title : undefined).toBe('AI生图');
     expect(image?.type === 'submenu' ? image.badge : undefined).toBe('new');
 
     expect(collectHrefs(buildMenu({ aiImageEnabled: false })).includes('/image')).toBe(false);

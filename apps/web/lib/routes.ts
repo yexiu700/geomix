@@ -99,7 +99,7 @@ export const MENU: MenuItem[] = [
       {
         type: 'submenu',
         key: 'image',
-        title: 'AI生图/视频',
+        title: 'AI生图',
         badge: 'new',
         children: [link('/image')],
       },
