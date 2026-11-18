@@ -18,6 +18,7 @@ import {
 
 function buildInMemoryHarness() {
   const state = {
+    questionText: '工业激光切割机选型时应该重点核对哪些指标？',
     task: {
       id: 'task_79',
       tenantId: 'tenant_79',
@@ -103,7 +104,7 @@ function buildInMemoryHarness() {
           .map((i) => ({ id: i.id, seq: i.seq, attempts: i.attempts }));
       }
       if (sql.includes('FROM "Question"')) {
-        return [{ id: 'q_79', text: '工业激光切割机选型时应该重点核对哪些指标？' }];
+        return [{ id: 'q_79', text: state.questionText }];
       }
       if (sql.includes('FROM "MediaAsset"')) {
         return [];
@@ -567,5 +568,35 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
       .mocked(tx.$queryRaw)
       .mock.calls.filter((call) => String(call[0]).includes('FROM "MediaAsset"'));
     expect(mediaQueries).toHaveLength(0);
+  });
+
+  it('preserves full rewritten AI writing titles >35 chars without chopping trailing words like 实用选型指 (#249)', async () => {
+    process.env.COVER_WHEN_NO_IMAGE = 'false';
+    const { state, prisma, billing, quota, kbIndexer } = buildInMemoryHarness();
+    state.questionText = 'Anker氮化镓充电器支持MacBook和iPhone快充吗？';
+    state.task.keyword = {
+      id: 'kw_anker',
+      main: 'Anker氮化镓充电器',
+      brands: ['Anker'],
+    };
+    state.task.titleTplId = 'tpl_title_249';
+
+    const runner = new AiTaskRunner(
+      prisma,
+      billing,
+      quota,
+      LlmService.fromEnv({}),
+      new ComplianceService(),
+      kbIndexer,
+    );
+
+    await runner.process({ tenantId: 'tenant_79', taskId: 'task_79' });
+
+    expect(state.task.status).toBe('COMPLETED');
+    expect(state.articles).toHaveLength(1);
+    const savedTitle = state.articles[0]!.title;
+    expect(savedTitle).toBe('Anker氮化镓充电器支持MacBook和iPhone快充实用选型指南');
+    expect(savedTitle.endsWith('实用选型指')).toBe(false);
+    expect(savedTitle.endsWith('实用选型指南')).toBe(true);
   });
 });
