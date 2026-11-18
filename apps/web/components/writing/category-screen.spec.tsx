@@ -277,6 +277,24 @@ describe('article categories', () => {
     fireEvent.click(findButton('返回上一级'));
     expect(dispatch).toHaveBeenCalledWith({ type: 'back', id: '/writing/articles' });
   });
+
+  it('places primary 添加 button before 刷新 and 删除 in toolbar (#260)', async () => {
+    const client = categoryGateway();
+    render(
+      <CategoryScreen
+        title="文章分类"
+        tabId="/writing/categories"
+        gateway={client}
+        onDispatch={() => undefined}
+      />,
+    );
+    expect(await screen.findByText('测试分类')).toBeTruthy();
+
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+  });
 });
 
 function articleGateway(): ArticleGateway {

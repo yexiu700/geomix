@@ -23,6 +23,7 @@ import { Alert, Button, Input, Slider, Space, Switch, Table, Tag, Typography } f
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -465,72 +466,15 @@ export function RewriteSingleScreen({
 
   return (
     <section aria-label={title}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <div>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {title}
-          </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            提取公开长文核心事实并重组原创结构，自动剥离原图与外链水印，仅混排{UX_TERMS.gallery}
-            配图（
-            {unitPoints} 点数/篇，失败自动退点，不计 AI 写作数量）。
-          </Typography.Text>
-        </div>
-
-        <Space wrap>
-          <Button
-            onClick={() => {
-              void loadList(query);
-              void loadOptions();
-            }}
-            loading={loading}
-          >
-            刷新
-          </Button>
-          {!readOnly ? (
-            <>
-              <Button
-                type="primary"
-                aria-label="新建单篇复刻"
-                onClick={() => void openCreateModal()}
-              >
-                新建单篇复刻
-              </Button>
-              <Button
-                disabled={selectedIds.length === 0}
-                onClick={() => void handleBulkStatus('NORMAL')}
-              >
-                设为正常
-              </Button>
-              <Button
-                disabled={selectedIds.length === 0}
-                onClick={() => void handleBulkStatus('DISABLED')}
-              >
-                设为停用
-              </Button>
-              <Button
-                danger
-                disabled={selectedIds.length === 0}
-                onClick={() => handleDeleteIds(selectedIds)}
-              >
-                删除
-              </Button>
-            </>
-          ) : null}
-          <ExportAction
-            empty={!loading && total === 0 && items.length === 0}
-            onExport={handleExport}
-          />
-        </Space>
+      <div style={{ marginBottom: 12 }}>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          {title}
+        </Typography.Title>
+        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          提取公开长文核心事实并重组原创结构，自动剥离原图与外链水印，仅混排{UX_TERMS.gallery}
+          配图（
+          {unitPoints} 点数/篇，失败自动退点，不计 AI 写作数量）。
+        </Typography.Text>
       </div>
 
       {banner ? (
@@ -644,6 +588,44 @@ export function RewriteSingleScreen({
           重置筛选
         </Button>
       </div>
+
+      <CrudToolbar
+        showCreate={!readOnly}
+        createLabel="新建单篇复刻"
+        onCreate={() => void openCreateModal()}
+        refreshLoading={loading}
+        onRefresh={() => {
+          void loadList(query);
+          void loadOptions();
+        }}
+        showDelete={!readOnly}
+        deleteDisabled={selectedIds.length === 0}
+        onDelete={() => handleDeleteIds(selectedIds)}
+        extraLeft={
+          !readOnly ? (
+            <>
+              <Button
+                disabled={selectedIds.length === 0}
+                onClick={() => void handleBulkStatus('NORMAL')}
+              >
+                设为正常
+              </Button>
+              <Button
+                disabled={selectedIds.length === 0}
+                onClick={() => void handleBulkStatus('DISABLED')}
+              >
+                设为停用
+              </Button>
+            </>
+          ) : null
+        }
+        right={
+          <ExportAction
+            empty={!loading && total === 0 && items.length === 0}
+            onExport={handleExport}
+          />
+        }
+      />
 
       <Table<RewriteRecordItem>
         rowKey="id"

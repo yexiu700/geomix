@@ -488,4 +488,17 @@ describe('PromptScreen', () => {
     expect(document.body.textContent).toContain('工程机械选型指南指令');
     expect(document.body.textContent).not.toContain('没有找到匹配的记录');
   });
+
+  it('places primary 添加 button before 刷新 and 删除 in toolbar (#260)', async () => {
+    const { gateway } = makeGateway();
+    render(<PromptScreen title="写作指令" gateway={gateway} />);
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('工程机械选型指南指令');
+    });
+
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+  });
 });

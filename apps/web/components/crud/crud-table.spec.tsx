@@ -220,4 +220,13 @@ describe('crud table', () => {
     expect(onSearch).toHaveBeenCalledWith(expect.objectContaining({ keyword: '光纤激光' }));
     expect(screen.getByText('共 1 条')).toBeTruthy();
   });
+
+  it('places primary 添加 action before 刷新 and 删除 by default across all CrudTable consumers (#260)', () => {
+    render(<Harness />);
+    const leftToolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+
+    expect(leftToolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+  });
 });

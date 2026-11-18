@@ -403,7 +403,6 @@ export function QuestionScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索写作标题或主关键词"
         writeDisabled={writeLocked}
-        toolbarOrder="create-first"
         search={{
           keyword: query.keyword,
           enabled: undefined,

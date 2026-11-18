@@ -6,9 +6,12 @@ import {
   type CrudOrder,
   type CrudPageSize,
 } from '@geomix/shared';
-import { Button, Checkbox, Dropdown, Input, Select, Space, Table } from 'antd';
+import { Button, Checkbox, Dropdown, Input, Select, Table } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
+import { CrudToolbar } from './crud-toolbar';
 import { ExportAction } from './export-action';
+
+export { CrudToolbar, type CrudToolbarProps } from './crud-toolbar';
 
 export type CrudColumn<T> = {
   key: string;
@@ -41,7 +44,7 @@ export function CrudTable<T extends { id: string }>({
   statusFilter,
   emptyText = CRUD_EMPTY_TEXT,
   writeDisabled = false,
-  toolbarOrder = 'default',
+  toolbarOrder: _toolbarOrder = 'create-first',
   storageKey,
   showCreate = true,
   showDensityToggle = true,
@@ -74,7 +77,7 @@ export function CrudTable<T extends { id: string }>({
   statusFilter?: boolean;
   emptyText?: string;
   writeDisabled?: boolean;
-  toolbarOrder?: 'default' | 'create-first';
+  toolbarOrder?: 'create-first';
   storageKey?: string;
   showCreate?: boolean;
   showDensityToggle?: boolean;
@@ -156,103 +159,81 @@ export function CrudTable<T extends { id: string }>({
     onSearch({ ...draft, keyword: draft.keyword.trim() });
   };
 
-  const refreshBtn = (
-    <Button key="refresh" aria-label="刷新" onClick={onRefresh}>
-      刷新
-    </Button>
-  );
-  const createBtn = (
-    <Button
-      key="create"
-      aria-label="添加"
-      type="primary"
-      disabled={writeDisabled || !onCreate}
-      onClick={onCreate}
-    >
-      添加
-    </Button>
-  );
-
-  const leftButtons = showCreate
-    ? toolbarOrder === 'create-first'
-      ? [createBtn, refreshBtn]
-      : [refreshBtn, createBtn]
-    : [refreshBtn];
-
   return (
     <div className="gm-crud">
-      <div className="gm-crud-toolbar">
-        <Space wrap>
-          {leftButtons}
-          <Button
-            aria-label="删除"
-            danger
-            disabled={writeDisabled || !selected || !onDelete}
-            onClick={onDelete}
-          >
-            删除
-          </Button>
-          {onEnable ? (
-            <Button aria-label="启用" disabled={writeDisabled || !selected} onClick={onEnable}>
-              启用
-            </Button>
-          ) : null}
-          {onDisable ? (
-            <Button aria-label="停用" disabled={writeDisabled || !selected} onClick={onDisable}>
-              停用
-            </Button>
-          ) : null}
-          {onBack ? (
-            <Button aria-label="返回上一级" onClick={onBack}>
-              返回上一级
-            </Button>
-          ) : null}
-        </Space>
-        <Space wrap>
-          {showDensityToggle ? (
-            <Button aria-label="切换" onClick={() => setCompact((value) => !value)}>
-              切换
-            </Button>
-          ) : null}
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: columns
-                .filter((column) => column.hideable !== false)
-                .map((column) => ({
-                  key: column.key,
-                  label: (
-                    <Checkbox
-                      checked={!hidden.includes(column.key)}
-                      onChange={(event) => {
-                        setHidden((current) =>
-                          event.target.checked
-                            ? current.filter((key) => key !== column.key)
-                            : [...current, column.key],
-                        );
-                      }}
-                    >
-                      {column.title}
-                    </Checkbox>
-                  ),
-                })),
-            }}
-          >
-            <Button aria-label="列">列</Button>
-          </Dropdown>
-          {showExport ? (
-            <ExportAction
-              empty={!loading && total === 0 && rows.length === 0}
-              onExport={onExport}
-            />
-          ) : null}
-          {showSearch ? (
-            <Button aria-label="搜索" onClick={() => onSearchOpenChange(!searchOpen)}>
-              搜索
-            </Button>
-          ) : null}
-        </Space>
-      </div>
+      <CrudToolbar
+        showCreate={showCreate}
+        createDisabled={writeDisabled || !onCreate}
+        onCreate={onCreate}
+        onRefresh={onRefresh}
+        deleteDisabled={writeDisabled || !selected || !onDelete}
+        onDelete={onDelete}
+        extraLeft={
+          <>
+            {onEnable ? (
+              <Button aria-label="启用" disabled={writeDisabled || !selected} onClick={onEnable}>
+                启用
+              </Button>
+            ) : null}
+            {onDisable ? (
+              <Button aria-label="停用" disabled={writeDisabled || !selected} onClick={onDisable}>
+                停用
+              </Button>
+            ) : null}
+            {onBack ? (
+              <Button aria-label="返回上一级" onClick={onBack}>
+                返回上一级
+              </Button>
+            ) : null}
+          </>
+        }
+        right={
+          <>
+            {showDensityToggle ? (
+              <Button aria-label="切换" onClick={() => setCompact((value) => !value)}>
+                切换
+              </Button>
+            ) : null}
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: columns
+                  .filter((column) => column.hideable !== false)
+                  .map((column) => ({
+                    key: column.key,
+                    label: (
+                      <Checkbox
+                        checked={!hidden.includes(column.key)}
+                        onChange={(event) => {
+                          setHidden((current) =>
+                            event.target.checked
+                              ? current.filter((key) => key !== column.key)
+                              : [...current, column.key],
+                          );
+                        }}
+                      >
+                        {column.title}
+                      </Checkbox>
+                    ),
+                  })),
+              }}
+            >
+              <Button aria-label="列">列</Button>
+            </Dropdown>
+            {showExport ? (
+              <ExportAction
+                empty={!loading && total === 0 && rows.length === 0}
+                onExport={onExport}
+              />
+            ) : null}
+            {showSearch ? (
+              <Button aria-label="搜索" onClick={() => onSearchOpenChange(!searchOpen)}>
+                搜索
+              </Button>
+            ) : null}
+          </>
+        }
+      />
       {showSearch && searchOpen ? (
         <div className="gm-crud-search">
           <Input

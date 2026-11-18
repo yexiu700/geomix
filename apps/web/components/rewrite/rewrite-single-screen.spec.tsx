@@ -435,4 +435,19 @@ describe('RewriteSingleScreen', () => {
     expect(container.querySelector('.ant-table-cell-ellipsis')).toBeTruthy();
     expect(container.querySelector('.ant-table-fixed-column')).toBeTruthy();
   });
+
+  it('places primary 新建单篇复刻 button before 刷新 and 删除 in shared toolbar (#260)', async () => {
+    const { gateway } = makeGateway([makeRecord()]);
+    render(
+      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
+    );
+    await waitFor(() => {
+      expect(findButton('新建单篇复刻')).toBeTruthy();
+    });
+
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['新建单篇复刻', '刷新', '删除']);
+  });
 });

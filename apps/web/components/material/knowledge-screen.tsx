@@ -609,7 +609,6 @@ export function KnowledgeScreen({
         searchPlaceholder="搜索知识库、公司或品牌简称"
         search={search}
         writeDisabled={readOnly}
-        toolbarOrder="create-first"
         onSearchOpenChange={setSearchOpen}
         onSearch={(next) => {
           setPage(1);

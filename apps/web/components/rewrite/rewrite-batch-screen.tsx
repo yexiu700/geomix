@@ -48,6 +48,7 @@ import {
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -649,44 +650,24 @@ export function RewriteBatchScreen({
       {/* Header Banner */}
       <div
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 12,
           padding: '14px 18px',
           background: 'var(--gm-bg-surface)',
           border: '1px solid var(--gm-line-1)',
           borderRadius: 8,
         }}
       >
-        <div>
-          <Space size={10} align="center">
-            <Typography.Title level={4} style={{ margin: 0 }}>
-              {title}
-            </Typography.Title>
-            <Tag color="blue">{unitPoints} 点数/篇 · 按实际成功篇数扣点</Tag>
-            <Tag color="cyan">凑满最大改写量即停 · 差额自动退还</Tag>
-          </Space>
-          <div style={{ marginTop: 4, fontSize: 13, color: 'var(--gm-fg-2)' }}>
-            默认支持粘贴最多 {REWRITE_BATCH_LINK_LIST_MAX}{' '}
-            条公开文章链接批量抓取与结构重构；单链失败或超时自动跳过不扣点，所有插图仅取自
-            {UX_TERMS.gallery}。
-          </div>
-        </div>
-
-        <Space wrap>
-          <ExportAction
-            disabled={busy}
-            empty={!loading && total === 0 && items.length === 0}
-            onExport={handleExport}
-          />
-          {!readOnly && (
-            <Button type="primary" onClick={() => void openCreateModal()} disabled={busy}>
-              新建批量复刻
-            </Button>
-          )}
+        <Space size={10} align="center" wrap>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            {title}
+          </Typography.Title>
+          <Tag color="blue">{unitPoints} 点数/篇 · 按实际成功篇数扣点</Tag>
+          <Tag color="cyan">凑满最大改写量即停 · 差额自动退还</Tag>
         </Space>
+        <div style={{ marginTop: 4, fontSize: 13, color: 'var(--gm-fg-2)' }}>
+          默认支持粘贴最多 {REWRITE_BATCH_LINK_LIST_MAX}{' '}
+          条公开文章链接批量抓取与结构重构；单链失败或超时自动跳过不扣点，所有插图仅取自
+          {UX_TERMS.gallery}。
+        </div>
       </div>
 
       {errorMsg && (
@@ -709,11 +690,10 @@ export function RewriteBatchScreen({
         />
       )}
 
-      {/* Filter & Bulk Action Bar */}
+      {/* Filter Bar */}
       <div
         style={{
           display: 'flex',
-          justifyContent: 'space-between',
           alignItems: 'center',
           flexWrap: 'wrap',
           gap: 10,
@@ -723,77 +703,84 @@ export function RewriteBatchScreen({
           borderRadius: 8,
         }}
       >
-        <Space wrap>
-          <Input.Search
-            allowClear
-            placeholder="搜索任务名称或流量关键词"
-            value={keywordInput}
-            onChange={(e) => setKeywordInput(e.target.value)}
-            onSearch={(val) =>
-              setQuery((prev) => ({ ...prev, page: 1, keyword: val.trim() || undefined }))
-            }
-            style={{ width: 240 }}
-          />
-          <select
-            aria-label="筛选任务状态"
-            style={COMPACT_SELECT_STYLE}
-            value={query.status ?? ''}
-            onChange={(e) =>
-              setQuery((prev) => ({
-                ...prev,
-                page: 1,
-                status: (e.target.value || undefined) as TaskStatusName | undefined,
-              }))
-            }
-          >
-            <option value="">全部任务状态</option>
-            {TASK_STATUSES.map((st) => (
-              <option key={st} value={st}>
-                {REWRITE_BATCH_STATUS_LABELS[st] ?? st}
-              </option>
-            ))}
-          </select>
+        <Input.Search
+          allowClear
+          placeholder="搜索任务名称或流量关键词"
+          value={keywordInput}
+          onChange={(e) => setKeywordInput(e.target.value)}
+          onSearch={(val) =>
+            setQuery((prev) => ({ ...prev, page: 1, keyword: val.trim() || undefined }))
+          }
+          style={{ width: 240 }}
+        />
+        <select
+          aria-label="筛选任务状态"
+          style={COMPACT_SELECT_STYLE}
+          value={query.status ?? ''}
+          onChange={(e) =>
+            setQuery((prev) => ({
+              ...prev,
+              page: 1,
+              status: (e.target.value || undefined) as TaskStatusName | undefined,
+            }))
+          }
+        >
+          <option value="">全部任务状态</option>
+          {TASK_STATUSES.map((st) => (
+            <option key={st} value={st}>
+              {REWRITE_BATCH_STATUS_LABELS[st] ?? st}
+            </option>
+          ))}
+        </select>
 
-          <select
-            aria-label="筛选寻源方式"
-            style={COMPACT_SELECT_STYLE}
-            value={query.sourceType ?? ''}
-            onChange={(e) =>
-              setQuery((prev) => ({
-                ...prev,
-                page: 1,
-                sourceType: (e.target.value || undefined) as RewriteBatchSourceType | undefined,
-              }))
-            }
-          >
-            <option value="">全部寻源方式</option>
-            {REWRITE_BATCH_SOURCE_TYPES.map((st) => (
-              <option key={st} value={st}>
-                {REWRITE_BATCH_SOURCE_LABELS[st]}
-              </option>
-            ))}
-          </select>
-
-          <Button onClick={() => void loadList(query)} disabled={loading || busy}>
-            刷新列表
-          </Button>
-        </Space>
-
-        {!readOnly && (
-          <Space>
-            {selectedIds.length > 0 && (
-              <Typography.Text type="secondary">已选 {selectedIds.length} 项</Typography.Text>
-            )}
-            <Button
-              danger
-              disabled={busy || selectedIds.length === 0}
-              onClick={() => setBulkDeleteConfirmOpen(true)}
-            >
-              批量删除
-            </Button>
-          </Space>
-        )}
+        <select
+          aria-label="筛选寻源方式"
+          style={COMPACT_SELECT_STYLE}
+          value={query.sourceType ?? ''}
+          onChange={(e) =>
+            setQuery((prev) => ({
+              ...prev,
+              page: 1,
+              sourceType: (e.target.value || undefined) as RewriteBatchSourceType | undefined,
+            }))
+          }
+        >
+          <option value="">全部寻源方式</option>
+          {REWRITE_BATCH_SOURCE_TYPES.map((st) => (
+            <option key={st} value={st}>
+              {REWRITE_BATCH_SOURCE_LABELS[st]}
+            </option>
+          ))}
+        </select>
       </div>
+
+      {/* Unified Toolbar */}
+      <CrudToolbar
+        style={{ marginBottom: 0 }}
+        showCreate={!readOnly}
+        createLabel="新建批量复刻"
+        createDisabled={busy}
+        onCreate={() => void openCreateModal()}
+        refreshLabel="刷新列表"
+        refreshDisabled={loading || busy}
+        onRefresh={() => void loadList(query)}
+        showDelete={!readOnly}
+        deleteLabel="批量删除"
+        deleteDisabled={busy || selectedIds.length === 0}
+        onDelete={() => setBulkDeleteConfirmOpen(true)}
+        extraLeft={
+          !readOnly && selectedIds.length > 0 ? (
+            <Typography.Text type="secondary">已选 {selectedIds.length} 项</Typography.Text>
+          ) : null
+        }
+        right={
+          <ExportAction
+            disabled={busy}
+            empty={!loading && total === 0 && items.length === 0}
+            onExport={handleExport}
+          />
+        }
+      />
 
       {/* Minimized Draft Bar */}
       {modalState?.minimized && (

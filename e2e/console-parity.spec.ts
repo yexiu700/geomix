@@ -82,6 +82,15 @@ test.describe('GeoMix 壳层、旧入口跳转与管理后台专项核验 (#23)'
 
     await expect(page.locator('aside.ant-layout-sider .gm-badge')).toContainText('新上');
 
+    // #261: 指令面板内「首页 /dashboard」去重后仅出现唯一一次
+    await page.getByRole('button', { name: '打开指令面板' }).click();
+    const cmdInput = page.getByRole('textbox', { name: '搜索页面或操作' });
+    const cmdList = page.getByRole('listbox', { name: '指令列表' });
+    await expect(cmdInput).toBeVisible();
+    await expect(cmdList.getByRole('option').filter({ hasText: '/dashboard' })).toHaveCount(1);
+    await cmdInput.press('Escape');
+    await expect(cmdList).toBeHidden();
+
     await openMenuLink(page, {
       submenu: 'AI生图',
       itemTitle: 'AI生图',
@@ -90,6 +99,11 @@ test.describe('GeoMix 壳层、旧入口跳转与管理后台专项核验 (#23)'
     const pane = activePane(page);
     await expect(pane.getByRole('button', { name: '查看企业画像图库' })).toBeVisible();
     await expect(pane.getByText(/点数\/张/)).toBeVisible();
+
+    // #260: 列表页工具栏主创建按钮「添加」固定位于「刷新」左侧
+    const leftToolbarButtons = pane.locator('.gm-crud-toolbar > .ant-space:first-child button');
+    await expect(leftToolbarButtons.nth(0)).toHaveAttribute('aria-label', '添加');
+    await expect(leftToolbarButtons.nth(1)).toHaveAttribute('aria-label', '刷新');
 
     await openMenuLink(page, {
       itemTitle: 'AI数据看板',

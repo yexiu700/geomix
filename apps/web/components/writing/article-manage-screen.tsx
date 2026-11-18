@@ -27,6 +27,7 @@ import { Alert, Button, Input, Modal, Space, Table, Tag, Typography } from 'antd
 import type { CSSProperties, ChangeEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import {
@@ -823,91 +824,84 @@ export function ArticleManageScreen({
       ) : null}
 
       {/* 工具栏 */}
-      <div className="gm-crud-toolbar" style={{ marginBottom: 12 }}>
-        <Space wrap>
-          <Button aria-label="刷新" onClick={() => setReloadTick((n) => n + 1)}>
-            刷新
-          </Button>
-          <Button
-            type="primary"
-            aria-label="添加"
-            disabled={readOnly}
-            loading={editorLoading && !editor}
-            onClick={() => void openCreateModal()}
-          >
-            添加
-          </Button>
-          <Button
-            danger
-            aria-label="删除"
-            disabled={readOnly || selectedIds.length === 0}
-            onClick={() => setDeleteTargetIds(selectedIds)}
-          >
-            删除
-          </Button>
-          <Button
-            aria-label="批量设为正常"
-            disabled={readOnly || selectedIds.length === 0}
-            loading={bulkStatusLoading}
-            onClick={() => void handleBulkSetNormal()}
-          >
-            批量设为正常
-          </Button>
-          <Button aria-label="返回上一级" onClick={() => onDispatch?.({ type: 'back', id: tabId })}>
-            返回上一级
-          </Button>
-          <Button
-            aria-label="文章分类"
-            onClick={() =>
-              onDispatch?.({
-                type: 'open',
-                href: '/writing/categories',
-                sourceId: tabId,
-              })
-            }
-          >
-            文章分类
-          </Button>
-        </Space>
-
-        <Space wrap>
-          <select
-            aria-label="压缩包格式"
-            style={COMPACT_SELECT_STYLE}
-            value={archiveFormat}
-            onChange={(e) => setArchiveFormat(e.target.value as ArticleArchiveFormat)}
-          >
-            {ARTICLE_EXPORT_FORMATS.map((fmt) => (
-              <option key={fmt} value={fmt}>
-                {ARCHIVE_FORMAT_LABELS[fmt]}
-              </option>
-            ))}
-          </select>
-          <Button
-            aria-label="打包导出"
-            loading={exportingZip}
-            onClick={() => void handleExportZip(archiveFormat)}
-          >
-            打包导出 (.zip)
-          </Button>
-          <ExportAction
-            label="导出表格"
-            ariaLabel="导出表格"
-            empty={!loading && total === 0 && rows.length === 0}
-            options={[
-              { key: 'csv', label: 'CSV 列表' },
-              { key: 'xlsx', label: 'Excel 列表' },
-            ]}
-            onExport={handleExportTable}
-          />
-          <Button
-            aria-label={filterOpen ? '收起筛选' : '展开筛选'}
-            onClick={() => setFilterOpen((v) => !v)}
-          >
-            {filterOpen ? '收起筛选' : '展开筛选'}
-          </Button>
-        </Space>
-      </div>
+      <CrudToolbar
+        style={{ marginBottom: 12 }}
+        createDisabled={readOnly}
+        createLoading={editorLoading && !editor}
+        onCreate={() => void openCreateModal()}
+        onRefresh={() => setReloadTick((n) => n + 1)}
+        deleteDisabled={readOnly || selectedIds.length === 0}
+        onDelete={() => setDeleteTargetIds(selectedIds)}
+        extraLeft={
+          <>
+            <Button
+              aria-label="批量设为正常"
+              disabled={readOnly || selectedIds.length === 0}
+              loading={bulkStatusLoading}
+              onClick={() => void handleBulkSetNormal()}
+            >
+              批量设为正常
+            </Button>
+            <Button
+              aria-label="返回上一级"
+              onClick={() => onDispatch?.({ type: 'back', id: tabId })}
+            >
+              返回上一级
+            </Button>
+            <Button
+              aria-label="文章分类"
+              onClick={() =>
+                onDispatch?.({
+                  type: 'open',
+                  href: '/writing/categories',
+                  sourceId: tabId,
+                })
+              }
+            >
+              文章分类
+            </Button>
+          </>
+        }
+        right={
+          <>
+            <select
+              aria-label="压缩包格式"
+              style={COMPACT_SELECT_STYLE}
+              value={archiveFormat}
+              onChange={(e) => setArchiveFormat(e.target.value as ArticleArchiveFormat)}
+            >
+              {ARTICLE_EXPORT_FORMATS.map((fmt) => (
+                <option key={fmt} value={fmt}>
+                  {ARCHIVE_FORMAT_LABELS[fmt]}
+                </option>
+              ))}
+            </select>
+            <Button
+              aria-label="打包导出"
+              loading={exportingZip}
+              onClick={() => void handleExportZip(archiveFormat)}
+            >
+              打包导出 (.zip)
+            </Button>
+            <ExportAction
+              label="导出表格"
+              ariaLabel="导出表格"
+              empty={!loading && total === 0 && rows.length === 0}
+              options={[
+                { key: 'csv', label: 'CSV 列表' },
+                { key: 'xlsx', label: 'Excel 列表' },
+              ]}
+              onExport={handleExportTable}
+            />
+            <Button
+              aria-label={filterOpen ? '收起筛选' : '展开筛选'}
+              onClick={() => setFilterOpen((v) => !v)}
+            >
+              {filterOpen ? '收起筛选' : '展开筛选'}
+            </Button>
+          </>
+        }
+      />
 
       {/* 7 项筛选栏：分类、AI 任务、标题、发送次数、转视频次数、状态、创建时间 */}
       {filterOpen ? (

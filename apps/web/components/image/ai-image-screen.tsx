@@ -41,6 +41,7 @@ import {
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import {
@@ -1055,77 +1056,56 @@ export function AiImageScreen({
       )}
 
       {/* Toolbar */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 12,
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
-        <Space wrap>
-          <Button aria-label="刷新" onClick={() => void loadList(false)} loading={loading}>
-            刷新
-          </Button>
-          <Button
-            aria-label="添加"
-            type="primary"
-            disabled={readOnly}
-            onClick={() => void openCreateModal()}
-          >
-            添加
-          </Button>
-          <Button
-            danger
-            disabled={readOnly || selectedIds.length === 0}
-            onClick={() => setDeleteTargetIds(selectedIds)}
-          >
-            删除{selectedIds.length > 0 ? `（${selectedIds.length}）` : ''}
-          </Button>
-        </Space>
-
-        <Space wrap>
-          <Button
-            aria-label="搜索"
-            aria-expanded={searchVisible}
-            onClick={() => setSearchVisible((v) => !v)}
-          >
-            搜索
-          </Button>
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: ALL_COLUMN_KEYS.map((col) => ({
-                key: col.key,
-                label: (
-                  <Checkbox
-                    checked={visibleCols.includes(col.key)}
-                    onChange={(e) => {
-                      setVisibleCols((prev) =>
-                        e.target.checked
-                          ? [...prev, col.key]
-                          : prev.length > 1
-                            ? prev.filter((item) => item !== col.key)
-                            : prev,
-                      );
-                    }}
-                  >
-                    {col.label}
-                  </Checkbox>
-                ),
-              })),
-            }}
-          >
-            <Button aria-label="列">列</Button>
-          </Dropdown>
-          <ExportAction
-            empty={!loading && total === 0 && items.length === 0}
-            onExport={handleExport}
-          />
-        </Space>
-      </div>
+      <CrudToolbar
+        createDisabled={readOnly}
+        onCreate={() => void openCreateModal()}
+        refreshLoading={loading}
+        onRefresh={() => void loadList(false)}
+        deleteLabel={selectedIds.length > 0 ? `删除（${selectedIds.length}）` : '删除'}
+        deleteDisabled={readOnly || selectedIds.length === 0}
+        onDelete={() => setDeleteTargetIds(selectedIds)}
+        right={
+          <>
+            <Button
+              aria-label="搜索"
+              aria-expanded={searchVisible}
+              onClick={() => setSearchVisible((v) => !v)}
+            >
+              搜索
+            </Button>
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: ALL_COLUMN_KEYS.map((col) => ({
+                  key: col.key,
+                  label: (
+                    <Checkbox
+                      checked={visibleCols.includes(col.key)}
+                      onChange={(e) => {
+                        setVisibleCols((prev) =>
+                          e.target.checked
+                            ? [...prev, col.key]
+                            : prev.length > 1
+                              ? prev.filter((item) => item !== col.key)
+                              : prev,
+                        );
+                      }}
+                    >
+                      {col.label}
+                    </Checkbox>
+                  ),
+                })),
+              }}
+            >
+              <Button aria-label="列">列</Button>
+            </Dropdown>
+            <ExportAction
+              empty={!loading && total === 0 && items.length === 0}
+              onExport={handleExport}
+            />
+          </>
+        }
+      />
 
       {/* Table */}
       <Table<AiImageJobItem>
