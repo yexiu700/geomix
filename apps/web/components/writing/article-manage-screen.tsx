@@ -41,9 +41,15 @@ import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import {
   formatShanghaiDateTime,
+  sanitizeEntityTitleSegment,
   triggerBlobDownload,
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
+import {
+  ArticleRichEditor,
+  type ArticleRichEditorHandle,
+  type RichEditorCommand,
+} from './article-rich-editor';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -108,8 +114,18 @@ type EditorModalState = {
   draft: ArticleEditorDraft;
   minimized: boolean;
   maximized: boolean;
-  editorTab: 'edit' | 'preview';
+  editorTab: 'visual' | 'preview' | 'source';
 };
+
+const pendingFilterHandoffs = new Map<string, FilterDraft>();
+
+export function buildArticlesRouteHref(categoryId?: string, taskId?: string): string {
+  const params = new URLSearchParams();
+  if (categoryId) params.set('categoryId', categoryId);
+  if (taskId) params.set('taskId', taskId);
+  const qs = params.toString();
+  return qs ? `/writing/articles?${qs}` : '/writing/articles';
+}
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -178,49 +194,41 @@ export function ArticleManageScreen({
   );
 
   const initialUrlFilter = useMemo(() => articleQueryFromHref(href), [href]);
+  const [initialHandoff] = useState<FilterDraft | null>(() => {
+    const handoff = pendingFilterHandoffs.get(href) ?? null;
+    if (handoff) pendingFilterHandoffs.delete(href);
+    return handoff;
+  });
+  const prevHrefRef = useRef(href);
 
   const [query, setQuery] = useState<ArticleManageQuery>(() => ({
     page: 1,
     pageSize: 10,
     categoryId: initialUrlFilter.categoryId,
     taskId: initialUrlFilter.taskId,
-    keyword: '',
-    status: undefined,
-    sendCount: undefined,
-    videoCount: undefined,
-    createdFrom: undefined,
-    createdTo: undefined,
-    sort: 'createdAt',
-    order: 'desc',
+    keyword: initialHandoff?.keyword.trim() ?? '',
+    status:
+      initialHandoff && isArticleStatus(initialHandoff.status) ? initialHandoff.status : undefined,
+    sendCount: initialHandoff ? parseOptionalIntInput(initialHandoff.sendCount) : undefined,
+    videoCount: initialHandoff ? parseOptionalIntInput(initialHandoff.videoCount) : undefined,
+    createdFrom: initialHandoff?.createdFrom || undefined,
+    createdTo: initialHandoff?.createdTo || undefined,
+    sort: initialHandoff?.sort ?? 'createdAt',
+    order: initialHandoff?.order ?? 'desc',
   }));
 
   const [filterDraft, setFilterDraft] = useState<FilterDraft>(() => ({
     categoryId: initialUrlFilter.categoryId ?? '',
     taskId: initialUrlFilter.taskId ?? '',
-    keyword: '',
-    sendCount: '',
-    videoCount: '',
-    status: '',
-    createdFrom: '',
-    createdTo: '',
-    sort: 'createdAt',
-    order: 'desc',
+    keyword: initialHandoff?.keyword ?? '',
+    sendCount: initialHandoff?.sendCount ?? '',
+    videoCount: initialHandoff?.videoCount ?? '',
+    status: initialHandoff?.status ?? '',
+    createdFrom: initialHandoff?.createdFrom ?? '',
+    createdTo: initialHandoff?.createdTo ?? '',
+    sort: initialHandoff?.sort ?? 'createdAt',
+    order: initialHandoff?.order ?? 'desc',
   }));
-
-  useEffect(() => {
-    const next = articleQueryFromHref(href);
-    setQuery((prev) => ({
-      ...prev,
-      page: 1,
-      categoryId: next.categoryId,
-      taskId: next.taskId,
-    }));
-    setFilterDraft((prev) => ({
-      ...prev,
-      categoryId: next.categoryId ?? '',
-      taskId: next.taskId ?? '',
-    }));
-  }, [href]);
 
   const [filterOpen, setFilterOpen] = useState(true);
   const [rows, setRows] = useState<ArticleManageItem[]>([]);
@@ -235,19 +243,48 @@ export function ArticleManageScreen({
   const [archiveFormat, setArchiveFormat] = useState<ArticleArchiveFormat>('md');
   const [exportingZip, setExportingZip] = useState(false);
 
+  useEffect(() => {
+    if (prevHrefRef.current === href) return;
+    prevHrefRef.current = href;
+    const next = articleQueryFromHref(href);
+    setCategorySummary(null);
+    setQuery((prev) => ({
+      ...prev,
+      page: 1,
+      categoryId: next.categoryId,
+      taskId: next.taskId,
+    }));
+    setFilterDraft((prev) => ({
+      ...prev,
+      categoryId: next.categoryId ?? '',
+      taskId: next.taskId ?? '',
+    }));
+  }, [href]);
+
   const resolvedTitle = useMemo(() => {
-    if (!title.includes('·')) return title;
     const baseTitle = title.split('·')[0]?.trim() || '文章列表';
-    if (categorySummary?.name) return `${baseTitle} · ${categorySummary.name}`;
+    if (!query.categoryId && !query.taskId) {
+      return baseTitle;
+    }
+    const parts: string[] = [baseTitle];
     if (query.categoryId) {
-      const catName = formOptions?.categories.find((c) => c.id === query.categoryId)?.name;
-      if (catName) return `${baseTitle} · ${catName}`;
+      const matchedSummary =
+        categorySummary && categorySummary.id === query.categoryId
+          ? categorySummary.name
+          : undefined;
+      const catName =
+        matchedSummary ||
+        formOptions?.categories.find((c) => c.id === query.categoryId)?.name ||
+        sanitizeEntityTitleSegment(query.categoryId, '按分类筛选');
+      parts.push(catName);
     }
     if (query.taskId) {
-      const taskName = formOptions?.tasks.find((t) => t.id === query.taskId)?.name;
-      if (taskName) return `${baseTitle} · ${taskName}`;
+      const taskName =
+        formOptions?.tasks.find((t) => t.id === query.taskId)?.name ||
+        sanitizeEntityTitleSegment(query.taskId, '按任务筛选');
+      parts.push(taskName);
     }
-    return title;
+    return parts.join(' · ');
   }, [categorySummary, formOptions, query.categoryId, query.taskId, title]);
   useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
@@ -265,6 +302,7 @@ export function ArticleManageScreen({
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const coverFileInputRef = useRef<HTMLInputElement | null>(null);
+  const richEditorRef = useRef<ArticleRichEditorHandle | null>(null);
 
   // Delete confirmation modal
   const [deleteTargetIds, setDeleteTargetIds] = useState<string[] | null>(null);
@@ -362,7 +400,7 @@ export function ArticleManageScreen({
         draft: initial,
         minimized: false,
         maximized: false,
-        editorTab: 'edit',
+        editorTab: 'visual',
       });
       if (initial.mediaCategoryId) {
         await loadAssetsForMediaCategory(initial.mediaCategoryId, !initial.coverUrl);
@@ -398,7 +436,7 @@ export function ArticleManageScreen({
           draft: initial,
           minimized: false,
           maximized: false,
-          editorTab: 'edit',
+          editorTab: 'visual',
         });
         if (defaultMediaCatId) {
           await loadAssetsForMediaCategory(defaultMediaCatId, false);
@@ -432,12 +470,18 @@ export function ArticleManageScreen({
       setBanner({ type: 'warning', text: '转视频次数筛选需填写非负整数' });
       return;
     }
+    const nextCategoryId = filterDraft.categoryId || undefined;
+    const nextTaskId = filterDraft.taskId || undefined;
+    if (nextCategoryId !== query.categoryId) {
+      setCategorySummary(null);
+    }
+    const nextHref = buildArticlesRouteHref(nextCategoryId, nextTaskId);
     setSelectedIds([]);
     setQuery((prev) => ({
       ...prev,
       page: 1,
-      categoryId: filterDraft.categoryId || undefined,
-      taskId: filterDraft.taskId || undefined,
+      categoryId: nextCategoryId,
+      taskId: nextTaskId,
       keyword: filterDraft.keyword.trim(),
       sendCount: parseOptionalIntInput(filterDraft.sendCount),
       videoCount: parseOptionalIntInput(filterDraft.videoCount),
@@ -447,9 +491,18 @@ export function ArticleManageScreen({
       sort: filterDraft.sort,
       order: filterDraft.order,
     }));
+    if (onDispatch && nextHref !== href && tabId !== nextHref) {
+      pendingFilterHandoffs.set(nextHref, {
+        ...filterDraft,
+        categoryId: nextCategoryId ?? '',
+        taskId: nextTaskId ?? '',
+      });
+      onDispatch({ type: 'navigate', id: tabId, href: nextHref });
+    }
   };
 
   const resetFilters = () => {
+    pendingFilterHandoffs.clear();
     setSelectedIds([]);
     setCategorySummary(null);
     setFilterDraft({
@@ -478,7 +531,7 @@ export function ArticleManageScreen({
       sort: 'createdAt',
       order: 'desc',
     }));
-    if (href.includes('?')) {
+    if (href !== '/writing/articles' || tabId !== '/writing/articles') {
       onDispatch?.({ type: 'navigate', id: tabId, href: '/writing/articles' });
     }
   };
@@ -511,7 +564,7 @@ export function ArticleManageScreen({
       const updated: ArticleDetailRecord = await client.approve(articleId);
       setBanner({
         type: 'success',
-        text: `文章「${updated.title}」已标记为已审核（正常）`,
+        text: `文章「${updated.title}」已设为「正常」`,
       });
       if (editor && editor.articleId === articleId) {
         setEditor((cur) => (cur ? { ...cur, draft: { ...cur.draft, status: 'NORMAL' } } : cur));
@@ -521,7 +574,7 @@ export function ArticleManageScreen({
     } catch (err: unknown) {
       setBanner({
         type: 'error',
-        text: err instanceof Error ? err.message : '标记为已审核失败',
+        text: err instanceof Error ? err.message : '设为正常失败',
       });
     }
   };
@@ -600,6 +653,14 @@ export function ArticleManageScreen({
         },
       };
     });
+  };
+
+  const applyEditorCommand = (cmd: RichEditorCommand, fallbackSnippet: string) => {
+    if (editor?.editorTab === 'visual' && richEditorRef.current) {
+      richEditorRef.current.applyFormat(cmd);
+      return;
+    }
+    appendRichBlock(fallbackSnippet);
   };
 
   const handleCoverUploadChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1146,7 +1207,7 @@ export function ArticleManageScreen({
                       void handleApproveOne(row.id);
                     }}
                   >
-                    标记为已审核
+                    设为正常
                   </Button>
                 ) : null}
                 <Button
@@ -1192,13 +1253,13 @@ export function ArticleManageScreen({
           <Space>
             {editor?.mode === 'edit' && editor.articleId && editor.draft.status !== 'NORMAL' ? (
               <Button
-                aria-label="弹窗标记为已审核"
+                aria-label="弹窗设为正常"
                 disabled={submitting}
                 onClick={() => {
                   if (editor.articleId) void handleApproveOne(editor.articleId);
                 }}
               >
-                标记为已审核
+                设为正常
               </Button>
             ) : null}
             <Button
@@ -1505,42 +1566,69 @@ export function ArticleManageScreen({
                     borderBottom: '1px solid var(--gm-line-1)',
                   }}
                 >
-                  <Space size={4} wrap>
-                    <Button size="small" onClick={() => appendRichBlock('<h2>二级小标题</h2>')}>
-                      H2
-                    </Button>
-                    <Button size="small" onClick={() => appendRichBlock('<h3>三级小标题</h3>')}>
-                      H3
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => appendRichBlock('<p><strong>重点加粗内容</strong></p>')}
-                    >
-                      加粗
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => appendRichBlock('<ul><li>要点一</li><li>要点二</li></ul>')}
-                    >
-                      列表
-                    </Button>
-                    <Button
-                      size="small"
-                      onClick={() => appendRichBlock('<blockquote>核心结论引用说明</blockquote>')}
-                    >
-                      引用
-                    </Button>
-                  </Space>
+                  {editor.editorTab === 'preview' ? (
+                    <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                      当前为只读排版预览（切换「可视化编辑」可继续修改）
+                    </span>
+                  ) : (
+                    <Space size={4} wrap>
+                      <Button
+                        size="small"
+                        onClick={() => applyEditorCommand('p', '<p>正文段落内容</p>')}
+                      >
+                        正文
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => applyEditorCommand('h2', '<h2>二级小标题</h2>')}
+                      >
+                        H2
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => applyEditorCommand('h3', '<h3>三级小标题</h3>')}
+                      >
+                        H3
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          applyEditorCommand('bold', '<p><strong>重点加粗内容</strong></p>')
+                        }
+                      >
+                        加粗
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          applyEditorCommand('ul', '<ul><li>要点一</li><li>要点二</li></ul>')
+                        }
+                      >
+                        列表
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          applyEditorCommand(
+                            'blockquote',
+                            '<blockquote>核心结论引用说明</blockquote>',
+                          )
+                        }
+                      >
+                        引用
+                      </Button>
+                    </Space>
+                  )}
 
                   <Space size={8} wrap>
                     <Button
                       size="small"
-                      type={editor.editorTab === 'edit' ? 'primary' : 'default'}
+                      type={editor.editorTab === 'visual' ? 'primary' : 'default'}
                       onClick={() =>
-                        setEditor((cur) => (cur ? { ...cur, editorTab: 'edit' } : cur))
+                        setEditor((cur) => (cur ? { ...cur, editorTab: 'visual' } : cur))
                       }
                     >
-                      编辑内容
+                      可视化编辑
                     </Button>
                     <Button
                       size="small"
@@ -1550,6 +1638,15 @@ export function ArticleManageScreen({
                       }
                     >
                       排版预览
+                    </Button>
+                    <Button
+                      size="small"
+                      type={editor.editorTab === 'source' ? 'primary' : 'default'}
+                      onClick={() =>
+                        setEditor((cur) => (cur ? { ...cur, editorTab: 'source' } : cur))
+                      }
+                    >
+                      HTML 源码
                     </Button>
                     <Button
                       size="small"
@@ -1576,12 +1673,27 @@ export function ArticleManageScreen({
                   </Space>
                 </div>
 
-                {editor.editorTab === 'edit' ? (
+                {editor.editorTab === 'visual' ? (
+                  <ArticleRichEditor
+                    ref={richEditorRef}
+                    value={editor.draft.contentHtml}
+                    onChange={(nextHtml) =>
+                      setEditor((cur) =>
+                        cur
+                          ? {
+                              ...cur,
+                              draft: { ...cur.draft, contentHtml: nextHtml },
+                            }
+                          : cur,
+                      )
+                    }
+                  />
+                ) : editor.editorTab === 'source' ? (
                   <Input.TextArea
-                    aria-label="文章富文本内容"
-                    rows={5}
+                    aria-label="HTML 源码内容"
+                    rows={7}
                     style={{ border: 'none', borderRadius: 0 }}
-                    placeholder="支持输入文章正文或 HTML 富文本标签（如 <h2>、<p>、<strong>、<ul>）..."
+                    placeholder="高级模式：可直接查看或编辑白名单 HTML 标签（如 <h2>、<p>、<strong>、<ul>）..."
                     value={editor.draft.contentHtml}
                     onChange={(e) =>
                       setEditor((cur) =>
@@ -1598,8 +1710,8 @@ export function ArticleManageScreen({
                   <div
                     aria-label="富文本预览区"
                     style={{
-                      minHeight: 120,
-                      maxHeight: 200,
+                      minHeight: 180,
+                      maxHeight: 320,
                       overflowY: 'auto',
                       padding: 12,
                       background: 'var(--gm-bg-surface)',

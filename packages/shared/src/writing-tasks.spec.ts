@@ -290,5 +290,26 @@ describe('writing-tasks shared algorithms', () => {
     expect(processed.contentText).not.toContain('（ARZOPA）（ARZOPA）');
     expect(processed.contentText).not.toContain('只能使用以下事实');
     expect(processed.contentText).not.toContain('企业主体：');
+    expect(processed.contentText).not.toContain('【FAKE】');
+    expect(processed.contentText).not.toContain('开发占位正文');
+    expect(processed.contentText).not.toContain('示例方案甲');
+    expect(processed.contentText).not.toContain('示例方案乙');
+
+    const leakedLlm = [
+      '只能使用以下事实，不得编造参数、资质或案例：',
+      '—— 本篇写作参数 ——',
+      '阿卓帕科技（ARZOPA）（ARZOPA）面向移动办公场景提供便携屏幕方案。',
+      '## 核心优势',
+      '支持全功能 Type-C 一线直连。',
+    ].join('\n');
+    const cleanedLlm = postProcessArticleMarkdown(leakedLlm, {
+      question: '出差办公 ARZOPA 便携屏值得买吗？',
+      mainKeyword: '便携屏',
+      brand: 'ARZOPA',
+    });
+    expect(cleanedLlm.contentText).not.toContain('只能使用以下事实');
+    expect(cleanedLlm.contentText).not.toContain('本篇写作参数');
+    expect(cleanedLlm.contentText).not.toContain('（ARZOPA）（ARZOPA）');
+    expect(cleanedLlm.contentText).toContain('阿卓帕科技（ARZOPA）');
   });
 });
