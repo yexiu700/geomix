@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { expect, type Locator, type Page } from '@playwright/test';
@@ -16,6 +17,17 @@ const repoRoot = resolve(__dirname, '../..');
 const screenshotDir = resolve(repoRoot, 'test-results/e2e-screenshots');
 const mintScriptPath = resolve(__dirname, 'mint-e2e-session.cjs');
 const sessionCache = new Map<string, MintedSession>();
+const localRequire = createRequire(__filename);
+const { runNonBlockingRowPollStep } = localRequire('./poll-row.cjs') as {
+  runNonBlockingRowPollStep: (input: {
+    row: Locator;
+    refreshBtn: Locator;
+    drawerCloseBtn?: Locator;
+    expectedText: string;
+    readTimeoutMs?: number;
+    clickTimeoutMs?: number;
+  }) => Promise<string>;
+};
 
 export function mintSessionTokens(username = 'demo'): MintedSession {
   const cached = sessionCache.get(username);
@@ -55,6 +67,36 @@ export async function injectSessionBeforeLoad(
 
 export function activePane(page: Page): Locator {
   return page.locator('.gm-page:not([hidden])');
+}
+
+export async function pollTableRowUntilContains(
+  page: Page,
+  options: {
+    row: Locator;
+    refreshBtn: Locator;
+    expectedText: string;
+    dismissOpenDrawer?: boolean;
+    timeoutMs?: number;
+  },
+): Promise<void> {
+  const drawerCloseBtn = options.dismissOpenDrawer
+    ? page.locator('.ant-drawer-open .ant-drawer-close').first()
+    : undefined;
+  await expect
+    .poll(
+      () =>
+        runNonBlockingRowPollStep({
+          row: options.row,
+          refreshBtn: options.refreshBtn,
+          drawerCloseBtn,
+          expectedText: options.expectedText,
+        }),
+      {
+        timeout: options.timeoutMs ?? 45_000,
+        intervals: [250, 500, 1_000],
+      },
+    )
+    .toContain(options.expectedText);
 }
 
 export async function openMenuLink(

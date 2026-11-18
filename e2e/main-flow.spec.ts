@@ -5,6 +5,7 @@ import {
   injectSessionBeforeLoad,
   mintSessionTokens,
   openMenuLink,
+  pollTableRowUntilContains,
   saveGeoMixScreenshot,
   selectAntdMultipleOption,
   selectOptionByText,
@@ -253,22 +254,11 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(taskDialog).toBeHidden();
 
     const taskRow = pane.locator('tbody tr', { hasText: writingTaskName });
-    await expect
-      .poll(
-        async () => {
-          const currentText = (await taskRow.textContent().catch(() => '')) ?? '';
-          if (currentText.includes('创作完成')) {
-            return currentText;
-          }
-          const refreshBtn = pane.getByRole('button', { name: '刷新', exact: true });
-          if (await refreshBtn.isVisible().catch(() => false)) {
-            await refreshBtn.click();
-          }
-          return (await taskRow.textContent().catch(() => '')) ?? '';
-        },
-        { timeout: 45_000, intervals: [250, 500, 1_000] },
-      )
-      .toContain('创作完成');
+    await pollTableRowUntilContains(page, {
+      row: taskRow,
+      refreshBtn: pane.getByRole('button', { name: '刷新', exact: true }),
+      expectedText: '创作完成',
+    });
     await expect(taskRow).toContainText('1 / 1');
 
     await taskRow.getByRole('button', { name: `查看详情-${writingTaskName}` }).click();
@@ -393,28 +383,13 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await batchRewriteDialog.getByRole('button', { name: /^开始批量复刻/ }).click();
     await expect(batchRewriteDialog).toBeHidden({ timeout: 15_000 });
 
-    const openDrawerClose = page.locator('.ant-drawer-open .ant-drawer-close');
-    if (await openDrawerClose.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await openDrawerClose.click();
-    }
-
     const batchRow = pane.locator('tbody tr', { hasText: batchRewriteName });
-    await expect
-      .poll(
-        async () => {
-          const currentText = (await batchRow.textContent().catch(() => '')) ?? '';
-          if (currentText.includes('已完成')) {
-            return currentText;
-          }
-          const refreshListBtn = pane.getByRole('button', { name: '刷新列表' });
-          if (await refreshListBtn.isVisible().catch(() => false)) {
-            await refreshListBtn.click();
-          }
-          return (await batchRow.textContent().catch(() => '')) ?? '';
-        },
-        { timeout: 45_000, intervals: [250, 500, 1_000] },
-      )
-      .toContain('已完成');
+    await pollTableRowUntilContains(page, {
+      row: batchRow,
+      refreshBtn: pane.getByRole('button', { name: '刷新列表' }),
+      expectedText: '已完成',
+      dismissOpenDrawer: true,
+    });
     await expect(batchRow).toContainText('1 / 1 篇');
     await saveGeoMixScreenshot(page, '09-rewrite-completed.png');
 
