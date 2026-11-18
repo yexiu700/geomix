@@ -1,6 +1,6 @@
 'use client';
 
-import { Menu, type MenuProps } from 'antd';
+import { Button, Menu, Popover, type MenuProps } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   allSubmenuKeys,
@@ -172,6 +172,7 @@ export function SideMenu({
           items={toAntdItems(flatItems)}
           style={{ borderInlineEnd: 0 }}
         />
+        <UpcomingModulesHint onDispatch={onDispatch} />
       </div>
     );
   }
@@ -213,6 +214,82 @@ export function SideMenu({
           />
         );
       })}
+      <UpcomingModulesHint onDispatch={onDispatch} />
+    </div>
+  );
+}
+
+function UpcomingModulesHint({ onDispatch }: { onDispatch: (action: ShellAction) => void }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      style={{
+        margin: '12px 12px 16px',
+        paddingTop: 10,
+        borderTop: '1px solid var(--gm-line-1)',
+      }}
+    >
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        trigger="click"
+        placement="rightBottom"
+        title="二期功能规划 · 敬请期待"
+        content={
+          <div style={{ width: 220, fontSize: 12, color: 'var(--gm-fg-2)' }}>
+            <div style={{ marginBottom: 6 }}>
+              <strong>文章发布</strong>：多平台内容一键同步发布
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <strong>AI工具</strong>：关键词指数、AI拓词、手动拓词工具
+            </div>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() => {
+                setOpen(false);
+                onDispatch({ type: 'open', href: '/dashboard' });
+              }}
+            >
+              回到首页查看功能概览 →
+            </Button>
+          </div>
+        }
+      >
+        <button
+          type="button"
+          className="gm-upcoming-trigger"
+          aria-label="更多功能敬请期待"
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            borderRadius: 6,
+            border: '1px dashed var(--gm-line-2)',
+            background: 'transparent',
+            color: 'var(--gm-fg-3)',
+            fontSize: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+          }}
+        >
+          <span>更多规划功能</span>
+          <span
+            style={{
+              fontSize: 10,
+              padding: '1px 5px',
+              borderRadius: 4,
+              background: 'var(--gm-bg-surface)',
+              color: 'var(--gm-fg-3)',
+            }}
+          >
+            敬请期待
+          </span>
+        </button>
+      </Popover>
     </div>
   );
 }

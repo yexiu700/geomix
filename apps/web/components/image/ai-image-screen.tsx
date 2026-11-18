@@ -53,6 +53,7 @@ import { resolveMediaUrl } from '../../lib/gallery';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
@@ -214,6 +215,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export function AiImageScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   featureEnabled = true,
   storage,
@@ -224,6 +226,7 @@ export function AiImageScreen({
 }: {
   title: string;
   tabId?: string;
+  active?: boolean;
   readOnly?: boolean;
   featureEnabled?: boolean;
   storage?: SessionStorageLike;
@@ -342,6 +345,16 @@ export function AiImageScreen({
   useEffect(() => {
     void loadList(false);
   }, [loadList]);
+
+  useTabFreshness({
+    active,
+    domains: ['gallery', 'keywords', 'knowledge', 'points'],
+    onRefresh: () => {
+      if (featureEnabled) {
+        void ensureFormOptions();
+      }
+    },
+  });
 
   const hasActiveJobs = useMemo(
     () => items.some((row) => row.status === 'QUEUED' || row.status === 'RUNNING'),
@@ -534,6 +547,7 @@ export function AiImageScreen({
       setBannerInfo(
         `已提交生图订单 ${created.orderNo}（预冻结 ${created.reservedPoints} 点），系统正在后台生成图片。`,
       );
+      invalidateFreshness('points');
       await loadList(false);
     } catch (err) {
       setModalError(err instanceof Error ? err.message : '提交生图任务失败');
@@ -545,7 +559,7 @@ export function AiImageScreen({
   const openSaveGalleryModal = async (job: AiImageJobItem) => {
     setSaveModalError(null);
     setSaveTargetJob(job);
-    const opts = formOptions ?? (await ensureFormOptions());
+    const opts = (await ensureFormOptions()) ?? formOptions;
     const initialCat = job.saveCategoryId || opts?.mediaCategories[0]?.id || '';
     setSaveCategoryId(initialCat);
   };
@@ -567,6 +581,7 @@ export function AiImageScreen({
       setBannerInfo(
         `已将 ${res.savedCount} 张生成图片${wasSaved ? '更换至' : '存入'}图库分组「${res.categoryName}」，AI 写作可直接选用！`,
       );
+      invalidateFreshness('gallery');
       await loadList(false);
     } catch (err) {
       setSaveModalError(err instanceof Error ? err.message : '存入图库失败');
@@ -1177,7 +1192,10 @@ export function AiImageScreen({
             setModalState((prev) => (prev ? { ...prev, draft: prev.initial } : null));
           }}
           onMinimize={() => setModalState((prev) => (prev ? { ...prev, minimized: true } : null))}
-          onRestore={() => setModalState((prev) => (prev ? { ...prev, minimized: false } : null))}
+          onRestore={() => {
+            setModalState((prev) => (prev ? { ...prev, minimized: false } : null));
+            void ensureFormOptions();
+          }}
           onMaximize={() =>
             setModalState((prev) => (prev ? { ...prev, maximized: !prev.maximized } : null))
           }

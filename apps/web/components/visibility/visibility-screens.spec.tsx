@@ -21,6 +21,7 @@ import { useState } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AccountProfile } from '../../lib/api';
 import { initialSnapshot, reduceShell } from '../../lib/tab-stack';
+import { invalidateFreshness, resetFreshnessForTests } from '../../lib/tab-freshness';
 import type { VisibilityGateway } from '../../lib/visibility';
 import { ShellFrame } from '../shell/shell-frame';
 import { VisibilityMonitorsScreen } from './visibility-monitors-screen';
@@ -636,7 +637,7 @@ describe('Visibility feature flag & SideMenu', () => {
     const sider = container.querySelector('aside') as HTMLElement;
     expect(sider).toBeTruthy();
     expect(within(sider).getByText('AI数据看板')).toBeTruthy();
-    expect(within(sider).getAllByText('AI可见度诊断').length).toBeGreaterThanOrEqual(2);
+    expect(within(sider).getAllByText('AI可见度诊断')).toHaveLength(1);
 
     rerender(
       <ShellFrame
@@ -1698,5 +1699,110 @@ describe('VisibilityOverviewScreen', () => {
     expect(screen.getByLabelText('AI数据看板草稿')).toBeTruthy();
     expect(screen.getByTestId('active-href').textContent).toBe('/visibility/overview');
     expect((screen.getByLabelText('看板监测档案') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('refreshes keyword and knowledge base dropdowns when switching back to /visibility/monitors or opening create profile modal (#215)', async () => {
+    resetFreshnessForTests();
+    const base = buildMockGateway();
+    let keywordCreated = false;
+    let kbCreated = false;
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        const res = await base.gateway.listProfiles();
+        return {
+          ...res,
+          prefillSources: {
+            keywords: [
+              ...(res.prefillSources?.keywords ?? []),
+              ...(keywordCreated
+                ? [{ id: 'kw_anker', main: 'Anker氮化镓充电器', brands: ['Anker', '安克'] }]
+                : []),
+            ],
+            knowledgeBases: [
+              ...(res.prefillSources?.knowledgeBases ?? []),
+              ...(kbCreated
+                ? [
+                    {
+                      id: 'kb_anker',
+                      name: 'Anker企业知识库',
+                      companyName: '安克创新',
+                      brandShort: 'Anker',
+                    },
+                  ]
+                : []),
+            ],
+          },
+        };
+      },
+      async listKeywords() {
+        const list = await base.gateway.listKeywords();
+        return keywordCreated
+          ? [
+              ...list,
+              {
+                id: 'kw_anker',
+                main: 'Anker氮化镓充电器',
+                brands: ['Anker', '安克'],
+                optStatus: 'NONE',
+                questionCount: 3,
+                createdAt: '2026-11-18T10:00:00.000Z',
+                updatedAt: '2026-11-18T10:00:00.000Z',
+              },
+            ]
+          : list;
+      },
+    };
+
+    const view = render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        active={true}
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+
+    // Switch away to /material/keywords & /material/knowledge -> tab becomes inactive
+    view.rerender(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        active={false}
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    // Simulate creating keyword & knowledge base in other tabs
+    keywordCreated = true;
+    kbCreated = true;
+    invalidateFreshness('keywords', 'knowledge');
+
+    // Switch back to /visibility/monitors tab -> becomes active again
+    view.rerender(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        active={true}
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    // Open "新建品牌档案" modal and verify freshly created keyword & KB appear immediately
+    fireEvent.click(screen.getByLabelText('新建品牌档案'));
+    await waitFor(() => {
+      const kwSelect = screen.getByLabelText('从关键词快捷预填') as HTMLSelectElement;
+      const kbSelect = screen.getByLabelText('从知识库快捷预填') as HTMLSelectElement;
+      expect(kwSelect.textContent).toContain('Anker氮化镓充电器');
+      expect(kbSelect.textContent).toContain('Anker企业知识库');
+    });
   });
 });

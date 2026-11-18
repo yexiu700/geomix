@@ -51,6 +51,7 @@ import {
   triggerBlobDownload,
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
@@ -170,6 +171,7 @@ export function AiTaskScreen({
   title,
   tabId,
   href,
+  active = true,
   readOnly = false,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   gateway,
@@ -179,6 +181,7 @@ export function AiTaskScreen({
   title: string;
   tabId: string;
   href?: string;
+  active?: boolean;
   readOnly?: boolean;
   pollIntervalMs?: number;
   gateway?: AiTaskGateway;
@@ -329,6 +332,14 @@ export function AiTaskScreen({
     }
   }, [client]);
 
+  useTabFreshness({
+    active,
+    domains: ['keywords', 'questions', 'gallery', 'knowledge', 'prompts', 'categories', 'points'],
+    onRefresh: () => {
+      void refreshFormOptions();
+    },
+  });
+
   const openCreateModal = useCallback(
     async (preferredKeywordId?: string) => {
       setFormError(null);
@@ -422,6 +433,7 @@ export function AiTaskScreen({
       });
       setEditor(null);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('categories', 'tasks', 'articles', 'points');
       setBanner({
         type: 'success',
         text: `写作任务「${created.name}」已进入队列（预冻 ${created.frozenPoints} 点数，共 ${created.target} 篇）`,

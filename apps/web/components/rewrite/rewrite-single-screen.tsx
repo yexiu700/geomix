@@ -21,7 +21,7 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Input, Slider, Space, Switch, Table, Tag, Typography } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
@@ -34,6 +34,7 @@ import {
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 const NO_IMAGE_GALLERY_VALUE = '__NONE__';
 
@@ -186,7 +187,6 @@ export function RewriteSingleScreen({
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
-  const wasActiveRef = useRef(active);
 
   const loadList = useCallback(
     async (nextQuery: RewriteRecordListQuery) => {
@@ -236,12 +236,13 @@ export function RewriteSingleScreen({
     void loadOptions();
   }, [loadOptions]);
 
-  useEffect(() => {
-    if (!wasActiveRef.current && active) {
+  useTabFreshness({
+    active,
+    domains: ['categories', 'gallery', 'prompts', 'points'],
+    onRefresh: () => {
       void loadOptions();
-    }
-    wasActiveRef.current = active;
-  }, [active, loadOptions]);
+    },
+  });
 
   useEffect(() => {
     if (!active || tabId !== '/rewrite/single' || typeof window === 'undefined') return;
@@ -360,6 +361,7 @@ export function RewriteSingleScreen({
           .join(' '),
       });
 
+      invalidateFreshness('articles', 'categories', 'points');
       await Promise.all([loadList({ ...query, page: 1 }), loadOptions()]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : '复刻失败，请稍后重试';
@@ -872,7 +874,10 @@ export function RewriteSingleScreen({
         confirmLoading={submitting}
         error={modalError}
         onMinimize={() => setModalState((prev) => (prev ? { ...prev, minimized: true } : null))}
-        onRestore={() => setModalState((prev) => (prev ? { ...prev, minimized: false } : null))}
+        onRestore={() => {
+          setModalState((prev) => (prev ? { ...prev, minimized: false } : null));
+          void loadOptions();
+        }}
         onMaximize={() =>
           setModalState((prev) => (prev ? { ...prev, maximized: !prev.maximized } : null))
         }

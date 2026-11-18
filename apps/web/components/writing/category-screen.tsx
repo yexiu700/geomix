@@ -13,6 +13,7 @@ import { CategoryApiError, httpCategoryGateway, type CategoryGateway } from '../
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 import { TableClampText } from '../crud/table-clamp-text';
@@ -31,6 +32,7 @@ type Editor = {
 export function CategoryScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   gateway,
   storage,
@@ -38,6 +40,7 @@ export function CategoryScreen({
 }: {
   title: string;
   tabId: string;
+  active?: boolean;
   readOnly?: boolean;
   gateway?: CategoryGateway;
   storage?: SessionStorageLike;
@@ -94,6 +97,14 @@ export function CategoryScreen({
     };
   }, [client, query, reloadKey]);
 
+  useTabFreshness({
+    active,
+    domains: ['tasks', 'articles', 'categories'],
+    onRefresh: () => {
+      setReloadKey((value) => value + 1);
+    },
+  });
+
   async function save(): Promise<void> {
     if (!editor || saving || writeLocked) return;
     setSubmitted(true);
@@ -110,6 +121,7 @@ export function CategoryScreen({
       setEditor(null);
       setSubmitted(false);
       setReloadKey((value) => value + 1);
+      invalidateFreshness('categories');
     } catch (reason) {
       setFormError(messageOf(reason));
       noteLock(reason, setLocked);
@@ -127,6 +139,7 @@ export function CategoryScreen({
       setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
       setPendingDeleteIds(null);
       setReloadKey((value) => value + 1);
+      invalidateFreshness('categories');
     } catch (reason) {
       setPendingDeleteIds(null);
       setError(messageOf(reason));

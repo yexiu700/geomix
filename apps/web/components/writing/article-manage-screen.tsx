@@ -50,6 +50,7 @@ import {
   type ArticleRichEditorHandle,
   type RichEditorCommand,
 } from './article-rich-editor';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -173,6 +174,7 @@ export function ArticleManageScreen({
   title,
   tabId,
   href = '/writing/articles',
+  active = true,
   readOnly = false,
   gateway,
   storage,
@@ -182,6 +184,7 @@ export function ArticleManageScreen({
   title: string;
   tabId: string;
   href?: string;
+  active?: boolean;
   readOnly?: boolean;
   gateway?: ArticleManageGateway;
   storage?: SessionStorageLike;
@@ -333,6 +336,17 @@ export function ArticleManageScreen({
   useEffect(() => {
     void refreshFormOptions();
   }, [refreshFormOptions]);
+
+  useTabFreshness({
+    active,
+    domains: ['categories', 'gallery', 'tasks', 'articles'],
+    onRefresh: (reason) => {
+      void refreshFormOptions();
+      if (reason === 'invalidated') {
+        setReloadTick((n) => n + 1);
+      }
+    },
+  });
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -588,6 +602,7 @@ export function ArticleManageScreen({
       setSelectedIds((prev) => prev.filter((id) => !deleteTargetIds.includes(id)));
       setDeleteTargetIds(null);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('articles', 'categories');
       void refreshFormOptions();
     } catch (err: unknown) {
       setBanner({
@@ -729,6 +744,7 @@ export function ArticleManageScreen({
       }
       setEditor(null);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('articles', 'categories');
       void refreshFormOptions();
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : '保存文章失败');

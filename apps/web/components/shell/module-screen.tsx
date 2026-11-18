@@ -51,6 +51,7 @@ export function ModuleScreen({
         <DashboardScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           aiImageEnabled={aiImageEnabled}
           visibilityEnabled={visibilityEnabled}
           onDispatch={onDispatch}
@@ -59,7 +60,7 @@ export function ModuleScreen({
       </div>
     );
   }
-  if (path === '/workbench/samples') {
+  if (path === '/workbench/samples' && process.env.NODE_ENV !== 'production') {
     return <SampleScreen title={tab.title} readOnly={readOnly} />;
   }
   if (path === '/writing/categories') {
@@ -67,6 +68,7 @@ export function ModuleScreen({
       <CategoryScreen
         title={tab.title}
         tabId={tab.id}
+        active={active}
         readOnly={readOnly}
         onDispatch={onDispatch}
       />
@@ -79,6 +81,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           href={tab.href}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
@@ -96,6 +99,7 @@ export function ModuleScreen({
         <KeywordScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
@@ -110,6 +114,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           href={tab.href}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
@@ -169,6 +174,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           href={tab.href}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
@@ -210,6 +216,7 @@ export function ModuleScreen({
         <AiImageScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           readOnly={readOnly}
           featureEnabled={aiImageEnabled}
           onDispatch={onDispatch}
@@ -225,6 +232,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           href={tab.href}
+          active={active}
           readOnly={readOnly}
           featureEnabled={visibilityEnabled}
           storage={storage}
@@ -241,6 +249,7 @@ export function ModuleScreen({
           title={tab.title}
           tabId={tab.id}
           href={tab.href}
+          active={active}
           readOnly={readOnly}
           featureEnabled={visibilityEnabled}
           storage={storage}
