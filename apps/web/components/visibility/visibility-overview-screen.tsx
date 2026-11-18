@@ -25,13 +25,24 @@ import {
   type VisibilityProfileRecord,
   type VisibilityTrendPoint,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Space, Table, Tabs, Tag, Typography, message } from 'antd';
+import { Alert, Button, Checkbox, Space, Table, Tabs, Tooltip, Typography, message } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GM, formatPct, truncateMiddle } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
-import { citationSourceBadgeColor } from './visibility-monitors-screen';
+import {
+  EngineChipList,
+  SignalEmpty,
+  SignalError,
+  SignalKpiCard,
+  SignalPill,
+  SignalSkeleton,
+  SourceKindChip,
+  TruncText,
+} from '../geo/primitives';
+import { SonarDial } from '../geo/sonar-dial';
 
 const DEFAULT_PROFILE_STORAGE_KEY = 'geomix:visibility:default-profile-id';
 
@@ -39,10 +50,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
   maxWidth: '100%',
 };
@@ -51,10 +62,10 @@ const DATE_INPUT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 8px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
   maxWidth: '100%',
 };
@@ -217,10 +228,17 @@ function VisibilityTrendChartSvg({
               y1={y}
               x2={width - padRight}
               y2={y}
-              stroke="#edf2f7"
+              stroke={GM.chart.grid}
               strokeDasharray={tick === 0 ? undefined : '4 4'}
             />
-            <text x={padLeft - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
+            <text
+              x={padLeft - 8}
+              y={y + 4}
+              textAnchor="end"
+              fontSize="11"
+              className="gm-num"
+              fill={GM.chart.axis}
+            >
               {tick}%
             </text>
           </g>
@@ -244,7 +262,7 @@ function VisibilityTrendChartSvg({
               y={padTop}
               width={colW}
               height={plotH}
-              fill={isHovered ? 'rgba(22, 119, 255, 0.05)' : 'transparent'}
+              fill={isHovered ? GM.bg.hover : 'transparent'}
             />
             <rect
               x={barX}
@@ -252,10 +270,17 @@ function VisibilityTrendChartSvg({
               width={barW}
               height={pt.completedChecks > 0 ? totalH : 2}
               rx={3}
-              fill="#dbeafe"
+              fill="rgba(255,255,255,0.08)"
             />
             {pt.mentionedChecks > 0 ? (
-              <rect x={barX} y={mentionTop} width={barW} height={mentionH} rx={3} fill="#93c5fd" />
+              <rect
+                x={barX}
+                y={mentionTop}
+                width={barW}
+                height={mentionH}
+                rx={3}
+                fill="rgba(61,224,200,0.32)"
+              />
             ) : null}
             {idx % labelStep === 0 || idx === points.length - 1 ? (
               <text
@@ -263,7 +288,8 @@ function VisibilityTrendChartSvg({
                 y={height - 12}
                 textAnchor="middle"
                 fontSize="11"
-                fill={isHovered ? '#1677ff' : '#475569'}
+                className="gm-num"
+                fill={isHovered ? GM.fg.f1 : GM.chart.axis}
                 fontWeight={isHovered ? '600' : '400'}
               >
                 {formatShortDate(pt.date)}
@@ -277,17 +303,16 @@ function VisibilityTrendChartSvg({
       {points.length > 1 ? (
         <polyline
           fill="none"
-          stroke="#722ed1"
-          strokeWidth="2"
-          strokeDasharray="5 3"
+          stroke={GM.chart.c1}
+          strokeWidth="1.5"
+          strokeDasharray="4 3"
           points={sovPolyline}
-          opacity="0.82"
         />
       ) : null}
 
       {/* Visibility % solid polyline */}
       {points.length > 1 ? (
-        <polyline fill="none" stroke="#1677ff" strokeWidth="2.5" points={visPolyline} />
+        <polyline fill="none" stroke={GM.sig.cited} strokeWidth="2" points={visPolyline} />
       ) : null}
 
       {/* Data nodes */}
@@ -295,16 +320,26 @@ function VisibilityTrendChartSvg({
         const cx = padLeft + idx * colW + colW / 2;
         const cy = yPct(pt.visibilityPct);
         const sov = typeof pt.shareOfVoicePct === 'number' ? pt.shareOfVoicePct : periodSoVPct;
+        const isHovered = activeIndex === idx;
         return (
           <g key={`${pt.date}-nodes`} onMouseEnter={() => onHoverIndex(idx)}>
-            <circle cx={cx} cy={yPct(sov)} r={2.8} fill="#722ed1" />
+            <circle
+              cx={cx}
+              cy={yPct(sov)}
+              r={isHovered ? 4.5 : 3}
+              fill={GM.bg.surface}
+              stroke={GM.chart.c1}
+              strokeWidth="1.5"
+              className="gm-trend-node"
+            />
             <circle
               cx={cx}
               cy={cy}
-              r={activeIndex === idx ? 5 : 3.6}
-              fill="#ffffff"
-              stroke="#1677ff"
-              strokeWidth="2.2"
+              r={isHovered ? 4.5 : 3}
+              fill={GM.bg.surface}
+              stroke={GM.sig.cited}
+              strokeWidth="2"
+              className="gm-trend-node"
             />
           </g>
         );
@@ -357,6 +392,7 @@ export function VisibilityOverviewScreen({
   const urlProfileId = useMemo(() => readInitialProfileId(href), [href]);
 
   const [profiles, setProfiles] = useState<VisibilityProfileRecord[]>([]);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [filterDraft, setFilterDraft] = useState<OverviewFilterState>(() => ({
     profileId: urlProfileId ?? '',
     engine: '',
@@ -390,6 +426,8 @@ export function VisibilityOverviewScreen({
   const [citationPage, setCitationPage] = useState<number>(1);
   const [citationPageSize, setCitationPageSize] = useState<CrudPageSize>(10);
   const [citationsLoading, setCitationsLoading] = useState<boolean>(true);
+  const [citationsError, setCitationsError] = useState<string | null>(null);
+  const [citationRetryTick, setCitationRetryTick] = useState<number>(0);
   const [citationsData, setCitationsData] = useState<VisibilityCitationListResponse>(() => ({
     page: 1,
     pageSize: 10,
@@ -435,6 +473,7 @@ export function VisibilityOverviewScreen({
       .then((res) => {
         if (cancelled) return;
         setProfiles(res.items);
+        setProfilesLoaded(true);
         if (!urlProfileId && res.items.length > 0) {
           const savedDefault =
             typeof window !== 'undefined' && window.localStorage
@@ -450,7 +489,9 @@ export function VisibilityOverviewScreen({
           }
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setProfilesLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -504,6 +545,7 @@ export function VisibilityOverviewScreen({
     }
     let cancelled = false;
     setCitationsLoading(true);
+    setCitationsError(null);
 
     const engine = isVisibilityEngine(appliedFilter.engine) ? appliedFilter.engine : undefined;
     const sourceKind =
@@ -530,7 +572,7 @@ export function VisibilityOverviewScreen({
       })
       .catch((err) => {
         if (cancelled) return;
-        setBannerError(err instanceof Error ? err.message : '加载引用溯源排行榜失败');
+        setCitationsError(err instanceof Error ? err.message : '加载引用溯源排行榜失败');
       })
       .finally(() => {
         if (!cancelled) setCitationsLoading(false);
@@ -539,7 +581,15 @@ export function VisibilityOverviewScreen({
     return () => {
       cancelled = true;
     };
-  }, [appliedFilter, citationPage, citationPageSize, citationSourceKind, client, featureEnabled]);
+  }, [
+    appliedFilter,
+    citationPage,
+    citationPageSize,
+    citationRetryTick,
+    citationSourceKind,
+    client,
+    featureEnabled,
+  ]);
 
   // Load tenant keywords for target keyword selection in opportunities tab
   useEffect(() => {
@@ -663,6 +713,14 @@ export function VisibilityOverviewScreen({
     setAppliedFilter(clean);
   }, []);
 
+  const handleSelectEngine = useCallback((eng: VisibilityEngineKey | undefined) => {
+    const nextEngine = eng ?? '';
+    setFilterError(null);
+    setFilterDraft((curr) => ({ ...curr, engine: nextEngine }));
+    setCitationPage(1);
+    setAppliedFilter((curr) => ({ ...curr, engine: nextEngine }));
+  }, []);
+
   // Derive daily primary trend series
   const dailyTrendSeries = useMemo<TrendSeriesPoint[]>(() => {
     const selectedEng = isVisibilityEngine(appliedFilter.engine) ? appliedFilter.engine : null;
@@ -739,6 +797,11 @@ export function VisibilityOverviewScreen({
     onDispatch?.({ type: 'open', href: targetHref, sourceId: tabId });
   }
 
+  const maxCitationCount = useMemo(
+    () => citationsData.items.reduce((acc, item) => Math.max(acc, item.citationCount), 0),
+    [citationsData.items],
+  );
+
   if (!featureEnabled) {
     return (
       <section>
@@ -754,27 +817,81 @@ export function VisibilityOverviewScreen({
     );
   }
 
+  const selectedDialEngine = isVisibilityEngine(appliedFilter.engine)
+    ? appliedFilter.engine
+    : undefined;
+
+  if (
+    profilesLoaded &&
+    profiles.length === 0 &&
+    !overviewLoading &&
+    metrics.completedChecks === 0 &&
+    !bannerError
+  ) {
+    return (
+      <section style={{ minWidth: 0 }}>
+        <div className="gm-overview-header">
+          <div>
+            <h1 className="gm-overview-title">{title}</h1>
+            <div className="gm-overview-desc">
+              全景追踪企业品牌在各大生成式 AI 引擎中的提及率、行业声量占比（Share of
+              Voice）、推荐顺位与引用信源分布
+            </div>
+          </div>
+          <Button type="primary" aria-label="发起可见度诊断" onClick={goToMonitors}>
+            发起可见度诊断
+          </Button>
+        </div>
+        <div className="gm-panel">
+          <SignalEmpty
+            title="暂无品牌监测档案"
+            description="创建监测档案并发起多引擎可见度诊断后，即可在此查看 AI 提及率、声呐盘与引用溯源。"
+            actionText="发起可见度诊断"
+            onAction={goToMonitors}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  const sentimentTotal = metrics.sentimentSummary.total;
+  const sentimentRows = [
+    {
+      key: 'positive',
+      label: '正面',
+      count: metrics.sentimentSummary.positive,
+      color: GM.sentiment.positive,
+    },
+    {
+      key: 'neutral',
+      label: '中性',
+      count: metrics.sentimentSummary.neutral,
+      color: GM.sentiment.neutral,
+    },
+    {
+      key: 'mixed',
+      label: '褒贬参半',
+      count: metrics.sentimentSummary.mixed,
+      color: GM.sentiment.mixed,
+    },
+    {
+      key: 'negative',
+      label: '负面',
+      count: metrics.sentimentSummary.negative,
+      color: GM.sentiment.negative,
+    },
+  ];
+
   return (
     <section style={{ minWidth: 0 }}>
       {/* Page Header */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
+      <div className="gm-overview-header">
         <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
-            {title}
-          </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          <h1 className="gm-overview-title">{title}</h1>
+          <div className="gm-overview-desc">
             全景追踪企业品牌在各大生成式 AI 引擎中的提及率、行业声量占比（Share of
             Voice）、推荐顺位与引用信源分布
-          </Typography.Text>
+          </div>
         </div>
         <Button type="primary" aria-label="发起可见度诊断" onClick={goToMonitors}>
           发起可见度诊断
@@ -782,19 +899,7 @@ export function VisibilityOverviewScreen({
       </div>
 
       {/* Top Filter Bar */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: 8,
-          padding: 12,
-          marginBottom: 12,
-          borderRadius: 10,
-          border: '1px solid #e6eaf0',
-          background: '#f8fafc',
-        }}
-      >
+      <div className="gm-filterbar">
         <select
           aria-label="看板监测档案"
           style={{ ...COMPACT_SELECT_STYLE, width: 190 }}
@@ -831,11 +936,12 @@ export function VisibilityOverviewScreen({
           {([7, 14, 30] as const).map((dayNum) => {
             const isSelected = !filterDraft.from && !filterDraft.to && filterDraft.days === dayNum;
             return (
-              <Button
+              <button
                 key={dayNum}
-                size="small"
-                type={isSelected ? 'primary' : 'default'}
+                type="button"
+                className={isSelected ? 'gm-day-pill gm-day-pill-active' : 'gm-day-pill'}
                 aria-label={`近${dayNum}天`}
+                aria-pressed={isSelected}
                 onClick={() => {
                   setFilterError(null);
                   const next: OverviewFilterState = {
@@ -850,7 +956,7 @@ export function VisibilityOverviewScreen({
                 }}
               >
                 近 {dayNum} 天
-              </Button>
+              </button>
             );
           })}
         </Space>
@@ -863,7 +969,7 @@ export function VisibilityOverviewScreen({
             value={filterDraft.from}
             onChange={(e) => setFilterDraft((curr) => ({ ...curr, from: e.target.value }))}
           />
-          <span style={{ color: '#64748b', fontSize: 12 }}>至</span>
+          <span style={{ color: GM.fg.f3, fontSize: 12 }}>至</span>
           <input
             type="date"
             aria-label="结束日期"
@@ -904,404 +1010,344 @@ export function VisibilityOverviewScreen({
       ) : null}
 
       {/* 4 Core KPI Cards */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        <div className="gm-right-card" data-testid="kpi-visibility">
-          <div className="label">品牌提及率（Visibility %）</div>
-          <div className="value" style={{ color: '#1677ff' }}>
-            {metrics.visibilityPct.toFixed(1)}%
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: '#64748b' }}>
-            提及 {metrics.mentionedChecks} 次 / 有效观测 {metrics.completedChecks} 次
-          </div>
-        </div>
-
-        <div className="gm-right-card" data-testid="kpi-sov">
-          <div className="label">品牌声量占比（Share of Voice %）</div>
-          <div className="value" style={{ color: '#722ed1' }}>
-            {metrics.shareOfVoice.brandSharePct.toFixed(1)}%
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: '#64748b' }}>
-            本品牌 {metrics.shareOfVoice.brandMentions} 次 / 赛道总声量{' '}
-            {metrics.shareOfVoice.totalMentions} 次
-          </div>
-        </div>
-
-        <div className="gm-right-card" data-testid="kpi-position">
-          <div className="label">平均推荐顺位（Avg Position）</div>
-          <div className="value" style={{ color: '#0f766e' }}>
-            {metrics.avgPosition !== null ? `#${metrics.avgPosition.toFixed(1)}` : '—'}
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: '#64748b' }}>
-            {metrics.avgPosition !== null
+      <div className="gm-overview-kpi-grid">
+        <SignalKpiCard
+          testId="kpi-visibility"
+          label="品牌提及率（Visibility %）"
+          value={formatPct(metrics.visibilityPct)}
+          tone="cited"
+          numerator={metrics.mentionedChecks}
+          denominator={metrics.completedChecks}
+          caption="提及 / 有效观测"
+          loading={overviewLoading}
+        />
+        <SignalKpiCard
+          testId="kpi-sov"
+          label="品牌声量占比（Share of Voice %）"
+          value={formatPct(metrics.shareOfVoice.brandSharePct)}
+          tone="cited"
+          numerator={metrics.shareOfVoice.brandMentions}
+          denominator={metrics.shareOfVoice.totalMentions}
+          caption="本品牌 / 赛道总声量"
+          loading={overviewLoading}
+        />
+        <SignalKpiCard
+          testId="kpi-position"
+          label="平均推荐顺位（Avg Position）"
+          value={metrics.avgPosition !== null ? `#${metrics.avgPosition.toFixed(1)}` : '—'}
+          tone="info"
+          caption={
+            metrics.avgPosition !== null
               ? '顺位越靠前代表 AI 首推权重越高'
-              : '当前筛选周期内暂无命中顺位'}
-          </div>
-        </div>
-
-        <div className="gm-right-card" data-testid="kpi-owned-citation">
-          <div className="label">自有域名引用率（Owned Citation %）</div>
-          <div className="value" style={{ color: '#0891b2' }}>
-            {metrics.ownedCitationRatePct.toFixed(1)}%
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: '#64748b' }}>
-            自有引用 {metrics.ownedCitations}/{metrics.totalCitations} 次 · 正面情感{' '}
-            {metrics.sentimentSummary.positivePct.toFixed(1)}%
-          </div>
-        </div>
+              : '当前筛选周期内暂无命中顺位'
+          }
+          loading={overviewLoading}
+        />
+        <SignalKpiCard
+          testId="kpi-owned-citation"
+          label="自有域名引用率（Owned Citation %）"
+          value={formatPct(metrics.ownedCitationRatePct)}
+          tone="cited"
+          numerator={metrics.ownedCitations}
+          denominator={metrics.totalCitations}
+          caption={`自有引用 · 正面情感 ${metrics.sentimentSummary.positivePct.toFixed(1)}%`}
+          loading={overviewLoading}
+        />
       </div>
 
-      {/* Charts & Competitive Landscape Row */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))',
-          gap: 14,
-          marginBottom: 16,
-        }}
-      >
-        {/* Left: Trend Chart */}
-        <div
-          style={{
-            padding: 16,
-            borderRadius: 10,
-            border: '1px solid #e6eaf0',
-            background: '#ffffff',
-            minWidth: 0,
-          }}
-        >
+      {/* Main Analysis Grid: Left SonarDial (360px) + Right Trend & SoV/Sentiment */}
+      <div className="gm-overview-main-grid">
+        {/* Left: Engine Coverage SonarDial */}
+        <div className="gm-panel">
           <div
             style={{
               display: 'flex',
-              flexWrap: 'wrap',
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: 8,
-              marginBottom: 10,
+              marginBottom: 8,
             }}
           >
             <div>
-              <Typography.Text strong style={{ fontSize: 15 }}>
-                可见度与声量变化趋势
-              </Typography.Text>
-              <div style={{ fontSize: 12, color: '#64748b' }}>
-                {activeTrendPoint
-                  ? `${activeTrendPoint.date}：检测 ${activeTrendPoint.completedChecks} 次 · 提及 ${activeTrendPoint.mentionedChecks} 次 · 提及率 ${activeTrendPoint.visibilityPct.toFixed(1)}%`
-                  : `展示周期内每日品牌提及率（实线）、声量占比（虚线）与有效检测量（柱状）`}
+              <div className="gm-panel-title">引擎覆盖</div>
+              <div className="gm-panel-sub">
+                {selectedDialEngine
+                  ? `已筛选：${VISIBILITY_ENGINE_LABELS[selectedDialEngine] ?? selectedDialEngine}（再点取消）`
+                  : '点击辐条可按 AI 引擎联动筛选'}
               </div>
             </div>
-            <Space size={10} wrap style={{ fontSize: 12 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 2,
-                    background: '#1677ff',
-                    display: 'inline-block',
-                  }}
-                />
-                提及率 %
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span
-                  style={{
-                    width: 10,
-                    height: 3,
-                    background: '#722ed1',
-                    display: 'inline-block',
-                  }}
-                />
-                声量占比 %
-              </span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                <span
-                  style={{
-                    width: 10,
-                    height: 10,
-                    borderRadius: 2,
-                    background: '#93c5fd',
-                    display: 'inline-block',
-                  }}
-                />
-                检测/提及量
-              </span>
-            </Space>
+            {selectedDialEngine ? (
+              <Button size="small" onClick={() => handleSelectEngine(undefined)}>
+                清除引擎
+              </Button>
+            ) : null}
           </div>
 
-          {overviewLoading ? (
-            <div style={{ padding: '48px 0', textAlign: 'center', color: '#64748b' }}>
-              正在聚合趋势数据…
-            </div>
-          ) : !hasTrendActivity ? (
-            <div
-              data-testid="visibility-trend-empty"
-              style={{
-                padding: '44px 16px',
-                textAlign: 'center',
-                borderRadius: 8,
-                background: '#f8fafc',
-                border: '1px dashed #d9e2ef',
-              }}
-            >
-              <Typography.Text strong style={{ display: 'block', marginBottom: 6 }}>
-                当前筛选范围内暂无有效 AI 检测趋势记录
-              </Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                切换时间窗口或前往「AI可见度诊断」发起新一轮多引擎监测后即可查看趋势曲线。
-              </Typography.Text>
-            </div>
-          ) : (
-            <VisibilityTrendChartSvg
-              points={dailyTrendSeries}
-              periodSoVPct={metrics.shareOfVoice.brandSharePct}
-              activeIndex={hoveredTrendIdx}
-              onHoverIndex={setHoveredTrendIdx}
-            />
-          )}
+          <SonarDial
+            byEngine={engineBreakdown}
+            overallPct={metrics.visibilityPct}
+            selectedEngine={selectedDialEngine}
+            onSelectEngine={handleSelectEngine}
+            loading={overviewLoading}
+          />
+
+          <div className="gm-sonar-legend">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: GM.sig.cited,
+                  display: 'inline-block',
+                }}
+              />
+              已提及
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  border: `1px dashed ${GM.sig.absent}`,
+                  display: 'inline-block',
+                }}
+              />
+              未观测
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ color: GM.phosphor, fontSize: 10, lineHeight: 1 }}>▲</span>
+              扫描
+            </span>
+          </div>
         </div>
 
-        {/* Right: Competitor SoV + Sentiment + Per-Engine Breakdown */}
-        <div
-          style={{
-            padding: 16,
-            borderRadius: 10,
-            border: '1px solid #e6eaf0',
-            background: '#ffffff',
-            minWidth: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-          }}
-        >
-          {/* Share of Voice Leaderboard */}
-          <div>
-            <Typography.Text strong style={{ fontSize: 15, display: 'block', marginBottom: 8 }}>
-              品牌 vs 竞品声量对比榜（Share of Voice）
-            </Typography.Text>
-            {metrics.shareOfVoice.entries.length === 0 ? (
-              <Typography.Text type="secondary">暂无品牌与竞品对比数据</Typography.Text>
-            ) : (
-              <div style={{ display: 'grid', gap: 8 }}>
-                {metrics.shareOfVoice.entries.map((entry, idx) => {
-                  const visPct = computeVisibilityPct(entry.mentions, metrics.completedChecks);
-                  return (
-                    <div
-                      key={`${entry.isBrand ? 'brand' : 'comp'}-${entry.name}`}
-                      data-testid={entry.isBrand ? 'sov-brand-row' : `sov-comp-row-${entry.name}`}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 8,
-                        border: entry.isBrand ? '1px solid #91caff' : '1px solid #f0f2f5',
-                        background: entry.isBrand ? '#f0f7ff' : '#fafafa',
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 6,
-                          marginBottom: 4,
-                        }}
-                      >
-                        <Space size={6} wrap>
-                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                            #{idx + 1}
-                          </Typography.Text>
-                          <Typography.Text strong>{entry.name}</Typography.Text>
-                          {entry.isBrand ? <Tag color="blue">本品牌</Tag> : <Tag>竞品</Tag>}
-                        </Space>
-                        <Space size={8} style={{ fontSize: 12 }}>
-                          <span>提及 {entry.mentions} 次</span>
-                          <span style={{ color: '#64748b' }}>可见率 {visPct.toFixed(1)}%</span>
-                          <strong style={{ color: entry.isBrand ? '#1677ff' : '#d97706' }}>
-                            声量 {entry.sharePct.toFixed(1)}%
-                          </strong>
-                        </Space>
-                      </div>
-                      <div
-                        style={{
-                          width: '100%',
-                          height: 7,
-                          borderRadius: 999,
-                          background: '#e5e7eb',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${Math.max(0, Math.min(100, entry.sharePct))}%`,
-                            height: '100%',
-                            borderRadius: 999,
-                            background: entry.isBrand ? '#1677ff' : '#f59e0b',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Sentiment Distribution Bar */}
-          <div>
+        {/* Right Stack: Trend Card + SoV/Sentiment Card */}
+        <div className="gm-overview-right-stack">
+          {/* Upper Card: Visibility & SoV Trend */}
+          <div className="gm-panel">
             <div
               style={{
                 display: 'flex',
                 flexWrap: 'wrap',
-                justifyContent: 'space-between',
                 alignItems: 'center',
-                gap: 6,
-                marginBottom: 6,
+                justifyContent: 'space-between',
+                gap: 8,
+                marginBottom: 10,
               }}
             >
-              <Typography.Text strong style={{ fontSize: 14 }}>
-                本品牌情感倾向分布
-              </Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                共 {metrics.sentimentSummary.total} 次情感评估
-              </Typography.Text>
+              <div>
+                <div className="gm-panel-title">可见度与声量变化趋势</div>
+                <div className="gm-panel-sub gm-num">
+                  {activeTrendPoint
+                    ? `${activeTrendPoint.date}：检测 ${activeTrendPoint.completedChecks} 次 · 提及 ${activeTrendPoint.mentionedChecks} 次 · 提及率 ${activeTrendPoint.visibilityPct.toFixed(1)}%`
+                    : '展示周期内每日品牌提及率（实线）、声量占比（虚线）与有效检测量（柱状）'}
+                </div>
+              </div>
+              <Space size={10} wrap style={{ fontSize: 12, color: GM.fg.f2 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 2,
+                      background: GM.sig.cited,
+                      display: 'inline-block',
+                    }}
+                  />
+                  提及率 %
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 2,
+                      borderTop: `1.5px dashed ${GM.chart.c1}`,
+                      display: 'inline-block',
+                    }}
+                  />
+                  声量占比 %
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: 2,
+                      background: 'rgba(61,224,200,0.32)',
+                      display: 'inline-block',
+                    }}
+                  />
+                  检测/提及量
+                </span>
+              </Space>
             </div>
 
-            {metrics.sentimentSummary.total > 0 ? (
-              <>
+            {overviewLoading ? (
+              <SignalSkeleton variant="block" height={220} />
+            ) : !hasTrendActivity ? (
+              <div data-testid="visibility-trend-empty">
+                <SignalEmpty
+                  title="当前筛选范围内暂无有效 AI 检测趋势记录"
+                  description="切换时间窗口或前往「AI可见度诊断」发起新一轮多引擎监测后即可查看趋势曲线。"
+                />
+              </div>
+            ) : (
+              <VisibilityTrendChartSvg
+                points={dailyTrendSeries}
+                periodSoVPct={metrics.shareOfVoice.brandSharePct}
+                activeIndex={hoveredTrendIdx}
+                onHoverIndex={setHoveredTrendIdx}
+              />
+            )}
+          </div>
+
+          {/* Lower Card: Share of Voice + Sentiment */}
+          <div className="gm-panel">
+            <div className="gm-overview-subgrid">
+              {/* Left: Competitor Share of Voice */}
+              <div style={{ minWidth: 0 }}>
+                <div className="gm-panel-title" style={{ marginBottom: 8 }}>
+                  品牌 vs 竞品声量对比榜（Share of Voice）
+                </div>
+                {metrics.shareOfVoice.entries.length === 0 ? (
+                  <SignalEmpty title="暂无品牌与竞品对比数据" />
+                ) : (
+                  <div style={{ display: 'grid', gap: 4 }}>
+                    {metrics.shareOfVoice.entries.map((entry) => {
+                      const visPct = computeVisibilityPct(entry.mentions, metrics.completedChecks);
+                      return (
+                        <Tooltip
+                          key={`${entry.isBrand ? 'brand' : 'comp'}-${entry.name}`}
+                          title={`提及 ${entry.mentions} 次 · 可见率 ${visPct.toFixed(1)}%`}
+                        >
+                          <div
+                            data-testid={
+                              entry.isBrand ? 'sov-brand-row' : `sov-comp-row-${entry.name}`
+                            }
+                            className="gm-sov-row"
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                minWidth: 0,
+                              }}
+                            >
+                              <Tooltip title={entry.name}>
+                                <span
+                                  className="gm-clamp-1"
+                                  style={{ fontSize: 13, color: GM.fg.f1 }}
+                                >
+                                  {entry.name}
+                                </span>
+                              </Tooltip>
+                              {entry.isBrand ? <SignalPill tone="cited">我方</SignalPill> : null}
+                            </div>
+                            <div className="gm-sov-track">
+                              <div
+                                className="gm-sov-fill"
+                                style={{
+                                  width: `${Math.max(0, Math.min(100, entry.sharePct))}%`,
+                                  background: entry.isBrand ? GM.sig.cited : GM.sig.competitor,
+                                }}
+                              />
+                            </div>
+                            <span
+                              className="gm-num"
+                              style={{
+                                fontSize: 12,
+                                textAlign: 'right',
+                                color: entry.isBrand ? GM.sig.cited : GM.fg.f2,
+                              }}
+                            >
+                              <span className="gm-sr-only">{`声量 ${entry.sharePct.toFixed(1)}%`}</span>
+                              <span aria-hidden="true">{entry.sharePct.toFixed(1)}%</span>
+                            </span>
+                          </div>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Sentiment Distribution */}
+              <div style={{ minWidth: 0 }}>
                 <div
                   style={{
                     display: 'flex',
-                    width: '100%',
-                    height: 10,
-                    borderRadius: 999,
-                    overflow: 'hidden',
-                    background: '#f1f5f9',
-                    marginBottom: 6,
+                    flexWrap: 'wrap',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginBottom: 8,
                   }}
                 >
-                  <div
-                    style={{
-                      width: `${(metrics.sentimentSummary.positive / metrics.sentimentSummary.total) * 100}%`,
-                      background: '#0d9488',
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: `${(metrics.sentimentSummary.neutral / metrics.sentimentSummary.total) * 100}%`,
-                      background: '#64748b',
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: `${(metrics.sentimentSummary.mixed / metrics.sentimentSummary.total) * 100}%`,
-                      background: '#d97706',
-                    }}
-                  />
-                  <div
-                    style={{
-                      width: `${(metrics.sentimentSummary.negative / metrics.sentimentSummary.total) * 100}%`,
-                      background: '#e11d48',
-                    }}
-                  />
+                  <div className="gm-panel-title">本品牌情感倾向分布</div>
+                  <div className="gm-panel-sub gm-num">共 {sentimentTotal} 次情感评估</div>
                 </div>
-              </>
-            ) : null}
 
-            <Space size={[6, 6]} wrap style={{ fontSize: 12 }}>
-              <Tag color="cyan">正面 {metrics.sentimentSummary.positive}</Tag>
-              <Tag>中性 {metrics.sentimentSummary.neutral}</Tag>
-              <Tag color="orange">褒贬参半 {metrics.sentimentSummary.mixed}</Tag>
-              <Tag color="red">负面 {metrics.sentimentSummary.negative}</Tag>
-            </Space>
-          </div>
+                {sentimentTotal > 0 ? (
+                  <div className="gm-sentiment-bar">
+                    {sentimentRows.map((row) =>
+                      row.count > 0 ? (
+                        <div
+                          key={row.key}
+                          style={{
+                            width: `${(row.count / sentimentTotal) * 100}%`,
+                            background: row.color,
+                          }}
+                        />
+                      ) : null,
+                    )}
+                  </div>
+                ) : (
+                  <div className="gm-sentiment-bar" />
+                )}
 
-          {/* Per-Engine Breakdown */}
-          <div>
-            <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 6 }}>
-              各 AI 引擎可见度表现明细
-            </Typography.Text>
-            {engineBreakdown.length === 0 ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                当前条件下暂无分引擎观测明细
-              </Typography.Text>
-            ) : (
-              <div style={{ width: '100%', overflowX: 'auto' }}>
-                <table
-                  style={{
-                    width: '100%',
-                    minWidth: 320,
-                    borderCollapse: 'collapse',
-                    fontSize: 13,
-                  }}
-                >
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid #e6eaf0', color: '#64748b' }}>
-                      <th style={{ textAlign: 'left', padding: '6px 4px', fontWeight: 500 }}>
-                        引擎
-                      </th>
-                      <th style={{ textAlign: 'right', padding: '6px 4px', fontWeight: 500 }}>
-                        观测数
-                      </th>
-                      <th style={{ textAlign: 'right', padding: '6px 4px', fontWeight: 500 }}>
-                        提及率
-                      </th>
-                      <th style={{ textAlign: 'right', padding: '6px 4px', fontWeight: 500 }}>
-                        平均顺位
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {engineBreakdown.map((item) => (
-                      <tr key={item.engine} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '6px 4px' }}>
-                          {VISIBILITY_ENGINE_LABELS[item.engine] ?? item.engine}
-                        </td>
-                        <td style={{ textAlign: 'right', padding: '6px 4px' }}>
-                          {item.mentionedChecks}/{item.completedChecks}
-                        </td>
-                        <td style={{ textAlign: 'right', padding: '6px 4px' }}>
-                          <Tag
-                            color={
-                              item.visibilityPct >= 50
-                                ? 'success'
-                                : item.visibilityPct > 0
-                                  ? 'processing'
-                                  : 'default'
-                            }
-                            style={{ marginInlineEnd: 0 }}
-                          >
-                            {item.visibilityPct.toFixed(1)}%
-                          </Tag>
-                        </td>
-                        <td style={{ textAlign: 'right', padding: '6px 4px' }}>
-                          {item.avgPosition !== null ? `#${item.avgPosition.toFixed(1)}` : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="gm-sentiment-legend">
+                  {sentimentRows.map((row) => {
+                    const pct = sentimentTotal > 0 ? (row.count / sentimentTotal) * 100 : 0;
+                    return (
+                      <div
+                        key={row.key}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 6,
+                          color: GM.fg.f2,
+                        }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <span
+                            style={{
+                              width: 7,
+                              height: 7,
+                              borderRadius: '50%',
+                              background: row.color,
+                              flex: 'none',
+                            }}
+                          />
+                          <span>{row.label}</span>
+                        </span>
+                        <span className="gm-num" style={{ color: GM.fg.f1 }}>
+                          {row.count} ({pct.toFixed(1)}%)
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Bottom Analytics Tabs (Citations + extensible slot for Issue #60) */}
-      <div
-        style={{
-          padding: 16,
-          borderRadius: 10,
-          border: '1px solid #e6eaf0',
-          background: '#ffffff',
-          minWidth: 0,
-        }}
-      >
+      {/* Bottom Analytics Tabs (Citations + Opportunities + extensible slot) */}
+      <div className="gm-panel">
         <Tabs
           activeKey={activeBottomTab}
           onChange={setActiveBottomTab}
@@ -1326,149 +1372,223 @@ export function VisibilityOverviewScreen({
                       marginBottom: 12,
                     }}
                   >
-                    <Button
-                      size="small"
-                      type={citationSourceKind === 'ALL' ? 'primary' : 'default'}
+                    <button
+                      type="button"
+                      className={
+                        citationSourceKind === 'ALL'
+                          ? 'gm-source-pill-btn gm-source-pill-btn-active'
+                          : 'gm-source-pill-btn'
+                      }
                       aria-label="来源分类-全部"
+                      aria-pressed={citationSourceKind === 'ALL'}
                       onClick={() => {
                         setCitationSourceKind('ALL');
                         setCitationPage(1);
                       }}
                     >
-                      全部信源（{allCitationTotal}）
-                    </Button>
+                      <span>全部信源</span>
+                      <span className="gm-num">（{allCitationTotal}）</span>
+                    </button>
                     {CITATION_SOURCE_KINDS.map((kind) => {
                       const count = breakdownCounts[kind] ?? 0;
                       const active = citationSourceKind === kind;
                       return (
-                        <Button
+                        <button
                           key={kind}
-                          size="small"
-                          type={active ? 'primary' : 'default'}
+                          type="button"
+                          className={
+                            active
+                              ? 'gm-source-pill-btn gm-source-pill-btn-active'
+                              : 'gm-source-pill-btn'
+                          }
                           aria-label={`来源分类-${CITATION_SOURCE_LABELS[kind]}`}
+                          aria-pressed={active}
                           onClick={() => {
                             setCitationSourceKind(kind);
                             setCitationPage(1);
                           }}
                         >
-                          {CITATION_SOURCE_LABELS[kind]}（{count}）
-                        </Button>
+                          <SourceKindChip kind={kind} />
+                          <span className="gm-num">（{count}）</span>
+                        </button>
                       );
                     })}
                   </div>
 
                   {/* Paginated Domain & URL Leaderboard */}
-                  <div style={{ width: '100%', overflowX: 'auto' }}>
-                    <Table<VisibilityCitationSummaryItem>
-                      rowKey="domain"
-                      size="middle"
-                      loading={citationsLoading}
-                      dataSource={citationsData.items}
-                      scroll={{ x: 740 }}
-                      locale={{
-                        emptyText:
-                          '当前筛选条件下暂无 AI 引用信源记录，完成可见度监测后将自动汇总高权重引用域名与具体落地页',
-                      }}
-                      pagination={{
-                        current: citationPage,
-                        pageSize: citationPageSize,
-                        total: citationsData.total,
-                        showSizeChanger: true,
-                        pageSizeOptions: CRUD_PAGE_SIZES.map(String),
-                        onChange: (nextPage, nextSize) => {
-                          const normalized = normalizePageSize(nextSize);
-                          setCitationPage(normalized === citationPageSize ? nextPage : 1);
-                          setCitationPageSize(normalized);
-                        },
-                      }}
-                      columns={[
-                        {
-                          key: 'rank',
-                          title: '排名',
-                          width: 68,
-                          render: (_val, _row, index) =>
-                            `#${(citationPage - 1) * citationPageSize + index + 1}`,
-                        },
-                        {
-                          key: 'domain',
-                          dataIndex: 'domain',
-                          title: '引用域名',
-                          width: 200,
-                          render: (domain: string) => (
-                            <Typography.Text strong>{domain}</Typography.Text>
-                          ),
-                        },
-                        {
-                          key: 'sourceKind',
-                          dataIndex: 'sourceKind',
-                          title: '信源分类',
-                          width: 120,
-                          render: (kind: CitationSourceKind) => (
-                            <Tag color={citationSourceBadgeColor(kind)}>
-                              {CITATION_SOURCE_LABELS[kind]}
-                            </Tag>
-                          ),
-                        },
-                        {
-                          key: 'citationCount',
-                          dataIndex: 'citationCount',
-                          title: '被引用次数',
-                          width: 110,
-                          render: (count: number) => <strong>{count} 次</strong>,
-                        },
-                        {
-                          key: 'questionCount',
-                          dataIndex: 'questionCount',
-                          title: '覆盖问题数',
-                          width: 110,
-                          render: (count: number) => `${count} 题`,
-                        },
-                        {
-                          key: 'topUrls',
-                          title: '热门被引用页面（Top URLs）',
-                          render: (_val, row) => {
-                            if (row.topUrls.length === 0) {
-                              return <Typography.Text type="secondary">—</Typography.Text>;
-                            }
-                            const isExpanded = Boolean(expandedDomains[row.domain]);
-                            const visibleUrls = isExpanded ? row.topUrls : row.topUrls.slice(0, 2);
-                            return (
-                              <div style={{ display: 'grid', gap: 4 }}>
-                                {visibleUrls.map((u) => (
-                                  <div key={u.url} style={{ fontSize: 12, wordBreak: 'break-all' }}>
-                                    <Tag style={{ marginInlineEnd: 6 }}>{u.count} 次</Tag>
-                                    {u.title ? (
-                                      <strong style={{ marginInlineEnd: 6 }}>{u.title}</strong>
-                                    ) : null}
-                                    <span style={{ color: '#475569' }}>{u.url}</span>
-                                  </div>
-                                ))}
-                                {row.topUrls.length > 2 ? (
-                                  <div>
-                                    <Button
-                                      type="link"
-                                      size="small"
-                                      style={{ paddingInline: 0 }}
-                                      onClick={() =>
-                                        setExpandedDomains((curr) => ({
-                                          ...curr,
-                                          [row.domain]: !isExpanded,
-                                        }))
-                                      }
-                                    >
-                                      {isExpanded
-                                        ? '收起页面列表'
-                                        : `展开全部 ${row.topUrls.length} 个被引用页面`}
-                                    </Button>
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          },
-                        },
-                      ]}
+                  {citationsError ? (
+                    <SignalError
+                      message={citationsError}
+                      onRetry={() => setCitationRetryTick((t) => t + 1)}
                     />
-                  </div>
+                  ) : citationsLoading && citationsData.items.length === 0 ? (
+                    <SignalSkeleton variant="row" rows={5} />
+                  ) : (
+                    <div className="gm-table-scroll">
+                      <Table<VisibilityCitationSummaryItem>
+                        rowKey="domain"
+                        size="middle"
+                        loading={citationsLoading}
+                        dataSource={citationsData.items}
+                        scroll={{ x: 740 }}
+                        locale={{
+                          emptyText: (
+                            <SignalEmpty title="当前筛选条件下暂无 AI 引用信源记录，完成可见度监测后将自动汇总高权重引用域名与具体落地页" />
+                          ),
+                        }}
+                        pagination={{
+                          current: citationPage,
+                          pageSize: citationPageSize,
+                          total: citationsData.total,
+                          showSizeChanger: true,
+                          pageSizeOptions: CRUD_PAGE_SIZES.map(String),
+                          onChange: (nextPage, nextSize) => {
+                            const normalized = normalizePageSize(nextSize);
+                            setCitationPage(normalized === citationPageSize ? nextPage : 1);
+                            setCitationPageSize(normalized);
+                          },
+                        }}
+                        columns={[
+                          {
+                            key: 'rank',
+                            title: '排名',
+                            width: 64,
+                            align: 'right',
+                            render: (_val, _row, index) => (
+                              <span className="gm-num" style={{ color: GM.fg.f3 }}>
+                                #{(citationPage - 1) * citationPageSize + index + 1}
+                              </span>
+                            ),
+                          },
+                          {
+                            key: 'domain',
+                            dataIndex: 'domain',
+                            title: '引用域名',
+                            width: 220,
+                            render: (domain: string) => {
+                              const truncated =
+                                domain.length > 40 ? truncateMiddle(domain, 40) : domain;
+                              return domain.length > 40 ? (
+                                <Tooltip title={domain}>
+                                  <span className="gm-mono" style={{ color: GM.fg.f1 }}>
+                                    {truncated}
+                                  </span>
+                                </Tooltip>
+                              ) : (
+                                <span className="gm-mono" style={{ color: GM.fg.f1 }}>
+                                  {domain}
+                                </span>
+                              );
+                            },
+                          },
+                          {
+                            key: 'sourceKind',
+                            dataIndex: 'sourceKind',
+                            title: '信源分类',
+                            width: 120,
+                            render: (kind: CitationSourceKind) => <SourceKindChip kind={kind} />,
+                          },
+                          {
+                            key: 'citationCount',
+                            dataIndex: 'citationCount',
+                            title: '被引用次数',
+                            width: 120,
+                            align: 'right',
+                            render: (count: number) => {
+                              const pct =
+                                maxCitationCount > 0
+                                  ? Math.round((count / maxCitationCount) * 100)
+                                  : 0;
+                              return (
+                                <div
+                                  className="gm-count-bar-cell gm-num"
+                                  style={{ '--p': `${pct}%` } as CSSProperties}
+                                >
+                                  {count} 次
+                                </div>
+                              );
+                            },
+                          },
+                          {
+                            key: 'questionCount',
+                            dataIndex: 'questionCount',
+                            title: '覆盖问题数',
+                            width: 110,
+                            align: 'right',
+                            render: (count: number) => <span className="gm-num">{count} 题</span>,
+                          },
+                          {
+                            key: 'topUrls',
+                            title: '热门被引用页面（Top URLs）',
+                            render: (_val, row) => {
+                              if (row.topUrls.length === 0) {
+                                return <span style={{ color: GM.fg.f3 }}>—</span>;
+                              }
+                              const isExpanded = Boolean(expandedDomains[row.domain]);
+                              const visibleUrls = isExpanded
+                                ? row.topUrls
+                                : row.topUrls.slice(0, 2);
+                              return (
+                                <div style={{ display: 'grid', gap: 4 }}>
+                                  {visibleUrls.map((u) => (
+                                    <div
+                                      key={u.url}
+                                      style={{
+                                        display: 'flex',
+                                        flexWrap: 'wrap',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        fontSize: 12,
+                                      }}
+                                    >
+                                      <span className="gm-num" style={{ color: GM.fg.f3 }}>
+                                        {u.count} 次
+                                      </span>
+                                      {u.title ? (
+                                        <span style={{ color: GM.fg.f1, fontWeight: 500 }}>
+                                          {u.title}
+                                        </span>
+                                      ) : null}
+                                      <Tooltip title={u.url}>
+                                        <a
+                                          href={u.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="gm-mono"
+                                          style={{ color: GM.status.info }}
+                                        >
+                                          {truncateMiddle(u.url, 56)}
+                                        </a>
+                                      </Tooltip>
+                                    </div>
+                                  ))}
+                                  {row.topUrls.length > 2 ? (
+                                    <div>
+                                      <Button
+                                        type="link"
+                                        size="small"
+                                        style={{ paddingInline: 0 }}
+                                        onClick={() =>
+                                          setExpandedDomains((curr) => ({
+                                            ...curr,
+                                            [row.domain]: !isExpanded,
+                                          }))
+                                        }
+                                      >
+                                        {isExpanded
+                                          ? '收起页面列表'
+                                          : `展开全部 ${row.topUrls.length} 个被引用页面`}
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            },
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
                 </div>
               ),
             },
@@ -1490,20 +1610,11 @@ export function VisibilityOverviewScreen({
 
                   {/* Action Bar */}
                   <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      padding: '10px 12px',
-                      borderRadius: 8,
-                      border: '1px solid #e6eaf0',
-                      background: '#f8fafc',
-                    }}
+                    className="gm-filterbar"
+                    style={{ justifyContent: 'space-between', marginBottom: 0 }}
                   >
                     <Space wrap size={8}>
-                      <Typography.Text style={{ fontSize: 13 }}>目标主词：</Typography.Text>
+                      <span style={{ fontSize: 13, color: GM.fg.f2 }}>目标主词：</span>
                       <select
                         aria-label="目标主词"
                         style={{ ...COMPACT_SELECT_STYLE, minWidth: 180 }}
@@ -1521,9 +1632,9 @@ export function VisibilityOverviewScreen({
                           ))
                         )}
                       </select>
-                      <Tag color={selectedOpportunityTitles.length > 0 ? 'blue' : 'default'}>
-                        已选 {selectedOpportunityTitles.length} 条
-                      </Tag>
+                      <SignalPill tone={selectedOpportunityTitles.length > 0 ? 'info' : 'neutral'}>
+                        <span className="gm-num">已选 {selectedOpportunityTitles.length} 条</span>
+                      </SignalPill>
                       {selectedOpportunityTitles.length > 0 ? (
                         <Button
                           size="small"
@@ -1555,13 +1666,10 @@ export function VisibilityOverviewScreen({
 
                   {/* Section 1: Competitor Gaps */}
                   <div style={{ minWidth: 0 }}>
-                    <Typography.Text
-                      strong
-                      style={{ fontSize: 14, display: 'block', marginBottom: 8 }}
-                    >
+                    <div className="gm-panel-title" style={{ marginBottom: 8 }}>
                       竞品命中但本品牌未提及（内容缺口问题）
-                    </Typography.Text>
-                    <div style={{ width: '100%', overflowX: 'auto' }}>
+                    </div>
+                    <div className="gm-table-scroll">
                       <Table<VisibilityOpportunityGapItem>
                         rowKey="promptText"
                         size="small"
@@ -1570,7 +1678,9 @@ export function VisibilityOverviewScreen({
                         pagination={false}
                         scroll={{ x: 680 }}
                         locale={{
-                          emptyText: '当前筛选条件下暂无竞品命中但本品牌未提及的缺口问题',
+                          emptyText: (
+                            <SignalEmpty title="当前筛选条件下暂无竞品命中但本品牌未提及的缺口问题" />
+                          ),
                         }}
                         columns={[
                           {
@@ -1593,21 +1703,32 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'promptText',
                             title: '缺口问题（Prompt）',
                             render: (text: string) => (
-                              <Typography.Text strong>{text}</Typography.Text>
+                              <span style={{ color: GM.fg.f1, fontWeight: 500 }}>
+                                <TruncText text={text} lines={2} />
+                              </span>
                             ),
                           },
                           {
                             key: 'competitors',
                             dataIndex: 'competitors',
                             title: '命中竞品',
-                            width: 200,
+                            width: 220,
                             render: (comps: string[]) => (
                               <Space size={[4, 4]} wrap>
-                                {comps.map((c) => (
-                                  <Tag key={c} color="orange" style={{ marginInlineEnd: 0 }}>
+                                {comps.slice(0, 3).map((c) => (
+                                  <SignalPill key={c} tone="competitor">
                                     {c}
-                                  </Tag>
+                                  </SignalPill>
                                 ))}
+                                {comps.length > 3 ? (
+                                  <Tooltip title={comps.slice(3).join('、')}>
+                                    <span>
+                                      <SignalPill tone="neutral">
+                                        <span className="gm-num">+{comps.length - 3}</span>
+                                      </SignalPill>
+                                    </span>
+                                  </Tooltip>
+                                ) : null}
                               </Space>
                             ),
                           },
@@ -1615,15 +1736,9 @@ export function VisibilityOverviewScreen({
                             key: 'engines',
                             dataIndex: 'engines',
                             title: '出现引擎',
-                            width: 180,
+                            width: 200,
                             render: (engines: VisibilityEngineKey[]) => (
-                              <Space size={[4, 4]} wrap>
-                                {engines.map((eng) => (
-                                  <Tag key={eng} style={{ marginInlineEnd: 0 }}>
-                                    {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
-                                  </Tag>
-                                ))}
-                              </Space>
+                              <EngineChipList engines={engines} max={3} />
                             ),
                           },
                           {
@@ -1631,7 +1746,8 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'observationCount',
                             title: '出现次数',
                             width: 96,
-                            render: (count: number) => `${count} 次`,
+                            align: 'right',
+                            render: (count: number) => <span className="gm-num">{count} 次</span>,
                           },
                         ]}
                       />
@@ -1640,13 +1756,10 @@ export function VisibilityOverviewScreen({
 
                   {/* Section 2: Query Fan-Out */}
                   <div style={{ minWidth: 0 }}>
-                    <Typography.Text
-                      strong
-                      style={{ fontSize: 14, display: 'block', marginBottom: 8 }}
-                    >
+                    <div className="gm-panel-title" style={{ marginBottom: 8 }}>
                       高频搜索拆解词（Query Fan-Out）
-                    </Typography.Text>
-                    <div style={{ width: '100%', overflowX: 'auto' }}>
+                    </div>
+                    <div className="gm-table-scroll">
                       <Table<VisibilityFanOutItem>
                         rowKey="query"
                         size="small"
@@ -1655,7 +1768,9 @@ export function VisibilityOverviewScreen({
                         pagination={false}
                         scroll={{ x: 680 }}
                         locale={{
-                          emptyText: '当前筛选条件下暂无 AI 引擎搜索拆解词（Query Fan-Out）记录',
+                          emptyText: (
+                            <SignalEmpty title="当前筛选条件下暂无 AI 引擎搜索拆解词（Query Fan-Out）记录" />
+                          ),
                         }}
                         columns={[
                           {
@@ -1678,36 +1793,51 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'query',
                             title: '搜索拆解词（Fan-Out Query）',
                             width: 240,
-                            render: (q: string) => <Typography.Text strong>{q}</Typography.Text>,
+                            render: (q: string) => (
+                              <span style={{ color: GM.fg.f1, fontWeight: 500 }}>{q}</span>
+                            ),
                           },
                           {
                             key: 'frequency',
                             dataIndex: 'frequency',
                             title: '出现频次',
                             width: 96,
-                            render: (freq: number) => <Tag color="blue">{freq} 次</Tag>,
+                            align: 'right',
+                            render: (freq: number) => (
+                              <SignalPill tone="info">
+                                <span className="gm-num">{freq} 次</span>
+                              </SignalPill>
+                            ),
                           },
                           {
                             key: 'brandMentionedPct',
                             dataIndex: 'brandMentionedPct',
                             title: '品牌覆盖率',
-                            width: 110,
-                            render: (pct?: number) =>
-                              typeof pct === 'number' ? `${pct.toFixed(1)}%` : '—',
+                            width: 136,
+                            align: 'right',
+                            render: (pct?: number) => {
+                              if (typeof pct !== 'number') {
+                                return <span style={{ color: GM.fg.f3 }}>—</span>;
+                              }
+                              const clamped = Math.max(0, Math.min(100, pct));
+                              return (
+                                <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                                  {formatPct(pct)}
+                                  <span
+                                    className="gm-cov-mini-bar"
+                                    style={{ '--p': `${clamped}%` } as CSSProperties}
+                                  />
+                                </span>
+                              );
+                            },
                           },
                           {
                             key: 'engines',
                             dataIndex: 'engines',
                             title: '引擎',
-                            width: 160,
+                            width: 180,
                             render: (engines: VisibilityEngineKey[]) => (
-                              <Space size={[4, 4]} wrap>
-                                {engines.map((eng) => (
-                                  <Tag key={eng} style={{ marginInlineEnd: 0 }}>
-                                    {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
-                                  </Tag>
-                                ))}
-                              </Space>
+                              <EngineChipList engines={engines} max={3} />
                             ),
                           },
                           {
@@ -1716,11 +1846,11 @@ export function VisibilityOverviewScreen({
                             title: '来源问题预览',
                             render: (prompts: string[]) =>
                               prompts.length > 0 ? (
-                                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                  {prompts.join('；')}
-                                </Typography.Text>
+                                <span style={{ color: GM.fg.f3, fontSize: 12 }}>
+                                  <TruncText text={prompts.join('；')} lines={2} />
+                                </span>
                               ) : (
-                                '—'
+                                <span style={{ color: GM.fg.f3 }}>—</span>
                               ),
                           },
                         ]}
