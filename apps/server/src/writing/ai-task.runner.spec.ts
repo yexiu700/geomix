@@ -26,7 +26,7 @@ function buildInMemoryHarness() {
       kbId: null as string | null,
       contentTplId: 'tpl_79',
       titleTplId: null as string | null,
-      mediaCategoryId: 'cat_79',
+      mediaCategoryId: 'cat_79' as string | null,
       categoryId: 'artcat_79',
       imageCount: 0,
       resultStatus: 'NORMAL' as const,
@@ -194,7 +194,7 @@ function buildInMemoryHarness() {
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
       systemTemplateSeeded: true,
       promptTemplate: {
-        count: vi.fn(async () => 4),
+        count: vi.fn(async () => 18),
         findFirst: vi.fn(async () => ({
           id: 'tpl_79',
           content: '请围绕 {{question}} 撰写一篇专业选型指南，自然提及 {{brand}}。',
@@ -536,5 +536,32 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
     expect(art.contentText).not.toContain('（ARZOPA）（ARZOPA）');
     expect(art.contentText).not.toContain('只能使用以下事实');
     expect(art.contentText).not.toContain('企业主体：');
+  });
+
+  it('completes pure-text task with imageCount=0 and mediaCategoryId=null without querying MediaAsset (#148)', async () => {
+    process.env.COVER_WHEN_NO_IMAGE = 'true';
+    const { state, prisma, billing, quota, kbIndexer } = buildInMemoryHarness();
+    state.task.mediaCategoryId = null;
+    state.task.imageCount = 0;
+
+    const runner = new AiTaskRunner(
+      prisma,
+      billing,
+      quota,
+      LlmService.fromEnv({}),
+      new ComplianceService(),
+      kbIndexer,
+    );
+
+    await runner.process({ tenantId: 'tenant_79', taskId: 'task_79' });
+
+    expect(state.task.status).toBe('COMPLETED');
+    expect(state.task.doneCount).toBe(1);
+    expect(state.articles).toHaveLength(1);
+    const tx = await prisma.base.$transaction(async (inner) => inner);
+    const mediaQueries = vi
+      .mocked(tx.$queryRaw)
+      .mock.calls.filter((call) => String(call[0]).includes('FROM "MediaAsset"'));
+    expect(mediaQueries).toHaveLength(0);
   });
 });

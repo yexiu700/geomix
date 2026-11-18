@@ -12,6 +12,7 @@ import {
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { formatShanghaiDateTime, useSyncTabTitle } from '../../lib/ux-foundation';
+import { TableClampText } from '../crud/table-clamp-text';
 
 export function ArticleListScreen({
   title,
@@ -138,7 +139,14 @@ export function ArticleListScreen({
           },
         }}
         columns={[
-          { title: '标题', dataIndex: 'title', key: 'title' },
+          {
+            title: '标题',
+            dataIndex: 'title',
+            key: 'title',
+            render: (value: string) => (
+              <TableClampText text={value} lines={2} tooltipThreshold={28} />
+            ),
+          },
           {
             title: '状态',
             dataIndex: 'status',
@@ -147,7 +155,17 @@ export function ArticleListScreen({
             render: (status: string) =>
               isArticleStatus(status) ? ARTICLE_STATUS_LABEL[status] : status,
           },
-          { title: '发送次数', dataIndex: 'sendCount', key: 'sendCount', width: 110 },
+          {
+            title: '发送次数',
+            dataIndex: 'sendCount',
+            key: 'sendCount',
+            width: 110,
+            render: (value: number) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {value}
+              </span>
+            ),
+          },
           {
             title: '计入剩余量',
             dataIndex: 'countsAsRemaining',
@@ -160,7 +178,11 @@ export function ArticleListScreen({
             dataIndex: 'createdAt',
             key: 'createdAt',
             width: 156,
-            render: (value: string) => formatShanghaiDateTime(value),
+            render: (value: string) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {formatShanghaiDateTime(value)}
+              </span>
+            ),
           },
         ]}
       />

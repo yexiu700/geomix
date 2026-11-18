@@ -57,6 +57,7 @@ describe('phase-1 migration', () => {
       '20261117120000_visibility',
       '20261118083000_media_asset_original_name',
       '20261118090000_announcement_audit_fields',
+      '20261118120000_ai_task_nullable_media_category',
       '20261118130000_rewrite_optional_gallery',
     ]);
     const sql = readFileSync(

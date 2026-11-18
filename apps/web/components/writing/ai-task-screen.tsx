@@ -35,12 +35,14 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
+import { TableClampText } from '../crud/table-clamp-text';
 import { httpAiTaskGateway, type AiTaskFormOptions, type AiTaskGateway } from '../../lib/ai-tasks';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
@@ -317,6 +319,16 @@ export function AiTaskScreen({
     });
   }, [editor?.draft.target, editor?.draft.kbId, baseAiWritePoints, kbAddonPoints]);
 
+  const refreshFormOptions = useCallback(async (): Promise<AiTaskFormOptions | null> => {
+    try {
+      const opts = await client.loadFormOptions();
+      setFormOptions(opts);
+      return opts;
+    } catch {
+      return null;
+    }
+  }, [client]);
+
   const openCreateModal = useCallback(
     async (preferredKeywordId?: string) => {
       setFormError(null);
@@ -353,42 +365,43 @@ export function AiTaskScreen({
     if (!editor) return;
     const d = editor.draft;
     const trimmedName = d.name.trim();
+    const errors: string[] = [];
     if (!trimmedName) {
-      setFormError('请填写任务名称');
-      return;
+      errors.push('请填写任务名称');
     }
     if (!d.keywordId) {
-      setFormError('请选择蒸馏训练词');
-      return;
+      errors.push('请选择蒸馏训练词');
+    } else {
+      const pickedKw = formOptions?.keywords.find((k) => k.id === d.keywordId);
+      if (pickedKw && pickedKw.questionCount < 1) {
+        errors.push('所选训练主词下暂无写作问题，请先前往「写作标题」添加问题');
+      }
     }
-    const pickedKw = formOptions?.keywords.find((k) => k.id === d.keywordId);
-    if (pickedKw && pickedKw.questionCount < 1) {
-      setFormError('所选训练主词下暂无写作问题，请先前往「写作标题」添加问题');
-      return;
-    }
-    if (!d.mediaCategoryId) {
-      setFormError('请选择画像图库');
-      return;
-    }
-    const pickedGal = formOptions?.mediaCategories.find((g) => g.id === d.mediaCategoryId);
-    if (d.imageCount > 0 && pickedGal && pickedGal.assetCount < 1) {
-      setFormError('所选画像图库暂无图片，请先上传图片或将文章配图调为 0 张');
-      return;
+    if (d.imageCount > 0) {
+      if (!d.mediaCategoryId) {
+        errors.push('请选择画像图库');
+      } else {
+        const pickedGal = formOptions?.mediaCategories.find((g) => g.id === d.mediaCategoryId);
+        if (pickedGal && pickedGal.assetCount < 1) {
+          errors.push('所选画像图库暂无图片，请先上传图片或将文章配图调为 0 张');
+        }
+      }
     }
     if (selectedKb && selectedKb.indexStatus === 'INDEXING') {
-      setFormError('所选企业知识库正在建立智能检索，请变为「可用」后再提交任务');
-      return;
+      errors.push('所选企业知识库正在建立智能检索，请变为「可用」后再提交任务');
     }
     if (manualSlotBlocked) {
-      setFormError('该系统模板含【品牌N】手工槽位，请先前往「写作指令」克隆并填写对标品牌后再选用');
-      return;
+      errors.push('该系统模板含【品牌N】手工槽位，请先前往「写作指令」克隆并填写对标品牌后再选用');
     }
     if (
       !Number.isInteger(d.target) ||
       d.target < AI_TASK_TARGET_MIN ||
       d.target > AI_TASK_TARGET_MAX
     ) {
-      setFormError(`AI 创作数量需在 ${AI_TASK_TARGET_MIN}–${AI_TASK_TARGET_MAX} 篇之间`);
+      errors.push(`AI 创作数量需在 ${AI_TASK_TARGET_MIN}–${AI_TASK_TARGET_MAX} 篇之间`);
+    }
+    if (errors.length > 0) {
+      setFormError(errors.join('；'));
       return;
     }
 
@@ -399,7 +412,7 @@ export function AiTaskScreen({
         name: trimmedName,
         categoryId: d.categoryId || null,
         keywordId: d.keywordId,
-        mediaCategoryId: d.mediaCategoryId,
+        mediaCategoryId: d.imageCount === 0 ? null : d.mediaCategoryId,
         imageCount: d.imageCount,
         kbId: d.kbId || null,
         contentTplId: d.contentTplId || null,
@@ -525,42 +538,50 @@ export function AiTaskScreen({
     {
       key: 'name',
       title: '任务名',
-      width: 190,
+      width: 200,
       hideable: false,
       render: (row) => (
-        <div style={{ minWidth: 156 }}>
-          <Typography.Text strong style={{ display: 'block' }}>
-            {row.name}
-          </Typography.Text>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            分类：{row.categoryName}
-          </Typography.Text>
+        <div style={{ minWidth: 160 }}>
+          <TableClampText text={row.name} lines={2} strong maxWidth={190} tooltipThreshold={18} />
+          <TableClampText
+            text={`分类：${row.categoryName}`}
+            lines={1}
+            maxWidth={190}
+            tooltipThreshold={18}
+            style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+          />
         </div>
       ),
     },
     {
       key: 'keywordMain',
       title: '蒸馏词',
-      width: 110,
+      width: 120,
       render: (row) => <Tag color="geekblue">{row.keywordMain}</Tag>,
     },
     {
       key: 'target',
       title: '创作上限',
-      width: 78,
-      render: (row) => `${row.target} 篇`,
+      width: 88,
+      render: (row) => (
+        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+          {row.target} 篇
+        </span>
+      ),
     },
     {
       key: 'doneCount',
       title: '已创作',
-      width: 86,
+      width: 104,
       render: (row) => (
         <Space direction="vertical" size={0}>
           <Typography.Text strong>
-            {row.doneCount} / {row.target}
+            <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+              {row.doneCount} / {row.target}
+            </span>
           </Typography.Text>
           {row.failCount > 0 || row.skipCount > 0 ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
               {row.failCount > 0 ? `失败 ${row.failCount}` : ''}
               {row.failCount > 0 && row.skipCount > 0 ? ' · ' : ''}
               {row.skipCount > 0 ? `跳过 ${row.skipCount}` : ''}
@@ -572,10 +593,23 @@ export function AiTaskScreen({
     {
       key: 'kbName',
       title: '知识库',
-      width: 140,
+      width: 148,
       render: (row) =>
         row.kbName ? (
-          <Tag color="purple">{row.kbName}</Tag>
+          <Tooltip title={row.kbName.length > 10 ? row.kbName : undefined}>
+            <Tag
+              color="purple"
+              style={{
+                maxWidth: 132,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                verticalAlign: 'middle',
+              }}
+            >
+              {row.kbName}
+            </Tag>
+          </Tooltip>
         ) : (
           <Typography.Text type="secondary">未使用</Typography.Text>
         ),
@@ -583,7 +617,7 @@ export function AiTaskScreen({
     {
       key: 'detail',
       title: '详情',
-      width: 80,
+      width: 88,
       render: (row) => (
         <Button
           type="link"
@@ -598,12 +632,16 @@ export function AiTaskScreen({
     {
       key: 'lastError',
       title: '错误消息',
-      width: 110,
+      width: 160,
       render: (row) =>
         row.lastError ? (
-          <Typography.Text type="danger" style={{ fontSize: 12 }}>
-            {row.lastError}
-          </Typography.Text>
+          <TableClampText
+            text={row.lastError}
+            lines={2}
+            maxWidth={150}
+            tooltipThreshold={16}
+            style={{ fontSize: 12, color: 'var(--gm-danger)' }}
+          />
         ) : (
           <Typography.Text type="secondary">—</Typography.Text>
         ),
@@ -611,7 +649,7 @@ export function AiTaskScreen({
     {
       key: 'status',
       title: '状态',
-      width: 88,
+      width: 96,
       render: (row) => (
         <Tag color={statusTagColor(row.status)}>{TASK_STATUS_LABELS[row.status]}</Tag>
       ),
@@ -619,14 +657,22 @@ export function AiTaskScreen({
     {
       key: 'lastWrittenAt',
       title: '最新写作',
-      width: 132,
-      render: (row) => formatTime(row.lastWrittenAt),
+      width: 156,
+      render: (row) => (
+        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+          {formatTime(row.lastWrittenAt)}
+        </span>
+      ),
     },
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 132,
-      render: (row) => formatTime(row.createdAt),
+      width: 156,
+      render: (row) => (
+        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+          {formatTime(row.createdAt)}
+        </span>
+      ),
     },
     {
       key: 'actions',
@@ -797,13 +843,20 @@ export function AiTaskScreen({
         minimized={editor?.minimized ?? false}
         maximized={editor?.maximized ?? false}
         confirmLoading={submitting}
+        error={formError}
         onMinimize={() => setEditor((curr) => (curr ? { ...curr, minimized: true } : curr))}
-        onRestore={() => setEditor((curr) => (curr ? { ...curr, minimized: false } : curr))}
+        onRestore={() => {
+          setEditor((curr) => (curr ? { ...curr, minimized: false } : curr));
+          void refreshFormOptions();
+        }}
         onMaximize={() =>
           setEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }
         onClose={() => setEditor(null)}
-        onReset={() => setEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr))}
+        onReset={() => {
+          setFormError(null);
+          setEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
+        }}
         ok={
           <Button
             type="primary"
@@ -818,12 +871,10 @@ export function AiTaskScreen({
       >
         {editor ? (
           <Space direction="vertical" style={{ width: '100%' }} size={12}>
-            {formError ? <Alert type="error" showIcon message={formError} /> : null}
-
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
                 gap: '10px 16px',
                 alignItems: 'start',
               }}
@@ -903,14 +954,52 @@ export function AiTaskScreen({
 
               {/* 4. 画像图库 */}
               <div>
-                <label htmlFor="gm-aitask-gallery" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库
-                </label>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    marginBottom: 4,
+                  }}
+                >
+                  <label htmlFor="gm-aitask-gallery" style={{ margin: 0 }}>
+                    {editor.draft.imageCount > 0 ? (
+                      <>
+                        <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库
+                      </>
+                    ) : (
+                      '画像图库（0 张配图时无需选择）'
+                    )}
+                  </label>
+                  <Button
+                    type="link"
+                    size="small"
+                    aria-label="去新建图库"
+                    style={{ padding: 0, height: 'auto' }}
+                    onClick={() => {
+                      setEditor((curr) => (curr ? { ...curr, minimized: true } : curr));
+                      onDispatch?.({
+                        type: 'open',
+                        href: '/material/gallery',
+                        sourceId: tabId,
+                      });
+                    }}
+                  >
+                    去新建图库
+                  </Button>
+                </div>
                 <select
                   id="gm-aitask-gallery"
                   aria-label="画像图库"
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.mediaCategoryId}
+                  disabled={editor.draft.imageCount === 0}
+                  style={{
+                    ...NATIVE_SELECT_STYLE,
+                    ...(editor.draft.imageCount === 0
+                      ? { opacity: 0.55, cursor: 'not-allowed' }
+                      : undefined),
+                  }}
+                  value={editor.draft.imageCount === 0 ? '' : editor.draft.mediaCategoryId}
                   onChange={(e) =>
                     setEditor((curr) =>
                       curr
@@ -919,7 +1008,9 @@ export function AiTaskScreen({
                     )
                   }
                 >
-                  <option value="">不选择</option>
+                  <option value="">
+                    {editor.draft.imageCount === 0 ? '0 张配图无需选择图库' : '不选择'}
+                  </option>
                   {(formOptions?.mediaCategories ?? []).map((gal) => (
                     <option key={gal.id} value={gal.id}>
                       {gal.name}（{gal.assetCount} 张图片）
@@ -940,11 +1031,18 @@ export function AiTaskScreen({
                   step={1}
                   marks={{ 0: '0张', 1: '1张', 2: '2张', 3: '3张', 4: '4张', 5: '5张' }}
                   value={editor.draft.imageCount}
-                  onChange={(val) =>
+                  onChange={(val) => {
+                    if (
+                      val === 0 &&
+                      (formError === '请选择画像图库' ||
+                        formError === '所选画像图库暂无图片，请先上传图片或将文章配图调为 0 张')
+                    ) {
+                      setFormError(null);
+                    }
                     setEditor((curr) =>
                       curr ? { ...curr, draft: { ...curr.draft, imageCount: val } } : curr,
-                    )
-                  }
+                    );
+                  }}
                 />
               </div>
 
@@ -1193,7 +1291,9 @@ export function AiTaskScreen({
               <Descriptions.Item label="文章分类">{activeDetail.categoryName}</Descriptions.Item>
               <Descriptions.Item label="蒸馏训练词">{activeDetail.keywordMain}</Descriptions.Item>
               <Descriptions.Item label="画像图库">
-                {activeDetail.mediaCategoryName}（每篇 {activeDetail.imageCount} 张）
+                {activeDetail.mediaCategoryName
+                  ? `${activeDetail.mediaCategoryName}（每篇 ${activeDetail.imageCount} 张）`
+                  : `未使用（纯文，每篇 ${activeDetail.imageCount} 张）`}
               </Descriptions.Item>
               <Descriptions.Item label="企业知识库">
                 {activeDetail.kbName ?? '未使用'}
@@ -1226,13 +1326,19 @@ export function AiTaskScreen({
                   key: 'title',
                   render: (_, item) => (
                     <Space direction="vertical" size={0}>
-                      <Typography.Text strong>
-                        {item.title ?? item.questionText ?? '待抽取'}
-                      </Typography.Text>
+                      <TableClampText
+                        text={item.title ?? item.questionText ?? '待抽取'}
+                        lines={2}
+                        strong
+                        tooltipThreshold={30}
+                      />
                       {item.questionText && item.title && item.title !== item.questionText ? (
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          原问题：{item.questionText}
-                        </Typography.Text>
+                        <TableClampText
+                          text={`原问题：${item.questionText}`}
+                          lines={1}
+                          tooltipThreshold={30}
+                          style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+                        />
                       ) : null}
                     </Space>
                   ),
@@ -1271,9 +1377,13 @@ export function AiTaskScreen({
                   key: 'error',
                   render: (_, item) =>
                     item.error ? (
-                      <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                        {item.error}
-                      </Typography.Text>
+                      <TableClampText
+                        text={item.error}
+                        lines={2}
+                        maxWidth={220}
+                        tooltipThreshold={20}
+                        style={{ fontSize: 12, color: 'var(--gm-danger)' }}
+                      />
                     ) : item.articleId ? (
                       <Button
                         type="link"
@@ -1296,6 +1406,9 @@ export function AiTaskScreen({
       <Modal
         open={cancelTarget !== null}
         title="确认终止写作任务"
+        centered
+        transitionName=""
+        maskTransitionName=""
         okText="确认终止并退还未用点数"
         cancelText="返回"
         okButtonProps={{ danger: true, loading: cancelling }}
@@ -1312,6 +1425,9 @@ export function AiTaskScreen({
       <Modal
         open={deleteIds !== null}
         title="确认删除任务记录"
+        centered
+        transitionName=""
+        maskTransitionName=""
         okText="确认删除"
         cancelText="取消"
         okButtonProps={{ danger: true, loading: deleting }}

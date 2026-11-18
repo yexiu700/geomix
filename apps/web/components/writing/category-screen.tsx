@@ -15,6 +15,7 @@ import type { ShellAction } from '../../lib/tab-stack';
 import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
+import { TableClampText } from '../crud/table-clamp-text';
 
 const EMPTY: ArticleCategoryInput = { name: '' };
 
@@ -152,8 +153,7 @@ export function CategoryScreen({
         {title}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        分类只属于当前账号。文章数量和文章剩余量按文章实时统计，剩余量是状态为正常且发送次数为 0
-        的文章数。
+        分类只属于当前账号。文章数量和文章剩余量按文章实时统计，剩余量是状态为正常且未发布的文章数。
       </Typography.Paragraph>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       <CrudTable
@@ -212,7 +212,6 @@ export function CategoryScreen({
               }
         }
         onDelete={writeLocked ? undefined : () => setPendingDeleteIds(selectedIds)}
-        onBack={() => onDispatch({ type: 'back', id: tabId })}
         columns={[
           {
             key: 'seq',
@@ -225,10 +224,28 @@ export function CategoryScreen({
             key: 'name',
             title: '分类名称',
             hideable: false,
-            render: (row) => row.name,
+            render: (row) => <TableClampText text={row.name} lines={2} tooltipThreshold={24} />,
           },
-          { key: 'total', title: '文章数量', width: 110, render: (row) => row.total },
-          { key: 'remaining', title: '文章剩余量', width: 120, render: (row) => row.remaining },
+          {
+            key: 'total',
+            title: '文章数量',
+            width: 110,
+            render: (row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {row.total}
+              </span>
+            ),
+          },
+          {
+            key: 'remaining',
+            title: '文章剩余量',
+            width: 120,
+            render: (row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {row.remaining}
+              </span>
+            ),
+          },
           {
             key: 'articles',
             title: '查看文章',
@@ -254,7 +271,11 @@ export function CategoryScreen({
             key: 'createdAt',
             title: '创建时间',
             width: 156,
-            render: (row) => formatShanghaiDateTime(row.createdAt),
+            render: (row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {formatShanghaiDateTime(row.createdAt)}
+              </span>
+            ),
           },
           {
             key: 'actions',
@@ -340,7 +361,7 @@ export function CategoryScreen({
           }}
         >
           <label>
-            文章分类
+            <span style={{ color: 'var(--gm-danger)' }}>* </span>文章分类
             <Input
               aria-label="文章分类"
               value={editor?.draft.name ?? ''}
@@ -353,16 +374,16 @@ export function CategoryScreen({
               onPressEnter={() => void save()}
             />
           </label>
-          {nameError ? <p className="gm-form-error">{nameError}</p> : null}
         </form>
       </CrudModal>
       <Modal
         open={Boolean(pendingDeleteIds && pendingDeleteIds.length > 0)}
         title="删除所选分类"
+        centered
         transitionName=""
         maskTransitionName=""
         confirmLoading={deleting}
-        okText="确定"
+        okText="确认删除"
         cancelText="取消"
         okButtonProps={{ danger: true }}
         onOk={() => void removePending()}

@@ -71,44 +71,51 @@ const optionalIdField = z
   })
   .refine((val) => val === null || AI_TASK_ID_PATTERN.test(val), '编号格式不正确');
 
-export const aiTaskCreateSchema = z.object({
-  name: z
-    .string({ required_error: '请填写任务名称' })
-    .trim()
-    .min(1, '请填写任务名称')
-    .max(AI_TASK_NAME_MAX, `任务名称不超过 ${AI_TASK_NAME_MAX} 个字符`),
-  categoryId: z
-    .union([z.string().trim(), z.null(), z.undefined()])
-    .transform((val) => {
-      if (!val || val.length === 0 || val === AI_TASK_AUTO_CATEGORY) return null;
-      return val;
-    })
-    .refine((val) => val === null || AI_TASK_ID_PATTERN.test(val), '文章分类编号不正确'),
-  keywordId: z
-    .string({ required_error: '请选择训练主词' })
-    .trim()
-    .regex(AI_TASK_ID_PATTERN, '请选择训练主词'),
-  mediaCategoryId: z
-    .string({ required_error: '请选择企业画像图库' })
-    .trim()
-    .regex(AI_TASK_ID_PATTERN, '请选择企业画像图库'),
-  imageCount: z.coerce
-    .number()
-    .int('配图数量必须为整数')
-    .min(AI_TASK_IMAGE_MIN, `配图数量不少于 ${AI_TASK_IMAGE_MIN} 张`)
-    .max(AI_TASK_IMAGE_MAX, `配图数量不超过 ${AI_TASK_IMAGE_MAX} 张`)
-    .default(1),
-  kbId: optionalIdField,
-  contentTplId: optionalIdField,
-  titleTplId: optionalIdField,
-  resultStatus: z.enum(AI_TASK_RESULT_STATUSES).default('PENDING'),
-  target: z.coerce
-    .number()
-    .int('写作篇数必须为整数')
-    .min(AI_TASK_TARGET_MIN, `写作篇数至少 ${AI_TASK_TARGET_MIN} 篇`)
-    .max(AI_TASK_TARGET_MAX, `单次写作篇数不超过 ${AI_TASK_TARGET_MAX} 篇`)
-    .default(1),
-});
+export const aiTaskCreateSchema = z
+  .object({
+    name: z
+      .string({ required_error: '请填写任务名称' })
+      .trim()
+      .min(1, '请填写任务名称')
+      .max(AI_TASK_NAME_MAX, `任务名称不超过 ${AI_TASK_NAME_MAX} 个字符`),
+    categoryId: z
+      .union([z.string().trim(), z.null(), z.undefined()])
+      .transform((val) => {
+        if (!val || val.length === 0 || val === AI_TASK_AUTO_CATEGORY) return null;
+        return val;
+      })
+      .refine((val) => val === null || AI_TASK_ID_PATTERN.test(val), '文章分类编号不正确'),
+    keywordId: z
+      .string({ required_error: '请选择训练主词' })
+      .trim()
+      .regex(AI_TASK_ID_PATTERN, '请选择训练主词'),
+    mediaCategoryId: optionalIdField,
+    imageCount: z.coerce
+      .number()
+      .int('配图数量必须为整数')
+      .min(AI_TASK_IMAGE_MIN, `配图数量不少于 ${AI_TASK_IMAGE_MIN} 张`)
+      .max(AI_TASK_IMAGE_MAX, `配图数量不超过 ${AI_TASK_IMAGE_MAX} 张`)
+      .default(1),
+    kbId: optionalIdField,
+    contentTplId: optionalIdField,
+    titleTplId: optionalIdField,
+    resultStatus: z.enum(AI_TASK_RESULT_STATUSES).default('PENDING'),
+    target: z.coerce
+      .number()
+      .int('写作篇数必须为整数')
+      .min(AI_TASK_TARGET_MIN, `写作篇数至少 ${AI_TASK_TARGET_MIN} 篇`)
+      .max(AI_TASK_TARGET_MAX, `单次写作篇数不超过 ${AI_TASK_TARGET_MAX} 篇`)
+      .default(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.imageCount > 0 && !data.mediaCategoryId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mediaCategoryId'],
+        message: '请选择企业画像图库',
+      });
+    }
+  });
 
 export type AiTaskCreateInput = z.infer<typeof aiTaskCreateSchema>;
 
@@ -165,8 +172,8 @@ export type AiTaskRecord = {
   categoryName: string;
   keywordId: string;
   keywordMain: string;
-  mediaCategoryId: string;
-  mediaCategoryName: string;
+  mediaCategoryId: string | null;
+  mediaCategoryName: string | null;
   imageCount: number;
   kbId: string | null;
   kbName: string | null;

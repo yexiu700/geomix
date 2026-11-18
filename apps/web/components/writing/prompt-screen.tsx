@@ -27,6 +27,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CrudTable, type CrudColumn, type CrudSearch } from '../crud/crud-table';
+import { TableClampText } from '../crud/table-clamp-text';
 import { PromptApiError, httpPromptGateway, type PromptGateway } from '../../lib/prompts';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
@@ -102,6 +103,20 @@ export function PromptScreen({
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const contentRef = useRef<HTMLTextAreaElement | null>(null);
+  const errorAlertRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen || !formError) return;
+    const bodyEl = errorAlertRef.current?.closest('.ant-modal-body');
+    if (bodyEl instanceof HTMLElement) {
+      if (typeof bodyEl.scrollTo === 'function') {
+        bodyEl.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        bodyEl.scrollTop = 0;
+      }
+    }
+    errorAlertRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  }, [modalOpen, formError]);
 
   // System Default Prompts Read-Only Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -208,12 +223,11 @@ export function PromptScreen({
     setFormError(null);
     const trimmedName = draft.name.trim();
     const trimmedContent = draft.content.trim();
-    if (!trimmedName) {
-      setFormError('请输入指令名称');
-      return;
-    }
-    if (!trimmedContent) {
-      setFormError('请输入指令内容');
+    const errors: string[] = [];
+    if (!trimmedName) errors.push('请输入指令名称');
+    if (!trimmedContent) errors.push('请输入指令内容');
+    if (errors.length > 0) {
+      setFormError(errors.join('；'));
       return;
     }
 
@@ -317,7 +331,7 @@ export function PromptScreen({
       hideable: false,
       render: (row) => (
         <Space size={6} wrap>
-          <Typography.Text strong>{row.name}</Typography.Text>
+          <TableClampText text={row.name} lines={2} strong maxWidth={280} tooltipThreshold={24} />
           {row.clonedFrom ? <Tag>克隆</Tag> : null}
           {!row.randomPool ? <Tag color="warning">{UX_TERMS.manualSlotBadge}</Tag> : null}
         </Space>
@@ -332,8 +346,12 @@ export function PromptScreen({
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 180,
-      render: (row) => formatShanghaiDateTime(row.createdAt),
+      width: 168,
+      render: (row) => (
+        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+          {formatShanghaiDateTime(row.createdAt)}
+        </span>
+      ),
     },
     {
       key: 'actions',
@@ -456,18 +474,22 @@ export function PromptScreen({
       <Modal
         title={draft.editingId ? '编辑写作指令' : '添加写作指令'}
         open={modalOpen}
+        centered
         width={720}
         transitionName=""
         maskTransitionName=""
+        styles={{ body: { maxHeight: 'calc(100vh - 210px)', overflowY: 'auto' } }}
         confirmLoading={submitting}
         okText="确定"
         cancelText="取消"
         onOk={handleSave}
         onCancel={() => setModalOpen(false)}
       >
-        {formError ? (
-          <Alert type="error" showIcon style={{ marginBottom: 12 }} message={formError} />
-        ) : null}
+        <div ref={errorAlertRef}>
+          {formError ? (
+            <Alert type="error" showIcon style={{ marginBottom: 12 }} message={formError} />
+          ) : null}
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
@@ -549,7 +571,7 @@ export function PromptScreen({
             <textarea
               ref={contentRef}
               aria-label="指令内容"
-              rows={9}
+              rows={7}
               maxLength={PROMPT_CONTENT_MAX}
               placeholder="请输入提示词指令正文，可点击上方按钮快速插入变量占位符"
               value={draft.content}
@@ -616,7 +638,9 @@ export function PromptScreen({
                     <span>{tpl.name}</span>
                     <Tag color={kindTagColor(tpl.kind)}>{PROMPT_KIND_LABELS[tpl.kind]}</Tag>
                     <Tag>只读</Tag>
-                    {!tpl.randomPool ? <Tag color="warning">含手工槽位·不入随机池</Tag> : null}
+                    {!tpl.randomPool ? (
+                      <Tag color="warning">{UX_TERMS.systemManualSlotBadge}</Tag>
+                    ) : null}
                   </Space>
                 }
                 extra={
@@ -658,6 +682,7 @@ export function PromptScreen({
       <Modal
         title="确认删除写作指令"
         open={Boolean(deleteIds)}
+        centered
         transitionName=""
         maskTransitionName=""
         confirmLoading={deleting}

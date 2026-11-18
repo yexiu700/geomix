@@ -447,8 +447,8 @@ model AiTask {
   category        ArticleCategory @relation(fields: [categoryId], references: [id])
   keywordId       String
   keyword         Keyword         @relation(fields: [keywordId], references: [id])
-  mediaCategoryId String
-  mediaCategory   MediaCategory   @relation(fields: [mediaCategoryId], references: [id])
+  mediaCategoryId String?
+  mediaCategory   MediaCategory?  @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
   imageCount      Int             @default(1) // 0..5
   kbId            String?
   kb              KnowledgeBase?  @relation(fields: [kbId], references: [id], onDelete: SetNull)

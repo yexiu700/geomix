@@ -28,6 +28,7 @@ import type { CSSProperties, ChangeEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
+import { TableClampText } from '../crud/table-clamp-text';
 import {
   articleQueryFromHref,
   httpArticleManageGateway,
@@ -626,17 +627,13 @@ export function ArticleManageScreen({
   const handleSaveArticle = async () => {
     if (!editor) return;
     const trimmedTitle = editor.draft.title.trim();
-    if (!trimmedTitle) {
-      setFormError('请填写文章标题');
-      return;
-    }
-    if (!editor.draft.categoryId) {
-      setFormError('请选择归属分类');
-      return;
-    }
     const wordCount = countArticleWords(editor.draft.contentHtml);
-    if (wordCount === 0) {
-      setFormError('请填写文章正文内容');
+    const errors: string[] = [];
+    if (!trimmedTitle) errors.push('请填写文章标题');
+    if (!editor.draft.categoryId) errors.push('请选择归属分类');
+    if (wordCount === 0) errors.push('请填写文章正文内容');
+    if (errors.length > 0) {
+      setFormError(errors.join('；'));
       return;
     }
 
@@ -1012,7 +1009,14 @@ export function ArticleManageScreen({
             key: 'categoryName',
             title: '分类名',
             width: 140,
-            render: (_, row) => row.categoryName ?? '未分类',
+            render: (_, row) => (
+              <TableClampText
+                text={row.categoryName ?? '未分类'}
+                lines={1}
+                maxWidth={128}
+                tooltipThreshold={12}
+              />
+            ),
           },
           {
             key: 'title',
@@ -1035,7 +1039,12 @@ export function ArticleManageScreen({
                   />
                 ) : null}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 500, wordBreak: 'break-word' }}>{row.title}</div>
+                  <TableClampText
+                    text={row.title}
+                    lines={2}
+                    tooltipThreshold={28}
+                    style={{ fontWeight: 500 }}
+                  />
                   <div
                     style={{
                       display: 'flex',
@@ -1056,7 +1065,13 @@ export function ArticleManageScreen({
                     {row.aiTaskName ? (
                       <>
                         <span>·</span>
-                        <span>任务：{row.aiTaskName}</span>
+                        <TableClampText
+                          text={`任务：${row.aiTaskName}`}
+                          lines={1}
+                          maxWidth={180}
+                          tooltipThreshold={16}
+                          style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+                        />
                       </>
                     ) : null}
                   </div>
@@ -1068,13 +1083,21 @@ export function ArticleManageScreen({
             key: 'sendCount',
             title: '发送次数',
             width: 95,
-            render: (_, row) => row.sendCount,
+            render: (_, row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {row.sendCount}
+              </span>
+            ),
           },
           {
             key: 'videoCount',
             title: '转视频次数',
             width: 105,
-            render: (_, row) => row.videoCount,
+            render: (_, row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {row.videoCount}
+              </span>
+            ),
           },
           {
             key: 'status',
@@ -1089,8 +1112,12 @@ export function ArticleManageScreen({
           {
             key: 'createdAt',
             title: '创建时间',
-            width: 155,
-            render: (_, row) => formatTime(row.createdAt),
+            width: 156,
+            render: (_, row) => (
+              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                {formatTime(row.createdAt)}
+              </span>
+            ),
           },
           {
             key: 'actions',
@@ -1149,7 +1176,10 @@ export function ArticleManageScreen({
         confirmLoading={submitting}
         error={formError}
         onMinimize={() => setEditor((cur) => (cur ? { ...cur, minimized: true } : cur))}
-        onRestore={() => setEditor((cur) => (cur ? { ...cur, minimized: false } : cur))}
+        onRestore={() => {
+          setEditor((cur) => (cur ? { ...cur, minimized: false } : cur));
+          void refreshFormOptions();
+        }}
         onMaximize={() => setEditor((cur) => (cur ? { ...cur, maximized: !cur.maximized } : cur))}
         onClose={() => {
           if (!submitting) setEditor(null);
@@ -1192,7 +1222,9 @@ export function ArticleManageScreen({
               }}
             >
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>标题 *</div>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--gm-danger)' }}>* </span>标题
+                </div>
                 <Input
                   aria-label="文章标题"
                   maxLength={ARTICLE_TITLE_MAX}
@@ -1207,7 +1239,9 @@ export function ArticleManageScreen({
               </div>
 
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>归属分类 *</div>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--gm-danger)' }}>* </span>归属分类
+                </div>
                 <select
                   aria-label="归属分类"
                   style={NATIVE_SELECT_STYLE}
@@ -1583,6 +1617,9 @@ export function ArticleManageScreen({
       <Modal
         open={Boolean(deleteTargetIds)}
         title="确认删除文章"
+        centered
+        transitionName=""
+        maskTransitionName=""
         okText="确认删除"
         cancelText="取消"
         okButtonProps={{ danger: true, loading: deleting }}

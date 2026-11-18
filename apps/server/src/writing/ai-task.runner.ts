@@ -821,14 +821,14 @@ export class AiTaskRunner implements AiTaskHandler {
 
   private async pickAndInjectImages(input: {
     tenantId: string;
-    mediaCategoryId: string;
+    mediaCategoryId: string | null;
     imageCount: number;
     coverWhenNoImage: boolean;
     contentHtml: string;
     title: string;
   }): Promise<{ contentHtml: string; coverUrl: string | null }> {
     const fetchLimit = input.imageCount > 0 ? input.imageCount : input.coverWhenNoImage ? 1 : 0;
-    if (fetchLimit <= 0) {
+    if (fetchLimit <= 0 || !input.mediaCategoryId) {
       return { contentHtml: input.contentHtml, coverUrl: null };
     }
 
