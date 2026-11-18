@@ -2,7 +2,6 @@
 
 import {
   CITATION_SOURCE_LABELS,
-  CRUD_EMPTY_TEXT,
   DOMESTIC_VISIBILITY_ENGINE_KEYS,
   ITEM_STATUS_LABELS,
   TASK_STATUSES,
@@ -47,13 +46,23 @@ import {
   Switch,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GM, formatPct } from '../../lib/design-tokens';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
 import { PriceButton } from '../crud/price-button';
+import {
+  EngineChipList,
+  SignalEmpty,
+  SignalPill,
+  SignalSkeleton,
+  StatusPill,
+  TruncText,
+} from '../geo/primitives';
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
@@ -71,10 +80,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
-  fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
+  fontSize: 13,
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -82,10 +91,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
   maxWidth: '100%',
 };
@@ -1131,16 +1140,13 @@ export function VisibilityMonitorsScreen({
       width: 200,
       hideable: false,
       render: (row) => (
-        <div>
-          <Typography.Text strong>{row.name}</Typography.Text>
-          {row.lastError ? (
-            <div style={{ marginTop: 2 }}>
-              <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                {row.lastError}
-              </Typography.Text>
-            </div>
-          ) : null}
-        </div>
+        <button
+          type="button"
+          className="gm-monitors-name-btn"
+          onClick={() => void openDetailDrawer(row.id)}
+        >
+          <TruncText text={row.name} lines={1} />
+        </button>
       ),
     },
     {
@@ -1148,72 +1154,156 @@ export function VisibilityMonitorsScreen({
       title: '监测档案 / 主品牌',
       width: 170,
       render: (row) => (
-        <Space direction="vertical" size={2}>
-          <span>{row.profileName}</span>
-          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span className="gm-clamp-1" style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+            {row.profileName}
+          </span>
+          <span className="gm-clamp-1" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
             {row.brandName}
-          </Tag>
-        </Space>
+          </span>
+        </div>
       ),
     },
     {
       key: 'keywordMain',
       title: '关联主词',
       width: 130,
-      render: (row) =>
-        row.keywordMain ? (
-          <Tag color="geekblue">{row.keywordMain}</Tag>
-        ) : (
-          <Typography.Text type="secondary">自定义问题</Typography.Text>
-        ),
+      render: (row) => (
+        <span
+          className="gm-clamp-1"
+          style={{ color: row.keywordMain ? 'var(--gm-fg-2)' : 'var(--gm-fg-3)' }}
+        >
+          {row.keywordMain ?? '—'}
+        </span>
+      ),
     },
     {
       key: 'engines',
       title: '监测引擎',
       width: 210,
-      render: (row) => {
-        const shown = row.engines.slice(0, 3);
-        const rest = row.engines.length - shown.length;
-        return (
-          <Space size={[4, 4]} wrap>
-            {shown.map((eng) => (
-              <Tag key={eng} style={{ marginInlineEnd: 0 }}>
-                {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
-              </Tag>
-            ))}
-            {rest > 0 ? <Tag style={{ marginInlineEnd: 0 }}>+{rest}</Tag> : null}
-          </Space>
-        );
-      },
+      render: (row) => <EngineChipList engines={row.engines} max={3} />,
     },
     {
       key: 'progress',
       title: '检测进度',
-      width: 130,
-      render: (row) => (
-        <div>
-          <Typography.Text strong>
-            {row.doneCount} / {row.totalChecks}
-          </Typography.Text>
-          {row.failCount > 0 || (row.skipCount ?? 0) > 0 ? (
-            <div style={{ fontSize: 12, color: '#64748b' }}>
-              {row.failCount > 0 ? `失败 ${row.failCount} ` : ''}
-              {(row.skipCount ?? 0) > 0 ? `跳过 ${row.skipCount}` : ''}
+      width: 140,
+      render: (row) => {
+        const totalChecks = row.totalChecks;
+        const donePct =
+          totalChecks > 0 ? Math.min(100, Math.max(0, (row.doneCount / totalChecks) * 100)) : 0;
+        const failPct =
+          totalChecks > 0
+            ? Math.min(100 - donePct, Math.max(0, (row.failCount / totalChecks) * 100))
+            : 0;
+        const skipPct =
+          totalChecks > 0
+            ? Math.min(
+                100 - donePct - failPct,
+                Math.max(0, ((row.skipCount ?? 0) / totalChecks) * 100),
+              )
+            : 0;
+        return (
+          <div style={{ width: 140 }}>
+            <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
+              {row.doneCount}/{totalChecks}
+            </span>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                height: 4,
+                borderRadius: 2,
+                overflow: 'hidden',
+                background: 'rgba(255,255,255,0.06)',
+                gap: 1,
+                marginTop: 6,
+              }}
+            >
+              {totalChecks > 0 ? (
+                <>
+                  {donePct > 0 ? (
+                    <div
+                      style={{
+                        width: `${donePct}%`,
+                        height: '100%',
+                        background: GM.sig.cited,
+                      }}
+                    />
+                  ) : null}
+                  {row.status === 'RUNNING' ? <div className="gm-progress-pulse" /> : null}
+                  {failPct > 0 ? (
+                    <div
+                      style={{
+                        width: `${failPct}%`,
+                        height: '100%',
+                        background: GM.status.danger,
+                      }}
+                    />
+                  ) : null}
+                  {skipPct > 0 ? (
+                    <div
+                      style={{
+                        width: `${skipPct}%`,
+                        height: '100%',
+                        background: GM.fg.f4,
+                      }}
+                    />
+                  ) : null}
+                </>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ),
+          </div>
+        );
+      },
     },
     {
       key: 'visibilityPct',
       title: '品牌提及率',
-      width: 110,
+      width: 130,
       render: (row) => {
-        const pct = row.visibilityPct ?? 0;
+        const pct = row.visibilityPct;
+        const barWidth =
+          pct === null || pct === undefined || !Number.isFinite(pct)
+            ? 0
+            : Math.min(100, Math.max(0, pct));
         return (
-          <Tag color={pct >= 50 ? 'success' : pct > 0 ? 'processing' : 'default'}>
-            {pct.toFixed(1)}%
-          </Tag>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 8,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 40,
+                height: 4,
+                borderRadius: 2,
+                background: 'rgba(255,255,255,0.06)',
+                overflow: 'hidden',
+                flex: 'none',
+              }}
+            >
+              <span
+                style={{
+                  display: 'block',
+                  width: `${barWidth}%`,
+                  height: '100%',
+                  background: GM.sig.cited,
+                }}
+              />
+            </span>
+            <span
+              className="gm-num"
+              style={{
+                color: pct === null || pct === undefined ? 'var(--gm-fg-3)' : 'var(--gm-fg-1)',
+              }}
+            >
+              {formatPct(pct)}
+            </span>
+          </div>
         );
       },
     },
@@ -1222,29 +1312,63 @@ export function VisibilityMonitorsScreen({
       title: '预冻 / 结算点数',
       width: 140,
       render: (row) => {
-        const frozen = row.frozenPoints ?? row.totalChecks * row.unitPrice;
+        const frozen = row.frozenPoints ?? 0;
         const settled = row.settledPoints ?? 0;
+        const released = row.releasedPoints ?? 0;
         return (
-          <div style={{ fontSize: 13 }}>
-            <div>预冻 {frozen} 点</div>
-            <div style={{ color: '#64748b', fontSize: 12 }}>已结 {settled} 点</div>
-          </div>
+          <Tooltip title={`已退回 ${released} 点`}>
+            <div className="gm-num" style={{ textAlign: 'right', fontSize: 13 }}>
+              <div style={{ color: 'var(--gm-fg-1)' }}>预冻 {frozen} 点</div>
+              <div style={{ color: 'var(--gm-fg-3)', fontSize: 12 }}>已结 {settled} 点</div>
+            </div>
+          </Tooltip>
         );
       },
     },
     {
       key: 'status',
       title: '状态',
-      width: 96,
+      width: 112,
       render: (row) => (
-        <Tag color={statusTagColor(row.status)}>{TASK_STATUS_LABELS[row.status]}</Tag>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <StatusPill kind="task" status={row.status} />
+          {row.lastError ? (
+            <Tooltip title={row.lastError} styles={{ root: { maxWidth: 360 } }}>
+              <span
+                role="img"
+                aria-label="任务异常详情"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 12,
+                  height: 12,
+                  borderRadius: '50%',
+                  background: 'rgba(240,96,93,0.16)',
+                  color: 'var(--gm-danger)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  cursor: 'help',
+                  flex: 'none',
+                }}
+              >
+                !
+              </span>
+            </Tooltip>
+          ) : null}
+        </span>
       ),
     },
     {
       key: 'createdAt',
       title: '创建时间',
       width: 144,
-      render: (row) => formatTime(row.createdAt),
+      render: (row) => (
+        <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+          {formatTime(row.createdAt)}
+        </span>
+      ),
     },
     {
       key: 'actions',
@@ -1252,7 +1376,7 @@ export function VisibilityMonitorsScreen({
       width: 210,
       hideable: false,
       render: (row) => (
-        <Space size={4} wrap>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           <Button
             type="link"
             size="small"
@@ -1311,7 +1435,7 @@ export function VisibilityMonitorsScreen({
               删除
             </Button>
           ) : null}
-        </Space>
+        </div>
       ),
     },
   ];
@@ -1338,23 +1462,31 @@ export function VisibilityMonitorsScreen({
         style={{
           display: 'flex',
           flexWrap: 'wrap',
-          alignItems: 'center',
+          alignItems: 'flex-end',
           justifyContent: 'space-between',
           gap: 12,
-          marginBottom: 12,
+          marginBottom: 16,
         }}
       >
         <div>
-          <Typography.Title level={3} style={{ margin: 0 }}>
+          <Typography.Title
+            level={3}
+            style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}
+          >
             {title}
           </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+          <div style={{ fontSize: 12, lineHeight: '18px', color: 'var(--gm-fg-3)', marginTop: 4 }}>
             跨国内 8
             大主流模型与海外搜索引擎，批量诊断企业品牌提及率、推荐顺位、情感倾向与权威引用信源
-          </Typography.Text>
+          </div>
         </div>
         <Space wrap>
-          <PriceButton action="visibility_check" prices={prices} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <PriceButton action="visibility_check" prices={prices} />
+            <SignalPill tone="warning">
+              <span className="gm-num">{unitPoints}</span> 点/次
+            </SignalPill>
+          </span>
           <Button
             aria-label="新建品牌档案"
             disabled={readOnly}
@@ -1400,19 +1532,7 @@ export function VisibilityMonitorsScreen({
             children: (
               <div style={{ minWidth: 0 }}>
                 {/* Quick Filter Bar */}
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: 12,
-                    marginBottom: 12,
-                    borderRadius: 8,
-                    border: '1px solid #e6eaf0',
-                    background: '#f8fafc',
-                  }}
-                >
+                <div className="gm-filterbar">
                   <select
                     aria-label="筛选监测档案"
                     style={{ ...COMPACT_SELECT_STYLE, width: 180 }}
@@ -1502,13 +1622,13 @@ export function VisibilityMonitorsScreen({
                   </Button>
 
                   {hasActiveRun ? (
-                    <Tag color="processing" style={{ marginInlineStart: 'auto' }}>
-                      运行中每 5 秒自动同步进度
-                    </Tag>
+                    <span style={{ marginInlineStart: 'auto' }}>
+                      <SignalPill tone="info">运行中每 5 秒自动同步进度</SignalPill>
+                    </span>
                   ) : null}
                 </div>
 
-                <div style={{ width: '100%', overflowX: 'auto' }}>
+                <div className="gm-monitors-table-wrap">
                   <CrudTable
                     rows={runs}
                     columns={columns}
@@ -1520,9 +1640,39 @@ export function VisibilityMonitorsScreen({
                     searchOpen={searchOpen}
                     writeDisabled={readOnly}
                     emptyText={
-                      profiles.length === 0
-                        ? '尚未创建品牌监测档案，请先点击「新建品牌档案」配置主品牌与竞品后再发起监测'
-                        : CRUD_EMPTY_TEXT
+                      (loading ? (
+                        <SignalSkeleton variant="row" rows={5} />
+                      ) : profiles.length === 0 ? (
+                        <SignalEmpty
+                          title="先建立品牌档案"
+                          description="尚未创建品牌监测档案，请先点击「新建品牌档案」配置主品牌与竞品后再发起监测"
+                          actionText={readOnly ? undefined : '新建品牌档案'}
+                          onAction={() => openCreateProfileModal()}
+                        />
+                      ) : query.profileId || query.status || query.keyword ? (
+                        <SignalEmpty
+                          title="没有符合筛选条件的任务"
+                          actionText="重置筛选"
+                          onAction={() => {
+                            setKeywordDraft('');
+                            setSelectedIds([]);
+                            setQuery((curr) => ({
+                              ...curr,
+                              page: 1,
+                              profileId: undefined,
+                              status: undefined,
+                              keyword: undefined,
+                            }));
+                          }}
+                        />
+                      ) : (
+                        <SignalEmpty
+                          title="还没有监测任务"
+                          description="选择档案、问题和引擎，系统会逐一向各 AI 引擎提问并记录是否提及你的品牌"
+                          actionText={readOnly ? undefined : '新建监测任务'}
+                          onAction={() => openCreateRunModal()}
+                        />
+                      )) as unknown as string
                     }
                     search={{
                       keyword: query.keyword ?? '',
@@ -1587,40 +1737,26 @@ export function VisibilityMonitorsScreen({
                 </div>
 
                 {profiles.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '36px 20px',
-                      textAlign: 'center',
-                      border: '1px dashed #d9e2ef',
-                      borderRadius: 10,
-                      background: '#f8fafc',
-                    }}
-                  >
-                    <Typography.Title level={5} style={{ marginTop: 0 }}>
-                      暂无品牌与竞品监测档案
-                    </Typography.Title>
-                    <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-                      您可以直接录入主品牌与官网域名，或从已有「关键词 /
-                      企业知识库」一键预填品牌词。
-                    </Typography.Paragraph>
-                    <Button
-                      type="primary"
-                      disabled={readOnly}
-                      onClick={() => openCreateProfileModal()}
-                    >
-                      立即创建首个品牌档案
-                    </Button>
+                  <div className="gm-panel">
+                    <SignalEmpty
+                      title="暂无品牌与竞品监测档案"
+                      description="您可以直接录入主品牌与官网域名，或从已有「关键词 / 企业知识库」一键预填品牌词。"
+                      actionText={readOnly ? undefined : '立即创建首个品牌档案'}
+                      onAction={() => openCreateProfileModal()}
+                    />
                   </div>
                 ) : (
                   <div
                     style={{
                       display: 'grid',
                       gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))',
-                      gap: 14,
+                      gap: 12,
                     }}
                   >
                     {profiles.map((prof) => {
                       const isDefault = prof.id === effectiveDefaultProfileId;
+                      const shownCompetitors = prof.competitors.slice(0, 3);
+                      const hiddenCompetitors = prof.competitors.slice(3);
                       return (
                         <div
                           key={prof.id}
@@ -1631,9 +1767,14 @@ export function VisibilityMonitorsScreen({
                             justifyContent: 'space-between',
                             gap: 12,
                             padding: 16,
-                            border: isDefault ? '1px solid #91caff' : '1px solid #e6eaf0',
-                            borderRadius: 10,
-                            background: isDefault ? '#f8fbff' : '#ffffff',
+                            border: isDefault
+                              ? '1px solid var(--gm-phosphor-a40)'
+                              : '1px solid var(--gm-line-1)',
+                            borderRadius: 8,
+                            background: isDefault
+                              ? 'var(--gm-bg-elevated)'
+                              : 'var(--gm-bg-surface)',
+                            boxShadow: isDefault ? 'var(--gm-glow-active)' : undefined,
                             minWidth: 0,
                           }}
                         >
@@ -1648,71 +1789,87 @@ export function VisibilityMonitorsScreen({
                                 marginBottom: 8,
                               }}
                             >
-                              <Typography.Text strong style={{ fontSize: 16 }}>
+                              <Typography.Text
+                                strong
+                                style={{ fontSize: 16, color: 'var(--gm-fg-1)' }}
+                              >
                                 {prof.name}
                               </Typography.Text>
                               <Space size={4} wrap>
-                                {isDefault ? <Tag color="blue">默认档案</Tag> : null}
-                                <Tag>{prof.runCount ?? 0} 次任务</Tag>
+                                {isDefault ? <SignalPill tone="cited">默认档案</SignalPill> : null}
+                                <SignalPill tone="neutral">
+                                  <span className="gm-num">{prof.runCount ?? 0}</span> 次任务
+                                </SignalPill>
                               </Space>
                             </div>
 
-                            <div style={{ marginBottom: 8, fontSize: 13 }}>
-                              <Typography.Text type="secondary">主品牌：</Typography.Text>
-                              <Tag color="geekblue" style={{ marginInlineStart: 4 }}>
-                                {prof.brandName}
-                              </Tag>
+                            <div
+                              style={{
+                                marginBottom: 8,
+                                fontSize: 13,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                              }}
+                            >
+                              <span style={{ color: 'var(--gm-fg-3)' }}>主品牌：</span>
+                              <SignalPill tone="info">{prof.brandName}</SignalPill>
                             </div>
 
                             <div style={{ marginBottom: 8, fontSize: 13 }}>
-                              <Typography.Text type="secondary">品牌别名：</Typography.Text>
+                              <span style={{ color: 'var(--gm-fg-3)' }}>品牌别名：</span>
                               {prof.brandAliases.length > 0 ? (
                                 <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
                                   {prof.brandAliases.map((alias) => (
-                                    <Tag key={alias} style={{ marginInlineEnd: 0 }}>
+                                    <span key={alias} className="gm-engine-chip">
                                       {alias}
-                                    </Tag>
+                                    </span>
                                   ))}
                                 </Space>
                               ) : (
-                                <Typography.Text type="secondary">未设置别名</Typography.Text>
+                                <span style={{ color: 'var(--gm-fg-3)' }}>未设置别名</span>
                               )}
                             </div>
 
                             <div style={{ marginBottom: 8, fontSize: 13 }}>
-                              <Typography.Text type="secondary">自有官网域名：</Typography.Text>
+                              <span style={{ color: 'var(--gm-fg-3)' }}>自有官网域名：</span>
                               {prof.ownedDomains.length > 0 ? (
                                 <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
                                   {prof.ownedDomains.map((dom) => (
-                                    <Tag key={dom} color="cyan" style={{ marginInlineEnd: 0 }}>
-                                      {dom}
-                                    </Tag>
+                                    <span key={dom} className="gm-engine-chip">
+                                      <TruncText text={dom} mono middle />
+                                    </span>
                                   ))}
                                 </Space>
                               ) : (
-                                <Typography.Text type="secondary">未配置域名</Typography.Text>
+                                <span style={{ color: 'var(--gm-fg-3)' }}>未配置域名</span>
                               )}
                             </div>
 
                             <div style={{ fontSize: 13 }}>
-                              <Typography.Text type="secondary">
+                              <span style={{ color: 'var(--gm-fg-3)' }}>
                                 监测竞品（{prof.competitors.length}/{VISIBILITY_MAX_COMPETITORS}
                                 ）：
-                              </Typography.Text>
+                              </span>
                               {prof.competitors.length > 0 ? (
                                 <Space size={[4, 4]} wrap style={{ marginTop: 4 }}>
-                                  {prof.competitors.map((comp) => (
-                                    <Tag
-                                      key={comp.name}
-                                      color="orange"
-                                      style={{ marginInlineEnd: 0 }}
-                                    >
+                                  {shownCompetitors.map((comp) => (
+                                    <SignalPill key={comp.name} tone="competitor">
                                       {comp.name}
-                                    </Tag>
+                                    </SignalPill>
                                   ))}
+                                  {hiddenCompetitors.length > 0 ? (
+                                    <Tooltip
+                                      title={hiddenCompetitors.map((c) => c.name).join('、')}
+                                    >
+                                      <span className="gm-engine-more gm-num">
+                                        +{hiddenCompetitors.length}
+                                      </span>
+                                    </Tooltip>
+                                  ) : null}
                                 </Space>
                               ) : (
-                                <Typography.Text type="secondary">未添加竞品</Typography.Text>
+                                <span style={{ color: 'var(--gm-fg-3)' }}>未添加竞品</span>
                               )}
                             </div>
                           </div>
@@ -1723,7 +1880,7 @@ export function VisibilityMonitorsScreen({
                               flexWrap: 'wrap',
                               gap: 6,
                               paddingTop: 10,
-                              borderTop: '1px solid #f0f2f5',
+                              borderTop: '1px solid var(--gm-line-1)',
                             }}
                           >
                             <Button
@@ -1821,7 +1978,7 @@ export function VisibilityMonitorsScreen({
         }
       >
         {profileModal ? (
-          <div>
+          <div className="gm-profile-modal-body">
             {profileModal.draft.mode === 'create' &&
             (prefillSources.keywords.length > 0 || prefillSources.knowledgeBases.length > 0) ? (
               <div
@@ -1829,8 +1986,8 @@ export function VisibilityMonitorsScreen({
                   padding: 12,
                   marginBottom: 14,
                   borderRadius: 8,
-                  border: '1px solid #d9e6ff',
-                  background: '#f5f9ff',
+                  border: '1px solid var(--gm-line-2)',
+                  background: 'var(--gm-bg-surface)',
                 }}
               >
                 <Typography.Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
@@ -1845,7 +2002,9 @@ export function VisibilityMonitorsScreen({
                 >
                   {prefillSources.keywords.length > 0 ? (
                     <label style={{ marginBottom: 0 }}>
-                      <span style={{ fontSize: 12, color: '#475569' }}>从训练主词导入品牌词</span>
+                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                        从训练主词导入品牌词
+                      </span>
                       <select
                         aria-label="从关键词快捷预填"
                         style={NATIVE_SELECT_STYLE}
@@ -1865,7 +2024,9 @@ export function VisibilityMonitorsScreen({
 
                   {prefillSources.knowledgeBases.length > 0 ? (
                     <label style={{ marginBottom: 0 }}>
-                      <span style={{ fontSize: 12, color: '#475569' }}>从企业知识库导入品牌词</span>
+                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                        从企业知识库导入品牌词
+                      </span>
                       <select
                         aria-label="从知识库快捷预填"
                         style={NATIVE_SELECT_STYLE}
@@ -1934,9 +2095,9 @@ export function VisibilityMonitorsScreen({
               {splitTagList(profileModal.draft.brandAliasesText).length > 0 ? (
                 <Space size={[4, 4]} wrap>
                   {splitTagList(profileModal.draft.brandAliasesText).map((tag) => (
-                    <Tag key={tag} color="geekblue">
+                    <span key={tag} className="gm-engine-chip">
                       {tag}
-                    </Tag>
+                    </span>
                   ))}
                 </Space>
               ) : null}
@@ -2017,52 +2178,11 @@ export function VisibilityMonitorsScreen({
                       style={{
                         padding: 10,
                         borderRadius: 8,
-                        border: '1px solid #e6eaf0',
-                        background: '#f8fafc',
+                        border: '1px solid var(--gm-line-1)',
+                        background: 'var(--gm-bg-surface)',
                       }}
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          marginBottom: 6,
-                        }}
-                      >
-                        <Typography.Text strong style={{ fontSize: 13 }}>
-                          竞品 #{idx + 1}
-                        </Typography.Text>
-                        <Button
-                          size="small"
-                          type="text"
-                          danger
-                          aria-label={`移除竞品-${idx + 1}`}
-                          onClick={() =>
-                            setProfileModal((curr) =>
-                              curr
-                                ? {
-                                    ...curr,
-                                    draft: {
-                                      ...curr.draft,
-                                      competitors: curr.draft.competitors.filter(
-                                        (_, i) => i !== idx,
-                                      ),
-                                    },
-                                  }
-                                : curr,
-                            )
-                          }
-                        >
-                          移除
-                        </Button>
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                          gap: 8,
-                        }}
-                      >
+                      <div className="gm-competitor-grid">
                         <Input
                           aria-label={`竞品名称-${idx + 1}`}
                           placeholder="竞品名称（必填）"
@@ -2126,6 +2246,37 @@ export function VisibilityMonitorsScreen({
                             );
                           }}
                         />
+                        <Button
+                          size="small"
+                          type="text"
+                          danger
+                          aria-label={`移除竞品-${idx + 1}`}
+                          style={{
+                            width: 32,
+                            height: 32,
+                            padding: 0,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          onClick={() =>
+                            setProfileModal((curr) =>
+                              curr
+                                ? {
+                                    ...curr,
+                                    draft: {
+                                      ...curr.draft,
+                                      competitors: curr.draft.competitors.filter(
+                                        (_, i) => i !== idx,
+                                      ),
+                                    },
+                                  }
+                                : curr,
+                            )
+                          }
+                        >
+                          ×
+                        </Button>
                       </div>
                     </div>
                   ))}
@@ -2192,10 +2343,11 @@ export function VisibilityMonitorsScreen({
         }
       >
         {runModal ? (
-          <div>
+          <div className="gm-run-modal-body">
             <Alert
               type="info"
               showIcon
+              className="gm-num"
               style={{ marginBottom: 14 }}
               message={`共 ${runPromptCount} 个问题 × ${runEngineCount} 个引擎 = ${runTotalChecks} 次检测，预计冻结 ${runTotalPoints} 点数（单价 ${unitPoints} 点/次，失败或终止未执行项自动退回）`}
             />
@@ -2258,8 +2410,8 @@ export function VisibilityMonitorsScreen({
                   padding: 12,
                   marginBottom: 12,
                   borderRadius: 8,
-                  border: '1px solid #e6eaf0',
-                  background: '#f8fafc',
+                  border: '1px solid var(--gm-line-1)',
+                  background: 'var(--gm-bg-surface)',
                 }}
               >
                 <div
@@ -2336,9 +2488,9 @@ export function VisibilityMonitorsScreen({
                         >
                           <span>{q.text}</span>
                           {q.included ? (
-                            <Tag color="success" style={{ marginInlineStart: 6 }}>
-                              已收录
-                            </Tag>
+                            <span style={{ marginInlineStart: 6 }}>
+                              <SignalPill tone="cited">已收录</SignalPill>
+                            </span>
                           ) : null}
                         </Checkbox>
                       );
@@ -2353,6 +2505,7 @@ export function VisibilityMonitorsScreen({
               <Input.TextArea
                 aria-label="自定义监测问题"
                 rows={4}
+                style={{ maxHeight: 160, overflow: 'auto' }}
                 placeholder={
                   '2026年出差办公便携显示器推荐哪几款？\n4K触控便携屏哪个品牌色彩准确且售后稳定？'
                 }
@@ -2414,41 +2567,69 @@ export function VisibilityMonitorsScreen({
 
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-                  gap: 8,
-                  padding: 10,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  padding: 12,
                   borderRadius: 8,
-                  border: '1px solid #e6eaf0',
-                  background: '#f8fafc',
+                  border: '1px solid var(--gm-line-1)',
+                  background: 'var(--gm-bg-surface)',
                 }}
               >
-                {VISIBILITY_ENGINES.map((eng) => {
-                  const checked = runModal.draft.engines.includes(eng.key);
-                  return (
-                    <Checkbox
-                      key={eng.key}
-                      aria-label={`选择引擎-${eng.label}`}
-                      checked={checked}
-                      onChange={(e) => {
-                        const nextChecked = e.target.checked;
-                        patchRunDraft((prev) => ({
-                          ...prev,
-                          engines: nextChecked
-                            ? [...prev.engines, eng.key]
-                            : prev.engines.filter((k) => k !== eng.key),
-                        }));
+                {[
+                  {
+                    groupLabel: '国内主流引擎',
+                    items: VISIBILITY_ENGINES.filter((eng) => eng.domestic),
+                  },
+                  {
+                    groupLabel: '海外搜索引擎',
+                    items: VISIBILITY_ENGINES.filter((eng) => !eng.domestic),
+                  },
+                ].map((group) => (
+                  <div key={group.groupLabel}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        lineHeight: '16px',
+                        fontWeight: 500,
+                        letterSpacing: '0.06em',
+                        color: 'var(--gm-fg-3)',
+                        marginBottom: 6,
                       }}
                     >
-                      <span>{eng.label}</span>
-                      {eng.domestic ? (
-                        <Tag color="blue" style={{ marginInlineStart: 4, fontSize: 11 }}>
-                          国内
-                        </Tag>
-                      ) : null}
-                    </Checkbox>
-                  );
-                })}
+                      {group.groupLabel}
+                    </div>
+                    <div className="gm-engine-grid">
+                      {group.items.map((eng) => {
+                        const checked = runModal.draft.engines.includes(eng.key);
+                        return (
+                          <div
+                            key={eng.key}
+                            className={
+                              checked ? 'gm-engine-card gm-engine-card-checked' : 'gm-engine-card'
+                            }
+                          >
+                            <Checkbox
+                              aria-label={`选择引擎-${eng.label}`}
+                              checked={checked}
+                              onChange={(e) => {
+                                const nextChecked = e.target.checked;
+                                patchRunDraft((prev) => ({
+                                  ...prev,
+                                  engines: nextChecked
+                                    ? [...prev.engines, eng.key]
+                                    : prev.engines.filter((k) => k !== eng.key),
+                                }));
+                              }}
+                            >
+                              <span>{eng.label}</span>
+                            </Checkbox>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

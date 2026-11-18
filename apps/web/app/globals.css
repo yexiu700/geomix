@@ -1435,3 +1435,114 @@ input:not([class*='ant-']):hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* === monitors === */
+.gm-monitors-table-wrap {
+  width: 100%;
+  border: 1px solid var(--gm-line-1);
+  border-radius: var(--gm-radius-md);
+  overflow: hidden;
+  background: var(--gm-bg-surface);
+}
+
+.gm-monitors-table-wrap .ant-table-wrapper {
+  overflow-x: auto;
+}
+
+.gm-monitors-name-btn {
+  display: block;
+  width: 100%;
+  min-width: 180px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--gm-fg-1);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-monitors-name-btn:hover {
+  color: var(--gm-phosphor);
+}
+
+@keyframes gm-pulse-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.gm-progress-pulse {
+  flex: none;
+  width: 6px;
+  height: 4px;
+  background: rgba(197, 240, 74, 0.8);
+  animation: gm-pulse-dot 1200ms var(--gm-ease-in-out) infinite;
+}
+
+.gm-crud-dialog:has(.gm-profile-modal-body) {
+  width: min(640px, calc(100vw - 24px));
+}
+
+.gm-crud-dialog:has(.gm-run-modal-body) {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.gm-competitor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 32px;
+  gap: 8px;
+  align-items: center;
+}
+
+.gm-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gm-engine-card {
+  height: 36px;
+  border: 1px solid var(--gm-line-2);
+  border-radius: var(--gm-radius-sm);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--gm-bg-surface);
+  transition:
+    border-color var(--gm-dur-fast) var(--gm-ease-out),
+    background-color var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-engine-card:hover {
+  border-color: var(--gm-line-strong);
+}
+
+.gm-engine-card-checked {
+  border-color: var(--gm-phosphor-a40);
+  background: var(--gm-phosphor-a08);
+}
+
+.gm-engine-card .ant-checkbox-wrapper {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 0;
+}
+
+@media (max-width: 640px) {
+  .gm-competitor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gm-engine-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
