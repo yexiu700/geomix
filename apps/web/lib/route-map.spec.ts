@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { LEGACY_REDIRECTS, legacyPathname, safeConsoleHref } from './route-map';
+import {
+  LEGACY_REDIRECTS,
+  legacyPathname,
+  safeAdminHref,
+  safeConsoleHref,
+  safePostLoginHref,
+} from './route-map';
 
 describe('legacy redirects (#7 / #72)', () => {
   it('maps all 15 documented legacy /user/* routes (including trailing slashes and common subpaths)', () => {
@@ -40,7 +46,7 @@ describe('legacy redirects (#7 / #72)', () => {
     expect(legacyPathname('/dashboard')).toBeNull();
   });
 
-  it('only accepts an in-app console href after login', () => {
+  it('only accepts an in-app console or admin href after login (#194)', () => {
     expect(safeConsoleHref('/writing/prompts')).toBe('/writing/prompts');
     expect(safeConsoleHref('/material/questions?keywordId=demo')).toBe(
       '/material/questions?keywordId=demo',
@@ -48,5 +54,15 @@ describe('legacy redirects (#7 / #72)', () => {
     expect(safeConsoleHref('https://example.com/writing/prompts')).toBeNull();
     expect(safeConsoleHref('//example.com')).toBeNull();
     expect(safeConsoleHref('/user/zhiling')).toBeNull();
+
+    expect(safeAdminHref('/admin')).toBe('/admin/tenants');
+    expect(safeAdminHref('/admin/tenants')).toBe('/admin/tenants');
+    expect(safeAdminHref('/admin/llm-costs/')).toBe('/admin/llm-costs');
+    expect(safeAdminHref('/admin/unknown')).toBeNull();
+    expect(safeAdminHref('//evil.example/admin/tenants')).toBeNull();
+
+    expect(safePostLoginHref('/admin/tenants')).toBe('/admin/tenants');
+    expect(safePostLoginHref('/me/rights')).toBe('/me/rights');
+    expect(safePostLoginHref('https://example.com/admin/tenants')).toBeNull();
   });
 });

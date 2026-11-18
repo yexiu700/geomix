@@ -10,7 +10,7 @@ const postJsonMock = vi.fn();
 const loadAccountMock = vi.fn();
 
 const routerMock = { replace: replaceMock };
-const searchParamsMock = new URLSearchParams();
+let searchParamsMock = new URLSearchParams();
 
 const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -44,7 +44,9 @@ beforeAll(() => {
 afterEach(() => {
   vi.useRealTimers();
   cleanup();
+  searchParamsMock = new URLSearchParams();
   window.sessionStorage.clear();
+  window.localStorage.clear();
   replaceMock.mockReset();
   postJsonMock.mockReset();
   loadAccountMock.mockReset();
@@ -124,6 +126,34 @@ describe('LoginPanel captcha readiness (#64)', () => {
       { timeout: 5000 },
     );
     expect(replaceMock).toHaveBeenCalledWith('/dashboard');
+  });
+
+  it('redirects back to /admin/tenants when ?next=%2Fadmin%2Ftenants is present (#194)', async () => {
+    searchParamsMock = new URLSearchParams({ next: '/admin/tenants' });
+    window.localStorage.setItem('geomix.accessToken', 'at_shared');
+    window.localStorage.setItem('geomix.refreshToken', 'rt_shared');
+    loadAccountMock.mockResolvedValue({
+      status: 'ok',
+      account: {
+        id: 'u-admin',
+        username: 'admin',
+        nickname: '管理员',
+        role: 'ADMIN',
+        tenant: {
+          id: 't-platform',
+          name: 'GeoMix 平台',
+          expiresAt: '2099-12-31T00:00:00.000Z',
+          isActive: true,
+          readOnly: false,
+        },
+      },
+    });
+
+    render(<LoginPanel />);
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/admin/tenants');
+    });
   });
 });
 

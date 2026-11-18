@@ -4,7 +4,7 @@ import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadAccount, postJson } from '../lib/api';
-import { safeConsoleHref } from '../lib/route-map';
+import { safePostLoginHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
 
 export const CAPTCHA_LOAD_TIMEOUT_MS = 10_000;
@@ -77,7 +77,7 @@ async function fetchCaptchaAttempt(controller: AbortController): Promise<Captcha
 export function LoginPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextHref = safeConsoleHref(searchParams.get('next'));
+  const nextHref = safePostLoginHref(searchParams.get('next'));
   const preset = NOTICES[searchParams.get('notice') ?? ''] ?? '';
   const [captchaId, setCaptchaId] = useState('');
   const [captchaImage, setCaptchaImage] = useState('');

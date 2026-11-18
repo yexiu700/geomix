@@ -4,7 +4,9 @@ import {
   clearSession,
   readAccessToken,
   readRefreshToken,
+  readSharedRefreshToken,
   saveSession,
+  syncSessionToSharedStorage,
   type SessionStorageLike,
 } from './session';
 
@@ -105,17 +107,30 @@ export async function getJson<T>(path: string, token: string): Promise<Envelope<
 
 export async function refreshAccessToken(storage: SessionStorageLike): Promise<string | null> {
   const refreshToken = readRefreshToken(storage);
-  if (!refreshToken) return null;
-  try {
-    const result = await postJson<{ accessToken: string; refreshToken: string }>('/auth/refresh', {
-      refreshToken,
-    });
-    if (result.code !== 0 || !result.data?.accessToken || !result.data.refreshToken) return null;
-    saveSession(storage, result.data.accessToken, result.data.refreshToken);
-    return result.data.accessToken;
-  } catch {
-    return null;
+  const sharedRefreshToken = readSharedRefreshToken(storage);
+  const candidates =
+    refreshToken && sharedRefreshToken && sharedRefreshToken !== refreshToken
+      ? [refreshToken, sharedRefreshToken]
+      : refreshToken
+        ? [refreshToken]
+        : sharedRefreshToken
+          ? [sharedRefreshToken]
+          : [];
+  for (const candidate of candidates) {
+    try {
+      const result = await postJson<{ accessToken: string; refreshToken: string }>(
+        '/auth/refresh',
+        { refreshToken: candidate },
+      );
+      if (result.code === 0 && result.data?.accessToken && result.data.refreshToken) {
+        saveSession(storage, result.data.accessToken, result.data.refreshToken);
+        return result.data.accessToken;
+      }
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 export async function loadAccount(storage: SessionStorageLike): Promise<AccountLoad> {
@@ -128,7 +143,10 @@ export async function loadAccount(storage: SessionStorageLike): Promise<AccountL
       if (!refreshed) return { status: 'anonymous' };
       result = await getJson<AccountProfile>('/account', refreshed);
     }
-    if (result.code === 0 && result.data?.tenant) return { status: 'ok', account: result.data };
+    if (result.code === 0 && result.data?.tenant) {
+      syncSessionToSharedStorage(storage);
+      return { status: 'ok', account: result.data };
+    }
     if (result.code === API_ERROR.TENANT_EXPIRED) return { status: 'disabled' };
     if (result.code === AUTH_ERROR.UNAUTHORIZED) return { status: 'anonymous' };
     return { status: 'anonymous' };

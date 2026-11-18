@@ -4,9 +4,10 @@ import { SITE_NAME } from '@geomix/shared';
 import { Button } from 'antd';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { loadAccount, logoutSession, type AccountProfile } from '../../lib/api';
-import { clearSession } from '../../lib/session';
+import { safeAdminHref } from '../../lib/route-map';
+import { clearSession, readAccessToken } from '../../lib/session';
 
 const LINKS = [
   { href: '/admin/tenants', title: '租户' },
@@ -19,29 +20,46 @@ const LINKS = [
 export function AdminGate({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const [phase, setPhase] = useState<'boot' | 'ok' | 'deny' | 'offline'>('boot');
 
-  useEffect(() => {
-    let live = true;
-    void loadAccount(window.sessionStorage).then((result) => {
-      if (!live) return;
+  const verifyAdminSession = useCallback(
+    async (isLive: () => boolean) => {
+      const result = await loadAccount(window.sessionStorage);
+      if (!isLive()) return;
       if (result.status === 'offline') {
         setPhase('offline');
         return;
       }
-      if (result.status !== 'ok' || result.account.role !== 'ADMIN') {
-        if (result.status !== 'ok') clearSession(window.sessionStorage);
+      if (result.status !== 'ok') {
+        const hadToken = readAccessToken(window.sessionStorage) !== null;
+        if (hadToken || result.status === 'disabled') clearSession(window.sessionStorage);
+        const next = safeAdminHref(pathnameRef.current) ?? '/admin/tenants';
+        const notice = result.status === 'disabled' ? 'disabled' : hadToken ? 'session' : '';
+        const query = new URLSearchParams({ next });
+        if (notice) query.set('notice', notice);
+        router.replace(`/login?${query.toString()}`);
+        return;
+      }
+      if (result.account.role !== 'ADMIN') {
         setPhase('deny');
         return;
       }
       setAccount(result.account);
       setPhase('ok');
-    });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    let live = true;
+    void verifyAdminSession(() => live);
     return () => {
       live = false;
     };
-  }, []);
+  }, [verifyAdminSession]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -59,7 +77,16 @@ export function AdminGate({ children }: { children: ReactNode }) {
   if (phase === 'offline') {
     return (
       <main className="gm-boot" style={{ color: 'var(--gm-danger)' }}>
-        无法连接接口
+        <p>无法连接接口</p>
+        <Button
+          type="primary"
+          onClick={() => {
+            setPhase('boot');
+            void verifyAdminSession(() => true);
+          }}
+        >
+          重试
+        </Button>
       </main>
     );
   }

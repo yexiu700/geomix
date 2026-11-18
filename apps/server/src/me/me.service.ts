@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   AUTH_ERROR,
   MODEL_INCLUSION_CARDS,
+  QUOTA_DEFAULTS,
   buildRightsCards,
   emptyModelInclusions,
   escapeLikeLiteral,
@@ -15,6 +16,7 @@ import {
   type ModelInclusionKey,
   type MoneyListQuery,
   type PointListQuery,
+  type QuotaKeyName,
   type VerificationInput,
 } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
@@ -120,13 +122,25 @@ export class MeService {
     if (!tenant) throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '账号不存在');
     const wallet = await this.prisma.base.wallet.findUnique({ where: { tenantId } });
     if (!wallet) throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '钱包不存在');
-    const [quotas, included, models] = await Promise.all([
+    const [quotas, included, models, liveUsage] = await Promise.all([
       this.prisma.base.quota.findMany({ where: { tenantId } }),
       this.prisma.base.question.count({
         where: { tenantId, included: true },
       }),
       this.computeModelInclusions(tenantId),
+      this.computeLiveQuotaUsage(tenantId),
     ]);
+    const quotaByKey = new Map(quotas.map((row) => [row.key as QuotaKeyName, row]));
+    const reconciledQuotas = QUOTA_DEFAULTS.map((item) => {
+      const stored = quotaByKey.get(item.key);
+      const storedUsed = stored?.used ?? 0n;
+      const liveUsed = liveUsage[item.key] ?? 0n;
+      return {
+        key: item.key,
+        used: liveUsed > storedUsed ? liveUsed : storedUsed,
+        limit: stored?.limit ?? BigInt(item.limit),
+      };
+    });
     const resolved = resolveTenantBillingMode(tenant.billingMode, parseEnv().BILLING_MODE);
     const readOnly = !tenant.isActive || tenant.expiresAt.getTime() <= Date.now();
     return {
@@ -144,13 +158,55 @@ export class MeService {
       available: wallet.points - wallet.pointsReserved,
       money: formatMoney(wallet.money.toString()),
       cards: buildRightsCards({
-        quotas: quotas.map((row) => ({ key: row.key, used: row.used, limit: row.limit })),
+        quotas: reconciledQuotas,
         included,
         expiresOn: formatLedgerTime(tenant.expiresAt.toISOString()).slice(0, 10),
         points: wallet.points,
         money: wallet.money.toString(),
       }),
       models,
+    };
+  }
+
+  private async computeLiveQuotaUsage(
+    tenantId: string,
+  ): Promise<Partial<Record<QuotaKeyName, bigint>>> {
+    const base = this.prisma.base as unknown as {
+      keyword?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
+      question?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
+      article?: {
+        count?: (args: { where: { tenantId: string; source: 'AI_TASK' } }) => Promise<number>;
+      };
+      mediaAsset?: {
+        aggregate?: (args: {
+          where: { tenantId: string };
+          _sum: { bytes: true };
+        }) => Promise<{ _sum?: { bytes?: number | bigint | null } }>;
+      };
+    };
+
+    const [keywordCount, questionCount, aiWriteCount, storageAgg] = await Promise.all([
+      typeof base.keyword?.count === 'function'
+        ? base.keyword.count({ where: { tenantId } })
+        : Promise.resolve(0),
+      typeof base.question?.count === 'function'
+        ? base.question.count({ where: { tenantId } })
+        : Promise.resolve(0),
+      typeof base.article?.count === 'function'
+        ? base.article.count({ where: { tenantId, source: 'AI_TASK' } })
+        : Promise.resolve(0),
+      typeof base.mediaAsset?.aggregate === 'function'
+        ? base.mediaAsset.aggregate({ where: { tenantId }, _sum: { bytes: true } })
+        : Promise.resolve({ _sum: { bytes: 0 } }),
+    ]);
+
+    const rawBytes = storageAgg?._sum?.bytes ?? 0;
+    const storageBytes = typeof rawBytes === 'bigint' ? rawBytes : BigInt(Math.max(0, rawBytes));
+    return {
+      MAIN_KEYWORD: BigInt(Math.max(0, keywordCount)),
+      QUESTION: BigInt(Math.max(0, questionCount)),
+      AI_WRITE: BigInt(Math.max(0, aiWriteCount)),
+      STORAGE_BYTES: storageBytes,
     };
   }
 
