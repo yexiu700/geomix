@@ -26,7 +26,7 @@ import {
   type RewriteResultStatusName,
   type TaskStatusName,
 } from '@geomix/shared';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, Key } from 'react';
 import {
   httpRewriteBatchGateway,
   type RewriteBatchFormOptions,
@@ -152,10 +152,7 @@ export type DrawerState = {
   detail: RewriteBatchDetailResponse | null;
 };
 
-export type CreateSession = {
-  id: number;
-  initialOptions: RewriteBatchFormOptions | null;
-};
+export type CreateSession = { id: number; initialOptions: RewriteBatchFormOptions | null };
 
 export const INITIAL_BATCH_LIST_STATE: BatchListState = {
   items: [],
@@ -164,11 +161,7 @@ export const INITIAL_BATCH_LIST_STATE: BatchListState = {
   remoteSearchEnabled: false,
 };
 
-export const INITIAL_DRAWER_STATE: DrawerState = {
-  open: false,
-  loading: false,
-  detail: null,
-};
+export const INITIAL_DRAWER_STATE: DrawerState = { open: false, loading: false, detail: null };
 
 export type CreateDraft = {
   name: string;
@@ -185,9 +178,7 @@ export type CreateDraft = {
   brand: string;
 };
 
-export type DraftLinkListPreview = ParsedBatchLinkList & {
-  firstInvalidWarning: string | null;
-};
+export type DraftLinkListPreview = ParsedBatchLinkList & { firstInvalidWarning: string | null };
 
 export type ValidateCreateDraftContext = {
   remoteSearchEnabled: boolean;
@@ -195,18 +186,8 @@ export type ValidateCreateDraftContext = {
 };
 
 export type ValidateCreateDraftResult =
-  | {
-      ok: true;
-      issues: [];
-      errorMessage: null;
-      payload: RewriteBatchCreateInput;
-    }
-  | {
-      ok: false;
-      issues: string[];
-      errorMessage: string;
-      payload: null;
-    };
+  | { ok: true; issues: []; errorMessage: null; payload: RewriteBatchCreateInput }
+  | { ok: false; issues: string[]; errorMessage: string; payload: null };
 
 export type RewriteBatchControlAction = 'pause' | 'resume' | 'cancel';
 
@@ -219,13 +200,7 @@ export type BatchRowActionDescriptor =
       danger?: boolean;
       primaryGhost?: boolean;
     }
-  | {
-      key: 'delete';
-      label: string;
-      kind: 'delete';
-      danger: true;
-      primaryGhost?: false;
-    };
+  | { key: 'delete'; label: string; kind: 'delete'; danger: true; primaryGhost?: false };
 
 export function getBatchNoteStyle(status: TaskStatusName): CSSProperties {
   return {
@@ -287,9 +262,68 @@ export function mergeOptionsIntoListState(
 export function shouldCloseDrawerOnDelete(
   drawer: DrawerState,
   deletedIds: readonly string[],
+  pendingBatchId?: string | null,
 ): boolean {
-  return Boolean(drawer.detail && deletedIds.includes(drawer.detail.batch.id));
+  const targetId = drawer.detail?.batch.id ?? pendingBatchId ?? null;
+  return Boolean(targetId && deletedIds.includes(targetId));
 }
+
+export function createDrawerRequestTracker() {
+  let seq = 0;
+  let targetId: string | null = null;
+  let inFlight: { batchId: string; promise: Promise<RewriteBatchDetailResponse> } | null = null;
+
+  return {
+    get seq() {
+      return seq;
+    },
+    get targetId() {
+      return targetId;
+    },
+    beginOpen(batchId: string) {
+      targetId = batchId;
+      seq += 1;
+      return seq;
+    },
+    activate(batchId: string) {
+      targetId = batchId;
+      seq += 1;
+      if (inFlight?.batchId === batchId) inFlight = null;
+    },
+    invalidate(batchId: string) {
+      if (inFlight?.batchId === batchId) inFlight = null;
+      if (targetId === batchId) seq += 1;
+    },
+    close() {
+      targetId = null;
+      seq += 1;
+    },
+    isCurrent(reqSeq: number) {
+      return seq === reqSeq;
+    },
+    shouldCloseOnDelete(drawer: DrawerState, deletedIds: readonly string[]) {
+      return shouldCloseDrawerOnDelete(drawer, deletedIds, targetId);
+    },
+    shouldAutoSync(drawer: DrawerState, items: readonly RewriteBatchItem[], syncDrawer: boolean) {
+      return Boolean(
+        syncDrawer &&
+        drawer.open &&
+        drawer.detail &&
+        shouldSyncOpenDrawer(drawer.detail.batch, items),
+      );
+    },
+    fetchDetail(gateway: Pick<RewriteBatchGateway, 'detail'>, batchId: string) {
+      if (inFlight?.batchId === batchId) return inFlight.promise;
+      const promise = gateway.detail(batchId).finally(() => {
+        if (inFlight?.promise === promise) inFlight = null;
+      });
+      inFlight = { batchId, promise };
+      return promise;
+    },
+  };
+}
+
+export type DrawerRequestTracker = ReturnType<typeof createDrawerRequestTracker>;
 
 export function formatCreatedBatchFeedback(created: RewriteBatchDetailResponse): string {
   return `批量复刻任务「${created.batch.name}」已入队（预冻 ${created.batch.reservedPoints} 点数，按实际成功篇数结算并自动退差额）`;
@@ -303,12 +337,7 @@ export function deriveBatchPollingState(
   items: readonly RewriteBatchItem[],
   drawer: DrawerState,
   pollIntervalMs: number,
-): {
-  drawerBatchId: string | null;
-  drawerBatchActive: boolean;
-  hasActiveBatch: boolean;
-  effectiveInterval: number;
-} {
+) {
   const drawerBatchId = drawer.open && drawer.detail ? drawer.detail.batch.id : null;
   const drawerBatchActive =
     drawer.open && drawer.detail !== null && isActiveBatchStatus(drawer.detail.batch.status);
@@ -338,11 +367,7 @@ export function buildInitialDraft(
 }
 
 export function applyDraftNameChange(draft: CreateDraft, name: string): CreateDraft {
-  return {
-    ...draft,
-    name,
-    autoCategoryName: buildDefaultBatchCategoryName(name),
-  };
+  return { ...draft, name, autoCategoryName: buildDefaultBatchCategoryName(name) };
 }
 
 export function computeEstimatedFreezePoints(maxCount: number, unitPoints: number): number {
@@ -352,20 +377,7 @@ export function computeEstimatedFreezePoints(maxCount: number, unitPoints: numbe
 }
 
 export function isCreateDraftDirty(draft: CreateDraft, initial: CreateDraft): boolean {
-  return (
-    draft.name !== initial.name ||
-    draft.maxCount !== initial.maxCount ||
-    draft.sourceType !== initial.sourceType ||
-    draft.keyword !== initial.keyword ||
-    draft.linksText !== initial.linksText ||
-    draft.mediaCategoryId !== initial.mediaCategoryId ||
-    draft.noImage !== initial.noImage ||
-    draft.templateId !== initial.templateId ||
-    draft.categoryId !== initial.categoryId ||
-    draft.autoCategoryName !== initial.autoCategoryName ||
-    draft.resultStatus !== initial.resultStatus ||
-    draft.brand !== initial.brand
-  );
+  return (Object.keys(initial) as Array<keyof CreateDraft>).some((k) => draft[k] !== initial[k]);
 }
 
 export function previewDraftLinkList(
@@ -451,12 +463,7 @@ export function validateCreateDraft(
   }
 
   if (issues.length > 0) {
-    return {
-      ok: false,
-      issues,
-      errorMessage: issues.join('；'),
-      payload: null,
-    };
+    return { ok: false, issues, errorMessage: issues.join('；'), payload: null };
   }
 
   return {
@@ -483,52 +490,40 @@ export function formatTime(iso: string | null | undefined): string {
   return formatShanghaiDateTime(iso);
 }
 
+const BATCH_STATUS_TAG_COLORS: Record<TaskStatusName, string> = {
+  RUNNING: 'processing',
+  COMPLETED: 'success',
+  PAUSED: 'warning',
+  PARTIAL: 'gold',
+  FAILED: 'error',
+  CANCELLED: 'default',
+  QUEUED: 'blue',
+};
+
+const ITEM_STATUS_TAG_COLORS: Record<ItemStatusName, string> = {
+  SUCCESS: 'success',
+  RUNNING: 'processing',
+  FAILED: 'error',
+  SKIPPED: 'default',
+  PENDING: 'blue',
+};
+
+const ARTICLE_STATUS_TAG_COLORS: Record<ArticleStatusName, string> = {
+  NORMAL: 'green',
+  PENDING: 'gold',
+  DISABLED: 'default',
+};
+
 export function batchStatusTagColor(status: TaskStatusName): string {
-  switch (status) {
-    case 'RUNNING':
-      return 'processing';
-    case 'COMPLETED':
-      return 'success';
-    case 'PAUSED':
-      return 'warning';
-    case 'PARTIAL':
-      return 'gold';
-    case 'FAILED':
-      return 'error';
-    case 'CANCELLED':
-      return 'default';
-    case 'QUEUED':
-    default:
-      return 'blue';
-  }
+  return BATCH_STATUS_TAG_COLORS[status] ?? 'blue';
 }
 
 export function itemStatusTagColor(status: ItemStatusName): string {
-  switch (status) {
-    case 'SUCCESS':
-      return 'success';
-    case 'RUNNING':
-      return 'processing';
-    case 'FAILED':
-      return 'error';
-    case 'SKIPPED':
-      return 'default';
-    case 'PENDING':
-    default:
-      return 'blue';
-  }
+  return ITEM_STATUS_TAG_COLORS[status] ?? 'blue';
 }
 
 export function articleStatusTagColor(status: ArticleStatusName): string {
-  switch (status) {
-    case 'NORMAL':
-      return 'green';
-    case 'PENDING':
-      return 'gold';
-    case 'DISABLED':
-    default:
-      return 'default';
-  }
+  return ARTICLE_STATUS_TAG_COLORS[status] ?? 'default';
 }
 
 export function isActiveBatchStatus(status: TaskStatusName): boolean {
@@ -536,30 +531,26 @@ export function isActiveBatchStatus(status: TaskStatusName): boolean {
 }
 
 export function isControllableBatchStatus(status: TaskStatusName): boolean {
-  return status === 'QUEUED' || status === 'RUNNING' || status === 'PAUSED';
+  return isActiveBatchStatus(status) || status === 'PAUSED';
 }
 
 export function isTerminalBatchStatus(status: TaskStatusName): boolean {
-  return (
-    status === 'COMPLETED' || status === 'PARTIAL' || status === 'FAILED' || status === 'CANCELLED'
-  );
+  return !isControllableBatchStatus(status);
 }
+
+const NOOP_STORAGE: SessionStorageLike = {
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => undefined,
+};
 
 export function resolveRewriteBatchGateway(
   injectedGateway?: RewriteBatchGateway,
   storage?: SessionStorageLike,
 ): RewriteBatchGateway {
   if (injectedGateway) return injectedGateway;
-  const browserStorage: SessionStorageLike =
-    storage ??
-    (typeof window !== 'undefined'
-      ? window.sessionStorage
-      : {
-          getItem: () => null,
-          setItem: () => undefined,
-          removeItem: () => undefined,
-        });
-  return httpRewriteBatchGateway(browserStorage);
+  const s = storage ?? (typeof window !== 'undefined' ? window.sessionStorage : NOOP_STORAGE);
+  return httpRewriteBatchGateway(s);
 }
 
 export function pruneTerminalSelection(
@@ -601,6 +592,36 @@ export function normalizeBatchPageSize(nextSize: number): RewriteBatchListQuery[
   return (
     CRUD_PAGE_SIZES.includes(nextSize as (typeof CRUD_PAGE_SIZES)[number]) ? nextSize : 25
   ) as RewriteBatchListQuery['pageSize'];
+}
+
+export function buildBatchRowSelection(
+  readOnly: boolean,
+  selectedIds: string[],
+  onSelectIds: (ids: string[]) => void,
+) {
+  if (readOnly) return undefined;
+  return {
+    selectedRowKeys: selectedIds,
+    onChange: (keys: Key[]) => onSelectIds(keys.map(String)),
+    getCheckboxProps: (rec: RewriteBatchItem) => ({ disabled: !isTerminalBatchStatus(rec.status) }),
+  };
+}
+
+export function buildBatchPagination(
+  query: RewriteBatchListQuery,
+  total: number,
+  setQuery: (updater: (prev: RewriteBatchListQuery) => RewriteBatchListQuery) => void,
+) {
+  return {
+    current: query.page,
+    pageSize: query.pageSize,
+    total,
+    showSizeChanger: true,
+    pageSizeOptions: PAGE_SIZE_OPTIONS,
+    showTotal: (count: number) => `共 ${count} 个批量复刻任务`,
+    onChange: (page: number, size: number) =>
+      setQuery((prev) => ({ ...prev, page, pageSize: normalizeBatchPageSize(size) })),
+  };
 }
 
 export async function executeBatchControl(

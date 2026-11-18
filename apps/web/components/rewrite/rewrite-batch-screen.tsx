@@ -94,25 +94,39 @@ export function RewriteBatchScreen({
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
   const [drawer, setDrawer] = useState<H.DrawerState>(H.INITIAL_DRAWER_STATE);
 
-  const drawerStateRef = useRef<H.DrawerState>(drawer);
-  drawerStateRef.current = drawer;
+  const drawerRef = useRef<H.DrawerState>(drawer);
+  drawerRef.current = drawer;
+  const trackerRef = useRef<H.DrawerRequestTracker | null>(null);
+  const tracker = (trackerRef.current ??= H.createDrawerRequestTracker());
+
+  const applyDrawer = useCallback((next: H.DrawerState) => {
+    drawerRef.current = next;
+    setDrawer(next);
+  }, []);
+
+  const closeDrawer = useCallback(() => {
+    tracker.close();
+    applyDrawer(H.INITIAL_DRAWER_STATE);
+  }, [applyDrawer, tracker]);
 
   const refreshDrawerSilently = useCallback(
     async (batchId: string) => {
+      const reqSeq = tracker.seq;
       try {
-        const detail = await gateway.detail(batchId);
-        setDrawer((prev) =>
-          prev.open && prev.detail?.batch.id === detail.batch.id ? { ...prev, detail } : prev,
-        );
+        const detail = await tracker.fetchDetail(gateway, batchId);
+        const prev = drawerRef.current;
+        if (tracker.isCurrent(reqSeq) && prev.open && prev.detail?.batch.id === detail.batch.id) {
+          applyDrawer({ ...prev, detail });
+        }
       } catch {
         // 后台轮询或标签切回静默同步失败时不覆盖主列表错误提示
       }
     },
-    [gateway],
+    [applyDrawer, gateway, tracker],
   );
 
   const loadList = useCallback(
-    async (nextQuery: RewriteBatchListQuery, silent = false) => {
+    async (nextQuery: RewriteBatchListQuery, silent = false, syncDrawer = true) => {
       if (!silent) {
         setLoading(true);
         setErrorMsg(null);
@@ -121,13 +135,9 @@ export function RewriteBatchScreen({
         const res = await gateway.list(nextQuery);
         setListData(H.toBatchListState(res));
         setSelectedIds((prev) => H.pruneTerminalSelection(prev, res.items));
-        const curDrawer = drawerStateRef.current;
-        if (
-          curDrawer.open &&
-          curDrawer.detail &&
-          H.shouldSyncOpenDrawer(curDrawer.detail.batch, res.items)
-        ) {
-          void refreshDrawerSilently(curDrawer.detail.batch.id);
+        const cur = drawerRef.current;
+        if (tracker.shouldAutoSync(cur, res.items, syncDrawer) && cur.detail) {
+          await refreshDrawerSilently(cur.detail.batch.id);
         }
       } catch (err) {
         if (!silent) setErrorMsg(H.toErrorMessage(err, '加载批量爆文复刻列表失败'));
@@ -135,7 +145,7 @@ export function RewriteBatchScreen({
         if (!silent) setLoading(false);
       }
     },
-    [gateway, refreshDrawerSilently],
+    [gateway, refreshDrawerSilently, tracker],
   );
 
   const loadOptions = useCallback(async () => {
@@ -164,10 +174,11 @@ export function RewriteBatchScreen({
     onRefresh: (reason) => {
       void loadOptions();
       if (reason === 'activated') {
-        void loadList(query, true);
-        const curDrawer = drawerStateRef.current;
-        if (curDrawer.open && curDrawer.detail) {
-          void refreshDrawerSilently(curDrawer.detail.batch.id);
+        const cur = drawerRef.current;
+        const syncOpen = Boolean(cur.open && cur.detail);
+        void loadList(query, true, !syncOpen);
+        if (syncOpen && cur.detail) {
+          void refreshDrawerSilently(cur.detail.batch.id);
         }
       }
     },
@@ -183,11 +194,10 @@ export function RewriteBatchScreen({
     active,
     intervalMs: effectiveInterval,
     onPoll: async () => {
+      const pollDrawer = Boolean(drawerBatchId && drawerBatchActive);
       await Promise.all([
-        loadList(query, true),
-        drawerBatchId && drawerBatchActive
-          ? refreshDrawerSilently(drawerBatchId)
-          : Promise.resolve(),
+        loadList(query, true, !pollDrawer),
+        pollDrawer && drawerBatchId ? refreshDrawerSilently(drawerBatchId) : Promise.resolve(),
       ]);
     },
   });
@@ -196,10 +206,10 @@ export function RewriteBatchScreen({
     (href: string) => {
       if (!onDispatch) return;
       setCreateSession(null);
-      setDrawer(H.INITIAL_DRAWER_STATE);
+      closeDrawer();
       onDispatch({ type: 'open', href, sourceId: tabId });
     },
-    [onDispatch, tabId],
+    [closeDrawer, onDispatch, tabId],
   );
 
   const openCreateModal = async () => {
@@ -209,25 +219,29 @@ export function RewriteBatchScreen({
 
   const openTaskDrawer = useCallback(
     async (batchId: string) => {
-      setDrawer((prev) => ({ ...prev, open: true, loading: true }));
+      const reqSeq = tracker.beginOpen(batchId);
+      const prev = drawerRef.current.detail;
+      applyDrawer({ open: true, loading: true, detail: prev?.batch.id === batchId ? prev : null });
       try {
-        const detail = await gateway.detail(batchId);
-        setDrawer({ open: true, loading: false, detail });
+        const detail = await tracker.fetchDetail(gateway, batchId);
+        if (tracker.isCurrent(reqSeq)) applyDrawer({ open: true, loading: false, detail });
       } catch (err) {
+        if (!tracker.isCurrent(reqSeq)) return;
         setErrorMsg(H.toErrorMessage(err, '加载任务明细失败'));
-        setDrawer((prev) => ({ ...prev, loading: false }));
+        applyDrawer({ ...drawerRef.current, loading: false });
       }
     },
-    [gateway],
+    [applyDrawer, gateway, tracker],
   );
 
   const handleCreated = async (created: RewriteBatchDetailResponse) => {
     setCreateSession(null);
     setFeedbackMsg(H.formatCreatedBatchFeedback(created));
     invalidateFreshness('articles', 'categories', 'points');
-    setDrawer({ open: true, loading: false, detail: created });
+    tracker.activate(created.batch.id);
+    applyDrawer({ open: true, loading: false, detail: created });
     await Promise.all([
-      loadList({ ...query, page: 1 }),
+      loadList({ ...query, page: 1 }, false, false),
       loadOptions(),
       H.isActiveBatchStatus(created.batch.status)
         ? refreshDrawerSilently(created.batch.id)
@@ -251,12 +265,14 @@ export function RewriteBatchScreen({
     (batch: RewriteBatchItem, action: H.RewriteBatchControlAction) =>
       runBusy('任务控制操作失败', async () => {
         setFeedbackMsg(await H.executeBatchControl(gateway, batch, action));
-        await loadList(query);
-        if (drawerStateRef.current.open && drawerStateRef.current.detail?.batch.id === batch.id) {
+        tracker.invalidate(batch.id);
+        const syncCur = drawerRef.current.open && drawerRef.current.detail?.batch.id === batch.id;
+        await loadList(query, false, !syncCur);
+        if (drawerRef.current.open && drawerRef.current.detail?.batch.id === batch.id) {
           await refreshDrawerSilently(batch.id);
         }
       }),
-    [gateway, loadList, query, refreshDrawerSilently, runBusy],
+    [gateway, loadList, query, refreshDrawerSilently, runBusy, tracker],
   );
 
   const handleRowAction = useCallback(
@@ -269,13 +285,12 @@ export function RewriteBatchScreen({
         await gateway.deleteOne(row.id);
         setFeedbackMsg(`已删除任务「${row.name}」`);
         setSelectedIds((prev) => prev.filter((id) => id !== row.id));
-        if (H.shouldCloseDrawerOnDelete(drawerStateRef.current, [row.id])) {
-          setDrawer(H.INITIAL_DRAWER_STATE);
-        }
+        if (tracker.shouldCloseOnDelete(drawerRef.current, [row.id])) closeDrawer();
+        tracker.invalidate(row.id);
         await loadList(query);
       });
     },
-    [gateway, handleControl, loadList, query, runBusy],
+    [closeDrawer, gateway, handleControl, loadList, query, runBusy, tracker],
   );
 
   const handleBulkDelete = () =>
@@ -285,9 +300,8 @@ export function RewriteBatchScreen({
           try {
             const res = await gateway.bulkDelete(selectedIds);
             setFeedbackMsg(`已批量删除 ${res.affected} 条已结束的批量复刻任务`);
-            if (H.shouldCloseDrawerOnDelete(drawerStateRef.current, selectedIds)) {
-              setDrawer(H.INITIAL_DRAWER_STATE);
-            }
+            if (tracker.shouldCloseOnDelete(drawerRef.current, selectedIds)) closeDrawer();
+            selectedIds.forEach((id) => tracker.invalidate(id));
             setSelectedIds([]);
             await loadList(query);
           } finally {
@@ -541,25 +555,8 @@ export function RewriteBatchScreen({
           dataSource={listData.items}
           scroll={{ x: 1240 }}
           locale={{ emptyText: CRUD_EMPTY_TEXT }}
-          rowSelection={
-            readOnly
-              ? undefined
-              : {
-                  selectedRowKeys: selectedIds,
-                  onChange: (keys) => setSelectedIds(keys.map(String)),
-                  getCheckboxProps: (rec) => ({ disabled: !H.isTerminalBatchStatus(rec.status) }),
-                }
-          }
-          pagination={{
-            current: query.page,
-            pageSize: query.pageSize,
-            total: listData.total,
-            showSizeChanger: true,
-            pageSizeOptions: H.PAGE_SIZE_OPTIONS,
-            showTotal: (count) => `共 ${count} 个批量复刻任务`,
-            onChange: (page, size) =>
-              setQuery((prev) => ({ ...prev, page, pageSize: H.normalizeBatchPageSize(size) })),
-          }}
+          rowSelection={H.buildBatchRowSelection(readOnly, selectedIds, setSelectedIds)}
+          pagination={H.buildBatchPagination(query, listData.total, setQuery)}
           columns={columns}
         />
       </div>
@@ -570,7 +567,7 @@ export function RewriteBatchScreen({
         busy={busy}
         readOnly={readOnly}
         detail={drawer.detail}
-        onClose={() => setDrawer((prev) => ({ ...prev, open: false }))}
+        onClose={closeDrawer}
         onRefresh={(batchId) => void openTaskDrawer(batchId)}
         onControl={(batch, action) => void handleControl(batch, action)}
         onNavigate={navigateTo}

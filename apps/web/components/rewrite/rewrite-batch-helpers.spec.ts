@@ -2,6 +2,7 @@ import {
   REWRITE_BATCH_URL_AS_KEYWORD_MSG,
   type MediaCategoryRecord,
   type RewriteBatchItem,
+  type RewriteBatchListQuery,
 } from '@geomix/shared';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -12,9 +13,12 @@ import {
   applyDraftNameChange,
   articleStatusTagColor,
   batchStatusTagColor,
+  buildBatchPagination,
+  buildBatchRowSelection,
   buildInitialDraft,
   computeEffectivePollInterval,
   computeEstimatedFreezePoints,
+  createDrawerRequestTracker,
   deriveBatchPollingState,
   executeBatchControl,
   formatBatchKeywordSummary,
@@ -517,6 +521,22 @@ describe('rewrite-batch-helpers', () => {
       expect(shouldCloseDrawerOnDelete(openActiveDrawer, ['b_run'])).toBe(true);
       expect(shouldCloseDrawerOnDelete(openActiveDrawer, ['b_done'])).toBe(false);
       expect(shouldCloseDrawerOnDelete(INITIAL_DRAWER_STATE, ['b_run'])).toBe(false);
+      expect(
+        shouldCloseDrawerOnDelete({ open: true, loading: true, detail: null }, ['b_run'], 'b_run'),
+      ).toBe(true);
+
+      expect(buildBatchRowSelection(true, ['b_done'], vi.fn())).toBeUndefined();
+      const sel = buildBatchRowSelection(false, ['b_done'], vi.fn());
+      expect(sel?.getCheckboxProps(running).disabled).toBe(true);
+      expect(sel?.getCheckboxProps(done).disabled).toBe(false);
+
+      let qState: RewriteBatchListQuery = { page: 2, pageSize: 25 };
+      const pag = buildBatchPagination(qState, 42, (up) => {
+        qState = up(qState);
+      });
+      expect(pag.showTotal(42)).toBe('共 42 个批量复刻任务');
+      pag.onChange(3, 999);
+      expect(qState).toEqual({ page: 3, pageSize: 25 });
 
       expect(
         mergeOptionsIntoListState(INITIAL_BATCH_LIST_STATE, {
@@ -539,6 +559,65 @@ describe('rewrite-batch-helpers', () => {
       expect(parseSourceFilter('link_list')).toBe('link_list');
       expect(getBatchNoteStyle('FAILED').color).toBe('var(--gm-danger)');
       expect(getBatchNoteStyle('PARTIAL').color).toBe('var(--gm-fg-2)');
+    });
+
+    it('deduplicates concurrent detail fetches and invalidates stale drawer sequences on close, delete, or control', async () => {
+      const tracker = createDrawerRequestTracker();
+      let inFlightCount = 0;
+      let maxConcurrent = 0;
+      let resolveFirst: ((val: { batch: RewriteBatchItem; records: [] }) => void) | null = null;
+
+      const detail = vi.fn(
+        (_id: string) =>
+          new Promise<{ batch: RewriteBatchItem; records: [] }>((resolve) => {
+            inFlightCount += 1;
+            maxConcurrent = Math.max(maxConcurrent, inFlightCount);
+            resolveFirst = (val) => {
+              inFlightCount -= 1;
+              resolve(val);
+            };
+          }),
+      );
+
+      const seq1 = tracker.beginOpen('b_1');
+      expect(tracker.isCurrent(seq1)).toBe(true);
+      expect(
+        tracker.shouldCloseOnDelete({ open: true, loading: true, detail: null }, ['b_1']),
+      ).toBe(true);
+
+      // Concurrent fetches for the same batchId share a single gateway.detail call
+      const p1 = tracker.fetchDetail({ detail }, 'b_1');
+      const p2 = tracker.fetchDetail({ detail }, 'b_1');
+      expect(detail).toHaveBeenCalledTimes(1);
+      expect(maxConcurrent).toBe(1);
+
+      // Invalidating an unrelated batch does NOT invalidate b_1's active sequence
+      tracker.invalidate('b_other');
+      expect(tracker.isCurrent(seq1)).toBe(true);
+
+      // Closing the drawer invalidates seq1 while p1/p2 are still in flight
+      tracker.close();
+      expect(tracker.isCurrent(seq1)).toBe(false);
+      expect(tracker.targetId).toBeNull();
+
+      const item = makeBatchItem({ id: 'b_1' });
+      resolveFirst!({ batch: item, records: [] });
+      const [r1, r2] = await Promise.all([p1, p2]);
+      expect(r1.batch.id).toBe('b_1');
+      expect(r2.batch.id).toBe('b_1');
+
+      // Subsequent fetch after settlement triggers a fresh gateway.detail call
+      const p3 = tracker.fetchDetail({ detail }, 'b_1');
+      expect(detail).toHaveBeenCalledTimes(2);
+      resolveFirst!({ batch: item, records: [] });
+      await p3;
+
+      // activate & invalidate on matching targetId advance sequence and drop cached flight
+      tracker.activate('b_2');
+      const seqAfterActivate = tracker.seq;
+      expect(tracker.targetId).toBe('b_2');
+      tracker.invalidate('b_2');
+      expect(tracker.isCurrent(seqAfterActivate)).toBe(false);
     });
   });
 });
