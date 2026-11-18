@@ -4,6 +4,7 @@ import { ConfigProvider, unstableSetRender } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { GM_ANTD_THEME } from '../lib/design-tokens';
 
 type ContainerWithRoot = (Element | DocumentFragment) & {
   _reactRoot?: ReturnType<typeof createRoot>;
@@ -23,7 +24,7 @@ unstableSetRender((node, container) => {
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }}>
+    <ConfigProvider locale={zhCN} theme={GM_ANTD_THEME} button={{ autoInsertSpace: false }}>
       {children}
     </ConfigProvider>
   );
