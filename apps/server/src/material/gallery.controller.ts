@@ -1,10 +1,15 @@
 import {
+  ArgumentsHost,
   Body,
+  Catch,
   Controller,
   Delete,
+  ExceptionFilter,
   Get,
   HttpCode,
+  HttpException,
   Inject,
+  Logger,
   Param,
   Patch,
   Post,
@@ -12,6 +17,7 @@ import {
   Req,
   Res,
   UploadedFiles,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -40,6 +46,7 @@ import { asHttpRequest } from '../auth/http-request';
 import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
+import { isProviderError, providerToApi } from '../infra/provider-error';
 import { GalleryService, type RawUploadFile } from './gallery.service';
 
 type DownloadResponse = {
@@ -54,6 +61,147 @@ type MulterMemoryFile = {
   buffer: Buffer;
   size: number;
 };
+
+function decodeUploadFilename(raw?: string): string | undefined {
+  if (!raw) return raw;
+  let hasHighLatin1 = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    if (code > 0xff) return raw;
+    if (code >= 0x80) hasHighLatin1 = true;
+  }
+  if (!hasHighLatin1) return raw;
+  const latin1Buf = Buffer.from(raw, 'latin1');
+  const utf8 = latin1Buf.toString('utf8');
+  if (utf8.includes('\ufffd')) return raw;
+  return Buffer.from(utf8, 'utf8').equals(latin1Buf) ? utf8 : raw;
+}
+
+function readUploadHttpMessage(exception: HttpException): string {
+  const body = exception.getResponse();
+  if (typeof body === 'string') return body;
+  if (body && typeof body === 'object' && 'message' in body) {
+    const message = (body as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+    if (Array.isArray(message)) return message.map(String).join('；');
+  }
+  return exception.message;
+}
+
+function mapUploadMulterMessage(
+  status: number,
+  rawMsg: string,
+): { status: number; code: number; msg: string } | null {
+  if (status === 413 || rawMsg === 'File too large' || rawMsg === 'LIMIT_FILE_SIZE') {
+    return { status: 413, code: API_ERROR.BAD_REQUEST, msg: GALLERY_FILE_TOO_LARGE_MSG };
+  }
+  if (rawMsg === 'Too many files' || rawMsg === 'LIMIT_FILE_COUNT') {
+    return {
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+      msg: `单次最多上传 ${GALLERY_UPLOAD_MAX_FILES} 张图片`,
+    };
+  }
+  if (rawMsg === 'Unexpected field' || rawMsg === 'LIMIT_UNEXPECTED_FILE') {
+    return {
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+      msg: '上传字段不正确，请使用 files 字段上传图片',
+    };
+  }
+  if (
+    rawMsg === 'Boundary not found' ||
+    rawMsg.startsWith('Multipart:') ||
+    rawMsg === 'LIMIT_PART_COUNT' ||
+    rawMsg === 'LIMIT_FIELD_KEY' ||
+    rawMsg === 'LIMIT_FIELD_VALUE' ||
+    rawMsg === 'LIMIT_FIELD_COUNT' ||
+    rawMsg === 'Field name missing'
+  ) {
+    return {
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+      msg: '上传请求格式不正确，请使用 multipart/form-data 重试',
+    };
+  }
+  return null;
+}
+
+@Catch()
+class GalleryUploadExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(GalleryUploadExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost): void {
+    const response = host.switchToHttp().getResponse<DownloadResponse>();
+    if (exception instanceof ApiError) {
+      if (exception.retryAfterSeconds !== undefined) {
+        response.setHeader('Retry-After', String(exception.retryAfterSeconds));
+      }
+      response.status(exception.status).json({
+        code: exception.code,
+        msg: exception.message,
+        data: null,
+      });
+      return;
+    }
+    if (isProviderError(exception)) {
+      const apiErr = providerToApi(exception);
+      response.status(apiErr.status).json({
+        code: apiErr.code,
+        msg: apiErr.message,
+        data: null,
+      });
+      return;
+    }
+    if (exception instanceof HttpException) {
+      const status = exception.getStatus();
+      const rawMsg = readUploadHttpMessage(exception);
+      const multerMapped = mapUploadMulterMessage(status, rawMsg);
+      if (multerMapped) {
+        response.status(multerMapped.status).json({
+          code: multerMapped.code,
+          msg: multerMapped.msg,
+          data: null,
+        });
+        return;
+      }
+      if (status === 404) {
+        response.status(404).json({ code: AUTH_ERROR.NOT_FOUND, msg: rawMsg, data: null });
+        return;
+      }
+      if (status === 401) {
+        response.status(401).json({ code: AUTH_ERROR.UNAUTHORIZED, msg: rawMsg, data: null });
+        return;
+      }
+      if (status === 403) {
+        response.status(403).json({ code: API_ERROR.TENANT_EXPIRED, msg: rawMsg, data: null });
+        return;
+      }
+      if (status < 500) {
+        response.status(status).json({ code: API_ERROR.BAD_REQUEST, msg: rawMsg, data: null });
+        return;
+      }
+    }
+    if (
+      typeof exception === 'object' &&
+      exception !== null &&
+      'code' in exception &&
+      typeof (exception as { code?: unknown }).code === 'string'
+    ) {
+      const multerMapped = mapUploadMulterMessage(400, (exception as { code: string }).code);
+      if (multerMapped) {
+        response.status(multerMapped.status).json({
+          code: multerMapped.code,
+          msg: multerMapped.msg,
+          data: null,
+        });
+        return;
+      }
+    }
+    this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+    response.status(500).json({ code: 50000, msg: '服务器错误', data: null });
+  }
+}
 
 function readGalleryId(raw: string, label = '编号'): string {
   const id = raw.trim();
@@ -169,6 +317,7 @@ export class GalleryAssetsController {
 
   @Post('upload')
   @HttpCode(200)
+  @UseFilters(GalleryUploadExceptionFilter)
   @UseInterceptors(
     FilesInterceptor('files', GALLERY_UPLOAD_MAX_FILES, {
       limits: {
@@ -192,8 +341,8 @@ export class GalleryAssetsController {
     const rawCategoryId = typeof body?.categoryId === 'string' ? body.categoryId : '';
     const categoryId = readGalleryId(rawCategoryId, '素材分类编号');
     const files: RawUploadFile[] = (uploaded ?? []).map((file) => ({
-      filename: file.originalname,
-      buffer: file.buffer,
+      filename: decodeUploadFilename(file.originalname),
+      buffer: Buffer.isBuffer(file.buffer) ? file.buffer : Buffer.alloc(0),
     }));
     return ok(await this.gallery.uploadBuffers(categoryId, files));
   }

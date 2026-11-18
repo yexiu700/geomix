@@ -192,6 +192,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const compressedWide = multipartJson.data.items[1]?.asset;
       expect(compressedWide?.width).toBe(1600);
       expect(compressedWide?.mime).toBe('image/jpeg');
+      expect(compressedWide?.originalName).toBe('wide-2000.png');
+      expect(compressedWide?.displayName).toBe('wide-2000.png');
 
       const totalUploadedBytes = multipartJson.data.items.reduce(
         (acc, item) => acc + item.asset.bytes,

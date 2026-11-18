@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StorageService } from './storage';
+import { createS3ObjectClient, StorageService } from './storage';
 
 describe('storage', () => {
   it('keeps objects inside the tenant prefix and replays the same body once', async () => {
@@ -67,5 +67,23 @@ describe('storage', () => {
         idempotencyKey: 'idem-store-03',
       }),
     ).rejects.toMatchObject({ reason: 'object' });
+  });
+
+  it('wraps S3 put and delete failures into ProviderError(upstream)', async () => {
+    const client = createS3ObjectClient({
+      S3_ENDPOINT: 'http://127.0.0.1:1',
+      S3_REGION: 'us-east-1',
+      S3_BUCKET: 'geomix',
+      S3_ACCESS_KEY_ID: 'geomix',
+      S3_SECRET_ACCESS_KEY: 'geomix-dev-only',
+      S3_FORCE_PATH_STYLE: 'true',
+    });
+    await expect(
+      client.put('tenants/t1/test.jpg', Buffer.from('abc'), 'image/jpeg'),
+    ).rejects.toMatchObject({ kind: 'upstream', reason: 's3' });
+    await expect(client.delete('tenants/t1/test.jpg')).rejects.toMatchObject({
+      kind: 'upstream',
+      reason: 's3',
+    });
   });
 });

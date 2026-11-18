@@ -78,17 +78,23 @@ export async function compressImage(
   const qualities = [80, 70, 60, 50, 40, 30];
   for (let step = 0; step < 6; step += 1) {
     for (const quality of qualities) {
-      const body = await sharp(input, {
-        limitInputPixels: limits.maxPixels,
-        pages: 1,
-        animated: false,
-      })
-        .rotate()
-        .resize({ width: edge, height: edge, fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality, mozjpeg: true })
-        .toBuffer();
+      let body: Buffer;
+      let out: sharp.Metadata;
+      try {
+        body = await sharp(input, {
+          limitInputPixels: limits.maxPixels,
+          pages: 1,
+          animated: false,
+        })
+          .rotate()
+          .resize({ width: edge, height: edge, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality, mozjpeg: true })
+          .toBuffer();
+        out = await sharp(body).metadata();
+      } catch {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '图片无法读取或已损坏', 'decode');
+      }
       if (body.length <= limits.maxOutputBytes) {
-        const out = await sharp(body).metadata();
         const width = out.width ?? 0;
         const height = out.height ?? 0;
         if (Math.max(width, height) > limits.maxEdge) {

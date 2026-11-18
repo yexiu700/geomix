@@ -7,6 +7,7 @@ import {
   AUTH_ERROR,
   CRUD_EXPORT_LIMIT,
   GALLERY_CATEGORY_TYPE_IMAGE,
+  GALLERY_FILE_FORMAT_MSG,
   GALLERY_FILE_TOO_LARGE_MSG,
   GALLERY_PREVIEW_LIMIT,
   GALLERY_THUMB_MAX_EDGE,
@@ -19,6 +20,8 @@ import {
   buildStorageSummary,
   escapeLikeLiteral,
   parseEnv,
+  safeMediaDisplayName,
+  sanitizeMediaOriginalName,
   type MediaAssetListQuery,
   type MediaAssetListResponse,
   type MediaAssetPreview,
@@ -38,7 +41,7 @@ import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
 import { compressImage, placeholderPng } from '../infra/compress';
-import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
+import { PROVIDER_KIND, ProviderError, providerToApi } from '../infra/provider-error';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -70,6 +73,7 @@ type AssetRow = {
   categoryId: string | null;
   origin: MediaOriginName;
   objectKey: string;
+  originalName?: string | null;
   url: string;
   thumbUrl: string | null;
   width: number;
@@ -160,12 +164,19 @@ export class GalleryService {
   }
 
   private presentAsset(tenantId: string, row: AssetRow): MediaAssetRecord {
+    const originalName = sanitizeMediaOriginalName(row.originalName);
     return {
       id: row.id,
       categoryId: row.categoryId,
       categoryName: row.category?.name ?? null,
       origin: row.origin,
       objectKey: row.objectKey,
+      originalName,
+      displayName: safeMediaDisplayName({
+        id: row.id,
+        origin: row.origin,
+        originalName,
+      }),
       url: this.signedAssetUrl(tenantId, row.id, 'file'),
       thumbUrl: this.signedAssetUrl(tenantId, row.id, 'thumb'),
       width: row.width,
@@ -377,10 +388,11 @@ export class GalleryService {
       where.categoryId = query.categoryId;
     }
     if (query.q) {
-      where.objectKey = {
-        contains: escapeLikeLiteral(query.q),
-        mode: 'insensitive',
-      };
+      const needle = escapeLikeLiteral(query.q);
+      where.OR = [
+        { originalName: { contains: needle, mode: 'insensitive' } },
+        { objectKey: { contains: needle, mode: 'insensitive' } },
+      ];
     }
     return where;
   }
@@ -453,6 +465,39 @@ export class GalleryService {
     return this.uploadBuffers(input.categoryId, files);
   }
 
+  private mapCompressError(error: unknown): ApiError {
+    if (error instanceof ProviderError) {
+      if (error.kind === PROVIDER_KIND.TOO_LARGE && error.reason === 'input') {
+        return new ApiError(400, API_ERROR.BAD_REQUEST, GALLERY_FILE_TOO_LARGE_MSG);
+      }
+      if (error.reason === 'format') {
+        return new ApiError(400, API_ERROR.BAD_REQUEST, GALLERY_FILE_FORMAT_MSG);
+      }
+      if (error.reason === 'empty') {
+        return new ApiError(400, API_ERROR.BAD_REQUEST, '图片文件为空，请选择有效的图片文件');
+      }
+      if (error.reason === 'decode' || error.reason === 'metadata') {
+        return new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '图片内容损坏或无法解析，请更换有效的 JPG、PNG 或 WebP 图片',
+        );
+      }
+      if (error.reason === 'pixels') {
+        return new ApiError(400, API_ERROR.BAD_REQUEST, '图片像素尺寸过大，请缩小后重试');
+      }
+      if (error.reason === 'output') {
+        return new ApiError(400, API_ERROR.BAD_REQUEST, '图片压缩后仍超过 1MB，请裁剪或压缩后重试');
+      }
+      return new ApiError(400, API_ERROR.BAD_REQUEST, error.message);
+    }
+    return new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      '图片无法解析，请更换有效的 JPG、PNG 或 WebP 图片',
+    );
+  }
+
   async uploadBuffers(categoryId: string, files: RawUploadFile[]): Promise<MediaUploadResponse> {
     const tenantId = currentTenantId();
     if (!tenantId) throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '未登录');
@@ -477,6 +522,9 @@ export class GalleryService {
 
     const limitBytes = this.maxInputBytes();
     for (const file of files) {
+      if (!Buffer.isBuffer(file.buffer) || file.buffer.length === 0) {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '图片文件为空，请选择有效的图片文件');
+      }
       if (file.buffer.length > limitBytes) {
         throw new ApiError(400, API_ERROR.BAD_REQUEST, GALLERY_FILE_TOO_LARGE_MSG);
       }
@@ -496,42 +544,54 @@ export class GalleryService {
           warnWidth: IMAGE_WARN_WIDTH,
         });
       } catch (error) {
-        if (error instanceof ProviderError) {
-          if (error.kind === PROVIDER_KIND.TOO_LARGE && error.reason === 'input') {
-            throw new ApiError(400, API_ERROR.BAD_REQUEST, GALLERY_FILE_TOO_LARGE_MSG);
-          }
-          throw new ApiError(400, API_ERROR.BAD_REQUEST, error.message);
-        }
-        throw error;
+        throw this.mapCompressError(error);
       }
 
-      const thumbBuffer = await sharp(compressed.body)
-        .resize({
-          width: GALLERY_THUMB_MAX_EDGE,
-          height: GALLERY_THUMB_MAX_EDGE,
-          fit: 'cover',
-        })
-        .jpeg({ quality: 75 })
-        .toBuffer();
+      let thumbBuffer: Buffer;
+      try {
+        thumbBuffer = await sharp(compressed.body)
+          .resize({
+            width: GALLERY_THUMB_MAX_EDGE,
+            height: GALLERY_THUMB_MAX_EDGE,
+            fit: 'cover',
+          })
+          .jpeg({ quality: 75 })
+          .toBuffer();
+      } catch {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '生成图片缩略图失败，请更换有效图片重试');
+      }
 
       const assetId = generateAssetId();
       const mainName = mainObjectName(assetId);
       const thumbName = thumbObjectName(assetId);
+      const safeOriginalName = sanitizeMediaOriginalName(file.filename);
 
-      const storedMain = await this.storage.put({
-        tenantId,
-        name: mainName,
-        body: compressed.body,
-        contentType: compressed.contentType,
-        idempotencyKey: `upload:${assetId}:main`,
-      });
-      await this.storage.put({
-        tenantId,
-        name: thumbName,
-        body: thumbBuffer,
-        contentType: 'image/jpeg',
-        idempotencyKey: `upload:${assetId}:thumb`,
-      });
+      let storedMain;
+      let mainStored = false;
+      try {
+        storedMain = await this.storage.put({
+          tenantId,
+          name: mainName,
+          body: compressed.body,
+          contentType: compressed.contentType,
+          idempotencyKey: `upload:${assetId}:main`,
+        });
+        mainStored = true;
+        await this.storage.put({
+          tenantId,
+          name: thumbName,
+          body: thumbBuffer,
+          contentType: 'image/jpeg',
+          idempotencyKey: `upload:${assetId}:thumb`,
+        });
+      } catch (error) {
+        if (mainStored) {
+          await Promise.allSettled([this.storage.delete(tenantId, mainName)]);
+        }
+        if (error instanceof ApiError) throw error;
+        if (error instanceof ProviderError) throw providerToApi(error);
+        throw new ApiError(502, API_ERROR.UPSTREAM_UNAVAILABLE, '对象存储写入失败，请稍后重试');
+      }
 
       let created: AssetRow;
       try {
@@ -544,6 +604,7 @@ export class GalleryService {
               categoryId: category.id,
               origin: 'UPLOAD',
               objectKey: storedMain.key,
+              originalName: safeOriginalName,
               url: `/api/v1/media-assets/${assetId}/file`,
               thumbUrl: `/api/v1/media-assets/${assetId}/thumb`,
               width: compressed.width,
@@ -562,7 +623,9 @@ export class GalleryService {
         throw error;
       }
 
-      const label = file.filename?.trim() || assetId;
+      const label =
+        safeOriginalName ??
+        safeMediaDisplayName({ id: assetId, origin: 'UPLOAD', originalName: null });
       const warningText = compressed.warning
         ? `${label}：图片宽度 ${compressed.width}px 小于建议值 500px（仅提示，已完成上传）`
         : undefined;
@@ -570,6 +633,7 @@ export class GalleryService {
 
       items.push({
         asset: this.presentAsset(tenantId, created),
+        originalName: safeOriginalName,
         warning: warningText,
       });
     }

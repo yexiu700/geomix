@@ -52,4 +52,27 @@ describe('image compression', () => {
       }),
     ).rejects.toMatchObject({ reason: 'input' });
   });
+
+  it('compresses 1x1 PNGs cleanly and converts corrupted-body PNG decode errors into ProviderError', async () => {
+    const gray67 = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVQIHWP4DwABAQEANl9ngAAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const ok = await compressImage(gray67);
+    expect(ok.width).toBe(1);
+    expect(ok.height).toBe(1);
+    expect(ok.warning).toContain('500');
+
+    const corruptIdat = Buffer.concat([
+      gray67.subarray(0, 45),
+      Buffer.from([
+        0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x01, 0x02, 0x03, 0x04, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      ]),
+    ]);
+    await expect(compressImage(corruptIdat)).rejects.toMatchObject({
+      kind: 'contract',
+      reason: 'decode',
+    });
+  });
 });
