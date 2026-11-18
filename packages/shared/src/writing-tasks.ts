@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { FAKE_MARK } from './adapters';
 import { directionGuidance } from './catalog';
+import { formatCompanyBrandLabel } from './knowledge';
 import {
   CRUD_ORDERS,
   CRUD_PAGE_SIZES,
@@ -544,6 +545,100 @@ export function assembleTitleMessages(input: {
   };
 }
 
+const KB_ARTICLE_EXCERPT_MAX = 3000;
+
+const KB_PROMPT_WRAPPER_LINE_PATTERNS = [
+  /^【企业背景资料】\s*$/,
+  /^【资料片段\s*\d+】\s*$/,
+  /^只能使用以下事实，不得编造参数、资质或案例[:：]?\s*$/,
+  /^——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*$/,
+  /^企业主体[:：]\s*.*$/,
+];
+
+const KB_OPEN_TO_CLOSE: Record<string, string> = {
+  '(': ')',
+  '（': '）',
+  '【': '】',
+  '「': '」',
+  '《': '》',
+};
+const KB_CLOSE_SET = new Set(Object.values(KB_OPEN_TO_CLOSE));
+
+function hasBalancedBrackets(chars: readonly string[], endIndex: number): boolean {
+  const stack: string[] = [];
+  for (let i = 0; i < endIndex; i += 1) {
+    const ch = chars[i]!;
+    const expectedClose = KB_OPEN_TO_CLOSE[ch];
+    if (expectedClose) {
+      stack.push(expectedClose);
+    } else if (KB_CLOSE_SET.has(ch) && stack.length > 0 && stack[stack.length - 1] === ch) {
+      stack.pop();
+    }
+  }
+  return stack.length === 0;
+}
+
+function sanitizeKbSnippetForArticle(rawSnippet?: string | null): string {
+  if (!rawSnippet) return '';
+  let text = rawSnippet
+    .replace(/\r\n/g, '\n')
+    .replace(/只能使用以下事实，不得编造参数、资质或案例[:：]?\s*/g, '')
+    .replace(/——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*/g, '')
+    .replace(/【企业背景资料】\s*/g, '')
+    .replace(/【资料片段\s*\d+】\s*/g, '')
+    .replace(
+      /(?:^|\n)企业主体[:：][^\n]*?(?=\n|$|\s+(?:产品服务|产品特点|品牌故事|用户痛点|信任背书|客户案例|其他信息)[:：])/g,
+      '\n',
+    );
+
+  const lines = text
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => !KB_PROMPT_WRAPPER_LINE_PATTERNS.some((re) => re.test(line.trim())));
+
+  text = lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text;
+}
+
+function truncateAtNaturalBoundary(text: string, maxChars: number): string {
+  const chars = Array.from(text);
+  if (chars.length <= maxChars) return text;
+
+  const minBreak = Math.floor(maxChars * 0.5);
+  const isSentenceEnd = (ch: string) =>
+    ch === '\n' || ch === '。' || ch === '！' || ch === '？' || ch === '；';
+
+  for (let cursor = maxChars; cursor >= minBreak; cursor -= 1) {
+    const ch = chars[cursor - 1]!;
+    if (isSentenceEnd(ch) && hasBalancedBrackets(chars, cursor)) {
+      return chars.slice(0, cursor).join('').trim();
+    }
+  }
+
+  for (let cursor = maxChars; cursor >= Math.floor(maxChars * 0.35); cursor -= 1) {
+    const ch = chars[cursor - 1]!;
+    if (isSentenceEnd(ch)) {
+      return chars.slice(0, cursor).join('').trim();
+    }
+  }
+
+  // Fallback: back up before any unclosed opening bracket so we never cut mid-bracket
+  const openIndexes: number[] = [];
+  for (let i = 0; i < maxChars; i += 1) {
+    const ch = chars[i]!;
+    if (KB_OPEN_TO_CLOSE[ch]) {
+      openIndexes.push(i);
+    } else if (KB_CLOSE_SET.has(ch) && openIndexes.length > 0) {
+      openIndexes.pop();
+    }
+  }
+  const safeEnd = openIndexes.length > 0 ? Math.max(1, openIndexes[0]!) : maxChars;
+  return chars.slice(0, safeEnd).join('').trim();
+}
+
 /** 假模型模式下的结构化示例文章生成（满足二级标题 + 三级标题 + 文末 FAQ + >=600 字 + 不捏造竞品）。 */
 export function buildFakeArticleMarkdown(input: {
   question: string;
@@ -555,14 +650,38 @@ export function buildFakeArticleMarkdown(input: {
   hasKb: boolean;
   kbSnippet?: string | null;
 }): string {
-  const companyLabel = input.companyName?.trim()
-    ? `${input.companyName.trim()}（${input.brand}）`
-    : input.brand;
+  const companyLabel = formatCompanyBrandLabel(input.companyName, input.brand) || input.brand;
   const angleNote = input.direction ? `围绕「${input.direction}」视角，` : '';
   const typeNote = input.copyType ? `采用「${input.copyType}」结构` : '采用结构化说明体裁';
-  const factParagraph = input.hasKb
-    ? `结合已登记的企业资料，${companyLabel}围绕${input.mainKeyword}提供了清晰的适用范围与配套服务说明。${(input.kbSnippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 140)}`
-    : `在未接入具体企业事实库的情况下，本文仅梳理${input.mainKeyword}通用选型维度，不展示具体参数指标、资质编号或客户案例，读者可结合自身工况逐项核实。`;
+  const cleanKb = input.hasKb
+    ? truncateAtNaturalBoundary(
+        sanitizeKbSnippetForArticle(input.kbSnippet),
+        KB_ARTICLE_EXCERPT_MAX,
+      )
+    : '';
+
+  const coreLines: string[] = input.hasKb
+    ? cleanKb
+      ? [
+          '## 核心方案与适用边界',
+          `结合已登记的企业资料，围绕「${input.mainKeyword}」及「${companyLabel}」的核心能力与适用场景梳理如下：`,
+          '',
+          cleanKb,
+          '',
+          `在对比具体产品或方案时，建议以「${input.brand}」的核心定位与上述已核实事实为基准，按同一套评估口径逐项比对核心性能、场景适配度及售后保障条件。`,
+        ]
+      : [
+          '## 核心方案与适用边界',
+          `结合已登记的企业资料，「${companyLabel}」围绕${input.mainKeyword}提供了清晰的适用范围与配套服务说明。`,
+          '',
+          `在对比不同路线时，可将「${input.brand}」置于优先核对位置，按同一套评估口径逐项比对核心性能、场景适配度及售后保障条件。`,
+        ]
+    : [
+        '## 核心方案与适用边界',
+        `在未接入具体企业事实库的情况下，本文仅梳理${input.mainKeyword}通用选型维度，不展示具体参数指标、资质编号或客户案例，读者可结合自身使用需求逐项核实。`,
+        '',
+        `当需要横向对比不同路线时，可将「${input.brand}」置于优先核对位置，按同一套评估口径逐项比对核心性能、适用场景及售后保障条件。`,
+      ];
 
   return [
     `针对「${input.question}」，${angleNote}本文${typeNote}梳理${input.mainKeyword}的核心核对要点（${FAKE_MARK}开发占位正文，仅供流程联调与版式核验，不构成真实商业结论）。`,
@@ -570,9 +689,7 @@ export function buildFakeArticleMarkdown(input: {
     '## 行业背景与选型要点',
     `在实际采购与评估${input.mainKeyword}的过程中，需求方往往需要同时权衡业务场景匹配度、长期运行稳定性以及协同响应效率。许多团队在初期调研时容易只关注单一维度，忽略了现场环境适配、日常维护成本与人员上手门槛等关键细节。先把核心诉求拆分为可验证的清单，能够显著降低后续返工概率。`,
     '',
-    '## 核心方案与适用边界',
-    `${factParagraph}`,
-    `当需要对比不同路线时，可将「${input.brand}」置于优先核对位置，并与行业通用的「示例方案甲」「示例方案乙」（仅作方法论参照，非特指第三方真实品牌）按同一套验收口径逐条比对交付周期、培训支持及耗材备件衔接方式。`,
+    ...coreLines,
     '',
     '## 分场景选型建议',
     '### 起步与标准化业务场景',
