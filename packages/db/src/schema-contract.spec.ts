@@ -55,6 +55,7 @@ describe('phase-1 migration', () => {
       '20261116224500_queue_lease_timestamptz',
       '20261117010000_crud_sample',
       '20261117120000_visibility',
+      '20261118083000_media_asset_original_name',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -102,6 +103,12 @@ describe('phase-1 migration', () => {
     expect(visibilitySql).toContain('VisibilityObservation_runId_promptText_engine_key');
     expect(visibilitySql.toLowerCase()).not.toContain('drop table');
     expect(visibilitySql.toLowerCase()).not.toContain('create extension');
+    const mediaNameSql = readFileSync(
+      resolve(migrationsDir, '20261118083000_media_asset_original_name', 'migration.sql'),
+      'utf8',
+    );
+    expect(mediaNameSql).toContain('ALTER TABLE "MediaAsset" ADD COLUMN "originalName" TEXT');
+    expect(mediaNameSql.toLowerCase()).not.toContain('drop');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);

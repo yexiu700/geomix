@@ -55,6 +55,8 @@ export type MediaAssetRecord = {
   categoryName: string | null;
   origin: MediaOriginName;
   objectKey: string;
+  originalName?: string | null;
+  displayName?: string;
   url: string;
   thumbUrl: string;
   width: number;
@@ -76,6 +78,7 @@ export type MediaAssetListResponse = {
 
 export type MediaUploadResultItem = {
   asset: MediaAssetRecord;
+  originalName?: string | null;
   warning?: string;
 };
 
@@ -237,16 +240,47 @@ export function mediaCategoryExportTable(rows: readonly MediaCategoryRecord[]): 
   };
 }
 
+function stripControlChars(value: string): string {
+  let out = '';
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0x20 && code !== 0x7f) out += ch;
+  }
+  return out;
+}
+
+export function sanitizeMediaOriginalName(raw: string | undefined | null): string | null {
+  if (typeof raw !== 'string') return null;
+  const cleaned = stripControlChars(raw).split(/[/\\]/).pop()?.replace(/\s+/g, ' ').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '..') return null;
+  return Array.from(cleaned).slice(0, 160).join('');
+}
+
+export function safeMediaDisplayName(input: {
+  id: string;
+  origin: MediaOriginName;
+  originalName?: string | null;
+}): string {
+  const clean = sanitizeMediaOriginalName(input.originalName);
+  if (clean) return clean;
+  const shortId = input.id.slice(-6) || 'image';
+  return input.origin === 'AI_IMAGE' ? `AI生成图片-${shortId}.jpg` : `上传图片-${shortId}.jpg`;
+}
+
 export function mediaAssetExportTable(rows: readonly MediaAssetRecord[]): {
   headers: string[];
   rows: string[][];
 } {
   return {
-    headers: ['序号', '素材分类', '存储地址', '尺寸', '大小', '使用次数', '创建时间'],
+    headers: ['序号', '素材分类', '素材名称', '尺寸', '大小', '使用次数', '创建时间'],
     rows: rows.map((row, idx) => [
       String(idx + 1),
       row.categoryName ?? '未归类',
-      row.objectKey,
+      safeMediaDisplayName({
+        id: row.id,
+        origin: row.origin,
+        originalName: row.originalName,
+      }),
       `${row.width}×${row.height}`,
       formatGalleryBytes(row.bytes),
       String(row.usedCount),

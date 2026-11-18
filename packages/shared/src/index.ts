@@ -293,6 +293,8 @@ export {
   normalizeCategoryName,
   parseMediaAssetListQuery,
   parseMediaCategoryListQuery,
+  safeMediaDisplayName,
+  sanitizeMediaOriginalName,
   validateClientUploadFile,
 } from './gallery';
 export type {

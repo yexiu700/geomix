@@ -153,9 +153,13 @@ export function createS3ObjectClient(env: Record<string, string | undefined>): O
   const bucket = parsed.S3_BUCKET;
   return {
     async put(key, body, contentType) {
-      await client.send(
-        new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
-      );
+      try {
+        await client.send(
+          new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
+        );
+      } catch {
+        throw new ProviderError(PROVIDER_KIND.UPSTREAM, '对象存储暂时不可用', 's3');
+      }
     },
     async get(key) {
       try {
@@ -169,7 +173,11 @@ export function createS3ObjectClient(env: Record<string, string | undefined>): O
       }
     },
     async delete(key) {
-      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      } catch {
+        throw new ProviderError(PROVIDER_KIND.UPSTREAM, '对象存储暂时不可用', 's3');
+      }
     },
   };
 }
