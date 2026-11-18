@@ -4,6 +4,7 @@ import { Tag, Typography } from 'antd';
 import {
   createElement,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -140,13 +141,34 @@ export function useGalleryBatchUpload({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingSeqRef = useRef(0);
   const uploadSessionRef = useRef(0);
+  const uploadAttemptRef = useRef(0);
   const uploadingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const pendingItemsRef = useRef<PendingUploadItem[]>([]);
+  const uploadStatusRef = useRef<UploadStatus>('idle');
   const onUploadSuccessRef = useRef(onUploadSuccess);
   onUploadSuccessRef.current = onUploadSuccess;
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      uploadSessionRef.current += 1;
+      uploadAttemptRef.current += 1;
+      uploadingRef.current = false;
+    };
+  }, []);
+
   const resetUpload = useCallback(() => {
     uploadSessionRef.current += 1;
+    uploadAttemptRef.current += 1;
     uploadingRef.current = false;
+    pendingItemsRef.current = [];
+    uploadStatusRef.current = 'idle';
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (!mountedRef.current) return;
     setPendingItems([]);
     setUploadError(null);
     setUploading(false);
@@ -154,22 +176,21 @@ export function useGalleryBatchUpload({
     setUploadProgress(0);
     setDragActive(false);
     setLastUploaded([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
   }, []);
 
   const appendFiles = useCallback(
     (fileList: FileList | readonly File[] | null) => {
       if (!fileList || fileList.length === 0) return;
-      if (uploading || uploadingRef.current || readOnly) return;
+      if (uploadingRef.current || readOnly || !mountedRef.current) return;
       setUploadError(null);
-      if (uploadStatus === 'error' || uploadStatus === 'success') {
+      if (uploadStatusRef.current === 'error' || uploadStatusRef.current === 'success') {
+        uploadStatusRef.current = 'idle';
         setUploadStatus('idle');
         setUploadProgress(0);
       }
       const chosen = Array.from(fileList);
-      if (pendingItems.length + chosen.length > GALLERY_UPLOAD_MAX_FILES) {
+      const currentItems = pendingItemsRef.current;
+      if (currentItems.length + chosen.length > GALLERY_UPLOAD_MAX_FILES) {
         setUploadError(`单次最多选择 ${GALLERY_UPLOAD_MAX_FILES} 张图片`);
         return;
       }
@@ -187,47 +208,60 @@ export function useGalleryBatchUpload({
         pendingSeqRef.current += 1;
         valid.push({ key: `pending_${pendingSeqRef.current}`, file });
       }
-      setPendingItems((prev) => [...prev, ...valid]);
+      const nextItems = [...currentItems, ...valid];
+      pendingItemsRef.current = nextItems;
+      setPendingItems(nextItems);
       const session = uploadSessionRef.current;
       for (const entry of valid) {
         void readImageDimensions(entry.file)
           .then((dims) => {
-            if (!dims || uploadSessionRef.current !== session) return;
+            if (
+              !dims ||
+              !mountedRef.current ||
+              uploadSessionRef.current !== session ||
+              !pendingItemsRef.current.some((item) => item.key === entry.key)
+            ) {
+              return;
+            }
             const widthWarning = checkImageWidthWarning(dims.width);
-            setPendingItems((prev) =>
-              prev.map((item) =>
-                item.key === entry.key
-                  ? { ...item, width: dims.width, height: dims.height, widthWarning }
-                  : item,
-              ),
+            const updated = pendingItemsRef.current.map((item) =>
+              item.key === entry.key
+                ? { ...item, width: dims.width, height: dims.height, widthWarning }
+                : item,
             );
+            pendingItemsRef.current = updated;
+            setPendingItems(updated);
           })
           .catch(() => undefined);
       }
     },
-    [pendingItems.length, readOnly, uploadStatus, uploading],
+    [readOnly],
   );
 
-  const removePendingItem = useCallback(
-    (key: string) => {
-      if (uploading || uploadingRef.current) return;
-      setPendingItems((prev) => prev.filter((entry) => entry.key !== key));
-    },
-    [uploading],
-  );
+  const removePendingItem = useCallback((key: string) => {
+    if (uploadingRef.current || !mountedRef.current) return;
+    const nextItems = pendingItemsRef.current.filter((entry) => entry.key !== key);
+    pendingItemsRef.current = nextItems;
+    setPendingItems(nextItems);
+  }, []);
 
   const openFilePicker = useCallback(() => {
-    if (uploading || uploadingRef.current || readOnly) return;
+    if (uploadingRef.current || readOnly || !mountedRef.current) return;
     fileInputRef.current?.click();
-  }, [readOnly, uploading]);
+  }, [readOnly]);
 
   const submitUpload = useCallback(async (): Promise<boolean> => {
-    if (uploading || uploadingRef.current || readOnly) return false;
-    if (pendingItems.length === 0) {
+    if (uploadingRef.current || readOnly || !mountedRef.current) return false;
+    const itemsToUpload = pendingItemsRef.current;
+    if (itemsToUpload.length === 0) {
       setUploadError('请至少选择一张图片');
       return false;
     }
+    const session = uploadSessionRef.current;
+    uploadAttemptRef.current += 1;
+    const attempt = uploadAttemptRef.current;
     uploadingRef.current = true;
+    uploadStatusRef.current = 'uploading';
     setUploading(true);
     setUploadStatus('uploading');
     setUploadError(null);
@@ -235,11 +269,29 @@ export function useGalleryBatchUpload({
     try {
       const res = await gateway.uploadAssets(
         categoryId,
-        pendingItems.map((item) => item.file),
-        setUploadProgress,
+        itemsToUpload.map((item) => item.file),
+        (percent) => {
+          if (
+            mountedRef.current &&
+            uploadingRef.current &&
+            uploadSessionRef.current === session &&
+            uploadAttemptRef.current === attempt
+          ) {
+            setUploadProgress(percent);
+          }
+        },
       );
+      if (
+        !mountedRef.current ||
+        uploadSessionRef.current !== session ||
+        uploadAttemptRef.current !== attempt
+      ) {
+        return false;
+      }
       uploadSessionRef.current += 1;
       uploadingRef.current = false;
+      pendingItemsRef.current = [];
+      uploadStatusRef.current = 'success';
       setUploadProgress(100);
       setUploadStatus('success');
       setUploading(false);
@@ -251,13 +303,21 @@ export function useGalleryBatchUpload({
       onUploadSuccessRef.current?.(res);
       return true;
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        uploadSessionRef.current !== session ||
+        uploadAttemptRef.current !== attempt
+      ) {
+        return false;
+      }
       uploadingRef.current = false;
+      uploadStatusRef.current = 'error';
       setUploadStatus('error');
       setUploadError(err instanceof Error ? err.message : '上传图片失败');
       setUploading(false);
       return false;
     }
-  }, [categoryId, gateway, pendingItems, readOnly, uploading]);
+  }, [categoryId, gateway, readOnly]);
 
   const pendingWidthWarnings = useMemo(
     () =>
@@ -284,34 +344,35 @@ export function useGalleryBatchUpload({
       onDragEnter: (e: DragEvent<HTMLElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!uploading && !uploadingRef.current && !readOnly) {
+        if (!uploadingRef.current && !readOnly && mountedRef.current) {
           setDragActive(true);
         }
       },
       onDragOver: (e: DragEvent<HTMLElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!uploading && !uploadingRef.current && !readOnly) {
+        if (!uploadingRef.current && !readOnly && mountedRef.current) {
           setDragActive(true);
         }
       },
       onDragLeave: (e: DragEvent<HTMLElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null) && mountedRef.current) {
           setDragActive(false);
         }
       },
       onDrop: (e: DragEvent<HTMLElement>) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!mountedRef.current) return;
         setDragActive(false);
-        if (!uploading && !uploadingRef.current && !readOnly) {
+        if (!uploadingRef.current && !readOnly) {
           appendFiles(e.dataTransfer?.files ?? null);
         }
       },
     }),
-    [appendFiles, dragActive, readOnly, uploading],
+    [appendFiles, dragActive, readOnly],
   );
 
   const fileInputProps = useMemo(

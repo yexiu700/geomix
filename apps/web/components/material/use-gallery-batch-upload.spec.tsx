@@ -8,10 +8,19 @@ import {
   GALLERY_UPLOAD_MAX_FILES,
   IMAGE_MAX_INPUT_BYTES,
   buildStorageSummary,
+  checkImageWidthWarning,
   type MediaUploadResponse,
 } from '@geomix/shared';
 import type { GalleryGateway } from '../../lib/gallery';
 import { resolveAssetDisplayName, useGalleryBatchUpload } from './use-gallery-batch-upload';
+
+vi.mock('@geomix/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@geomix/shared')>();
+  return {
+    ...actual,
+    checkImageWidthWarning: vi.fn(actual.checkImageWidthWarning),
+  };
+});
 
 function makeUploadResponse(files: readonly File[]): MediaUploadResponse {
   const storage = buildStorageSummary(256n * 1024n, 100n * 1024n * 1024n);
@@ -55,6 +64,7 @@ function makeUploadGateway(
 }
 
 afterEach(() => {
+  vi.mocked(checkImageWidthWarning).mockClear();
   vi.unstubAllGlobals();
   cleanup();
 });
@@ -452,5 +462,238 @@ describe('useGalleryBatchUpload', () => {
     );
     expect(aiFallback).toBe('AI生成图片-abcdef.jpg');
     expect(aiFallback).not.toContain('tenants/');
+  });
+
+  it('enforces GALLERY_UPLOAD_MAX_FILES and up-to-date queue refs across synchronous same-tick mutations', async () => {
+    const gateway = makeUploadGateway();
+    const { result } = renderHook(() =>
+      useGalleryBatchUpload({
+        categoryId: 'cat_1',
+        gateway,
+      }),
+    );
+
+    const batchA = Array.from(
+      { length: 12 },
+      (_, idx) => new File(['a'], `rapid_a_${idx + 1}.jpg`, { type: 'image/jpeg' }),
+    );
+    const batchB = Array.from(
+      { length: 12 },
+      (_, idx) => new File(['b'], `rapid_b_${idx + 1}.jpg`, { type: 'image/jpeg' }),
+    );
+
+    act(() => {
+      result.current.appendFiles(batchA);
+      result.current.appendFiles(batchB);
+    });
+
+    expect(result.current.pendingItems).toHaveLength(12);
+    expect(result.current.uploadError).toBe(`单次最多选择 ${GALLERY_UPLOAD_MAX_FILES} 张图片`);
+
+    const batchFill = Array.from(
+      { length: 8 },
+      (_, idx) => new File(['c'], `fill_${idx + 1}.jpg`, { type: 'image/jpeg' }),
+    );
+    act(() => {
+      result.current.appendFiles(batchFill);
+    });
+    expect(result.current.pendingItems).toHaveLength(GALLERY_UPLOAD_MAX_FILES);
+    expect(result.current.uploadError).toBeNull();
+
+    const firstKey = result.current.pendingItems[0]!.key;
+    const replacementFile = new File(['r'], 'replacement.jpg', { type: 'image/jpeg' });
+    act(() => {
+      result.current.removePendingItem(firstKey);
+      result.current.appendFiles([replacementFile]);
+    });
+    expect(result.current.uploadError).toBeNull();
+    expect(result.current.pendingItems).toHaveLength(GALLERY_UPLOAD_MAX_FILES);
+    expect(result.current.pendingItems[result.current.pendingItems.length - 1]?.file.name).toBe(
+      'replacement.jpg',
+    );
+
+    act(() => {
+      result.current.resetUpload();
+    });
+
+    const sameTickFile = new File(['s'], 'same-tick-upload.png', { type: 'image/png' });
+    let submitted = false;
+    await act(async () => {
+      result.current.appendFiles([sameTickFile]);
+      submitted = await result.current.submitUpload();
+    });
+
+    expect(submitted).toBe(true);
+    expect(gateway.uploadAssets).toHaveBeenCalledTimes(1);
+    expect(gateway.uploadAssets).toHaveBeenCalledWith(
+      'cat_1',
+      [sameTickFile],
+      expect.any(Function),
+    );
+    expect(result.current.uploadStatus).toBe('success');
+    expect(result.current.pendingItems).toEqual([]);
+  });
+
+  it('cancels pending readImageDimensions session on unmount without invoking checkImageWidthWarning or mutating state', async () => {
+    let resolvePendingBitmap:
+      ((bitmap: { width: number; height: number; close: () => void }) => void) | undefined;
+    const closeBitmap = vi.fn();
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(
+        () =>
+          new Promise<{ width: number; height: number; close: () => void }>((resolve) => {
+            resolvePendingBitmap = resolve;
+          }),
+      ),
+    );
+
+    const gateway = makeUploadGateway();
+    const { result, unmount } = renderHook(() =>
+      useGalleryBatchUpload({
+        categoryId: 'cat_1',
+        gateway,
+      }),
+    );
+
+    const pendingFile = new File(['narrow'], 'unmount-narrow.png', { type: 'image/png' });
+    act(() => {
+      result.current.appendFiles([pendingFile]);
+    });
+    expect(result.current.pendingItems).toHaveLength(1);
+
+    unmount();
+
+    await act(async () => {
+      resolvePendingBitmap?.({ width: 320, height: 240, close: closeBitmap });
+      await Promise.resolve();
+    });
+
+    expect(closeBitmap).toHaveBeenCalledTimes(1);
+    expect(checkImageWidthWarning).not.toHaveBeenCalled();
+    expect(result.current.pendingItems[0]?.width).toBeUndefined();
+    expect(result.current.pendingWidthWarnings).toEqual([]);
+  });
+
+  it('ignores late onProgress, resolve, and reject callbacks when resetUpload() or unmount() runs during in-flight submitUpload', async () => {
+    let reportProgress: ((percent: number) => void) | undefined;
+    let resolveUpload: ((res: MediaUploadResponse) => void) | undefined;
+    let rejectUpload: ((err: Error) => void) | undefined;
+    const onUploadSuccess = vi.fn();
+
+    const gateway = makeUploadGateway(
+      vi.fn(async (_categoryId, _files, onProgress) => {
+        reportProgress = onProgress;
+        return await new Promise<MediaUploadResponse>((resolve, reject) => {
+          resolveUpload = resolve;
+          rejectUpload = reject;
+        });
+      }),
+    );
+
+    const { result, unmount } = renderHook(() =>
+      useGalleryBatchUpload({
+        categoryId: 'cat_1',
+        gateway,
+        onUploadSuccess,
+      }),
+    );
+
+    // 1. resetUpload() while upload #1 is in-flight, followed by late progress + resolve
+    const fileOne = new File(['1'], 'inflight-resolve.jpg', { type: 'image/jpeg' });
+    act(() => {
+      result.current.appendFiles([fileOne]);
+    });
+
+    let uploadOnePromise!: Promise<boolean>;
+    act(() => {
+      uploadOnePromise = result.current.submitUpload();
+    });
+    expect(result.current.uploadStatus).toBe('uploading');
+
+    act(() => {
+      result.current.resetUpload();
+    });
+    expect(result.current.uploadStatus).toBe('idle');
+    expect(result.current.uploading).toBe(false);
+    expect(result.current.uploadProgress).toBe(0);
+    expect(result.current.pendingItems).toEqual([]);
+
+    const staleProgressOne = reportProgress;
+    const staleResolveOne = resolveUpload;
+    let uploadOneOk = true;
+    await act(async () => {
+      staleProgressOne?.(88);
+      staleResolveOne?.(makeUploadResponse([fileOne]));
+      uploadOneOk = await uploadOnePromise;
+    });
+
+    expect(uploadOneOk).toBe(false);
+    expect(result.current.uploadStatus).toBe('idle');
+    expect(result.current.uploading).toBe(false);
+    expect(result.current.uploadProgress).toBe(0);
+    expect(result.current.pendingItems).toEqual([]);
+    expect(result.current.lastUploaded).toEqual([]);
+    expect(onUploadSuccess).not.toHaveBeenCalled();
+
+    // 2. resetUpload() while upload #2 is in-flight, followed by late progress + reject
+    const fileTwo = new File(['2'], 'inflight-reject.jpg', { type: 'image/jpeg' });
+    act(() => {
+      result.current.appendFiles([fileTwo]);
+    });
+
+    let uploadTwoPromise!: Promise<boolean>;
+    act(() => {
+      uploadTwoPromise = result.current.submitUpload();
+    });
+    expect(result.current.uploadStatus).toBe('uploading');
+
+    act(() => {
+      result.current.resetUpload();
+    });
+
+    const staleProgressTwo = reportProgress;
+    const staleRejectTwo = rejectUpload;
+    let uploadTwoOk = true;
+    await act(async () => {
+      staleProgressTwo?.(72);
+      staleRejectTwo?.(new Error('旧上传请求已中断'));
+      uploadTwoOk = await uploadTwoPromise;
+    });
+
+    expect(uploadTwoOk).toBe(false);
+    expect(result.current.uploadStatus).toBe('idle');
+    expect(result.current.uploading).toBe(false);
+    expect(result.current.uploadProgress).toBe(0);
+    expect(result.current.uploadError).toBeNull();
+    expect(result.current.pendingItems).toEqual([]);
+    expect(onUploadSuccess).not.toHaveBeenCalled();
+
+    // 3. unmount() while upload #3 is in-flight, followed by late progress + resolve
+    const fileThree = new File(['3'], 'inflight-unmount.jpg', { type: 'image/jpeg' });
+    act(() => {
+      result.current.appendFiles([fileThree]);
+    });
+
+    let uploadThreePromise!: Promise<boolean>;
+    act(() => {
+      uploadThreePromise = result.current.submitUpload();
+    });
+    expect(result.current.uploadStatus).toBe('uploading');
+
+    const staleProgressThree = reportProgress;
+    const staleResolveThree = resolveUpload;
+    unmount();
+
+    let uploadThreeOk = true;
+    await act(async () => {
+      staleProgressThree?.(95);
+      staleResolveThree?.(makeUploadResponse([fileThree]));
+      uploadThreeOk = await uploadThreePromise;
+    });
+
+    expect(uploadThreeOk).toBe(false);
+    expect(result.current.uploadStatus).toBe('uploading');
+    expect(onUploadSuccess).not.toHaveBeenCalled();
   });
 });
