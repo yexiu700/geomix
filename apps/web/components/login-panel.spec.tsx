@@ -477,3 +477,65 @@ describe('LoginPanel UX polish (#128 #129 #130)', () => {
     expect(document.activeElement).toBe(usernameInput);
   });
 });
+
+describe('LoginPanel accessibility & contrast (#248)', () => {
+  it('renders password visibility toggle as a keyboard-reachable semantic button with aria-pressed', async () => {
+    postJsonMock.mockResolvedValue({
+      code: 0,
+      msg: 'ok',
+      data: { captchaId: 'cap_a11y_pw', image: TINY_PNG },
+    });
+
+    render(<LoginPanel />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '点击图片更换验证码' })).toBeTruthy();
+    });
+
+    const passwordInput = screen.getByLabelText('密码') as HTMLInputElement;
+    const toggleBtn = screen.getByRole('button', { name: '显示密码' }) as HTMLButtonElement;
+    expect(toggleBtn.tagName).toBe('BUTTON');
+    expect(toggleBtn.type).toBe('button');
+    expect(toggleBtn.tabIndex).toBeGreaterThanOrEqual(0);
+    expect(toggleBtn.getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(toggleBtn);
+    expect(passwordInput.type).toBe('text');
+
+    const hideBtn = screen.getByRole('button', { name: '隐藏密码' }) as HTMLButtonElement;
+    expect(hideBtn.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('renders captcha refresh container as a semantic button (not div[role=img]) and shows admin guidance', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: `cap_${calls}`, image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(<LoginPanel />);
+
+    const captchaBtn = (await waitFor(() =>
+      screen.getByRole('button', { name: '点击图片更换验证码' }),
+    )) as HTMLButtonElement;
+    expect(captchaBtn.tagName).toBe('BUTTON');
+    expect(captchaBtn.type).toBe('button');
+    expect(captchaBtn.classList.contains('gm-login-captcha-frame')).toBe(true);
+    expect(container.querySelector('div[role="img"]')).toBeNull();
+
+    fireEvent.click(captchaBtn);
+    await waitFor(() => {
+      expect(calls).toBe(2);
+    });
+
+    expect(container.querySelector('.gm-login-helper')?.textContent).toContain('账号由管理员开通');
+    expect(container.querySelector('.gm-login-support-note')?.textContent).toContain('管理员');
+    expect(container.querySelector('.gm-login-support-note')?.textContent).toContain('忘记密码');
+  });
+});
