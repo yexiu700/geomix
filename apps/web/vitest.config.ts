@@ -6,10 +6,18 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    pool: 'forks',
-    testTimeout: 60000,
-    maxWorkers: 1,
-    include: ['lib/**/*.spec.ts', 'components/**/*.spec.tsx'],
+    pool: 'threads',
+    maxWorkers: '100%',
+    testTimeout: 30000,
+    include: ['lib/**/*.spec.ts', 'lib/**/*.spec.tsx', 'components/**/*.spec.tsx'],
     setupFiles: ['./vitest.setup.ts'],
+    deps: {
+      optimizer: {
+        web: {
+          enabled: true,
+          include: ['antd'],
+        },
+      },
+    },
   },
 });
