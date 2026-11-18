@@ -1041,6 +1041,52 @@ input:not([class*='ant-']):hover {
   margin-bottom: 16px;
 }
 
+.gm-dashboard-root .gm-signal-strip-grid {
+  margin-bottom: 0;
+}
+
+.gm-dashboard-root .gm-signal-strip-grid .gm-kpi {
+  min-height: 86px;
+  padding: 12px 14px;
+  gap: 4px;
+}
+
+.gm-dashboard-zero-points {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  border-radius: var(--gm-radius-md);
+  border: 1px solid rgba(242, 184, 75, 0.35);
+  background: rgba(242, 184, 75, 0.08);
+}
+
+.gm-dashboard-onboarding {
+  padding: 12px 14px;
+  border-radius: var(--gm-radius-md);
+  border: 1px solid var(--gm-line-1);
+  background: var(--gm-bg-surface);
+}
+
+.gm-dashboard-onboarding-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gm-dashboard-onboarding-step {
+  padding: 10px 12px;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid var(--gm-line-1);
+  background: var(--gm-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .gm-dashboard-accounts {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1049,8 +1095,9 @@ input:not([class*='ant-']):hover {
 
 .gm-kpi.gm-kpi-compact {
   min-height: 0;
+  padding: 12px 14px;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .gm-dashboard-trend-reconcile {
@@ -1060,14 +1107,20 @@ input:not([class*='ant-']):hover {
   margin-top: 8px;
 }
 
+.gm-dashboard-entry-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
 .gm-dashboard-entry-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .gm-dashboard-entry-card {
-  padding: 12px;
+  padding: 9px 11px;
   border: 1px solid var(--gm-line-1);
   border-radius: var(--gm-radius-md);
   background: var(--gm-bg-surface);
@@ -1076,7 +1129,7 @@ input:not([class*='ant-']):hover {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 6px;
+  gap: 4px;
   transition:
     background-color var(--gm-dur-fast) var(--gm-ease-out),
     border-color var(--gm-dur-fast) var(--gm-ease-out);
@@ -1088,7 +1141,7 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-dashboard-entry-card-soon {
-  padding: 12px;
+  padding: 9px 11px;
   border: 1px solid var(--gm-line-1);
   border-radius: var(--gm-radius-md);
   background: var(--gm-bg-surface);
@@ -1097,7 +1150,7 @@ input:not([class*='ant-']):hover {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: 6px;
+  gap: 4px;
 }
 
 .gm-trend-bar {
@@ -1113,6 +1166,11 @@ input:not([class*='ant-']):hover {
   .gm-signal-strip-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .gm-dashboard-onboarding-grid,
+  .gm-dashboard-entry-groups {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 767px) {
@@ -1120,7 +1178,8 @@ input:not([class*='ant-']):hover {
     grid-template-columns: 1fr;
   }
 
-  .gm-dashboard-accounts {
+  .gm-dashboard-accounts,
+  .gm-dashboard-entry-grid {
     grid-template-columns: 1fr;
   }
 }

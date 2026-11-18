@@ -3,7 +3,6 @@
 import {
   UX_TERMS,
   dedupeRechargeNotice,
-  replaceUxJargon,
   visibleDashboardEntryCards,
   type DashboardEntryCardDef,
   type DashboardSummary,
@@ -28,8 +27,8 @@ const ENTRY_GROUP_ORDER: ReadonlyArray<DashboardEntryCardDef['group']> = [
   '素材源力',
   '文章写作',
   '流量复刻',
-  'AI生图/视频',
   'AI数据与诊断',
+  'AI生图/视频',
   '二期规划',
 ];
 
@@ -224,7 +223,7 @@ export function DashboardScreen({
   storage,
   gateway,
   loadVisibilityOverview,
-  autoRotateAnnouncements = true,
+  autoRotateAnnouncements: _autoRotateAnnouncements,
   onDispatch,
 }: {
   title: string;
@@ -266,15 +265,28 @@ export function DashboardScreen({
   const [summary, setSummary] = useState<DashboardSummary>(() =>
     createEmptyDashboardSummary(aiImageEnabled, new Date(), visibilityEnabled),
   );
+  const [hasLoadedSummary, setHasLoadedSummary] = useState(false);
+  const [visibilityChecks, setVisibilityChecks] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [announcementIdx, setAnnouncementIdx] = useState(0);
+
+  const trackedSignalLoader = useCallback(async () => {
+    try {
+      const next = await signalLoader();
+      setVisibilityChecks(next.metrics.completedChecks);
+      return next;
+    } catch (err) {
+      setVisibilityChecks(0);
+      throw err;
+    }
+  }, [signalLoader]);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
     try {
       const next = await api.getSummary();
       setSummary(next);
+      setHasLoadedSummary(true);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载首页数据失败');
@@ -286,18 +298,6 @@ export function DashboardScreen({
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
-
-  const announcements = summary.announcements;
-  const safeAnnouncementIdx = announcements.length > 0 ? announcementIdx % announcements.length : 0;
-  const activeAnnouncement = announcements[safeAnnouncementIdx];
-
-  useEffect(() => {
-    if (!autoRotateAnnouncements || announcements.length <= 1) return;
-    const timer = setInterval(() => {
-      setAnnouncementIdx((prev) => (prev + 1) % announcements.length);
-    }, 6_000);
-    return () => clearInterval(timer);
-  }, [announcements.length, autoRotateAnnouncements]);
 
   const effectiveAiImage = aiImageEnabled && summary.features.aiImage;
   const effectiveVisibility = visibilityEnabled && summary.features.visibility !== false;
@@ -327,6 +327,22 @@ export function DashboardScreen({
   );
   const trendGrandTotal = trendWritingTotal + trendRewriteTotal;
 
+  const hasStatsHistory =
+    summary.stats.keywords > 0 ||
+    summary.stats.questions > 0 ||
+    summary.stats.mediaAssets > 0 ||
+    summary.stats.knowledgeBases > 0 ||
+    summary.stats.prompts > 0 ||
+    summary.stats.articleCategories > 0 ||
+    summary.stats.aiTasks > 0 ||
+    summary.stats.articles > 0 ||
+    summary.stats.rewriteSingle > 0 ||
+    summary.stats.rewriteBatches > 0 ||
+    summary.stats.aiImages > 0;
+  const hasHistoricalData = hasStatsHistory || trendGrandTotal > 0 || (visibilityChecks ?? 0) > 0;
+
+  const showZeroPointsGuide = hasLoadedSummary && summary.pointsCard.available <= 0;
+
   const openRoute = useCallback(
     (href: string) => {
       onDispatch?.({
@@ -338,18 +354,44 @@ export function DashboardScreen({
     [onDispatch, tabId],
   );
 
-  return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* 0. GEO Signal Strip */}
-      {effectiveVisibility && (
-        <GeoSignalStrip
-          load={signalLoader}
-          onOpenOverview={() => openRoute('/visibility/overview')}
-          onOpenMonitors={() => openRoute('/visibility/monitors')}
-        />
-      )}
+  const zeroPointsSection = showZeroPointsGuide ? (
+    <div data-testid="dashboard-zero-points-guide" className="gm-dashboard-zero-points">
+      <div style={{ minWidth: 0, flex: '1 1 360px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <SignalPill tone="warning">可用点数为 0</SignalPill>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            在线购点暂未开放 · 下一步建议
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 4, lineHeight: '18px' }}>
+          {summary.pointsCard.billingMode === 'SHADOW'
+            ? '如需补充可用点数请联系平台管理员为您加点；当前处于免费体验期（暂不扣点），您也可先查看报告、整理关键词与知识库。'
+            : '按次计费任务需补充点数后发起，请联系平台管理员为您加点；当前可先免费查看数据报告、整理关键词与查看已有文章。'}
+        </div>
+      </div>
+      <Space size={8} wrap>
+        {effectiveVisibility && (
+          <Button type="primary" size="small" onClick={() => openRoute('/visibility/overview')}>
+            查看 AI 数据看板
+          </Button>
+        )}
+        {effectiveVisibility && summary.pointsCard.billingMode === 'SHADOW' && (
+          <Button size="small" onClick={() => openRoute('/visibility/monitors')}>
+            去 AI 可见度诊断
+          </Button>
+        )}
+        <Button size="small" onClick={() => openRoute('/me/rights')}>
+          查看账号权益
+        </Button>
+        <Button size="small" onClick={() => openRoute('/material/keywords')}>
+          管理关键词与知识库
+        </Button>
+      </Space>
+    </div>
+  ) : null;
 
-      {/* Header Row */}
+  const onboardingSection = !hasHistoricalData ? (
+    <div data-testid="dashboard-onboarding-guide" className="gm-dashboard-onboarding">
       <div
         style={{
           display: 'flex',
@@ -357,410 +399,305 @@ export function DashboardScreen({
           alignItems: 'center',
           flexWrap: 'wrap',
           gap: 8,
+          marginBottom: 10,
         }}
       >
         <div>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {title}
-          </Typography.Title>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            GeoMix 智能内容创作工作台 · 账户资产、近 5 日创作趋势与模块快捷入口
-          </Typography.Text>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            新手业务主路径 · 3 步开启品牌创作与诊断
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginLeft: 10 }}>
+            按顺序完成首次配置，即可快速产出品牌文章并监测 AI 搜索露出
+          </span>
         </div>
-        <Button
-          aria-label="刷新首页"
-          size="small"
-          loading={loading}
-          onClick={() => void loadSummary()}
-        >
-          刷新数据
-        </Button>
       </div>
+      <div className="gm-dashboard-onboarding-grid">
+        <div className="gm-dashboard-onboarding-step">
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            第 1 步 · 录入品牌关键词与知识库
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}>
+            先添加品牌主词并录入企业与产品资料，让 AI 生成内容紧扣真实业务。
+          </div>
+          <Space size={8} wrap style={{ marginTop: 4 }}>
+            <Button type="primary" size="small" onClick={() => openRoute('/material/keywords')}>
+              添加关键词
+            </Button>
+            <Button size="small" onClick={() => openRoute('/material/knowledge')}>
+              完善知识库
+            </Button>
+          </Space>
+        </div>
+        <div className="gm-dashboard-onboarding-step">
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            第 2 步 · 生成写作标题与品牌配图
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}>
+            整理客户常见问题作为写作标题，并准备企业实景图或生成品牌配图。
+          </div>
+          <Space size={8} wrap style={{ marginTop: 4 }}>
+            <Button type="primary" size="small" onClick={() => openRoute('/material/questions')}>
+              生成写作标题
+            </Button>
+            {effectiveAiImage && (
+              <Button size="small" onClick={() => openRoute('/image')}>
+                AI 生图配图
+              </Button>
+            )}
+          </Space>
+        </div>
+        <div className="gm-dashboard-onboarding-step">
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            第 3 步 · 发起 AI 批量写作与诊断
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}>
+            一键批量生成合规品牌文章，并发起主流 AI 引擎的品牌可见度诊断。
+          </div>
+          <Space size={8} wrap style={{ marginTop: 4 }}>
+            <Button type="primary" size="small" onClick={() => openRoute('/writing/tasks')}>
+              发起 AI 写作
+            </Button>
+            {effectiveVisibility && (
+              <Button size="small" onClick={() => openRoute('/visibility/monitors')}>
+                发起可见度诊断
+              </Button>
+            )}
+          </Space>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
-      {error && (
-        <Alert type="error" showIcon closable onClose={() => setError(null)} message={error} />
-      )}
+  const signalSection = effectiveVisibility ? (
+    <GeoSignalStrip
+      load={trackedSignalLoader}
+      compactEmpty
+      onOpenOverview={() => openRoute('/visibility/overview')}
+      onOpenMonitors={() => openRoute('/visibility/monitors')}
+    />
+  ) : null;
 
-      {/* 1. Self-written Announcement Bar */}
-      {activeAnnouncement && (
-        <div
-          data-testid="dashboard-announcement-bar"
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '8px 12px',
-            minHeight: 36,
-            padding: '6px 12px',
-            borderRadius: 8,
-            background: 'var(--gm-bg-surface)',
-            border: '1px solid var(--gm-line-1)',
-            fontSize: 12,
-            color: 'var(--gm-fg-2)',
-          }}
-        >
+  const accountsSection = (
+    <div className="gm-dashboard-accounts">
+      {/* Balance Card */}
+      <div data-testid="dashboard-balance-card" className="gm-kpi gm-kpi-compact">
+        <div>
           <div
             style={{
               display: 'flex',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              gap: 10,
-              minWidth: 0,
-              flex: '1 1 200px',
+              marginBottom: 6,
             }}
           >
-            <SignalPill tone="info">平台播报</SignalPill>
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--gm-fg-2)',
-                lineHeight: 1.5,
-                wordBreak: 'break-word',
-              }}
-            >
-              {replaceUxJargon(activeAnnouncement.content)}
-            </span>
-          </div>
-          {announcements.length > 1 && (
-            <Space size={6} style={{ flexShrink: 0 }}>
-              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                {safeAnnouncementIdx + 1} / {announcements.length}
-              </span>
-              <Button
-                size="small"
-                aria-label="上一条播报"
-                onClick={() =>
-                  setAnnouncementIdx(
-                    (prev) => (prev - 1 + announcements.length) % announcements.length,
-                  )
-                }
-              >
-                上一条
-              </Button>
-              <Button
-                size="small"
-                aria-label="下一条播报"
-                onClick={() => setAnnouncementIdx((prev) => (prev + 1) % announcements.length)}
-              >
-                下一条
-              </Button>
-            </Space>
-          )}
-        </div>
-      )}
-
-      {/* 2. Balance Card & Points Card */}
-      <div className="gm-dashboard-accounts">
-        {/* Balance Card */}
-        <div data-testid="dashboard-balance-card" className="gm-kpi gm-kpi-compact">
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-              }}
-            >
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                账户余额
-              </span>
-              <Button
-                type="link"
-                size="small"
-                style={{ padding: 0 }}
-                onClick={() => openRoute('/me/money')}
-              >
-                余额明细
-              </Button>
-            </div>
-            <div
-              className="gm-num"
-              style={{
-                fontSize: 28,
-                fontWeight: 600,
-                color: 'var(--gm-fg-1)',
-                lineHeight: '34px',
-                letterSpacing: '-0.02em',
-              }}
-            >
-              {renderCompactAmount(summary.balanceCard.balance, '¥')}
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                marginTop: 10,
-                fontSize: 13,
-                color: 'var(--gm-fg-2)',
-              }}
-            >
-              <span>
-                本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
-                <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
-                  ¥{summary.balanceCard.monthConsumed}
-                </strong>
-              </span>
-              <span>
-                本月入账：
-                <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
-                  ¥{summary.balanceCard.monthRecharged}
-                </strong>
-              </span>
-            </div>
-          </div>
-          <div
-            style={{
-              padding: '8px 10px',
-              borderRadius: 6,
-              background: 'var(--gm-bg-elevated)',
-              border: '1px solid var(--gm-line-1)',
-              fontSize: 12,
-              color: 'var(--gm-fg-3)',
-            }}
-          >
-            充值提示：{dedupeRechargeNotice(summary.balanceCard.rechargeNotice)}
-          </div>
-        </div>
-
-        {/* Points Card */}
-        <div data-testid="dashboard-points-card" className="gm-kpi gm-kpi-compact">
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-                gap: 8,
-              }}
-            >
-              <Space size={8}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  可用点数
-                </span>
-                <SignalPill tone={summary.pointsCard.billingMode === 'SHADOW' ? 'warning' : 'info'}>
-                  {summary.pointsCard.billingMode === 'SHADOW'
-                    ? UX_TERMS.billingShadow
-                    : UX_TERMS.billingStrict}
-                </SignalPill>
-              </Space>
-              <Space size={10}>
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ padding: 0 }}
-                  onClick={() => openRoute('/me/points')}
-                >
-                  点数明细
-                </Button>
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ padding: 0 }}
-                  onClick={() => openRoute('/me/rights')}
-                >
-                  账号权益
-                </Button>
-              </Space>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <span
-                className="gm-num"
-                style={{
-                  fontSize: 28,
-                  fontWeight: 600,
-                  color: 'var(--gm-fg-1)',
-                  lineHeight: '34px',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                {renderCompactAmount(summary.pointsCard.available, '', ' 点')}
-              </span>
-              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                账面 {summary.pointsCard.points} 点 · 冻结中 {summary.pointsCard.pointsReserved} 点
-              </span>
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                marginTop: 10,
-                fontSize: 13,
-                color: 'var(--gm-fg-2)',
-              }}
-            >
-              <span>
-                本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
-                <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
-                  {summary.pointsCard.monthConsumedPoints} 点
-                </strong>
-                {summary.pointsCard.monthListPricePoints !==
-                  summary.pointsCard.monthConsumedPoints && (
-                  <span className="gm-num" style={{ color: 'var(--gm-fg-3)', marginLeft: 4 }}>
-                    （免费期原价核算 {summary.pointsCard.monthListPricePoints} 点）
-                  </span>
-                )}
-              </span>
-              <span>
-                本月加点：
-                <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
-                  +{summary.pointsCard.monthRechargedPoints} 点
-                </strong>
-              </span>
-            </div>
-          </div>
-          <div
-            style={{
-              padding: '8px 10px',
-              borderRadius: 6,
-              background: 'var(--gm-bg-elevated)',
-              border: '1px solid var(--gm-line-1)',
-              fontSize: 12,
-              color: 'var(--gm-fg-3)',
-            }}
-          >
-            充值提示：{dedupeRechargeNotice(summary.pointsCard.rechargeNotice)}
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Strict 5-Day AI Creation Trend (Writing & Rewrite by Day) */}
-      <div
-        data-testid="dashboard-trend-card"
-        style={{
-          padding: 16,
-          borderRadius: 8,
-          border: '1px solid var(--gm-line-1)',
-          background: 'var(--gm-bg-surface)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: 8,
-            marginBottom: 10,
-          }}
-        >
-          <div>
-            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-              近 5 日 AI 创作趋势
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginLeft: 10 }}>
-              按北京时间（UTC+8）自然日统计 AI 写作与爆文复刻产出，与文章列表明细一致
-            </span>
-          </div>
-          <Space size={14} wrap>
-            <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 10,
-                  height: 10,
-                  borderRadius: 2,
-                  background: 'var(--gm-chart-1)',
-                  marginRight: 5,
-                }}
-              />
-              AI 写作：{trendWritingTotal} 篇
-            </span>
-            <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  width: 10,
-                  height: 10,
-                  borderRadius: 2,
-                  background: 'var(--gm-chart-2)',
-                  marginRight: 5,
-                }}
-              />
-              爆文复刻：{trendRewriteTotal} 篇
-            </span>
-            <SignalPill tone="neutral">
-              <span className="gm-num">5 日合计 {trendGrandTotal} 篇</span>
-            </SignalPill>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>账户余额</span>
             <Button
               type="link"
               size="small"
               style={{ padding: 0 }}
-              onClick={() => openRoute('/writing/articles')}
+              onClick={() => openRoute('/me/money')}
             >
-              查看文章明细
+              余额明细
             </Button>
-          </Space>
+          </div>
+          <div
+            className="gm-num"
+            style={{
+              fontSize: 26,
+              fontWeight: 600,
+              color: 'var(--gm-fg-1)',
+              lineHeight: '32px',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            {renderCompactAmount(summary.balanceCard.balance, '¥')}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 16,
+              flexWrap: 'wrap',
+              marginTop: 6,
+              fontSize: 12,
+              color: 'var(--gm-fg-2)',
+            }}
+          >
+            <span>
+              本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
+              <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
+                ¥{summary.balanceCard.monthConsumed}
+              </strong>
+            </span>
+            <span>
+              本月入账：
+              <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
+                ¥{summary.balanceCard.monthRecharged}
+              </strong>
+            </span>
+          </div>
         </div>
-
-        {loading ? (
-          <SignalSkeleton variant="block" height={220} />
-        ) : (
-          <TrendChartSvg days={summary.trend5d} />
-        )}
-
-        {/* 5-day per-day exact reconciliation strip */}
-        <div className="gm-dashboard-trend-reconcile">
-          {summary.trend5d.map((day) => (
-            <div
-              key={day.date}
-              data-testid={`dashboard-trend-day-${day.date}`}
-              style={{
-                padding: 8,
-                borderRadius: 6,
-                background: 'var(--gm-bg-elevated)',
-                border: '1px solid var(--gm-line-1)',
-                fontSize: 12,
-                textAlign: 'center',
-              }}
-            >
-              <div
-                className="gm-num"
-                style={{ fontWeight: 600, color: 'var(--gm-fg-1)', marginBottom: 2 }}
-              >
-                {day.date}
-              </div>
-              <div style={{ color: 'var(--gm-fg-3)' }}>
-                写作{' '}
-                <strong className="gm-num" style={{ color: 'var(--gm-chart-1)' }}>
-                  {day.writingCount}
-                </strong>{' '}
-                · 复刻{' '}
-                <strong className="gm-num" style={{ color: 'var(--gm-chart-2)' }}>
-                  {day.rewriteCount}
-                </strong>
-              </div>
-            </div>
-          ))}
+        <div
+          style={{
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: 'var(--gm-bg-elevated)',
+            border: '1px solid var(--gm-line-1)',
+            fontSize: 12,
+            color: 'var(--gm-fg-3)',
+          }}
+        >
+          充值提示：{dedupeRechargeNotice(summary.balanceCard.rechargeNotice)}
         </div>
       </div>
 
-      {/* 4. Feature Entry Cards (Phase-1 active + Phase-2 "即将上线") */}
+      {/* Points Card */}
+      <div data-testid="dashboard-points-card" className="gm-kpi gm-kpi-compact">
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 6,
+              gap: 8,
+            }}
+          >
+            <Space size={8}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                可用点数
+              </span>
+              <SignalPill tone={summary.pointsCard.billingMode === 'SHADOW' ? 'warning' : 'info'}>
+                {summary.pointsCard.billingMode === 'SHADOW'
+                  ? `${UX_TERMS.billingShadow}（暂不扣点）`
+                  : UX_TERMS.billingStrict}
+              </SignalPill>
+            </Space>
+            <Space size={10}>
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0 }}
+                onClick={() => openRoute('/me/points')}
+              >
+                点数明细
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                style={{ padding: 0 }}
+                onClick={() => openRoute('/me/rights')}
+              >
+                账号权益
+              </Button>
+            </Space>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <span
+              className="gm-num"
+              style={{
+                fontSize: 26,
+                fontWeight: 600,
+                color: 'var(--gm-fg-1)',
+                lineHeight: '32px',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              {renderCompactAmount(summary.pointsCard.available, '', ' 点')}
+            </span>
+            {summary.pointsCard.pointsReserved > 0 ? (
+              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                总计 {summary.pointsCard.points} 点 · 任务占用中 {summary.pointsCard.pointsReserved}{' '}
+                点
+              </span>
+            ) : summary.pointsCard.points !== summary.pointsCard.available ? (
+              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                总计 {summary.pointsCard.points} 点
+              </span>
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 16,
+              flexWrap: 'wrap',
+              marginTop: 6,
+              fontSize: 12,
+              color: 'var(--gm-fg-2)',
+            }}
+          >
+            <span>
+              本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
+              <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
+                {summary.pointsCard.monthConsumedPoints} 点
+              </strong>
+              {summary.pointsCard.monthListPricePoints !==
+                summary.pointsCard.monthConsumedPoints && (
+                <span className="gm-num" style={{ color: 'var(--gm-fg-3)', marginLeft: 4 }}>
+                  （免费期原价核算 {summary.pointsCard.monthListPricePoints} 点）
+                </span>
+              )}
+            </span>
+            <span>
+              本月加点：
+              <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
+                +{summary.pointsCard.monthRechargedPoints} 点
+              </strong>
+            </span>
+          </div>
+        </div>
+        <div
+          style={{
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: 'var(--gm-bg-elevated)',
+            border: '1px solid var(--gm-line-1)',
+            fontSize: 12,
+            color: 'var(--gm-fg-3)',
+          }}
+        >
+          充值提示：{dedupeRechargeNotice(summary.pointsCard.rechargeNotice)}
+        </div>
+      </div>
+    </div>
+  );
+
+  const entryCardsSection = (
+    <div
+      data-testid="dashboard-entry-cards"
+      style={{
+        padding: '12px 14px',
+        borderRadius: 8,
+        border: '1px solid var(--gm-line-1)',
+        background: 'var(--gm-bg-surface)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
       <div
-        data-testid="dashboard-entry-cards"
         style={{
-          padding: 16,
-          borderRadius: 8,
-          border: '1px solid var(--gm-line-1)',
-          background: 'var(--gm-bg-surface)',
           display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
         }}
       >
-        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>功能入口</div>
+        <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>功能入口</span>
+        <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+          点击任意模块卡片直达对应工作区
+        </span>
+      </div>
 
-        {groupedEntries.map(({ group, cards }, groupIdx) => (
+      <div className="gm-dashboard-entry-groups">
+        {groupedEntries.map(({ group, cards }) => (
           <div key={group}>
             <div
               style={{
                 fontSize: 11,
                 fontWeight: 500,
                 color: 'var(--gm-fg-3)',
-                margin: groupIdx === 0 ? '0 0 8px' : '16px 0 8px',
+                marginBottom: 6,
                 letterSpacing: '0.06em',
               }}
             >
@@ -782,7 +719,6 @@ export function DashboardScreen({
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
-                          marginBottom: 4,
                           gap: 6,
                         }}
                       >
@@ -798,7 +734,7 @@ export function DashboardScreen({
                         <SignalPill tone="neutral">即将上线</SignalPill>
                       </div>
                       <div
-                        className="gm-clamp-2"
+                        className="gm-clamp-1"
                         style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}
                       >
                         {card.desc}
@@ -863,7 +799,7 @@ export function DashboardScreen({
                       )}
                     </div>
                     <div
-                      className="gm-clamp-2"
+                      className="gm-clamp-1"
                       style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}
                     >
                       {card.desc}
@@ -875,6 +811,180 @@ export function DashboardScreen({
           </div>
         ))}
       </div>
+    </div>
+  );
+
+  const trendSection = (
+    <div
+      data-testid="dashboard-trend-card"
+      style={{
+        padding: 16,
+        borderRadius: 8,
+        border: '1px solid var(--gm-line-1)',
+        background: 'var(--gm-bg-surface)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 8,
+          marginBottom: 10,
+        }}
+      >
+        <div>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            近 5 日 AI 创作趋势
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginLeft: 10 }}>
+            按北京时间（UTC+8）自然日统计 AI 写作与爆文复刻产出，与文章列表明细一致
+          </span>
+        </div>
+        <Space size={14} wrap>
+          <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: 2,
+                background: 'var(--gm-chart-1)',
+                marginRight: 5,
+              }}
+            />
+            AI 写作：{trendWritingTotal} 篇
+          </span>
+          <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: 2,
+                background: 'var(--gm-chart-2)',
+                marginRight: 5,
+              }}
+            />
+            爆文复刻：{trendRewriteTotal} 篇
+          </span>
+          <SignalPill tone="neutral">
+            <span className="gm-num">5 日合计 {trendGrandTotal} 篇</span>
+          </SignalPill>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0 }}
+            onClick={() => openRoute('/writing/articles')}
+          >
+            查看文章明细
+          </Button>
+        </Space>
+      </div>
+
+      {loading ? (
+        <SignalSkeleton variant="block" height={220} />
+      ) : (
+        <TrendChartSvg days={summary.trend5d} />
+      )}
+
+      {/* 5-day per-day exact reconciliation strip */}
+      <div className="gm-dashboard-trend-reconcile">
+        {summary.trend5d.map((day) => (
+          <div
+            key={day.date}
+            data-testid={`dashboard-trend-day-${day.date}`}
+            style={{
+              padding: 8,
+              borderRadius: 6,
+              background: 'var(--gm-bg-elevated)',
+              border: '1px solid var(--gm-line-1)',
+              fontSize: 12,
+              textAlign: 'center',
+            }}
+          >
+            <div
+              className="gm-num"
+              style={{ fontWeight: 600, color: 'var(--gm-fg-1)', marginBottom: 2 }}
+            >
+              {day.date}
+            </div>
+            <div style={{ color: 'var(--gm-fg-3)' }}>
+              写作{' '}
+              <strong className="gm-num" style={{ color: 'var(--gm-chart-1)' }}>
+                {day.writingCount}
+              </strong>{' '}
+              · 复刻{' '}
+              <strong className="gm-num" style={{ color: 'var(--gm-chart-2)' }}>
+                {day.rewriteCount}
+              </strong>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <section
+      className="gm-dashboard-root"
+      style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+    >
+      {/* 1. Primary Page Header (always at top of first screen, #135) */}
+      <div
+        data-testid="dashboard-header"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 8,
+        }}
+      >
+        <div>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            {title}
+          </Typography.Title>
+          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+            GeoMix 智能内容工作台 · 品牌素材管理、AI 创作与可见度诊断
+          </Typography.Text>
+        </div>
+        <Button
+          aria-label="刷新首页"
+          size="small"
+          loading={loading}
+          onClick={() => void loadSummary()}
+        >
+          刷新数据
+        </Button>
+      </div>
+
+      {error && (
+        <Alert type="error" showIcon closable onClose={() => setError(null)} message={error} />
+      )}
+
+      {/* 2. Zero-points next-step guidance when points = 0 and online recharge is disabled (#219) */}
+      {zeroPointsSection}
+
+      {!hasHistoricalData ? (
+        <>
+          {/* Empty / New account flow: 3-step beginner guidance + module quick entries first, then accounts/signals/trend */}
+          {onboardingSection}
+          {entryCardsSection}
+          {accountsSection}
+          {signalSection}
+          {trendSection}
+        </>
+      ) : (
+        <>
+          {/* Historical-data account flow: visibility signals + balance/points + quick entries above the fold, then 5-day trend */}
+          {signalSection}
+          {accountsSection}
+          {entryCardsSection}
+          {trendSection}
+        </>
+      )}
     </section>
   );
 }
