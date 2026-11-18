@@ -185,6 +185,7 @@ export class VisibilityJudgeService {
       },
       answerText,
       citedUrls,
+      input.promptText,
     );
 
     const competitorCandidates = (input.profile.competitors ?? []).map((comp, idx) =>
@@ -198,6 +199,7 @@ export class VisibilityJudgeService {
         },
         answerText,
         citedUrls,
+        input.promptText,
       ),
     );
 
@@ -273,7 +275,7 @@ export class VisibilityJudgeService {
             '- negative：负面批评、提示风险或不建议选择；',
             '- other_meaning：同名普通词汇歧义（如水果“苹果”而非品牌）；',
             '- other_company：同名但明显指代另一家无关主体；',
-            '- no_info：未真正提及该实体。',
+            '- no_info：未真正提及该实体，或仅在复述/转述用户提问词时顺带出现而正文未对该品牌进行推荐、评价或对比。',
             '仅输出严格 JSON：{"verdicts":[{"subjectKey":"brand","portrayal":"positive","evidence":"原文关键句"}]}',
           ].join('\n'),
         },
@@ -340,16 +342,19 @@ function scanCandidate(
   subject: TrackedSubject,
   answerText: string,
   citedUrls: readonly string[],
+  promptText?: string,
 ): CandidateScan {
-  const textOffsets = findSubjectMentionOffsets(answerText, subject);
+  const mentionOptions = { promptText };
+  const textOffsets = findSubjectMentionOffsets(answerText, subject, undefined, mentionOptions);
   const offsets =
     textOffsets.length > 0
       ? textOffsets
-      : findSubjectMentionOffsets(answerText, subject, citedUrls);
+      : findSubjectMentionOffsets(answerText, subject, citedUrls, mentionOptions);
   const domainCited =
     subject.domains.length > 0 &&
     citedUrls.some((url) => subject.domains.some((dom) => matchesDomain(url, dom)));
-  const passages = textOffsets.length > 0 ? extractEvidencePassages(answerText, subject, 3) : [];
+  const passages =
+    textOffsets.length > 0 ? extractEvidencePassages(answerText, subject, 3, mentionOptions) : [];
 
   return {
     subjectKey,

@@ -610,6 +610,7 @@ export class VisibilityService {
       row.observations.map((obs) => ({
         id: obs.id,
         status: obs.status,
+        promptText: obs.promptText,
         answerText: obs.answerText,
         brandMentioned: obs.brandMentioned,
         brandPosition: obs.brandPosition,
@@ -992,6 +993,7 @@ export class VisibilityService {
       observations.map((obs) => ({
         id: obs.id,
         status: obs.status,
+        promptText: obs.promptText,
         answerText: obs.answerText,
         brandMentioned: obs.brandMentioned,
         brandPosition: obs.brandPosition,
