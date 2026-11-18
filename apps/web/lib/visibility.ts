@@ -18,21 +18,13 @@ import type {
   VisibilityRunListQuery,
   VisibilityRunListResponse,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import { httpQuestionGateway } from './questions';
 import { httpSampleGateway, type PriceItem } from './samples';
 import type { SessionStorageLike } from './session';
 
-export class VisibilityApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'VisibilityApiError';
-  }
-}
+export class VisibilityApiError extends GatewayApiError {}
 
 export type VisibilityGateway = {
   listProfiles(): Promise<VisibilityProfileListResponse>;
@@ -117,22 +109,7 @@ export function buildVisibilityOpportunitiesQueryString(
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) {
-    throw new VisibilityApiError(response.status, -1, '服务响应为空');
-  }
-  let json: Envelope<T>;
-  try {
-    json = JSON.parse(text) as Envelope<T>;
-  } catch {
-    throw new VisibilityApiError(response.status, -1, '服务响应解析失败');
-  }
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new VisibilityApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(VisibilityApiError);
 
 export function httpVisibilityGateway(storage: SessionStorageLike): VisibilityGateway {
   const questionGw = httpQuestionGateway(storage);

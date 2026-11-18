@@ -14,21 +14,17 @@ import {
   type MediaCategoryRecord,
 } from '@geomix/shared';
 import { authorizedRequest, type Envelope } from './api';
+import {
+  GatewayApiError,
+  createEnvelopeUnwrapper,
+  filenameFromContentDisposition as filenameFromDisposition,
+} from './envelope';
 import { httpGalleryGateway } from './gallery';
 import { httpKeywordGateway } from './keywords';
 import { httpKnowledgeGateway } from './knowledge';
 import type { SessionStorageLike } from './session';
 
-export class AiImageApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'AiImageApiError';
-  }
-}
+export class AiImageApiError extends GatewayApiError {}
 
 export type AiImageDownloadFile = {
   filename: string;
@@ -77,21 +73,7 @@ export function buildAiImageListQueryString(
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new AiImageApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new AiImageApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
-
-function filenameFromDisposition(header: string | null, fallback: string): string {
-  if (!header) return fallback;
-  const m = /filename="?([^";]+)"?/i.exec(header);
-  return m?.[1]?.trim() || fallback;
-}
+const unwrap = createEnvelopeUnwrapper(AiImageApiError);
 
 export function httpAiImageGateway(storage: SessionStorageLike): AiImageGateway {
   const galleryGw = httpGalleryGateway(storage);

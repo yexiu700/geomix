@@ -4,20 +4,12 @@ import type {
   KeywordRecord,
   QuestionSourceName,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import type { PriceItem } from './samples';
 import type { SessionStorageLike } from './session';
 
-export class KeywordApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'KeywordApiError';
-  }
-}
+export class KeywordApiError extends GatewayApiError {}
 
 export type KeywordSavePayload = {
   main: string;
@@ -73,15 +65,7 @@ function toQueryString(query: KeywordListQuery, format?: 'csv' | 'xlsx'): string
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new KeywordApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0) {
-    throw new KeywordApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(KeywordApiError, { requireData: false });
 
 export function httpKeywordGateway(storage: SessionStorageLike): KeywordGateway {
   return {

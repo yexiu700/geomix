@@ -13,20 +13,16 @@ import type {
 } from '@geomix/shared';
 import { authorizedRequest, type Envelope } from './api';
 import { httpCategoryGateway } from './categories';
+import {
+  GatewayApiError,
+  createEnvelopeUnwrapper,
+  filenameFromContentDisposition as filenameFromDisposition,
+} from './envelope';
 import { httpGalleryGateway } from './gallery';
 import { httpPromptGateway } from './prompts';
 import type { SessionStorageLike } from './session';
 
-export class RewriteApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'RewriteApiError';
-  }
-}
+export class RewriteApiError extends GatewayApiError {}
 
 export type RewriteFormOptions = {
   categories: ArticleCategoryRecord[];
@@ -70,30 +66,7 @@ export function buildRewriteListQueryString(
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new RewriteApiError(response.status, -1, '服务响应为空');
-  let json: Envelope<T>;
-  try {
-    json = JSON.parse(text) as Envelope<T>;
-  } catch {
-    const message =
-      response.status === 502 || response.status === 504
-        ? '服务响应超时，请稍后重试'
-        : '服务返回异常响应，请稍后重试';
-    throw new RewriteApiError(response.status, -1, message);
-  }
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new RewriteApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
-
-function filenameFromDisposition(header: string | null, fallback: string): string {
-  if (!header) return fallback;
-  const m = /filename="?([^";]+)"?/i.exec(header);
-  return m?.[1]?.trim() || fallback;
-}
+const unwrap = createEnvelopeUnwrapper(RewriteApiError);
 
 export function httpRewriteSingleGateway(storage: SessionStorageLike): RewriteSingleGateway {
   const categoryGw = httpCategoryGateway(storage);

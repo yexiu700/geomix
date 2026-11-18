@@ -10,8 +10,9 @@ import type {
   MediaCategoryRecord,
   PromptOptionsResponse,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
 import { httpCategoryGateway } from './categories';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import { httpGalleryGateway } from './gallery';
 import { httpKeywordGateway } from './keywords';
 import { httpKnowledgeGateway } from './knowledge';
@@ -19,16 +20,7 @@ import { httpPromptGateway } from './prompts';
 import { httpSampleGateway, type PriceItem } from './samples';
 import type { SessionStorageLike } from './session';
 
-export class AiTaskApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'AiTaskApiError';
-  }
-}
+export class AiTaskApiError extends GatewayApiError {}
 
 export type AiTaskFormOptions = {
   categories: ArticleCategoryRecord[];
@@ -67,15 +59,7 @@ export function buildAiTaskQueryString(query: AiTaskListQuery): string {
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new AiTaskApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new AiTaskApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(AiTaskApiError);
 
 export function httpAiTaskGateway(storage: SessionStorageLike): AiTaskGateway {
   const categoryGw = httpCategoryGateway(storage);

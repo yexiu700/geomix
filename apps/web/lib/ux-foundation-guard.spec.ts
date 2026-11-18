@@ -138,4 +138,23 @@ describe('UX Foundation static guardrails', () => {
     expect(legacyDefaultOrderViolations).toEqual([]);
     expect(unstandardizedListScreens).toEqual([]);
   });
+
+  it('forbids duplicated private async function unwrap blocks across apps/web/lib gateways (#264)', () => {
+    const libDir = join(WEB_ROOT, 'lib');
+    const libFiles = collectProductionSourceFiles(libDir);
+    const duplicateUnwrapFiles: string[] = [];
+
+    for (const file of libFiles) {
+      const rel = relative(WEB_ROOT, file);
+      if (rel === 'lib/envelope.ts') {
+        continue;
+      }
+      const content = readFileSync(file, 'utf8');
+      if (/\bfunction\s+unwrap\b/.test(content)) {
+        duplicateUnwrapFiles.push(rel);
+      }
+    }
+
+    expect(duplicateUnwrapFiles).toEqual([]);
+  });
 });

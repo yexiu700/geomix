@@ -7,19 +7,11 @@ import {
   type MediaCategoryWriteInput,
   type MediaUploadResponse,
 } from '@geomix/shared';
-import { authorizedRequest, refreshAccessToken, type Envelope } from './api';
+import { authorizedRequest, refreshAccessToken } from './api';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import { apiBase, readAccessToken, type SessionStorageLike } from './session';
 
-export class GalleryApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'GalleryApiError';
-  }
-}
+export class GalleryApiError extends GatewayApiError {}
 
 export type GalleryGateway = {
   listCategories(query: MediaCategoryListQuery): Promise<MediaCategoryListResponse>;
@@ -120,33 +112,7 @@ export async function readImageDimensions(
   }
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new GalleryApiError(response.status, -1, '服务响应为空');
-  let json: Envelope<T> | null = null;
-  try {
-    json = JSON.parse(text) as Envelope<T>;
-  } catch {
-    json = null;
-  }
-  if (!json || typeof json !== 'object') {
-    const fallbackMsg =
-      response.status === 413
-        ? '上传文件过大，超出服务器或网关限制'
-        : response.status >= 500
-          ? `服务暂时不可用（HTTP ${response.status}）`
-          : `服务返回异常响应（HTTP ${response.status}）`;
-    throw new GalleryApiError(response.status, -1, fallbackMsg);
-  }
-  if (!response.ok || json.code !== 0) {
-    throw new GalleryApiError(
-      response.status,
-      typeof json.code === 'number' ? json.code : -1,
-      json.msg || `操作失败（HTTP ${response.status}）`,
-    );
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(GalleryApiError, { requireData: false });
 
 function categoryQueryString(query: MediaCategoryListQuery & { export?: 'csv' | 'xlsx' }): string {
   const params = new URLSearchParams();
