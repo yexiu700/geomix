@@ -10,6 +10,7 @@ import {
   PRICING_DEFAULTS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
+  UX_TERMS,
   formatAiTaskFreezeSummary,
   formatAiTaskSubmitLabel,
   isTaskStatus,
@@ -39,11 +40,16 @@ import {
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
 import { TableClampText } from '../crud/table-clamp-text';
-import { httpAiTaskGateway, type AiTaskFormOptions, type AiTaskGateway } from '../../lib/ai-tasks';
+import {
+  AiTaskApiError,
+  httpAiTaskGateway,
+  type AiTaskFormOptions,
+  type AiTaskGateway,
+} from '../../lib/ai-tasks';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import {
@@ -167,6 +173,16 @@ function isControllableStatus(status: TaskStatusName): boolean {
   return status === 'QUEUED' || status === 'RUNNING' || status === 'PAUSED';
 }
 
+function isUnauthorizedError(err: unknown): boolean {
+  if (err instanceof AiTaskApiError) {
+    return err.status === 401;
+  }
+  if (err && typeof err === 'object' && 'status' in err) {
+    return (err as { status?: unknown }).status === 401;
+  }
+  return false;
+}
+
 export function AiTaskScreen({
   title,
   tabId,
@@ -209,6 +225,10 @@ export function AiTaskScreen({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
+  const [authExpired, setAuthExpired] = useState(false);
+  const [pageVisible, setPageVisible] = useState(() =>
+    typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
+  );
 
   const [banner, setBanner] = useState<{
     type: 'success' | 'warning' | 'error';
@@ -245,9 +265,13 @@ export function AiTaskScreen({
       if (!silent) setLoading(true);
       try {
         const res = await client.list(query);
+        setAuthExpired(false);
         setRows(res.items);
         setTotal(res.total);
       } catch (err: unknown) {
+        if (isUnauthorizedError(err)) {
+          setAuthExpired(true);
+        }
         if (!silent) {
           setBanner({
             type: 'error',
@@ -265,20 +289,60 @@ export function AiTaskScreen({
     void loadList(false);
   }, [loadList, reloadTick]);
 
-  // 5-second automatic progress polling for task list and open detail drawer
   useEffect(() => {
-    if (pollIntervalMs <= 0) return;
+    if (typeof document === 'undefined') return;
+    const handleVisibilityChange = () => {
+      setPageVisible(document.visibilityState !== 'hidden');
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    const wasActive = prevActiveRef.current;
+    prevActiveRef.current = active;
+    if (!wasActive && active) {
+      setAuthExpired(false);
+      void loadList(true);
+    }
+  }, [active, loadList]);
+
+  const hasActiveTasks = useMemo(
+    () =>
+      rows.some((r) => isActiveTaskStatus(r.status)) ||
+      Boolean(drawerOpen && activeDetail && isActiveTaskStatus(activeDetail.status)),
+    [rows, drawerOpen, activeDetail],
+  );
+
+  // 5-second automatic progress polling only when tab is active, page visible, authenticated, and active tasks exist
+  useEffect(() => {
+    if (pollIntervalMs <= 0 || !active || !pageVisible || authExpired || !hasActiveTasks) return;
     const timer = setInterval(() => {
       void loadList(true);
       if (drawerOpen && activeDetail && isActiveTaskStatus(activeDetail.status)) {
         void client
           .detail(activeDetail.id)
           .then((fresh) => setActiveDetail(fresh))
-          .catch(() => undefined);
+          .catch((err: unknown) => {
+            if (isUnauthorizedError(err)) {
+              setAuthExpired(true);
+            }
+          });
       }
     }, pollIntervalMs);
     return () => clearInterval(timer);
-  }, [pollIntervalMs, loadList, drawerOpen, activeDetail, client]);
+  }, [
+    pollIntervalMs,
+    active,
+    pageVisible,
+    authExpired,
+    hasActiveTasks,
+    loadList,
+    drawerOpen,
+    activeDetail,
+    client,
+  ]);
 
   const baseAiWritePoints = useMemo(() => {
     const found = formOptions?.prices.find((p) => p.action === 'ai_write');
@@ -292,6 +356,11 @@ export function AiTaskScreen({
     return PRICING_DEFAULTS.find((p) => p.action === 'kb_addon')?.unitPoints ?? 5;
   }, [formOptions]);
 
+  const usableSystemArticlePrompts = useMemo<PromptTemplateRecord[]>(() => {
+    if (!formOptions) return [];
+    return formOptions.articlePrompts.system.filter((tpl) => !tpl.hasManualSlot);
+  }, [formOptions]);
+
   const allArticleTemplates = useMemo<PromptTemplateRecord[]>(() => {
     if (!formOptions) return [];
     return [...formOptions.articlePrompts.user, ...formOptions.articlePrompts.system];
@@ -302,11 +371,7 @@ export function AiTaskScreen({
     return allArticleTemplates.find((tpl) => tpl.id === editor.draft.contentTplId) ?? null;
   }, [allArticleTemplates, editor?.draft.contentTplId]);
 
-  const manualSlotBlocked = Boolean(
-    selectedArticleTemplate &&
-    selectedArticleTemplate.isSystem &&
-    selectedArticleTemplate.hasManualSlot,
-  );
+  const manualSlotBlocked = Boolean(selectedArticleTemplate?.hasManualSlot);
 
   const selectedKb = useMemo(() => {
     if (!editor?.draft.kbId || !formOptions) return null;
@@ -381,11 +446,11 @@ export function AiTaskScreen({
       errors.push('请填写任务名称');
     }
     if (!d.keywordId) {
-      errors.push('请选择蒸馏训练词');
+      errors.push(`请选择${UX_TERMS.mainKeyword}`);
     } else {
       const pickedKw = formOptions?.keywords.find((k) => k.id === d.keywordId);
       if (pickedKw && pickedKw.questionCount < 1) {
-        errors.push('所选训练主词下暂无写作问题，请先前往「写作标题」添加问题');
+        errors.push(`所选${UX_TERMS.mainKeyword}下暂无写作问题，请先前往「写作标题」添加问题`);
       }
     }
     if (d.imageCount > 0) {
@@ -402,7 +467,9 @@ export function AiTaskScreen({
       errors.push('所选企业知识库正在建立智能检索，请变为「可用」后再提交任务');
     }
     if (manualSlotBlocked) {
-      errors.push('该系统模板含【品牌N】手工槽位，请先前往「写作指令」克隆并填写对标品牌后再选用');
+      errors.push(
+        '所选内容创作指令仍含【品牌1】等手工槽位，请先前往「写作指令」填写具体对比品牌后再选用',
+      );
     }
     if (
       !Number.isInteger(d.target) ||
@@ -545,7 +612,7 @@ export function AiTaskScreen({
   }
 
   // Strictly aligned with Issue #17 11 columns:
-  // 任务名、蒸馏词、创作上限、已创作、知识库、详情、错误消息、状态、最新写作、创建时间、操作
+  // 任务名、主关键词、创作上限、已创作、知识库、详情、错误消息、状态、最新写作、创建时间、操作
   const columns: CrudColumn<AiTaskRecord>[] = [
     {
       key: 'name',
@@ -567,7 +634,7 @@ export function AiTaskScreen({
     },
     {
       key: 'keywordMain',
-      title: '蒸馏词',
+      title: UX_TERMS.mainKeyword,
       width: 120,
       render: (row) => <Tag color="geekblue">{row.keywordMain}</Tag>,
     },
@@ -760,7 +827,7 @@ export function AiTaskScreen({
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="AI 写作任务按提交预冻点数、按完成篇数逐篇结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章保留 30 天，到期后系统自动删除清理；注意：文章成功发布后会在一段时间后自动删除，请及时导出保存。"
+        message="AI 写作任务按提交预冻点数、按完成篇数逐篇结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章默认保留 30 天，请及时导出保存。"
       />
 
       {banner ? (
@@ -810,9 +877,9 @@ export function AiTaskScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
-        searchPlaceholder="搜索任务名称或蒸馏词"
+        searchPlaceholder={`搜索任务名称或${UX_TERMS.mainKeyword}`}
         writeDisabled={readOnly}
-        emptyText="暂无 AI 写作任务，点击「添加」配置训练词与素材即可批量创作"
+        emptyText={`暂无 AI 写作任务，点击「添加」配置${UX_TERMS.mainKeyword}与素材即可批量创作`}
         search={{
           keyword: query.keyword,
           enabled: undefined,
@@ -900,7 +967,7 @@ export function AiTaskScreen({
                   id="gm-aitask-name"
                   aria-label="任务名称"
                   maxLength={AI_TASK_NAME_MAX}
-                  placeholder="请输入任务名称，例如：春季激光选型科普计划"
+                  placeholder="请输入任务名称，例如：产品选购科普专题"
                   value={editor.draft.name}
                   onChange={(e) =>
                     setEditor((curr) =>
@@ -937,14 +1004,14 @@ export function AiTaskScreen({
                 </select>
               </div>
 
-              {/* 3. 蒸馏训练词 */}
+              {/* 3. 主关键词 */}
               <div>
                 <label htmlFor="gm-aitask-keyword" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 蒸馏训练词
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span> {UX_TERMS.mainKeyword}
                 </label>
                 <select
                   id="gm-aitask-keyword"
-                  aria-label="蒸馏训练词"
+                  aria-label={UX_TERMS.mainKeyword}
                   style={NATIVE_SELECT_STYLE}
                   value={editor.draft.keywordId}
                   onChange={(e) =>
@@ -1123,12 +1190,11 @@ export function AiTaskScreen({
                       ))}
                     </optgroup>
                   ) : null}
-                  {(formOptions?.articlePrompts.system.length ?? 0) > 0 ? (
+                  {usableSystemArticlePrompts.length > 0 ? (
                     <optgroup label="系统默认文章指令">
-                      {formOptions!.articlePrompts.system.map((tpl) => (
+                      {usableSystemArticlePrompts.map((tpl) => (
                         <option key={tpl.id} value={tpl.id}>
                           {tpl.name}
-                          {tpl.hasManualSlot ? '（含【品牌N】槽位，需先克隆）' : ''}
                         </option>
                       ))}
                     </optgroup>
@@ -1234,7 +1300,7 @@ export function AiTaskScreen({
               <Alert
                 type="warning"
                 showIcon
-                message="该系统模板含【品牌1】等手工槽位，请先前往「写作指令」克隆并填写具体对标品牌后再选用。"
+                message="所选内容创作指令仍含【品牌1】等手工槽位，请先前往「写作指令」填写具体对比品牌后再选用。"
               />
             ) : null}
 
@@ -1301,7 +1367,9 @@ export function AiTaskScreen({
                 {activeDetail.failCount}，跳过 {activeDetail.skipCount}）
               </Descriptions.Item>
               <Descriptions.Item label="文章分类">{activeDetail.categoryName}</Descriptions.Item>
-              <Descriptions.Item label="蒸馏训练词">{activeDetail.keywordMain}</Descriptions.Item>
+              <Descriptions.Item label={UX_TERMS.mainKeyword}>
+                {activeDetail.keywordMain}
+              </Descriptions.Item>
               <Descriptions.Item label="画像图库">
                 {activeDetail.mediaCategoryName
                   ? `${activeDetail.mediaCategoryName}（每篇 ${activeDetail.imageCount} 张）`

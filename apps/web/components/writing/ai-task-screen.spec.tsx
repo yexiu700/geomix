@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AiTaskDetailRecord, AiTaskRecord, PromptTemplateRecord } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AiTaskFormOptions, AiTaskGateway } from '../../lib/ai-tasks';
+import { AiTaskApiError, type AiTaskFormOptions, type AiTaskGateway } from '../../lib/ai-tasks';
 import { invalidateFreshness, resetFreshnessForTests } from '../../lib/tab-freshness';
 import type { ShellAction } from '../../lib/tab-stack';
 import { AiTaskScreen } from './ai-task-screen';
@@ -127,7 +127,16 @@ function makeFormOptions(): AiTaskFormOptions {
     ],
     articlePrompts: {
       kind: 'ARTICLE',
-      user: [makePrompt({ id: 'usr_art_1', kind: 'ARTICLE', name: '我的深度测评模板' })],
+      user: [
+        makePrompt({ id: 'usr_art_1', kind: 'ARTICLE', name: '我的深度测评模板' }),
+        makePrompt({
+          id: 'usr_art_slot',
+          kind: 'ARTICLE',
+          name: '未替换槽位克隆模板',
+          hasManualSlot: true,
+          clonedFrom: 'sys_art_slot',
+        }),
+      ],
       system: [
         makePrompt({ id: 'sys_art_1', kind: 'ARTICLE', name: '系统科普选购模板', isSystem: true }),
         makePrompt({
@@ -234,7 +243,7 @@ describe('AiTaskScreen', () => {
     // Verify all 11 column headers are present
     for (const colTitle of [
       '任务名',
-      '蒸馏词',
+      '主关键词',
       '创作上限',
       '已创作',
       '知识库',
@@ -247,6 +256,11 @@ describe('AiTaskScreen', () => {
     ]) {
       expect(screen.getAllByText(colTitle).length).toBeGreaterThan(0);
     }
+
+    // #153: top Alert clarifies 30-day default retention without contradictory vague auto-delete wording
+    expect(document.body.textContent).toContain('生成的文章默认保留 30 天，请及时导出保存');
+    expect(document.body.textContent).not.toContain('一段时间后自动删除');
+    expect(document.body.textContent).not.toContain('整单预冻');
 
     // Open detail drawer and verify AiTaskItem row
     fireEvent.click(findButton('查看详情-十篇激光选型计划'));
@@ -274,7 +288,7 @@ describe('AiTaskScreen', () => {
     });
   });
 
-  it('defaults 10 form fields per spec, filters ARTICLE vs TITLE prompts, guards manual-slot templates, and switches button between 10点数/篇 and 15点数/篇 when KB is selected', async () => {
+  it('defaults 10 form fields per spec, filters ARTICLE vs TITLE & system manual-slot prompts, guards cloned manual-slot templates, and switches button between 10 点/篇 and 15 点/篇 when KB is selected', async () => {
     let submittedPayload: unknown = null;
     const createdDetail: AiTaskDetailRecord = {
       ...makeTaskRow({ name: '春季钣金获客任务', target: 8, unitPrice: 15, frozenPoints: 120 }),
@@ -310,54 +324,61 @@ describe('AiTaskScreen', () => {
       expect(screen.getByLabelText('任务名称')).toBeTruthy();
     });
 
-    // 1. Check default button label (10点数/篇), target=1, unselected keyword/gallery (#74), and default pre-freeze summary (1 篇 × 10 点/篇 = 10 点)
-    expect(findButton('开始写作（10点数/篇）')).toBeTruthy();
+    // Industry-neutral placeholder (#153)
+    const nameInput = screen.getByLabelText('任务名称') as HTMLInputElement;
+    expect(nameInput.placeholder).toContain('产品选购科普专题');
+    expect(nameInput.placeholder).not.toContain('春季激光选型科普计划');
+
+    // 1. Check default button label (10 点/篇), target=1, unselected keyword/gallery (#74), and default pre-freeze summary (预计预冻 10 点数)
+    expect(findButton('开始写作（10 点/篇）')).toBeTruthy();
     expect((screen.getByLabelText('AI 创作数量') as HTMLInputElement).value).toBe('1');
-    const kwSelect = screen.getByLabelText('蒸馏训练词') as HTMLSelectElement;
+    const kwSelect = screen.getByLabelText('主关键词') as HTMLSelectElement;
     const galSelect = screen.getByLabelText('画像图库') as HTMLSelectElement;
     expect(kwSelect.value).toBe('');
     expect(galSelect.value).toBe('');
-    expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain(
-      '10 点数（1 篇 × 10 点/篇）',
-    );
+    const freezeBannerText = screen.getByTestId('ai-task-freeze-banner').textContent ?? '';
+    expect(freezeBannerText).toContain('预计预冻 10 点数（1 篇 × 10 点/篇）');
+    expect(freezeBannerText).not.toContain('整单预冻');
     expect(screen.getByText('1 张/篇')).toBeTruthy();
 
-    // 2. Verify strict PromptKind separation in dropdown options
+    // 2. Verify strict PromptKind separation & system manual-slot filtering in dropdown options
     const contentSelect = screen.getByLabelText('内容创作指令') as HTMLSelectElement;
     const titleSelect = screen.getByLabelText('标题创作指令') as HTMLSelectElement;
     expect(contentSelect.value).toBe('');
     expect(titleSelect.value).toBe('');
     expect(contentSelect.textContent).toContain('我的深度测评模板');
+    expect(contentSelect.textContent).toContain('系统科普选购模板');
+    expect(contentSelect.textContent).not.toContain('多品牌横评对照模板');
     expect(contentSelect.textContent).not.toContain('我的简明标题指令');
     expect(titleSelect.textContent).toContain('我的简明标题指令');
     expect(titleSelect.textContent).not.toContain('我的深度测评模板');
 
-    // 3. Selecting manual-slot system template warns and disables submit until changed
-    fireEvent.change(contentSelect, { target: { value: 'sys_art_slot' } });
-    expect(screen.getByText(/请先前往「写作指令」克隆并填写具体对标品牌/)).toBeTruthy();
-    expect(findButton('开始写作（10点数/篇）').disabled).toBe(true);
+    // 3. Selecting unfilled cloned user template with manual slot warns and disables submit until changed
+    fireEvent.change(contentSelect, { target: { value: 'usr_art_slot' } });
+    expect(screen.getByText(/请先前往「写作指令」填写具体对比品牌后再选用/)).toBeTruthy();
+    expect(findButton('开始写作（10 点/篇）').disabled).toBe(true);
 
     fireEvent.change(contentSelect, { target: { value: 'usr_art_1' } });
-    expect(findButton('开始写作（10点数/篇）').disabled).toBe(false);
+    expect(findButton('开始写作（10 点/篇）').disabled).toBe(false);
 
-    // 4. Selecting Enterprise Knowledge Base immediately switches button to 开始写作（15点数/篇） and updates pre-freeze total!
+    // 4. Selecting Enterprise Knowledge Base immediately switches button to 开始写作（15 点/篇） and updates pre-freeze total!
     const kbSelect = screen.getByLabelText('企业知识库') as HTMLSelectElement;
     fireEvent.change(kbSelect, { target: { value: 'kb_1' } });
 
-    expect(findButton('开始写作（15点数/篇）')).toBeTruthy();
+    expect(findButton('开始写作（15 点/篇）')).toBeTruthy();
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain('+5 点/篇');
     expect(screen.getByTestId('ai-task-freeze-banner').textContent).toContain(
       '15 点数（1 篇 × 15 点/篇）',
     );
 
-    // Clear KB -> switches back to 开始写作（10点数/篇）; re-select KB -> 开始写作（15点数/篇）
+    // Clear KB -> switches back to 开始写作（10 点/篇）; re-select KB -> 开始写作（15 点/篇）
     fireEvent.change(kbSelect, { target: { value: '' } });
-    expect(findButton('开始写作（10点数/篇）')).toBeTruthy();
+    expect(findButton('开始写作（10 点/篇）')).toBeTruthy();
     fireEvent.change(kbSelect, { target: { value: 'kb_1' } });
-    expect(findButton('开始写作（15点数/篇）')).toBeTruthy();
+    expect(findButton('开始写作（15 点/篇）')).toBeTruthy();
 
     // Fill name, explicitly select keyword & gallery (#74), adjust target to 8 -> banner updates to 120 点数（8 篇 × 15 点/篇） and submit!
-    fireEvent.change(screen.getByLabelText('任务名称'), {
+    fireEvent.change(nameInput, {
       target: { value: '春季钣金获客任务' },
     });
     fireEvent.change(kwSelect, { target: { value: 'kw_1' } });
@@ -369,7 +390,7 @@ describe('AiTaskScreen', () => {
       '120 点数（8 篇 × 15 点/篇）',
     );
 
-    fireEvent.click(findButton('开始写作（15点数/篇）'));
+    fireEvent.click(findButton('开始写作（15 点/篇）'));
 
     await waitFor(() => {
       expect(gateway.create).toHaveBeenCalledTimes(1);
@@ -468,11 +489,11 @@ describe('AiTaskScreen', () => {
     });
 
     // #151: submitting empty form renders CrudModal footer error alert with all missing required fields
-    fireEvent.click(findButton('开始写作（10点数/篇）'));
+    fireEvent.click(findButton('开始写作（10 点/篇）'));
     await waitFor(() => {
       const errorText = document.querySelector('.gm-crud-error')?.textContent ?? '';
       expect(errorText).toContain('请填写任务名称');
-      expect(errorText).toContain('请选择蒸馏训练词');
+      expect(errorText).toContain('请选择主关键词');
       expect(errorText).toContain('请选择画像图库');
     });
 
@@ -480,7 +501,7 @@ describe('AiTaskScreen', () => {
     fireEvent.change(screen.getByLabelText('任务名称'), {
       target: { value: '纯文与还原刷新验证' },
     });
-    fireEvent.change(screen.getByLabelText('蒸馏训练词'), {
+    fireEvent.change(screen.getByLabelText('主关键词'), {
       target: { value: 'kw_1' },
     });
     fireEvent.change(screen.getByLabelText('AI 创作数量'), {
@@ -510,7 +531,7 @@ describe('AiTaskScreen', () => {
     expect((screen.getByLabelText('任务名称') as HTMLInputElement).value).toBe(
       '纯文与还原刷新验证',
     );
-    expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).value).toBe('kw_1');
+    expect((screen.getByLabelText('主关键词') as HTMLSelectElement).value).toBe('kw_1');
     expect((screen.getByLabelText('AI 创作数量') as HTMLInputElement).value).toBe('5');
 
     // #148: drag/click 文章配图 to 0 张 -> disables 画像图库, removes * required check, submits pure-text task
@@ -520,7 +541,7 @@ describe('AiTaskScreen', () => {
     expect(galSelect.disabled).toBe(true);
     expect(document.body.textContent).toContain('画像图库（0 张配图时无需选择）');
 
-    fireEvent.click(findButton('开始写作（10点数/篇）'));
+    fireEvent.click(findButton('开始写作（10 点/篇）'));
     await waitFor(() => {
       expect(createdPayloads).toHaveLength(1);
     });
@@ -587,9 +608,9 @@ describe('AiTaskScreen', () => {
 
     fireEvent.click(findButton('添加'));
     await waitFor(() => {
-      expect(screen.getByLabelText('蒸馏训练词')).toBeTruthy();
+      expect(screen.getByLabelText('主关键词')).toBeTruthy();
     });
-    expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).textContent).not.toContain(
+    expect((screen.getByLabelText('主关键词') as HTMLSelectElement).textContent).not.toContain(
       'Anker氮化镓充电器',
     );
 
@@ -616,9 +637,144 @@ describe('AiTaskScreen', () => {
     );
 
     await waitFor(() => {
-      expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).textContent).toContain(
+      expect((screen.getByLabelText('主关键词') as HTMLSelectElement).textContent).toContain(
         'Anker氮化镓充电器',
       );
     });
+  });
+
+  it('pauses polling when tab is inactive, document is hidden, or no active tasks exist, refreshes once on active transition, and stops on 401 (#153)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let visibilityState: DocumentVisibilityState = 'visible';
+    const prevVisibilityDesc = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibilityState,
+    });
+
+    try {
+      let currentRow = makeTaskRow({ status: 'RUNNING' });
+      let failWith401 = false;
+      const listMock = vi.fn(async () => {
+        if (failWith401) {
+          throw new AiTaskApiError(401, 40101, '未登录');
+        }
+        return { page: 1, pageSize: 10, total: 1, items: [currentRow] };
+      });
+      const gateway: AiTaskGateway = {
+        list: listMock,
+        detail: vi.fn(),
+        create: vi.fn(),
+        pause: vi.fn(),
+        resume: vi.fn(),
+        cancel: vi.fn(),
+        bulkDelete: vi.fn(),
+        download: vi.fn(),
+        loadFormOptions: vi.fn(async () => makeFormOptions()),
+      };
+
+      const view = render(
+        <AiTaskScreen
+          title="AI写作任务"
+          tabId="tab_tasks"
+          active={true}
+          pollIntervalMs={5_000}
+          gateway={gateway}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(listMock).toHaveBeenCalledTimes(1);
+      });
+
+      // 1. Tab becomes inactive -> 5s polling pauses
+      view.rerender(
+        <AiTaskScreen
+          title="AI写作任务"
+          tabId="tab_tasks"
+          active={false}
+          pollIntervalMs={5_000}
+          gateway={gateway}
+        />,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11_000);
+      });
+      expect(listMock).toHaveBeenCalledTimes(1);
+
+      // 2. Switching back active=true refreshes once immediately
+      view.rerender(
+        <AiTaskScreen
+          title="AI写作任务"
+          tabId="tab_tasks"
+          active={true}
+          pollIntervalMs={5_000}
+          gateway={gateway}
+        />,
+      );
+      await waitFor(() => {
+        expect(listMock).toHaveBeenCalledTimes(2);
+      });
+
+      // 3. Document becomes hidden -> 5s polling pauses
+      visibilityState = 'hidden';
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11_000);
+      });
+      expect(listMock).toHaveBeenCalledTimes(2);
+
+      // 4. Document visible again + 401 error stops polling permanently until re-activated
+      visibilityState = 'visible';
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      failWith401 = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_100);
+      });
+      expect(listMock).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(11_000);
+      });
+      expect(listMock).toHaveBeenCalledTimes(3);
+
+      // 5. When all tasks are COMPLETED (no QUEUED/RUNNING), polling does not run
+      failWith401 = false;
+      currentRow = makeTaskRow({ status: 'COMPLETED', doneCount: 10 });
+      view.rerender(
+        <AiTaskScreen
+          title="AI写作任务"
+          tabId="tab_tasks"
+          active={false}
+          pollIntervalMs={5_000}
+          gateway={gateway}
+        />,
+      );
+      view.rerender(
+        <AiTaskScreen
+          title="AI写作任务"
+          tabId="tab_tasks"
+          active={true}
+          pollIntervalMs={5_000}
+          gateway={gateway}
+        />,
+      );
+      await waitFor(() => {
+        expect(listMock).toHaveBeenCalledTimes(4);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(listMock).toHaveBeenCalledTimes(4);
+    } finally {
+      if (prevVisibilityDesc) {
+        Object.defineProperty(document, 'visibilityState', prevVisibilityDesc);
+      } else {
+        delete (document as { visibilityState?: DocumentVisibilityState }).visibilityState;
+      }
+    }
   });
 });

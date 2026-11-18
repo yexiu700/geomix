@@ -1,7 +1,7 @@
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadAccount, postJson, refreshAccessToken } from './api';
-import { saveSession, type SessionStorageLike } from './session';
+import { authorizedRequest, loadAccount, postJson, refreshAccessToken } from './api';
+import { REFRESH_TOKEN_KEY, saveSession, type SessionStorageLike } from './session';
 
 function memoryStorage(): SessionStorageLike {
   const values = new Map<string, string>();
@@ -14,6 +14,11 @@ function memoryStorage(): SessionStorageLike {
       values.delete(key);
     },
   };
+}
+
+function makeJwt(claims: { exp?: number; iat?: number; sub?: string }): string {
+  const encode = (obj: unknown) => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(claims)}.sig`;
 }
 
 const account = {
@@ -30,9 +35,9 @@ const account = {
   },
 };
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { 'content-type': 'application/json' },
   });
 }
@@ -115,5 +120,130 @@ describe('account session', () => {
     });
     expect(res).toEqual({ code: 0, msg: 'ok', data: { ok: true } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent refreshAccessToken calls via single-flight mutex (#153)', async () => {
+    const storage = memoryStorage();
+    saveSession(storage, 'expired-at', 'rt-1');
+    let refreshCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/auth/refresh')) {
+          refreshCalls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          return jsonResponse({
+            code: 0,
+            msg: 'ok',
+            data: { accessToken: 'fresh-at', refreshToken: 'fresh-rt' },
+          });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }),
+    );
+
+    const [first, second, third] = await Promise.all([
+      refreshAccessToken(storage),
+      refreshAccessToken(storage),
+      refreshAccessToken(storage),
+    ]);
+    expect(refreshCalls).toBe(1);
+    expect(first).toBe('fresh-at');
+    expect(second).toBe('fresh-at');
+    expect(third).toBe('fresh-at');
+  });
+
+  it('continues to sharedRefreshToken when primary refresh candidate throws a network error (#153)', async () => {
+    const sessionStore = memoryStorage();
+    const localStore = memoryStorage();
+    sessionStore.setItem(REFRESH_TOKEN_KEY, 'rt-primary');
+    localStore.setItem(REFRESH_TOKEN_KEY, 'rt-shared');
+    vi.stubGlobal('window', {
+      sessionStorage: sessionStore,
+      localStorage: localStore,
+    });
+
+    const attemptedTokens: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { refreshToken: string };
+        attemptedTokens.push(body.refreshToken);
+        if (body.refreshToken === 'rt-primary') {
+          throw new Error('transient network error');
+        }
+        return jsonResponse({
+          code: 0,
+          msg: 'ok',
+          data: { accessToken: 'recovered-at', refreshToken: 'recovered-rt' },
+        });
+      }),
+    );
+
+    const refreshed = await refreshAccessToken(sessionStore);
+    expect(refreshed).toBe('recovered-at');
+    expect(attemptedTokens).toEqual(['rt-primary', 'rt-shared']);
+  });
+
+  it('proactively refreshes expiring JWT before calling API in authorizedRequest so no 401 is emitted (#153)', async () => {
+    const storage = memoryStorage();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiringAccess = makeJwt({ sub: 'u1', iat: nowSec - 900, exp: nowSec - 10 });
+    const freshAccess = makeJwt({ sub: 'u1', iat: nowSec, exp: nowSec + 900 });
+    saveSession(storage, expiringAccess, 'rt-valid');
+
+    const calls: Array<{ path: string; auth: string | null }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = String(url).replace('http://localhost:3001/api/v1', '');
+        const auth = new Headers(init?.headers).get('authorization');
+        calls.push({ path, auth });
+        if (path === '/auth/refresh') {
+          return jsonResponse({
+            code: 0,
+            msg: 'ok',
+            data: { accessToken: freshAccess, refreshToken: 'rt-next' },
+          });
+        }
+        expect(auth).toBe(`Bearer ${freshAccess}`);
+        return jsonResponse({ code: 0, msg: 'ok', data: { items: [], total: 0 } });
+      }),
+    );
+
+    const res = await authorizedRequest(storage, 'GET', '/ai-tasks?page=1');
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([
+      { path: '/auth/refresh', auth: null },
+      { path: '/ai-tasks?page=1', auth: `Bearer ${freshAccess}` },
+    ]);
+  });
+
+  it('refreshes via refreshToken when accessToken is missing before calling API in authorizedRequest (#153)', async () => {
+    const storage = memoryStorage();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const freshAccess = makeJwt({ sub: 'u1', iat: nowSec, exp: nowSec + 900 });
+    storage.setItem(REFRESH_TOKEN_KEY, 'rt-only');
+
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = String(url).replace('http://localhost:3001/api/v1', '');
+        calls.push(path);
+        if (path === '/auth/refresh') {
+          return jsonResponse({
+            code: 0,
+            msg: 'ok',
+            data: { accessToken: freshAccess, refreshToken: 'rt-next' },
+          });
+        }
+        return jsonResponse({ code: 0, msg: 'ok', data: { ok: true } });
+      }),
+    );
+
+    const res = await authorizedRequest(storage, 'GET', '/ai-tasks?page=1');
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(['/auth/refresh', '/ai-tasks?page=1']);
   });
 });

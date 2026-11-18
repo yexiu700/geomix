@@ -2,6 +2,7 @@ import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import {
   apiBase,
   clearSession,
+  decodeJwtClaims,
   readAccessToken,
   readRefreshToken,
   readSharedRefreshToken,
@@ -9,6 +10,25 @@ import {
   syncSessionToSharedStorage,
   type SessionStorageLike,
 } from './session';
+
+const ACCESS_REFRESH_LEEWAY_MS = 60_000;
+let refreshInFlight: Promise<string | null> | null = null;
+
+function unauthorizedSyntheticResponse(): Response {
+  return new Response(
+    JSON.stringify({ code: AUTH_ERROR.UNAUTHORIZED, msg: '未登录', data: null }),
+    {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    },
+  );
+}
+
+function getTokenExpiryMs(token: string): number | null {
+  const claims = decodeJwtClaims(token);
+  if (!claims || claims.exp === undefined) return null;
+  return claims.exp * 1000;
+}
 
 export type Envelope<T> = { code: number; msg: string; data: T };
 
@@ -81,21 +101,34 @@ export async function authorizedRequest(
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   };
-  const token = readAccessToken(storage);
+  let token = readAccessToken(storage);
   if (!token) {
-    return new Response(
-      JSON.stringify({ code: AUTH_ERROR.UNAUTHORIZED, msg: '未登录', data: null }),
-      {
-        status: 401,
-        headers: { 'content-type': 'application/json' },
-      },
-    );
+    const hasRefresh = Boolean(readRefreshToken(storage) || readSharedRefreshToken(storage));
+    if (hasRefresh) {
+      token = await refreshAccessToken(storage);
+    }
+    if (!token) {
+      return unauthorizedSyntheticResponse();
+    }
+  } else {
+    const expMs = getTokenExpiryMs(token);
+    const nowMs = Date.now();
+    if (expMs !== null && expMs - nowMs < ACCESS_REFRESH_LEEWAY_MS) {
+      const refreshed = await refreshAccessToken(storage);
+      if (refreshed) {
+        token = refreshed;
+      } else if (expMs <= nowMs) {
+        return unauthorizedSyntheticResponse();
+      }
+    }
   }
   const response = await send(token);
   if (response.status !== 401) return response;
-  const refreshed = await refreshAccessToken(storage);
-  if (!refreshed) return response;
-  return send(refreshed);
+  const latestToken = readAccessToken(storage);
+  const nextToken =
+    latestToken && latestToken !== token ? latestToken : await refreshAccessToken(storage);
+  if (!nextToken) return response;
+  return send(nextToken);
 }
 
 export async function getJson<T>(path: string, token: string): Promise<Envelope<T>> {
@@ -106,31 +139,41 @@ export async function getJson<T>(path: string, token: string): Promise<Envelope<
 }
 
 export async function refreshAccessToken(storage: SessionStorageLike): Promise<string | null> {
-  const refreshToken = readRefreshToken(storage);
-  const sharedRefreshToken = readSharedRefreshToken(storage);
-  const candidates =
-    refreshToken && sharedRefreshToken && sharedRefreshToken !== refreshToken
-      ? [refreshToken, sharedRefreshToken]
-      : refreshToken
-        ? [refreshToken]
-        : sharedRefreshToken
-          ? [sharedRefreshToken]
-          : [];
-  for (const candidate of candidates) {
-    try {
-      const result = await postJson<{ accessToken: string; refreshToken: string }>(
-        '/auth/refresh',
-        { refreshToken: candidate },
-      );
-      if (result.code === 0 && result.data?.accessToken && result.data.refreshToken) {
-        saveSession(storage, result.data.accessToken, result.data.refreshToken);
-        return result.data.accessToken;
-      }
-    } catch {
-      return null;
-    }
+  if (refreshInFlight) {
+    return refreshInFlight;
   }
-  return null;
+  refreshInFlight = (async () => {
+    const refreshToken = readRefreshToken(storage);
+    const sharedRefreshToken = readSharedRefreshToken(storage);
+    const candidates =
+      refreshToken && sharedRefreshToken && sharedRefreshToken !== refreshToken
+        ? [refreshToken, sharedRefreshToken]
+        : refreshToken
+          ? [refreshToken]
+          : sharedRefreshToken
+            ? [sharedRefreshToken]
+            : [];
+    for (const candidate of candidates) {
+      try {
+        const result = await postJson<{ accessToken: string; refreshToken: string }>(
+          '/auth/refresh',
+          { refreshToken: candidate },
+        );
+        if (result.code === 0 && result.data?.accessToken && result.data.refreshToken) {
+          saveSession(storage, result.data.accessToken, result.data.refreshToken);
+          return result.data.accessToken;
+        }
+      } catch {
+        // Continue so sharedRefreshToken can still be attempted if primary fails
+      }
+    }
+    return null;
+  })();
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
 }
 
 export async function loadAccount(storage: SessionStorageLike): Promise<AccountLoad> {

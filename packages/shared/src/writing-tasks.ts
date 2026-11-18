@@ -10,6 +10,7 @@ import {
   type CrudOrder,
   type CrudPageSize,
 } from './crud';
+import { UX_TERMS } from './ux-foundation';
 
 export const AI_TASK_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const AI_TASK_NAME_MAX = 60;
@@ -19,7 +20,7 @@ export const AI_TASK_IMAGE_MIN = 0;
 export const AI_TASK_IMAGE_MAX = 5;
 export const AI_TASK_MIN_CHARS_DEFAULT = 500;
 export const AI_TASK_TITLE_MIN = 15;
-export const AI_TASK_TITLE_MAX = 35;
+export const AI_TASK_TITLE_MAX = 60;
 export const AI_TASK_MAX_CONSECUTIVE_FAILS = 3;
 export const AI_TASK_TENANT_CONCURRENCY = 2;
 export const AI_TASK_AUTO_CATEGORY = 'AUTO';
@@ -86,9 +87,9 @@ export const aiTaskCreateSchema = z
       })
       .refine((val) => val === null || AI_TASK_ID_PATTERN.test(val), '文章分类编号不正确'),
     keywordId: z
-      .string({ required_error: '请选择训练主词' })
+      .string({ required_error: `请选择${UX_TERMS.mainKeyword}` })
       .trim()
-      .regex(AI_TASK_ID_PATTERN, '请选择训练主词'),
+      .regex(AI_TASK_ID_PATTERN, `请选择${UX_TERMS.mainKeyword}`),
     mediaCategoryId: optionalIdField,
     imageCount: z.coerce
       .number()
@@ -129,7 +130,7 @@ export const aiTaskBulkDeleteSchema = z.object({
 export type AiTaskBulkDeleteInput = z.infer<typeof aiTaskBulkDeleteSchema>;
 
 export function formatAiTaskSubmitLabel(unitPrice: number): string {
-  return `开始写作（${unitPrice}点数/篇）`;
+  return `开始写作（${unitPrice} 点/篇）`;
 }
 
 export function formatAiTaskFreezeSummary(input: {
@@ -148,7 +149,7 @@ export function formatAiTaskFreezeSummary(input: {
   return {
     unitPrice,
     totalFrozen,
-    text: `${kbPart}预计整单预冻 ${totalFrozen} 点数（${safeTarget} 篇 × ${unitPrice} 点/篇），按成功产出逐篇结算，失败或终止未用部分自动退还。`,
+    text: `${kbPart}预计预冻 ${totalFrozen} 点数（${safeTarget} 篇 × ${unitPrice} 点/篇），按成功产出逐篇结算，失败或终止未用部分自动退还。`,
   };
 }
 
@@ -287,7 +288,7 @@ export function aiTaskExportTable(rows: readonly AiTaskRecord[]): {
     headers: [
       '任务名称',
       '文章分类',
-      '训练主词',
+      UX_TERMS.mainKeyword,
       '企业知识库',
       '配图数',
       '已创作/目标',
@@ -536,7 +537,7 @@ export function assembleTitleMessages(input: {
       {
         role: 'system',
         content:
-          '你是中文内容标题编辑。只输出一行纯文本标题，长度控制在 15–35 字，不加引号、书名号、序号或前缀说明，不使用极限词。',
+          '你是中文内容标题编辑。只输出一行纯文本标题，长度控制在 15–45 字（不超过 60 字），保证语义与词组完整，不加引号、书名号、序号或前缀说明，不使用极限词。',
       },
       {
         role: 'user',
@@ -716,13 +717,201 @@ export function buildFakeArticleMarkdown(input: {
   ].join('\n');
 }
 
+const TITLE_COMPOUND_WORDS = new Set([
+  '指南',
+  '攻略',
+  '解析',
+  '解读',
+  '评测',
+  '测评',
+  '对比',
+  '建议',
+  '方案',
+  '要点',
+  '清单',
+  '步骤',
+  '方法',
+  '技巧',
+  '标准',
+  '边界',
+  '事项',
+  '实操',
+  '避坑',
+  '选型',
+  '选购',
+  '科普',
+  '介绍',
+  '说明',
+  '推荐',
+  '总结',
+  '手册',
+  '教程',
+  '分析',
+  '策略',
+  '维度',
+  '区别',
+  '优势',
+  '原理',
+  '参数',
+  '配置',
+  '表现',
+  '体验',
+  '场景',
+  '品牌',
+  '产品',
+  '服务',
+  '支持',
+  '快充',
+  '充电',
+  '实用',
+  '问题',
+  '注意',
+  '常见',
+  '核心',
+  '评估',
+  '参考',
+  '方式',
+  '选择',
+  '使用',
+  '落地',
+  '执行',
+  '核对',
+  '梳理',
+]);
+
+function isAsciiWordChar(ch: string | undefined): boolean {
+  return Boolean(ch && /[A-Za-z0-9]/.test(ch));
+}
+
+function isPartOfAsciiToken(chars: readonly string[], index: number): boolean {
+  const ch = chars[index];
+  if (!ch) return false;
+  if (isAsciiWordChar(ch)) return true;
+  if (ch === '.' || ch === '_' || ch === '-') {
+    return isAsciiWordChar(chars[index - 1]) && isAsciiWordChar(chars[index + 1]);
+  }
+  return false;
+}
+
+export function trimTitleAtCleanBoundary(
+  raw: string,
+  maxLen = AI_TASK_TITLE_MAX,
+  minLen = AI_TASK_TITLE_MIN,
+): string {
+  const trimmed = raw.trim();
+  const chars = Array.from(trimmed);
+  if (chars.length <= maxLen) {
+    return trimmed;
+  }
+
+  const minBreak = Math.max(4, Math.min(minLen, Math.floor(maxLen * 0.55)));
+  let end = maxLen;
+
+  // 1. Never cut inside an ASCII / English / numeric / version token (e.g. MacBook, iPhone, Type-C, USB3.0)
+  if (isPartOfAsciiToken(chars, end - 1) && isPartOfAsciiToken(chars, end)) {
+    let backed = end;
+    while (backed > minBreak && isPartOfAsciiToken(chars, backed - 1)) {
+      backed -= 1;
+    }
+    if (backed >= minBreak && (backed === 0 || !isPartOfAsciiToken(chars, backed - 1))) {
+      end = backed;
+    }
+  }
+
+  // 2. Prefer converging at sentence or clause punctuation boundaries near the upper limit
+  const punctMinBreak = Math.max(minBreak, Math.floor(maxLen * 0.55));
+  for (let i = Math.min(end, chars.length); i >= punctMinBreak; i -= 1) {
+    const ch = chars[i - 1];
+    if (!ch) continue;
+    if (/[。！？]/.test(ch)) {
+      end = i;
+      break;
+    }
+    if (/[；;：:，,、|｜—]/.test(ch) && !isPartOfAsciiToken(chars, i - 1)) {
+      end = i - 1;
+      break;
+    }
+  }
+
+  // 3. Avoid slicing a known multi-character Chinese phrase/suffix in half (e.g. 指南 -> 指)
+  while (end > minBreak && end < chars.length) {
+    const prev = chars[end - 1] ?? '';
+    const next = chars[end] ?? '';
+    if (TITLE_COMPOUND_WORDS.has(`${prev}${next}`)) {
+      end -= 1;
+      continue;
+    }
+    const fourCharWindow = chars
+      .slice(Math.max(0, end - 3), Math.min(chars.length, end + 3))
+      .join('');
+    if (
+      (prev === '注' && next === '意') ||
+      (fourCharWindow.includes('注意事项') &&
+        ((chars[end - 2] === '注' && prev === '意' && next === '事') ||
+          (prev === '事' && next === '项')))
+    ) {
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+
+  // 4. Balance brackets so we never leave an unclosed opening bracket
+  const openIdx: number[] = [];
+  for (let i = 0; i < end; i += 1) {
+    const ch = chars[i]!;
+    if (KB_OPEN_TO_CLOSE[ch]) {
+      openIdx.push(i);
+    } else if (KB_CLOSE_SET.has(ch) && openIdx.length > 0) {
+      openIdx.pop();
+    }
+  }
+  if (openIdx.length > 0 && openIdx[0]! >= 4) {
+    end = openIdx[0]!;
+  }
+
+  const candidate = chars
+    .slice(0, end)
+    .join('')
+    .replace(/[，,、：:；;—\-\s的与和及并或]+$/u, '')
+    .trim();
+
+  if (candidate.length > 0) {
+    return candidate;
+  }
+  return chars.slice(0, maxLen).join('').trim();
+}
+
 export function buildFakeTitleText(question: string, mainKeyword: string): string {
-  const base = question.replace(/[？?！!。，,\s]+$/g, '').trim();
-  const candidate = base.includes(mainKeyword) ? `${base}实用选型指南` : `${mainKeyword}：${base}`;
+  const withoutPunct = question.replace(/[？?！!。，,、；;：:\s]+$/gu, '').trim();
+  const strippedModal = withoutPunct.replace(/[吗呢吧啊呀嘛]+$/gu, '').trim();
+  const base = strippedModal.length >= 4 ? strippedModal : withoutPunct || question.trim();
+  const baseLen = Array.from(base).length;
+  const kw = mainKeyword.trim();
+
+  let candidate: string;
+  if (!kw || base.includes(kw)) {
+    if (baseLen + 6 <= AI_TASK_TITLE_MAX) {
+      candidate = `${base}实用选型指南`;
+    } else if (baseLen + 4 <= AI_TASK_TITLE_MAX) {
+      candidate = `${base}选型指南`;
+    } else {
+      candidate = base;
+    }
+  } else {
+    const prefixed = `${kw}：${base}`;
+    if (Array.from(prefixed).length <= AI_TASK_TITLE_MAX) {
+      candidate = prefixed;
+    } else if (baseLen >= AI_TASK_TITLE_MIN) {
+      candidate = base;
+    } else {
+      candidate = prefixed;
+    }
+  }
   return cleanTitleText(candidate, question);
 }
 
-/** 清理模型产出的单行标题：去引号/书名号/换行，控制长度在 minLen..maxLen。 */
+/** 清理模型产出的单行标题：去引号/书名号/换行，在完整词组或标点边界处收敛至 minLen..maxLen。 */
 export function cleanTitleText(
   raw: string,
   fallbackQuestion: string,
@@ -741,21 +930,17 @@ export function cleanTitleText(
     .replace(/\s+/g, ' ')
     .trim();
 
-  const chars = Array.from(cleaned);
-  if (chars.length > maxLen) {
-    cleaned = chars
-      .slice(0, maxLen)
-      .join('')
-      .replace(/[，,、：:；;—-]+$/u, '');
+  if (Array.from(cleaned).length > maxLen) {
+    cleaned = trimTitleAtCleanBoundary(cleaned, maxLen, minLen);
   }
   if (Array.from(cleaned).length === 0) {
     const fb = fallbackQuestion.replace(/["'“”‘’《》【】]/g, '').trim();
-    return Array.from(fb).slice(0, maxLen).join('');
+    return trimTitleAtCleanBoundary(fb, maxLen, minLen);
   }
   if (Array.from(cleaned).length < Math.min(6, minLen)) {
     const fb = fallbackQuestion.replace(/["'“”‘’《》【】]/g, '').trim();
     if (fb.length > cleaned.length) {
-      return Array.from(fb).slice(0, maxLen).join('');
+      return trimTitleAtCleanBoundary(fb, maxLen, minLen);
     }
   }
   return cleaned;

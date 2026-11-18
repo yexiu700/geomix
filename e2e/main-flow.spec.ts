@@ -235,18 +235,18 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
 
     const taskDialog = page.getByRole('dialog', { name: '新建 AI 写作任务' });
     await expect(taskDialog).toBeVisible();
-    await expect(taskDialog.getByLabel('蒸馏训练词')).toHaveValue('');
+    await expect(taskDialog.getByLabel('主关键词')).toHaveValue('');
     await expect(taskDialog.getByLabel('画像图库')).toHaveValue('');
     await expect(taskDialog.getByLabel('AI 创作数量')).toHaveValue('1');
-    await expect(taskDialog.getByRole('button', { name: '开始写作（10点数/篇）' })).toBeVisible();
+    await expect(taskDialog.getByRole('button', { name: '开始写作（10 点/篇）' })).toBeVisible();
 
     await taskDialog.getByLabel('任务名称').fill(writingTaskName);
-    await selectOptionByText(taskDialog.getByLabel('蒸馏训练词'), mainKeyword);
+    await selectOptionByText(taskDialog.getByLabel('主关键词'), mainKeyword);
     await selectOptionByText(taskDialog.getByLabel('画像图库'), galleryName);
     await selectOptionByText(taskDialog.getByLabel('企业知识库'), kbName);
     await selectOptionByText(taskDialog.getByLabel('内容创作指令'), clonedPromptName);
 
-    const submitTaskBtn = taskDialog.getByRole('button', { name: '开始写作（15点数/篇）' });
+    const submitTaskBtn = taskDialog.getByRole('button', { name: '开始写作（15 点/篇）' });
     await expect(submitTaskBtn).toBeVisible();
     await submitTaskBtn.click();
     await expect(taskDialog).toBeHidden();

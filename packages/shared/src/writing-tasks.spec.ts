@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AI_TASK_TITLE_MAX,
   aiTaskCreateSchema,
+  aiTaskExportTable,
   assembleArticleMessages,
+  assembleTitleMessages,
   buildFakeArticleMarkdown,
+  buildFakeTitleText,
   cleanTitleText,
+  formatAiTaskFreezeSummary,
+  formatAiTaskSubmitLabel,
   injectGalleryImages,
   pickDirectionAndCopyType,
   pickTaskBrand,
   postProcessArticleMarkdown,
   seededShuffle,
+  trimTitleAtCleanBoundary,
 } from './writing-tasks';
 
 describe('writing-tasks shared algorithms', () => {
@@ -311,5 +318,115 @@ describe('writing-tasks shared algorithms', () => {
     expect(cleanedLlm.contentText).not.toContain('本篇写作参数');
     expect(cleanedLlm.contentText).not.toContain('（ARZOPA）（ARZOPA）');
     expect(cleanedLlm.contentText).toContain('阿卓帕科技（ARZOPA）');
+  });
+
+  it('unifies 主关键词, 点/篇, and removes 整单预冻 jargon in writing-tasks helpers (#153)', () => {
+    expect(formatAiTaskSubmitLabel(10)).toBe('开始写作（10 点/篇）');
+    expect(formatAiTaskSubmitLabel(15)).toBe('开始写作（15 点/篇）');
+
+    const freeze = formatAiTaskFreezeSummary({
+      target: 5,
+      basePoints: 10,
+      kbAddonPoints: 5,
+      withKnowledgeBase: true,
+    });
+    expect(freeze.unitPrice).toBe(15);
+    expect(freeze.totalFrozen).toBe(75);
+    expect(freeze.text).toContain('预计预冻 75 点数（5 篇 × 15 点/篇）');
+    expect(freeze.text).not.toContain('整单预冻');
+
+    const exported = aiTaskExportTable([]);
+    expect(exported.headers).toContain('主关键词');
+    expect(exported.headers).not.toContain('训练主词');
+
+    const missingKeyword = aiTaskCreateSchema.safeParse({
+      name: '术语校验任务',
+      mediaCategoryId: null,
+      imageCount: 0,
+    });
+    expect(missingKeyword.success).toBe(false);
+    if (!missingKeyword.success) {
+      expect(missingKeyword.error.issues.some((i) => i.message === '请选择主关键词')).toBe(true);
+    }
+  });
+
+  it('keeps long mixed Chinese/ASCII titles intact up to 60 chars and trims cleanly at word/punctuation/bracket boundaries (#249)', () => {
+    expect(AI_TASK_TITLE_MAX).toBe(60);
+
+    const titlePrompt = assembleTitleMessages({
+      templateContent: '围绕{问题}写标题',
+      mainKeyword: 'Anker氮化镓充电器',
+      brand: 'Anker',
+      question: 'Anker氮化镓充电器支持MacBook和iPhone快充吗？',
+      bodyExcerpt: '实测支持多口快充协议。',
+    });
+    expect(titlePrompt.messages[0]?.content).toContain('15–45 字（不超过 60 字）');
+
+    // Exact regression scenario from #249
+    const fakeTitle = buildFakeTitleText(
+      'Anker氮化镓充电器支持MacBook和iPhone快充吗？',
+      'Anker氮化镓充电器',
+    );
+    expect(fakeTitle).toBe('Anker氮化镓充电器支持MacBook和iPhone快充实用选型指南');
+    expect(fakeTitle.endsWith('实用选型指')).toBe(false);
+    expect(fakeTitle.endsWith('实用选型指南')).toBe(true);
+
+    // Near-ceiling question avoids pushing past 60 chars with clipped suffix
+    const longQuestion =
+      '面向多设备差旅办公人群的大功率氮化镓桌面充电站支持哪些常见快充协议与安全温控保护机制呢？';
+    const longFakeTitle = buildFakeTitleText(longQuestion, '氮化镓桌面充电站');
+    expect(Array.from(longFakeTitle).length).toBeLessThanOrEqual(AI_TASK_TITLE_MAX);
+    expect(longFakeTitle.endsWith('指')).toBe(false);
+
+    // Even under a tight 35-char limit, trimTitleAtCleanBoundary does not chop 指南 -> 指
+    const tightTrimmed = cleanTitleText(
+      'Anker氮化镓充电器支持MacBook和iPhone快充吗实用选型指南',
+      '后备标题',
+      15,
+      35,
+    );
+    expect(Array.from(tightTrimmed).length).toBeLessThanOrEqual(35);
+    expect(tightTrimmed.endsWith('指')).toBe(false);
+
+    // Never splits ASCII/English tokens mid-word
+    const asciiBoundary = trimTitleAtCleanBoundary(
+      '企业差旅多设备桌面供电方案如何同时兼容超极本与智能手机以及便携屏设备MacBookPro与iPhone16ProMax实测',
+      50,
+      15,
+    );
+    expect(asciiBoundary).toBe(
+      '企业差旅多设备桌面供电方案如何同时兼容超极本与智能手机以及便携屏设备MacBookPro',
+    );
+    expect(Array.from(asciiBoundary).length).toBeLessThanOrEqual(50);
+
+    const straddlingAscii = trimTitleAtCleanBoundary(
+      '企业差旅多设备桌面供电方案如何同时兼容超极本与智能手机以及便携屏设备MacBookPro实测',
+      38,
+      15,
+    );
+    expect(straddlingAscii).toBe(
+      '企业差旅多设备桌面供电方案如何同时兼容超极本与智能手机以及便携屏设备',
+    );
+
+    // Balances brackets and prefers punctuation boundaries
+    const bracketBalanced = trimTitleAtCleanBoundary(
+      '氮化镓充电器选购指南：覆盖多口功率分配与温度控制要点，附带常见设备（如MacBook、iPhone与平板）兼容核对清单',
+      48,
+      15,
+    );
+    expect(Array.from(bracketBalanced).length).toBeLessThanOrEqual(48);
+    expect((bracketBalanced.match(/（/g) ?? []).length).toBe(
+      (bracketBalanced.match(/）/g) ?? []).length,
+    );
+    expect(bracketBalanced).toBe(
+      '氮化镓充电器选购指南：覆盖多口功率分配与温度控制要点，附带常见设备',
+    );
+
+    const punctConverged = trimTitleAtCleanBoundary(
+      '氮化镓充电器选购指南：覆盖多口功率分配与温度控制要点，附带常见设备清单',
+      30,
+      15,
+    );
+    expect(punctConverged).toBe('氮化镓充电器选购指南：覆盖多口功率分配与温度控制要点');
   });
 });
