@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
   AI_IMAGE_DEFAULT_RATIO,
   AI_IMAGE_DEFAULT_UNIT_POINTS,
-  AI_IMAGE_PROMPT_MAX,
+  AI_IMAGE_PROMPT_MIN,
   AI_IMAGE_REF_MAX_BYTES,
   API_ERROR,
   AUTH_ERROR,
@@ -39,7 +39,7 @@ import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
 import { compressImage } from '../infra/compress';
 import { LlmService } from '../infra/llm';
-import { ProviderError } from '../infra/provider-error';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -48,6 +48,12 @@ import {
   buildSignedMediaAssetUrl,
   type ImageJobEnqueuer,
 } from './image-job.runner';
+import {
+  buildFallbackVisualPrompt,
+  buildImagePromptMessages,
+  extractAndValidateOptimizedPrompt,
+  trimPromptToMaxLength,
+} from './prompt-optimizer';
 import type { aiImageCreateSchema, aiImageOptimizePromptSchema } from '@geomix/shared';
 
 type JobRow = {
@@ -129,6 +135,8 @@ function extractKbContext(kb: {
 
 @Injectable()
 export class AiImagesService {
+  private readonly logger = new Logger(AiImagesService.name);
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(BillingService) private readonly billing: BillingService,
@@ -408,42 +416,53 @@ export class AiImagesService {
       .digest('hex')
       .slice(0, 24);
 
-    const completion = await this.llm.complete({
-      tenantId,
-      scene: 'distill',
-      messages: [
-        {
-          role: 'system',
-          content:
-            '你是专业的商业视觉配图提示词编辑。请将用户的简短描述扩写为一段画面层次清晰、光线构图具体的中文配图提示词（80-220字）。硬性约束：不出现真人正脸肖像、公众人物、任何品牌商标Logo或文字海报，不输出引号或多余解释。',
-        },
-        {
-          role: 'user',
-          content: contextSegments.join('\n'),
-        },
-      ],
-      idempotencyKey: `img_opt_${idemHash}`,
-      temperature: 0.7,
-      maxTokens: 360,
+    const fallbackPrompt = buildFallbackVisualPrompt({
+      prompt: input.prompt,
+      styleLabel,
+      keywordText,
+      kbContext,
     });
 
-    let candidate: string;
-    if (completion.fake && completion.text.startsWith(FAKE_MARK)) {
-      const extraTopic = [
-        keywordText ? `围绕${keywordText}应用场景` : '',
-        kbContext ? `呈现${kbContext}` : '',
-      ]
-        .filter(Boolean)
-        .join('，');
-      candidate = `${styleLabel}风格，${input.prompt}${extraTopic ? `，${extraTopic}` : ''}。采用柔和自然主光与细腻环境反射，主体层次突出、景深干净利落，色调克制协调，现代专业商业空间构图，高清质感细节，画面无人物正脸、无商标标识、无叠加宣传文字。`;
-    } else {
-      candidate = completion.text
-        .replace(/^["'“”「」]+|["'“”「」]+$/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+    let candidate: string | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const strictRetry = attempt > 0;
+      try {
+        const completion = await this.llm.complete({
+          tenantId,
+          scene: 'image_prompt',
+          messages: buildImagePromptMessages({ contextSegments, strictRetry }),
+          idempotencyKey: strictRetry ? `img_opt_${idemHash}:retry1` : `img_opt_${idemHash}`,
+          temperature: strictRetry ? 0.2 : 0.5,
+          maxTokens: 800,
+          disableThinking: true,
+        });
+
+        if (completion.fake && completion.text.startsWith(FAKE_MARK)) {
+          candidate = fallbackPrompt;
+          break;
+        }
+
+        const extracted = extractAndValidateOptimizedPrompt(completion.text);
+        if (extracted) {
+          candidate = extracted;
+          break;
+        }
+        this.logger.warn(
+          `optimizePrompt rejected leaked/invalid output on attempt ${attempt + 1} (tenant=${tenantId})`,
+        );
+      } catch (err) {
+        if (err instanceof ProviderError && err.kind === PROVIDER_KIND.CONTRACT) {
+          this.logger.warn(
+            `optimizePrompt caught contract error on attempt ${attempt + 1} (tenant=${tenantId}): ${err.reason}`,
+          );
+          continue;
+        }
+        throw err;
+      }
     }
 
-    const scanned = this.compliance.scan(candidate);
+    const finalCandidate = candidate ?? fallbackPrompt;
+    const scanned = this.compliance.scan(finalCandidate);
     if (scanned.blocked) {
       throw new ApiError(
         403,
@@ -452,9 +471,10 @@ export class AiImagesService {
       );
     }
 
-    const optimizedPrompt = scanned.text.trim().slice(0, AI_IMAGE_PROMPT_MAX - 10);
+    const optimizedPrompt = trimPromptToMaxLength(scanned.text.trim());
     return {
-      optimizedPrompt: optimizedPrompt.length >= 5 ? optimizedPrompt : input.prompt,
+      optimizedPrompt:
+        optimizedPrompt.length >= AI_IMAGE_PROMPT_MIN ? optimizedPrompt : fallbackPrompt,
     };
   }
 
