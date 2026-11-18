@@ -126,4 +126,20 @@ describe('dashboard shared helpers', () => {
     expect(withoutVisibility.some((c) => c.key === 'aidata')).toBe(false);
     expect(withoutVisibility.some((c) => c.key === 'visibility')).toBe(false);
   });
+
+  it('uses user-facing copy free of internal R&D jargon across all entry cards (#136)', () => {
+    const bannedJargon = [
+      '影子计费',
+      '整单预冻',
+      '多篇并发异步创作',
+      '零拷贝',
+      '长文本向量知识库',
+      'AI 蒸馏拓展',
+      '批量组合词包',
+    ];
+    const allText = DASHBOARD_ENTRY_CARDS.map((c) => `${c.title} ${c.desc}`).join('\n');
+    for (const term of bannedJargon) {
+      expect(allText).not.toContain(term);
+    }
+  });
 });

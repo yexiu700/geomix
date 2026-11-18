@@ -11,12 +11,14 @@ export type GeoSignalStripProps = {
   load: () => Promise<VisibilityOverviewResponse>;
   onOpenOverview: () => void;
   onOpenMonitors?: () => void;
+  compactEmpty?: boolean;
 };
 
 export function GeoSignalStrip({
   load,
   onOpenOverview,
   onOpenMonitors,
+  compactEmpty = false,
 }: GeoSignalStripProps): JSX.Element {
   const [data, setData] = useState<VisibilityOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,25 +76,55 @@ export function GeoSignalStrip({
           ))}
         </div>
       ) : error ? (
-        <div style={{ marginBottom: 16 }}>
+        <div>
           <SignalError message="AI 可见度信号加载失败" onRetry={() => void reload()} />
         </div>
       ) : !metrics || metrics.completedChecks === 0 ? (
-        <div
-          style={{
-            marginBottom: 16,
-            border: '1px solid var(--gm-line-1)',
-            borderRadius: 'var(--gm-radius-md)',
-            background: 'var(--gm-bg-surface)',
-          }}
-        >
-          <SignalEmpty
-            title="还没有 AI 可见度数据"
-            description="创建品牌档案并发起一次监测，即可在这里看到你在各大 AI 引擎中的提及率"
-            actionText="去发起诊断"
-            onAction={onOpenMonitors}
-          />
-        </div>
+        compactEmpty ? (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '8px 16px',
+              padding: '12px 16px',
+              border: '1px solid var(--gm-line-1)',
+              borderRadius: 'var(--gm-radius-md)',
+              background: 'var(--gm-bg-surface)',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                还没有 AI 可见度数据
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 2 }}>
+                创建品牌档案并发起一次监测，即可在这里看到你在各大 AI 引擎中的提及率
+              </div>
+            </div>
+            {onOpenMonitors && (
+              <Button type="primary" size="small" onClick={onOpenMonitors}>
+                去发起诊断
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div
+            style={{
+              marginBottom: 16,
+              border: '1px solid var(--gm-line-1)',
+              borderRadius: 'var(--gm-radius-md)',
+              background: 'var(--gm-bg-surface)',
+            }}
+          >
+            <SignalEmpty
+              title="还没有 AI 可见度数据"
+              description="创建品牌档案并发起一次监测，即可在这里看到你在各大 AI 引擎中的提及率"
+              actionText="去发起诊断"
+              onAction={onOpenMonitors}
+            />
+          </div>
+        )
       ) : (
         <div className="gm-signal-strip-grid">
           <SignalKpiCard
