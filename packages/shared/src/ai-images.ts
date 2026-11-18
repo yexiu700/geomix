@@ -20,7 +20,7 @@ export const AI_IMAGE_RATIOS = [
 ] as const;
 export type AiImageRatio = (typeof AI_IMAGE_RATIOS)[number];
 
-export const AI_IMAGE_DEFAULT_RATIO: AiImageRatio = '21:9';
+export const AI_IMAGE_DEFAULT_RATIO: AiImageRatio = '16:9';
 
 export const AI_IMAGE_RATIO_LABELS: Record<AiImageRatio, string> = {
   '21:9': '21:9 超宽横幅',
@@ -292,7 +292,7 @@ export function aiImageExportTable(items: readonly AiImageJobItem[]): {
       '实结点数',
       '已退点数',
       '状态',
-      '转存图库分组',
+      '归属图库分组',
       '备注',
       '创建时间',
     ],
@@ -307,7 +307,7 @@ export function aiImageExportTable(items: readonly AiImageJobItem[]): {
       String(item.settledPoints),
       String(item.releasedPoints),
       AI_IMAGE_STATUS_LABELS[item.status] ?? item.status,
-      item.saveCategoryName ?? '未转存',
+      item.saveCategoryName ?? '未存入图库',
       item.error ?? '',
       item.createdAt,
     ]),

@@ -307,3 +307,49 @@ describe('prompt-optimizer extraction & validation helpers', () => {
     expect(containsPromptLeakage(trimmed)).toBe(false);
   });
 });
+
+describe('AiImagesService.list keyword orderNo search', () => {
+  it('matches full formatted orderNo like IMG20261117-001ABC against id suffix', async () => {
+    const countMock = vi.fn().mockResolvedValue(0);
+    const findManyMock = vi.fn().mockResolvedValue([]);
+    const prisma = {
+      base: {
+        pricingItem: { findUnique: vi.fn().mockResolvedValue({ unitPoints: 5, enabled: true }) },
+      },
+      scoped: {
+        aiImageJob: {
+          count: countMock,
+          findMany: findManyMock,
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new AiImagesService(
+      prisma,
+      {} as BillingService,
+      {} as QuotaService,
+      {} as StorageService,
+      new ComplianceService(),
+      {} as LlmService,
+      {} as ImageJobEnqueuer,
+    );
+
+    await runInTenant('tenant_demo', () =>
+      service.list({
+        page: 1,
+        pageSize: 25,
+        keyword: 'IMG20261117-001ABC',
+      }),
+    );
+
+    expect(countMock).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { prompt: { contains: 'IMG20261117-001ABC', mode: 'insensitive' } },
+          { id: { contains: 'IMG20261117-001ABC', mode: 'insensitive' } },
+          { id: { endsWith: '001ABC', mode: 'insensitive' } },
+        ],
+      },
+    });
+  });
+});

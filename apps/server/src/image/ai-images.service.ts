@@ -175,11 +175,19 @@ export class AiImagesService {
       where.status = query.status;
     }
     if (query.keyword) {
-      const escaped = escapeLikeLiteral(query.keyword);
-      where.OR = [
+      const trimmed = query.keyword.trim();
+      const escaped = escapeLikeLiteral(trimmed);
+      const orConditions: Prisma.AiImageJobWhereInput[] = [
         { prompt: { contains: escaped, mode: 'insensitive' } },
         { id: { contains: escaped, mode: 'insensitive' } },
       ];
+      const orderNoMatch = /^IMG\d{8}-([A-Za-z0-9]{1,6})$/i.exec(trimmed);
+      if (orderNoMatch?.[1]) {
+        orConditions.push({
+          id: { endsWith: escapeLikeLiteral(orderNoMatch[1]), mode: 'insensitive' },
+        });
+      }
+      where.OR = orConditions;
     }
     return where;
   }

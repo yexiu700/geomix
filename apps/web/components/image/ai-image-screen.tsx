@@ -31,12 +31,13 @@ import {
   Input,
   Modal,
   Space,
+  Spin,
   Table,
   Tag,
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
@@ -166,8 +167,8 @@ function statusTagColor(status: TaskStatusName): string {
   }
 }
 
-function defaultDownloadHandler(file: AiImageDownloadFile): void {
-  triggerBlobDownload(file);
+function defaultDownloadHandler(file: AiImageDownloadFile): boolean {
+  return triggerBlobDownload(file);
 }
 
 function triggerAssetDownload(asset: AiImageGeneratedAsset, orderNo: string, idx: number): void {
@@ -210,7 +211,7 @@ export function AiImageScreen({
   storage?: SessionStorageLike;
   gateway?: AiImageGateway;
   pollIntervalMs?: number;
-  onDownload?: (file: AiImageDownloadFile) => void;
+  onDownload?: (file: AiImageDownloadFile) => void | boolean;
   onDispatch?: (action: ShellAction) => void;
 }) {
   const effectiveStorage = useMemo<SessionStorageLike>(() => {
@@ -269,6 +270,11 @@ export function AiImageScreen({
     job: AiImageJobItem;
     assetIndex: number;
   } | null>(null);
+  const [previewImgStatus, setPreviewImgStatus] = useState<'loading' | 'loaded' | 'error'>(
+    'loading',
+  );
+  const [previewRetryKey, setPreviewRetryKey] = useState(0);
+  const previewImgRef = useRef<HTMLImageElement | null>(null);
 
   // Delete Confirmation Modal
   const [deleteTargetIds, setDeleteTargetIds] = useState<string[] | null>(null);
@@ -325,6 +331,17 @@ export function AiImageScreen({
     }, pollIntervalMs);
     return () => clearInterval(timer);
   }, [hasActiveJobs, isFeatureActive, loadList, pollIntervalMs]);
+
+  const previewAsset = previewState?.job.assets[previewState.assetIndex] ?? null;
+
+  useEffect(() => {
+    if (!previewState || !previewAsset) return;
+    setPreviewImgStatus('loading');
+    const imgEl = previewImgRef.current;
+    if (imgEl && imgEl.complete && imgEl.naturalWidth > 0) {
+      setPreviewImgStatus('loaded');
+    }
+  }, [previewState, previewAsset, previewRetryKey]);
 
   const openCreateModal = async () => {
     setModalError(null);
@@ -500,11 +517,17 @@ export function AiImageScreen({
   };
 
   const handleExport = async (format: CrudExportFormat) => {
+    setPageError(null);
     try {
       const file = await api.downloadTable(query, format);
-      onDownload(file);
+      const ok = onDownload(file);
+      if (ok === false) {
+        throw new Error('当前浏览器不支持文件下载，请更换浏览器重试');
+      }
     } catch (err) {
-      setPageError(err instanceof Error ? err.message : '导出生图列表失败');
+      const msg = err instanceof Error ? err.message : '导出生图列表失败';
+      setPageError(msg);
+      throw err instanceof Error ? err : new Error(msg);
     }
   };
 
@@ -519,7 +542,7 @@ export function AiImageScreen({
   if (!isFeatureActive) {
     return (
       <section>
-        <Typography.Title level={4} style={{ marginTop: 0 }}>
+        <Typography.Title level={3} style={{ marginTop: 0 }}>
           {title}
         </Typography.Title>
         <Alert
@@ -674,7 +697,7 @@ export function AiImageScreen({
                   {row.saveCategoryName}
                 </span>
               ) : (
-                <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>未转存图库</span>
+                <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>未存入图库</span>
               ),
           },
         ]
@@ -778,8 +801,6 @@ export function AiImageScreen({
       : []),
   ];
 
-  const previewAsset = previewState?.job.assets[previewState.assetIndex] ?? null;
-
   return (
     <section>
       <div
@@ -793,12 +814,12 @@ export function AiImageScreen({
         }}
       >
         <div>
-          <Typography.Title level={4} style={{ margin: 0 }}>
+          <Typography.Title level={3} style={{ margin: 0 }}>
             {title}
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            支持 9 种商业构图比例与免费提示词扩写；按成功入库张数逐张结算（当前标价 {unitPoints}{' '}
-            点数/张），支持一键存入企业画像图库供 AI 写作选用。
+            支持 9 种商业构图比例与免费提示词扩写；按实际生成成功张数结算（当前标价 {unitPoints}{' '}
+            点数/张），支持一键保存到企业画像图库供 AI 写作自动配图。
           </Typography.Text>
         </div>
         <Space>
@@ -892,12 +913,13 @@ export function AiImageScreen({
             查询
           </Button>
           <Button
+            aria-label="清空"
             onClick={() => {
               setSearchInput('');
               setQuery({ page: 1, pageSize: query.pageSize });
             }}
           >
-            重置筛选
+            清空
           </Button>
         </div>
       )}
@@ -935,8 +957,12 @@ export function AiImageScreen({
         </Space>
 
         <Space wrap>
-          <Button onClick={() => setSearchVisible((v) => !v)}>
-            {searchVisible ? '收起搜索' : '展开搜索'}
+          <Button
+            aria-label="搜索"
+            aria-expanded={searchVisible}
+            onClick={() => setSearchVisible((v) => !v)}
+          >
+            搜索
           </Button>
           <Dropdown
             trigger={['click']}
@@ -962,7 +988,7 @@ export function AiImageScreen({
               })),
             }}
           >
-            <Button>列显示 ▾</Button>
+            <Button aria-label="列">列</Button>
           </Dropdown>
           <ExportAction
             empty={!loading && total === 0 && items.length === 0}
@@ -991,7 +1017,7 @@ export function AiImageScreen({
           total,
           showSizeChanger: true,
           pageSizeOptions: CRUD_PAGE_SIZES.map(String),
-          showTotal: (count) => `共 ${count} 条记录`,
+          showTotal: (count) => `共 ${count} 条`,
           onChange: (nextPage, nextSize) => {
             const safeSize = (CRUD_PAGE_SIZES as readonly number[]).includes(nextSize)
               ? (nextSize as AiImageJobListQuery['pageSize'])
@@ -1057,7 +1083,7 @@ export function AiImageScreen({
                   合计预冻结 {draftQuote.totalPoints} 点数
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
-                  提交后按标价预冻结，按成功入库张数逐张结算；生成失败或存储空间不足自动退还点数（体验期仅记录点数明细，不扣减可用点数）。
+                  提交后先按标价冻结对应点数，按实际生成成功张数结算；生成失败或存储空间不足时自动退还点数（免费体验期仅记录点数明细，不扣减可用点数）。
                 </div>
               </div>
               <Tag color="blue" style={{ fontSize: 13, padding: '3px 10px' }}>
@@ -1094,7 +1120,7 @@ export function AiImageScreen({
                 rows={4}
                 maxLength={AI_IMAGE_PROMPT_MAX}
                 showCount
-                placeholder="请描述期望生成的商业配图主体、环境光线与质感，例如：现代精密激光切割加工车间实景，柔和工业照明，整洁金属产线构图（不生成真人正脸、商标Logo或带字海报）"
+                placeholder="请描述期望生成的商业配图主体、场景光线与质感，例如：简约现代办公桌面摆放极简笔记本电脑与产品实物陈列，柔和自然窗光，清晰质感构图"
                 value={modalState.draft.prompt}
                 onChange={(e) =>
                   setModalState((prev) =>
@@ -1154,10 +1180,11 @@ export function AiImageScreen({
               </div>
             </div>
 
-            {/* 2. Aspect Ratio (9 options, default 21:9) */}
+            {/* 2. Aspect Ratio (9 options, default 16:9) */}
             <div>
               <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                图片比例（默认 21:9） <span style={{ color: 'var(--gm-danger)' }}>*</span>
+                图片比例（默认 {AI_IMAGE_DEFAULT_RATIO}）{' '}
+                <span style={{ color: 'var(--gm-danger)' }}>*</span>
               </div>
               <div
                 role="radiogroup"
@@ -1394,10 +1421,10 @@ export function AiImageScreen({
             {/* 5. Save directly to Gallery Category (Optional, default none) */}
             <div>
               <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                转存到企业画像（可选，默认不选择）
+                保存到企业画像图库（可选，默认不保存）
               </div>
               <select
-                aria-label="转存到企业画像"
+                aria-label="保存到企业画像图库"
                 style={NATIVE_SELECT_STYLE}
                 value={modalState.draft.saveCategoryId}
                 onChange={(e) =>
@@ -1411,7 +1438,7 @@ export function AiImageScreen({
                   )
                 }
               >
-                <option value="">暂不转存（生成后可在列表随时点「存入图库」）</option>
+                <option value="">暂不保存（生成后可在列表随时点「存入图库」）</option>
                 {(formOptions?.mediaCategories ?? []).map((cat) => (
                   <option key={cat.id} value={cat.id}>
                     {cat.name}（现有 {cat.assetCount} 张）
@@ -1427,10 +1454,15 @@ export function AiImageScreen({
       <Modal
         open={Boolean(saveTargetJob)}
         title="存入企业画像图库"
+        keyboard
+        transitionName=""
+        maskTransitionName=""
         confirmLoading={savingGallery}
-        okText="确认转存"
+        okText="确认存入"
         cancelText="取消"
-        onCancel={() => setSaveTargetJob(null)}
+        onCancel={() => {
+          if (!savingGallery) setSaveTargetJob(null);
+        }}
         onOk={() => void handleConfirmSaveGallery()}
       >
         {saveTargetJob && (
@@ -1464,6 +1496,9 @@ export function AiImageScreen({
       {/* Image Preview Modal */}
       <Modal
         open={Boolean(previewState && previewAsset)}
+        keyboard
+        transitionName=""
+        maskTransitionName=""
         title={
           previewState
             ? `图片预览 · ${previewState.job.orderNo}（第 ${previewState.assetIndex + 1}/${previewState.job.assets.length} 张）`
@@ -1499,14 +1534,73 @@ export function AiImageScreen({
                 background: 'var(--gm-bg-base)',
                 borderRadius: 8,
                 padding: 12,
+                minHeight: 280,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 textAlign: 'center',
               }}
             >
+              {previewImgStatus === 'loading' && (
+                <div
+                  data-testid="ai-image-preview-loading"
+                  className="gm-skeleton"
+                  style={{
+                    width: '100%',
+                    minHeight: 256,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 12,
+                    borderRadius: 6,
+                    border: '1px solid var(--gm-line-1)',
+                  }}
+                >
+                  <Spin size="large" />
+                  <span style={{ fontSize: 13, color: 'var(--gm-fg-2)' }}>正在加载原图…</span>
+                </div>
+              )}
+              {previewImgStatus === 'error' && (
+                <div
+                  data-testid="ai-image-preview-error"
+                  style={{
+                    width: '100%',
+                    minHeight: 256,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 10,
+                    color: 'var(--gm-fg-2)',
+                  }}
+                >
+                  <span>原图加载失败，请检查网络或稍后重试</span>
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setPreviewImgStatus('loading');
+                      setPreviewRetryKey((k) => k + 1);
+                    }}
+                  >
+                    重新加载
+                  </Button>
+                </div>
+              )}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
+                ref={previewImgRef}
+                key={`${previewAsset.id}-${previewRetryKey}`}
                 src={resolveMediaUrl(previewAsset.url)}
                 alt={previewState.job.orderNo}
-                style={{ maxWidth: '100%', maxHeight: 460, borderRadius: 4 }}
+                onLoad={() => setPreviewImgStatus('loaded')}
+                onError={() => setPreviewImgStatus('error')}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 460,
+                  borderRadius: 4,
+                  display: previewImgStatus === 'loaded' ? 'block' : 'none',
+                }}
               />
             </div>
             <div
@@ -1525,16 +1619,21 @@ export function AiImageScreen({
       <Modal
         open={Boolean(deleteTargetIds)}
         title="确认删除生图记录"
+        keyboard
+        transitionName=""
+        maskTransitionName=""
         confirmLoading={deleting}
         okButtonProps={{ danger: true }}
         okText="确认删除"
         cancelText="取消"
-        onCancel={() => setDeleteTargetIds(null)}
+        onCancel={() => {
+          if (!deleting) setDeleteTargetIds(null);
+        }}
         onOk={() => void handleConfirmDelete()}
       >
         <p style={{ margin: 0 }}>
           确定删除选中的 {deleteTargetIds?.length ?? 0}{' '}
-          条生图记录吗？已存入企业画像图库的图片将保留在图库中不受影响，未转存图库的图片将同步释放存储空间。
+          条生图记录吗？已存入企业画像图库的图片将保留在图库中不受影响，未存入图库的图片将同步释放存储空间。
         </p>
       </Modal>
     </section>
