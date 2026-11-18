@@ -43,12 +43,24 @@ export function AdminGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  if (phase === 'boot') return <main className="gm-boot">正在确认登录</main>;
-  if (phase === 'offline') return <main className="gm-boot">无法连接接口</main>;
+  if (phase === 'boot') {
+    return (
+      <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>
+        正在确认登录
+      </main>
+    );
+  }
+  if (phase === 'offline') {
+    return (
+      <main className="gm-boot" style={{ color: 'var(--gm-danger)' }}>
+        无法连接接口
+      </main>
+    );
+  }
   if (phase === 'deny' || !account) {
     return (
-      <main className="gm-boot">
-        <p>没有这个页面</p>
+      <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>
+        <p style={{ color: 'var(--gm-fg-1)' }}>没有这个页面</p>
         <Button type="primary" onClick={() => router.push('/dashboard')}>
           回首页
         </Button>
@@ -57,21 +69,26 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="gm-admin">
+    <div className="gm-admin" style={{ color: 'var(--gm-fg-1)' }}>
       <header className="gm-admin-bar">
-        <strong>{SITE_NAME} 管理</strong>
+        <strong style={{ color: 'var(--gm-fg-1)' }}>{SITE_NAME} 管理</strong>
         <nav aria-label="管理菜单">
           {LINKS.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               aria-current={pathname === link.href ? 'page' : undefined}
+              style={{
+                color: pathname === link.href ? 'var(--gm-phosphor)' : 'var(--gm-fg-2)',
+              }}
             >
               {link.title}
             </Link>
           ))}
         </nav>
-        <Link href="/dashboard">返回后台</Link>
+        <Link href="/dashboard" style={{ color: 'var(--gm-info)' }}>
+          返回后台
+        </Link>
         <Button
           onClick={() => {
             void logoutSession(window.sessionStorage).then(() => router.replace('/login'));

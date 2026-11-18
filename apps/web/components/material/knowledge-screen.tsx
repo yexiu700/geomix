@@ -596,7 +596,7 @@ export function KnowledgeScreen({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Typography.Text strong>
-              <span style={{ color: '#ff4d4f' }}>* </span>知识库名称
+              <span style={{ color: 'var(--gm-danger)' }}>* </span>知识库名称
             </Typography.Text>
             <Input
               aria-label="知识库名称"
@@ -628,7 +628,7 @@ export function KnowledgeScreen({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <Typography.Text strong>
-                    <span style={{ color: '#ff4d4f' }}>* </span>公司名称
+                    <span style={{ color: 'var(--gm-danger)' }}>* </span>公司名称
                   </Typography.Text>
                   <Input
                     aria-label="公司名称"
@@ -646,7 +646,7 @@ export function KnowledgeScreen({
                 </div>
                 <div>
                   <Typography.Text strong>
-                    <span style={{ color: '#ff4d4f' }}>* </span>品牌简称
+                    <span style={{ color: 'var(--gm-danger)' }}>* </span>品牌简称
                   </Typography.Text>
                   <Input
                     aria-label="品牌简称"
@@ -667,7 +667,7 @@ export function KnowledgeScreen({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <Typography.Text strong>
-                    <span style={{ color: '#ff4d4f' }}>* </span>创作方向
+                    <span style={{ color: 'var(--gm-danger)' }}>* </span>创作方向
                   </Typography.Text>
                   <Select
                     aria-label="创作方向"
@@ -687,7 +687,7 @@ export function KnowledgeScreen({
                 </div>
                 <div>
                   <Typography.Text strong>
-                    <span style={{ color: '#ff4d4f' }}>* </span>文案类型
+                    <span style={{ color: 'var(--gm-danger)' }}>* </span>文案类型
                   </Typography.Text>
                   <Select
                     aria-label="文案类型"
@@ -759,7 +759,7 @@ export function KnowledgeScreen({
                 }}
               >
                 <Typography.Text strong>
-                  <span style={{ color: '#ff4d4f' }}>* </span>汇总信息
+                  <span style={{ color: 'var(--gm-danger)' }}>* </span>汇总信息
                 </Typography.Text>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {Array.from(draft.summary.summaryText).length}/{KB_SUMMARY_MAX}
@@ -827,7 +827,7 @@ export function KnowledgeScreen({
                 style={{
                   marginBottom: 0,
                   marginTop: 4,
-                  background: '#fafafa',
+                  background: 'var(--gm-bg-elevated)',
                   padding: 10,
                   borderRadius: 6,
                 }}
@@ -869,9 +869,9 @@ export function KnowledgeScreen({
             maxHeight: 220,
             overflowY: 'auto',
             padding: '12px 14px',
-            border: '1px solid #f0f0f0',
+            border: '1px solid var(--gm-line-1)',
             borderRadius: 6,
-            background: '#fafafa',
+            background: 'var(--gm-bg-elevated)',
             lineHeight: 1.85,
           }}
         >

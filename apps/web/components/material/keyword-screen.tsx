@@ -918,7 +918,7 @@ export function KeywordScreen({
               return (
                 <div
                   key={pack.key}
-                  style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 10 }}
+                  style={{ border: '1px solid var(--gm-line-1)', borderRadius: 8, padding: 10 }}
                 >
                   <Checkbox
                     checked={checked}
@@ -1003,7 +1003,7 @@ export function KeywordScreen({
               style={{
                 maxHeight: 320,
                 overflowY: 'auto',
-                border: '1px solid #f0f0f0',
+                border: '1px solid var(--gm-line-1)',
                 borderRadius: 6,
                 padding: 10,
               }}

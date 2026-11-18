@@ -57,10 +57,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -68,10 +68,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -576,13 +576,13 @@ export function AiImageScreen({
                       onClick={() => setPreviewState({ job: row, assetIndex: index })}
                       style={{
                         padding: 0,
-                        border: '1px solid #d9d9d9',
+                        border: '1px solid var(--gm-line-1)',
                         borderRadius: 6,
                         overflow: 'hidden',
                         width: 56,
                         height: 42,
                         cursor: 'pointer',
-                        background: '#f5f5f5',
+                        background: 'var(--gm-bg-elevated)',
                       }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -620,7 +620,7 @@ export function AiImageScreen({
                   style={{
                     fontSize: 13,
                     lineHeight: 1.5,
-                    color: '#1f1f1f',
+                    color: 'var(--gm-fg-1)',
                     wordBreak: 'break-word',
                   }}
                 >
@@ -629,7 +629,7 @@ export function AiImageScreen({
                 {row.error ? (
                   <div
                     style={{
-                      color: '#cf1322',
+                      color: 'var(--gm-danger)',
                       fontSize: 12,
                       marginTop: 2,
                       wordBreak: 'break-word',
@@ -680,9 +680,11 @@ export function AiImageScreen({
             width: 145,
             render: (_: unknown, row: AiImageJobItem) =>
               row.saveCategoryName ? (
-                <span style={{ fontSize: 12, color: '#389e0d' }}>{row.saveCategoryName}</span>
+                <span style={{ fontSize: 12, color: 'var(--gm-sig-cited)' }}>
+                  {row.saveCategoryName}
+                </span>
               ) : (
-                <span style={{ fontSize: 12, color: '#8c8c8c' }}>未转存图库</span>
+                <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>未转存图库</span>
               ),
           },
         ]
@@ -708,13 +710,13 @@ export function AiImageScreen({
             key: 'points',
             width: 145,
             render: (_: unknown, row: AiImageJobItem) => (
-              <div style={{ fontSize: 12, lineHeight: 1.6 }}>
-                <div style={{ fontWeight: 600, color: '#1d39c4' }}>
+              <div className="gm-num" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
                   {row.status === 'QUEUED' || row.status === 'RUNNING'
                     ? `预冻 ${row.reservedPoints} 点`
                     : `实结 ${row.settledPoints} 点`}
                 </div>
-                <div style={{ color: '#8c8c8c' }}>
+                <div style={{ color: 'var(--gm-fg-3)' }}>
                   标价 {row.unitPoints} 点/张
                   {row.releasedPoints > 0 ? ` · 已退 ${row.releasedPoints} 点` : ''}
                 </div>
@@ -731,7 +733,9 @@ export function AiImageScreen({
             key: 'createdAt',
             width: 150,
             render: (val: string) => (
-              <span style={{ fontSize: 12, color: '#595959' }}>{formatTime(val)}</span>
+              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                {formatTime(val)}
+              </span>
             ),
           },
         ]
@@ -839,8 +843,8 @@ export function AiImageScreen({
       {searchVisible && (
         <div
           style={{
-            background: '#fafafa',
-            border: '1px solid #f0f0f0',
+            background: 'var(--gm-bg-surface)',
+            border: '1px solid var(--gm-line-1)',
             borderRadius: 8,
             padding: 12,
             marginBottom: 12,
@@ -1054,8 +1058,8 @@ export function AiImageScreen({
               style={{
                 padding: '12px 14px',
                 borderRadius: 8,
-                background: '#f0f5ff',
-                border: '1px solid #adc6ff',
+                background: 'var(--gm-bg-elevated)',
+                border: '1px solid rgba(111,168,255,0.32)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1064,11 +1068,11 @@ export function AiImageScreen({
               }}
             >
               <div>
-                <div style={{ fontWeight: 600, color: '#1d39c4' }}>
+                <div className="gm-num" style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
                   预计消耗说明：单价 {draftQuote.unitPoints} 点数/张 × 生成 {draftQuote.count} 张 ＝
                   合计预冻结 {draftQuote.totalPoints} 点数
                 </div>
-                <div style={{ fontSize: 12, color: '#595959', marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
                   提交后按标价预冻结，按成功入库张数逐张结算；生成失败或存储空间不足自动退还点数（免费影子计费期仅记原价流水，不实扣可用点数）。
                 </div>
               </div>
@@ -1091,7 +1095,7 @@ export function AiImageScreen({
               >
                 <span style={{ fontWeight: 500 }}>
                   画面提示词（{AI_IMAGE_PROMPT_MIN}–{AI_IMAGE_PROMPT_MAX} 字）{' '}
-                  <span style={{ color: '#ff4d4f' }}>*</span>
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span>
                 </span>
                 <Button
                   size="small"
@@ -1169,7 +1173,7 @@ export function AiImageScreen({
             {/* 2. Aspect Ratio (9 options, default 21:9) */}
             <div>
               <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                图片比例（默认 21:9） <span style={{ color: '#ff4d4f' }}>*</span>
+                图片比例（默认 21:9） <span style={{ color: 'var(--gm-danger)' }}>*</span>
               </div>
               <div
                 role="radiogroup"
@@ -1196,9 +1200,11 @@ export function AiImageScreen({
                       style={{
                         padding: '8px 10px',
                         borderRadius: 6,
-                        border: selected ? '1px solid #1677ff' : '1px solid #d9d9d9',
-                        background: selected ? '#e6f4ff' : '#ffffff',
-                        color: selected ? '#0958d9' : '#262626',
+                        border: selected
+                          ? '1px solid var(--gm-phosphor-a40)'
+                          : '1px solid var(--gm-line-2)',
+                        background: selected ? 'var(--gm-bg-selected)' : 'var(--gm-bg-elevated)',
+                        color: selected ? 'var(--gm-fg-1)' : 'var(--gm-fg-2)',
                         fontWeight: selected ? 600 : 400,
                         fontSize: 13,
                         textAlign: 'left',
@@ -1273,9 +1279,11 @@ export function AiImageScreen({
                           height: 32,
                           padding: '0 12px',
                           borderRadius: 6,
-                          border: selected ? '1px solid #1677ff' : '1px solid #d9d9d9',
-                          background: selected ? '#e6f4ff' : '#ffffff',
-                          color: selected ? '#0958d9' : '#262626',
+                          border: selected
+                            ? '1px solid var(--gm-phosphor-a40)'
+                            : '1px solid var(--gm-line-2)',
+                          background: selected ? 'var(--gm-bg-selected)' : 'var(--gm-bg-elevated)',
+                          color: selected ? 'var(--gm-fg-1)' : 'var(--gm-fg-2)',
                           fontWeight: selected ? 600 : 400,
                           fontSize: 13,
                           whiteSpace: 'nowrap',
@@ -1329,9 +1337,11 @@ export function AiImageScreen({
                         height: 32,
                         padding: '0 14px',
                         borderRadius: 6,
-                        border: selected ? '1px solid #1677ff' : '1px solid #d9d9d9',
-                        background: selected ? '#e6f4ff' : '#ffffff',
-                        color: selected ? '#0958d9' : '#262626',
+                        border: selected
+                          ? '1px solid var(--gm-phosphor-a40)'
+                          : '1px solid var(--gm-line-2)',
+                        background: selected ? 'var(--gm-bg-selected)' : 'var(--gm-bg-elevated)',
+                        color: selected ? 'var(--gm-fg-1)' : 'var(--gm-fg-2)',
                         fontWeight: selected ? 600 : 400,
                         fontSize: 13,
                         cursor: 'pointer',
@@ -1349,8 +1359,8 @@ export function AiImageScreen({
                     marginTop: 8,
                     padding: 10,
                     borderRadius: 6,
-                    border: '1px dashed #d9d9d9',
-                    background: '#fafafa',
+                    border: '1px dashed var(--gm-line-1)',
+                    background: 'var(--gm-bg-surface)',
                   }}
                 >
                   <input
@@ -1359,7 +1369,7 @@ export function AiImageScreen({
                     accept="image/jpeg,image/png,image/webp"
                     onChange={(e) => void handleUploadRefFile(e.target.files?.[0])}
                   />
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
                     支持 JPG / PNG / WebP，单张不超过 10MB
                     {modalState.draft.refImageFilename
                       ? ` · 已选择：${modalState.draft.refImageFilename}`
@@ -1502,7 +1512,7 @@ export function AiImageScreen({
           <div>
             <div
               style={{
-                background: '#141414',
+                background: 'var(--gm-bg-base)',
                 borderRadius: 8,
                 padding: 12,
                 textAlign: 'center',
@@ -1515,7 +1525,10 @@ export function AiImageScreen({
                 style={{ maxWidth: '100%', maxHeight: 460, borderRadius: 4 }}
               />
             </div>
-            <div style={{ marginTop: 10, fontSize: 13, color: '#595959' }}>
+            <div
+              className="gm-num"
+              style={{ marginTop: 10, fontSize: 13, color: 'var(--gm-fg-2)' }}
+            >
               尺寸：{previewAsset.width} × {previewAsset.height}px · 大小：
               {Math.max(1, Math.round(previewAsset.bytes / 1024))} KB · 文章引用次数：
               {previewAsset.usedCount} 次

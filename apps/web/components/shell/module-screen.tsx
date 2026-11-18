@@ -284,6 +284,7 @@ export function TabDraftNote({
   return (
     <div style={{ marginTop: 16 }}>
       <Input.TextArea
+        className="gm-draft-note"
         aria-label={`${tab.title}草稿`}
         value={draft}
         rows={2}
