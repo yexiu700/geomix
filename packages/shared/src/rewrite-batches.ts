@@ -3,6 +3,7 @@ import { CRUD_PAGE_SIZES, type CrudPageSize } from './crud';
 import {
   REWRITE_DEFAULT_UNIT_POINTS,
   REWRITE_ID_PATTERN,
+  REWRITE_MIN_SOURCE_CHARS,
   REWRITE_RESULT_STATUSES,
   canonicalizeRewriteUrl,
   computeRewriteUrlHash,
@@ -23,6 +24,7 @@ export const REWRITE_BATCH_ITEM_TIMEOUT_MS_DEFAULT = 45_000;
 
 export const REWRITE_BATCH_URL_AS_KEYWORD_MSG =
   '检测到这是链接不是关键词，请切换为「粘贴链接清单」模式或输入纯文本搜索词';
+export const REWRITE_BATCH_SHORT_SOURCE_MSG = `源文有效正文不足 ${REWRITE_MIN_SOURCE_CHARS} 字，已自动跳过（本次未扣点数）；请更换长文链接，或前往「单篇爆文复刻」使用粘贴原文`;
 
 export const REWRITE_BATCH_SOURCE_TYPES = ['link_list', 'remote'] as const;
 export type RewriteBatchSourceType = (typeof REWRITE_BATCH_SOURCE_TYPES)[number];
@@ -415,6 +417,8 @@ export type RewriteBatchItem = {
   id: string;
   name: string;
   keyword: string;
+  brand?: string | null;
+  resultStatus?: RewriteResultStatusName;
   sourceType: RewriteBatchSourceType;
   maxCount: number;
   doneCount: number;

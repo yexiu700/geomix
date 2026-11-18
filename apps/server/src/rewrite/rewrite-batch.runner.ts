@@ -7,8 +7,8 @@ import {
   REWRITE_BATCH_CONCURRENCY,
   REWRITE_BATCH_DEFAULT_UNIT_POINTS,
   REWRITE_BATCH_LINK_LIST_MAX,
+  REWRITE_BATCH_SHORT_SOURCE_MSG,
   REWRITE_MIN_SOURCE_CHARS,
-  REWRITE_SHORT_SOURCE_MSG,
   assembleRewriteMessages,
   batchRewriteImageCountForText,
   buildFakeRewriteMarkdown,
@@ -269,7 +269,8 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
           categoryId: batch.categoryId,
           mediaCategoryId: batch.mediaCategoryId,
           templateContent: batch.template.content,
-          brandHint: batch.sourceType === 'link_list' ? batch.keyword.trim() : '',
+          brandHint: batch.brand?.trim() ?? '',
+          resultStatus: batch.resultStatus === 'NORMAL' ? 'NORMAL' : 'PENDING',
           recordId: step.recordId,
           url: step.url,
           sourceTitleHint: step.sourceTitle,
@@ -453,6 +454,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
     mediaCategoryId: string | null;
     templateContent: string;
     brandHint: string;
+    resultStatus: 'PENDING' | 'NORMAL';
     recordId: string;
     url: string;
     sourceTitleHint: string | null;
@@ -471,7 +473,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
         const effectiveTitle = extracted.title || input.sourceTitleHint || '行业技术观察';
 
         if (extracted.charCount < REWRITE_MIN_SOURCE_CHARS) {
-          throw new Error(`${REWRITE_SHORT_SOURCE_MSG}（仅 ${extracted.charCount} 字，未扣点）`);
+          throw new Error(`${REWRITE_BATCH_SHORT_SOURCE_MSG}（当前仅 ${extracted.charCount} 字）`);
         }
 
         await this.compliance.assertAllowed({
@@ -638,7 +640,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
               contentHtml: finalContentHtml,
               contentText: best.contentText,
               coverUrl,
-              status: 'PENDING',
+              status: input.resultStatus,
               source: 'REWRITE_BATCH',
               sourceUrl: input.url,
               complianceFlags: complianceFlags as Prisma.InputJsonValue,

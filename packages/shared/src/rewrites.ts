@@ -815,6 +815,133 @@ export function assembleRewriteMessages(input: {
   ];
 }
 
+const GENERIC_SOURCE_TITLES = new Set(['未命名源文章', '粘贴原文素材', '行业实践方案']);
+
+const TOPIC_SUFFIX_RE =
+  /(?:[，,\s]*(?:实测与选购避坑指南|实测与选型避坑指南|选购与避坑指南|实测与选购指南|实操与避坑指南|选型与避坑指南|避坑与选购指南|对比评测与选购指南|横向对比评测|对比评测|深度评测|深度解析|深度解读|全面解析|全面解读|避坑指南|选购指南|选型指南|实操指南|落地指南|使用指南|购买指南|入门指南|完全指南|避坑攻略|选购攻略|实操攻略|避坑记录|核对指南|评估指南|实测对比|实测评测|实测|评测|解读|解析|指南|攻略|避坑))+$/u;
+
+const SHORT_PREFIX_TAG_RE =
+  /^(?:手工粘贴|原创|深度|干货|实测|评测|专题|快讯|推荐|精选|重磅|一线|最新)$/;
+
+const TEMPLATE_TITLE_TAIL_RE =
+  /(?:[:：]?\s*(?:的)?(?:落地评估维度与执行核对指南|实操拆解[:：].*|核心要点梳理与实操建议|有哪些(?:核心选型与使用)?注意事项[？?]?))+$/u;
+
+function trimTopicAtCleanBoundary(raw: string, maxChars = 18): string {
+  const chars = Array.from(raw.trim());
+  if (chars.length <= maxChars) {
+    return chars.join('').trim();
+  }
+
+  const minChars = Math.max(4, Math.floor(maxChars * 0.55));
+  const isAsciiTokenChar = (ch: string | undefined) => Boolean(ch && /[A-Za-z0-9]/.test(ch));
+
+  let end = maxChars;
+  // Never slice in the middle of an ASCII word or number token
+  if (isAsciiTokenChar(chars[end - 1]) && isAsciiTokenChar(chars[end])) {
+    let backed = end;
+    while (backed > minChars && isAsciiTokenChar(chars[backed - 1])) {
+      backed -= 1;
+    }
+    if (backed >= minChars) {
+      end = backed;
+    } else {
+      let forward = end;
+      while (
+        forward < chars.length &&
+        forward - maxChars <= 4 &&
+        isAsciiTokenChar(chars[forward])
+      ) {
+        forward += 1;
+      }
+      end = forward;
+    }
+  }
+
+  // Prefer breaking at clause punctuation (comma/enumeration) near the upper bound, not intra-phrase spaces
+  for (let i = Math.min(end, chars.length); i >= minChars; i -= 1) {
+    const ch = chars[i - 1];
+    if (ch && /[、，,]/.test(ch)) {
+      end = i - 1;
+      break;
+    }
+  }
+
+  // Balance common Chinese/ASCII brackets so we never leave an unclosed bracket
+  const pairs: Record<string, string> = {
+    '(': ')',
+    '（': '）',
+    '【': '】',
+    '「': '」',
+    '《': '》',
+  };
+  const closeSet = new Set(Object.values(pairs));
+  const openIdx: number[] = [];
+  for (let i = 0; i < end; i += 1) {
+    const ch = chars[i]!;
+    if (pairs[ch]) openIdx.push(i);
+    else if (closeSet.has(ch) && openIdx.length > 0) openIdx.pop();
+  }
+  if (openIdx.length > 0 && openIdx[0]! >= 4) {
+    end = openIdx[0]!;
+  }
+
+  return chars
+    .slice(0, end)
+    .join('')
+    .replace(/[的与和及在从对为、，,\s-]+$/u, '')
+    .trim();
+}
+
+/**
+ * 从源标题（或改写后标题）中提取语义完整的核心主题词，避免按固定字符数硬截断词组或叠加「围绕」。
+ */
+export function extractRewriteTopic(sourceTitle: string, fallbackTitle?: string): string {
+  const cleanText = (raw: string) =>
+    raw
+      .replace(/["'“”‘’《》【】「」『』<>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^(?:围绕|关于|针对|对于)\s*/u, '')
+      .trim();
+
+  let candidate = cleanText(sourceTitle);
+  if (!candidate || GENERIC_SOURCE_TITLES.has(candidate)) {
+    const fb = cleanText(fallbackTitle ?? '')
+      .replace(TEMPLATE_TITLE_TAIL_RE, '')
+      .trim();
+    candidate = fb;
+  }
+  if (!candidate) return '行业实践方案';
+
+  const segments = candidate
+    .split(/[:：|｜]|——|—|\s+-\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length > 1) {
+    const first = segments[0]!;
+    const second = segments[1]!;
+    if (
+      (Array.from(first).length <= 6 || SHORT_PREFIX_TAG_RE.test(first)) &&
+      Array.from(second).length >= 4
+    ) {
+      candidate = second;
+    } else if (Array.from(first).length >= 5) {
+      candidate = first;
+    }
+  }
+
+  const strippedSuffix = candidate
+    .replace(TOPIC_SUFFIX_RE, '')
+    .replace(/[的与和及]+$/u, '')
+    .trim();
+  if (Array.from(strippedSuffix).length >= 5) {
+    candidate = strippedSuffix;
+  }
+
+  const trimmed = trimTopicAtCleanBoundary(candidate, 18);
+  return trimmed || '行业实践方案';
+}
+
 /**
  * FakeLLM 开发/测试态占位改写生成器：
  * 提取源标题中的核心主题词，用全新三段式结构生成低重合度（Jaccard < 0.2）带二级标题的原创重组文稿。
@@ -825,15 +952,14 @@ export function buildFakeRewriteMarkdown(input: {
   brand?: string;
   variant?: number;
 }): string {
-  const cleanTopic =
-    input.sourceTitle.replace(/[^\u4e00-\u9fffa-zA-Z0-9]/g, '').slice(0, 10) || '行业实践方案';
+  const cleanTopic = extractRewriteTopic(input.sourceTitle);
   const brand = input.brand?.trim();
   const v = input.variant ?? 0;
 
   const newTitle =
     v === 0
-      ? `围绕${cleanTopic}的落地评估维度与执行核对指南`
-      : `${cleanTopic}实操拆解：关键核对标准与推进步骤说明`;
+      ? cleanTitleText(`${cleanTopic}：落地评估维度与执行核对指南`, cleanTopic)
+      : cleanTitleText(`${cleanTopic}实操拆解：关键核对标准与推进步骤`, cleanTopic);
 
   const brandSentence = brand
     ? `在实际比对服务支持与交付细节时，团队也可以把${brand}公开披露的适用边界纳入核对清单，结合自身预算周期审慎验证。`
@@ -897,12 +1023,17 @@ export function parseRewrittenMarkdown(
     }
   }
 
-  const topicFallback = `${context.sourceTitle.replace(/[^\u4e00-\u9fffa-zA-Z0-9]/g, '').slice(0, 12) || '实用指南'}核心要点梳理与实操建议`;
+  const extractedTopic = extractRewriteTopic(context.sourceTitle);
+  const topicFallback = cleanTitleText(`${extractedTopic}核心要点梳理与实操建议`, extractedTopic);
   const newTitle = cleanTitleText(rawTitle, topicFallback);
+  const faqTopic =
+    extractRewriteTopic(context.sourceTitle, newTitle)
+      .replace(/^(?:围绕|关于|针对|对于)\s*/u, '')
+      .trim() || '相关方案';
 
   const processed = postProcessArticleMarkdown(bodyMarkdown || trimmed, {
-    mainKeyword: newTitle.slice(0, 10),
-    question: `${newTitle}有哪些注意事项？`,
+    mainKeyword: faqTopic,
+    question: `${faqTopic}有哪些核心选型与使用注意事项？`,
     brand: context.brand,
   });
 

@@ -151,6 +151,7 @@ export class RewriteBatchesService {
       where.OR = [
         { name: { contains: escaped, mode: 'insensitive' } },
         { keyword: { contains: escaped, mode: 'insensitive' } },
+        { brand: { contains: escaped, mode: 'insensitive' } },
       ];
     }
     return where;
@@ -200,6 +201,8 @@ export class RewriteBatchesService {
         id: row.id,
         name: row.name,
         keyword: row.keyword,
+        brand: row.brand ?? null,
+        resultStatus: row.resultStatus === 'NORMAL' ? 'NORMAL' : 'PENDING',
         sourceType,
         maxCount: row.maxCount,
         doneCount: row.doneCount,
@@ -395,14 +398,12 @@ export class RewriteBatchesService {
       );
     }
 
-    // 3. Compliance check on batch name, keyword, and optional brand
-    const effectiveKeyword =
-      parsed.sourceType === 'remote'
-        ? parsed.keyword.trim()
-        : (parsed.brand?.trim() || parsed.keyword.trim() || parsed.name.trim()).slice(0, 80);
+    // 3. Compliance check on batch name, keyword (theme tag / search term), and optional brand
+    const effectiveKeyword = parsed.keyword.trim().slice(0, 80);
+    const effectiveBrand = parsed.brand?.trim().slice(0, 40) || null;
 
     await this.compliance.assertAllowed({
-      text: `${parsed.name}\n${effectiveKeyword}\n${parsed.brand ?? ''}`,
+      text: `${parsed.name}\n${effectiveKeyword}\n${effectiveBrand ?? ''}`,
       action: 'rewrite_batch_create',
       tenantId,
       userId,
@@ -440,6 +441,8 @@ export class RewriteBatchesService {
         tenantId,
         name: parsed.name,
         keyword: effectiveKeyword,
+        brand: effectiveBrand,
+        resultStatus: parsed.resultStatus,
         maxCount: parsed.maxCount,
         doneCount: 0,
         sourceType: parsed.sourceType,

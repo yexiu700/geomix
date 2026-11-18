@@ -531,6 +531,8 @@ model RewriteBatch {
   tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name            String
   keyword         String
+  brand           String?
+  resultStatus    ArticleStatus   @default(PENDING)
   maxCount        Int // 1..50
   doneCount       Int             @default(0)
   sourceType      String          @default("link_list") // link_list | bocha | bing ...

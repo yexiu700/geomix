@@ -10,6 +10,7 @@ import {
   computeChar5GramJaccard,
   computeRewriteUrlHash,
   extractArticleFromHtml,
+  extractRewriteTopic,
   normalizePastedSource,
   parseRewrittenMarkdown,
   rewriteSingleCreateSchema,
@@ -255,5 +256,56 @@ describe('rewrites shared helpers', () => {
 
     const autoName = buildDefaultRewriteCategoryName(new Date('2026-11-17T08:30:00Z'));
     expect(autoName).toMatch(/^爆文复刻-\d{8}-\d{4}$/);
+  });
+
+  it('keeps multi-character Chinese/English phrases intact in fake titles and FAQ without "围绕围绕" duplication (#208)', () => {
+    const sourceTitle = '2026 氮化镓多口快充充电器实测与选购避坑指南';
+    const sourceText =
+      '氮化镓充电器在高功率密度桌面快充场景下显著减小了体积，选购时需关注多口同时输出时的功率分配策略、温升控制表现与线缆协议兼容性。'.repeat(
+        6,
+      );
+
+    expect(extractRewriteTopic(sourceTitle)).toBe('2026 氮化镓多口快充充电器');
+    expect(extractRewriteTopic('手工粘贴：车间压缩空气管路节能巡检方法')).toBe(
+      '车间压缩空气管路节能巡检方法',
+    );
+    expect(extractRewriteTopic('围绕企业知识库搭建的要点解析')).toBe('企业知识库搭建的要点');
+    const longMixed = extractRewriteTopic(
+      '2026款Anker 100W氮化镓多口快充充电器横向对比评测与选购避坑指南',
+    );
+    expect(longMixed).toContain('Anker');
+    expect(longMixed).toContain('100W');
+
+    const fakeMd = buildFakeRewriteMarkdown({
+      sourceTitle,
+      sourceText,
+      brand: 'Anker',
+    });
+    const parsed = parseRewrittenMarkdown(fakeMd, { sourceTitle, brand: 'Anker' });
+
+    expect(parsed.newTitle).toContain('2026 氮化镓多口快充充电器');
+    expect(parsed.newTitle).not.toMatch(/^围绕/);
+    expect(parsed.newTitle).not.toContain('多口快的');
+    expect(parsed.contentText).toContain('常见问题（FAQ）');
+    expect(parsed.contentText).not.toContain('围绕围绕');
+    expect(parsed.contentText).not.toContain('多口快的');
+    expect(parsed.contentText).not.toContain('氮化镓多的');
+    expect(computeChar5GramJaccard(sourceText, parsed.contentText)).toBeLessThan(
+      REWRITE_SIM_MAX_DEFAULT,
+    );
+
+    // Even if an upstream LLM emits a title starting with "围绕", FAQ never duplicates "围绕围绕"
+    const llmWithWeiraoTitle = [
+      '围绕氮化镓快充充电器的实测选购与使用指南',
+      '',
+      '## 核心选购要点',
+      '氮化镓快充在体积与散热之间取得平衡，实际使用中建议核对多口分配功率与协议兼容性。'.repeat(4),
+    ].join('\n');
+    const parsedLlm = parseRewrittenMarkdown(llmWithWeiraoTitle, {
+      sourceTitle: '未命名源文章',
+      brand: 'Anker',
+    });
+    expect(parsedLlm.contentText).toContain('常见问题（FAQ）');
+    expect(parsedLlm.contentText).not.toContain('围绕围绕');
   });
 });

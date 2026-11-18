@@ -49,6 +49,7 @@ import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
+import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
 import {
   httpRewriteBatchGateway,
@@ -247,6 +248,11 @@ export function RewriteBatchScreen({
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerDetail, setDrawerDetail] = useState<RewriteBatchDetailResponse | null>(null);
   const wasActiveRef = useRef(active);
+  const drawerStateRef = useRef<{ open: boolean; detail: RewriteBatchDetailResponse | null }>({
+    open: false,
+    detail: null,
+  });
+  drawerStateRef.current = { open: drawerOpen, detail: drawerDetail };
 
   const loadList = useCallback(
     async (nextQuery: RewriteBatchListQuery, silent = false) => {
@@ -265,6 +271,30 @@ export function RewriteBatchScreen({
             res.items.some((item) => item.id === id && isTerminalBatchStatus(item.status)),
           ),
         );
+        const curDrawer = drawerStateRef.current;
+        if (curDrawer.open && curDrawer.detail) {
+          const matched = res.items.find((item) => item.id === curDrawer.detail!.batch.id);
+          if (
+            matched &&
+            (matched.status !== curDrawer.detail.batch.status ||
+              matched.doneCount !== curDrawer.detail.batch.doneCount ||
+              matched.settledPoints !== curDrawer.detail.batch.settledPoints ||
+              matched.releasedPoints !== curDrawer.detail.batch.releasedPoints ||
+              isActiveBatchStatus(matched.status))
+          ) {
+            void gateway
+              .detail(matched.id)
+              .then((detail) => {
+                if (
+                  drawerStateRef.current.open &&
+                  drawerStateRef.current.detail?.batch.id === detail.batch.id
+                ) {
+                  setDrawerDetail(detail);
+                }
+              })
+              .catch(() => undefined);
+          }
+        }
       } catch (err) {
         if (!silent) {
           setErrorMsg(err instanceof Error ? err.message : '加载批量爆文复刻列表失败');
@@ -313,26 +343,30 @@ export function RewriteBatchScreen({
     }
   }, [active, tabId]);
 
+  const drawerBatchId = drawerOpen && drawerDetail ? drawerDetail.batch.id : null;
+  const drawerBatchActive =
+    drawerOpen && drawerDetail !== null && isActiveBatchStatus(drawerDetail.batch.status);
   const hasActiveBatch = useMemo(
-    () =>
-      items.some((b) => isActiveBatchStatus(b.status)) ||
-      (drawerOpen && drawerDetail !== null && isActiveBatchStatus(drawerDetail.batch.status)),
-    [drawerDetail, drawerOpen, items],
+    () => items.some((b) => isActiveBatchStatus(b.status)) || drawerBatchActive,
+    [drawerBatchActive, items],
   );
 
   useEffect(() => {
     if (!hasActiveBatch || pollIntervalMs <= 0) return undefined;
+    const effectiveInterval = drawerBatchActive ? Math.min(pollIntervalMs, 1_500) : pollIntervalMs;
     const timer = setInterval(() => {
       void loadList(query, true);
-      if (drawerOpen && drawerDetail && isActiveBatchStatus(drawerDetail.batch.status)) {
+      if (drawerBatchId && drawerBatchActive) {
         void gateway
-          .detail(drawerDetail.batch.id)
-          .then((detail) => setDrawerDetail(detail))
+          .detail(drawerBatchId)
+          .then((detail) => {
+            setDrawerDetail((prev) => (prev && prev.batch.id === detail.batch.id ? detail : prev));
+          })
           .catch(() => undefined);
       }
-    }, pollIntervalMs);
+    }, effectiveInterval);
     return () => clearInterval(timer);
-  }, [drawerDetail, drawerOpen, gateway, hasActiveBatch, loadList, pollIntervalMs, query]);
+  }, [drawerBatchActive, drawerBatchId, gateway, hasActiveBatch, loadList, pollIntervalMs, query]);
 
   const navigateTo = useCallback(
     (href: string) => {
@@ -473,9 +507,22 @@ export function RewriteBatchScreen({
       setFeedbackMsg(
         `批量复刻任务「${created.batch.name}」已入队（预冻 ${created.batch.reservedPoints} 点数，按实际成功篇数结算并自动退差额）`,
       );
-      await Promise.all([loadList({ ...query, page: 1 }), loadOptions()]);
       setDrawerDetail(created);
       setDrawerOpen(true);
+      await Promise.all([
+        loadList({ ...query, page: 1 }),
+        loadOptions(),
+        isActiveBatchStatus(created.batch.status)
+          ? gateway
+              .detail(created.batch.id)
+              .then((latest) => {
+                setDrawerDetail((prev) =>
+                  prev && prev.batch.id === latest.batch.id ? latest : prev,
+                );
+              })
+              .catch(() => undefined)
+          : Promise.resolve(),
+      ]);
     } catch (err) {
       setModalError(err instanceof Error ? err.message : '创建批量复刻任务失败');
     } finally {
@@ -791,6 +838,7 @@ export function RewriteBatchScreen({
           rowKey="id"
           loading={loading}
           dataSource={items}
+          scroll={{ x: 1240 }}
           locale={{ emptyText: CRUD_EMPTY_TEXT }}
           rowSelection={
             readOnly
@@ -823,7 +871,7 @@ export function RewriteBatchScreen({
             {
               title: '序号',
               key: 'seq',
-              width: 68,
+              width: 60,
               render: (_val: unknown, _row: RewriteBatchItem, idx: number) =>
                 (query.page - 1) * query.pageSize + idx + 1,
             },
@@ -831,15 +879,42 @@ export function RewriteBatchScreen({
               title: '任务名',
               dataIndex: 'name',
               key: 'name',
+              width: 200,
+              minWidth: 180,
+              ellipsis: { showTitle: false },
               render: (_val: unknown, row: RewriteBatchItem) => (
-                <div>
-                  <div style={{ fontWeight: 600, color: 'var(--gm-fg-1)' }}>{row.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 2 }}>
-                    归档分类：
+                <div style={{ display: 'grid', gap: 2, minWidth: 165, whiteSpace: 'normal' }}>
+                  <TableClampText
+                    text={row.name}
+                    lines={2}
+                    strong
+                    tooltipThreshold={18}
+                    style={{ color: 'var(--gm-fg-1)' }}
+                  />
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--gm-fg-3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    <span style={{ flex: 'none' }}>归档分类：</span>
                     <Button
                       type="link"
                       size="small"
-                      style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                      title={row.categoryName || '查看分类文章'}
+                      style={{
+                        padding: 0,
+                        height: 'auto',
+                        fontSize: 12,
+                        maxWidth: 120,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        display: 'inline-block',
+                      }}
                       onClick={() =>
                         navigateTo(
                           `/writing/articles?categoryId=${encodeURIComponent(row.categoryId)}`,
@@ -856,14 +931,30 @@ export function RewriteBatchScreen({
               title: '关键词',
               dataIndex: 'keyword',
               key: 'keyword',
+              width: 190,
+              minWidth: 160,
+              ellipsis: { showTitle: false },
               render: (_val: unknown, row: RewriteBatchItem) => (
-                <div>
+                <div style={{ display: 'grid', gap: 4, minWidth: 145, whiteSpace: 'normal' }}>
                   <Space size={6} wrap>
-                    <Tag color={row.sourceType === 'link_list' ? 'geekblue' : 'purple'}>
+                    <Tag
+                      color={row.sourceType === 'link_list' ? 'geekblue' : 'purple'}
+                      style={{ margin: 0, whiteSpace: 'nowrap' }}
+                    >
                       {REWRITE_BATCH_SOURCE_LABELS[row.sourceType] ?? row.sourceType}
                     </Tag>
-                    <span>{row.keyword || `链接清单（${row.candidateCount} 条候选）`}</span>
+                    {row.brand ? (
+                      <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                        品牌：{row.brand}
+                      </Tag>
+                    ) : null}
                   </Space>
+                  <TableClampText
+                    text={row.keyword || `链接清单（${row.candidateCount} 条候选）`}
+                    lines={2}
+                    tooltipThreshold={18}
+                    style={{ fontSize: 13 }}
+                  />
                 </div>
               ),
             },
@@ -871,13 +962,13 @@ export function RewriteBatchScreen({
               title: '最大改写量',
               dataIndex: 'maxCount',
               key: 'maxCount',
-              width: 110,
+              width: 105,
               render: (val: number) => <span className="gm-num">{val} 篇</span>,
             },
             {
               title: '当前数量',
               key: 'doneCount',
-              width: 190,
+              width: 175,
               render: (_val: unknown, row: RewriteBatchItem) => (
                 <div>
                   <div className="gm-num" style={{ fontWeight: 600 }}>
@@ -894,23 +985,27 @@ export function RewriteBatchScreen({
               title: '状态',
               dataIndex: 'status',
               key: 'status',
-              width: 220,
+              width: 215,
+              minWidth: 185,
+              ellipsis: { showTitle: false },
               render: (_val: unknown, row: RewriteBatchItem) => (
-                <div>
-                  <Tag color={batchStatusTagColor(row.status)}>
-                    {REWRITE_BATCH_STATUS_LABELS[row.status] ?? row.status}
-                  </Tag>
+                <div style={{ display: 'grid', gap: 4, minWidth: 170, whiteSpace: 'normal' }}>
+                  <div>
+                    <Tag color={batchStatusTagColor(row.status)}>
+                      {REWRITE_BATCH_STATUS_LABELS[row.status] ?? row.status}
+                    </Tag>
+                  </div>
                   {row.note && (
-                    <div
+                    <TableClampText
+                      text={row.note}
+                      lines={2}
+                      tooltipThreshold={26}
                       style={{
                         fontSize: 12,
                         color: row.status === 'FAILED' ? 'var(--gm-danger)' : 'var(--gm-fg-2)',
-                        marginTop: 4,
                         lineHeight: 1.4,
                       }}
-                    >
-                      {row.note}
-                    </div>
+                    />
                   )}
                 </div>
               ),
@@ -918,7 +1013,7 @@ export function RewriteBatchScreen({
             {
               title: '查看任务',
               key: 'inspect',
-              width: 120,
+              width: 115,
               render: (_val: unknown, row: RewriteBatchItem) => (
                 <Button size="small" onClick={() => void openTaskDrawer(row.id)}>
                   查看任务 ({row.candidateCount || row.doneCount})
@@ -929,7 +1024,7 @@ export function RewriteBatchScreen({
               title: '添加时间',
               dataIndex: 'createdAt',
               key: 'createdAt',
-              width: 150,
+              width: 140,
               render: (val: string) => (
                 <span className="gm-num" style={{ fontSize: 13, color: 'var(--gm-fg-2)' }}>
                   {formatTime(val)}
@@ -939,7 +1034,8 @@ export function RewriteBatchScreen({
             {
               title: '操作',
               key: 'actions',
-              width: 180,
+              width: 155,
+              fixed: 'right',
               render: (_val: unknown, row: RewriteBatchItem) => {
                 if (readOnly) return <Typography.Text type="secondary">只读</Typography.Text>;
                 return (
@@ -1571,6 +1667,11 @@ export function RewriteBatchScreen({
               <Descriptions.Item label="创建时间">
                 {formatTime(drawerDetail.batch.createdAt)}
               </Descriptions.Item>
+              {drawerDetail.batch.brand && (
+                <Descriptions.Item label="融入品牌词" span={2}>
+                  {drawerDetail.batch.brand}
+                </Descriptions.Item>
+              )}
               {drawerDetail.batch.note && (
                 <Descriptions.Item label="结算与执行说明" span={2}>
                   {drawerDetail.batch.note}
@@ -1583,6 +1684,7 @@ export function RewriteBatchScreen({
               size="small"
               loading={drawerLoading}
               dataSource={drawerDetail.records}
+              scroll={{ x: 830 }}
               pagination={{ pageSize: 10, showSizeChanger: false }}
               locale={{ emptyText: '暂无候选处理记录' }}
               columns={[
@@ -1595,35 +1697,41 @@ export function RewriteBatchScreen({
                 {
                   title: '候选源链接 / 原标题',
                   key: 'source',
+                  width: 235,
+                  minWidth: 200,
+                  ellipsis: { showTitle: false },
                   render: (_v: unknown, rec: RewriteRecordItem) => (
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{rec.sourceTitle || '待抓取标题'}</div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: 'var(--gm-fg-3)',
-                          wordBreak: 'break-all',
-                          maxWidth: 260,
-                        }}
-                      >
-                        {rec.url}
-                      </div>
+                    <div style={{ display: 'grid', gap: 2, minWidth: 185, whiteSpace: 'normal' }}>
+                      <TableClampText
+                        text={rec.sourceTitle || '待抓取标题'}
+                        lines={2}
+                        strong
+                        tooltipThreshold={22}
+                      />
+                      <TableClampText
+                        text={rec.url}
+                        lines={1}
+                        tooltipThreshold={28}
+                        style={{ fontSize: 12, color: 'var(--gm-fg-3)', wordBreak: 'break-all' }}
+                      />
                     </div>
                   ),
                 },
                 {
                   title: '复刻新标题',
                   key: 'newTitle',
+                  width: 215,
+                  minWidth: 185,
+                  ellipsis: { showTitle: false },
                   render: (_v: unknown, rec: RewriteRecordItem) => (
-                    <div>
-                      <div>{rec.newTitle || '—'}</div>
+                    <div style={{ display: 'grid', gap: 4, minWidth: 170, whiteSpace: 'normal' }}>
+                      <TableClampText text={rec.newTitle} lines={2} tooltipThreshold={20} />
                       {rec.articleStatus && (
-                        <Tag
-                          color={articleStatusTagColor(rec.articleStatus)}
-                          style={{ marginTop: 4 }}
-                        >
-                          {ARTICLE_STATUS_LABEL[rec.articleStatus]}
-                        </Tag>
+                        <div>
+                          <Tag color={articleStatusTagColor(rec.articleStatus)}>
+                            {ARTICLE_STATUS_LABEL[rec.articleStatus]}
+                          </Tag>
+                        </div>
                       )}
                     </div>
                   ),
@@ -1631,7 +1739,7 @@ export function RewriteBatchScreen({
                 {
                   title: '5-gram 相似度',
                   key: 'similarity',
-                  width: 120,
+                  width: 115,
                   render: (_v: unknown, rec: RewriteRecordItem) => {
                     if (rec.similarity === null || rec.similarity === undefined) return '—';
                     const pct = `${(rec.similarity * 100).toFixed(1)}%`;
@@ -1646,16 +1754,23 @@ export function RewriteBatchScreen({
                 {
                   title: '状态 / 说明',
                   key: 'status',
-                  width: 190,
+                  width: 205,
+                  minWidth: 175,
+                  ellipsis: { showTitle: false },
                   render: (_v: unknown, rec: RewriteRecordItem) => (
-                    <div>
-                      <Tag color={itemStatusTagColor(rec.status)}>
-                        {ITEM_STATUS_LABELS[rec.status] ?? rec.status}
-                      </Tag>
+                    <div style={{ display: 'grid', gap: 3, minWidth: 160, whiteSpace: 'normal' }}>
+                      <div>
+                        <Tag color={itemStatusTagColor(rec.status)}>
+                          {ITEM_STATUS_LABELS[rec.status] ?? rec.status}
+                        </Tag>
+                      </div>
                       {rec.error && (
-                        <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 3 }}>
-                          {rec.error}
-                        </div>
+                        <TableClampText
+                          text={rec.error}
+                          lines={2}
+                          tooltipThreshold={26}
+                          style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+                        />
                       )}
                     </div>
                   ),
@@ -1664,6 +1779,7 @@ export function RewriteBatchScreen({
                   title: '操作',
                   key: 'go',
                   width: 90,
+                  fixed: 'right',
                   render: (_v: unknown, rec: RewriteRecordItem) =>
                     rec.articleId ? (
                       <Button

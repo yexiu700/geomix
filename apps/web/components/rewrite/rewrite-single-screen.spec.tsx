@@ -437,4 +437,24 @@ describe('RewriteSingleScreen', () => {
       expect(window.location.pathname).toBe('/rewrite/single');
     });
   });
+
+  it('protects 复刻新标题 column from single-character vertical collapse via clamp/ellipsis and table scroll (#208)', async () => {
+    const longTitle = '2026 氮化镓多口快充充电器：落地评估维度与执行核对指南';
+    const { gateway } = makeGateway([
+      makeRecord({
+        id: 'rw_clamp_01',
+        sourceTitle: '2026 氮化镓多口快充充电器实测与选购避坑指南',
+        newTitle: longTitle,
+      }),
+    ]);
+
+    const { container } = render(
+      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
+    );
+
+    const titleEl = await screen.findByText(longTitle);
+    expect(titleEl.className).toContain('gm-clamp-2');
+    expect(container.querySelector('.ant-table-cell-ellipsis')).toBeTruthy();
+    expect(container.querySelector('.ant-table-fixed-column')).toBeTruthy();
+  });
 });

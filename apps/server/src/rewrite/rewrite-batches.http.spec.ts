@@ -198,6 +198,13 @@ describe.skipIf(
           res.end('<html><body>请完成安全验证后继续访问</body></html>');
           return;
         }
+        if (path === '/short-source') {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end(
+            '<html><head><title>超短快讯</title></head><body><article><h1>超短快讯</h1><p>这是一条正文不足两百字的行业简讯。</p></article></body></html>',
+          );
+          return;
+        }
         if (path === '/slow-hang') {
           const timer = setTimeout(() => {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -342,6 +349,7 @@ describe.skipIf(
             name: '五链一败验收任务',
             maxCount: 5,
             sourceType: 'link_list',
+            keyword: '智能制造装备标签',
             linksText: [
               'https://public.batch.example/a-1',
               'https://public.batch.example/a-2',
@@ -356,9 +364,13 @@ describe.skipIf(
         },
       );
       expect(fiveLinksRes.status).toBe(200);
+      expect(fiveLinksRes.data!.batch.keyword).toBe('智能制造装备标签');
+      expect(fiveLinksRes.data!.batch.brand).toBe('智造装备');
       const batch1Id = fiveLinksRes.data!.batch.id;
 
       const batch1Done = await waitForBatchTerminal(ctx.base, token, batch1Id);
+      expect(batch1Done.batch.keyword).toBe('智能制造装备标签');
+      expect(batch1Done.batch.brand).toBe('智造装备');
       expect(batch1Done.batch.status).toBe('PARTIAL');
       expect(batch1Done.batch.doneCount).toBe(4);
       expect(batch1Done.batch.reservedPoints).toBe(25);
@@ -477,6 +489,35 @@ describe.skipIf(
       const csvText = await csvRes.text();
       expect(csvText).toContain('五链一败验收任务');
       expect(csvText).toContain('凑满三篇即停任务');
+
+      // 8. Verify short-source batch error never tells users to turn on nonexistent "粘贴原文" switch (#209)
+      const shortBatchRes = await httpCall<RewriteBatchDetailResponse>(
+        ctx.base,
+        'POST',
+        '/api/v1/rewrite-batches',
+        {
+          token,
+          body: {
+            name: '短正文跳过文案验收',
+            maxCount: 2,
+            sourceType: 'link_list',
+            keyword: 'Anker氮化镓充电器',
+            brand: 'Anker',
+            linksText:
+              'https://public.batch.example/short-source\nhttps://public.batch.example/ok-short-pair',
+            mediaCategoryId,
+            templateId: 'sys_rewrite_01',
+          },
+        },
+      );
+      expect(shortBatchRes.status).toBe(200);
+      expect(shortBatchRes.data!.batch.keyword).toBe('Anker氮化镓充电器');
+      expect(shortBatchRes.data!.batch.brand).toBe('Anker');
+      const shortDone = await waitForBatchTerminal(ctx.base, token, shortBatchRes.data!.batch.id);
+      expect(shortDone.batch.status).toBe('PARTIAL');
+      const skippedShort = shortDone.records.find((r) => r.status === 'SKIPPED');
+      expect(skippedShort?.error).toContain('200 字');
+      expect(skippedShort?.error).not.toContain('开启「粘贴原文」');
     });
   },
 );
