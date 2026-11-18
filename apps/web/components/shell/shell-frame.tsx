@@ -440,31 +440,17 @@ export function ShellFrame({
         onChangePassword={() => setPasswordOpen(true)}
         onLogout={onLogout}
       />
-      {passwordOpen ? (
-        <div
-          className="gm-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="修改密码"
-          tabIndex={-1}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.stopPropagation();
-              setPasswordOpen(false);
-            }
-          }}
-        >
-          <div className="gm-modal-card">
-            <div className="gm-modal-head">
-              <strong>修改密码</strong>
-              <Button aria-label="关闭修改密码" onClick={() => setPasswordOpen(false)}>
-                关闭
-              </Button>
-            </div>
-            <PasswordForm onSubmit={onChangePassword} />
-          </div>
-        </div>
-      ) : null}
+      <Modal
+        open={passwordOpen}
+        title="修改密码"
+        onCancel={() => setPasswordOpen(false)}
+        keyboard
+        maskClosable
+        destroyOnHidden
+        footer={null}
+      >
+        <PasswordForm onSubmit={onChangePassword} onCancel={() => setPasswordOpen(false)} />
+      </Modal>
     </Layout>
   );
 }
