@@ -173,28 +173,58 @@ export function httpRewriteBatchGateway(storage: SessionStorageLike): RewriteBat
     },
 
     async loadFormOptions() {
-      const [catRes, mediaRes, promptRes, listPreview] = await Promise.all([
-        categoryGw.list({
+      const loadAllCategories = async (): Promise<ArticleCategoryRecord[]> => {
+        const first = await categoryGw.list({
           page: 1,
           pageSize: 50,
           sort: 'createdAt',
           order: 'desc',
           keyword: '',
           export: undefined,
-        }),
-        galleryGw.listCategories({ page: 1, pageSize: 50 }),
+        });
+        const items = [...first.items];
+        const totalPages = Math.min(5, Math.ceil(first.total / 50));
+        if (totalPages > 1) {
+          const rest = await Promise.allSettled(
+            Array.from({ length: totalPages - 1 }, (_, idx) =>
+              categoryGw.list({
+                page: idx + 2,
+                pageSize: 50,
+                sort: 'createdAt',
+                order: 'desc',
+                keyword: '',
+                export: undefined,
+              }),
+            ),
+          );
+          for (const entry of rest) {
+            if (entry.status === 'fulfilled') {
+              items.push(...entry.value.items);
+            }
+          }
+        }
+        return items;
+      };
+
+      const [catRes, mediaRes, promptRes, listPreview] = await Promise.allSettled([
+        loadAllCategories(),
+        galleryGw.listCategories({ page: 1, pageSize: 100 }),
         promptGw.options('REWRITE'),
-        authorizedRequest(storage, 'GET', '/rewrite-batches?page=1&pageSize=10')
-          .then((r) => unwrap<RewriteBatchListResponse>(r))
-          .catch(() => null),
+        authorizedRequest(storage, 'GET', '/rewrite-batches?page=1&pageSize=10').then((r) =>
+          unwrap<RewriteBatchListResponse>(r),
+        ),
       ]);
 
       return {
-        categories: catRes.items,
-        mediaCategories: mediaRes.items,
-        rewriteTemplates: [...promptRes.user, ...promptRes.system],
-        unitPoints: listPreview?.unitPoints ?? 5,
-        remoteSearchEnabled: listPreview?.remoteSearchEnabled ?? false,
+        categories: catRes.status === 'fulfilled' ? catRes.value : [],
+        mediaCategories: mediaRes.status === 'fulfilled' ? mediaRes.value.items : [],
+        rewriteTemplates:
+          promptRes.status === 'fulfilled'
+            ? [...promptRes.value.user, ...promptRes.value.system]
+            : [],
+        unitPoints: listPreview.status === 'fulfilled' ? listPreview.value.unitPoints : 5,
+        remoteSearchEnabled:
+          listPreview.status === 'fulfilled' ? listPreview.value.remoteSearchEnabled : false,
       };
     },
   };

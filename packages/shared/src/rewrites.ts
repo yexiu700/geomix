@@ -13,7 +13,7 @@ export const REWRITE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 export const REWRITE_SIM_MAX_DEFAULT = 0.35;
 export const REWRITE_MIN_SOURCE_CHARS = 200;
 export const REWRITE_MAX_SOURCE_CHARS = 8000;
-export const REWRITE_IMAGE_MIN = 1;
+export const REWRITE_IMAGE_MIN = 0;
 export const REWRITE_IMAGE_MAX = 3;
 export const REWRITE_IMAGE_DEFAULT = 2;
 export const REWRITE_DEFAULT_UNIT_POINTS = 5;
@@ -57,7 +57,7 @@ export type RewriteRecordItem = {
   newTitle: string | null;
   categoryId: string | null;
   categoryName: string | null;
-  mediaCategoryId: string;
+  mediaCategoryId: string | null;
   mediaCategoryName: string | null;
   templateId: string;
   templateName: string | null;
@@ -216,7 +216,12 @@ export function canonicalizeRewriteUrl(rawUrl: string): string {
   if (trimmed.startsWith('paste://')) {
     return trimmed;
   }
-  const parsed = new URL(trimmed);
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('链接格式不正确，请输入以 http:// 或 https:// 开头的完整网址');
+  }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('仅支持 http 或 https 公开网页链接');
   }
@@ -921,7 +926,14 @@ export const rewriteSingleCreateSchema = z
       .max(50_000, '粘贴原文长度不能超过 50000 个字符')
       .optional()
       .default(''),
-    mediaCategoryId: z.string().regex(REWRITE_ID_PATTERN, '请选择文章配图图库分类'),
+    mediaCategoryId: z
+      .union([
+        z.string().regex(REWRITE_ID_PATTERN, '请选择有效的文章配图图库分类'),
+        z.literal(''),
+        z.null(),
+      ])
+      .optional()
+      .transform((val) => (val && val.length > 0 ? val : null)),
     imageCount: z
       .number()
       .int()
@@ -943,6 +955,13 @@ export const rewriteSingleCreateSchema = z
     brand: z.string().trim().max(40, '融入品牌词不超过 40 个字符').optional().default(''),
   })
   .superRefine((val, ctx) => {
+    if (val.imageCount > 0 && !val.mediaCategoryId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mediaCategoryId'],
+        message: '请选择文章配图的企业图库分类（不配图时请将配图张数设为 0）',
+      });
+    }
     if (!val.pastedText) {
       if (!val.url || val.url.trim().length === 0) {
         ctx.addIssue({

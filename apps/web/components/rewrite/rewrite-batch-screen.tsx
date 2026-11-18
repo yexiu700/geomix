@@ -45,7 +45,7 @@ import {
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -56,10 +56,11 @@ import {
 } from '../../lib/rewrite-batches';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_BATCH_MAX_COUNT = 1;
+const NO_IMAGE_GALLERY_VALUE = '__NONE__';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -91,6 +92,7 @@ type CreateDraft = {
   keyword: string;
   linksText: string;
   mediaCategoryId: string;
+  noImage: boolean;
   templateId: string;
   categoryId: string;
   autoCategoryName: string;
@@ -105,7 +107,8 @@ type ModalState = {
   maximized: boolean;
 };
 
-function buildInitialDraft(_options: RewriteBatchFormOptions | null): CreateDraft {
+function buildInitialDraft(options: RewriteBatchFormOptions | null): CreateDraft {
+  const hasUsableGallery = (options?.mediaCategories ?? []).some((c) => c.assetCount > 0);
   return {
     name: '',
     maxCount: DEFAULT_BATCH_MAX_COUNT,
@@ -113,6 +116,7 @@ function buildInitialDraft(_options: RewriteBatchFormOptions | null): CreateDraf
     keyword: '',
     linksText: '',
     mediaCategoryId: '',
+    noImage: !hasUsableGallery,
     templateId: '',
     categoryId: '',
     autoCategoryName: buildDefaultBatchCategoryName('批量爆文'),
@@ -187,6 +191,7 @@ function isTerminalBatchStatus(status: TaskStatusName): boolean {
 export function RewriteBatchScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   storage,
@@ -195,6 +200,7 @@ export function RewriteBatchScreen({
 }: {
   title: string;
   tabId?: string;
+  active?: boolean;
   readOnly?: boolean;
   pollIntervalMs?: number;
   storage?: SessionStorageLike;
@@ -238,6 +244,7 @@ export function RewriteBatchScreen({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerDetail, setDrawerDetail] = useState<RewriteBatchDetailResponse | null>(null);
+  const wasActiveRef = useRef(active);
 
   const loadList = useCallback(
     async (nextQuery: RewriteBatchListQuery, silent = false) => {
@@ -269,7 +276,10 @@ export function RewriteBatchScreen({
       if (opts.unitPoints) setUnitPoints(opts.unitPoints);
       setRemoteSearchEnabled(opts.remoteSearchEnabled);
       return opts;
-    } catch {
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : '加载表单选项（文章分类/图库/指令）失败，请刷新重试',
+      );
       return null;
     }
   }, [gateway]);
@@ -281,6 +291,13 @@ export function RewriteBatchScreen({
   useEffect(() => {
     void loadOptions();
   }, [loadOptions]);
+
+  useEffect(() => {
+    if (!wasActiveRef.current && active) {
+      void loadOptions();
+    }
+    wasActiveRef.current = active;
+  }, [active, loadOptions]);
 
   const hasActiveBatch = useMemo(
     () =>
@@ -306,6 +323,8 @@ export function RewriteBatchScreen({
   const navigateTo = useCallback(
     (href: string) => {
       if (!onDispatch) return;
+      setModalState(null);
+      setModalError(null);
       setDrawerOpen(false);
       setDrawerDetail(null);
       onDispatch({
@@ -319,7 +338,7 @@ export function RewriteBatchScreen({
 
   const openCreateModal = async () => {
     setModalError(null);
-    const opts = formOptions ?? (await loadOptions());
+    const opts = (await loadOptions()) ?? formOptions;
     const initial = buildInitialDraft(opts);
     setModalState({
       initial,
@@ -357,72 +376,66 @@ export function RewriteBatchScreen({
     const { draft } = modalState;
     setModalError(null);
 
+    const issues: string[] = [];
+
     if (!draft.name.trim()) {
-      setModalError('请填写任务名称');
-      return;
+      issues.push('请填写任务名称');
+    } else if (draft.name.trim().length > REWRITE_BATCH_NAME_MAX) {
+      issues.push(`任务名称不超过 ${REWRITE_BATCH_NAME_MAX} 个字符`);
     }
-    if (draft.name.trim().length > REWRITE_BATCH_NAME_MAX) {
-      setModalError(`任务名称不超过 ${REWRITE_BATCH_NAME_MAX} 个字符`);
-      return;
-    }
+
     if (
       !Number.isInteger(draft.maxCount) ||
       draft.maxCount < REWRITE_BATCH_MAX_COUNT_MIN ||
       draft.maxCount > REWRITE_BATCH_MAX_COUNT_MAX
     ) {
-      setModalError(
+      issues.push(
         `最大改写量须在 ${REWRITE_BATCH_MAX_COUNT_MIN}–${REWRITE_BATCH_MAX_COUNT_MAX} 篇之间`,
       );
-      return;
     }
 
     if (draft.sourceType === 'remote') {
       if (!draft.keyword.trim()) {
-        setModalError('关键词全网搜索模式下请填写流量关键词');
-        return;
-      }
-      if (looksLikeUrlNotKeyword(draft.keyword)) {
-        setModalError(REWRITE_BATCH_URL_AS_KEYWORD_MSG);
-        return;
-      }
-      if (!remoteSearchEnabled) {
-        setModalError(
+        issues.push('关键词全网搜索模式下请填写流量关键词');
+      } else if (looksLikeUrlNotKeyword(draft.keyword)) {
+        issues.push(REWRITE_BATCH_URL_AS_KEYWORD_MSG);
+      } else if (!remoteSearchEnabled) {
+        issues.push(
           '当前环境尚未启用联网关键词检索源，请切换至「粘贴链接清单」模式提交公开文章 URL',
         );
-        return;
       }
     } else {
       if (draft.keyword.trim() && looksLikeUrlNotKeyword(draft.keyword)) {
-        setModalError(REWRITE_BATCH_URL_AS_KEYWORD_MSG);
-        return;
+        issues.push(REWRITE_BATCH_URL_AS_KEYWORD_MSG);
       }
       const parsed = parseBatchLinkList(draft.linksText, REWRITE_BATCH_LINK_LIST_MAX);
       if (parsed.nonEmptyCount === 0) {
-        setModalError('请至少粘贴 1 条公开文章链接（一行一条）');
-        return;
-      }
-      if (parsed.invalidLines.length > 0) {
+        issues.push('请至少粘贴 1 条公开文章链接（一行一条）');
+      } else if (parsed.invalidLines.length > 0) {
         const first = parsed.invalidLines[0]!;
-        setModalError(`第 ${first.line} 行链接不合法：${first.reason}`);
-        return;
-      }
-      if (parsed.candidates.length === 0) {
+        issues.push(`第 ${first.line} 行链接不合法：${first.reason}`);
+      } else if (parsed.candidates.length === 0) {
         const firstExcl = parsed.excludedLines[0];
-        setModalError(
+        issues.push(
           firstExcl
             ? `全部候选链接均不可用于正文复刻（第 ${firstExcl.line} 行：${firstExcl.reason}）`
             : '没有可用的有效文章链接',
         );
-        return;
       }
     }
 
-    if (!draft.mediaCategoryId) {
-      setModalError('请选择文章配图图库分类（图库无图时请先前往我的图库上传图片）');
-      return;
+    if (!draft.noImage && !draft.mediaCategoryId) {
+      issues.push(`请选择文章配图${UX_TERMS.gallery}分类（或选择「不配图（0 张）」）`);
+    } else if (!draft.noImage && selectedMediaCat && selectedMediaCat.assetCount === 0) {
+      issues.push('所选图库分类暂无图片，请先上传图片或选择「不配图（0 张）」');
     }
+
     if (!draft.templateId) {
-      setModalError('请选择爆文改写指令');
+      issues.push('请选择爆文改写指令');
+    }
+
+    if (issues.length > 0) {
+      setModalError(issues.join('；'));
       return;
     }
 
@@ -432,7 +445,7 @@ export function RewriteBatchScreen({
       sourceType: draft.sourceType,
       keyword: draft.keyword.trim(),
       linksText: draft.sourceType === 'link_list' ? draft.linksText : undefined,
-      mediaCategoryId: draft.mediaCategoryId,
+      mediaCategoryId: draft.noImage ? null : draft.mediaCategoryId || null,
       templateId: draft.templateId,
       categoryId: draft.categoryId || null,
       brand: draft.brand.trim() || undefined,
@@ -556,6 +569,11 @@ export function RewriteBatchScreen({
       },
     });
   };
+
+  const mediaCategoriesWithImages = useMemo(
+    () => (formOptions?.mediaCategories ?? []).filter((cat) => cat.assetCount > 0),
+    [formOptions],
+  );
 
   const selectedMediaCat = useMemo(() => {
     if (!modalState || !formOptions) return null;
@@ -1008,8 +1026,6 @@ export function RewriteBatchScreen({
               </Tag>
             </div>
 
-            {modalError && <Alert type="error" showIcon message={modalError} />}
-
             {/* Task Name & Max Count */}
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
               <div>
@@ -1204,48 +1220,112 @@ export function RewriteBatchScreen({
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: 8,
                     marginBottom: 6,
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>
-                    文章配图（自有图库分类） <span style={{ color: 'var(--gm-danger)' }}>*</span>
+                    文章配图（自有图库分类）
+                    {!modalState.draft.noImage ? (
+                      <>
+                        {' '}
+                        <span style={{ color: 'var(--gm-danger)' }}>*</span>
+                      </>
+                    ) : null}
                   </span>
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0, height: 'auto' }}
-                    onClick={() => navigateTo('/material/gallery')}
-                  >
-                    管理图库
-                  </Button>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/material/gallery');
+                      }}
+                    >
+                      管理图库
+                    </Button>
+                  ) : null}
                 </div>
                 <select
                   aria-label="文章配图图库分类"
                   style={NATIVE_SELECT_STYLE}
-                  value={modalState.draft.mediaCategoryId}
-                  onChange={(e) =>
+                  value={
+                    modalState.draft.noImage
+                      ? NO_IMAGE_GALLERY_VALUE
+                      : modalState.draft.mediaCategoryId
+                  }
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === NO_IMAGE_GALLERY_VALUE) {
+                      setModalState((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              draft: { ...prev.draft, mediaCategoryId: '', noImage: true },
+                            }
+                          : null,
+                      );
+                      return;
+                    }
                     setModalState((prev) =>
                       prev
-                        ? { ...prev, draft: { ...prev.draft, mediaCategoryId: e.target.value } }
+                        ? {
+                            ...prev,
+                            draft: { ...prev.draft, mediaCategoryId: val, noImage: false },
+                          }
                         : null,
-                    )
-                  }
+                    );
+                  }}
                 >
                   <option value="">不选择</option>
+                  <option value={NO_IMAGE_GALLERY_VALUE}>不配图（0 张，不使用来源站原图）</option>
                   {(formOptions?.mediaCategories ?? []).map((cat) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.name}（{cat.assetCount} 张可用）
                     </option>
                   ))}
                 </select>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
-                  按原文篇幅自动插图（&lt;600字 1 张 / 600字以上 2 张），严禁使用来源站原图。
-                  {selectedMediaCat && selectedMediaCat.assetCount === 0 && (
-                    <span style={{ color: 'var(--gm-danger)', marginLeft: 4 }}>
-                      当前图库分类暂无图片，请先上传图片！
-                    </span>
-                  )}
-                </div>
+                {mediaCategoriesWithImages.length === 0 ? (
+                  <Alert
+                    style={{ marginTop: 6 }}
+                    type="warning"
+                    showIcon
+                    message={
+                      <span>
+                        当前暂无含图片的企业图库分类，已默认设为「不配图（0 张）」可直接提交，或
+                        {onDispatch ? (
+                          <Button
+                            type="link"
+                            size="small"
+                            htmlType="button"
+                            style={{ padding: '0 4px', height: 'auto' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateTo('/material/gallery');
+                            }}
+                          >
+                            前往上传配图
+                          </Button>
+                        ) : null}
+                      </span>
+                    }
+                  />
+                ) : (
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
+                    {modalState.draft.noImage
+                      ? '已选择不配图（0 张）：正文不插入图片且严禁使用来源站原图。'
+                      : '按原文篇幅自动插图（<600字 1 张 / 600字以上 2 张），严禁使用来源站原图。'}
+                    {!modalState.draft.noImage &&
+                      selectedMediaCat &&
+                      selectedMediaCat.assetCount === 0 && (
+                        <span style={{ color: 'var(--gm-danger)', marginLeft: 4 }}>
+                          当前图库分类暂无图片，请先上传图片或选择「不配图（0 张）」！
+                        </span>
+                      )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1254,6 +1334,7 @@ export function RewriteBatchScreen({
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: 8,
                     marginBottom: 6,
                   }}
                 >
@@ -1261,14 +1342,20 @@ export function RewriteBatchScreen({
                     爆文改写指令（仅流量复刻类型）{' '}
                     <span style={{ color: 'var(--gm-danger)' }}>*</span>
                   </span>
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0, height: 'auto' }}
-                    onClick={() => navigateTo('/writing/prompts')}
-                  >
-                    管理指令
-                  </Button>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/writing/prompts');
+                      }}
+                    >
+                      管理指令
+                    </Button>
+                  ) : null}
                 </div>
                 <select
                   aria-label="爆文改写指令"
@@ -1295,7 +1382,31 @@ export function RewriteBatchScreen({
             {/* Category, Brand & Result Status */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>归档文章分类</div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>归档文章分类</span>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/writing/categories');
+                      }}
+                    >
+                      管理分类
+                    </Button>
+                  ) : null}
+                </div>
                 <select
                   aria-label="归档文章分类"
                   style={NATIVE_SELECT_STYLE}

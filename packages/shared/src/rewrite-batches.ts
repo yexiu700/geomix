@@ -315,10 +315,7 @@ export const rewriteBatchCreateSchema = z
     keyword: z.string().trim().max(120, '流量关键词不超过 120 个字符').optional().default(''),
     linkList: z.array(z.string()).max(200, '提交链接行数过多').optional().default([]),
     linksText: z.string().max(30_000, '链接清单内容过长').optional(),
-    mediaCategoryId: z
-      .string({ required_error: '请选择文章配图图库分类' })
-      .trim()
-      .regex(REWRITE_ID_PATTERN, '请选择有效的文章配图图库分类'),
+    mediaCategoryId: optionalIdField.transform((val) => val ?? null),
     templateId: z
       .string({ required_error: '请选择爆文改写指令' })
       .trim()
@@ -398,7 +395,7 @@ export type RewriteBatchCreateInput = {
   keyword?: string;
   linkList?: string[];
   linksText?: string;
-  mediaCategoryId: string;
+  mediaCategoryId?: string | null;
   templateId: string;
   categoryId?: string | null;
   brand?: string;
@@ -425,7 +422,7 @@ export type RewriteBatchItem = {
   failedOrSkippedCount: number;
   categoryId: string;
   categoryName: string | null;
-  mediaCategoryId: string;
+  mediaCategoryId: string | null;
   mediaCategoryName: string | null;
   templateId: string;
   templateName: string | null;

@@ -21,7 +21,7 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Input, Slider, Space, Switch, Table, Tag, Typography } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -32,7 +32,9 @@ import {
 } from '../../lib/rewrites';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+
+const NO_IMAGE_GALLERY_VALUE = '__NONE__';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -79,16 +81,17 @@ type ModalState = {
 };
 
 function buildInitialDraft(
-  _options: RewriteFormOptions | null,
+  options: RewriteFormOptions | null,
   seed?: Partial<CreateDraft>,
 ): CreateDraft {
+  const hasUsableGallery = (options?.mediaCategories ?? []).some((c) => c.assetCount > 0);
   return {
     pastedText: seed?.pastedText ?? false,
     url: seed?.url ?? '',
     pastedTitle: seed?.pastedTitle ?? '',
     pastedContent: seed?.pastedContent ?? '',
     mediaCategoryId: seed?.mediaCategoryId ?? '',
-    imageCount: seed?.imageCount ?? REWRITE_IMAGE_DEFAULT,
+    imageCount: seed?.imageCount ?? (hasUsableGallery ? REWRITE_IMAGE_DEFAULT : 0),
     templateId: seed?.templateId ?? '',
     categoryId: seed?.categoryId ?? '',
     autoCategoryName: seed?.autoCategoryName ?? '爆文复刻',
@@ -133,6 +136,7 @@ function articleStatusTagColor(status: ArticleStatusName): string {
 export function RewriteSingleScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   storage,
   gateway: injectedGateway,
@@ -140,6 +144,7 @@ export function RewriteSingleScreen({
 }: {
   title: string;
   tabId?: string;
+  active?: boolean;
   readOnly?: boolean;
   storage?: SessionStorageLike;
   gateway?: RewriteSingleGateway;
@@ -180,6 +185,7 @@ export function RewriteSingleScreen({
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [urlWarning, setUrlWarning] = useState<string | null>(null);
+  const wasActiveRef = useRef(active);
 
   const loadList = useCallback(
     async (nextQuery: RewriteRecordListQuery) => {
@@ -209,7 +215,14 @@ export function RewriteSingleScreen({
         setUnitPoints(opts.unitPoints);
       }
       return opts;
-    } catch {
+    } catch (err) {
+      setBanner({
+        type: 'warning',
+        text:
+          err instanceof Error
+            ? err.message
+            : '加载表单选项（文章分类/图库/指令）失败，请点击刷新重试',
+      });
       return null;
     }
   }, [gateway]);
@@ -221,6 +234,13 @@ export function RewriteSingleScreen({
   useEffect(() => {
     void loadOptions();
   }, [loadOptions]);
+
+  useEffect(() => {
+    if (!wasActiveRef.current && active) {
+      void loadOptions();
+    }
+    wasActiveRef.current = active;
+  }, [active, loadOptions]);
 
   // Poll every 5s if any single record is RUNNING/PENDING
   useEffect(() => {
@@ -234,7 +254,7 @@ export function RewriteSingleScreen({
 
   const openCreateModal = useCallback(
     async (seed?: Partial<CreateDraft>) => {
-      const opts = formOptions ?? (await loadOptions());
+      const opts = (await loadOptions()) ?? formOptions;
       const initial = buildInitialDraft(opts, seed);
       setModalError(null);
       setUrlWarning(null);
@@ -293,7 +313,7 @@ export function RewriteSingleScreen({
       }
     }
 
-    if (!d.mediaCategoryId) {
+    if (d.imageCount > 0 && !d.mediaCategoryId) {
       setModalError('请选择文章配图的企业图库分类');
       return;
     }
@@ -309,7 +329,7 @@ export function RewriteSingleScreen({
         url: d.url.trim(),
         pastedTitle: d.pastedTitle.trim(),
         pastedContent: d.pastedContent,
-        mediaCategoryId: d.mediaCategoryId,
+        mediaCategoryId: d.imageCount > 0 ? d.mediaCategoryId || null : null,
         imageCount: d.imageCount,
         templateId: d.templateId,
         categoryId: d.categoryId || null,
@@ -406,12 +426,11 @@ export function RewriteSingleScreen({
     [gateway, query],
   );
 
-  const openArticlesForCategory = useCallback(
-    (categoryId: string | null) => {
+  const navigateTo = useCallback(
+    (href: string) => {
       if (!onDispatch) return;
-      const href = categoryId
-        ? `/writing/articles?categoryId=${encodeURIComponent(categoryId)}`
-        : '/writing/articles';
+      setModalState(null);
+      setModalError(null);
       onDispatch({
         type: 'open',
         href,
@@ -419,6 +438,16 @@ export function RewriteSingleScreen({
       });
     },
     [onDispatch, tabId],
+  );
+
+  const openArticlesForCategory = useCallback(
+    (categoryId: string | null) => {
+      const href = categoryId
+        ? `/writing/articles?categoryId=${encodeURIComponent(categoryId)}`
+        : '/writing/articles';
+      navigateTo(href);
+    },
+    [navigateTo],
   );
 
   const pastedCharCount = useMemo(
@@ -454,7 +483,13 @@ export function RewriteSingleScreen({
         </div>
 
         <Space wrap>
-          <Button onClick={() => void loadList(query)} loading={loading}>
+          <Button
+            onClick={() => {
+              void loadList(query);
+              void loadOptions();
+            }}
+            loading={loading}
+          >
             刷新
           </Button>
           {!readOnly ? (
@@ -776,7 +811,8 @@ export function RewriteSingleScreen({
                         pastedText: true,
                         url: row.url.startsWith('paste://') ? '' : row.url,
                         pastedTitle: row.sourceTitle ?? '',
-                        mediaCategoryId: row.mediaCategoryId,
+                        mediaCategoryId: row.mediaCategoryId ?? '',
+                        ...(row.mediaCategoryId ? {} : { imageCount: 0 }),
                         templateId: row.templateId,
                         categoryId: row.categoryId ?? '',
                       })
@@ -823,7 +859,6 @@ export function RewriteSingleScreen({
           <Button
             type="primary"
             loading={submitting}
-            disabled={mediaCategoriesWithImages.length === 0}
             aria-label={`复刻文章（${unitPoints}点数/篇）`}
             onClick={() => void handleSubmitRewrite()}
           >
@@ -938,18 +973,65 @@ export function RewriteSingleScreen({
               ) : null}
             </div>
 
-            {/* Gallery Category + 1..3 Image Slider */}
+            {/* Gallery Category + 0..3 Image Slider */}
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>文章配图（企业图库） *</div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>
+                    文章配图（{UX_TERMS.gallery}）
+                    {modalState.draft.imageCount > 0 ? (
+                      <span style={{ color: 'var(--gm-danger)' }}> *</span>
+                    ) : null}
+                  </span>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/material/gallery');
+                      }}
+                    >
+                      管理图库
+                    </Button>
+                  ) : null}
+                </div>
                 {mediaCategoriesWithImages.length > 0 ? (
                   <select
                     aria-label="文章配图图库"
                     style={NATIVE_SELECT_STYLE}
-                    value={modalState.draft.mediaCategoryId}
-                    onChange={(e) => updateDraft({ mediaCategoryId: e.target.value })}
+                    value={
+                      modalState.draft.imageCount === 0 && !modalState.draft.mediaCategoryId
+                        ? NO_IMAGE_GALLERY_VALUE
+                        : modalState.draft.mediaCategoryId
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === NO_IMAGE_GALLERY_VALUE) {
+                        updateDraft({ mediaCategoryId: '', imageCount: 0 });
+                        return;
+                      }
+                      updateDraft({
+                        mediaCategoryId: val,
+                        imageCount:
+                          val && modalState.draft.imageCount === 0
+                            ? REWRITE_IMAGE_DEFAULT
+                            : modalState.draft.imageCount,
+                      });
+                    }}
                   >
                     <option value="">不选择</option>
+                    <option value={NO_IMAGE_GALLERY_VALUE}>不配图（0 张，不使用来源站原图）</option>
                     {mediaCategoriesWithImages.map((mc) => (
                       <option key={mc.id} value={mc.id}>
                         {mc.name}（{mc.assetCount} 张可用）
@@ -962,18 +1044,16 @@ export function RewriteSingleScreen({
                     showIcon
                     message={
                       <span>
-                        当前暂无含图片的企业图库分类。
+                        当前暂无含图片的企业图库分类，可直接以「不配图（0 张）」提交，或
                         {onDispatch ? (
                           <Button
                             type="link"
                             size="small"
-                            onClick={() => {
-                              setModalState(null);
-                              onDispatch({
-                                type: 'open',
-                                href: '/material/gallery',
-                                sourceId: tabId,
-                              });
+                            htmlType="button"
+                            style={{ padding: '0 4px', height: 'auto' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateTo('/material/gallery');
                             }}
                           >
                             前往上传配图
@@ -1001,9 +1081,14 @@ export function RewriteSingleScreen({
                   min={REWRITE_IMAGE_MIN}
                   max={REWRITE_IMAGE_MAX}
                   step={1}
-                  marks={{ 1: '1张', 2: '2张', 3: '3张' }}
+                  marks={{ 0: '0张', 1: '1张', 2: '2张', 3: '3张' }}
                   value={modalState.draft.imageCount}
-                  onChange={(val) => updateDraft({ imageCount: val })}
+                  onChange={(val) =>
+                    updateDraft({
+                      imageCount: val,
+                      ...(val === 0 ? { mediaCategoryId: '' } : undefined),
+                    })
+                  }
                 />
               </div>
             </div>
@@ -1011,8 +1096,33 @@ export function RewriteSingleScreen({
             {/* Prompt Template (REWRITE only) + Optional Brand */}
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                  爆文改写指令（仅流量复刻类型） *
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>
+                    爆文改写指令（仅流量复刻类型）{' '}
+                    <span style={{ color: 'var(--gm-danger)' }}>*</span>
+                  </span>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/writing/prompts');
+                      }}
+                    >
+                      管理指令
+                    </Button>
+                  ) : null}
                 </div>
                 <select
                   aria-label="爆文改写指令"
@@ -1044,7 +1154,31 @@ export function RewriteSingleScreen({
             {/* Category Selection / Editable Timestamped Auto Category + Result Status */}
             <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>归属文章分类</div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>归属文章分类</span>
+                  {onDispatch ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      htmlType="button"
+                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateTo('/writing/categories');
+                      }}
+                    >
+                      管理分类
+                    </Button>
+                  ) : null}
+                </div>
                 <select
                   aria-label="归属文章分类"
                   style={NATIVE_SELECT_STYLE}

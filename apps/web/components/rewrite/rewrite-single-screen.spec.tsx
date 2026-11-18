@@ -294,4 +294,118 @@ describe('RewriteSingleScreen', () => {
     expect(submitted[0]?.pastedText).toBe(true);
     expect(submitted[0]?.url).toBe('https://zhuanlan.zhihu.com/p/blocked');
   });
+
+  it('allows 0-image submission without gallery, navigates cleanly from 前往上传配图 / 管理指令 / 管理分类, and refreshes existing categories', async () => {
+    const dispatched: ShellAction[] = [];
+    const { gateway, submitted } = makeGateway([]);
+    let optionsCall = 0;
+    gateway.loadFormOptions = vi.fn(async () => {
+      optionsCall += 1;
+      return {
+        ...makeOptions(),
+        categories:
+          optionsCall >= 2
+            ? [
+                {
+                  id: 'cat_existing_01',
+                  name: '已有客户案例分类',
+                  total: 3,
+                  remaining: 3,
+                  createdAt: '2026-11-17T08:00:00.000Z',
+                },
+              ]
+            : [],
+        mediaCategories: [],
+      };
+    });
+
+    const { rerender } = render(
+      <RewriteSingleScreen
+        title="单篇爆文复刻"
+        tabId="/rewrite/single"
+        active
+        gateway={gateway}
+        onDispatch={(action) => dispatched.push(action)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(findButton('新建单篇复刻')).toBeTruthy();
+    });
+
+    // Simulate switching away and back -> refreshes form options
+    rerender(
+      <RewriteSingleScreen
+        title="单篇爆文复刻"
+        tabId="/rewrite/single"
+        active={false}
+        gateway={gateway}
+        onDispatch={(action) => dispatched.push(action)}
+      />,
+    );
+    rerender(
+      <RewriteSingleScreen
+        title="单篇爆文复刻"
+        tabId="/rewrite/single"
+        active
+        gateway={gateway}
+        onDispatch={(action) => dispatched.push(action)}
+      />,
+    );
+
+    fireEvent.click(findButton('新建单篇复刻'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('文章链接')).toBeTruthy();
+    });
+
+    // Submit button is NOT disabled when no usable gallery exists, and existing category appears
+    const submitBtn = findButton('复刻文章（5点数/篇）');
+    expect(submitBtn.disabled).toBe(false);
+    const categorySelect = screen.getByLabelText('归属文章分类') as HTMLSelectElement;
+    expect(
+      Array.from(categorySelect.options).some((o) => o.textContent === '已有客户案例分类'),
+    ).toBe(true);
+
+    // Submit directly with 0 images
+    fireEvent.change(screen.getByLabelText('文章链接'), {
+      target: { value: 'https://news.example.org/no-image-article' },
+    });
+    fireEvent.change(screen.getByLabelText('爆文改写指令'), {
+      target: { value: 'sys_rewrite_01' },
+    });
+    fireEvent.change(categorySelect, { target: { value: 'cat_existing_01' } });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(submitted.length).toBe(1);
+    });
+    expect(submitted[0]).toMatchObject({
+      mediaCategoryId: null,
+      imageCount: 0,
+      categoryId: 'cat_existing_01',
+    });
+
+    // Re-open modal and verify 前往上传配图, 管理指令, and 管理分类 dispatch without blocking
+    fireEvent.click(findButton('新建单篇复刻'));
+    await waitFor(() => {
+      expect(findButton('前往上传配图')).toBeTruthy();
+    });
+    fireEvent.click(findButton('前往上传配图'));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/material/gallery',
+      sourceId: '/rewrite/single',
+    });
+
+    fireEvent.click(findButton('新建单篇复刻'));
+    await waitFor(() => {
+      expect(findButton('管理指令')).toBeTruthy();
+    });
+    fireEvent.click(findButton('管理指令'));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/writing/prompts',
+      sourceId: '/rewrite/single',
+    });
+  });
 });
