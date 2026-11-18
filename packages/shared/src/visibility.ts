@@ -360,24 +360,203 @@ function collectSubjectTerms(subject: TrackedSubject): string[] {
   return result;
 }
 
+export type SubjectMentionOptions = {
+  promptText?: string;
+  excludeQuestionEchoIntro?: boolean;
+};
+
+const INTRO_GREETING_PREFIX =
+  /^(?:好的|您好|你好|当然|没问题|明白|收到|这里|首先|Sure|Certainly|Of course|Hello|Hi)[，,：:\s]+/iu;
+
+const DIRECT_RECOMMENDATION_PREFIX =
+  /^(?:首选推荐|强烈推荐|优先推荐|最推荐|推荐选择|值得推荐|首先推荐|1[.、)）]|[-*•]\s+|top\s+pick|best\s+choice|we\s+recommend)/iu;
+
+const EXPLICIT_CN_QUESTION_ECHO_PREFIX =
+  /^(?:针对|关于|围绕|对于|就|结合|根据|按照|在回答|在解答)?\s*(?:您|你)(?:所|正在)?(?:询问|咨询|提问|提出|提到|提及|关注|想了解|关心|了解|问|搜索|检索)(?:的|到|关于)?/u;
+
+const EXPLICIT_CN_QUESTION_SUFFIX =
+  /^(?:针对|关于|围绕|对于|在回答|在解答|就)\s*.{1,120}?(?:这个问题|这一问题|该问题|的提问|的询问|的咨询|的问题|这个话题|该话题)$/u;
+
+const QUOTED_CN_PROMPT_ECHO =
+  /^(?:针对|关于|围绕|对于|在回答|在解答|在讨论|在评估|在分析|在对比|在了解|在选购|就)\s*[「『“"《][^」』”"》\r\n]{1,140}[」』”"》](?:\s*(?:这个问题|这一问题|该问题|这一需求|这类产品|这个方向|的话题|等方面|的提问|的询问|问题|时|而言|来说|来看|方面|上))?$/u;
+
+const ENGLISH_QUESTION_ECHO =
+  /^(?:Regarding|Concerning|About|Addressing|In response to|In answer to|With respect to|When it comes to|For)\s+(?:(?:your|the)\s+(?:question|query|prompt|request|inquiry)\b|["'“‘][^"'”’\r\n]{1,140}["'”’])|^(?:You(?:'re| are)?\s+asking\s+about|You\s+asked\s+about)\b/iu;
+
+const PROMPT_FRAMING_PREPOSITION = /^(?:针对|关于|围绕|对于|就)\s*/u;
+
+const ANAPHORIC_BRAND_CONTINUATION =
+  /^(?:其|它|它们|该品牌|该产品|这款|这系列|本品牌|它家|它本身|它主要|it\b|its\b|they\b)/iu;
+
+const COMPETITOR_LIST_LEAD_IN =
+  /(?:几款|以下|市面|目前|热门|主流|常见|值得|高性价比|同类|替代).{0,16}(?:品牌|产品|方案|工具|选择|平台|厂商|推荐|清单|榜单|型号)|(?:以下|如下|为您)(?:整理|推荐|盘点|汇总|介绍|列举|对比)|主要包括|top\s+(?:brands|picks|options|choices|alternatives|tools)|here\s+are\s+(?:some\s+)?(?:top|popular|recommended)/iu;
+
+const ATTRIBUTE_ONLY_LEAD_IN = /^(?:以下|主要|核心)?(?:优势|优点|特点|缺点|亮点|参数|规格)/u;
+
+function normalizeForEchoCompare(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[\s"'“”‘’「」『』《》【】()（）[\].,!?，。！？：:；;、~`*_#-]/gu, '');
+}
+
+function sharesPromptEcho(clauseBody: string, promptText?: string): boolean {
+  if (!promptText) return false;
+  const normClause = normalizeForEchoCompare(clauseBody);
+  const normPrompt = normalizeForEchoCompare(promptText);
+  if (normClause.length < 3 || normPrompt.length < 3) return false;
+  if (normPrompt.includes(normClause) || normClause.includes(normPrompt)) {
+    return true;
+  }
+  const clauseGrams = new Set<string>();
+  for (let i = 0; i < normClause.length - 1; i += 1) {
+    clauseGrams.add(normClause.slice(i, i + 2));
+  }
+  let shared = 0;
+  for (let i = 0; i < normPrompt.length - 1; i += 1) {
+    if (clauseGrams.has(normPrompt.slice(i, i + 2))) shared += 1;
+  }
+  const minLen = Math.min(normClause.length, normPrompt.length) - 1;
+  return minLen > 0 && shared / minLen >= 0.5;
+}
+
+function scanOpeningClauseEnd(
+  text: string,
+  start: number,
+): { clauseEnd: number; delimiter: string; afterDelimiter: number } | null {
+  const limit = Math.min(text.length, start + 240);
+  let quoteClose: string | null = null;
+  let quoteOpenedAt = -1;
+
+  for (let i = start; i < limit; i += 1) {
+    const ch = text[i] ?? '';
+    if (quoteClose) {
+      if (ch === quoteClose || i - quoteOpenedAt > 140) {
+        quoteClose = null;
+      }
+      continue;
+    }
+
+    if (ch === '「') {
+      quoteClose = '」';
+      quoteOpenedAt = i;
+      continue;
+    }
+    if (ch === '『') {
+      quoteClose = '』';
+      quoteOpenedAt = i;
+      continue;
+    }
+    if (ch === '“') {
+      quoteClose = '”';
+      quoteOpenedAt = i;
+      continue;
+    }
+    if (ch === '《') {
+      quoteClose = '》';
+      quoteOpenedAt = i;
+      continue;
+    }
+    if (ch === '"') {
+      quoteClose = '"';
+      quoteOpenedAt = i;
+      continue;
+    }
+
+    if (/[，,：:；;。！？.!?\r\n]/u.test(ch)) {
+      let after = i + 1;
+      while (after < text.length && /[，,：:；;。！？.!?\s]/u.test(text[after] ?? '')) {
+        after += 1;
+      }
+      return { clauseEnd: i, delimiter: ch, afterDelimiter: after };
+    }
+  }
+  return null;
+}
+
+/**
+ * 识别回答开头的“提问复述/导语”结束偏移量（返回 0 表示无此类导语）。
+ * 用于排除诸如「针对您询问的 Anker 氮化镓充电器推荐，以下为您整理热门品牌：」首句中的品牌词复述，
+ * 避免正文仅推荐竞品时误判本品牌命中且顺位 #1。
+ */
+export function findQuestionEchoIntroEnd(text: string, promptText?: string): number {
+  if (typeof text !== 'string' || !text.trim()) return 0;
+
+  const leadingWs = text.match(/^\s*/)?.[0].length ?? 0;
+  const candidateStarts = [leadingWs];
+  const greetingMatch = text.slice(leadingWs).match(INTRO_GREETING_PREFIX);
+  if (greetingMatch?.[0]) {
+    candidateStarts.push(leadingWs + greetingMatch[0].length);
+  }
+
+  for (const start of candidateStarts) {
+    if (start >= text.length) continue;
+    const scanned = scanOpeningClauseEnd(text, start);
+    if (!scanned) continue;
+
+    const clause = text.slice(start, scanned.clauseEnd).trim();
+    if (!clause || clause.length > 200) continue;
+    if (DIRECT_RECOMMENDATION_PREFIX.test(clause)) return 0;
+
+    const nextRest = text.slice(scanned.afterDelimiter);
+    const nextSentence = nextRest.split(/[。！？.!?\r\n]/u, 1)[0]?.trim() ?? '';
+    const isCommaDelimiter = scanned.delimiter === '，' || scanned.delimiter === ',';
+
+    const isExplicitEcho =
+      EXPLICIT_CN_QUESTION_ECHO_PREFIX.test(clause) ||
+      EXPLICIT_CN_QUESTION_SUFFIX.test(clause) ||
+      QUOTED_CN_PROMPT_ECHO.test(clause) ||
+      ENGLISH_QUESTION_ECHO.test(clause);
+
+    if (isExplicitEcho) {
+      if (
+        isCommaDelimiter &&
+        ANAPHORIC_BRAND_CONTINUATION.test(nextSentence) &&
+        !COMPETITOR_LIST_LEAD_IN.test(nextSentence)
+      ) {
+        return 0;
+      }
+      return scanned.afterDelimiter;
+    }
+
+    if (PROMPT_FRAMING_PREPOSITION.test(clause)) {
+      const clauseBody = clause.replace(PROMPT_FRAMING_PREPOSITION, '').trim();
+      if (
+        sharesPromptEcho(clauseBody, promptText) &&
+        COMPETITOR_LIST_LEAD_IN.test(nextSentence) &&
+        !ATTRIBUTE_ONLY_LEAD_IN.test(nextSentence) &&
+        !ANAPHORIC_BRAND_CONTINUATION.test(nextSentence)
+      ) {
+        return scanned.afterDelimiter;
+      }
+    }
+  }
+
+  return 0;
+}
+
 /**
  * 查找品牌/竞品在回答正文中的全部字符偏移（升序去重）。
- * 若正文未直接出现词条但 citedUrls 命中其域名，返回 [text.length + citationIndex] 作为兜底位置。
+ * 默认跳过开头“提问复述/导语”区域；若正文未直接出现词条但 citedUrls 命中其域名，返回 [text.length + citationIndex] 作为兜底位置。
  */
 export function findSubjectMentionOffsets(
   text: string,
   subject: { name: string; aliases: readonly string[]; domains: readonly string[] },
   citedUrls?: readonly string[],
+  options?: SubjectMentionOptions,
 ): number[] {
   const safeText = typeof text === 'string' ? text : '';
   const terms = collectSubjectTerms(subject);
   const offsetSet = new Set<number>();
+  const introEnd =
+    options?.excludeQuestionEchoIntro === false
+      ? 0
+      : findQuestionEchoIntroEnd(safeText, options?.promptText);
 
   if (safeText.length > 0) {
     for (const term of terms) {
       const pattern = wholeWordPattern(term);
       for (const match of safeText.matchAll(pattern)) {
-        if (typeof match.index === 'number') {
+        if (typeof match.index === 'number' && match.index >= introEnd) {
           offsetSet.add(match.index);
         }
       }
@@ -407,11 +586,16 @@ export function extractEvidencePassages(
   text: string,
   subject: { name: string; aliases: readonly string[]; domains: readonly string[] },
   maxPassages = 3,
+  options?: SubjectMentionOptions,
 ): string[] {
   if (!text || !text.trim() || maxPassages <= 0) return [];
-  const offsets = findSubjectMentionOffsets(text, subject);
+  const offsets = findSubjectMentionOffsets(text, subject, undefined, options);
   if (offsets.length === 0) return [];
 
+  const introEnd =
+    options?.excludeQuestionEchoIntro === false
+      ? 0
+      : findQuestionEchoIntroEnd(text, options?.promptText);
   const segments = splitSentenceSpans(text);
   const passages: string[] = [];
   const seen = new Set<string>();
@@ -423,16 +607,18 @@ export function extractEvidencePassages(
     if (hitIdx >= 0) {
       const current = segments[hitIdx];
       if (current) {
-        rawSnippet = current.text.trim();
+        const trimOffset =
+          introEnd > current.start && introEnd < current.end ? introEnd - current.start : 0;
+        rawSnippet = current.text.slice(trimOffset).trim();
         if (rawSnippet.length < 24 && segments[hitIdx + 1]) {
           rawSnippet = `${rawSnippet} ${segments[hitIdx + 1]?.text.trim() ?? ''}`.trim();
         }
       }
     }
     if (!rawSnippet || rawSnippet.length > 240) {
-      const winStart = Math.max(0, offset - 60);
+      const winStart = Math.max(introEnd, offset - 60);
       const winEnd = Math.min(text.length, offset + 140);
-      const prefix = winStart > 0 ? '…' : '';
+      const prefix = winStart > introEnd ? '…' : '';
       const suffix = winEnd < text.length ? '…' : '';
       rawSnippet = `${prefix}${text.slice(winStart, winEnd).replace(/\s+/g, ' ').trim()}${suffix}`;
     } else {
@@ -668,6 +854,7 @@ export type RawCitationForMetrics = {
 export type RawObservationForMetrics = {
   id?: string;
   status?: string;
+  promptText?: string | null;
   answerText?: string | null;
   brandMentioned?: boolean | null;
   brandPosition?: number | null;
@@ -777,6 +964,9 @@ export function recomputeRunMetrics(
   completed.forEach((obs, obsIdx) => {
     const citations = obs.citations ?? [];
     const citedUrls = citations.map((item) => item.url);
+    const mentionOptions: SubjectMentionOptions | undefined = obs.promptText
+      ? { promptText: obs.promptText }
+      : undefined;
 
     let brandMentioned: boolean;
     let brandPosition: number | null = obs.brandPosition ?? null;
@@ -792,6 +982,7 @@ export function recomputeRunMetrics(
           domains: ownedDomains,
         },
         citedUrls,
+        mentionOptions,
       );
       brandMentioned = brandOffsets.length > 0;
       if (brandMentioned && brandPosition === null) {
@@ -810,6 +1001,7 @@ export function recomputeRunMetrics(
                 domains: comp.domains ?? [],
               },
               citedUrls,
+              mentionOptions,
             );
             return {
               name: comp.name,
@@ -845,6 +1037,7 @@ export function recomputeRunMetrics(
             domains: comp.domains ?? [],
           },
           citedUrls,
+          mentionOptions,
         );
         if (compOffsets.length > 0) {
           competitorMentionCounts.set(comp.name, (competitorMentionCounts.get(comp.name) ?? 0) + 1);

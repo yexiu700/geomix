@@ -202,6 +202,151 @@ describe('CJK-aware mention matching, passages, and 1-based ranking', () => {
       { name: '竞品丙', mentioned: true, firstMention: 95, position: 3 },
     ]);
   });
+
+  it('ignores brand mentions that only appear in opening question-echo intros (#212)', () => {
+    const brand = {
+      name: 'Anker',
+      aliases: ['安克', '安克创新'],
+      domains: ['anker.com'],
+    };
+    const ugreen = { name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] };
+    const baseus = { name: '倍思', aliases: ['Baseus'], domains: ['baseus.com'] };
+
+    // Case 1: Intro echoes user question containing "Anker", body only recommends competitors
+    const echoOnlyAnswer = [
+      '针对您询问的 Anker 氮化镓充电器推荐，以下为您整理当前市面口碑较好的主流品牌：',
+      '1. 绿联（UGREEN）：快充协议兼容性强，散热控制稳定。',
+      '2. 倍思（Baseus）：体积小巧，多口输出功率分配合理。',
+    ].join('\n');
+
+    expect(
+      findSubjectMentionOffsets(echoOnlyAnswer, brand, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }),
+    ).toEqual([]);
+    expect(
+      extractEvidencePassages(echoOnlyAnswer, brand, 3, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }),
+    ).toEqual([]);
+    expect(
+      findSubjectMentionOffsets(echoOnlyAnswer, ugreen, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }).length,
+    ).toBeGreaterThan(0);
+
+    // Case 2: Quoted prompt echo framing clause with competitors in the second clause
+    const quotedEchoAnswer = [
+      '围绕「Anker氮化镓充电器推荐」，公开讨论度较高的工具主要包括 绿联 与 倍思：',
+      '- 绿联 主打高性价比快充矩阵；',
+      '- 倍思 侧重轻量便携设计。',
+    ].join('\n');
+
+    expect(
+      findSubjectMentionOffsets(quotedEchoAnswer, brand, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }),
+    ).toEqual([]);
+    expect(
+      findSubjectMentionOffsets(quotedEchoAnswer, ugreen, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }).length,
+    ).toBeGreaterThan(0);
+
+    // Case 3: Intro echoes question AND body genuinely recommends brand at #2
+    const echoPlusBodyAnswer = [
+      '针对您询问的 Anker 氮化镓充电器推荐，以下为您整理几款热门选择：',
+      '1. 绿联（UGREEN）：性价比突出，多口兼容主流快充协议。',
+      '2. Anker（安克）：氮化镓控温技术成熟，持续满载输出稳定，值得优先推荐。',
+      '3. 倍思（Baseus）：外观便携，适合日常差旅使用。',
+    ].join('\n');
+
+    const brandOffsets = findSubjectMentionOffsets(echoPlusBodyAnswer, brand, undefined, {
+      promptText: 'Anker氮化镓充电器推荐',
+    });
+    const ugreenOffsets = findSubjectMentionOffsets(echoPlusBodyAnswer, ugreen, undefined, {
+      promptText: 'Anker氮化镓充电器推荐',
+    });
+    const baseusOffsets = findSubjectMentionOffsets(echoPlusBodyAnswer, baseus, undefined, {
+      promptText: 'Anker氮化镓充电器推荐',
+    });
+
+    expect(brandOffsets).toEqual([
+      echoPlusBodyAnswer.indexOf('2. Anker') + 3,
+      echoPlusBodyAnswer.indexOf('安克'),
+    ]);
+    const ranked = rankTrackedSubjects([
+      { name: 'Anker', mentioned: brandOffsets.length > 0, firstMention: brandOffsets[0] ?? null },
+      { name: '绿联', mentioned: ugreenOffsets.length > 0, firstMention: ugreenOffsets[0] ?? null },
+      { name: '倍思', mentioned: baseusOffsets.length > 0, firstMention: baseusOffsets[0] ?? null },
+    ]);
+    expect(ranked.map((item) => [item.name, item.position])).toEqual([
+      ['Anker', 2],
+      ['绿联', 1],
+      ['倍思', 3],
+    ]);
+
+    const passages = extractEvidencePassages(echoPlusBodyAnswer, brand, 3, {
+      promptText: 'Anker氮化镓充电器推荐',
+    });
+    expect(passages).toHaveLength(1);
+    expect(passages[0]).toContain('Anker（安克）：氮化镓控温技术成熟');
+    expect(passages[0]).not.toContain('针对您询问的');
+
+    // Case 4: Genuine direct recommendation in first sentence (no question echo) must still match at #1
+    const directFirstSentence =
+      '关于 Anker 氮化镓充电器，其采用自研控温芯片，散热与稳定性出色，值得优先推荐。';
+    expect(
+      findSubjectMentionOffsets(directFirstSentence, brand, undefined, {
+        promptText: 'Anker氮化镓充电器怎么样',
+      }),
+    ).toEqual([directFirstSentence.indexOf('Anker')]);
+
+    // Case 5: Greeting + question echo + unquoted prompt-overlap lead-in
+    const greetingEcho =
+      '好的，针对 Anker 氮化镓充电器推荐，以下为您整理几款热门品牌：\n1. 绿联...\n2. 倍思...';
+    expect(
+      findSubjectMentionOffsets(greetingEcho, brand, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }),
+    ).toEqual([]);
+    expect(
+      findSubjectMentionOffsets(greetingEcho, ugreen, undefined, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }).length,
+    ).toBeGreaterThan(0);
+
+    // Case 6: English question-echo intro
+    const englishEcho =
+      'Regarding your question about Anker GaN charger recommendations, top picks include:\n1. UGREEN: reliable.\n2. Baseus: compact.';
+    expect(
+      findSubjectMentionOffsets(englishEcho, brand, undefined, {
+        promptText: 'Anker GaN charger recommendations',
+      }),
+    ).toEqual([]);
+    expect(
+      findSubjectMentionOffsets(englishEcho, ugreen, undefined, {
+        promptText: 'Anker GaN charger recommendations',
+      }).length,
+    ).toBeGreaterThan(0);
+
+    // Case 7: Anaphora continuation after "针对您询问的..." must NOT lose genuine evaluation
+    const anaphoraEval =
+      '针对您询问的 Anker 氮化镓充电器，其采用自研氮化镓芯片，散热与兼容性出色，非常值得入手。';
+    expect(
+      findSubjectMentionOffsets(anaphoraEval, brand, undefined, {
+        promptText: 'Anker氮化镓充电器怎么样',
+      }),
+    ).toEqual([anaphoraEval.indexOf('Anker')]);
+
+    // Case 8: Quoted-intro followed by body mention in the same sentence trims intro from passage
+    const sameSentenceBody = '围绕「Anker氮化镓充电器推荐」，实测推荐 Anker Prime 与绿联 65W。';
+    expect(
+      extractEvidencePassages(sameSentenceBody, brand, 3, {
+        promptText: 'Anker氮化镓充电器推荐',
+      }),
+    ).toEqual(['实测推荐 Anker Prime 与绿联 65W。']);
+  });
 });
 
 describe('visibility metrics, fan-out normalization, and audit recomputation', () => {
@@ -355,6 +500,28 @@ describe('visibility metrics, fan-out normalization, and audit recomputation', (
       { domain: 'docs.geomix.cn', sourceKind: 'OWNED', count: 1, observationCount: 1 },
       { domain: 'geomix.cn', sourceKind: 'OWNED', count: 1, observationCount: 1 },
     ]);
+
+    // Fallback recomputation from raw answerText with question-echo intro (#212)
+    const echoRecomputed = recomputeRunMetrics(
+      [
+        {
+          status: 'SUCCESS',
+          promptText: 'GeoMix对比评测',
+          answerText: [
+            '针对您询问的 GeoMix对比评测，以下为您整理当前主流方案：',
+            '1. 竞品甲：传统行业案例积累丰富。',
+            '2. 竞品乙：轻量化方案上手快。',
+          ].join('\n'),
+          citations: [],
+        },
+      ],
+      profile,
+    );
+    expect(echoRecomputed.mentionedChecks).toBe(0);
+    expect(echoRecomputed.avgPosition).toBeNull();
+    expect(echoRecomputed.shareOfVoice.brandMentions).toBe(0);
+    expect(echoRecomputed.shareOfVoice.entries.find((e) => e.name === '竞品甲')?.mentions).toBe(1);
+    expect(echoRecomputed.shareOfVoice.entries.find((e) => e.name === '竞品乙')?.mentions).toBe(1);
   });
 });
 

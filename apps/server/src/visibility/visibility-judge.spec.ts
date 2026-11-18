@@ -286,4 +286,163 @@ describe('VisibilityJudgeService', () => {
       expect(judged.competitorHits[0]?.mentioned).toBe(true);
     }
   });
+
+  it('does not mark question-echo intro as brand mention #1 when body only recommends competitors (#212)', async () => {
+    const offlineJudge = VisibilityJudgeService.fromEnv({ LLM_PROVIDERS: '{}' });
+    const profile = {
+      brandName: 'Anker',
+      brandAliases: ['安克', '安克创新'],
+      ownedDomains: ['anker.com'],
+      competitors: [
+        { name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] },
+        { name: '倍思', aliases: ['Baseus'], domains: ['baseus.com'] },
+      ],
+    };
+
+    const echoOnlyAnswer = [
+      '针对您询问的 Anker 氮化镓充电器推荐，以下为您整理当前市面上口碑较好的品牌方案：',
+      '1. 绿联（UGREEN）：快充协议兼容性强，多口温控稳定。',
+      '2. 倍思（Baseus）：体积小巧便携，高性价比之选。',
+    ].join('\n');
+
+    // Deterministic / fake LLM mode
+    const offlineJudged = await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'tongyi',
+      promptText: 'Anker氮化镓充电器推荐',
+      answerText: echoOnlyAnswer,
+      profile,
+    });
+
+    expect(offlineJudged.brandMentioned).toBe(false);
+    expect(offlineJudged.brandPosition).toBeNull();
+    expect(offlineJudged.brandSentiment).toBeNull();
+    expect(offlineJudged.brandPassage).toBeNull();
+    expect(offlineJudged.competitorHits).toEqual([
+      { name: '绿联', mentioned: true, position: 1, sentiment: 'positive' },
+      { name: '倍思', mentioned: true, position: 2, sentiment: 'positive' },
+    ]);
+
+    // Real LLM Judge mode: intro echo must not be sent as brand evidence or counted as #1
+    let capturedPrompt = '';
+    const { llm } = createMockLlm((userMsg) => {
+      capturedPrompt = userMsg;
+      return JSON.stringify({
+        verdicts: [
+          {
+            subjectKey: 'comp_0',
+            portrayal: 'positive',
+            evidence: '1. 绿联（UGREEN）：快充协议兼容性强',
+          },
+          {
+            subjectKey: 'comp_1',
+            portrayal: 'positive',
+            evidence: '2. 倍思（Baseus）：体积小巧便携',
+          },
+        ],
+      });
+    });
+    const llmJudge = new VisibilityJudgeService(llm);
+    const llmJudged = await llmJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'tongyi',
+      promptText: 'Anker氮化镓充电器推荐',
+      answerText: echoOnlyAnswer,
+      profile,
+    });
+
+    expect(capturedPrompt).not.toContain('subjectKey="brand"');
+    expect(llmJudged.brandMentioned).toBe(false);
+    expect(llmJudged.brandPosition).toBeNull();
+    expect(llmJudged.brandPassage).toBeNull();
+    expect(llmJudged.competitorHits).toEqual([
+      { name: '绿联', mentioned: true, position: 1, sentiment: 'positive' },
+      { name: '倍思', mentioned: true, position: 2, sentiment: 'positive' },
+    ]);
+  });
+
+  it('ranks brand accurately by body position when intro echoes question and body recommends brand at #2 (#212)', async () => {
+    const offlineJudge = VisibilityJudgeService.fromEnv({ LLM_PROVIDERS: '{}' });
+    const profile = {
+      brandName: 'Anker',
+      brandAliases: ['安克'],
+      ownedDomains: ['anker.com'],
+      competitors: [
+        { name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] },
+        { name: '倍思', aliases: ['Baseus'], domains: ['baseus.com'] },
+      ],
+    };
+
+    const echoPlusBodyAnswer = [
+      '针对您询问的 Anker 氮化镓充电器推荐，以下为您整理几款热门选择：',
+      '1. 绿联（UGREEN）：性价比突出，多口兼容主流快充协议。',
+      '2. Anker（安克）：氮化镓控温技术成熟，持续满载输出稳定，值得优先推荐。',
+      '3. 倍思（Baseus）：外观便携，适合日常差旅使用。',
+    ].join('\n');
+
+    const judged = await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'tongyi',
+      promptText: 'Anker氮化镓充电器推荐',
+      answerText: echoPlusBodyAnswer,
+      profile,
+    });
+
+    expect(judged.brandMentioned).toBe(true);
+    expect(judged.brandPosition).toBe(2);
+    expect(judged.brandSentiment).toBe('positive');
+    expect(judged.brandPassage).toContain('Anker（安克）：氮化镓控温技术成熟');
+    expect(judged.brandPassage).not.toContain('针对您询问的');
+    expect(judged.competitorHits).toEqual([
+      { name: '绿联', mentioned: true, position: 1, sentiment: 'positive' },
+      { name: '倍思', mentioned: true, position: 3, sentiment: 'neutral' },
+    ]);
+  });
+
+  it('surfaces competitor-only gap in Collector(fake) -> Judge(fake) even when promptText contains brandName (#212)', async () => {
+    const env = { VISIBILITY_COLLECTOR: 'fake', LLM_PROVIDERS: '{}' };
+    const collector = VisibilityCollectorService.fromEnv(env);
+    const judge = VisibilityJudgeService.fromEnv(env);
+    const profile = {
+      brandName: 'Anker',
+      brandAliases: ['安克'],
+      ownedDomains: ['anker.com'],
+      competitors: [
+        { name: '绿联', domains: ['ugreen.com'] },
+        { name: '倍思', domains: ['baseus.com'] },
+      ],
+    };
+
+    let sawScenario3 = false;
+    for (let i = 1; i <= 20; i += 1) {
+      const promptText = `Anker氮化镓充电器推荐实测对比${i}`;
+      const collected = await collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'tongyi',
+        promptText,
+        brandName: profile.brandName,
+        ownedDomains: profile.ownedDomains,
+        competitors: profile.competitors,
+      });
+      if (Number(collected.rawMeta?.scenarioBucket) !== 3) continue;
+      sawScenario3 = true;
+
+      const judged = await judge.evaluate({
+        tenantId: 'tenant_demo',
+        engine: 'tongyi',
+        promptText,
+        answerText: collected.answerText,
+        citations: collected.citations,
+        profile,
+      });
+
+      expect(judged.brandMentioned).toBe(false);
+      expect(judged.brandPosition).toBeNull();
+      expect(judged.brandPassage).toBeNull();
+      expect(judged.competitorHits.some((c) => c.mentioned)).toBe(true);
+      break;
+    }
+
+    expect(sawScenario3).toBe(true);
+  });
 });
