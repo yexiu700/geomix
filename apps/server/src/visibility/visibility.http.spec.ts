@@ -2546,4 +2546,96 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
       '倍思 Baseus',
     ]);
   });
+
+  it('rejects cross-brand keywordId or mismatched questionIds when creating a run or importing opportunity questions with profileId (#218, #213)', async () => {
+    const tenantIso = 'ten_kw_iso';
+    const tokenIso = store.seedTenant({
+      tenantId: tenantIso,
+      userId: 'usr_kw_iso',
+      username: 'merchant_kw_iso',
+      points: 200,
+      billingMode: 'SHADOW',
+    });
+
+    const now = new Date();
+    const profArzopaId = store.nextId('vprof');
+    store.profiles.set(profArzopaId, {
+      id: profArzopaId,
+      tenantId: tenantIso,
+      name: 'ARZOPA便携屏监测档案',
+      brandName: 'ARZOPA',
+      brandAliases: ['Arzopa Portable Monitor', '便携显示器'],
+      ownedDomains: ['arzopa.com'],
+      competitors: [{ name: 'ASUS ZenScreen', aliases: [], domains: ['asus.com'] }],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const kwAnkerId = store.nextId('kw');
+    store.keywords.set(kwAnkerId, {
+      id: kwAnkerId,
+      tenantId: tenantIso,
+      main: 'Anker氮化镓充电器',
+      brands: ['Anker'],
+      optStatus: 'NONE',
+      createdAt: now,
+    });
+
+    const qAnkerId = store.nextId('q');
+    store.questions.set(qAnkerId, {
+      id: qAnkerId,
+      tenantId: tenantIso,
+      keywordId: kwAnkerId,
+      text: 'Anker氮化镓充电器支持MacBook快充吗？',
+      source: 'MANUAL',
+      usedCount: 0,
+      lastUsedAt: null,
+      included: false,
+      createdAt: now,
+    });
+
+    // 1. Creating a run for ARZOPA profile with Anker keywordId -> 400 BAD_REQUEST
+    const wrongKwRun = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
+      token: tokenIso,
+      headers: { 'Idempotency-Key': 'idem-iso-wrong-kw-001' },
+      body: {
+        profileId: profArzopaId,
+        keywordId: kwAnkerId,
+        engines: ['deepseek'],
+        questionIds: [qAnkerId],
+      },
+    });
+    expect(wrongKwRun.status).toBe(400);
+    expect(wrongKwRun.code).toBe(API_ERROR.BAD_REQUEST);
+
+    // 2. Creating a run for ARZOPA profile omitting keywordId but sneaking in Anker questionIds -> 400 BAD_REQUEST
+    const wrongQuestionRun = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
+      token: tokenIso,
+      headers: { 'Idempotency-Key': 'idem-iso-wrong-q-001' },
+      body: {
+        profileId: profArzopaId,
+        engines: ['deepseek'],
+        questionIds: [qAnkerId],
+      },
+    });
+    expect(wrongQuestionRun.status).toBe(400);
+    expect(wrongQuestionRun.code).toBe(API_ERROR.BAD_REQUEST);
+
+    // 3. Importing ARZOPA opportunity questions into Anker keywordId when profileId=profArzopaId is provided -> 400 BAD_REQUEST
+    const wrongImport = await httpJson(
+      base,
+      'POST',
+      '/api/v1/visibility/opportunities/import-questions',
+      {
+        token: tokenIso,
+        body: {
+          profileId: profArzopaId,
+          keywordId: kwAnkerId,
+          titles: ['Switch外接便携屏哪款延迟低？'],
+        },
+      },
+    );
+    expect(wrongImport.status).toBe(400);
+    expect(wrongImport.code).toBe(API_ERROR.BAD_REQUEST);
+  });
 });

@@ -17,6 +17,7 @@ import {
   isCitationSourceKind,
   isVisibilityEngine,
   isVisibilitySentiment,
+  matchesVisibilityProfileKeyword,
   normalizeQuestionKey,
   normalizeVisibilityDomain,
   recomputeRunMetrics,
@@ -709,19 +710,45 @@ export class VisibilityService {
 
     const profile = await this.prisma.base.visibilityProfile.findFirst({
       where: { id: input.profileId, tenantId },
-      select: { id: true, name: true, brandName: true },
+      select: {
+        id: true,
+        name: true,
+        brandName: true,
+        brandAliases: true,
+        ownedDomains: true,
+        competitors: true,
+      },
     });
     if (!profile) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选监测档案不存在');
     }
 
+    const profileKeywordTarget = {
+      id: profile.id,
+      name: profile.name,
+      brandName: profile.brandName,
+      brandAliases: profile.brandAliases,
+      ownedDomains: profile.ownedDomains,
+      competitors: parseProfileCompetitors(profile.competitors),
+    };
+
     if (input.keywordId) {
       const keyword = await this.prisma.base.keyword.findFirst({
         where: { id: input.keywordId, tenantId },
-        select: { id: true },
+        select: { id: true, main: true, brands: true },
       });
       if (!keyword) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选训练主词不存在');
+      }
+      if (
+        keyword.brands.some((b) => b.trim().length > 0) &&
+        !matchesVisibilityProfileKeyword(keyword, profileKeywordTarget)
+      ) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '所选训练主词不属于当前监测档案品牌，请重新选择或改填自定义问题',
+        );
       }
     }
 
@@ -731,10 +758,41 @@ export class VisibilityService {
     if (requestedQuestionIds.length > 0) {
       const questions = await this.prisma.base.question.findMany({
         where: { id: { in: requestedQuestionIds }, tenantId },
-        select: { id: true, text: true },
+        select: { id: true, text: true, keywordId: true },
       });
       if (questions.length !== requestedQuestionIds.length) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分所选问题不存在或无权访问');
+      }
+      if (input.keywordId && questions.some((q) => q.keywordId !== input.keywordId)) {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '所选监测问题不属于当前关联训练主词');
+      }
+      if (!input.keywordId) {
+        const distinctKeywordIds = [
+          ...new Set(
+            questions.map((q) => q.keywordId).filter((kid): kid is string => Boolean(kid)),
+          ),
+        ];
+        const questionKeywords = await Promise.all(
+          distinctKeywordIds.map((kid) =>
+            this.prisma.base.keyword.findFirst({
+              where: { id: kid, tenantId },
+              select: { id: true, main: true, brands: true },
+            }),
+          ),
+        );
+        for (const qKw of questionKeywords) {
+          if (
+            qKw &&
+            qKw.brands.some((b) => b.trim().length > 0) &&
+            !matchesVisibilityProfileKeyword(qKw, profileKeywordTarget)
+          ) {
+            throw new ApiError(
+              400,
+              API_ERROR.BAD_REQUEST,
+              '所选监测问题所属主词与当前监测档案品牌不匹配',
+            );
+          }
+        }
       }
       const qById = new Map(questions.map((q) => [q.id, q]));
       for (const qId of requestedQuestionIds) {
@@ -1364,10 +1422,44 @@ export class VisibilityService {
 
     const keywordRow = await this.prisma.base.keyword.findFirst({
       where: { id: input.keywordId, tenantId },
-      select: { id: true, main: true },
+      select: { id: true, main: true, brands: true },
     });
     if (!keywordRow) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '训练主词不存在');
+    }
+
+    if (input.profileId) {
+      const profile = await this.prisma.base.visibilityProfile.findFirst({
+        where: { id: input.profileId, tenantId },
+        select: {
+          id: true,
+          name: true,
+          brandName: true,
+          brandAliases: true,
+          ownedDomains: true,
+          competitors: true,
+        },
+      });
+      if (!profile) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
+      }
+      if (
+        keywordRow.brands.some((b) => b.trim().length > 0) &&
+        !matchesVisibilityProfileKeyword(keywordRow, {
+          id: profile.id,
+          name: profile.name,
+          brandName: profile.brandName,
+          brandAliases: profile.brandAliases,
+          ownedDomains: profile.ownedDomains,
+          competitors: parseProfileCompetitors(profile.competitors),
+        })
+      ) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '所选目标主词不属于当前监测档案品牌，请先切换档案或选择同品牌主词',
+        );
+      }
     }
 
     const seenInput = new Set<string>();
