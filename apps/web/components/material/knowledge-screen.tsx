@@ -41,6 +41,7 @@ import {
   type KnowledgeGateway,
 } from '../../lib/knowledge';
 import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 
 type DetailModeDraft = {
   companyName: string;
@@ -453,6 +454,7 @@ export function KnowledgeScreen({
       setSelectedIds([]);
       setPage(1);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('knowledge');
       const okMsg =
         saved.indexStatus === 'INDEXING'
           ? `已保存「${saved.name}」，后台正在分段建立智能检索，完成后状态将更新为「可用」`
@@ -483,6 +485,7 @@ export function KnowledgeScreen({
       setDeleteIds(null);
       setSelectedIds([]);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('knowledge');
       const msg = `已删除 ${res.deleted} 个企业知识库`;
       setBanner({ type: 'success', text: msg });
       feedback.notifySuccess(msg);

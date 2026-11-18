@@ -76,13 +76,15 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('hides /workbench/samples for non-admin roles and shows it for ADMIN', () => {
+  it('never exposes /workbench/samples in command palette for MERCHANT or ADMIN (#134)', () => {
     setupPalette({ role: 'MERCHANT' });
     expect(screen.queryByText('/workbench/samples')).toBeNull();
+    expect(screen.queryByText('列表示例')).toBeNull();
     cleanup();
 
     setupPalette({ role: 'ADMIN' });
-    expect(screen.getByText('/workbench/samples')).toBeTruthy();
+    expect(screen.queryByText('/workbench/samples')).toBeNull();
+    expect(screen.queryByText('列表示例')).toBeNull();
   });
 
   it('wraps keyboard selection cyclically with ArrowUp and ArrowDown and closes on Escape', () => {

@@ -33,6 +33,7 @@ import { GM, formatPct, truncateMiddle } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { sanitizeEntityTitleSegment, useSyncTabTitle } from '../../lib/ux-foundation';
+import { useTabFreshness } from '../../lib/tab-freshness';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
 import { TableClampText } from '../crud/table-clamp-text';
 import {
@@ -376,6 +377,7 @@ export function VisibilityOverviewScreen({
   title,
   tabId,
   href,
+  active = true,
   readOnly = false,
   featureEnabled = true,
   storage,
@@ -386,6 +388,7 @@ export function VisibilityOverviewScreen({
   title: string;
   tabId?: string;
   href?: string;
+  active?: boolean;
   readOnly?: boolean;
   featureEnabled?: boolean;
   storage?: SessionStorageLike;
@@ -666,6 +669,37 @@ export function VisibilityOverviewScreen({
     client,
     featureEnabled,
   ]);
+
+  const refreshReferenceOptions = useCallback(async () => {
+    if (!featureEnabled) return;
+    try {
+      const [profileRes, kwList] = await Promise.all([
+        client.listProfiles(),
+        client.listKeywords().catch(() => null),
+      ]);
+      setProfiles(profileRes.items);
+      setProfilesLoaded(true);
+      if (kwList) {
+        setKeywords(kwList);
+        setSelectedKeywordId((curr) =>
+          curr && kwList.some((k) => k.id === curr) ? curr : (kwList[0]?.id ?? ''),
+        );
+      }
+    } catch {
+      // keep existing dropdown options on transient error
+    }
+  }, [client, featureEnabled]);
+
+  useTabFreshness({
+    active,
+    domains: ['visibility-profiles', 'keywords', 'visibility-runs'],
+    onRefresh: (reason) => {
+      void refreshReferenceOptions();
+      if (reason === 'invalidated') {
+        setCitationRetryTick((n) => n + 1);
+      }
+    },
+  });
 
   // Load tenant keywords for target keyword selection in opportunities tab
   useEffect(() => {

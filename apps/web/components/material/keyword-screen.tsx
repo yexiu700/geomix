@@ -32,6 +32,7 @@ import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -68,6 +69,7 @@ type PreviewModalState = {
 export function KeywordScreen({
   title,
   tabId,
+  active = true,
   readOnly = false,
   gateway,
   storage,
@@ -75,6 +77,7 @@ export function KeywordScreen({
 }: {
   title: string;
   tabId: string;
+  active?: boolean;
   readOnly?: boolean;
   gateway?: KeywordGateway;
   storage?: SessionStorageLike;
@@ -162,6 +165,15 @@ export function KeywordScreen({
       live = false;
     };
   }, [client, query, reloadKey]);
+
+  useTabFreshness({
+    active,
+    domains: ['questions'],
+    refreshOnActivate: false,
+    onRefresh: () => {
+      setReloadKey((v) => v + 1);
+    },
+  });
 
   useEffect(() => {
     let live = true;
@@ -273,6 +285,7 @@ export function KeywordScreen({
       setEditor(null);
       setDistillFallback(null);
       setReloadKey((v) => v + 1);
+      invalidateFreshness('keywords', 'questions');
     } catch (reason) {
       const msg = messageOf(reason);
       setFormError(msg);
@@ -314,6 +327,7 @@ export function KeywordScreen({
         idempotencyKey: idem,
       });
       setDistillConfirmOpen(false);
+      invalidateFreshness('points');
       setPreview({
         title: `AI蒸馏结果预览（共 ${res.questions.length} 条，${res.shadow ? `记账 ${res.charged} 点·免费期` : `已计 ${res.charged} 点`}）`,
         source: 'AI',
@@ -458,6 +472,7 @@ export function KeywordScreen({
       setSelectedIds((prev) => prev.filter((id) => !ids.includes(id)));
       setConfirmDeleteIds(null);
       setReloadKey((v) => v + 1);
+      invalidateFreshness('keywords', 'questions');
     } catch (reason) {
       setConfirmDeleteIds(null);
       setError(messageOf(reason));

@@ -30,6 +30,7 @@ import { CrudTable, type CrudColumn, type CrudSearch } from '../crud/crud-table'
 import { TableClampText } from '../crud/table-clamp-text';
 import { PromptApiError, httpPromptGateway, type PromptGateway } from '../../lib/prompts';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 
 type KindFilter = 'ALL' | PromptKindName;
 
@@ -248,6 +249,7 @@ export function PromptScreen({
       setSelectedIds([]);
       setPage(1);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('prompts');
       setBanner({
         type: saved.warnings.length > 0 ? 'warning' : 'success',
         text:
@@ -268,6 +270,7 @@ export function PromptScreen({
       const cloned = await client.clone(source.id);
       setDrawerOpen(false);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('prompts');
       setBanner({
         type: 'success',
         text: `已从「${source.name}」克隆副本，可直接修改内容后保存`,
@@ -291,6 +294,7 @@ export function PromptScreen({
       setDeleteIds(null);
       setSelectedIds([]);
       setReloadTick((n) => n + 1);
+      invalidateFreshness('prompts');
       setBanner({ type: 'success', text: `已删除 ${res.deleted} 条写作指令` });
     } catch (err: unknown) {
       setBanner({

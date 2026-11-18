@@ -434,6 +434,8 @@ export function ShellFrame({
         role={account.role}
         tabs={state.tabs}
         activeId={state.activeId}
+        aiImageEnabled={aiImageEnabled}
+        visibilityEnabled={visibilityEnabled}
         onDispatch={onDispatch}
         onOpenLayout={() => setPanelOpen(true)}
         onToggleMenu={toggleMenu}

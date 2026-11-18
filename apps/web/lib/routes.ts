@@ -13,11 +13,12 @@ export type RouteMatch = {
 type StaticRoute = {
   title: string;
   parent: string | null;
+  devOnly?: boolean;
 };
 
 export const STATIC_ROUTES: Record<string, StaticRoute> = {
   '/dashboard': { title: '首页', parent: null },
-  '/workbench/samples': { title: '列表示例', parent: null },
+  '/workbench/samples': { title: '列表示例', parent: null, devOnly: true },
   '/material/keywords': { title: '关键词', parent: null },
   '/material/questions': { title: '写作标题', parent: '/material/keywords' },
   '/material/gallery': { title: '企业画像图库', parent: null },
@@ -105,34 +106,8 @@ export const MENU: MenuItem[] = [
       },
     ],
   },
-  {
-    type: 'section',
-    key: 'publish',
-    title: '文章发布',
-    children: [{ type: 'soon', key: 'publish-soon', title: '即将上线' }],
-  },
-  {
-    type: 'section',
-    key: 'aidata',
-    title: 'AI数据',
-    children: [link('/visibility/overview')],
-  },
-  {
-    type: 'section',
-    key: 'visibility',
-    title: 'AI可见度诊断',
-    children: [link('/visibility/monitors')],
-  },
-  {
-    type: 'submenu',
-    key: 'tools',
-    title: 'AI工具',
-    children: [
-      { type: 'soon', key: 'tool-index', title: '关键词指数' },
-      { type: 'soon', key: 'tool-expand', title: 'AI拓词' },
-      { type: 'soon', key: 'tool-manual', title: '手动拓词工具' },
-    ],
-  },
+  link('/visibility/overview'),
+  link('/visibility/monitors'),
   {
     type: 'submenu',
     key: 'me',
@@ -154,8 +129,9 @@ export function buildMenu(options?: {
     }
     if (
       options?.visibilityEnabled === false &&
-      item.type === 'section' &&
-      (item.key === 'aidata' || item.key === 'visibility')
+      ((item.type === 'link' &&
+        (item.href === '/visibility/overview' || item.href === '/visibility/monitors')) ||
+        (item.type === 'section' && (item.key === 'aidata' || item.key === 'visibility')))
     ) {
       return false;
     }
@@ -166,10 +142,31 @@ export function buildMenu(options?: {
 export function isConsoleRouteAccessible(href: string, role?: string): boolean {
   const matched = matchRoute(href);
   if (!matched) return false;
-  if (matched.path === '/workbench/samples') {
+  const staticRoute = STATIC_ROUTES[matched.path];
+  if (staticRoute?.devOnly) {
+    if (process.env.NODE_ENV === 'production') return false;
     return role === 'ADMIN';
   }
   return true;
+}
+
+export function isCommandPaletteRoute(
+  href: string,
+  role?: string,
+  options?: { aiImageEnabled?: boolean; visibilityEnabled?: boolean },
+): boolean {
+  const matched = matchRoute(href);
+  if (!matched) return false;
+  const staticRoute = STATIC_ROUTES[matched.path];
+  if (staticRoute?.devOnly) return false;
+  if (options?.aiImageEnabled === false && matched.path === '/image') return false;
+  if (
+    options?.visibilityEnabled === false &&
+    (matched.path === '/visibility/overview' || matched.path === '/visibility/monitors')
+  ) {
+    return false;
+  }
+  return isConsoleRouteAccessible(href, role);
 }
 
 function filterMenuItems(items: MenuItem[], predicate: (item: MenuItem) => boolean): MenuItem[] {
