@@ -431,18 +431,73 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       expect(priced.status).toBe(200);
       expect(priced.data.items.find((item) => item.action === 'ai_write')?.unitPoints).toBe(12);
 
-      const announcement = await call<{ id: string }>(base, 'POST', '/api/v1/admin/announcements', {
+      const batchPriced = await call<{
+        items: Array<{ action: string; unitPoints: number; enabled: boolean; label: string }>;
+      }>(base, 'PUT', '/api/v1/admin/pricing', {
+        token: adminToken,
+        body: {
+          items: [
+            { action: 'ai_write', unitPoints: 10, enabled: true },
+            { action: 'kb_addon', unitPoints: 6, enabled: true },
+          ],
+        },
+      });
+      expect(batchPriced.status).toBe(200);
+      expect(batchPriced.data.items.find((item) => item.action === 'kb_addon')?.unitPoints).toBe(6);
+
+      const announcement = await call<{
+        id: string;
+        operatorName: string | null;
+        createdAt: string | null;
+      }>(base, 'POST', '/api/v1/admin/announcements', {
         token: adminToken,
         body: { content: 'GeoMix 维护公告', enabled: true, sort: 1 },
       });
       expect(announcement.status).toBe(200);
+      expect(announcement.data.operatorName).toBe(`admin_${suffix}`);
+      expect(announcement.data.createdAt).toBeTruthy();
+
+      const editedAnnouncement = await call<{ id: string; content: string }>(
+        base,
+        'PATCH',
+        `/api/v1/admin/announcements/${announcement.data.id}`,
+        {
+          token: adminToken,
+          body: { content: 'GeoMix 维护公告（已更新）', enabled: true, sort: 1 },
+        },
+      );
+      expect(editedAnnouncement.status).toBe(200);
+      expect(editedAnnouncement.data.content).toBe('GeoMix 维护公告（已更新）');
+
       const feed = await call<{ items: Array<{ content: string }> }>(
         base,
         'GET',
         '/api/v1/announcements',
         { token: merchantToken },
       );
-      expect(feed.data.items.some((item) => item.content === 'GeoMix 维护公告')).toBe(true);
+      expect(feed.data.items.some((item) => item.content === 'GeoMix 维护公告（已更新）')).toBe(
+        true,
+      );
+
+      const merchantDeleteAnnouncement = await call(
+        base,
+        'DELETE',
+        `/api/v1/admin/announcements/${announcement.data.id}`,
+        { token: merchantToken },
+      );
+      expect(merchantDeleteAnnouncement.status).toBe(404);
+
+      const deletedAnnouncement = await call<{ deleted: boolean; id: string }>(
+        base,
+        'DELETE',
+        `/api/v1/admin/announcements/${announcement.data.id}`,
+        { token: adminToken },
+      );
+      expect(deletedAnnouncement.status).toBe(200);
+      expect(deletedAnnouncement.data).toEqual({
+        deleted: true,
+        id: announcement.data.id,
+      });
 
       const template = await call<{ id: string; name: string }>(
         base,
