@@ -344,6 +344,36 @@ export function chunkKnowledgeText(
   return chunks;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 拼接「公司全称（品牌简称）」，若公司全称已包含（品牌简称）或与品牌简称相同则不重复拼接（Refs #156）。
+ */
+export function formatCompanyBrandLabel(
+  companyName?: string | null,
+  brand?: string | null,
+): string {
+  const cleanCompany = (companyName ?? '').trim();
+  const cleanBrand = (brand ?? '').trim();
+  if (!cleanCompany) return cleanBrand;
+  if (!cleanBrand) return cleanCompany;
+
+  if (cleanCompany.toLowerCase() === cleanBrand.toLowerCase()) {
+    return cleanCompany;
+  }
+
+  const escaped = escapeRegExp(cleanBrand);
+  const parenBrandRegex = new RegExp(`[（(]\\s*${escaped}\\s*[）)]`, 'i');
+  if (parenBrandRegex.test(cleanCompany)) {
+    const dupRegex = new RegExp(`([（(]\\s*${escaped}\\s*[）)])(?:\\s*\\1)+`, 'gi');
+    return cleanCompany.replace(dupRegex, '$1');
+  }
+
+  return `${cleanCompany}（${cleanBrand}）`;
+}
+
 /**
  * 组装细分模式「企业事实卡」（只放非空字段，供 F04a §3.2 写作注入复用）。
  */
@@ -353,12 +383,7 @@ export function formatKnowledgeFactCard(input: {
   fields?: Partial<KbDetailFields> | null;
 }): string {
   const lines: string[] = ['只能使用以下事实，不得编造参数、资质或案例：'];
-  const header = [
-    input.companyName?.trim(),
-    input.brandShort?.trim() ? `（${input.brandShort.trim()}）` : '',
-  ]
-    .filter(Boolean)
-    .join('');
+  const header = formatCompanyBrandLabel(input.companyName, input.brandShort);
   if (header) {
     lines.push(`企业主体：${header}`);
   }

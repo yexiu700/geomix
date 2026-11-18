@@ -12,6 +12,7 @@ import {
   assembleTitleMessages,
   buildFakeArticleMarkdown,
   buildFakeTitleText,
+  chunkKnowledgeText,
   cleanTitleText,
   emptyKbDetailFields,
   formatKnowledgeFactCard,
@@ -593,7 +594,10 @@ export class AiTaskRunner implements AiTaskHandler {
         .map((chunk, idx) => `【资料片段 ${idx + 1}】\n${chunk.content.trim()}`)
         .join('\n\n');
     }
-    return `【企业背景资料】\n${Array.from(summary).slice(0, KB_FULL_INJECT_MAX).join('')}`;
+    const firstBlock =
+      chunkKnowledgeText(summary, KB_FULL_INJECT_MAX, 0)[0] ??
+      Array.from(summary).slice(0, KB_FULL_INJECT_MAX).join('');
+    return `【企业背景资料】\n${firstBlock}`;
   }
 
   private async callLlmWithRetry(input: {

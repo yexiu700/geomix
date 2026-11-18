@@ -180,4 +180,93 @@ describe('writing-tasks shared algorithms', () => {
     expect(zeroImgs.usedAssetIds).toEqual(['img1']);
     expect(zeroImgs.contentHtml).not.toContain('<img');
   });
+
+  it('preserves >400-char SUMMARY brand matrix facts without mid-bracket truncation, prompt tag leakage, or generic B2B filler (#207)', () => {
+    const summaryBody = [
+      '【核心品牌矩阵】',
+      '1. Anker（安克）：主打氮化镓（GaN）快充充电器、MagGo 磁吸无线充及大功率户外与桌面充电站，专注高转换效率、智能温控安全保护与多口功率动态分配技术，适合差旅便携、车载补能与多设备高效桌面供电场景，兼顾兼容性与长时间高负载输出稳定性。',
+      '2. Soundcore（声阔）：聚焦无线降噪耳机与便携蓝牙音箱，主打自研同轴声学架构、自适应主动降噪算法与超长续航能力，覆盖日常通勤、远程办公会议及户外露营听音需求，并提供多档位自定义音效调节。',
+      '3. eufy（悠飞）：聚焦智能家居安防摄像头、可视门铃与扫地机器人，强调本地端加密存储与免月费长期看护体验，面向注重家庭隐私保护、夜间高清监控与自动化居家清洁的消费群体。',
+    ].join('\n');
+    const longSummary = `${summaryBody}\n4. AnkerWork：面向混合办公与远程协同场景推出会议全向麦、无线领夹麦与高清摄像头，提升多人会议拾音清晰度、AI 智能降噪与多端免驱适配能力，适用于线上培训、视频会议与远程教学等多类办公环境。`;
+    expect(Array.from(longSummary).length).toBeGreaterThan(400);
+
+    const fakeMd = buildFakeArticleMarkdown({
+      question: '安克创新旗下有哪些核心消费电子品牌与适用场景？',
+      mainKeyword: '消费电子品牌矩阵',
+      brand: 'Anker',
+      companyName: null,
+      hasKb: true,
+      kbSnippet: `【企业背景资料】\n${longSummary}`,
+    });
+    const processed = postProcessArticleMarkdown(fakeMd, {
+      question: '安克创新旗下有哪些核心消费电子品牌与适用场景？',
+      mainKeyword: '消费电子品牌矩阵',
+      brand: 'Anker',
+    });
+
+    expect(processed.contentText).toContain('Anker（安克）');
+    expect(processed.contentText).toContain('氮化镓（GaN）');
+    expect(processed.contentText).toContain('Soundcore（声阔）');
+    expect(processed.contentText).toContain('eufy（悠飞）');
+    expect(processed.contentText).toContain('AnkerWork');
+    expect(processed.contentText).not.toContain('【企业背景资料】');
+    expect(processed.contentText).not.toContain('培训支持及耗材备件衔接方式');
+    expect(processed.contentText).not.toContain('示例方案甲');
+    expect(processed.contentHtml).not.toContain('氮化镓（<br>');
+    expect(processed.contentHtml).toContain('<h2>');
+    expect(processed.contentHtml).toContain('<h3>');
+    expect(processed.contentHtml).toContain('常见问题（FAQ）');
+    expect(processed.charCount).toBeGreaterThanOrEqual(550);
+  });
+
+  it('truncates oversized >3500-char KB snippets only at complete sentence/paragraph boundaries without unclosed brackets (#207)', () => {
+    const unit =
+      '1. Anker（安克）：主打氮化镓（GaN）快充设备与便携储能方案，覆盖日常出差及桌面多口快充场景。';
+    const oversized = Array.from({ length: 65 }, (_, i) => `${i + 1}. ${unit}`).join('\n');
+    expect(Array.from(oversized).length).toBeGreaterThan(3500);
+
+    const fakeMd = buildFakeArticleMarkdown({
+      question: '多品牌快充矩阵如何选型？',
+      mainKeyword: '快充设备',
+      brand: 'Anker',
+      hasKb: true,
+      kbSnippet: `【资料片段 1】\n${oversized}`,
+    });
+    expect(fakeMd).not.toContain('【资料片段 1】');
+
+    // Ensure no unclosed full-width or half-width parentheses inside the KB section
+    const opens = (fakeMd.match(/[（(]/g) ?? []).length;
+    const closes = (fakeMd.match(/[）)]/g) ?? []).length;
+    expect(opens).toBe(closes);
+  });
+
+  it('does not duplicate company shortName or leak DETAIL fact-card prompt instructions (#156)', () => {
+    const detailFactCard = [
+      '只能使用以下事实，不得编造参数、资质或案例：',
+      '企业主体：阿卓帕科技（ARZOPA）（ARZOPA）',
+      '产品服务：便携显示器与移动办公副屏',
+      '产品特点：全功能 Type-C 一线直连与低蓝光 IPS 面板',
+    ].join('\n');
+
+    const fakeMd = buildFakeArticleMarkdown({
+      question: '出差办公 ARZOPA 便携屏值得买吗？',
+      mainKeyword: '便携屏',
+      brand: 'ARZOPA',
+      companyName: '阿卓帕科技（ARZOPA）',
+      hasKb: true,
+      kbSnippet: detailFactCard,
+    });
+    const processed = postProcessArticleMarkdown(fakeMd, {
+      question: '出差办公 ARZOPA 便携屏值得买吗？',
+      mainKeyword: '便携屏',
+      brand: 'ARZOPA',
+    });
+
+    expect(processed.contentText).toContain('阿卓帕科技（ARZOPA）');
+    expect(processed.contentText).toContain('便携显示器与移动办公副屏');
+    expect(processed.contentText).not.toContain('（ARZOPA）（ARZOPA）');
+    expect(processed.contentText).not.toContain('只能使用以下事实');
+    expect(processed.contentText).not.toContain('企业主体：');
+  });
 });

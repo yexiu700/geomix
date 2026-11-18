@@ -75,5 +75,21 @@ describe('knowledge shared helpers', () => {
     expect(card).toContain('智造星装备有限公司（智造星）');
     expect(card).toContain('产品服务：激光切割机');
     expect(card).not.toContain('品牌故事：');
+
+    const dedupCard = formatKnowledgeFactCard({
+      companyName: '阿卓帕科技（ARZOPA）',
+      brandShort: 'ARZOPA',
+      fields: { productService: '便携显示器' },
+    });
+    expect(dedupCard).toContain('企业主体：阿卓帕科技（ARZOPA）');
+    expect(dedupCard).not.toContain('（ARZOPA）（ARZOPA）');
+
+    const sameBrandCard = formatKnowledgeFactCard({
+      companyName: 'ARZOPA',
+      brandShort: 'ARZOPA',
+      fields: { productService: '便携显示器' },
+    });
+    expect(sameBrandCard).toContain('企业主体：ARZOPA');
+    expect(sameBrandCard).not.toContain('ARZOPA（ARZOPA）');
   });
 });
