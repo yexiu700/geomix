@@ -716,12 +716,18 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-admin-bar {
+  position: relative;
+  z-index: 1005;
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 12px 20px;
   background: var(--gm-bg-surface);
   border-bottom: 1px solid var(--gm-line-1);
+}
+
+.gm-admin .gm-crud-mask:not(.max) {
+  padding-top: 72px;
 }
 
 .gm-admin-bar nav {

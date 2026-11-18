@@ -2,8 +2,13 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AdminApiError, type AnnouncementRow, type PriceRow } from '../../lib/admin-client';
-import { AnnouncementAdmin, PricingAdmin } from './catalog-admin';
+import {
+  AdminApiError,
+  type AnnouncementRow,
+  type PriceRow,
+  type TemplateRow,
+} from '../../lib/admin-client';
+import { AnnouncementAdmin, PricingAdmin, TemplateAdmin } from './catalog-admin';
 
 afterEach(() => {
   cleanup();
@@ -272,5 +277,128 @@ describe('AnnouncementAdmin (#199)', () => {
 
     expect(await screen.findByText('删除公告失败')).toBeTruthy();
     expect(within(screen.getByRole('table')).getByText('GeoMix 平台日常维护通知')).toBeTruthy();
+  });
+
+  it('blocks empty announcement publish with required asterisk and inline error (#197)', async () => {
+    const createAnnouncement = vi.fn();
+    const client = {
+      listAnnouncements: vi.fn(async () => sampleAnnouncements()),
+      createAnnouncement,
+      updateAnnouncement: vi.fn(),
+      deleteAnnouncement: vi.fn(),
+    };
+
+    render(<AnnouncementAdmin client={client} />);
+    expect(await screen.findByText('GeoMix 平台日常维护通知')).toBeTruthy();
+    expect(document.querySelectorAll('.ant-form-item-required').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText('公告内容').getAttribute('placeholder')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }));
+    expect(await screen.findByText('请填写公告内容', {}, { timeout: 5000 })).toBeTruthy();
+    expect(createAnnouncement).not.toHaveBeenCalled();
+  });
+});
+
+function sampleTemplates(): TemplateRow[] {
+  return [
+    {
+      id: 'tpl-1',
+      kind: 'ARTICLE',
+      name: '标准文章模板',
+      content: '请围绕 {{主关键词}} 生成结构化内容。',
+      randomPool: true,
+      sort: 1,
+      updatedAt: '2026-11-18T00:00:00.000Z',
+    },
+  ];
+}
+
+describe('TemplateAdmin (#197, #198)', () => {
+  it('validates required template fields with asterisks and placeholders before calling createTemplate (#197)', async () => {
+    const createTemplate = vi.fn(async (input) => ({
+      id: 'tpl-2',
+      ...input,
+      updatedAt: '2026-11-18T01:00:00.000Z',
+    }));
+    const client = {
+      listTemplates: vi.fn(async () => sampleTemplates()),
+      createTemplate,
+      updateTemplate: vi.fn(),
+    };
+
+    render(<TemplateAdmin client={client} />);
+    expect(await screen.findByText('标准文章模板')).toBeTruthy();
+
+    expect(document.querySelectorAll('.ant-form-item-required').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByLabelText('模板名称').getAttribute('placeholder')).toBeTruthy();
+    expect(screen.getByLabelText('模板正文').getAttribute('placeholder')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '新增模板' }));
+    expect(await screen.findByText('请填写模板名称', {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText('请填写模板正文', {}, { timeout: 5000 })).toBeTruthy();
+    expect(createTemplate).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('模板名称'), { target: { value: '新增问答模板' } });
+    fireEvent.change(screen.getByLabelText('模板正文'), {
+      target: { value: '围绕问题输出要点。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '新增模板' }));
+
+    await waitFor(() => {
+      expect(createTemplate).toHaveBeenCalledWith({
+        kind: 'ARTICLE',
+        name: '新增问答模板',
+        content: '围绕问题输出要点。',
+        randomPool: true,
+        sort: 2,
+      });
+    });
+  });
+
+  it('supports 取消, Escape close, backdrop mask click, and required validation in edit modal (#198)', async () => {
+    const updateTemplate = vi.fn(async (id, input) => ({
+      id,
+      ...input,
+      updatedAt: '2026-11-18T02:00:00.000Z',
+    }));
+    const client = {
+      listTemplates: vi.fn(async () => sampleTemplates()),
+      createTemplate: vi.fn(),
+      updateTemplate,
+    };
+
+    render(<TemplateAdmin client={client} />);
+    expect(await screen.findByText('标准文章模板')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑模板' });
+
+    // No dead minimize/maximize buttons
+    expect(within(dialog).queryByRole('button', { name: '最小化' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: '最大化' })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: /取\s*消/ })).toBeTruthy();
+
+    // Empty name blocked before calling updateTemplate
+    fireEvent.change(within(dialog).getByLabelText('编辑模板名称'), { target: { value: '' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存模板' }));
+    expect(await within(dialog).findByText('请填写模板名称', {}, { timeout: 5000 })).toBeTruthy();
+    expect(updateTemplate).not.toHaveBeenCalled();
+
+    // Cancel closes modal
+    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
+
+    // Re-open and Escape closes modal
+    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
+    expect(await screen.findByRole('dialog', { name: '编辑模板' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
+
+    // Re-open and clicking backdrop mask closes modal
+    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
+    expect(await screen.findByRole('dialog', { name: '编辑模板' })).toBeTruthy();
+    const mask = document.querySelector('.gm-crud-mask') as HTMLElement;
+    fireEvent.click(mask);
+    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
   });
 });

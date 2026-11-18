@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LedgerPage, MoneyItem, PointItem, RightsView } from '../../lib/account-client';
 import { MoneyScreen } from './money-screen';
@@ -137,16 +137,38 @@ describe('personal center screens', () => {
       target: { value: '91310000abcd1234' },
     });
     fireEvent.click(screen.getByRole('button', { name: '提交资料' }));
-    expect(submit).toHaveBeenCalledWith({
-      companyName: '示例主体',
-      creditCode: '91310000ABCD1234',
-      contact: '',
-      phone: '',
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledWith({
+        companyName: '示例主体',
+        creditCode: '91310000ABCD1234',
+        contact: '',
+        phone: '',
+      });
     });
     view.rerender(
       <VerifyScreen title="实名认证" readOnly load={async () => null} submit={submit} />,
     );
     expect(screen.getByRole('button', { name: '提交资料' })).toHaveProperty('disabled', true);
+  });
+
+  it('blocks empty verify submission with inline required validation and asterisks (#197)', async () => {
+    const submit = vi.fn();
+    render(<VerifyScreen title="实名认证" load={async () => null} submit={submit} />);
+    await screen.findByText(/尚未开通核验/);
+
+    expect(document.querySelectorAll('.ant-form-item-required')).toHaveLength(2);
+    expect(
+      screen.getByRole('textbox', { name: '主体名称' }).getAttribute('placeholder'),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('textbox', { name: '统一社会信用代码' }).getAttribute('placeholder'),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '提交资料' }));
+    expect(await screen.findByText('请填写主体名称', {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText('请填写统一社会信用代码', {}, { timeout: 5000 })).toBeTruthy();
+    expect(submit).not.toHaveBeenCalled();
+    expect(document.querySelector('.ant-form-item-has-error')).not.toBeNull();
   });
 
   it('validates amount format, resets filters, and exports money ledger', async () => {

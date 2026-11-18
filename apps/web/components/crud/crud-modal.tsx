@@ -13,6 +13,7 @@ export function CrudModal({
   width,
   showCancel = true,
   cancelText = '取消',
+  maskClosable = true,
   error,
   ok,
   onMinimize,
@@ -30,6 +31,7 @@ export function CrudModal({
   width?: number | string;
   showCancel?: boolean;
   cancelText?: string;
+  maskClosable?: boolean;
   error?: string | null;
   ok?: ReactNode;
   onMinimize?: () => void;
@@ -82,7 +84,14 @@ export function CrudModal({
       : undefined;
 
   return (
-    <div className={maximized ? 'gm-crud-mask max' : 'gm-crud-mask'}>
+    <div
+      className={maximized ? 'gm-crud-mask max' : 'gm-crud-mask'}
+      onClick={(event) => {
+        if (maskClosable && !confirmLoading && event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div
         ref={dialogRef}
         className={maximized ? 'gm-crud-dialog max' : 'gm-crud-dialog'}

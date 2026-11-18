@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountProfile } from '../../lib/api';
@@ -301,5 +301,71 @@ describe('admin shell', { timeout: 60_000 }, () => {
         value: prevWidth,
       });
     }
+  });
+
+  it('requires matching 确认新密码 and supports 取消 and Escape close in 修改密码 modal (#198)', async () => {
+    const onChangePassword = vi.fn(async () => null);
+    render(
+      <ShellFrame
+        account={account}
+        state={initialSnapshot()}
+        onDispatch={() => undefined}
+        onLogout={() => undefined}
+        onChangePassword={onChangePassword}
+      />,
+    );
+
+    // Open 修改密码 via 账号菜单 dropdown
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '账号菜单' }));
+    fireEvent.click(await screen.findByText('修改密码'));
+
+    const dialog = await screen.findByRole('dialog', { name: '修改密码' });
+    expect(within(dialog).getByLabelText('当前密码')).toBeTruthy();
+    expect(within(dialog).getByLabelText('新密码')).toBeTruthy();
+    expect(within(dialog).getByLabelText('确认新密码')).toBeTruthy();
+
+    // Mismatched confirmPassword blocks submission
+    fireEvent.change(within(dialog).getByLabelText('当前密码'), {
+      target: { value: 'OldPass123' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('新密码'), {
+      target: { value: 'NewPass123' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('确认新密码'), {
+      target: { value: 'Mismatch123' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '修改密码' }));
+
+    expect(
+      await within(dialog).findByText('两次输入的新密码不一致', {}, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(onChangePassword).not.toHaveBeenCalled();
+
+    // Matching confirmPassword submits cleanly without leaking confirmPassword
+    fireEvent.change(within(dialog).getByLabelText('确认新密码'), {
+      target: { value: 'NewPass123' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '修改密码' }));
+    await waitFor(() => {
+      expect(onChangePassword).toHaveBeenCalledWith({
+        currentPassword: 'OldPass123',
+        newPassword: 'NewPass123',
+      });
+    });
+
+    // 取消 closes modal
+    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '修改密码' })).toBeNull();
+    });
+
+    // Re-open and Escape closes modal
+    fireEvent.mouseEnter(screen.getByRole('button', { name: '账号菜单' }));
+    fireEvent.click(await screen.findByText('修改密码'));
+    await screen.findByRole('dialog', { name: '修改密码' });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '修改密码' })).toBeNull();
+    });
   });
 });

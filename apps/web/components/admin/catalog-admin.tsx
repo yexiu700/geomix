@@ -1,7 +1,19 @@
 'use client';
 
 import { formatAdminDateTime, getPricingActionMeta } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import {
+  Alert,
+  Button,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
 import { useEffect, useState } from 'react';
 import {
   AdminApiError,
@@ -309,16 +321,14 @@ export function AnnouncementAdmin({
     'listAnnouncements' | 'createAnnouncement' | 'updateAnnouncement' | 'deleteAnnouncement'
   >;
 }) {
+  const [publishForm] = Form.useForm<{ content: string }>();
+  const [editForm] = Form.useForm<{ content: string; enabled: boolean; sort: string }>();
   const [rows, setRows] = useState<AnnouncementRow[]>([]);
-  const [content, setContent] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<AnnouncementRow | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [editEnabled, setEditEnabled] = useState(true);
-  const [editSort, setEditSort] = useState('0');
   const [editSaving, setEditSaving] = useState(false);
   const [editModalError, setEditModalError] = useState<string | null>(null);
 
@@ -342,13 +352,8 @@ export function AnnouncementAdmin({
     };
   }, [client]);
 
-  const handlePublish = async () => {
-    const trimmed = content.trim();
-    if (!trimmed) {
-      setNotice(null);
-      setError('请填写公告');
-      return;
-    }
+  const handlePublish = async (values: { content: string }) => {
+    const trimmed = values.content.trim();
     setError(null);
     setNotice(null);
     setPublishing(true);
@@ -359,7 +364,7 @@ export function AnnouncementAdmin({
         sort: rows.length,
       });
       setRows((current) => [...current, row]);
-      setContent('');
+      publishForm.resetFields();
       setNotice('公告已发布');
     } catch (reason: unknown) {
       setError(messageOf(reason));
@@ -371,20 +376,25 @@ export function AnnouncementAdmin({
   const openEditModal = (row: AnnouncementRow) => {
     setEditModalError(null);
     setEditing(row);
-    setEditContent(row.content);
-    setEditEnabled(row.enabled);
-    setEditSort(String(row.sort));
+    editForm.setFieldsValue({
+      content: row.content,
+      enabled: row.enabled,
+      sort: String(row.sort),
+    });
   };
 
   const handleSaveEdit = async () => {
     if (!editing) return;
-    const trimmed = editContent.trim();
-    if (!trimmed) {
-      setEditModalError('请填写公告');
+    let values: { content: string; enabled: boolean; sort: string };
+    try {
+      values = await editForm.validateFields();
+    } catch {
       return;
     }
-    const sortNum = Number(editSort.trim());
-    if (!/^[0-9]+$/.test(editSort.trim()) || !Number.isSafeInteger(sortNum) || sortNum > 9999) {
+    const trimmed = values.content.trim();
+    const sortTrimmed = (values.sort ?? '0').trim();
+    const sortNum = Number(sortTrimmed);
+    if (!/^[0-9]+$/.test(sortTrimmed) || !Number.isSafeInteger(sortNum) || sortNum > 9999) {
       setEditModalError('排序权重需为 0 ~ 9999 的整数');
       return;
     }
@@ -395,7 +405,7 @@ export function AnnouncementAdmin({
     try {
       const updated = await client.updateAnnouncement(editing.id, {
         content: trimmed,
-        enabled: editEnabled,
+        enabled: values.enabled,
         sort: sortNum,
       });
       setRows((current) => current.map((item) => (item.id === updated.id ? updated : item)));
@@ -432,18 +442,37 @@ export function AnnouncementAdmin({
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         公告管理
       </Typography.Title>
-      <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
-        <Input
-          aria-label="公告内容"
-          value={content}
-          maxLength={200}
-          placeholder="写一条 GeoMix 公告"
-          onChange={(event) => setContent(event.target.value)}
-        />
-        <Button type="primary" loading={publishing} onClick={() => void handlePublish()}>
-          发布
-        </Button>
-      </Space.Compact>
+      <Form
+        form={publishForm}
+        layout="vertical"
+        scrollToFirstError
+        initialValues={{ content: '' }}
+        onFinish={(values) => void handlePublish(values)}
+        style={{ marginBottom: 12 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <Form.Item
+            label="公告内容"
+            name="content"
+            style={{ flex: 1, marginBottom: 0 }}
+            rules={[
+              { required: true, whitespace: true, message: '请填写公告内容' },
+              { max: 200, message: '公告最多 200 字' },
+            ]}
+          >
+            <Input
+              aria-label="公告内容"
+              maxLength={200}
+              placeholder="写一条 GeoMix 公告（最多 200 字）"
+            />
+          </Form.Item>
+          <Form.Item label=" " style={{ marginBottom: 0 }}>
+            <Button type="primary" htmlType="submit" loading={publishing}>
+              发布
+            </Button>
+          </Form.Item>
+        </div>
+      </Form>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
       {notice ? (
         <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
@@ -511,6 +540,8 @@ export function AnnouncementAdmin({
         title="编辑公告"
         okText="保存"
         cancelText="取消"
+        keyboard
+        maskClosable={!editSaving}
         destroyOnHidden
         okButtonProps={{ loading: editSaving }}
         onCancel={() => {
@@ -521,31 +552,39 @@ export function AnnouncementAdmin({
         }}
         onOk={() => void handleSaveEdit()}
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          {editModalError ? <Alert type="error" showIcon message={editModalError} /> : null}
-          <Input.TextArea
-            aria-label="编辑公告内容"
-            rows={3}
-            maxLength={200}
-            value={editContent}
-            onChange={(event) => setEditContent(event.target.value)}
-          />
+        <Form form={editForm} layout="vertical" scrollToFirstError>
+          {editModalError ? (
+            <Alert type="error" showIcon message={editModalError} style={{ marginBottom: 12 }} />
+          ) : null}
+          <Form.Item
+            label="公告内容"
+            name="content"
+            rules={[
+              { required: true, whitespace: true, message: '请填写公告内容' },
+              { max: 200, message: '公告最多 200 字' },
+            ]}
+          >
+            <Input.TextArea
+              aria-label="编辑公告内容"
+              rows={3}
+              maxLength={200}
+              placeholder="请输入公告内容（最多 200 字）"
+            />
+          </Form.Item>
           <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
-            <Space>
-              <span>启用状态</span>
-              <Switch aria-label="编辑公告启用" checked={editEnabled} onChange={setEditEnabled} />
-            </Space>
-            <Space>
-              <Typography.Text>排序权重</Typography.Text>
-              <Input
-                aria-label="编辑公告排序"
-                style={{ width: 100 }}
-                value={editSort}
-                onChange={(event) => setEditSort(event.target.value)}
-              />
-            </Space>
+            <Form.Item
+              label="启用状态"
+              name="enabled"
+              valuePropName="checked"
+              style={{ marginBottom: 0 }}
+            >
+              <Switch aria-label="编辑公告启用" />
+            </Form.Item>
+            <Form.Item label="排序权重" name="sort" style={{ marginBottom: 0 }}>
+              <Input aria-label="编辑公告排序" style={{ width: 100 }} placeholder="0 ~ 9999" />
+            </Form.Item>
           </Space>
-        </Space>
+        </Form>
       </Modal>
 
       <Modal
@@ -553,6 +592,8 @@ export function AnnouncementAdmin({
         title="确认删除公告"
         okText="确认删除"
         cancelText="取消"
+        keyboard
+        maskClosable={!deleting}
         destroyOnHidden
         okButtonProps={{ danger: true, loading: deleting }}
         onCancel={() => {
@@ -572,23 +613,27 @@ const TEMPLATE_KINDS: Array<{ value: TemplateRow['kind']; label: string }> = [
   { value: 'REWRITE', label: '复刻模板 (REWRITE)' },
 ];
 
+type TemplateFormValues = {
+  kind: TemplateRow['kind'];
+  name: string;
+  content: string;
+  randomPool: boolean;
+};
+
 export function TemplateAdmin({
   client,
 }: {
   client: Pick<AdminClient, 'listTemplates' | 'createTemplate' | 'updateTemplate'>;
 }) {
+  const [createForm] = Form.useForm<TemplateFormValues>();
+  const [editForm] = Form.useForm<TemplateFormValues>();
   const [rows, setRows] = useState<TemplateRow[]>([]);
-  const [kind, setKind] = useState<TemplateRow['kind']>('ARTICLE');
-  const [name, setName] = useState('');
-  const [content, setContent] = useState('');
-  const [randomPool, setRandomPool] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<TemplateRow | null>(null);
-  const [editKind, setEditKind] = useState<TemplateRow['kind']>('ARTICLE');
-  const [editName, setEditName] = useState('');
-  const [editContent, setEditContent] = useState('');
-  const [editRandomPool, setEditRandomPool] = useState(true);
+  const [editSaving, setEditSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -607,6 +652,56 @@ export function TemplateAdmin({
     };
   }, [client]);
 
+  const handleCreate = async (values: TemplateFormValues) => {
+    setError(null);
+    setNotice(null);
+    setCreating(true);
+    try {
+      const row = await client.createTemplate({
+        kind: values.kind,
+        name: values.name.trim(),
+        content: values.content.trim(),
+        randomPool: values.randomPool,
+        sort: rows.length + 1,
+      });
+      setRows((current) => [...current, row]);
+      createForm.resetFields();
+      setNotice('模板已创建');
+    } catch (reason: unknown) {
+      setError(messageOf(reason));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing) return;
+    let values: TemplateFormValues;
+    try {
+      values = await editForm.validateFields();
+    } catch {
+      return;
+    }
+    setModalError(null);
+    setEditSaving(true);
+    try {
+      const updated = await client.updateTemplate(editing.id, {
+        kind: values.kind,
+        name: values.name.trim(),
+        content: values.content.trim(),
+        randomPool: values.randomPool,
+        sort: editing.sort,
+      });
+      setRows((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setEditing(null);
+      setNotice('模板已更新');
+    } catch (reason: unknown) {
+      setModalError(messageOf(reason));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   return (
     <section aria-label="系统模板">
       <Typography.Title level={3} style={{ marginTop: 0 }}>
@@ -615,59 +710,58 @@ export function TemplateAdmin({
       <Typography.Paragraph type="secondary">
         这里只管理系统模板。正文请自行编写，不要粘贴外部站点的模板原文。
       </Typography.Paragraph>
-      <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
-        <Space wrap>
-          <Select
-            aria-label="模板类型"
-            value={kind}
-            style={{ width: 200 }}
-            options={TEMPLATE_KINDS}
-            onChange={(value: TemplateRow['kind']) => setKind(value)}
-          />
-          <Space>
-            <span>随机池</span>
-            <Switch aria-label="随机池" checked={randomPool} onChange={setRandomPool} />
-          </Space>
+      <Form
+        form={createForm}
+        layout="vertical"
+        scrollToFirstError
+        initialValues={{ kind: 'ARTICLE', name: '', content: '', randomPool: true }}
+        onFinish={(values) => void handleCreate(values)}
+        style={{ marginBottom: 12 }}
+      >
+        <Space wrap size={16} align="start">
+          <Form.Item
+            label="模板类型"
+            name="kind"
+            rules={[{ required: true, message: '请选择模板类型' }]}
+          >
+            <Select aria-label="模板类型" style={{ width: 200 }} options={TEMPLATE_KINDS} />
+          </Form.Item>
+          <Form.Item label="随机池" name="randomPool" valuePropName="checked">
+            <Switch aria-label="随机池" />
+          </Form.Item>
         </Space>
-        <Input
-          aria-label="模板名称"
-          placeholder="模板名称"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <Input.TextArea
-          aria-label="模板正文"
-          rows={4}
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-        />
-        <Button
-          type="primary"
-          onClick={() => {
-            setError(null);
-            void client
-              .createTemplate({
-                kind,
-                name,
-                content,
-                randomPool,
-                sort: rows.length + 1,
-              })
-              .then(
-                (row) => {
-                  setError(null);
-                  setRows((current) => [...current, row]);
-                  setName('');
-                  setContent('');
-                },
-                (reason: unknown) => setError(messageOf(reason)),
-              );
-          }}
+        <Form.Item
+          label="模板名称"
+          name="name"
+          rules={[
+            { required: true, whitespace: true, message: '请填写模板名称' },
+            { max: 40, message: '名称最多 40 字' },
+          ]}
         >
+          <Input aria-label="模板名称" placeholder="请输入模板名称（最多 40 字）" />
+        </Form.Item>
+        <Form.Item
+          label="模板正文"
+          name="content"
+          rules={[
+            { required: true, whitespace: true, message: '请填写模板正文' },
+            { max: 8000, message: '模板最多 8000 字' },
+          ]}
+        >
+          <Input.TextArea
+            aria-label="模板正文"
+            rows={4}
+            placeholder="请输入模板正文（请自行编写，勿粘贴外部站点原文）"
+          />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" loading={creating}>
           新增模板
         </Button>
-      </Space>
-      {error ? <Alert type="error" showIcon message={error} /> : null}
+      </Form>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {notice ? (
+        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+      ) : null}
       <Table<TemplateRow>
         rowKey="id"
         dataSource={rows}
@@ -687,10 +781,12 @@ export function TemplateAdmin({
                 onClick={() => {
                   setModalError(null);
                   setEditing(row);
-                  setEditKind(row.kind);
-                  setEditName(row.name);
-                  setEditContent(row.content);
-                  setEditRandomPool(row.randomPool);
+                  editForm.setFieldsValue({
+                    kind: row.kind,
+                    name: row.name,
+                    content: row.content,
+                    randomPool: row.randomPool,
+                  });
                 }}
               >
                 编辑
@@ -704,10 +800,8 @@ export function TemplateAdmin({
         title="编辑模板"
         minimized={false}
         maximized={false}
+        confirmLoading={editSaving}
         error={modalError}
-        onMinimize={() => undefined}
-        onRestore={() => undefined}
-        onMaximize={() => undefined}
         onClose={() => {
           setModalError(null);
           setEditing(null);
@@ -715,71 +809,62 @@ export function TemplateAdmin({
         onReset={() => {
           setModalError(null);
           if (!editing) return;
-          setEditKind(editing.kind);
-          setEditName(editing.name);
-          setEditContent(editing.content);
-          setEditRandomPool(editing.randomPool);
+          editForm.setFieldsValue({
+            kind: editing.kind,
+            name: editing.name,
+            content: editing.content,
+            randomPool: editing.randomPool,
+          });
         }}
         ok={
           <Button
             type="primary"
             aria-label="保存模板"
-            onClick={() => {
-              if (!editing) return;
-              setModalError(null);
-              void client
-                .updateTemplate(editing.id, {
-                  kind: editKind,
-                  name: editName,
-                  content: editContent,
-                  randomPool: editRandomPool,
-                  sort: editing.sort,
-                })
-                .then(
-                  (updated) => {
-                    setRows((current) =>
-                      current.map((item) => (item.id === updated.id ? updated : item)),
-                    );
-                    setEditing(null);
-                  },
-                  (reason: unknown) => setModalError(messageOf(reason)),
-                );
-            }}
+            loading={editSaving}
+            onClick={() => void handleSaveEdit()}
           >
             保存模板
           </Button>
         }
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Space wrap>
-            <Select
-              aria-label="编辑模板类型"
-              value={editKind}
-              style={{ width: 200 }}
-              options={TEMPLATE_KINDS}
-              onChange={(value: TemplateRow['kind']) => setEditKind(value)}
-            />
-            <Space>
-              <span>随机池</span>
-              <Switch
-                aria-label="编辑随机池"
-                checked={editRandomPool}
-                onChange={setEditRandomPool}
-              />
-            </Space>
+        <Form form={editForm} layout="vertical" scrollToFirstError>
+          <Space wrap size={16} align="start">
+            <Form.Item
+              label="模板类型"
+              name="kind"
+              rules={[{ required: true, message: '请选择模板类型' }]}
+            >
+              <Select aria-label="编辑模板类型" style={{ width: 200 }} options={TEMPLATE_KINDS} />
+            </Form.Item>
+            <Form.Item label="随机池" name="randomPool" valuePropName="checked">
+              <Switch aria-label="编辑随机池" />
+            </Form.Item>
           </Space>
-          <Input
-            aria-label="编辑模板名称"
-            value={editName}
-            onChange={(event) => setEditName(event.target.value)}
-          />
-          <Input.TextArea
-            aria-label="编辑模板正文"
-            rows={4}
-            value={editContent}
-            onChange={(event) => setEditContent(event.target.value)}
-          />
-        </Space>
+          <Form.Item
+            label="模板名称"
+            name="name"
+            rules={[
+              { required: true, whitespace: true, message: '请填写模板名称' },
+              { max: 40, message: '名称最多 40 字' },
+            ]}
+          >
+            <Input aria-label="编辑模板名称" placeholder="请输入模板名称（最多 40 字）" />
+          </Form.Item>
+          <Form.Item
+            label="模板正文"
+            name="content"
+            rules={[
+              { required: true, whitespace: true, message: '请填写模板正文' },
+              { max: 8000, message: '模板最多 8000 字' },
+            ]}
+          >
+            <Input.TextArea
+              aria-label="编辑模板正文"
+              rows={4}
+              placeholder="请输入模板正文（请自行编写，勿粘贴外部站点原文）"
+            />
+          </Form.Item>
+        </Form>
       </CrudModal>
     </section>
   );
