@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { VisibilityEngineBreakdownItem } from '@geomix/shared';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SonarDial } from './sonar-dial';
 
@@ -133,5 +133,64 @@ describe('SonarDial', () => {
     expect(screen.getByRole('alert').textContent).toContain('引擎数据加载失败');
     fireEvent.click(screen.getByRole('button', { name: '重 试' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives left/right engine labels ample SVG viewBox padding and keeps ring scale labels clear of center KPI text (#187)', () => {
+    render(
+      <SonarDial
+        byEngine={[
+          {
+            engine: 'claude',
+            completedChecks: 5,
+            mentionedChecks: 5,
+            visibilityPct: 100,
+            avgPosition: 1,
+          },
+          {
+            engine: 'tongyi',
+            completedChecks: 5,
+            mentionedChecks: 5,
+            visibilityPct: 100,
+            avgPosition: 1,
+          },
+        ]}
+        overallPct={100}
+        onSelectEngine={vi.fn()}
+      />,
+    );
+
+    const svg = screen.getByRole('img', { name: 'AI 引擎覆盖率声呐盘' });
+    const viewBoxParts = (svg.getAttribute('viewBox') ?? '').trim().split(/\s+/).map(Number);
+    expect(viewBoxParts).toHaveLength(4);
+    const [vbX, vbY, vbW, vbH] = viewBoxParts as [number, number, number, number];
+    const vbRight = vbX + vbW;
+    const vbBottom = vbY + vbH;
+
+    const svgScope = within(svg as unknown as HTMLElement);
+
+    // Left-edge and right-edge labels must have >= 65 SVG units of clearance inside viewBox
+    for (const label of ['Claude', 'Perplexity']) {
+      const textEl = svgScope.getByText(label);
+      const x = Number(textEl.getAttribute('x'));
+      expect(x - vbX).toBeGreaterThanOrEqual(65);
+    }
+    for (const label of ['通义千问', '文心一言']) {
+      const textEl = svgScope.getByText(label);
+      const x = Number(textEl.getAttribute('x'));
+      expect(vbRight - x).toBeGreaterThanOrEqual(65);
+    }
+    const topLabel = svgScope.getByText('DeepSeek');
+    expect(Number(topLabel.getAttribute('y')) - vbY).toBeGreaterThanOrEqual(50);
+    const bottomLabel = svgScope.getByText('Kimi');
+    expect(vbBottom - Number(bottomLabel.getAttribute('y'))).toBeGreaterThanOrEqual(50);
+
+    // Ring scale labels (25%, 50%, 75%) must sit clearly above the center value (100.0%)
+    const centerVal = svgScope.getByText('100.0%');
+    const centerY = Number(centerVal.getAttribute('y'));
+    // With 24px font centered near baseline centerY, top of glyphs is around centerY - 20
+    const centerTopEdge = centerY - 20;
+    const ring25 = svgScope.getByText('25%');
+    const ring25Y = Number(ring25.getAttribute('y'));
+    expect(ring25Y).toBeLessThanOrEqual(centerTopEdge - 8);
   });
 });

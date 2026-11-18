@@ -19,7 +19,12 @@ export type SonarDialProps = {
 
 const CX = 160;
 const CY = 160;
-const R = 120;
+const R = 112;
+const VB_X = -40;
+const VB_Y = -40;
+const VB_SIZE = 400;
+const RING_RADII = [28, 56, 84, 112] as const;
+const RING_LABEL_DEG = -76;
 const SHORT_LABELS: Partial<Record<VisibilityEngineKey, string>> = { google_aio: 'Google AIO' };
 const DEG = Math.PI / 180;
 const STEP = 360 / VISIBILITY_ENGINES.length;
@@ -63,7 +68,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
         hasData,
         spokeEnd: polar(R, deg),
         point: polar(hasData ? (R * pct) / 100 : 0, deg),
-        labelPos: polar(R + 16, deg),
+        labelPos: polar(R + 12, deg),
         anchor: (cos > 0.2 ? 'start' : cos < -0.2 ? 'end' : 'middle') as 'start' | 'end' | 'middle',
         dialLabel: eng.label.length > 6 ? (SHORT_LABELS[eng.key] ?? eng.label) : eng.label,
         hitD: sectorPath(R + 28, deg - STEP / 2, deg + STEP / 2),
@@ -102,7 +107,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
   return (
     <div className="gm-sonar" onKeyDown={(e) => e.key === 'Escape' && p.onSelectEngine(undefined)}>
       <svg
-        viewBox="0 0 320 320"
+        viewBox={`${VB_X} ${VB_Y} ${VB_SIZE} ${VB_SIZE}`}
         width="100%"
         height="100%"
         role="img"
@@ -121,22 +126,31 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
             <stop offset="100%" stopColor="rgba(197,240,74,0)" />
           </linearGradient>
         </defs>
-        {([30, 60, 90, 120] as const).map((r) => (
+        {RING_RADII.map((r) => (
           <circle
             key={r}
             cx={CX}
             cy={CY}
             r={r}
             fill="none"
-            stroke={r === 120 ? GM.line.l2 : GM.line.l1}
+            stroke={r === R ? GM.line.l2 : GM.line.l1}
             strokeWidth={1}
           />
         ))}
-        {([30, 60, 90] as const).map((r, i) => (
-          <text key={r} x={CX + 4} y={CY - r} className="gm-sonar-ring-label gm-num">
-            {`${(i + 1) * 25}%`}
-          </text>
-        ))}
+        {RING_RADII.slice(0, 3).map((r, i) => {
+          const pos = polar(r + 3, RING_LABEL_DEG);
+          return (
+            <text
+              key={r}
+              x={pos.x}
+              y={pos.y}
+              textAnchor="start"
+              className="gm-sonar-ring-label gm-num"
+            >
+              {`${(i + 1) * 25}%`}
+            </text>
+          );
+        })}
         {nodes.map(({ idx, eng, spokeEnd, deg, labelPos, anchor, dialLabel }) => {
           const sel = p.selectedEngine === eng.key;
           return (
@@ -164,7 +178,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                 y={labelPos.y}
                 textAnchor={anchor}
                 dominantBaseline="middle"
-                fontSize={11}
+                fontSize={12}
                 fontWeight={sel ? 600 : 400}
                 fill={sel ? GM.fg.f1 : eng.domestic ? GM.fg.f2 : GM.fg.f3}
               >
@@ -208,10 +222,10 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
             ))}
           </>
         ) : null}
-        <text x={CX} y={158} textAnchor="middle" className="gm-sonar-center-val gm-num">
+        <text x={CX} y={161} textAnchor="middle" className="gm-sonar-center-val gm-num">
           {isEmpty ? '—' : formatPct(p.overallPct)}
         </text>
-        <text x={CX} y={176} textAnchor="middle" className="gm-sonar-center-sub">
+        <text x={CX} y={178} textAnchor="middle" className="gm-sonar-center-sub">
           整体提及率
         </text>
         {nodes.map(({ idx, eng, hitD }) => {
@@ -240,8 +254,8 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
           className="gm-sonar-tooltip"
           role="tooltip"
           style={{
-            left: `calc(${((hovered.point.x / 320) * 100).toFixed(2)}% + 12px)`,
-            top: `calc(${((hovered.point.y / 320) * 100).toFixed(2)}% + 12px)`,
+            left: `calc(${(((hovered.point.x - VB_X) / VB_SIZE) * 100).toFixed(2)}% + 12px)`,
+            top: `calc(${(((hovered.point.y - VB_Y) / VB_SIZE) * 100).toFixed(2)}% + 12px)`,
           }}
         >
           <div className="gm-sonar-tooltip-title">{hovered.eng.label}</div>
