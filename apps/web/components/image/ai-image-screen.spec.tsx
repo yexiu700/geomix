@@ -242,6 +242,12 @@ describe('AiImageScreen', () => {
     expect(screen.queryByText('列显示 ▾')).toBeNull();
     expect(screen.queryByText('重置筛选')).toBeNull();
 
+    // Unified create-first toolbar order (#260): 添加 before 刷新 before 删除
+    const leftToolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(leftToolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
     // Open create modal
     fireEvent.click(screen.getByLabelText('添加'));
     await screen.findByText('添加 AI 生图任务');

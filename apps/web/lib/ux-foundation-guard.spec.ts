@@ -93,4 +93,49 @@ describe('UX Foundation static guardrails', () => {
     expect(placeholderViolations).toEqual([]);
     expect(jargonViolations).toEqual([]);
   });
+
+  it('enforces shared CrudToolbar / CrudTable create-first toolbar contract across list screens (#260)', () => {
+    const rawToolbarClassViolations: string[] = [];
+    const legacyDefaultOrderViolations: string[] = [];
+    const unstandardizedListScreens: string[] = [];
+
+    const requiredToolbarListScreens = new Set([
+      'components/material/keyword-screen.tsx',
+      'components/material/question-screen.tsx',
+      'components/material/gallery-screen.tsx',
+      'components/material/knowledge-screen.tsx',
+      'components/writing/prompt-screen.tsx',
+      'components/writing/category-screen.tsx',
+      'components/writing/ai-task-screen.tsx',
+      'components/writing/article-manage-screen.tsx',
+      'components/rewrite/rewrite-single-screen.tsx',
+      'components/rewrite/rewrite-batch-screen.tsx',
+      'components/image/ai-image-screen.tsx',
+    ]);
+
+    for (const file of files) {
+      const rel = relative(WEB_ROOT, file);
+      const content = readFileSync(file, 'utf8');
+      if (rel !== 'components/crud/crud-toolbar.tsx' && content.includes('gm-crud-toolbar')) {
+        rawToolbarClassViolations.push(rel);
+      }
+      if (
+        content.includes('toolbarOrder="default"') ||
+        content.includes("toolbarOrder = 'default'")
+      ) {
+        legacyDefaultOrderViolations.push(rel);
+      }
+      if (
+        requiredToolbarListScreens.has(rel) &&
+        !content.includes('<CrudTable') &&
+        !content.includes('<CrudToolbar')
+      ) {
+        unstandardizedListScreens.push(rel);
+      }
+    }
+
+    expect(rawToolbarClassViolations).toEqual([]);
+    expect(legacyDefaultOrderViolations).toEqual([]);
+    expect(unstandardizedListScreens).toEqual([]);
+  });
 });

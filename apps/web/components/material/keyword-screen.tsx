@@ -586,7 +586,6 @@ export function KeywordScreen({
                 });
               }
         }
-        toolbarOrder="create-first"
         onDelete={writeLocked ? undefined : () => setConfirmDeleteIds(selectedIds)}
         columns={[
           {

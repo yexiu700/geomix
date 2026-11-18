@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import type { ShellAction } from './tab-stack';
 
+export { CrudToolbar, type CrudToolbarProps } from '../components/crud/crud-toolbar';
+
 export {
   UX_TERMS,
   UX_TIMEZONE,

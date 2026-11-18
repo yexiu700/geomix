@@ -127,6 +127,64 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('deduplicates 首页 /dashboard and static routes while keeping parameterized open tabs (#261)', () => {
+    const initial = initialSnapshot();
+    const { unmount } = setupPalette({
+      tabs: initial.tabs,
+      activeId: initial.activeId,
+    });
+
+    const initialOptions = screen.getAllByRole('option');
+    const dashboardMatches = initialOptions.filter((el) => el.textContent?.includes('/dashboard'));
+    expect(dashboardMatches).toHaveLength(1);
+    expect(initialOptions[0]?.textContent).toContain('首页');
+    expect(initialOptions[0]?.textContent).toContain('/dashboard');
+    expect(screen.queryByText('已打开标签')).toBeNull();
+    unmount();
+
+    let withSubTab = reduceShell(initialSnapshot(), { type: 'open', href: '/material/keywords' });
+    withSubTab = reduceShell(withSubTab, { type: 'open', href: '/material/gallery/cat-ikea' });
+    withSubTab = reduceShell(withSubTab, {
+      type: 'retitle',
+      id: '/material/gallery/cat-ikea',
+      title: '企业画像图库 · 家居场景实拍',
+    });
+
+    const { onDispatch, onClose } = setupPalette({
+      tabs: [
+        ...withSubTab.tabs,
+        {
+          id: '/workbench/samples',
+          href: '/workbench/samples',
+          title: '列表示例',
+          pinned: false,
+        },
+      ],
+      activeId: '/material/gallery/cat-ikea',
+    });
+
+    const allOptions = screen.getAllByRole('option');
+    expect(allOptions.filter((el) => el.textContent?.includes('/dashboard'))).toHaveLength(1);
+    expect(allOptions.filter((el) => el.textContent?.includes('/material/keywords'))).toHaveLength(
+      1,
+    );
+    expect(screen.queryByText('/workbench/samples')).toBeNull();
+
+    const subTabOptions = allOptions.filter((el) =>
+      el.textContent?.includes('/material/gallery/cat-ikea'),
+    );
+    expect(subTabOptions).toHaveLength(1);
+    expect(subTabOptions[0]?.textContent).toContain('企业画像图库 · 家居场景实拍');
+    expect(screen.getByText('已打开标签')).toBeTruthy();
+
+    fireEvent.click(subTabOptions[0]!);
+    expect(onDispatch).toHaveBeenCalledWith({
+      type: 'activate',
+      id: '/material/gallery/cat-ikea',
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('opens on Ctrl+K in ShellFrame and ignores IME composing Ctrl+K', () => {
     render(
       <ShellFrame

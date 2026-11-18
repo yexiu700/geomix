@@ -663,6 +663,12 @@ describe('ArticleManageScreen (Issue #18)', () => {
       expect(screen.getByText(/剩余可用 1 篇/)).toBeTruthy();
     });
 
+    // Unified create-first toolbar order (#260): 添加 before 刷新 before 删除
+    const leftToolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(leftToolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
     // Select first row checkbox
     const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]');
     fireEvent.click(checkboxes[0]!);

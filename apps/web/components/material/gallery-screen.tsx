@@ -346,7 +346,6 @@ export function GalleryCategoryScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索素材分类名称"
         writeDisabled={readOnly}
-        toolbarOrder="create-first"
         search={{
           keyword: q,
           enabled: undefined,
@@ -767,7 +766,6 @@ export function GalleryAssetScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索图片文件名"
         writeDisabled={readOnly}
-        toolbarOrder="create-first"
         search={{
           keyword: q,
           enabled: undefined,

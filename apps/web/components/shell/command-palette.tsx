@@ -3,7 +3,7 @@
 import { Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountProfile } from '../../lib/api';
-import { STATIC_ROUTES, isCommandPaletteRoute } from '../../lib/routes';
+import { STATIC_ROUTES, isCommandPaletteRoute, matchRoute } from '../../lib/routes';
 import type { ShellAction, ShellSnapshot } from '../../lib/tab-stack';
 
 export type CommandPaletteProps = {
@@ -53,25 +53,44 @@ export function CommandPalette({
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const allItems = useMemo<CommandItem[]>(() => {
-    const pages: CommandItem[] = Object.entries(STATIC_ROUTES)
-      .filter(([href]) => isCommandPaletteRoute(href, role, { aiImageEnabled, visibilityEnabled }))
-      .map(([href, route]) => ({
-        id: `page:${href}`,
+    const seenIds = new Set<string>();
+    const seenHrefs = new Set<string>();
+
+    const pages: CommandItem[] = [];
+    for (const [href, route] of Object.entries(STATIC_ROUTES)) {
+      if (!isCommandPaletteRoute(href, role, { aiImageEnabled, visibilityEnabled })) continue;
+      const canonicalHref = matchRoute(href)?.href ?? href;
+      const id = `page:${canonicalHref}`;
+      if (seenIds.has(id) || seenHrefs.has(canonicalHref)) continue;
+      seenIds.add(id);
+      seenHrefs.add(canonicalHref);
+      pages.push({
+        id,
         group: '页面',
         title: route.title,
-        href,
-        execute: () => onDispatch({ type: 'open', href }),
-      }));
+        href: canonicalHref,
+        execute: () => onDispatch({ type: 'open', href: canonicalHref }),
+      });
+    }
 
-    const openTabs: CommandItem[] = tabs.map((tab) => ({
-      id: `tab:${tab.id}`,
-      group: '已打开标签',
-      title: tab.title,
-      href: tab.href,
-      execute: () => onDispatch({ type: 'activate', id: tab.id }),
-    }));
+    const openTabs: CommandItem[] = [];
+    for (const tab of tabs) {
+      if (!isCommandPaletteRoute(tab.href, role, { aiImageEnabled, visibilityEnabled })) continue;
+      const canonicalHref = matchRoute(tab.href)?.href ?? tab.href;
+      const id = `tab:${tab.id}`;
+      if (seenIds.has(id) || seenHrefs.has(canonicalHref)) continue;
+      seenIds.add(id);
+      seenHrefs.add(canonicalHref);
+      openTabs.push({
+        id,
+        group: '已打开标签',
+        title: tab.title,
+        href: canonicalHref,
+        execute: () => onDispatch({ type: 'activate', id: tab.id }),
+      });
+    }
 
-    const actions: CommandItem[] = [
+    const rawActions: CommandItem[] = [
       {
         id: 'action:layout',
         group: '操作',
@@ -97,6 +116,11 @@ export function CommandPalette({
         execute: onLogout,
       },
     ];
+    const actions = rawActions.filter((action) => {
+      if (seenIds.has(action.id)) return false;
+      seenIds.add(action.id);
+      return true;
+    });
 
     return [...pages, ...openTabs, ...actions];
   }, [

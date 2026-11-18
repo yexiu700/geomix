@@ -656,4 +656,25 @@ describe('RewriteBatchScreen', () => {
     expect(container.querySelector('.ant-table-cell-ellipsis')).toBeTruthy();
     expect(document.querySelectorAll('.gm-clamp-2').length).toBeGreaterThan(0);
   });
+
+  it('places primary 新建批量复刻 button before 刷新列表 and 批量删除 in shared toolbar (#260)', async () => {
+    const { gateway } = makeGateway([makeBatch()]);
+    render(
+      <RewriteBatchScreen
+        title="批量爆文复刻"
+        tabId="/rewrite/batch"
+        active
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+    await waitFor(() => {
+      expect(findButton('新建批量复刻')).toBeTruthy();
+    });
+
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['新建批量复刻', '刷新列表', '批量删除']);
+  });
 });

@@ -777,4 +777,35 @@ describe('AiTaskScreen', () => {
       }
     }
   });
+
+  it('places primary 添加 button before 刷新 and 删除 in toolbar (#260)', async () => {
+    const gateway: AiTaskGateway = {
+      list: vi.fn(async () => ({ items: [makeTaskRow()], total: 1, page: 1, pageSize: 10 })),
+      detail: vi.fn(),
+      create: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      cancel: vi.fn(),
+      bulkDelete: vi.fn(),
+      download: vi.fn(),
+      loadFormOptions: vi.fn(async () => makeFormOptions()),
+    };
+
+    render(
+      <AiTaskScreen
+        title="AI写作任务"
+        tabId="/writing/tasks"
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('十篇激光选型计划')).toBeTruthy();
+    });
+
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+  });
 });
