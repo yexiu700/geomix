@@ -74,6 +74,51 @@ async function fetchCaptchaAttempt(controller: AbortController): Promise<Captcha
   }
 }
 
+function PasswordEyeIcon({ visible }: { visible: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      aria-label={visible ? 'eye' : 'eye-invisible'}
+      className="gm-login-password-eye"
+    >
+      {visible ? (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M1.5 8C2.8 5.2 5.2 3.8 8 3.8C10.8 3.8 13.2 5.2 14.5 8C13.2 10.8 10.8 12.2 8 12.2C5.2 12.2 2.8 10.8 1.5 8Z"
+            stroke="currentColor"
+            strokeWidth="1.35"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.35" />
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M2.2 2.2L13.8 13.8"
+            stroke="currentColor"
+            strokeWidth="1.35"
+            strokeLinecap="round"
+          />
+          <path
+            d="M6.4 4.1C6.9 3.9 7.4 3.8 8 3.8C10.8 3.8 13.2 5.2 14.5 8C13.9 9.2 13.1 10.2 12 10.9M9.9 11.9C9.3 12.1 8.7 12.2 8 12.2C5.2 12.2 2.8 10.8 1.5 8C2.2 6.5 3.3 5.4 4.6 4.7"
+            stroke="currentColor"
+            strokeWidth="1.35"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M6.6 6.6C6.2 7 6 7.5 6 8C6 9.1 6.9 10 8 10C8.5 10 9 9.8 9.4 9.4"
+            stroke="currentColor"
+            strokeWidth="1.35"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 function LoginPasswordInput(props: ComponentProps<typeof Input.Password>) {
   const [visible, setVisible] = useState(false);
 
@@ -99,6 +144,17 @@ function LoginPasswordInput(props: ComponentProps<typeof Input.Password>) {
           visible,
           onVisibleChange: setVisible,
         }}
+        iconRender={(isVisible) => (
+          <button
+            type="button"
+            aria-label={isVisible ? '隐藏密码' : '显示密码'}
+            aria-pressed={isVisible}
+            title={isVisible ? '隐藏密码' : '显示密码'}
+            disabled={props.disabled}
+          >
+            <PasswordEyeIcon visible={isVisible} />
+          </button>
+        )}
       />
     </div>
   );
@@ -262,7 +318,7 @@ export function LoginPanel() {
   return (
     <main className="gm-boot">
       <Card className="gm-login-card" title="GeoMix 登录">
-        <Typography.Paragraph type="secondary">账号由管理员开通。</Typography.Paragraph>
+        <Typography.Paragraph className="gm-login-helper">账号由管理员开通。</Typography.Paragraph>
         {checking ? <Typography.Paragraph>正在确认登录</Typography.Paragraph> : null}
         {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}
         {checking ? null : (
@@ -291,45 +347,36 @@ export function LoginPanel() {
             <div className="gm-login-captcha-row">
               <div className="gm-login-captcha-media">
                 {captchaLoading ? (
-                  <Typography.Paragraph
-                    type="secondary"
-                    role="status"
-                    className="gm-login-captcha-status"
-                  >
+                  <Typography.Paragraph role="status" className="gm-login-captcha-status">
                     正在加载验证码...
                   </Typography.Paragraph>
                 ) : captchaImage ? (
                   <>
                     <Tooltip title="点击图片更换验证码">
-                      <div className="gm-login-captcha-frame">
-                        <div
+                      <button
+                        type="button"
+                        className={`gm-login-captcha-frame${busy || captchaLoading ? ' is-disabled' : ''}`}
+                        aria-label="点击图片更换验证码"
+                        title="点击图片更换验证码"
+                        disabled={busy || captchaLoading}
+                        onClick={() => {
+                          if (!busy && !captchaLoading) {
+                            void loadCaptcha({ force: true });
+                          }
+                        }}
+                      >
+                        <span
                           role="img"
                           aria-label="验证码"
                           title="点击图片更换验证码"
-                          tabIndex={0}
                           className={`gm-login-captcha-img${busy || captchaLoading ? ' is-disabled' : ''}`}
-                          onClick={() => {
-                            if (!busy && !captchaLoading) {
-                              void loadCaptcha({ force: true });
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (
-                              (event.key === 'Enter' || event.key === ' ') &&
-                              !busy &&
-                              !captchaLoading
-                            ) {
-                              event.preventDefault();
-                              void loadCaptcha({ force: true });
-                            }
-                          }}
                           style={{
                             backgroundImage: `url("${captchaImage}")`,
                           }}
                         />
-                      </div>
+                      </button>
                     </Tooltip>
-                    <Typography.Text type="secondary" className="gm-login-captcha-hint">
+                    <Typography.Text className="gm-login-captcha-hint">
                       点击图片更换验证码
                     </Typography.Text>
                   </>
@@ -363,6 +410,9 @@ export function LoginPanel() {
                 登录
               </Button>
             </div>
+            <Typography.Paragraph className="gm-login-support-note">
+              忘记密码或需开通、重置账号，请联系团队或平台管理员协助处理。
+            </Typography.Paragraph>
           </Form>
         )}
       </Card>

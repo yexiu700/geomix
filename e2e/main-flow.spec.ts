@@ -35,7 +35,8 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await anonymousPage.goto('/dashboard');
     await expect(anonymousPage).toHaveURL(/\/login\?next=%2Fdashboard/);
     await expect(anonymousPage.getByText('GeoMix 登录')).toBeVisible();
-    await expect(anonymousPage.getByRole('img', { name: '验证码' })).toBeVisible();
+    await expect(anonymousPage.getByRole('button', { name: '点击图片更换验证码' })).toBeVisible();
+    await expect(anonymousPage.locator('.gm-login-captcha-img')).toBeVisible();
     await expect(anonymousPage.getByRole('button', { name: '换一张' })).toBeVisible();
     await saveGeoMixScreenshot(anonymousPage, '01-login.png');
     await anonymousContext.close();
