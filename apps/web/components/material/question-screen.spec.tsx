@@ -209,4 +209,72 @@ describe('QuestionScreen', () => {
     await clickBtn('确认删除');
     await waitFor(() => expect(gateway.deletedIds).toContainEqual(['q_1']));
   });
+
+  it('enforces create-first toolbar, link action buttons, required * markers, [取消, 重置, 确定] footer order, and ESC close (#141)', async () => {
+    const gateway = createGatewayMock();
+    render(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('工业机器人哪家服务好？');
+
+    // Toolbar order: 添加 before 刷新 before 删除
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
+    // Action column buttons are uniform ant-btn-link ant-btn-sm
+    const firstRowBtns = Array.from(
+      document.querySelectorAll('tbody tr:first-child td:last-child button'),
+    );
+    expect(firstRowBtns.map((b) => (b.textContent ?? '').replace(/\s+/g, ''))).toEqual([
+      '编辑',
+      '删除',
+    ]);
+    for (const btn of firstRowBtns) {
+      expect(btn.classList.contains('ant-btn-link')).toBe(true);
+      expect(btn.classList.contains('ant-btn-sm')).toBe(true);
+    }
+
+    // Add modal: required *, [取消, 重置, 确定], reset clears validation error, ESC closes
+    await clickBtn('添加');
+    const addDialog = screen.getByRole('dialog', { name: '添加写作标题' });
+    expect(addDialog.textContent).toContain('* 蒸馏主词');
+    expect(addDialog.textContent).toContain('* 拓展问题');
+    const addFooterBtns = Array.from(addDialog.querySelectorAll('.gm-crud-footer button')).map(
+      (b) => (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(addFooterBtns).toEqual(['取消', '重置', '确定']);
+
+    await clickBtn('确定');
+    expect(await screen.findByText('请选择蒸馏主词')).toBeTruthy();
+    await clickBtn('重置');
+    expect(screen.queryByText('请选择蒸馏主词')).toBeNull();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '添加写作标题' })).toBeNull();
+    });
+
+    // Edit modal: required *, [取消, 重置, 确定], and ESC closes
+    await clickBtn('编辑');
+    const editDialog = screen.getByRole('dialog', { name: '编辑写作标题' });
+    expect(editDialog.textContent).toContain('* 问题内容');
+    const editFooterBtns = Array.from(editDialog.querySelectorAll('.gm-crud-footer button')).map(
+      (b) => (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(editFooterBtns).toEqual(['取消', '重置', '确定']);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '编辑写作标题' })).toBeNull();
+    });
+  });
 });
