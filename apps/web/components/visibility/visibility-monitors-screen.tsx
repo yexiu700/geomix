@@ -3,7 +3,6 @@
 import {
   DOMESTIC_VISIBILITY_ENGINE_KEYS,
   TASK_STATUSES,
-  TASK_STATUS_LABELS,
   VISIBILITY_BRAND_NAME_MAX,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   VISIBILITY_ENGINES,
@@ -11,9 +10,12 @@ import {
   VISIBILITY_MAX_COMPETITORS,
   VISIBILITY_PROFILE_NAME_MAX,
   VISIBILITY_RUN_NAME_MAX,
+  VISIBILITY_TASK_STATUS_LABELS,
+  formatShanghaiDateTime,
   isTaskStatus,
   normalizeVisibilityDomain,
   quoteVisibilityRunPoints,
+  toXlsx,
   type CitationSourceKind,
   type CrudExportFormat,
   type KeywordRecord,
@@ -58,6 +60,7 @@ import { RunWorkspace } from '../geo/run-workspace';
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { triggerBlobDownload, useSyncTabTitle } from '../../lib/ux-foundation';
 import {
   createVisibilityIdempotencyKey,
   httpVisibilityGateway,
@@ -180,8 +183,7 @@ function splitPromptLines(raw: string): string[] {
 }
 
 function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 export function citationSourceBadgeColor(kind: CitationSourceKind): string {
@@ -205,16 +207,7 @@ function isControllableRunStatus(status: TaskStatusName): boolean {
 }
 
 function defaultDownloadHandler(file: VisibilityExportFile): void {
-  if (typeof window === 'undefined' || typeof URL.createObjectURL !== 'function') return;
-  const blob = new Blob([file.body as BlobPart], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(file);
 }
 
 function escapeCsvCell(val: string): string {
@@ -224,7 +217,10 @@ function escapeCsvCell(val: string): string {
   return val;
 }
 
-function buildRunsExportBytes(rows: VisibilityRunRecord[]): Uint8Array {
+function buildRunsExportTable(rows: VisibilityRunRecord[]): {
+  headers: string[];
+  rows: string[][];
+} {
   const headers = [
     '任务编号',
     '任务名称',
@@ -239,26 +235,28 @@ function buildRunsExportBytes(rows: VisibilityRunRecord[]): Uint8Array {
     '状态',
     '创建时间',
   ];
+  const tableRows = rows.map((r) => [
+    r.id,
+    r.name,
+    r.profileName,
+    r.brandName,
+    r.keywordMain ?? '自定义问题',
+    r.engines.map((e) => VISIBILITY_ENGINE_LABELS[e] ?? e).join(' / '),
+    `${r.doneCount}/${r.totalChecks}`,
+    String(r.visibilityPct ?? 0),
+    String(r.frozenPoints ?? r.totalChecks * r.unitPrice),
+    String(r.settledPoints ?? 0),
+    VISIBILITY_TASK_STATUS_LABELS[r.status],
+    formatTime(r.createdAt),
+  ]);
+  return { headers, rows: tableRows };
+}
+
+function buildRunsExportBytes(rows: VisibilityRunRecord[]): Uint8Array {
+  const table = buildRunsExportTable(rows);
   const lines = [
-    headers.join(','),
-    ...rows.map((r) =>
-      [
-        r.id,
-        r.name,
-        r.profileName,
-        r.brandName,
-        r.keywordMain ?? '自定义问题',
-        r.engines.map((e) => VISIBILITY_ENGINE_LABELS[e] ?? e).join(' / '),
-        `${r.doneCount}/${r.totalChecks}`,
-        String(r.visibilityPct ?? 0),
-        String(r.frozenPoints ?? r.totalChecks * r.unitPrice),
-        String(r.settledPoints ?? 0),
-        TASK_STATUS_LABELS[r.status],
-        formatTime(r.createdAt),
-      ]
-        .map(escapeCsvCell)
-        .join(','),
-    ),
+    table.headers.join(','),
+    ...table.rows.map((cells) => cells.map(escapeCsvCell).join(',')),
   ];
   return new TextEncoder().encode(`\uFEFF${lines.join('\r\n')}`);
 }
@@ -1019,21 +1017,60 @@ export function VisibilityMonitorsScreen({
   }
 
   function handleExportRuns(format: CrudExportFormat) {
+    if (format === 'xlsx') {
+      const table = buildRunsExportTable(runs);
+      const xlsxBytes = toXlsx(table.headers, table.rows);
+      downloadFile({
+        filename: 'geomix-visibility-runs.xlsx',
+        mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        body: xlsxBytes,
+      });
+      return;
+    }
     const bytes = buildRunsExportBytes(runs);
-    const ext = format === 'xlsx' ? 'csv' : 'csv';
     downloadFile({
-      filename: `geomix-visibility-runs.${ext}`,
+      filename: 'geomix-visibility-runs.csv',
       mime: 'text/csv;charset=utf-8',
       body: bytes,
     });
   }
 
   function openOverviewForProfile(profileId?: string) {
+    setDrawerOpen(false);
     const targetHref = profileId
       ? `/visibility/overview?profileId=${encodeURIComponent(profileId)}`
       : '/visibility/overview';
     onDispatch?.({ type: 'open', href: targetHref, sourceId: tabId });
   }
+
+  const resolvedTitle = useMemo(() => {
+    const activeProfileId = query.profileId || initialUrlParams.profileId;
+    const matchedProfile = activeProfileId
+      ? profiles.find((p) => p.id === activeProfileId)
+      : undefined;
+    const matchedRunName = initialUrlParams.runId
+      ? detailRun?.id === initialUrlParams.runId
+        ? detailRun.name
+        : runs.find((r) => r.id === initialUrlParams.runId)?.name
+      : undefined;
+    const parts: string[] = [];
+    if (matchedProfile) parts.push(matchedProfile.name);
+    if (matchedRunName) parts.push(matchedRunName);
+    if (parts.length > 0) {
+      return `AI可见度诊断 · ${parts.join(' · ')}`;
+    }
+    return title;
+  }, [
+    detailRun,
+    initialUrlParams.profileId,
+    initialUrlParams.runId,
+    profiles,
+    query.profileId,
+    runs,
+    title,
+  ]);
+
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
   // ===================== Filtered Observations in Drawer =====================
 
@@ -1361,7 +1398,7 @@ export function VisibilityMonitorsScreen({
     return (
       <section>
         <Typography.Title level={3} style={{ marginTop: 0 }}>
-          {title}
+          {resolvedTitle}
         </Typography.Title>
         <Alert
           type="info"
@@ -1371,6 +1408,21 @@ export function VisibilityMonitorsScreen({
       </section>
     );
   }
+
+  const clearRunFilters = () => {
+    setKeywordDraft('');
+    setSelectedIds([]);
+    setQuery((curr) => ({
+      ...curr,
+      page: 1,
+      profileId: undefined,
+      status: undefined,
+      keyword: undefined,
+    }));
+    if (tabId && href && href.includes('?')) {
+      onDispatch?.({ type: 'navigate', id: tabId, href: '/visibility/monitors' });
+    }
+  };
 
   return (
     <section style={{ minWidth: 0 }}>
@@ -1390,7 +1442,7 @@ export function VisibilityMonitorsScreen({
             level={3}
             style={{ margin: 0, fontSize: 20, lineHeight: '28px', fontWeight: 600 }}
           >
-            {title}
+            {resolvedTitle}
           </Typography.Title>
           <div style={{ fontSize: 12, lineHeight: '18px', color: 'var(--gm-fg-3)', marginTop: 4 }}>
             跨国内 8
@@ -1485,7 +1537,7 @@ export function VisibilityMonitorsScreen({
                     <option value="">全部状态</option>
                     {TASK_STATUSES.map((st) => (
                       <option key={st} value={st}>
-                        {TASK_STATUS_LABELS[st]}
+                        {VISIBILITY_TASK_STATUS_LABELS[st]}
                       </option>
                     ))}
                   </select>
@@ -1521,20 +1573,7 @@ export function VisibilityMonitorsScreen({
                     查询
                   </Button>
 
-                  <Button
-                    aria-label="重置任务筛选"
-                    onClick={() => {
-                      setKeywordDraft('');
-                      setSelectedIds([]);
-                      setQuery((curr) => ({
-                        ...curr,
-                        page: 1,
-                        profileId: undefined,
-                        status: undefined,
-                        keyword: undefined,
-                      }));
-                    }}
-                  >
+                  <Button aria-label="重置任务筛选" onClick={clearRunFilters}>
                     重置筛选
                   </Button>
 
@@ -1555,6 +1594,7 @@ export function VisibilityMonitorsScreen({
                     loading={loading}
                     selectedIds={selectedIds}
                     searchOpen={searchOpen}
+                    searchPlaceholder="搜索任务名、品牌或主词"
                     writeDisabled={readOnly}
                     emptyText={
                       (loading ? (
@@ -1570,17 +1610,7 @@ export function VisibilityMonitorsScreen({
                         <SignalEmpty
                           title="没有符合筛选条件的任务"
                           actionText="重置筛选"
-                          onAction={() => {
-                            setKeywordDraft('');
-                            setSelectedIds([]);
-                            setQuery((curr) => ({
-                              ...curr,
-                              page: 1,
-                              profileId: undefined,
-                              status: undefined,
-                              keyword: undefined,
-                            }));
-                          }}
+                          onAction={clearRunFilters}
                         />
                       ) : (
                         <SignalEmpty

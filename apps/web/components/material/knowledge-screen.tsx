@@ -31,13 +31,15 @@ import {
   type KnowledgeWriteInput,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Modal, Radio, Select, Space, Tag, Typography } from 'antd';
-import { useEffect, useMemo, useState, type UIEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
 import { CrudTable, type CrudColumn, type CrudSearch } from '../crud/crud-table';
+import { TableClampText } from '../crud/table-clamp-text';
 import {
   KnowledgeApiError,
   httpKnowledgeGateway,
   type KnowledgeGateway,
 } from '../../lib/knowledge';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 type DetailModeDraft = {
   companyName: string;
@@ -98,35 +100,11 @@ function draftFromRecord(row: KnowledgeBaseRecord): FormDraft {
   };
 }
 
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
-}
-
 function indexStatusColor(status: KbIndexStatusName): string {
   if (status === 'READY') return 'success';
   if (status === 'INDEXING') return 'processing';
   if (status === 'FAILED') return 'error';
   return 'default';
-}
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
-  if (typeof window === 'undefined' || typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = file.filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function KnowledgeScreen({
@@ -182,6 +160,12 @@ export function KnowledgeScreen({
   const [draft, setDraft] = useState<FormDraft>(createEmptyFormDraft);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const errorAlertRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen || !formError) return;
+    errorAlertRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  }, [modalOpen, formError]);
 
   // Help preview modal ("查看说明")
   const [helpField, setHelpField] = useState<KbDetailFieldMeta | null>(null);
@@ -400,7 +384,7 @@ export function KnowledgeScreen({
         type: 'success',
         text:
           saved.indexStatus === 'INDEXING'
-            ? `已保存「${saved.name}」，后台正在切片向量化，完成后状态将更新为「可用」`
+            ? `已保存「${saved.name}」，后台正在分段建立智能检索，完成后状态将更新为「可用」`
             : `已保存知识库「${saved.name}」`,
       });
     } catch (err: unknown) {
@@ -439,7 +423,7 @@ export function KnowledgeScreen({
         { page: 1, pageSize, q: search.keyword.trim() || undefined },
         format,
       );
-      triggerDownload(file);
+      triggerBlobDownload(file);
     } catch (err: unknown) {
       setBanner({
         type: 'error',
@@ -453,8 +437,9 @@ export function KnowledgeScreen({
     {
       key: 'name',
       title: '名称',
+      width: 240,
       hideable: false,
-      render: (row) => <Typography.Text strong>{row.name}</Typography.Text>,
+      render: (row) => <TableClampText text={row.name} lines={2} strong maxWidth={320} />,
     },
     {
       key: 'mode',
@@ -474,13 +459,19 @@ export function KnowledgeScreen({
     {
       key: 'companyName',
       title: '公司名',
-      render: (row) => (row.mode === 'DETAIL' ? row.companyName || '-' : '-'),
+      width: 220,
+      render: (row) =>
+        row.mode === 'DETAIL' && row.companyName ? (
+          <TableClampText text={row.companyName} lines={2} maxWidth={280} />
+        ) : (
+          '-'
+        ),
     },
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 180,
-      render: (row) => formatTime(row.createdAt),
+      width: 168,
+      render: (row) => formatShanghaiDateTime(row.createdAt),
     },
     {
       key: 'actions',
@@ -532,6 +523,7 @@ export function KnowledgeScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索知识库、公司或品牌简称"
         search={search}
         writeDisabled={readOnly}
         toolbarOrder="create-first"
@@ -590,7 +582,9 @@ export function KnowledgeScreen({
         />
 
         {formError ? (
-          <Alert type="error" showIcon style={{ marginBottom: 12 }} message={formError} />
+          <div ref={errorAlertRef}>
+            <Alert type="error" showIcon style={{ marginBottom: 12 }} message={formError} />
+          </div>
         ) : null}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -783,8 +777,8 @@ export function KnowledgeScreen({
                 type="secondary"
                 style={{ marginTop: 6, marginBottom: 0, fontSize: 12 }}
               >
-                说明：汇总资料 6000 字以内写作时整段注入；超过 6000
-                字保存后自动切分向量索引，索引完成后状态更新为「可用」。
+                说明：汇总资料 6000 字以内写作时完整带入参考；超过 6000
+                字保存后自动分段建立智能检索，准备完成后状态更新为「可用」。
               </Typography.Paragraph>
             </div>
           )}
@@ -912,7 +906,7 @@ export function KnowledgeScreen({
         onCancel={() => setDeleteIds(null)}
       >
         <Typography.Paragraph style={{ marginBottom: 0 }}>
-          确定要删除选中的 {deleteIds?.length ?? 0} 个企业知识库吗？删除后关联切片将一并移除。
+          确定要删除选中的 {deleteIds?.length ?? 0} 个企业知识库吗？删除后关联检索内容将一并移除。
         </Typography.Paragraph>
       </Modal>
     </section>

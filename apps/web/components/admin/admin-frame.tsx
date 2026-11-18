@@ -43,6 +43,12 @@ export function AdminGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const matched = LINKS.find((link) => link.href === pathname);
+    document.title = matched ? `${matched.title} · ${SITE_NAME} 管理` : `${SITE_NAME} 管理`;
+  }, [pathname]);
+
   if (phase === 'boot') {
     return (
       <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>

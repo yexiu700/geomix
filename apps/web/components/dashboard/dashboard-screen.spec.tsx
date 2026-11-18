@@ -119,11 +119,12 @@ describe('DashboardScreen (Issue #22)', () => {
     expect(balanceCard.textContent).toContain('¥219.50');
     expect(balanceCard.textContent).toContain('¥1500.00');
     expect(balanceCard.textContent).toContain(DASHBOARD_RECHARGE_NOTICE.money);
+    expect(balanceCard.textContent).not.toContain('（充值请联系客服）');
 
     // Points card (SHADOW mode shows both actual 0 and listPrice 45)
     const pointsCard = screen.getByTestId('dashboard-points-card');
     expect(pointsCard.textContent).toContain('980 点');
-    expect(pointsCard.textContent).toContain('影子计费（免费期）');
+    expect(pointsCard.textContent).toContain('免费体验期');
     expect(pointsCard.textContent).toContain('免费期原价核算 45 点');
     expect(pointsCard.textContent).toContain(DASHBOARD_RECHARGE_NOTICE.points);
 

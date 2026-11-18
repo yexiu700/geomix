@@ -17,6 +17,7 @@ import {
   type SampleRecord,
 } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { CrudModal } from './crud-modal';
 import { CrudTable } from './crud-table';
 import { PriceButton } from './price-button';
@@ -157,17 +158,7 @@ export function SampleScreen({
   async function download(format: 'csv' | 'xlsx'): Promise<void> {
     try {
       const file = await client.download(query, format);
-      const bytes = file.body.buffer.slice(
-        file.body.byteOffset,
-        file.body.byteOffset + file.body.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([bytes], { type: file.mime });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload(file);
     } catch (reason) {
       setError(messageOf(reason));
     }
@@ -200,6 +191,7 @@ export function SampleScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索名称或备注"
         writeDisabled={writeLocked}
         search={{
           keyword: query.keyword,
@@ -229,7 +221,7 @@ export function SampleScreen({
           setQuery((current) => ({ ...current, page, pageSize }));
         }}
         onSelectionChange={setSelectedIds}
-        onExport={(format) => void download(format)}
+        onExport={download}
         onRefresh={() => setReloadKey((value) => value + 1)}
         onCreate={
           writeLocked
@@ -267,7 +259,7 @@ export function SampleScreen({
           {
             key: 'updatedAt',
             title: '更新时间',
-            render: (row) => row.updatedAt.replace('T', ' ').slice(0, 16),
+            render: (row) => formatShanghaiDateTime(row.updatedAt),
           },
           {
             key: 'actions',

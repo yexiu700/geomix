@@ -77,6 +77,18 @@ export function ShellFrame({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (!passwordOpen) return undefined;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        event.preventDefault();
+        setPasswordOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [passwordOpen]);
+
   const active = state.tabs.find((tab) => tab.id === state.activeId) ?? state.tabs[0];
   const panes = state.prefs.multiTab
     ? state.tabs
@@ -356,7 +368,19 @@ export function ShellFrame({
         onLogout={onLogout}
       />
       {passwordOpen ? (
-        <div className="gm-modal" role="dialog" aria-label="修改密码">
+        <div
+          className="gm-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="修改密码"
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation();
+              setPasswordOpen(false);
+            }
+          }}
+        >
           <div className="gm-modal-card">
             <div className="gm-modal-head">
               <strong>修改密码</strong>

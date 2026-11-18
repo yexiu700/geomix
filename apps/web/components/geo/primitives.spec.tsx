@@ -95,7 +95,7 @@ describe('geo/primitives', () => {
     );
     expect(screen.getByText('已引用')).toBeTruthy();
     expect(screen.getByText('自有阵地')).toBeTruthy();
-    expect(screen.getByText('创作中')).toBeTruthy();
+    expect(screen.getByText('监测中')).toBeTruthy();
     expect(screen.getByText('已完成')).toBeTruthy();
   });
 

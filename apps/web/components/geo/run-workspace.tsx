@@ -1,10 +1,13 @@
 'use client';
 
 import {
-  isVisibilitySentiment,
   VISIBILITY_ENGINE_LABELS,
   VISIBILITY_SENTIMENT_LABELS,
   VISIBILITY_SENTIMENTS,
+  formatCollectorDisplayLabel,
+  formatJudgeModelDisplayLabel,
+  formatShanghaiDateTime,
+  isVisibilitySentiment,
   type VisibilityObservationRecord,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
@@ -42,11 +45,7 @@ export interface RunWorkspaceProps {
 }
 
 function formatCheckedAt(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatShanghaiDateTime(iso);
 }
 
 export function RunWorkspace({
@@ -431,11 +430,21 @@ export function RunWorkspace({
                   <EngineChip engine={selectedObs.engine} />
                   <StatusPill kind="item" status={selectedObs.status} />
                   <span className="gm-num">{formatCheckedAt(selectedObs.checkedAt)}</span>
-                  <span className="gm-mono">{selectedObs.collectorKind}</span>
-                  <span className="gm-mono">{selectedObs.judgeModel ?? '—'}</span>
-                  <span className="gm-mono gm-num">
-                    {selectedObs.tokensIn ?? '—'}/{selectedObs.tokensOut ?? '—'}
-                  </span>
+                  {formatCollectorDisplayLabel(selectedObs.collectorKind) ? (
+                    <span className="gm-mono">
+                      {formatCollectorDisplayLabel(selectedObs.collectorKind)}
+                    </span>
+                  ) : null}
+                  {formatJudgeModelDisplayLabel(selectedObs.judgeModel) ? (
+                    <span className="gm-mono">
+                      {formatJudgeModelDisplayLabel(selectedObs.judgeModel)}
+                    </span>
+                  ) : null}
+                  {selectedObs.tokensIn !== null || selectedObs.tokensOut !== null ? (
+                    <span className="gm-mono gm-num">
+                      Token {selectedObs.tokensIn ?? 0}/{selectedObs.tokensOut ?? 0}
+                    </span>
+                  ) : null}
                   {selectedObs.brandSentiment &&
                   isVisibilitySentiment(selectedObs.brandSentiment) ? (
                     <SentimentDot sentiment={selectedObs.brandSentiment} />

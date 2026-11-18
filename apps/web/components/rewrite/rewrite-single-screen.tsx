@@ -19,18 +19,20 @@ import {
   type RewriteRecordListQuery,
   type RewriteResultStatusName,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Slider, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Input, Slider, Space, Switch, Table, Tag, Typography } from 'antd';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { ExportAction } from '../crud/export-action';
+import { useUxFeedback } from '../crud/ux-feedback';
 import {
   httpRewriteSingleGateway,
-  type RewriteDownloadFile,
   type RewriteFormOptions,
   type RewriteSingleGateway,
 } from '../../lib/rewrites';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -97,7 +99,7 @@ function buildInitialDraft(
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 function itemStatusTagColor(status: ItemStatusName): string {
@@ -128,19 +130,6 @@ function articleStatusTagColor(status: ArticleStatusName): string {
   }
 }
 
-function triggerBrowserDownload(file: RewriteDownloadFile): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  const blob = new Blob([new Uint8Array(file.body)], { type: file.mime });
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = file.filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
-}
-
 export function RewriteSingleScreen({
   title,
   tabId,
@@ -156,6 +145,7 @@ export function RewriteSingleScreen({
   gateway?: RewriteSingleGateway;
   onDispatch?: (action: ShellAction) => void;
 }) {
+  const feedback = useUxFeedback();
   const gateway = useMemo(() => {
     if (injectedGateway) return injectedGateway;
     const browserStorage: SessionStorageLike =
@@ -377,9 +367,9 @@ export function RewriteSingleScreen({
   const handleDeleteIds = useCallback(
     (ids: string[]) => {
       if (ids.length === 0) return;
-      Modal.confirm({
+      feedback.confirm({
         title: `确认删除选中的 ${ids.length} 条复刻记录？`,
-        content: '删除复刻记录不会删除已落库的文章正文。',
+        content: '删除复刻记录不会删除已生成的文章正文。',
         okText: '确认删除',
         cancelText: '取消',
         okButtonProps: { danger: true },
@@ -398,14 +388,14 @@ export function RewriteSingleScreen({
         },
       });
     },
-    [gateway, loadList, query],
+    [feedback, gateway, loadList, query],
   );
 
   const handleExport = useCallback(
     async (format: CrudExportFormat) => {
       try {
         const file = await gateway.downloadTable(query, format);
-        triggerBrowserDownload(file);
+        triggerBlobDownload(file);
       } catch (err) {
         setBanner({
           type: 'error',
@@ -497,8 +487,10 @@ export function RewriteSingleScreen({
               </Button>
             </>
           ) : null}
-          <Button onClick={() => void handleExport('csv')}>导出 CSV</Button>
-          <Button onClick={() => void handleExport('xlsx')}>导出 XLSX</Button>
+          <ExportAction
+            empty={!loading && total === 0 && items.length === 0}
+            onExport={handleExport}
+          />
         </Space>
       </div>
 

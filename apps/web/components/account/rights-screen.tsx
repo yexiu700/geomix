@@ -34,7 +34,7 @@ export function RightsScreen({ title, load }: { title: string; load?: () => Prom
         {title}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        额度来自配额表。图片存储同时显示已用量和上限。模型收录计数留到后续模块，当前都是 0。
+        展示当前账号的配额使用进度、存储用量、可用点数余额及各 AI 平台收录统计。
       </Typography.Paragraph>
       {error ? <Alert type="error" showIcon message={error} /> : null}
       <div className="gm-rights">

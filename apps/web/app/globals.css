@@ -329,6 +329,14 @@ input:not([class*='ant-']):hover {
   font-size: 12px;
 }
 
+.ant-layout,
+.gm-content,
+.gm-page,
+.gm-crud {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .gm-content {
   padding: 16px;
 }
@@ -344,6 +352,16 @@ input:not([class*='ant-']):hover {
   padding: 20px 24px 28px;
   border-radius: 8px;
   background: var(--gm-bg-surface);
+}
+
+@media (max-width: 767px) {
+  .gm-content {
+    padding: 10px;
+  }
+
+  .gm-page {
+    padding: 14px 12px 20px;
+  }
 }
 
 .gm-crud-toolbar,
@@ -370,27 +388,27 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-crud-mask {
-  position: absolute;
-  z-index: 20;
+  position: fixed;
+  z-index: 1000;
   inset: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 32px 16px;
+  padding: 24px 16px;
   background: var(--gm-mask);
 }
 
 .gm-crud-mask.max {
   position: fixed;
-  z-index: 40;
+  z-index: 1010;
   padding: 0;
 }
 
 .gm-crud-dialog {
   display: flex;
   flex-direction: column;
-  width: min(720px, 100%);
-  max-height: calc(100% - 16px);
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
   overflow: hidden;
   border-radius: 10px;
   border: 1px solid var(--gm-line-1);
@@ -399,9 +417,9 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-crud-mask.max .gm-crud-dialog {
-  width: 100%;
-  height: 100%;
-  max-height: none;
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
   border-radius: 0;
 }
 
@@ -422,7 +440,36 @@ input:not([class*='ant-']):hover {
 
 .gm-crud-body {
   padding: 16px;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Global Modal & Table UX Foundation Guards */
+.ant-modal .ant-modal-body {
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ant-table-wrapper {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.ant-table-wrapper .ant-table-container,
+.ant-table-wrapper .ant-table-content {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th,
+.ant-table-wrapper .ant-table-thead > tr > td {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  vertical-align: top;
 }
 
 .gm-crud-body label {

@@ -16,6 +16,11 @@ import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 import { QuestionApiError, httpQuestionGateway, type QuestionGateway } from '../../lib/questions';
 import type { ShellAction } from '../../lib/tab-stack';
+import {
+  formatShanghaiDateTime,
+  triggerBlobDownload,
+  useSyncTabTitle,
+} from '../../lib/ux-foundation';
 
 type BatchDraft = {
   keywordId: string;
@@ -35,15 +40,6 @@ function readInitialKeywordId(href?: string): string | undefined {
   const params = new URLSearchParams(href.slice(qIndex + 1));
   const val = params.get('keywordId')?.trim();
   return val ? val : undefined;
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
 }
 
 export function QuestionScreen({
@@ -254,17 +250,7 @@ export function QuestionScreen({
   async function download(format: 'csv' | 'xlsx'): Promise<void> {
     try {
       const file = await client.download(query, format);
-      const bytes = file.body.buffer.slice(
-        file.body.byteOffset,
-        file.body.byteOffset + file.body.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([bytes], { type: file.mime });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload({ body: file.body, filename: file.filename, mime: file.mime });
     } catch (reason) {
       setError(messageOf(reason));
     }
@@ -275,10 +261,19 @@ export function QuestionScreen({
     [keywords],
   );
 
+  const resolvedTitle = useMemo(() => {
+    const activeKwId = query.keywordId ?? initialKeywordId;
+    if (!activeKwId) return title;
+    const matched = keywords.find((k) => k.id === activeKwId)?.main ?? rows[0]?.keywordMain;
+    return matched ? `写作标题 · ${matched}` : title;
+  }, [initialKeywordId, keywords, query.keywordId, rows, title]);
+
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
   return (
     <section>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        {title}
+        {resolvedTitle}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
         管理各蒸馏主词下的拓展咨询问题，支持按主词与收录状态筛选、多行批量去重添加、单条编辑及删除回退配额。
@@ -305,11 +300,15 @@ export function QuestionScreen({
           options={[{ value: 'ALL', label: '全部主词' }, ...keywordOptions]}
           onChange={(val) => {
             setSelectedIds([]);
+            const nextKeywordId = val === 'ALL' ? undefined : val;
             setQuery((curr) => ({
               ...curr,
               page: 1,
-              keywordId: val === 'ALL' ? undefined : val,
+              keywordId: nextKeywordId,
             }));
+            if (!nextKeywordId && href && href.includes('?')) {
+              onDispatch?.({ type: 'navigate', id: tabId, href: '/material/questions' });
+            }
           }}
         />
         <span>收录状态：</span>
@@ -373,6 +372,7 @@ export function QuestionScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索写作标题或主关键词"
         writeDisabled={writeLocked}
         search={{
           keyword: query.keyword,
@@ -401,7 +401,7 @@ export function QuestionScreen({
           setQuery((curr) => ({ ...curr, page, pageSize }));
         }}
         onSelectionChange={setSelectedIds}
-        onExport={(format) => void download(format)}
+        onExport={download}
         onRefresh={() => setReloadKey((v) => v + 1)}
         onCreate={writeLocked ? undefined : openAddModal}
         onDelete={writeLocked ? undefined : () => setConfirmDeleteIds(selectedIds)}
@@ -446,7 +446,7 @@ export function QuestionScreen({
             key: 'createdAt',
             title: '创建时间',
             width: 168,
-            render: (row) => formatTime(row.createdAt),
+            render: (row) => formatShanghaiDateTime(row.createdAt),
           },
           {
             key: 'actions',

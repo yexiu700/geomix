@@ -1,6 +1,9 @@
 'use client';
 
 import {
+  UX_TERMS,
+  dedupeRechargeNotice,
+  replaceUxJargon,
   visibleDashboardEntryCards,
   type DashboardEntryCardDef,
   type DashboardSummary,
@@ -415,7 +418,7 @@ export function DashboardScreen({
                 wordBreak: 'break-word',
               }}
             >
-              {activeAnnouncement.content}
+              {replaceUxJargon(activeAnnouncement.content)}
             </span>
           </div>
           {announcements.length > 1 && (
@@ -517,7 +520,7 @@ export function DashboardScreen({
               color: 'var(--gm-fg-3)',
             }}
           >
-            充值提示：{summary.balanceCard.rechargeNotice}（充值请联系客服）
+            充值提示：{dedupeRechargeNotice(summary.balanceCard.rechargeNotice)}
           </div>
         </div>
 
@@ -538,7 +541,9 @@ export function DashboardScreen({
                   可用点数
                 </span>
                 <SignalPill tone={summary.pointsCard.billingMode === 'SHADOW' ? 'warning' : 'info'}>
-                  {summary.pointsCard.billingMode === 'SHADOW' ? '影子计费（免费期）' : '正式计费'}
+                  {summary.pointsCard.billingMode === 'SHADOW'
+                    ? UX_TERMS.billingShadow
+                    : UX_TERMS.billingStrict}
                 </SignalPill>
               </Space>
               <Space size={10}>
@@ -617,7 +622,7 @@ export function DashboardScreen({
               color: 'var(--gm-fg-3)',
             }}
           >
-            充值提示：{summary.pointsCard.rechargeNotice}（充值请联系客服）
+            充值提示：{dedupeRechargeNotice(summary.pointsCard.rechargeNotice)}
           </div>
         </div>
       </div>
@@ -647,7 +652,7 @@ export function DashboardScreen({
               近 5 日 AI 创作趋势
             </span>
             <span style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginLeft: 10 }}>
-              按上海自然日统计 AI 写作与爆文复刻产出，与文章列表明细一致
+              按北京时间（UTC+8）自然日统计 AI 写作与爆文复刻产出，与文章列表明细一致
             </span>
           </div>
           <Space size={14} wrap>

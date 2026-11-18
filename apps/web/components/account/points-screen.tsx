@@ -10,6 +10,7 @@ import {
   type LedgerPage,
   type PointItem,
 } from '../../lib/account-client';
+import { triggerBlobDownload } from '../../lib/ux-foundation';
 
 const EMPTY: PointListQuery = {
   page: 1,
@@ -22,19 +23,6 @@ const EMPTY: PointListQuery = {
   to: undefined,
   export: undefined,
 };
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
-  if (typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export function PointsScreen({
   title,
@@ -87,12 +75,34 @@ export function PointsScreen({
     };
   }, [read, query]);
 
+  function applyFilter(): void {
+    const delta = draft.delta.trim();
+    if (delta !== '' && !/^-?\d+$/.test(delta)) {
+      setError('点数变动不正确');
+      return;
+    }
+    const fromIso = draft.from ? new Date(draft.from).toISOString() : undefined;
+    const toIso = draft.to ? new Date(draft.to).toISOString() : undefined;
+    if (fromIso && toIso && fromIso > toIso) {
+      setError('开始时间不能晚于结束时间');
+      return;
+    }
+    setError(null);
+    setQuery({
+      ...EMPTY,
+      title: draft.title.trim(),
+      delta: delta === '' ? undefined : Number(delta),
+      from: fromIso,
+      to: toIso,
+    });
+  }
+
   async function handleExport(format: 'csv' | 'xlsx'): Promise<void> {
     setExporting(true);
     setError(null);
     try {
       const file = await download(query, format);
-      triggerDownload(file);
+      triggerBlobDownload(file);
     } catch (reason) {
       setError(reason instanceof AccountApiError ? reason.message : '导出失败');
     } finally {
@@ -111,12 +121,14 @@ export function PointsScreen({
           placeholder="项目名称"
           value={draft.title}
           onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+          onPressEnter={applyFilter}
         />
         <Input
           aria-label="点数变动"
           placeholder="点数变动"
           value={draft.delta}
           onChange={(event) => setDraft((current) => ({ ...current, delta: event.target.value }))}
+          onPressEnter={applyFilter}
         />
         <Input
           aria-label="开始时间"
@@ -130,31 +142,7 @@ export function PointsScreen({
           value={draft.to}
           onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))}
         />
-        <Button
-          type="primary"
-          aria-label="查询"
-          onClick={() => {
-            const delta = draft.delta.trim();
-            if (delta !== '' && !/^-?\d+$/.test(delta)) {
-              setError('点数变动不正确');
-              return;
-            }
-            const fromIso = draft.from ? new Date(draft.from).toISOString() : undefined;
-            const toIso = draft.to ? new Date(draft.to).toISOString() : undefined;
-            if (fromIso && toIso && fromIso > toIso) {
-              setError('开始时间不能晚于结束时间');
-              return;
-            }
-            setError(null);
-            setQuery({
-              ...EMPTY,
-              title: draft.title.trim(),
-              delta: delta === '' ? undefined : Number(delta),
-              from: fromIso,
-              to: toIso,
-            });
-          }}
-        >
+        <Button type="primary" aria-label="查询" onClick={applyFilter}>
           查询
         </Button>
         <Button
@@ -190,6 +178,7 @@ export function PointsScreen({
           pageSize: page?.pageSize ?? 10,
           total: page?.total ?? 0,
           showSizeChanger: false,
+          showTotal: (total) => `共 ${total} 条记录`,
           onChange: (next) => setQuery((current) => ({ ...current, page: next })),
         }}
         columns={[

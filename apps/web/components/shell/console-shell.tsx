@@ -1,6 +1,6 @@
 'use client';
 
-import { SITE_NAME } from '@geomix/shared';
+import { SITE_NAME, replaceUxJargon } from '@geomix/shared';
 import { Button } from 'antd';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -34,6 +34,7 @@ const NAVIGATING = new Set([
   'close-others',
   'close-right',
   'close-all',
+  'navigate',
   'back',
 ]);
 
@@ -114,7 +115,7 @@ export function ConsoleShell() {
     void httpAnnouncements(window.sessionStorage).then(
       (items) => {
         if (!live || items.length === 0) return;
-        setAnnouncement(items.join('    '));
+        setAnnouncement(items.map(replaceUxJargon).join('    '));
       },
       () => undefined,
     );

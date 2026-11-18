@@ -38,6 +38,8 @@ import {
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { ExportAction } from '../crud/export-action';
+import { TableClampText } from '../crud/table-clamp-text';
 import {
   httpAiImageGateway,
   type AiImageDownloadFile,
@@ -47,6 +49,11 @@ import {
 import { resolveMediaUrl } from '../../lib/gallery';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import {
+  formatShanghaiDateTime,
+  formatShortDisplayId,
+  triggerBlobDownload,
+} from '../../lib/ux-foundation';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
@@ -139,7 +146,7 @@ function buildInitialDraft(): CreateDraft {
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 function statusTagColor(status: TaskStatusName): string {
@@ -160,16 +167,7 @@ function statusTagColor(status: TaskStatusName): string {
 }
 
 function defaultDownloadHandler(file: AiImageDownloadFile): void {
-  if (typeof window === 'undefined' || typeof URL.createObjectURL !== 'function') return;
-  const blob = new Blob([file.body as BlobPart], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  triggerBlobDownload(file);
 }
 
 function triggerAssetDownload(asset: AiImageGeneratedAsset, orderNo: string, idx: number): void {
@@ -471,7 +469,7 @@ export function AiImageScreen({
       });
       setSaveTargetJob(null);
       setBannerInfo(
-        `已将 ${res.savedCount} 张生成图片零拷贝转存至图库分组「${res.categoryName}」，写作任务可直接抽用！`,
+        `已将 ${res.savedCount} 张生成图片存入图库分组「${res.categoryName}」，AI 写作可直接选用！`,
       );
       await loadList(false);
     } catch (err) {
@@ -609,23 +607,15 @@ export function AiImageScreen({
           {
             title: '提示词',
             key: 'prompt',
+            width: 380,
             render: (_: unknown, row: AiImageJobItem) => (
-              <div>
+              <div style={{ maxWidth: 380 }}>
                 <div style={{ marginBottom: 2 }}>
                   <Typography.Text code style={{ fontSize: 12 }}>
                     {row.orderNo}
                   </Typography.Text>
                 </div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                    color: 'var(--gm-fg-1)',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {row.prompt}
-                </div>
+                <TableClampText text={row.prompt} lines={3} maxWidth={380} />
                 {row.error ? (
                   <div
                     style={{
@@ -808,7 +798,7 @@ export function AiImageScreen({
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
             支持 9 种商业构图比例与免费提示词扩写；按成功入库张数逐张结算（当前标价 {unitPoints}{' '}
-            点数/张），支持一键零拷贝转存企业画像图库供 AI 写作抽用。
+            点数/张），支持一键存入企业画像图库供 AI 写作选用。
           </Typography.Text>
         </div>
         <Space>
@@ -949,6 +939,7 @@ export function AiImageScreen({
             {searchVisible ? '收起搜索' : '展开搜索'}
           </Button>
           <Dropdown
+            trigger={['click']}
             menu={{
               items: ALL_COLUMN_KEYS.map((col) => ({
                 key: col.key,
@@ -971,19 +962,12 @@ export function AiImageScreen({
               })),
             }}
           >
-            <Button>列显示</Button>
+            <Button>列显示 ▾</Button>
           </Dropdown>
-          <Dropdown
-            menu={{
-              items: [
-                { key: 'csv', label: '导出 CSV' },
-                { key: 'xlsx', label: '导出 Excel' },
-              ],
-              onClick: ({ key }) => void handleExport(key as CrudExportFormat),
-            }}
-          >
-            <Button aria-label="导出">导出</Button>
-          </Dropdown>
+          <ExportAction
+            empty={!loading && total === 0 && items.length === 0}
+            onExport={handleExport}
+          />
         </Space>
       </div>
 
@@ -1073,7 +1057,7 @@ export function AiImageScreen({
                   合计预冻结 {draftQuote.totalPoints} 点数
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
-                  提交后按标价预冻结，按成功入库张数逐张结算；生成失败或存储空间不足自动退还点数（免费影子计费期仅记原价流水，不实扣可用点数）。
+                  提交后按标价预冻结，按成功入库张数逐张结算；生成失败或存储空间不足自动退还点数（体验期仅记录点数明细，不扣减可用点数）。
                 </div>
               </div>
               <Tag color="blue" style={{ fontSize: 13, padding: '3px 10px' }}>
@@ -1399,7 +1383,7 @@ export function AiImageScreen({
                     {(formOptions?.galleryAssets ?? []).map((asset) => (
                       <option key={asset.id} value={asset.id}>
                         {asset.categoryName ? `[${asset.categoryName}] ` : ''}
-                        {asset.id}（{asset.width}×{asset.height}）
+                        {formatShortDisplayId(asset.id, '图片')}（{asset.width}×{asset.height}）
                       </option>
                     ))}
                   </select>
@@ -1439,7 +1423,7 @@ export function AiImageScreen({
         </CrudModal>
       )}
 
-      {/* Zero-copy Save to Gallery Modal */}
+      {/* Save to Gallery Modal */}
       <Modal
         open={Boolean(saveTargetJob)}
         title="存入企业画像图库"
@@ -1454,7 +1438,7 @@ export function AiImageScreen({
             <Alert
               type="info"
               showIcon
-              message={`将订单 ${saveTargetJob.orderNo} 生成的 ${saveTargetJob.assets.length} 张图片归入所选图库分组（零拷贝关联，不重复占用存储空间配额）。`}
+              message={`将订单 ${saveTargetJob.orderNo} 生成的 ${saveTargetJob.assets.length} 张图片归入所选图库分组（不重复占用存储空间配额）。`}
             />
             {saveModalError && <Alert type="error" showIcon message={saveModalError} />}
             <div>

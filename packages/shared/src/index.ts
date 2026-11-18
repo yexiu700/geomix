@@ -671,3 +671,4 @@ export type {
 } from './dashboard';
 export * from './visibility';
 export * from './ops';
+export * from './ux-foundation';
