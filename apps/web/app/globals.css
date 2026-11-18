@@ -1077,3 +1077,104 @@ input:not([class*='ant-']):hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* === sonar-dial === */
+.gm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.gm-sonar {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+
+.gm-sonar-sweep {
+  transform-origin: 160px 160px;
+  animation: gm-sweep 4000ms linear infinite;
+}
+
+.gm-sonar:hover .gm-sonar-sweep {
+  animation-play-state: paused;
+}
+
+.gm-sonar-poly {
+  transform-origin: 160px 160px;
+  transition: transform 600ms var(--gm-ease-out);
+}
+
+.gm-sonar-hit {
+  fill: transparent;
+  cursor: pointer;
+  transition: fill var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-sonar-hit:hover,
+.gm-sonar-hit:focus-visible {
+  fill: rgba(255, 255, 255, 0.03);
+  outline: none;
+}
+
+.gm-sonar-tooltip {
+  position: absolute;
+  z-index: 10;
+  background: var(--gm-bg-overlay);
+  box-shadow: var(--gm-shadow-pop);
+  border: 1px solid var(--gm-line-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--gm-fg-2);
+  min-width: 168px;
+  pointer-events: none;
+}
+
+.gm-sonar-tooltip-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gm-fg-1);
+  margin-bottom: 4px;
+}
+
+.gm-sonar-skeleton {
+  width: 100%;
+  max-width: 360px;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  margin: 0 auto;
+}
+
+.gm-sonar-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+  pointer-events: none;
+}
+
+.gm-sonar-ring-label {
+  font-size: 10px;
+  fill: var(--gm-fg-4);
+  dominant-baseline: middle;
+}
+
+.gm-sonar-center-val {
+  font-size: 28px;
+  font-weight: 600;
+  fill: var(--gm-fg-1);
+}
+
+.gm-sonar-center-sub {
+  font-size: 10px;
+  fill: var(--gm-fg-3);
+}
