@@ -5,16 +5,21 @@ import {
   type DashboardEntryCardDef,
   type DashboardSummary,
   type DashboardTrendDay,
+  type VisibilityOverviewResponse,
 } from '@geomix/shared';
-import { Alert, Button, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Space, Tooltip, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createEmptyDashboardSummary,
   httpDashboardGateway,
   type DashboardGateway,
 } from '../../lib/dashboard';
+import { formatCompact, GM } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { httpVisibilityGateway } from '../../lib/visibility';
+import { GeoSignalStrip } from '../geo/geo-signal-strip';
+import { SignalPill, SignalSkeleton } from '../geo/primitives';
 
 const ENTRY_GROUP_ORDER: ReadonlyArray<DashboardEntryCardDef['group']> = [
   '素材源力',
@@ -24,6 +29,25 @@ const ENTRY_GROUP_ORDER: ReadonlyArray<DashboardEntryCardDef['group']> = [
   'AI数据与诊断',
   '二期规划',
 ];
+
+function renderCompactAmount(raw: string | number, prefix = '', suffix = '') {
+  const str = String(raw);
+  const integerDigits = str.replace(/\..*$/, '').replace(/[^0-9]/g, '').length;
+  const num = Number(raw);
+  const full = `${prefix}${str}${suffix}`;
+  if (integerDigits > 9 && Number.isFinite(num)) {
+    return (
+      <Tooltip title={full}>
+        <span>
+          {prefix}
+          {formatCompact(num)}
+          {suffix}
+        </span>
+      </Tooltip>
+    );
+  }
+  return full;
+}
 
 function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
   const width = 760;
@@ -39,12 +63,11 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
     4,
     ...days.map((d) => Math.max(d.writingCount, d.rewriteCount, d.totalCount)),
   );
-  // Round top grid nicely to even step
   const yMax = Math.ceil(maxVal / 2) * 2;
   const ticks = [0, Math.round(yMax / 2), yMax];
 
   const colW = plotW / Math.max(1, days.length);
-  const barW = 24;
+  const barW = 12;
   const barGap = 8;
 
   const yAt = (val: number) => padTop + plotH - (val / yMax) * plotH;
@@ -75,10 +98,11 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
               y1={y}
               x2={width - padRight}
               y2={y}
-              stroke="#edf0f5"
+              stroke={GM.chart.grid}
+              strokeWidth={1}
               strokeDasharray={tick === 0 ? undefined : '4 4'}
             />
-            <text x={padLeft - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#8c8c8c">
+            <text x={padLeft - 8} y={y + 4} textAnchor="end" fontSize="11" fill={GM.chart.axis}>
               {tick}
             </text>
           </g>
@@ -99,13 +123,14 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
           <g key={day.date}>
             {/* AI Writing bar */}
             <rect
+              className={day.writingCount > 0 ? 'gm-trend-bar' : undefined}
               x={wX}
               y={day.writingCount > 0 ? wY : padTop + plotH - 2}
               width={barW}
               height={day.writingCount > 0 ? wH : 2}
-              rx={4}
-              fill="#1677ff"
-              opacity={day.writingCount > 0 ? 0.92 : 0.25}
+              rx={2}
+              fill={GM.chart.c1}
+              opacity={day.writingCount > 0 ? undefined : 0.25}
             />
             {day.writingCount > 0 && (
               <text
@@ -114,7 +139,7 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
                 textAnchor="middle"
                 fontSize="11"
                 fontWeight="600"
-                fill="#0958d9"
+                fill={GM.chart.c1}
               >
                 {day.writingCount}
               </text>
@@ -122,13 +147,14 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
 
             {/* Rewrite bar */}
             <rect
+              className={day.rewriteCount > 0 ? 'gm-trend-bar' : undefined}
               x={rX}
               y={day.rewriteCount > 0 ? rY : padTop + plotH - 2}
               width={barW}
               height={day.rewriteCount > 0 ? rH : 2}
-              rx={4}
-              fill="#13c2c2"
-              opacity={day.rewriteCount > 0 ? 0.92 : 0.25}
+              rx={2}
+              fill={GM.chart.c2}
+              opacity={day.rewriteCount > 0 ? undefined : 0.25}
             />
             {day.rewriteCount > 0 && (
               <text
@@ -137,7 +163,7 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
                 textAnchor="middle"
                 fontSize="11"
                 fontWeight="600"
-                fill="#006d75"
+                fill={GM.chart.c2}
               >
                 {day.rewriteCount}
               </text>
@@ -148,9 +174,9 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
               x={cx}
               y={height - 12}
               textAnchor="middle"
-              fontSize="12"
+              fontSize="11"
               fontWeight="500"
-              fill="#434343"
+              fill={GM.chart.axis}
             >
               {day.label}
             </text>
@@ -162,17 +188,26 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
       {days.length > 1 && (
         <polyline
           fill="none"
-          stroke="#722ed1"
-          strokeWidth="2"
-          strokeDasharray="5 3"
+          stroke={GM.fg.f2}
+          strokeWidth={1.5}
+          strokeDasharray="4 3"
           points={linePoints}
-          opacity="0.7"
         />
       )}
       {days.map((day, idx) => {
         const cx = padLeft + idx * colW + colW / 2;
         const cy = yAt(day.totalCount);
-        return <circle key={`${day.date}-pt`} cx={cx} cy={cy} r={3.5} fill="#722ed1" />;
+        return (
+          <circle
+            key={`${day.date}-pt`}
+            cx={cx}
+            cy={cy}
+            r={3}
+            fill={GM.bg.surface}
+            stroke={GM.fg.f2}
+            strokeWidth={1.5}
+          />
+        );
       })}
     </svg>
   );
@@ -185,6 +220,7 @@ export function DashboardScreen({
   visibilityEnabled = true,
   storage,
   gateway,
+  loadVisibilityOverview,
   autoRotateAnnouncements = true,
   onDispatch,
 }: {
@@ -194,6 +230,7 @@ export function DashboardScreen({
   visibilityEnabled?: boolean;
   storage?: SessionStorageLike;
   gateway?: DashboardGateway;
+  loadVisibilityOverview?: () => Promise<VisibilityOverviewResponse>;
   autoRotateAnnouncements?: boolean;
   onDispatch?: (action: ShellAction) => void;
 }) {
@@ -216,6 +253,12 @@ export function DashboardScreen({
     () => gateway ?? httpDashboardGateway(effectiveStorage),
     [gateway, effectiveStorage],
   );
+
+  const defaultSignalLoad = useCallback(
+    () => httpVisibilityGateway(effectiveStorage).getOverview({ days: 14 }),
+    [effectiveStorage],
+  );
+  const signalLoader = loadVisibilityOverview ?? defaultSignalLoad;
 
   const [summary, setSummary] = useState<DashboardSummary>(() =>
     createEmptyDashboardSummary(aiImageEnabled, new Date(), visibilityEnabled),
@@ -281,16 +324,28 @@ export function DashboardScreen({
   );
   const trendGrandTotal = trendWritingTotal + trendRewriteTotal;
 
-  const openRoute = (href: string) => {
-    onDispatch?.({
-      type: 'open',
-      href,
-      sourceId: tabId,
-    });
-  };
+  const openRoute = useCallback(
+    (href: string) => {
+      onDispatch?.({
+        type: 'open',
+        href,
+        sourceId: tabId,
+      });
+    },
+    [onDispatch, tabId],
+  );
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 0. GEO Signal Strip */}
+      {effectiveVisibility && (
+        <GeoSignalStrip
+          load={signalLoader}
+          onOpenOverview={() => openRoute('/visibility/overview')}
+          onOpenMonitors={() => openRoute('/visibility/monitors')}
+        />
+      )}
+
       {/* Header Row */}
       <div
         style={{
@@ -333,10 +388,13 @@ export function DashboardScreen({
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: '8px 12px',
-            padding: '10px 14px',
+            minHeight: 36,
+            padding: '6px 12px',
             borderRadius: 8,
-            background: 'linear-gradient(90deg, #f0f5ff 0%, #f9fbff 100%)',
-            border: '1px solid #d6e4ff',
+            background: 'var(--gm-bg-surface)',
+            border: '1px solid var(--gm-line-1)',
+            fontSize: 12,
+            color: 'var(--gm-fg-2)',
           }}
         >
           <div
@@ -348,13 +406,11 @@ export function DashboardScreen({
               flex: '1 1 200px',
             }}
           >
-            <Tag color="blue" style={{ margin: 0, flexShrink: 0 }}>
-              平台播报
-            </Tag>
+            <SignalPill tone="info">平台播报</SignalPill>
             <span
               style={{
-                fontSize: 13,
-                color: '#1f2937',
+                fontSize: 12,
+                color: 'var(--gm-fg-2)',
                 lineHeight: 1.5,
                 wordBreak: 'break-word',
               }}
@@ -364,7 +420,7 @@ export function DashboardScreen({
           </div>
           {announcements.length > 1 && (
             <Space size={6} style={{ flexShrink: 0 }}>
-              <span style={{ fontSize: 12, color: '#64748b' }}>
+              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
                 {safeAnnouncementIdx + 1} / {announcements.length}
               </span>
               <Button
@@ -391,27 +447,9 @@ export function DashboardScreen({
       )}
 
       {/* 2. Balance Card & Points Card */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
-          gap: 14,
-        }}
-      >
+      <div className="gm-dashboard-accounts">
         {/* Balance Card */}
-        <div
-          data-testid="dashboard-balance-card"
-          style={{
-            padding: '16px 18px',
-            borderRadius: 10,
-            border: '1px solid #e6eaf0',
-            background: '#ffffff',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
+        <div data-testid="dashboard-balance-card" className="gm-kpi gm-kpi-compact">
           <div>
             <div
               style={{
@@ -421,7 +459,9 @@ export function DashboardScreen({
                 marginBottom: 8,
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>账户余额</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                账户余额
+              </span>
               <Button
                 type="link"
                 size="small"
@@ -431,8 +471,17 @@ export function DashboardScreen({
                 余额明细
               </Button>
             </div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', lineHeight: 1.2 }}>
-              ¥{summary.balanceCard.balance}
+            <div
+              className="gm-num"
+              style={{
+                fontSize: 28,
+                fontWeight: 600,
+                color: 'var(--gm-fg-1)',
+                lineHeight: '34px',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              {renderCompactAmount(summary.balanceCard.balance, '¥')}
             </div>
             <div
               style={{
@@ -441,16 +490,20 @@ export function DashboardScreen({
                 flexWrap: 'wrap',
                 marginTop: 10,
                 fontSize: 13,
-                color: '#475569',
+                color: 'var(--gm-fg-2)',
               }}
             >
               <span>
-                本月消耗（{summary.monthKey}）：
-                <strong style={{ color: '#0f172a' }}>¥{summary.balanceCard.monthConsumed}</strong>
+                本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
+                <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
+                  ¥{summary.balanceCard.monthConsumed}
+                </strong>
               </span>
               <span>
                 本月入账：
-                <strong style={{ color: '#15803d' }}>¥{summary.balanceCard.monthRecharged}</strong>
+                <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
+                  ¥{summary.balanceCard.monthRecharged}
+                </strong>
               </span>
             </div>
           </div>
@@ -458,10 +511,10 @@ export function DashboardScreen({
             style={{
               padding: '8px 10px',
               borderRadius: 6,
-              background: '#f8fafc',
-              border: '1px solid #eef2f6',
+              background: 'var(--gm-bg-elevated)',
+              border: '1px solid var(--gm-line-1)',
               fontSize: 12,
-              color: '#64748b',
+              color: 'var(--gm-fg-3)',
             }}
           >
             充值提示：{summary.balanceCard.rechargeNotice}（充值请联系客服）
@@ -469,19 +522,7 @@ export function DashboardScreen({
         </div>
 
         {/* Points Card */}
-        <div
-          data-testid="dashboard-points-card"
-          style={{
-            padding: '16px 18px',
-            borderRadius: 10,
-            border: '1px solid #d6e4ff',
-            background: 'linear-gradient(180deg, #fbfdff 0%, #ffffff 100%)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
+        <div data-testid="dashboard-points-card" className="gm-kpi gm-kpi-compact">
           <div>
             <div
               style={{
@@ -493,10 +534,12 @@ export function DashboardScreen({
               }}
             >
               <Space size={8}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#1f2937' }}>可用点数</span>
-                <Tag color={summary.pointsCard.billingMode === 'SHADOW' ? 'cyan' : 'blue'}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                  可用点数
+                </span>
+                <SignalPill tone={summary.pointsCard.billingMode === 'SHADOW' ? 'warning' : 'info'}>
                   {summary.pointsCard.billingMode === 'SHADOW' ? '影子计费（免费期）' : '正式计费'}
-                </Tag>
+                </SignalPill>
               </Space>
               <Space size={10}>
                 <Button
@@ -518,10 +561,19 @@ export function DashboardScreen({
               </Space>
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 28, fontWeight: 700, color: '#1d39c4', lineHeight: 1.2 }}>
-                {summary.pointsCard.available} 点
+              <span
+                className="gm-num"
+                style={{
+                  fontSize: 28,
+                  fontWeight: 600,
+                  color: 'var(--gm-fg-1)',
+                  lineHeight: '34px',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {renderCompactAmount(summary.pointsCard.available, '', ' 点')}
               </span>
-              <span style={{ fontSize: 12, color: '#64748b' }}>
+              <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
                 账面 {summary.pointsCard.points} 点 · 冻结中 {summary.pointsCard.pointsReserved} 点
               </span>
             </div>
@@ -532,24 +584,24 @@ export function DashboardScreen({
                 flexWrap: 'wrap',
                 marginTop: 10,
                 fontSize: 13,
-                color: '#475569',
+                color: 'var(--gm-fg-2)',
               }}
             >
               <span>
-                本月消耗（{summary.monthKey}）：
-                <strong style={{ color: '#0f172a' }}>
+                本月消耗（<span className="gm-num">{summary.monthKey}</span>）：
+                <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
                   {summary.pointsCard.monthConsumedPoints} 点
                 </strong>
                 {summary.pointsCard.monthListPricePoints !==
                   summary.pointsCard.monthConsumedPoints && (
-                  <span style={{ color: '#64748b', marginLeft: 4 }}>
+                  <span className="gm-num" style={{ color: 'var(--gm-fg-3)', marginLeft: 4 }}>
                     （免费期原价核算 {summary.pointsCard.monthListPricePoints} 点）
                   </span>
                 )}
               </span>
               <span>
                 本月加点：
-                <strong style={{ color: '#15803d' }}>
+                <strong className="gm-num" style={{ color: 'var(--gm-sig-cited)' }}>
                   +{summary.pointsCard.monthRechargedPoints} 点
                 </strong>
               </span>
@@ -559,10 +611,10 @@ export function DashboardScreen({
             style={{
               padding: '8px 10px',
               borderRadius: 6,
-              background: '#f0f5ff',
-              border: '1px solid #e0ecff',
+              background: 'var(--gm-bg-elevated)',
+              border: '1px solid var(--gm-line-1)',
               fontSize: 12,
-              color: '#475569',
+              color: 'var(--gm-fg-3)',
             }}
           >
             充值提示：{summary.pointsCard.rechargeNotice}（充值请联系客服）
@@ -574,10 +626,10 @@ export function DashboardScreen({
       <div
         data-testid="dashboard-trend-card"
         style={{
-          padding: '16px 18px',
-          borderRadius: 10,
-          border: '1px solid #e6eaf0',
-          background: '#ffffff',
+          padding: 16,
+          borderRadius: 8,
+          border: '1px solid var(--gm-line-1)',
+          background: 'var(--gm-bg-surface)',
         }}
       >
         <div
@@ -591,43 +643,43 @@ export function DashboardScreen({
           }}
         >
           <div>
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#1f2937' }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
               近 5 日 AI 创作趋势
             </span>
-            <span style={{ fontSize: 12, color: '#64748b', marginLeft: 10 }}>
+            <span style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginLeft: 10 }}>
               按上海自然日统计 AI 写作与爆文复刻产出，与文章列表明细一致
             </span>
           </div>
           <Space size={14} wrap>
-            <span style={{ fontSize: 12, color: '#475569' }}>
+            <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
               <span
                 style={{
                   display: 'inline-block',
                   width: 10,
                   height: 10,
                   borderRadius: 2,
-                  background: '#1677ff',
+                  background: 'var(--gm-chart-1)',
                   marginRight: 5,
                 }}
               />
               AI 写作：{trendWritingTotal} 篇
             </span>
-            <span style={{ fontSize: 12, color: '#475569' }}>
+            <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
               <span
                 style={{
                   display: 'inline-block',
                   width: 10,
                   height: 10,
                   borderRadius: 2,
-                  background: '#13c2c2',
+                  background: 'var(--gm-chart-2)',
                   marginRight: 5,
                 }}
               />
               爆文复刻：{trendRewriteTotal} 篇
             </span>
-            <Tag color="purple" style={{ margin: 0 }}>
-              5 日合计 {trendGrandTotal} 篇
-            </Tag>
+            <SignalPill tone="neutral">
+              <span className="gm-num">5 日合计 {trendGrandTotal} 篇</span>
+            </SignalPill>
             <Button
               type="link"
               size="small"
@@ -639,34 +691,42 @@ export function DashboardScreen({
           </Space>
         </div>
 
-        <TrendChartSvg days={summary.trend5d} />
+        {loading ? (
+          <SignalSkeleton variant="block" height={220} />
+        ) : (
+          <TrendChartSvg days={summary.trend5d} />
+        )}
 
         {/* 5-day per-day exact reconciliation strip */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-            gap: 8,
-            marginTop: 8,
-          }}
-        >
+        <div className="gm-dashboard-trend-reconcile">
           {summary.trend5d.map((day) => (
             <div
               key={day.date}
               data-testid={`dashboard-trend-day-${day.date}`}
               style={{
-                padding: '8px 10px',
+                padding: 8,
                 borderRadius: 6,
-                background: '#f8fafc',
-                border: '1px solid #eef2f6',
+                background: 'var(--gm-bg-elevated)',
+                border: '1px solid var(--gm-line-1)',
                 fontSize: 12,
                 textAlign: 'center',
               }}
             >
-              <div style={{ fontWeight: 600, color: '#334155', marginBottom: 2 }}>{day.date}</div>
-              <div style={{ color: '#64748b' }}>
-                写作 <strong style={{ color: '#0958d9' }}>{day.writingCount}</strong> · 复刻{' '}
-                <strong style={{ color: '#006d75' }}>{day.rewriteCount}</strong>
+              <div
+                className="gm-num"
+                style={{ fontWeight: 600, color: 'var(--gm-fg-1)', marginBottom: 2 }}
+              >
+                {day.date}
+              </div>
+              <div style={{ color: 'var(--gm-fg-3)' }}>
+                写作{' '}
+                <strong className="gm-num" style={{ color: 'var(--gm-chart-1)' }}>
+                  {day.writingCount}
+                </strong>{' '}
+                · 复刻{' '}
+                <strong className="gm-num" style={{ color: 'var(--gm-chart-2)' }}>
+                  {day.rewriteCount}
+                </strong>
               </div>
             </div>
           ))}
@@ -677,37 +737,31 @@ export function DashboardScreen({
       <div
         data-testid="dashboard-entry-cards"
         style={{
-          padding: '16px 18px',
-          borderRadius: 10,
-          border: '1px solid #e6eaf0',
-          background: '#ffffff',
+          padding: 16,
+          borderRadius: 8,
+          border: '1px solid var(--gm-line-1)',
+          background: 'var(--gm-bg-surface)',
           display: 'flex',
           flexDirection: 'column',
           gap: 14,
         }}
       >
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#1f2937' }}>功能入口</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--gm-fg-1)' }}>功能入口</div>
 
-        {groupedEntries.map(({ group, cards }) => (
+        {groupedEntries.map(({ group, cards }, groupIdx) => (
           <div key={group}>
             <div
               style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: '#64748b',
-                marginBottom: 8,
-                letterSpacing: 0.3,
+                fontSize: 11,
+                fontWeight: 500,
+                color: 'var(--gm-fg-3)',
+                margin: groupIdx === 0 ? '0 0 8px' : '16px 0 8px',
+                letterSpacing: '0.06em',
               }}
             >
               {group}
             </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                gap: 10,
-              }}
-            >
+            <div className="gm-dashboard-entry-grid">
               {cards.map((card) => {
                 const statValue = card.statKey ? summary.stats[card.statKey] : null;
                 if (card.comingSoon || !card.href) {
@@ -716,13 +770,7 @@ export function DashboardScreen({
                       key={card.key}
                       data-testid={`dashboard-card-${card.key}`}
                       aria-disabled="true"
-                      style={{
-                        padding: '12px 14px',
-                        borderRadius: 8,
-                        border: '1px dashed #d9e2ef',
-                        background: '#f8fafc',
-                        opacity: 0.85,
-                      }}
+                      className="gm-dashboard-entry-card-soon"
                     >
                       <div
                         style={{
@@ -733,12 +781,21 @@ export function DashboardScreen({
                           gap: 6,
                         }}
                       >
-                        <span style={{ fontWeight: 600, fontSize: 14, color: '#64748b' }}>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: 'var(--gm-fg-2)',
+                          }}
+                        >
                           {card.title}
                         </span>
-                        <Tag style={{ margin: 0 }}>即将上线</Tag>
+                        <SignalPill tone="neutral">即将上线</SignalPill>
                       </div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.5 }}>
+                      <div
+                        className="gm-clamp-2"
+                        style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}
+                      >
                         {card.desc}
                       </div>
                     </div>
@@ -752,18 +809,7 @@ export function DashboardScreen({
                     type="button"
                     data-testid={`dashboard-card-${card.key}`}
                     onClick={() => openRoute(targetHref)}
-                    style={{
-                      padding: '12px 14px',
-                      borderRadius: 8,
-                      border: '1px solid #e2e8f0',
-                      background: '#ffffff',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      gap: 6,
-                    }}
+                    className="gm-dashboard-entry-card"
                   >
                     <div
                       style={{
@@ -775,22 +821,46 @@ export function DashboardScreen({
                       }}
                     >
                       <Space size={6}>
-                        <span style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: 'var(--gm-fg-1)',
+                          }}
+                        >
                           {card.title}
                         </span>
                         {card.badge === '新上' && (
-                          <Tag color="green" style={{ margin: 0, fontSize: 11 }}>
+                          <span
+                            style={{
+                              height: 16,
+                              padding: '0 5px',
+                              borderRadius: 4,
+                              background: 'var(--gm-phosphor-a16)',
+                              color: 'var(--gm-phosphor)',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
                             新上
-                          </Tag>
+                          </span>
                         )}
                       </Space>
                       {statValue !== null && card.statUnit && (
-                        <span style={{ fontSize: 12, color: '#1677ff', fontWeight: 500 }}>
+                        <span
+                          className="gm-num"
+                          style={{ fontSize: 12, color: 'var(--gm-info)', fontWeight: 500 }}
+                        >
                           {statValue} {card.statUnit}
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.5 }}>
+                    <div
+                      className="gm-clamp-2"
+                      style={{ fontSize: 12, color: 'var(--gm-fg-3)', lineHeight: '18px' }}
+                    >
                       {card.desc}
                     </div>
                   </button>
