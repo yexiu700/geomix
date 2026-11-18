@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formatLlmTenantDisplayName } from './account-costs-ux';
 import { FAKE_TOKEN_COST_MICRO, LLM_SCENES, type LlmScene } from './adapters';
 import { toCsv } from './crud';
 import { toShanghaiDateKey } from './dashboard';
@@ -378,7 +379,7 @@ export function aggregateLlmDailyReport(
     const tenantKey = ev.tenantId ?? 'system';
     const curTenant = tenantMap.get(tenantKey) ?? {
       tenantId: tenantKey,
-      tenantName: ev.tenantName?.trim() || (tenantKey === 'system' ? '系统任务' : tenantKey),
+      tenantName: formatLlmTenantDisplayName(ev.tenantName, tenantKey),
       calls: 0,
       tokensIn: 0,
       tokensOut: 0,
@@ -441,12 +442,12 @@ export function llmDailyReportToCsv(report: LlmDailyCostReport): string {
     '日期',
     '总调用次数',
     '真实模型调用',
-    '占位假调用',
+    '模拟调用',
     '输入Token',
     '输出Token',
     '总Token',
-    '成本(微元)',
-    '预估成本(元)',
+    '成本（微元）',
+    '预估成本（元）',
   ];
   const rows = report.daily.map((d) => [
     d.date,

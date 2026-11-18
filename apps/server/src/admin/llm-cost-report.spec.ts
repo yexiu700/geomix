@@ -160,6 +160,49 @@ describe('Issue #24: LLM daily cost report & ops deliverables', () => {
     ).rejects.toBeInstanceOf(ApiError);
   });
 
+  it('masks missing tenant names without exposing raw tenant CUIDs in byTenant (#202)', async () => {
+    const now = new Date('2026-11-17T08:00:00.000Z');
+    const missingCuid = 'cmwkm6lyw001g14g2qj5t1xxb';
+    const prismaMock = {
+      base: {
+        auditLog: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'aud-cuid',
+              tenantId: missingCuid,
+              action: LLM_COST_AUDIT_ACTION,
+              createdAt: new Date('2026-11-17T02:00:00.000Z'),
+              payload: {
+                idempotencyKey: 'distill:cuid-1',
+                scene: 'distill',
+                provider: 'fake',
+                model: 'fake-cheap',
+                fake: true,
+                tokensIn: 100,
+                tokensOut: 50,
+                costMicro: 150,
+              },
+            },
+          ]),
+        },
+        aiTaskItem: { findMany: vi.fn().mockResolvedValue([]) },
+        visibilityObservation: { findMany: vi.fn().mockResolvedValue([]) },
+        tenant: { findMany: vi.fn().mockResolvedValue([]) },
+      },
+    } as unknown as PrismaService;
+
+    const service = new AdminOfficeService(prismaMock, {} as unknown as BillingService);
+    const report = await service.llmCostReport(
+      { userId: 'admin-1', role: 'ADMIN' },
+      { days: '7', includeFake: 'true' },
+      now,
+    );
+
+    expect(report.byTenant).toHaveLength(1);
+    expect(report.byTenant[0]?.tenantName).toBe('租户 #5T1XXB');
+    expect(report.byTenant[0]?.tenantName).not.toBe(missingCuid);
+  });
+
   it('ships valid Nginx HTTPS template, optional tls compose profile, clean .env.example, and runnable ops scripts', () => {
     const nginxConf = readFileSync(resolve(repoRoot, 'docker/nginx/geomix.conf.template'), 'utf8');
     expect(nginxConf).toContain('listen 443 ssl;');

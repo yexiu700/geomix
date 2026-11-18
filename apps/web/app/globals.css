@@ -662,7 +662,44 @@ input:not([class*='ant-']):hover {
   color: var(--gm-sig-cited);
 }
 
-.gm-ledger-filter,
+.gm-ledger-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .gm-ledger-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gm-ledger-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--gm-line-1);
+  border-radius: 8px;
+  background: var(--gm-bg-elevated);
+  margin-bottom: 12px;
+}
+
+.gm-ledger-filter .ant-input {
+  width: auto;
+  flex: 0 1 auto;
+}
+
+.gm-ledger-filter-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .gm-verify-form {
   display: flex;
   flex-wrap: wrap;

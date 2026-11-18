@@ -37,6 +37,8 @@ export type LedgerPage<T> = {
 
 export type RightsView = {
   points: number;
+  pointsReserved?: number;
+  available?: number;
   money: string;
   billingMode: string;
   cards: RightsCard[];

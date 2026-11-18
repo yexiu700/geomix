@@ -112,7 +112,7 @@ describe('LlmCostAdmin (#24)', () => {
     expect(screen.getAllByText('¥0.0240').length).toBeGreaterThanOrEqual(1);
     expect(llmCosts).toHaveBeenCalledWith({ days: 14, includeFake: true });
 
-    fireEvent.click(screen.getByRole('switch', { name: '含占位假调用' }));
+    fireEvent.click(screen.getByRole('switch', { name: '含模拟调用' }));
     await waitFor(() => {
       expect(llmCosts).toHaveBeenCalledWith({ days: 14, includeFake: false });
     });
@@ -135,5 +135,110 @@ describe('LlmCostAdmin (#24)', () => {
       },
       { timeout: 2000 },
     );
+  });
+
+  it('hides ops/env jargon, masks fake models and tenant CUIDs, and formats numbers consistently (#202)', async () => {
+    const rawCuid = 'cmwkm6lyw001g14g2qj5t1xxb';
+    const report = sampleReport({
+      rateConfigured: false,
+      totals: {
+        calls: 1234,
+        realCalls: 1000,
+        fakeCalls: 234,
+        tokensIn: 120000,
+        tokensOut: 34000,
+        totalTokens: 154000,
+        costMicro: 2450000,
+        costYuan: '2450.0000',
+      },
+      daily: [
+        {
+          date: '2026-11-17',
+          calls: 1234,
+          realCalls: 1000,
+          fakeCalls: 234,
+          tokensIn: 120000,
+          tokensOut: 34000,
+          totalTokens: 154000,
+          costMicro: 2450000,
+          costYuan: '2450.0000',
+        },
+      ],
+      byModel: [
+        {
+          provider: 'fake',
+          model: 'fake-quality',
+          fake: true,
+          calls: 234,
+          tokensIn: 10000,
+          tokensOut: 5000,
+          totalTokens: 15000,
+          costMicro: 15000,
+          costYuan: '0.0150',
+        },
+        {
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          fake: false,
+          calls: 1000,
+          tokensIn: 110000,
+          tokensOut: 29000,
+          totalTokens: 139000,
+          costMicro: 2435000,
+          costYuan: '2435.0000',
+        },
+      ],
+      byTenant: [
+        {
+          tenantId: rawCuid,
+          tenantName: rawCuid,
+          calls: 1234,
+          tokensIn: 120000,
+          tokensOut: 34000,
+          totalTokens: 154000,
+          costMicro: 2450000,
+          costYuan: '2450.0000',
+        },
+      ],
+    });
+
+    const { container } = render(
+      <LlmCostAdmin
+        client={{
+          llmCosts: vi.fn().mockResolvedValue(report),
+        }}
+      />,
+    );
+
+    expect((await screen.findAllByText('1,234')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('154,000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('¥2,450.0000').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('预估总成本（元）')).toBeTruthy();
+    expect(screen.getByText(/北京时间 UTC\+8/)).toBeTruthy();
+    expect(screen.getByText(/系统费率配置/)).toBeTruthy();
+
+    // No backend ops/env jargon in DOM
+    const allText = container.textContent ?? '';
+    expect(allText).not.toMatch(
+      /LLM_COST_RATES_JSON|SHADOW|STRICT|默认占位微元费率|开发占位|占位假调用/,
+    );
+
+    // Model distribution masks fake/fake-quality/开发占位
+    fireEvent.click(screen.getByRole('tab', { name: '按模型分布' }));
+    expect(await screen.findByText('内置模拟引擎')).toBeTruthy();
+    expect(screen.getByText('内置高质量模拟')).toBeTruthy();
+    expect(screen.getByText('内置模拟')).toBeTruthy();
+    expect(screen.getAllByText('1,000').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('139,000')).toBeTruthy();
+    expect(screen.getByText('¥2,435.0000')).toBeTruthy();
+    expect(screen.queryByText('fake-quality')).toBeNull();
+    expect(screen.queryByText('开发占位')).toBeNull();
+
+    // Tenant ranking masks raw CUID in both text and title attributes
+    fireEvent.click(screen.getByRole('tab', { name: '按租户排行' }));
+    expect(await screen.findByText('租户 #5T1XXB')).toBeTruthy();
+    expect(screen.getByText('#5T1XXB')).toBeTruthy();
+    expect(container.textContent).not.toContain(rawCuid);
+    expect(container.querySelector(`[title="${rawCuid}"]`)).toBeNull();
   });
 });

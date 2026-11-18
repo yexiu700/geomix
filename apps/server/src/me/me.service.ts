@@ -13,6 +13,8 @@ import {
   parseEnv,
   pointLedgerPhrase,
   resolveTenantBillingMode,
+  sanitizeLedgerRemark,
+  sanitizeLedgerTitle,
   type ModelInclusionKey,
   type MoneyListQuery,
   type PointListQuery,
@@ -364,12 +366,13 @@ function presentPoint(row: {
   createdAt: Date;
   status: string;
 }): PointItem {
+  const safeTitle = sanitizeLedgerTitle(row.title);
   return {
     id: row.id,
-    title: row.title,
+    title: safeTitle,
     delta: row.delta,
     listPrice: row.listPrice,
-    phrase: pointLedgerPhrase(row.delta, row.title),
+    phrase: pointLedgerPhrase(row.delta, safeTitle),
     pointsText: formatPointsCell(row.delta, row.listPrice),
     createdAt: row.createdAt.toISOString(),
     status: row.status,
@@ -385,9 +388,9 @@ function presentMoney(row: {
 }): MoneyItem {
   return {
     id: row.id,
-    title: row.title,
+    title: sanitizeLedgerTitle(row.title),
     amount: formatMoney(row.amount.toString()),
-    remark: row.remark ?? '',
+    remark: sanitizeLedgerRemark(row.remark),
     createdAt: row.createdAt.toISOString(),
   };
 }
