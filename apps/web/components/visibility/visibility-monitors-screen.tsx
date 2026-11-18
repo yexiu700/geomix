@@ -309,6 +309,29 @@ function buildDefaultRunDraft(defaultProfileId: string, defaultKeywordId = ''): 
   };
 }
 
+function validateProfileName(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return '请填写档案名称';
+  if (trimmed.length > VISIBILITY_PROFILE_NAME_MAX) {
+    return `档案名称不能超过 ${VISIBILITY_PROFILE_NAME_MAX} 个字符`;
+  }
+  return undefined;
+}
+
+function validateProfileBrandName(draft: ProfileDraft): string | undefined {
+  const trimmed = draft.brandName.trim();
+  if (
+    !trimmed &&
+    !(draft.mode === 'create' && (draft.importFromKeywordId || draft.importFromKbId))
+  ) {
+    return '请填写主品牌名称';
+  }
+  if (trimmed.length > VISIBILITY_BRAND_NAME_MAX) {
+    return `主品牌名称不能超过 ${VISIBILITY_BRAND_NAME_MAX} 个字符`;
+  }
+  return undefined;
+}
+
 export function VisibilityMonitorsScreen({
   title,
   tabId,
@@ -387,6 +410,8 @@ export function VisibilityMonitorsScreen({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [reloadTick, setReloadTick] = useState(0);
 
+  const sectionRef = useRef<HTMLElement | null>(null);
+
   const [banner, setBanner] = useState<{
     type: 'success' | 'error' | 'info' | 'warning';
     text: string;
@@ -395,6 +420,14 @@ export function VisibilityMonitorsScreen({
   // Profile Create/Edit Modal
   const [profileModal, setProfileModal] = useState<ProfileModalState | null>(null);
   const [profileModalError, setProfileModalError] = useState<string | null>(null);
+  const [profileFieldErrors, setProfileFieldErrors] = useState<{
+    name?: string;
+    brandName?: string;
+  }>({});
+  const [profileTouched, setProfileTouched] = useState<{
+    name?: boolean;
+    brandName?: boolean;
+  }>({});
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [deleteProfileTarget, setDeleteProfileTarget] = useState<VisibilityProfileRecord | null>(
     null,
@@ -410,6 +443,7 @@ export function VisibilityMonitorsScreen({
   // Run Control Modals
   const [cancelTarget, setCancelTarget] = useState<VisibilityRunRecord | null>(null);
   const [deleteRunIds, setDeleteRunIds] = useState<string[] | null>(null);
+  const [blockedDeleteRuns, setBlockedDeleteRuns] = useState<VisibilityRunRecord[] | null>(null);
   const [controlLoading, setControlLoading] = useState(false);
 
   // Diagnostic Detail Drawer
@@ -583,6 +617,29 @@ export function VisibilityMonitorsScreen({
     };
   }, [client, detailRunId, drawerOpen, featureEnabled, hasActiveRun, pollIntervalMs, query]);
 
+  // Auto-dismiss transient success/info banners and clear them when switching Shell tabs (#192)
+  useEffect(() => {
+    if (!banner || (banner.type !== 'success' && banner.type !== 'info')) return undefined;
+    const timer = window.setTimeout(() => {
+      setBanner((curr) => (curr === banner ? null : curr));
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [banner]);
+
+  useEffect(() => {
+    const pageEl = sectionRef.current?.closest('.gm-page');
+    if (!pageEl || typeof MutationObserver === 'undefined') return undefined;
+    const observer = new MutationObserver(() => {
+      if (pageEl.hasAttribute('hidden')) {
+        setBanner((curr) =>
+          curr && (curr.type === 'success' || curr.type === 'info') ? null : curr,
+        );
+      }
+    });
+    observer.observe(pageEl, { attributes: true, attributeFilter: ['hidden'] });
+    return () => observer.disconnect();
+  }, []);
+
   // Load questions whenever runModal opens or its selected keywordId changes
   const isRunModalOpen = runModal !== null;
   const activeModalKeywordId = runModal?.draft.keywordId ?? '';
@@ -617,6 +674,8 @@ export function VisibilityMonitorsScreen({
     if (readOnly) return;
     const initial = buildEmptyProfileDraft(profiles.length === 0);
     setProfileModalError(null);
+    setProfileFieldErrors({});
+    setProfileTouched({});
     setProfileModal({
       initial,
       draft: initial,
@@ -629,6 +688,8 @@ export function VisibilityMonitorsScreen({
     if (readOnly) return;
     const initial = buildEditProfileDraft(profile, profile.id === effectiveDefaultProfileId);
     setProfileModalError(null);
+    setProfileFieldErrors({});
+    setProfileTouched({});
     setProfileModal({
       initial,
       draft: initial,
@@ -641,9 +702,14 @@ export function VisibilityMonitorsScreen({
     setProfileModal((curr) => {
       if (!curr) return curr;
       if (!keywordId) {
+        const nextDraft = { ...curr.draft, importFromKeywordId: '' };
+        setProfileFieldErrors((prev) => ({
+          ...prev,
+          ...(profileTouched.brandName ? { brandName: validateProfileBrandName(nextDraft) } : {}),
+        }));
         return {
           ...curr,
-          draft: { ...curr.draft, importFromKeywordId: '' },
+          draft: nextDraft,
         };
       }
       const kw = prefillSources.keywords.find((item) => item.id === keywordId);
@@ -658,15 +724,20 @@ export function VisibilityMonitorsScreen({
           ),
         ),
       ];
+      const nextDraft: ProfileDraft = {
+        ...curr.draft,
+        importFromKeywordId: keywordId,
+        name: curr.draft.name.trim() || `${primaryBrand}品牌监测档案`,
+        brandName: primaryBrand,
+        brandAliasesText: mergedAliases.join(', '),
+      };
+      setProfileFieldErrors({
+        name: validateProfileName(nextDraft.name),
+        brandName: validateProfileBrandName(nextDraft),
+      });
       return {
         ...curr,
-        draft: {
-          ...curr.draft,
-          importFromKeywordId: keywordId,
-          name: curr.draft.name.trim() || `${primaryBrand}品牌监测档案`,
-          brandName: primaryBrand,
-          brandAliasesText: mergedAliases.join(', '),
-        },
+        draft: nextDraft,
       };
     });
   }
@@ -675,9 +746,14 @@ export function VisibilityMonitorsScreen({
     setProfileModal((curr) => {
       if (!curr) return curr;
       if (!kbId) {
+        const nextDraft = { ...curr.draft, importFromKbId: '' };
+        setProfileFieldErrors((prev) => ({
+          ...prev,
+          ...(profileTouched.brandName ? { brandName: validateProfileBrandName(nextDraft) } : {}),
+        }));
         return {
           ...curr,
-          draft: { ...curr.draft, importFromKbId: '' },
+          draft: nextDraft,
         };
       }
       const kb = prefillSources.knowledgeBases.find((item) => item.id === kbId);
@@ -697,15 +773,20 @@ export function VisibilityMonitorsScreen({
           ),
         ),
       ];
+      const nextDraft: ProfileDraft = {
+        ...curr.draft,
+        importFromKbId: kbId,
+        name: curr.draft.name.trim() || `${primaryBrand || kb.name}监测档案`,
+        brandName: primaryBrand,
+        brandAliasesText: mergedAliases.join(', '),
+      };
+      setProfileFieldErrors({
+        name: validateProfileName(nextDraft.name),
+        brandName: validateProfileBrandName(nextDraft),
+      });
       return {
         ...curr,
-        draft: {
-          ...curr.draft,
-          importFromKbId: kbId,
-          name: curr.draft.name.trim() || `${primaryBrand || kb.name}监测档案`,
-          brandName: primaryBrand,
-          brandAliasesText: mergedAliases.join(', '),
-        },
+        draft: nextDraft,
       };
     });
   }
@@ -714,29 +795,33 @@ export function VisibilityMonitorsScreen({
     if (!profileModal || readOnly) return;
     const { draft } = profileModal;
     setProfileModalError(null);
+    setProfileTouched({ name: true, brandName: true });
+
+    const nameError = validateProfileName(draft.name);
+    const brandError = validateProfileBrandName(draft);
+    if (nameError || brandError) {
+      setProfileFieldErrors({
+        ...(nameError ? { name: nameError } : {}),
+        ...(brandError ? { brandName: brandError } : {}),
+      });
+      if (nameError) {
+        setProfileModalError(nameError);
+        return;
+      }
+      if (brandError) {
+        setProfileModalError(
+          draft.mode === 'create' &&
+            (prefillSources.keywords.length > 0 || prefillSources.knowledgeBases.length > 0)
+            ? '请填写主品牌名称，或选择关键词/企业知识库快捷导入'
+            : brandError,
+        );
+        return;
+      }
+    }
+    setProfileFieldErrors({});
 
     const name = draft.name.trim();
-    if (!name) {
-      setProfileModalError('请填写监测档案名称');
-      return;
-    }
-    if (name.length > VISIBILITY_PROFILE_NAME_MAX) {
-      setProfileModalError(`档案名称不能超过 ${VISIBILITY_PROFILE_NAME_MAX} 个字符`);
-      return;
-    }
-
     const brandName = draft.brandName.trim();
-    if (
-      !brandName &&
-      !(draft.mode === 'create' && (draft.importFromKeywordId || draft.importFromKbId))
-    ) {
-      setProfileModalError('请填写主品牌名称，或选择关键词/企业知识库快捷导入');
-      return;
-    }
-    if (brandName.length > VISIBILITY_BRAND_NAME_MAX) {
-      setProfileModalError(`主品牌名称不能超过 ${VISIBILITY_BRAND_NAME_MAX} 个字符`);
-      return;
-    }
 
     const rawOwnedDomains = splitTagList(draft.ownedDomainsText);
     const ownedDomains: string[] = [];
@@ -781,6 +866,7 @@ export function VisibilityMonitorsScreen({
     const brandAliases = splitTagList(draft.brandAliasesText);
 
     setProfileSubmitting(true);
+    const previousDefaultId = effectiveDefaultProfileId;
     try {
       let saved: VisibilityProfileRecord;
       if (draft.mode === 'edit' && draft.editId) {
@@ -793,6 +879,12 @@ export function VisibilityMonitorsScreen({
         });
         setProfiles((curr) => curr.map((item) => (item.id === saved.id ? saved : item)));
         setBanner({ type: 'success', text: `已更新监测档案「${saved.name}」` });
+        if (draft.isDefault) {
+          persistDefaultProfile(saved.id);
+        } else if (defaultProfileId === saved.id && profiles.length > 1) {
+          const fallback = profiles.find((item) => item.id !== saved.id);
+          if (fallback) persistDefaultProfile(fallback.id);
+        }
       } else {
         saved = await client.createProfile({
           name,
@@ -805,12 +897,17 @@ export function VisibilityMonitorsScreen({
         });
         setProfiles((curr) => [saved, ...curr]);
         setBanner({ type: 'success', text: `已创建监测档案「${saved.name}」` });
+        if (draft.isDefault || profiles.length === 0) {
+          persistDefaultProfile(saved.id);
+        } else if (previousDefaultId && previousDefaultId !== defaultProfileId) {
+          // Lock the existing default profile in storage so prepending the new profile never steals default status (#192)
+          persistDefaultProfile(previousDefaultId);
+        }
       }
 
-      if (draft.isDefault || profiles.length === 0) {
-        persistDefaultProfile(saved.id);
-      }
       setProfileModal(null);
+      setProfileFieldErrors({});
+      setProfileTouched({});
     } catch (err) {
       setProfileModalError(err instanceof Error ? err.message : '保存监测档案失败');
     } finally {
@@ -1124,7 +1221,7 @@ export function VisibilityMonitorsScreen({
     {
       key: 'name',
       title: '任务名称',
-      width: 200,
+      width: 220,
       hideable: false,
       render: (row) => (
         <button
@@ -1139,9 +1236,12 @@ export function VisibilityMonitorsScreen({
     {
       key: 'profile',
       title: '监测档案 / 主品牌',
-      width: 170,
+      width: 200,
       render: (row) => (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        <div
+          data-testid={`run-profile-cell-${row.id}`}
+          style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 168 }}
+        >
           <span className="gm-clamp-1" style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
             {row.profileName}
           </span>
@@ -1154,11 +1254,16 @@ export function VisibilityMonitorsScreen({
     {
       key: 'keywordMain',
       title: '关联主词',
-      width: 130,
+      width: 140,
       render: (row) => (
         <span
+          data-testid={`run-keyword-cell-${row.id}`}
           className="gm-clamp-1"
-          style={{ color: row.keywordMain ? 'var(--gm-fg-2)' : 'var(--gm-fg-3)' }}
+          style={{
+            display: 'inline-block',
+            minWidth: 112,
+            color: row.keywordMain ? 'var(--gm-fg-2)' : 'var(--gm-fg-3)',
+          }}
         >
           {row.keywordMain ?? '—'}
         </span>
@@ -1304,7 +1409,10 @@ export function VisibilityMonitorsScreen({
         const released = row.releasedPoints ?? 0;
         return (
           <Tooltip title={`已退回 ${released} 点`}>
-            <div className="gm-num" style={{ textAlign: 'right', fontSize: 13 }}>
+            <div
+              className="gm-num"
+              style={{ textAlign: 'right', fontSize: 13, whiteSpace: 'nowrap', minWidth: 112 }}
+            >
               <div style={{ color: 'var(--gm-fg-1)' }}>预冻 {frozen} 点</div>
               <div style={{ color: 'var(--gm-fg-3)', fontSize: 12 }}>已结 {settled} 点</div>
             </div>
@@ -1315,9 +1423,11 @@ export function VisibilityMonitorsScreen({
     {
       key: 'status',
       title: '状态',
-      width: 112,
+      width: 116,
       render: (row) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+        >
           <StatusPill kind="task" status={row.status} />
           {row.lastError ? (
             <Tooltip title={row.lastError} styles={{ root: { maxWidth: 360 } }}>
@@ -1350,9 +1460,17 @@ export function VisibilityMonitorsScreen({
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 144,
+      width: 156,
       render: (row) => (
-        <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+        <span
+          className="gm-num"
+          style={{
+            display: 'inline-block',
+            fontSize: 12,
+            color: 'var(--gm-fg-3)',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {formatTime(row.createdAt)}
         </span>
       ),
@@ -1360,10 +1478,10 @@ export function VisibilityMonitorsScreen({
     {
       key: 'actions',
       title: '操作',
-      width: 210,
+      width: 240,
       hideable: false,
       render: (row) => (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 210 }}>
           <Button
             type="link"
             size="small"
@@ -1467,7 +1585,7 @@ export function VisibilityMonitorsScreen({
   };
 
   return (
-    <section style={{ minWidth: 0 }}>
+    <section ref={sectionRef} style={{ minWidth: 0 }}>
       {/* Top Header */}
       <div
         style={{
@@ -1532,7 +1650,12 @@ export function VisibilityMonitorsScreen({
 
       <Tabs
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key === 'profiles' ? 'profiles' : 'runs')}
+        onChange={(key) => {
+          setActiveTab(key === 'profiles' ? 'profiles' : 'runs');
+          setBanner((curr) =>
+            curr && (curr.type === 'success' || curr.type === 'info') ? null : curr,
+          );
+        }}
         items={[
           {
             key: 'runs',
@@ -1626,6 +1749,7 @@ export function VisibilityMonitorsScreen({
                     showCreate={false}
                     showDensityToggle={false}
                     showSearch={false}
+                    scroll={{ x: 'max-content' }}
                     emptyText={
                       (loading ? (
                         <SignalSkeleton variant="row" rows={5} />
@@ -1670,7 +1794,21 @@ export function VisibilityMonitorsScreen({
                       void loadMeta();
                     }}
                     onCreate={readOnly ? undefined : () => openCreateRunModal()}
-                    onDelete={readOnly ? undefined : () => setDeleteRunIds(selectedIds)}
+                    onDelete={
+                      readOnly
+                        ? undefined
+                        : () => {
+                            const selectedRows = runs.filter((r) => selectedIds.includes(r.id));
+                            const activeRows = selectedRows.filter((r) =>
+                              isControllableRunStatus(r.status),
+                            );
+                            if (activeRows.length > 0) {
+                              setBlockedDeleteRuns(activeRows);
+                              return;
+                            }
+                            setDeleteRunIds(selectedIds);
+                          }
+                    }
                   />
                 </div>
               </div>
@@ -1844,63 +1982,62 @@ export function VisibilityMonitorsScreen({
                           </div>
 
                           <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: 6,
-                              paddingTop: 10,
-                              borderTop: '1px solid var(--gm-line-1)',
-                            }}
+                            className="gm-profile-card-actions"
+                            data-testid={`profile-card-actions-${prof.id}`}
                           >
-                            <Button
-                              size="small"
-                              type="primary"
-                              aria-label={`发起监测-${prof.name}`}
-                              disabled={readOnly}
-                              onClick={() => openCreateRunModal(prof.id)}
-                            >
-                              发起监测
-                            </Button>
-                            <Button
-                              size="small"
-                              aria-label={`档案看板-${prof.name}`}
-                              onClick={() => openOverviewForProfile(prof.id)}
-                            >
-                              看板分析
-                            </Button>
-                            {!isDefault ? (
+                            <div className="gm-profile-card-actions-row">
                               <Button
                                 size="small"
-                                aria-label={`设为默认-${prof.name}`}
+                                type="primary"
+                                aria-label={`发起监测-${prof.name}`}
                                 disabled={readOnly}
-                                onClick={() => {
-                                  persistDefaultProfile(prof.id);
-                                  setBanner({
-                                    type: 'success',
-                                    text: `已将「${prof.name}」设为默认监测档案`,
-                                  });
-                                }}
+                                onClick={() => openCreateRunModal(prof.id)}
                               >
-                                设为默认
+                                发起监测
                               </Button>
-                            ) : null}
-                            <Button
-                              size="small"
-                              aria-label={`编辑档案-${prof.name}`}
-                              disabled={readOnly}
-                              onClick={() => openEditProfileModal(prof)}
-                            >
-                              编辑
-                            </Button>
-                            <Button
-                              size="small"
-                              danger
-                              aria-label={`删除档案-${prof.name}`}
-                              disabled={readOnly}
-                              onClick={() => setDeleteProfileTarget(prof)}
-                            >
-                              删除
-                            </Button>
+                              <Button
+                                size="small"
+                                aria-label={`档案看板-${prof.name}`}
+                                onClick={() => openOverviewForProfile(prof.id)}
+                              >
+                                看板分析
+                              </Button>
+                            </div>
+                            <div className="gm-profile-card-actions-row">
+                              {!isDefault ? (
+                                <Button
+                                  size="small"
+                                  aria-label={`设为默认-${prof.name}`}
+                                  disabled={readOnly}
+                                  onClick={() => {
+                                    persistDefaultProfile(prof.id);
+                                    setBanner({
+                                      type: 'success',
+                                      text: `已将「${prof.name}」设为默认监测档案`,
+                                    });
+                                  }}
+                                >
+                                  设为默认
+                                </Button>
+                              ) : null}
+                              <Button
+                                size="small"
+                                aria-label={`编辑档案-${prof.name}`}
+                                disabled={readOnly}
+                                onClick={() => openEditProfileModal(prof)}
+                              >
+                                编辑
+                              </Button>
+                              <Button
+                                size="small"
+                                danger
+                                aria-label={`删除档案-${prof.name}`}
+                                disabled={readOnly}
+                                onClick={() => setDeleteProfileTarget(prof)}
+                              >
+                                删除
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1930,9 +2067,13 @@ export function VisibilityMonitorsScreen({
           if (profileSubmitting) return;
           setProfileModal(null);
           setProfileModalError(null);
+          setProfileFieldErrors({});
+          setProfileTouched({});
         }}
         onReset={() => {
           setProfileModalError(null);
+          setProfileFieldErrors({});
+          setProfileTouched({});
           setProfileModal((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
         }}
         ok={
@@ -2016,35 +2157,108 @@ export function VisibilityMonitorsScreen({
               </div>
             ) : null}
 
-            <label>
-              <span>档案名称 *</span>
-              <Input
-                aria-label="档案名称"
-                placeholder="例如：星图办公硬件-便携显示器监测档案"
-                maxLength={VISIBILITY_PROFILE_NAME_MAX}
-                value={profileModal.draft.name}
-                onChange={(e) =>
-                  setProfileModal((curr) =>
-                    curr ? { ...curr, draft: { ...curr.draft, name: e.target.value } } : curr,
-                  )
-                }
-              />
-            </label>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ marginBottom: 0 }}>
+                <span>
+                  <span className="gm-required-mark" style={{ color: 'var(--gm-danger)' }}>
+                    *{' '}
+                  </span>
+                  档案名称
+                </span>
+                <Input
+                  aria-label="档案名称"
+                  aria-invalid={Boolean(profileFieldErrors.name) || undefined}
+                  status={profileFieldErrors.name ? 'error' : undefined}
+                  placeholder="例如：星图办公硬件-便携显示器监测档案"
+                  maxLength={VISIBILITY_PROFILE_NAME_MAX}
+                  value={profileModal.draft.name}
+                  onBlur={(e) => {
+                    const msg = validateProfileName(e.target.value);
+                    setProfileTouched((curr) => ({ ...curr, name: true }));
+                    setProfileFieldErrors((curr) => ({ ...curr, name: msg }));
+                  }}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    setProfileModal((curr) =>
+                      curr ? { ...curr, draft: { ...curr.draft, name: nextVal } } : curr,
+                    );
+                    if (profileTouched.name || profileFieldErrors.name || profileModalError) {
+                      const msg = validateProfileName(nextVal);
+                      setProfileFieldErrors((curr) => ({ ...curr, name: msg }));
+                      if (!msg && profileModalError === '请填写档案名称') {
+                        setProfileModalError(null);
+                      }
+                    }
+                  }}
+                />
+              </label>
+              {profileFieldErrors.name ? (
+                <p
+                  className="gm-form-error"
+                  data-testid="profile-name-error"
+                  role="alert"
+                  style={{ margin: '4px 0 0', fontSize: 12 }}
+                >
+                  {profileFieldErrors.name}
+                </p>
+              ) : null}
+            </div>
 
-            <label>
-              <span>主品牌名称 *</span>
-              <Input
-                aria-label="主品牌名称"
-                placeholder="例如：星图显示"
-                maxLength={VISIBILITY_BRAND_NAME_MAX}
-                value={profileModal.draft.brandName}
-                onChange={(e) =>
-                  setProfileModal((curr) =>
-                    curr ? { ...curr, draft: { ...curr.draft, brandName: e.target.value } } : curr,
-                  )
-                }
-              />
-            </label>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ marginBottom: 0 }}>
+                <span>
+                  <span className="gm-required-mark" style={{ color: 'var(--gm-danger)' }}>
+                    *{' '}
+                  </span>
+                  主品牌名称
+                </span>
+                <Input
+                  aria-label="主品牌名称"
+                  aria-invalid={Boolean(profileFieldErrors.brandName) || undefined}
+                  status={profileFieldErrors.brandName ? 'error' : undefined}
+                  placeholder="例如：星图显示"
+                  maxLength={VISIBILITY_BRAND_NAME_MAX}
+                  value={profileModal.draft.brandName}
+                  onBlur={() => {
+                    setProfileTouched((curr) => ({ ...curr, brandName: true }));
+                    setProfileFieldErrors((curr) => ({
+                      ...curr,
+                      brandName: validateProfileBrandName(profileModal.draft),
+                    }));
+                  }}
+                  onChange={(e) => {
+                    const nextVal = e.target.value;
+                    const nextDraft = { ...profileModal.draft, brandName: nextVal };
+                    setProfileModal((curr) => (curr ? { ...curr, draft: nextDraft } : curr));
+                    if (
+                      profileTouched.brandName ||
+                      profileFieldErrors.brandName ||
+                      profileModalError
+                    ) {
+                      const msg = validateProfileBrandName(nextDraft);
+                      setProfileFieldErrors((curr) => ({ ...curr, brandName: msg }));
+                      if (
+                        !msg &&
+                        profileModalError &&
+                        profileModalError.startsWith('请填写主品牌名称')
+                      ) {
+                        setProfileModalError(null);
+                      }
+                    }
+                  }}
+                />
+              </label>
+              {profileFieldErrors.brandName ? (
+                <p
+                  className="gm-form-error"
+                  data-testid="profile-brand-error"
+                  role="alert"
+                  style={{ margin: '4px 0 0', fontSize: 12 }}
+                >
+                  {profileFieldErrors.brandName}
+                </p>
+              ) : null}
+            </div>
 
             <label>
               <span>品牌别名（支持逗号或换行分隔，自动识别中英文简称）</span>
@@ -2263,7 +2477,11 @@ export function VisibilityMonitorsScreen({
                   )
                 }
               />
-              <span>设为默认监测档案（进入数据看板与新建监测时默认选中）</span>
+              <span>
+                {profileModal.draft.mode === 'create' && profiles.length === 0
+                  ? '设为默认监测档案（当前为首个档案，创建后将自动设为默认）'
+                  : '设为默认监测档案（进入数据看板与新建监测时默认选中）'}
+              </span>
             </div>
           </div>
         ) : null}
@@ -2322,7 +2540,12 @@ export function VisibilityMonitorsScreen({
             />
 
             <label>
-              <span>选择监测档案 *</span>
+              <span>
+                <span className="gm-required-mark" style={{ color: 'var(--gm-danger)' }}>
+                  *{' '}
+                </span>
+                选择监测档案
+              </span>
               <select
                 aria-label="选择监测档案"
                 style={NATIVE_SELECT_STYLE}
@@ -2497,7 +2720,10 @@ export function VisibilityMonitorsScreen({
                 }}
               >
                 <Typography.Text strong>
-                  目标 AI 引擎 *（已选 {runModal.draft.engines.length} 个）
+                  <span className="gm-required-mark" style={{ color: 'var(--gm-danger)' }}>
+                    *{' '}
+                  </span>
+                  目标 AI 引擎（已选 {runModal.draft.engines.length} 个）
                 </Typography.Text>
                 <Space size={6} wrap>
                   <Button
@@ -2660,6 +2886,8 @@ export function VisibilityMonitorsScreen({
       <Modal
         open={cancelTarget !== null}
         title="确认终止可见度监测任务"
+        keyboard
+        destroyOnHidden
         okText="确认终止并退还未用点数"
         cancelText="取消"
         okButtonProps={{ danger: true, loading: controlLoading }}
@@ -2675,8 +2903,55 @@ export function VisibilityMonitorsScreen({
       </Modal>
 
       <Modal
+        open={blockedDeleteRuns !== null && blockedDeleteRuns.length > 0}
+        title="无法删除进行中的监测任务"
+        keyboard
+        destroyOnHidden
+        onCancel={() => setBlockedDeleteRuns(null)}
+        footer={
+          blockedDeleteRuns && blockedDeleteRuns.length === 1 && selectedIds.length === 1
+            ? [
+                <Button key="cancel" aria-label="取消" onClick={() => setBlockedDeleteRuns(null)}>
+                  取消
+                </Button>,
+                <Button
+                  key="terminate"
+                  type="primary"
+                  danger
+                  aria-label="立即终止该任务"
+                  onClick={() => {
+                    const target = blockedDeleteRuns[0];
+                    setBlockedDeleteRuns(null);
+                    if (target) setCancelTarget(target);
+                  }}
+                >
+                  立即终止该任务
+                </Button>,
+              ]
+            : [
+                <Button
+                  key="ack"
+                  type="primary"
+                  aria-label="知道了"
+                  onClick={() => setBlockedDeleteRuns(null)}
+                >
+                  知道了
+                </Button>,
+              ]
+        }
+      >
+        <p>
+          已选中的任务中包含 {blockedDeleteRuns?.length ?? 0} 条尚未结束的监测任务（排队中 / 运行中
+          /
+          已暂停），禁止直接删除。请先点击「终止」（尚未执行的检测项预冻点数将自动退回账户），待任务结束后再删除记录。
+        </p>
+      </Modal>
+
+      <Modal
         open={deleteRunIds !== null && deleteRunIds.length > 0}
         title="确认删除监测任务记录"
+        keyboard
+        destroyOnHidden
         okText="确认删除"
         cancelText="取消"
         okButtonProps={{ danger: true, loading: controlLoading }}
@@ -2691,6 +2966,8 @@ export function VisibilityMonitorsScreen({
       <Modal
         open={deleteProfileTarget !== null}
         title="确认删除品牌与竞品档案"
+        keyboard
+        destroyOnHidden
         okText="确认删除档案"
         cancelText="取消"
         okButtonProps={{ danger: true, loading: controlLoading }}
