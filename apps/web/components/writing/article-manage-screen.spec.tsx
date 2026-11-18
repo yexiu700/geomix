@@ -396,21 +396,24 @@ describe('ArticleManageScreen (Issue #18)', () => {
     fireEvent.click(findButton('移除封面'));
     expect(dialog.textContent).toContain('未设置封面');
 
-    // Entering >1000 plain-text chars triggers live >1000 warning
-    fireEvent.change(screen.getByLabelText('文章富文本内容'), {
-      target: { value: `<p>${'精'.repeat(1005)}</p>` },
-    });
+    // Entering >1000 plain-text chars in default WYSIWYG editor triggers live >1000 warning
+    const richEditor = screen.getByLabelText('文章富文本内容') as HTMLDivElement;
+    expect(richEditor.getAttribute('contenteditable')).toBe('true');
+    expect(screen.queryByLabelText('HTML 源码内容')).toBeNull();
+    richEditor.innerHTML = `<p>${'精'.repeat(1005)}</p>`;
+    fireEvent.input(richEditor);
     expect(dialog.textContent).toContain('超过抖音、小红书建议的 1000 字上限');
 
     // Fill title and rich content, check live word count update & plain-text copy without HTML tags
     fireEvent.change(screen.getByLabelText('文章标题'), {
       target: { value: '手动撰写的激光打标维护手册' },
     });
-    fireEvent.change(screen.getByLabelText('文章富文本内容'), {
-      target: { value: '<h2>每日点检</h2><p>开机前先检查冷水机水位与镜片洁净度。</p>' },
-    });
+    richEditor.innerHTML = '<h2>每日点检</h2><p>开机前先检查冷水机水位与镜片洁净度。</p>';
+    fireEvent.input(richEditor);
     expect(screen.getByLabelText('字数统计').textContent).not.toContain('0 字');
     expect(dialog.textContent).not.toContain('超过抖音、小红书建议的 1000 字上限');
+    expect(richEditor.textContent).not.toContain('<h2>');
+    expect(richEditor.querySelector('h2')?.textContent).toBe('每日点检');
 
     fireEvent.click(findButton('复制纯文本'));
     await waitFor(() => {
@@ -433,6 +436,182 @@ describe('ArticleManageScreen (Issue #18)', () => {
         contentHtml: '<h2>每日点检</h2><p>开机前先检查冷水机水位与镜片洁净度。</p>',
       });
     });
+  });
+
+  it('defaults Edit Modal to WYSIWYG without exposing raw HTML tags, keeps HTML 源码 as optional advanced mode, and unifies 设为正常 (#149, #156)', async () => {
+    const gw = makeGateway();
+
+    render(<ArticleManageScreen title="文章列表" tabId="tab_articles" gateway={gw} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+    });
+
+    // Row action uses 设为正常 instead of 标记为已审核 (#156)
+    expect(screen.queryByText('标记为已审核')).toBeNull();
+    const rowNormalBtn = findButton('设为正常');
+    expect(rowNormalBtn).toBeTruthy();
+    fireEvent.click(rowNormalBtn);
+    await waitFor(() => {
+      expect(gw.approve).toHaveBeenCalledWith('art_pending_001');
+      expect(screen.getByText('文章「光纤激光切割机选型全攻略」已设为「正常」')).toBeTruthy();
+    });
+
+    // Open Edit modal -> defaults to 可视化编辑 without raw HTML tags in visible text (#149)
+    fireEvent.click(findButton('编辑'));
+    const dialog = await screen.findByRole('dialog', { name: '编辑文章' });
+    expect(dialog).toBeTruthy();
+    expect(findButton('弹窗设为正常').textContent?.trim()).toBe('设为正常');
+
+    const richEditor = screen.getByLabelText('文章富文本内容') as HTMLDivElement;
+    expect(richEditor.querySelector('h2')?.textContent).toBe('核心参数');
+    expect(richEditor.textContent).not.toContain('<h2>');
+    expect(richEditor.textContent).not.toContain('<p>');
+    expect(screen.queryByLabelText('HTML 源码内容')).toBeNull();
+
+    // Formatting toolbar button inserts block cleanly in WYSIWYG mode
+    fireEvent.click(findButton('H3'));
+    expect(richEditor.querySelector('h3')?.textContent).toBe('三级小标题');
+
+    // Switching to optional HTML 源码 mode exposes raw HTML textarea and syncs back
+    fireEvent.click(findButton('HTML 源码'));
+    const sourceArea = screen.getByLabelText('HTML 源码内容') as HTMLTextAreaElement;
+    expect(sourceArea.value).toContain('<h2>核心参数</h2>');
+    fireEvent.change(sourceArea, {
+      target: { value: '<h2>更新参数</h2><p>排版已更新。</p>' },
+    });
+
+    fireEvent.click(findButton('可视化编辑'));
+    const restoredRich = screen.getByLabelText('文章富文本内容') as HTMLDivElement;
+    expect(restoredRich.querySelector('h2')?.textContent).toBe('更新参数');
+    expect(restoredRich.textContent).not.toContain('<h2>');
+  });
+
+  it('syncs URL, h3 title, and tab retitle when switching category filter or resetting filters (#149)', async () => {
+    const dispatched: ShellAction[] = [];
+    const gw = makeGateway({
+      loadFormOptions: vi.fn().mockResolvedValue({
+        ...makeOptions(),
+        categories: [
+          {
+            id: 'cmwlsdssk007ooiprwynekggi',
+            name: 'Anker 电源专题',
+            total: 1,
+            remaining: 1,
+            createdAt: '2026-11-17T06:00:00.000Z',
+          },
+          {
+            id: 'cmwlsdssk008ooiprwynekggj',
+            name: 'ARZOPA便携屏评测',
+            total: 2,
+            remaining: 2,
+            createdAt: '2026-11-17T06:10:00.000Z',
+          },
+        ],
+      }),
+      list: vi.fn().mockImplementation(async (q) => {
+        if (q.categoryId === 'cmwlsdssk008ooiprwynekggj') {
+          return {
+            page: 1,
+            pageSize: 10,
+            total: 1,
+            categorySummary: {
+              id: 'cmwlsdssk008ooiprwynekggj',
+              name: 'ARZOPA便携屏评测',
+              total: 2,
+              remaining: 2,
+            },
+            items: [makeItem({ id: 'art_arzopa', title: 'ARZOPA 便携屏评测指南' })],
+          };
+        }
+        if (q.categoryId === 'cmwlsdssk007ooiprwynekggi') {
+          return {
+            page: 1,
+            pageSize: 10,
+            total: 1,
+            categorySummary: {
+              id: 'cmwlsdssk007ooiprwynekggi',
+              name: 'Anker 电源专题',
+              total: 1,
+              remaining: 1,
+            },
+            items: [makeItem({ id: 'art_anker', title: 'Anker 快充技术解析' })],
+          };
+        }
+        return {
+          page: 1,
+          pageSize: 10,
+          total: 2,
+          categorySummary: null,
+          items: [makeItem()],
+        };
+      }),
+    });
+
+    const initialHref =
+      '/writing/articles?categoryId=cmwlsdssk007ooiprwynekggi&taskId=task_run_001';
+    const { rerender } = render(
+      <ArticleManageScreen
+        title="文章列表 · 按分类筛选 · 按任务筛选"
+        tabId={initialHref}
+        href={initialHref}
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 }).textContent).toBe(
+        '文章列表 · Anker 电源专题 · 十篇激光选型计划',
+      );
+    });
+
+    // Switch category dropdown to ARZOPA and clear taskId, then click 查询
+    fireEvent.change(screen.getByLabelText('分类筛选'), {
+      target: { value: 'cmwlsdssk008ooiprwynekggj' },
+    });
+    fireEvent.change(screen.getByLabelText('AI 任务筛选'), {
+      target: { value: '' },
+    });
+    dispatched.length = 0;
+    fireEvent.click(findButton('查询'));
+
+    expect(dispatched).toContainEqual({
+      type: 'navigate',
+      id: initialHref,
+      href: '/writing/articles?categoryId=cmwlsdssk008ooiprwynekggj',
+    });
+
+    // Simulate ShellFrame updating href/tabId/title after navigate
+    const nextHref = '/writing/articles?categoryId=cmwlsdssk008ooiprwynekggj';
+    rerender(
+      <ArticleManageScreen
+        title="文章列表 · 按分类筛选"
+        tabId={nextHref}
+        href={nextHref}
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      const heading = screen.getByRole('heading', { level: 3 }).textContent ?? '';
+      expect(heading).toBe('文章列表 · ARZOPA便携屏评测');
+      expect(heading).not.toContain('Anker');
+      expect(heading).not.toContain('cmwlsdssk007ooiprwynekggi');
+    });
+
+    // Click 重置筛选 -> clears URL, category summary, h3 heading, and retitles back to 文章列表
+    dispatched.length = 0;
+    fireEvent.click(findButton('重置筛选'));
+
+    expect(dispatched).toContainEqual({
+      type: 'navigate',
+      id: nextHref,
+      href: '/writing/articles',
+    });
+    expect(screen.getByRole('heading', { level: 3 }).textContent).toBe('文章列表');
+    expect(screen.queryByText(/当前分类：/)).toBeNull();
   });
 
   it('supports 批量设为正常 (updating category remaining count) and zip archive export (md/html/docx)', async () => {

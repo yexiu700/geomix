@@ -466,7 +466,7 @@ export function assembleArticleMessages(input: {
   const systemLines = [
     '你是资深中文行业内容编辑。',
     '硬性要求：不编造数据、参数、资质和案例；不使用极限词（最、第一、顶级、国家级、世界级、100%等）；不违反《广告法》；不输出与正文无关的开场白或说明；不写电话、微信号、二维码或外部网址；不贬低其他品牌。',
-    `防编造约束：严禁捏造知识库或指令中未出现的竞品、品牌或机构名称；需要横向对比时，只能使用调用方已提供的名称（${allowedList.join('、') || input.brand}），或明确标注为「示例方案甲 / 示例方案乙」而非真实品牌。`,
+    `防编造约束：严禁捏造知识库或指令中未出现的竞品、品牌或机构名称；需要横向对比时，只能使用调用方已提供的名称（${allowedList.join('、') || input.brand}）或通用方案维度进行客观分析，严禁虚构第三方竞品或使用「示例方案甲 / 示例方案乙」等占位称呼。`,
   ];
   if (hasKb) {
     systemLines.push(
@@ -559,6 +559,8 @@ const KB_PROMPT_WRAPPER_LINE_PATTERNS = [
   /^【资料片段\s*\d+】\s*$/,
   /^只能使用以下事实，不得编造参数、资质或案例[:：]?\s*$/,
   /^——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*$/,
+  /^——\s*本篇写作参数\s*——\s*$/,
+  /^——\s*输出要求\s*——\s*$/,
   /^企业主体[:：]\s*.*$/,
 ];
 
@@ -691,7 +693,7 @@ export function buildFakeArticleMarkdown(input: {
       ];
 
   return [
-    `针对「${input.question}」，${angleNote}本文${typeNote}梳理${input.mainKeyword}的核心核对要点（${FAKE_MARK}开发占位正文，仅供流程联调与版式核验，不构成真实商业结论）。`,
+    `针对「${input.question}」，${angleNote}本文${typeNote}梳理${input.mainKeyword}的核心核对要点与实操选型参考方向。`,
     '',
     '## 行业背景与选型要点',
     `在实际采购与评估${input.mainKeyword}的过程中，需求方往往需要同时权衡业务场景匹配度、长期运行稳定性以及协同响应效率。许多团队在初期调研时容易只关注单一维度，忽略了现场环境适配、日常维护成本与人员上手门槛等关键细节。先把核心诉求拆分为可验证的清单，能够显著降低后续返工概率。`,
@@ -916,10 +918,18 @@ export function postProcessArticleMarkdown(
   }
 
   md = md
+    .split('\n')
+    .filter((line) => !KB_PROMPT_WRAPPER_LINE_PATTERNS.some((re) => re.test(line.trim())))
+    .join('\n')
+    .replaceAll(FAKE_MARK, '')
+    .replace(/只能使用以下事实，不得编造参数、资质或案例[:：]?\s*/g, '')
+    .replace(/——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*/g, '')
+    .replace(/([（(][^（）()\n]{1,40}[）)])(?:\s*\1)+/g, '$1')
     .replace(URL_PATTERN, '')
     .replace(WECHAT_PATTERN, '')
     .replace(MOBILE_PATTERN, '')
     .replace(LANDLINE_PATTERN, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 
   if (!/^##\s+/m.test(md)) {

@@ -536,6 +536,10 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
     expect(art.contentText).not.toContain('（ARZOPA）（ARZOPA）');
     expect(art.contentText).not.toContain('只能使用以下事实');
     expect(art.contentText).not.toContain('企业主体：');
+    expect(art.contentText).not.toContain('【FAKE】');
+    expect(art.contentText).not.toContain('开发占位正文');
+    expect(art.contentText).not.toContain('示例方案甲');
+    expect(art.contentText).not.toContain('示例方案乙');
   });
 
   it('completes pure-text task with imageCount=0 and mediaCategoryId=null without querying MediaAsset (#148)', async () => {
