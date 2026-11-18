@@ -310,4 +310,74 @@ describe('KeywordScreen', () => {
     await clickBtn('确定');
     await waitFor(() => expect(okGateway.createdPayloads).toHaveLength(1));
   });
+
+  it('enforces create-first toolbar, link action buttons, required * markers, [取消, 重置, 确定] footer order, and layered ESC closing (#141)', async () => {
+    const gateway = createGatewayMock();
+    render(
+      <KeywordScreen
+        title="关键词"
+        tabId="/material/keywords"
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('工业机器人');
+
+    // Toolbar order: 添加 before 刷新 before 删除
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
+    // Action column buttons are uniform ant-btn-link ant-btn-sm
+    const rowBtns = Array.from(document.querySelectorAll('tbody td:last-child button'));
+    expect(rowBtns.map((b) => (b.textContent ?? '').replace(/\s+/g, ''))).toEqual([
+      '查看问题',
+      '编辑',
+      '删除',
+    ]);
+    for (const btn of rowBtns) {
+      expect(btn.classList.contains('ant-btn-link')).toBe(true);
+      expect(btn.classList.contains('ant-btn-sm')).toBe(true);
+    }
+
+    // Open CrudModal: verify required * and footer button order [取消, 重置, 确定]
+    await clickBtn('添加');
+    const dialog = screen.getByRole('dialog', { name: '添加关键词' });
+    expect(dialog.textContent).toContain('* 主关键词');
+    const footerBtns = Array.from(dialog.querySelectorAll('.gm-crud-footer button')).map((b) =>
+      (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(footerBtns).toEqual(['取消', '重置', '确定']);
+
+    // Ensure no substring collision with CrudModal header '关闭'
+    const closeMatches = Array.from(document.querySelectorAll('button')).filter(
+      (btn) =>
+        (btn.getAttribute('aria-label') ?? '').includes('关闭') ||
+        (btn.textContent ?? '').includes('关闭'),
+    );
+    expect(closeMatches).toHaveLength(1);
+
+    // Open nested 拓词工具 modal -> window Escape must NOT close underlying CrudModal
+    fireEvent.change(screen.getByLabelText('主关键词'), { target: { value: '激光切割机' } });
+    await clickBtn('拓词工具');
+    expect(await screen.findByText(/拓词工具（免费词包，不扣点）/)).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('dialog', { name: '添加关键词' })).toBeTruthy();
+
+    // Closing nested AntD modal via Escape inside modal wrap leaves CrudModal open, then Escape closes CrudModal
+    const modalWrap = document.querySelector('.ant-modal-wrap') as HTMLElement;
+    fireEvent.keyDown(modalWrap, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => {
+      expect(modalWrap.style.display).toBe('none');
+    });
+    expect(screen.getByRole('dialog', { name: '添加关键词' })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '添加关键词' })).toBeNull();
+    });
+  });
 });

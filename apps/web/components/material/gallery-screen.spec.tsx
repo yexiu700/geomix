@@ -632,4 +632,95 @@ describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
 
     (resolveReload as (() => void) | null)?.();
   });
+
+  it('enforces create-first toolbar, link action buttons, required * markers, [取消, 重置, 确定] footer order, and ESC close (#141)', async () => {
+    const gateway = makeGateway();
+    const catView = render(
+      <GalleryCategoryScreen
+        title="企业画像图库"
+        tabId="/material/gallery"
+        onDispatch={vi.fn()}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('车间实拍')).toBeTruthy();
+    });
+
+    // Toolbar order: 添加 before 刷新 before 删除
+    const catToolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(catToolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
+    // Action column buttons are uniform ant-btn-link ant-btn-sm
+    const catRowBtns = Array.from(document.querySelectorAll('tbody td:last-child button'));
+    expect(catRowBtns.map((b) => (b.textContent ?? '').replace(/\s+/g, ''))).toEqual([
+      '图片列表',
+      '编辑',
+      '删除',
+    ]);
+    for (const btn of catRowBtns) {
+      expect(btn.classList.contains('ant-btn-link')).toBe(true);
+      expect(btn.classList.contains('ant-btn-sm')).toBe(true);
+    }
+
+    // Category modal: required *, [取消, 重置, 确定] order, and ESC closes modal
+    clickBtn('添加');
+    const catDialog = screen.getByRole('dialog', { name: '添加素材分类' });
+    const catLabel = catDialog.querySelector('label[for="gallery-category-input"]') as HTMLElement;
+    expect(catLabel).toBeTruthy();
+    expect(catLabel.textContent).toContain('*');
+    expect(catLabel.style.display).toBe('block');
+
+    const catFooterBtns = Array.from(catDialog.querySelectorAll('.gm-crud-footer button')).map(
+      (b) => (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(catFooterBtns).toEqual(['取消', '重置', '确定']);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '添加素材分类' })).toBeNull();
+    });
+
+    catView.unmount();
+
+    // Asset screen: toolbar, link action button, required *, footer order, and ESC close
+    render(
+      <GalleryAssetScreen
+        title="企业画像图库 · cat_1"
+        tabId="/material/gallery/cat_1"
+        categoryId="cat_1"
+        onDispatch={vi.fn()}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('图片列表 · 车间实拍')).toBeTruthy();
+    });
+
+    const assetToolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(assetToolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
+    const assetRowBtns = Array.from(document.querySelectorAll('tbody td:last-child button'));
+    expect(assetRowBtns).toHaveLength(1);
+    expect(assetRowBtns[0]?.classList.contains('ant-btn-link')).toBe(true);
+
+    clickBtn('添加');
+    const uploadDialog = screen.getByRole('dialog', { name: '添加图片素材' });
+    expect(uploadDialog.textContent).toContain('* 图片文件');
+    const uploadFooterBtns = Array.from(
+      uploadDialog.querySelectorAll('.gm-crud-footer button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(uploadFooterBtns).toEqual(['取消', '重置', '确定']);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '添加图片素材' })).toBeNull();
+    });
+  });
 });

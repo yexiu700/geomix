@@ -646,7 +646,7 @@ export function KeywordScreen({
             width: 210,
             hideable: false,
             render: (row) => (
-              <Space size={8}>
+              <Space size={4}>
                 <Button
                   size="small"
                   type="link"
@@ -660,11 +660,17 @@ export function KeywordScreen({
                 >
                   查看问题
                 </Button>
-                <Button size="small" disabled={writeLocked} onClick={() => void openEdit(row)}>
+                <Button
+                  size="small"
+                  type="link"
+                  disabled={writeLocked}
+                  onClick={() => void openEdit(row)}
+                >
                   编辑
                 </Button>
                 <Button
                   size="small"
+                  type="link"
                   danger
                   disabled={writeLocked}
                   onClick={() => setConfirmDeleteIds([row.id])}
@@ -692,6 +698,7 @@ export function KeywordScreen({
         }
         onClose={() => {
           setEditor(null);
+          setFormError(null);
           setDistillFallback(null);
         }}
         onReset={() => {
@@ -845,6 +852,8 @@ export function KeywordScreen({
 
       {/* AI蒸馏费用确认弹层 */}
       <Modal
+        centered
+        keyboard
         transitionName=""
         maskTransitionName=""
         open={distillConfirmOpen}
@@ -874,6 +883,8 @@ export function KeywordScreen({
       {/* 手动批量组合弹层 */}
       <Modal
         open={comboOpen}
+        centered
+        keyboard
         width={760}
         title="手动批量组合（免费）"
         okText="生成组合预览"
@@ -914,7 +925,10 @@ export function KeywordScreen({
             </div>
             <div>
               <div style={{ marginBottom: 4 }}>
-                <span>主词（每行须含{UX_TERMS.mainKeyword}）</span>
+                <span>
+                  <span style={{ color: 'var(--gm-danger)' }}>* </span>
+                  主词（每行须含{UX_TERMS.mainKeyword}）
+                </span>
               </div>
               <Input.TextArea
                 aria-label="组合主词"
@@ -970,6 +984,8 @@ export function KeywordScreen({
       {/* 免费拓词工具弹层 */}
       <Modal
         open={expanderOpen}
+        centered
+        keyboard
         width={760}
         title="拓词工具（免费词包，不扣点）"
         transitionName=""
@@ -1046,6 +1062,8 @@ export function KeywordScreen({
       {/* 勾选预览弹层（蒸馏与组合共用） */}
       <Modal
         open={preview !== null}
+        centered
+        keyboard
         width={680}
         title={preview?.title ?? '结果预览'}
         okText={`添加到问题框（已选 ${preview?.selected.length ?? 0} 条）`}
@@ -1126,6 +1144,8 @@ export function KeywordScreen({
       {/* 删除确认弹层 */}
       <Modal
         open={confirmDeleteIds !== null}
+        centered
+        keyboard
         title="确认删除关键词"
         okText="确认删除"
         okButtonProps={{ danger: true }}

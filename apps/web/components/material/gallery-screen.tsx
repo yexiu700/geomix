@@ -286,16 +286,18 @@ export function GalleryCategoryScreen({
       key: 'actions',
       title: '操作',
       width: 210,
+      hideable: false,
       render: (row) => (
-        <Space size={6}>
-          <Button size="small" onClick={() => openAssetList(row.id)}>
+        <Space size={4}>
+          <Button size="small" type="link" onClick={() => openAssetList(row.id)}>
             图片列表
           </Button>
-          <Button size="small" disabled={readOnly} onClick={() => openEdit(row)}>
+          <Button size="small" type="link" disabled={readOnly} onClick={() => openEdit(row)}>
             编辑
           </Button>
           <Button
             size="small"
+            type="link"
             danger
             disabled={readOnly}
             onClick={() => setPendingDeleteIds([row.id])}
@@ -341,6 +343,7 @@ export function GalleryCategoryScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索素材分类名称"
         writeDisabled={readOnly}
+        toolbarOrder="create-first"
         search={{
           keyword: q,
           enabled: undefined,
@@ -385,13 +388,17 @@ export function GalleryCategoryScreen({
         onMinimize={() => setMinimized(true)}
         onRestore={() => setMinimized(false)}
         onMaximize={() => setMaximized((v) => !v)}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setModalOpen(false);
+          setModalError(null);
+        }}
         onReset={() => {
           setCategoryName('');
           setModalError(null);
         }}
         ok={
           <Button
+            aria-label="确定"
             type="primary"
             loading={submitting}
             disabled={readOnly}
@@ -402,8 +409,11 @@ export function GalleryCategoryScreen({
         }
       >
         <div style={{ display: 'grid', gap: 8 }}>
-          <label htmlFor="gallery-category-input" style={{ fontWeight: 500 }}>
-            分类
+          <label
+            htmlFor="gallery-category-input"
+            style={{ display: 'block', fontWeight: 600, marginBottom: 0 }}
+          >
+            <span style={{ color: 'var(--gm-danger)' }}>* </span>分类
           </label>
           <Input
             id="gallery-category-input"
@@ -420,6 +430,8 @@ export function GalleryCategoryScreen({
       <Modal
         open={Boolean(pendingDeleteIds && pendingDeleteIds.length > 0)}
         title="确认删除素材分类"
+        centered
+        keyboard
         transitionName=""
         maskTransitionName=""
         confirmLoading={deleting}
@@ -690,9 +702,11 @@ export function GalleryAssetScreen({
       key: 'actions',
       title: '操作',
       width: 110,
+      hideable: false,
       render: (row) => (
         <Button
           size="small"
+          type="link"
           danger
           disabled={readOnly}
           onClick={() => setPendingDeleteIds([row.id])}
@@ -748,6 +762,7 @@ export function GalleryAssetScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索图片文件名"
         writeDisabled={readOnly}
+        toolbarOrder="create-first"
         search={{
           keyword: q,
           enabled: undefined,
@@ -819,6 +834,7 @@ export function GalleryAssetScreen({
           ) : (
             <Button
               key="upload-submit"
+              aria-label="确定"
               type="primary"
               loading={uploading}
               disabled={readOnly}
@@ -831,6 +847,10 @@ export function GalleryAssetScreen({
       >
         <div style={{ display: 'grid', gap: 12 }}>
           <Alert type="info" showIcon message={GALLERY_UPLOAD_NOTICE} />
+
+          <Typography.Text strong>
+            <span style={{ color: 'var(--gm-danger)' }}>* </span>图片文件
+          </Typography.Text>
 
           <div
             data-testid="gallery-upload-dropzone"
@@ -1014,6 +1034,8 @@ export function GalleryAssetScreen({
       <Modal
         open={Boolean(pendingDeleteIds && pendingDeleteIds.length > 0)}
         title="确认删除图片素材"
+        centered
+        keyboard
         transitionName=""
         maskTransitionName=""
         confirmLoading={deleting}

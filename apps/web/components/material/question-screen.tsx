@@ -374,6 +374,7 @@ export function QuestionScreen({
         searchOpen={searchOpen}
         searchPlaceholder="搜索写作标题或主关键词"
         writeDisabled={writeLocked}
+        toolbarOrder="create-first"
         search={{
           keyword: query.keyword,
           enabled: undefined,
@@ -452,11 +453,12 @@ export function QuestionScreen({
             key: 'actions',
             title: '操作',
             hideable: false,
-            width: 160,
+            width: 150,
             render: (row) => (
-              <Space size={6}>
+              <Space size={4}>
                 <Button
                   size="small"
+                  type="link"
                   disabled={writeLocked}
                   onClick={() => {
                     const initial: EditDraft = {
@@ -477,6 +479,7 @@ export function QuestionScreen({
                 </Button>
                 <Button
                   size="small"
+                  type="link"
                   danger
                   disabled={writeLocked}
                   onClick={() => setConfirmDeleteIds([row.id])}
@@ -501,8 +504,14 @@ export function QuestionScreen({
         onMaximize={() =>
           setAddEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }
-        onClose={() => setAddEditor(null)}
-        onReset={() => setAddEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr))}
+        onClose={() => {
+          setAddEditor(null);
+          setFormError(null);
+        }}
+        onReset={() => {
+          setFormError(null);
+          setAddEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
+        }}
         ok={
           <Button
             type="primary"
@@ -519,8 +528,11 @@ export function QuestionScreen({
           <Space direction="vertical" style={{ width: '100%' }} size={14}>
             {formError ? <Alert type="error" showIcon message={formError} /> : null}
             <div>
-              <label htmlFor="gm-qst-keyword" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: 'var(--gm-danger)' }}>*</span> 蒸馏主词
+              <label
+                htmlFor="gm-qst-keyword"
+                style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}
+              >
+                <span style={{ color: 'var(--gm-danger)' }}>* </span>蒸馏主词
               </label>
               <Select<string>
                 id="gm-qst-keyword"
@@ -537,8 +549,11 @@ export function QuestionScreen({
             </div>
 
             <div>
-              <label htmlFor="gm-qst-lines" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: 'var(--gm-danger)' }}>*</span> 拓展问题
+              <label
+                htmlFor="gm-qst-lines"
+                style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}
+              >
+                <span style={{ color: 'var(--gm-danger)' }}>* </span>拓展问题
               </label>
               <Input.TextArea
                 id="gm-qst-lines"
@@ -574,8 +589,14 @@ export function QuestionScreen({
         onMaximize={() =>
           setEditEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }
-        onClose={() => setEditEditor(null)}
-        onReset={() => setEditEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr))}
+        onClose={() => {
+          setEditEditor(null);
+          setFormError(null);
+        }}
+        onReset={() => {
+          setFormError(null);
+          setEditEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
+        }}
         ok={
           <Button
             type="primary"
@@ -592,12 +613,15 @@ export function QuestionScreen({
           <Space direction="vertical" style={{ width: '100%' }} size={14}>
             {formError ? <Alert type="error" showIcon message={formError} /> : null}
             <div>
-              <span style={{ display: 'block', marginBottom: 4 }}>所属主词</span>
+              <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>所属主词</span>
               <Input value={editEditor.draft.keywordMain} disabled />
             </div>
             <div>
-              <label htmlFor="gm-qst-edit-text" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: 'var(--gm-danger)' }}>*</span> 问题内容
+              <label
+                htmlFor="gm-qst-edit-text"
+                style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}
+              >
+                <span style={{ color: 'var(--gm-danger)' }}>* </span>问题内容
               </label>
               <Input
                 id="gm-qst-edit-text"
@@ -619,6 +643,8 @@ export function QuestionScreen({
       <Modal
         open={confirmDeleteIds !== null}
         title="确认删除写作标题"
+        centered
+        keyboard
         okText="确认删除"
         okButtonProps={{ danger: true }}
         cancelText="取消"

@@ -554,7 +554,7 @@ export function KnowledgeScreen({
       width: 150,
       hideable: false,
       render: (row) => (
-        <Space size={8}>
+        <Space size={4}>
           <Button size="small" type="link" disabled={readOnly} onClick={() => openEditModal(row)}>
             编辑
           </Button>
@@ -635,7 +635,11 @@ export function KnowledgeScreen({
         onMinimize={() => setMinimized(true)}
         onRestore={() => setMinimized(false)}
         onMaximize={() => setMaximized((value) => !value)}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setModalOpen(false);
+          setFieldErrors({});
+          setFormError(null);
+        }}
         onReset={() => {
           setDraft(initialDraft);
           setFieldErrors({});
@@ -997,6 +1001,8 @@ export function KnowledgeScreen({
       <Modal
         title="填写说明与示例"
         open={Boolean(helpField)}
+        centered
+        keyboard
         transitionName=""
         maskTransitionName=""
         footer={[
@@ -1045,12 +1051,14 @@ export function KnowledgeScreen({
       <Modal
         title={KB_AGREEMENT_TITLE}
         open={agreementOpen}
+        centered
+        keyboard
         width={640}
         transitionName=""
         maskTransitionName=""
         footer={[
           <Button key="cancel" onClick={() => setAgreementOpen(false)}>
-            关闭
+            取消
           </Button>,
           <Button
             key="confirm"
@@ -1104,6 +1112,8 @@ export function KnowledgeScreen({
       <Modal
         title="确认删除企业知识库"
         open={Boolean(deleteIds)}
+        centered
+        keyboard
         transitionName=""
         maskTransitionName=""
         confirmLoading={deleting}

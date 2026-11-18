@@ -412,4 +412,71 @@ describe('KnowledgeScreen', () => {
       summaryText: '本企业汇总资料：提供钣金柔性折弯中心与产线集成交付。',
     });
   });
+
+  it('enforces create-first toolbar, link action buttons, [取消, 重置, 确定] footer order, no 关闭 collision on agreement modal, and layered ESC closing (#141)', async () => {
+    const { gateway } = makeGateway({ signed: false });
+    render(<KnowledgeScreen title="企业知识库" gateway={gateway} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('激光装备产品库');
+    });
+
+    // Toolbar order: 添加 before 刷新 before 删除
+    const toolbarBtns = Array.from(
+      document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
+    ).map((b) => (b.textContent ?? '').replace(/\s+/g, ''));
+    expect(toolbarBtns.slice(0, 3)).toEqual(['添加', '刷新', '删除']);
+
+    // Action column buttons are uniform ant-btn-link ant-btn-sm
+    const firstRowBtns = Array.from(
+      document.querySelectorAll('tbody tr:first-child td:last-child button'),
+    );
+    expect(firstRowBtns.map((b) => (b.textContent ?? '').replace(/\s+/g, ''))).toEqual([
+      '编辑',
+      '删除',
+    ]);
+    for (const btn of firstRowBtns) {
+      expect(btn.classList.contains('ant-btn-link')).toBe(true);
+      expect(btn.classList.contains('ant-btn-sm')).toBe(true);
+    }
+
+    clickBtn('添加');
+    const kbDialog = document.querySelector('.gm-crud-dialog[role="dialog"]') as HTMLElement;
+    expect(kbDialog).toBeTruthy();
+    const footerBtns = Array.from(kbDialog.querySelectorAll('.gm-crud-footer button')).map((b) =>
+      (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(footerBtns).toEqual(['取消', '重置', '确定']);
+
+    // Open agreement modal on top -> footer uses 取消 (not 关闭), so only CrudModal header has 关闭
+    clickBtn('查看必读承诺协议');
+    const closeMatches = Array.from(document.querySelectorAll('button')).filter(
+      (btn) =>
+        (btn.getAttribute('aria-label') ?? '').includes('关闭') ||
+        (btn.textContent ?? '').includes('关闭'),
+    );
+    expect(closeMatches).toHaveLength(1);
+
+    const agreeFooterBtns = Array.from(document.querySelectorAll('.ant-modal-footer button')).map(
+      (b) => (b.textContent ?? '').replace(/\s+/g, ''),
+    );
+    expect(agreeFooterBtns[0]).toBe('取消');
+
+    // Window Escape while nested modal open keeps CrudModal open
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(document.querySelector('.gm-crud-dialog[role="dialog"]')).toBeTruthy();
+
+    // Escape inside AntD modal wrap closes agreement modal, then Escape closes CrudModal
+    const modalWrap = document.querySelector('.ant-modal-wrap') as HTMLElement;
+    fireEvent.keyDown(modalWrap, { key: 'Escape', code: 'Escape', keyCode: 27 });
+    await waitFor(() => {
+      expect(modalWrap.style.display).toBe('none');
+    });
+    expect(document.querySelector('.gm-crud-dialog[role="dialog"]')).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(document.querySelector('.gm-crud-dialog[role="dialog"]')).toBeNull();
+    });
+  });
 });
