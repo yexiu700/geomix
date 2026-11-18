@@ -75,6 +75,17 @@ describe('personal center screens', () => {
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     expect(document.querySelector('.ant-table-selection')).toBeNull();
 
+    // AntD Table with scroll={{ x: 'max-content' }} inserts a hidden tr.ant-table-measure-row
+    // before data rows; verify real data rows carry .ant-table-row and are not aria-hidden
+    const dataRows = document.querySelectorAll('tbody tr.ant-table-row');
+    expect(dataRows).toHaveLength(2);
+    expect(dataRows[0]?.getAttribute('aria-hidden')).toBeNull();
+    expect(dataRows[0]?.textContent).toContain('管理员充值');
+    const measureRow = document.querySelector('tbody tr.ant-table-measure-row');
+    if (measureRow) {
+      expect(measureRow.getAttribute('aria-hidden')).toBe('true');
+    }
+
     expect(screen.getByRole('columnheader', { name: '序号' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '项目' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '点数' })).toBeTruthy();
@@ -177,6 +188,10 @@ describe('personal center screens', () => {
     for (const name of ['项目', '金额', '说明', '消耗时间']) {
       expect(screen.getByRole('columnheader', { name })).toBeTruthy();
     }
+    expect(
+      Array.from(document.querySelectorAll('thead th')).map((th) => th.textContent?.trim()),
+    ).toEqual(['项目', '金额', '说明', '消耗时间']);
+    expect(document.querySelectorAll('tbody tr.ant-table-row')).toHaveLength(1);
     expect(screen.queryByRole('columnheader', { name: '序号' })).toBeNull();
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     expect(document.querySelector('.ant-table-selection')).toBeNull();

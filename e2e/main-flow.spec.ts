@@ -417,7 +417,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       itemTitle: '点数明细',
       expectedUrl: /\/me\/points$/,
     });
-    await expect(pane.locator('tbody tr').first()).toBeVisible();
+    await expect(pane.locator('tbody tr.ant-table-row').first()).toBeVisible();
     await expect(pane.locator('tbody')).toContainText('0');
 
     await openMenuLink(page, {
