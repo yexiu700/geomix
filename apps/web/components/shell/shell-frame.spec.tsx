@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AccountProfile } from '../../lib/api';
@@ -178,6 +178,122 @@ describe('admin shell', { timeout: 60_000 }, () => {
       fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
       expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
       expect(document.querySelector('.gm-sider-mask')).toBeNull();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: prevWidth,
+      });
+    }
+  });
+
+  it('opens only 首页 tab initially and lets users read full header announcement via modal (#132)', () => {
+    const prevWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 1440,
+    });
+    try {
+      const longAnnouncement =
+        'GeoMix验收公告_r2_rwax6：请使用自有或已授权素材并及时关注任务状态。';
+      render(
+        <ShellFrame
+          account={account}
+          state={initialSnapshot()}
+          announcement={longAnnouncement}
+          onDispatch={() => undefined}
+          onLogout={() => undefined}
+          onChangePassword={async () => null}
+        />,
+      );
+
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs).toHaveLength(1);
+      expect(tabs[0]?.textContent).toBe('首页');
+
+      const announcementBtn = screen.getByRole('button', { name: /查看公告全文|公告/ });
+      expect(announcementBtn.textContent).toContain('GeoMix验收公告_r2_rwax6');
+      expect((announcementBtn as HTMLElement).style.paddingLeft).toBe('0px');
+
+      fireEvent.click(announcementBtn);
+      const dialog = screen.getByRole('dialog', { name: '系统公告' });
+      expect(dialog.textContent).toContain(longAnnouncement);
+      fireEvent.keyDown(dialog, { key: 'Escape' });
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: prevWidth,
+      });
+    }
+  });
+
+  it('expands sidebar by default on 1440px desktop and syncs top toggle with layout drawer switch (#133)', () => {
+    const prevWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 1440,
+    });
+    try {
+      render(<Harness initial={initialSnapshot()} />);
+
+      // Expanded by default on desktop
+      expect(labeled('收起菜单')).toBeTruthy();
+      expect(
+        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
+      ).toBeTruthy();
+
+      // Top toggle collapses sidebar and syncs LayoutPanel switch
+      fireEvent.click(labeled('收起菜单'));
+      expect(labeled('展开菜单')).toBeTruthy();
+      expect(document.querySelector('.gm-sider .ant-menu')).toBeNull();
+
+      fireEvent.click(labeled('布局'));
+      const dialog = document.querySelector<HTMLElement>('.ant-drawer-content[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      const collapseSwitch = within(dialog!).getByRole('switch', { name: '折叠菜单' });
+      expect(collapseSwitch.getAttribute('aria-checked')).toBe('true');
+
+      // Top toggle expands sidebar again and syncs LayoutPanel switch back to false
+      fireEvent.click(labeled('展开菜单'));
+      expect(labeled('收起菜单')).toBeTruthy();
+      expect(
+        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
+      ).toBeTruthy();
+      expect(
+        within(dialog!).getByRole('switch', { name: '折叠菜单' }).getAttribute('aria-checked'),
+      ).toBe('false');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: prevWidth,
+      });
+    }
+  });
+
+  it('hides SideMenu completely when mobile Sider is collapsed and renders full menu when opened even if menuCollapsed pref was true (#131, #133)', () => {
+    const prevWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 375 });
+    try {
+      const initial = {
+        ...reduceShell(initialSnapshot(), { type: 'open', href: '/material/keywords' }),
+        prefs: { ...initialSnapshot().prefs, menuCollapsed: true },
+      };
+      render(<Harness initial={initial} />);
+
+      // When mobile Sider is collapsed, SideMenu must not mount menus/popups
+      expect(document.querySelector('.gm-sider .ant-menu')).toBeNull();
+      expect(document.querySelector('.ant-menu-submenu-popup')).toBeNull();
+
+      // Clicking 展开菜单 on mobile must render full menu items even if desktop pref was collapsed
+      fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
+      const sider = document.querySelector<HTMLElement>('.gm-sider');
+      expect(sider).not.toBeNull();
+      expect(within(sider!).getByText('素材源力')).toBeTruthy();
+      expect(within(sider!).getByText('关键词')).toBeTruthy();
     } finally {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,

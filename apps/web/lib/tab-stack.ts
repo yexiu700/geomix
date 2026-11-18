@@ -3,7 +3,7 @@ import { matchRoute } from './routes';
 /** 同时打开的标签上限。首页固定，超出时关掉最早可关闭的那个。 */
 export const MAX_OPEN_TABS = 15;
 export const HOME_HREF = '/dashboard';
-export const SHELL_STORAGE_KEY = 'geomix.shell.v1';
+export const SHELL_STORAGE_KEY = 'geomix.shell.v2';
 
 export type ShellTab = {
   id: string;

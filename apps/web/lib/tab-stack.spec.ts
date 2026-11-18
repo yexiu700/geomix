@@ -163,4 +163,45 @@ describe('tab stack', () => {
     });
     expect(state.tabs.find((t) => t.id === href)?.title).toBe('图片列表 · 工业激光实拍图库');
   });
+
+  it('defaults to only the pinned home tab and desktop-expanded layout prefs (#132, #133)', () => {
+    const snap = initialSnapshot();
+    expect(snap.tabs).toEqual([
+      {
+        id: '/dashboard',
+        href: '/dashboard',
+        title: '首页',
+        pinned: true,
+      },
+    ]);
+    expect(snap.activeId).toBe('/dashboard');
+    expect(snap.prefs).toEqual({
+      multiTab: true,
+      menuCollapsed: false,
+      submenusAlwaysVisible: false,
+      autoExpand: true,
+      multiLevel: true,
+    });
+  });
+
+  it('ignores stale geomix.shell.v1 storage containing 15 tabs and collapsed prefs (#132, #133)', () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      'geomix.shell.v1',
+      JSON.stringify({
+        tabs: Object.keys(STATIC_ROUTES)
+          .slice(0, 15)
+          .map((href) => ({ href })),
+        activeId: '/dashboard',
+        prefs: { menuCollapsed: true, submenusAlwaysVisible: true },
+      }),
+    );
+
+    const restored = loadShell(storage);
+    expect(SHELL_STORAGE_KEY).not.toBe('geomix.shell.v1');
+    expect(restored.tabs).toHaveLength(1);
+    expect(restored.tabs[0]?.href).toBe('/dashboard');
+    expect(restored.prefs.menuCollapsed).toBe(false);
+    expect(restored.prefs.submenusAlwaysVisible).toBe(false);
+  });
 });

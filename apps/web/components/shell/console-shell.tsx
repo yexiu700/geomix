@@ -27,6 +27,8 @@ import {
 } from '../../lib/tab-stack';
 import { ShellFrame } from './shell-frame';
 
+const SHELL_USER_KEY = 'geomix.shell.user';
+
 const NAVIGATING = new Set([
   'open',
   'activate',
@@ -54,6 +56,13 @@ export function ConsoleShell() {
   const persistEnabled = useRef(true);
 
   function applyLoadedAccount(nextAccount: AccountProfile) {
+    const prevUserId = window.localStorage.getItem(SHELL_USER_KEY);
+    if (prevUserId && prevUserId !== nextAccount.id) {
+      window.localStorage.removeItem(SHELL_STORAGE_KEY);
+      useShellStore.setState({ ...initialSnapshot(), hydrated: true });
+    }
+    window.localStorage.setItem(SHELL_USER_KEY, nextAccount.id);
+
     if (nextAccount.role !== 'ADMIN') {
       const store = useShellStore.getState();
       if (store.tabs.some((tab) => !isConsoleRouteAccessible(tab.href, nextAccount.role))) {
@@ -155,6 +164,8 @@ export function ConsoleShell() {
   async function onLogout() {
     persistEnabled.current = false;
     window.localStorage.removeItem(SHELL_STORAGE_KEY);
+    window.localStorage.removeItem('geomix.shell.v1');
+    window.localStorage.removeItem(SHELL_USER_KEY);
     useShellStore.setState({ ...initialSnapshot(), hydrated: true });
     await logoutSession(window.sessionStorage);
     router.replace('/login');

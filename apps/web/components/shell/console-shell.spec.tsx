@@ -110,4 +110,32 @@ describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
       expect(screen.getByText('没有这个页面')).toBeTruthy();
     });
   });
+
+  it('resets stale stored tabs to only 首页 when logging in as a different user (#132)', async () => {
+    window.localStorage.setItem('geomix.shell.user', 'other-user');
+    window.localStorage.setItem(
+      'geomix.shell.v2',
+      JSON.stringify({
+        tabs: [
+          { href: '/dashboard' },
+          { href: '/material/keywords' },
+          { href: '/material/questions' },
+        ],
+        activeId: '/dashboard',
+        prefs: { multiTab: true, menuCollapsed: false },
+      }),
+    );
+    loadAccountMock.mockResolvedValue({
+      status: 'ok',
+      account: { ...merchantAccount, uiPrefs: null },
+    });
+
+    render(<ConsoleShell />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(1);
+    });
+    expect(screen.getAllByRole('tab')[0]?.textContent).toBe('首页');
+    expect(window.localStorage.getItem('geomix.shell.user')).toBe(merchantAccount.id);
+  });
 });

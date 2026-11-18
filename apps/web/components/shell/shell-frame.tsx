@@ -1,7 +1,7 @@
 'use client';
 
 import { SITE_NAME } from '@geomix/shared';
-import { Alert, Button, Dropdown, Layout } from 'antd';
+import { Alert, Button, Dropdown, Layout, Modal, Tooltip } from 'antd';
 import { useEffect, useState } from 'react';
 import { PasswordForm } from '../password-form';
 import { SHELL_ANNOUNCEMENT, displayName, formatExpiry } from '../../lib/shell-copy';
@@ -37,6 +37,7 @@ export function ShellFrame({
   const [panelOpen, setPanelOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [isWindows, setIsWindows] = useState(false);
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
@@ -110,6 +111,13 @@ export function ShellFrame({
     });
   };
 
+  const handleDispatch = (action: ShellAction) => {
+    if (isMobile && action.type === 'prefs' && action.patch.menuCollapsed !== undefined) {
+      setMobileMenuOpen(!action.patch.menuCollapsed);
+    }
+    onDispatch(action);
+  };
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <style>{`
@@ -130,6 +138,36 @@ export function ShellFrame({
           color: var(--gm-fg-4) !important;
           cursor: not-allowed !important;
         }
+        .gm-marquee {
+          flex: 1 1 200px;
+          min-width: 140px;
+          display: flex;
+          align-items: center;
+          overflow: hidden;
+        }
+        .gm-marquee .gm-marquee-track {
+          display: block;
+          width: 100%;
+          max-width: 100%;
+          padding-left: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          animation: none;
+          background: transparent;
+          border: 0;
+          padding: 2px 4px;
+          border-radius: 4px;
+          color: var(--gm-fg-2);
+          font-size: 12px;
+          text-align: left;
+          cursor: pointer;
+          transition: color var(--gm-dur-fast) var(--gm-ease-out), background-color var(--gm-dur-fast) var(--gm-ease-out);
+        }
+        .gm-marquee .gm-marquee-track:hover {
+          color: var(--gm-fg-1);
+          background: var(--gm-bg-hover);
+        }
         .gm-draft-note,
         .gm-draft-note.ant-input {
           background: var(--gm-bg-surface);
@@ -145,6 +183,10 @@ export function ShellFrame({
           color: var(--gm-fg-1) !important;
         }
         @media (max-width: 768px) {
+          .gm-marquee {
+            flex: 1 1 100%;
+            min-width: 0;
+          }
           .gm-cmd-trigger {
             padding: 0 8px !important;
             gap: 0 !important;
@@ -163,6 +205,7 @@ export function ShellFrame({
         />
       ) : null}
       <Sider
+        id="gm-sider-nav"
         className="gm-sider"
         width={232}
         collapsed={siderCollapsed}
@@ -171,19 +214,20 @@ export function ShellFrame({
         theme="dark"
         style={{
           background: 'var(--gm-bg-base)',
-          borderRight: '1px solid var(--gm-line-1)',
+          borderRight: siderCollapsed ? 'none' : '1px solid var(--gm-line-1)',
         }}
       >
         <SideMenu
           activeHref={active?.href ?? '/dashboard'}
           prefs={state.prefs}
+          collapsed={siderCollapsed}
           aiImageEnabled={aiImageEnabled}
           visibilityEnabled={visibilityEnabled}
           onDispatch={(action) => {
             if (isMobile && action.type === 'open') {
               setMobileMenuOpen(false);
             }
-            onDispatch(action);
+            handleDispatch(action);
           }}
         />
       </Sider>
@@ -202,12 +246,18 @@ export function ShellFrame({
             <BrandMark />
             <span>{SITE_NAME}</span>
           </div>
-          <div
-            className="gm-marquee"
-            aria-label="公告"
-            style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
-          >
-            <div className="gm-marquee-track">{announcement}</div>
+          <div className="gm-marquee" aria-label="公告">
+            <Tooltip title={announcement}>
+              <button
+                type="button"
+                className="gm-marquee-track"
+                aria-label={`查看公告全文：${announcement}`}
+                onClick={() => setAnnouncementOpen(true)}
+                style={{ paddingLeft: 0, animation: 'none' }}
+              >
+                {announcement}
+              </button>
+            </Tooltip>
           </div>
           <button
             type="button"
@@ -284,7 +334,12 @@ export function ShellFrame({
           <Button aria-label="布局" onClick={() => setPanelOpen(true)}>
             布局
           </Button>
-          <Button aria-label={menuToggleLabel} onClick={toggleMenu}>
+          <Button
+            aria-label={menuToggleLabel}
+            aria-expanded={!siderCollapsed}
+            aria-controls="gm-sider-nav"
+            onClick={toggleMenu}
+          >
             {menuToggleLabel}
           </Button>
           <Dropdown
@@ -308,7 +363,7 @@ export function ShellFrame({
           </Dropdown>
         </Header>
         {state.prefs.multiTab ? (
-          <TabBar tabs={state.tabs} activeId={state.activeId} onDispatch={onDispatch} />
+          <TabBar tabs={state.tabs} activeId={state.activeId} onDispatch={handleDispatch} />
         ) : null}
         <Content className="gm-content" style={{ padding: isMobile ? 12 : 20 }}>
           {account.tenant.readOnly ? (
@@ -342,7 +397,7 @@ export function ShellFrame({
                   readOnly={account.tenant.readOnly}
                   aiImageEnabled={aiImageEnabled}
                   visibilityEnabled={visibilityEnabled}
-                  onDispatch={onDispatch}
+                  onDispatch={handleDispatch}
                 />
               </div>
             );
@@ -353,8 +408,26 @@ export function ShellFrame({
         open={panelOpen}
         prefs={state.prefs}
         onClose={() => setPanelOpen(false)}
-        onDispatch={onDispatch}
+        onDispatch={handleDispatch}
       />
+      <Modal
+        open={announcementOpen}
+        title="系统公告"
+        onCancel={() => setAnnouncementOpen(false)}
+        keyboard
+        maskClosable
+        footer={[
+          <Button key="close" type="primary" onClick={() => setAnnouncementOpen(false)}>
+            知道了
+          </Button>,
+        ]}
+      >
+        <p
+          style={{ margin: 0, color: 'var(--gm-fg-1)', lineHeight: '22px', whiteSpace: 'pre-wrap' }}
+        >
+          {announcement}
+        </p>
+      </Modal>
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
