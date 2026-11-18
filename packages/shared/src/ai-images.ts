@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CRUD_PAGE_SIZES, type CrudPageSize } from './crud';
+import { formatShanghaiDateTime } from './ux-foundation';
 import { TASK_STATUSES, type TaskStatusName } from './writing-tasks';
 
 export const AI_IMAGE_PROMPT_MIN = 5;
@@ -309,7 +310,7 @@ export function aiImageExportTable(items: readonly AiImageJobItem[]): {
       AI_IMAGE_STATUS_LABELS[item.status] ?? item.status,
       item.saveCategoryName ?? '未存入图库',
       item.error ?? '',
-      item.createdAt,
+      formatShanghaiDateTime(item.createdAt, { seconds: true }),
     ]),
   };
 }

@@ -62,6 +62,7 @@ export type AiImageGateway = {
   bulkDelete(ids: string[]): Promise<{ deletedCount: number }>;
   downloadTable(query: AiImageJobListQuery, format: CrudExportFormat): Promise<AiImageDownloadFile>;
   loadFormOptions(): Promise<AiImageFormOptions>;
+  listGalleryAssets?: (categoryId?: string) => Promise<MediaAssetRecord[]>;
 };
 
 export function buildAiImageListQueryString(
@@ -173,8 +174,8 @@ export function httpAiImageGateway(storage: SessionStorageLike): AiImageGateway 
 
     async loadFormOptions() {
       const [catRes, assetRes, kwRes, kbRes, jobList] = await Promise.all([
-        galleryGw.listCategories({ page: 1, pageSize: 50 }).catch(() => ({ items: [] })),
-        galleryGw.listAssets({ page: 1, pageSize: 50 }).catch(() => ({ items: [] })),
+        galleryGw.listCategories({ page: 1, pageSize: 100 }).catch(() => ({ items: [] })),
+        galleryGw.listAssets({ page: 1, pageSize: 100 }).catch(() => ({ items: [] })),
         keywordGw
           .list({ page: 1, pageSize: 50, keyword: '', sort: 'createdAt', order: 'desc' })
           .catch(() => ({ items: [] })),
@@ -191,6 +192,15 @@ export function httpAiImageGateway(storage: SessionStorageLike): AiImageGateway 
         knowledgeBases: kbRes.items,
         unitPoints: jobList?.unitPoints ?? AI_IMAGE_DEFAULT_UNIT_POINTS,
       };
+    },
+
+    async listGalleryAssets(categoryId) {
+      const res = await galleryGw.listAssets({
+        page: 1,
+        pageSize: 100,
+        categoryId: categoryId || undefined,
+      });
+      return res.items;
     },
   };
 }

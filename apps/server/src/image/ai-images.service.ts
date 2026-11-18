@@ -18,6 +18,7 @@ import {
   IMAGE_WARN_WIDTH,
   PRICING_DEFAULTS,
   escapeLikeLiteral,
+  formatShanghaiDate,
   isAiImageRatio,
   parseEnv,
   quoteAiImagePoints,
@@ -98,15 +99,13 @@ function generateRefAssetId(): string {
 }
 
 export function formatAiImageOrderNo(createdAt: Date, id: string): string {
-  const y = createdAt.getUTCFullYear();
-  const m = String(createdAt.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(createdAt.getUTCDate()).padStart(2, '0');
+  const dateCompact = formatShanghaiDate(createdAt).replace(/-/g, '');
   const suffix = id
     .replace(/[^A-Za-z0-9]/g, '')
     .slice(-6)
     .toUpperCase()
     .padStart(6, '0');
-  return `IMG${y}${m}${d}-${suffix}`;
+  return `IMG${dateCompact}-${suffix}`;
 }
 
 function extractKbContext(kb: {
