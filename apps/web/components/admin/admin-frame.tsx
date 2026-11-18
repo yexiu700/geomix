@@ -4,10 +4,13 @@ import { SITE_NAME } from '@geomix/shared';
 import { Button } from 'antd';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { clearCachedAccount, readCachedAccount, writeCachedAccount } from '../../lib/account-cache';
 import { loadAccount, logoutSession, type AccountProfile } from '../../lib/api';
 import { safeAdminHref } from '../../lib/route-map';
 import { clearSession, readAccessToken } from '../../lib/session';
+
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 const LINKS = [
   { href: '/admin/tenants', title: '租户' },
@@ -25,15 +28,27 @@ export function AdminGate({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const [phase, setPhase] = useState<'boot' | 'ok' | 'deny' | 'offline'>('boot');
 
+  useIsomorphicLayoutEffect(() => {
+    const cached = readCachedAccount(window.sessionStorage);
+    if (!cached) return;
+    if (cached.role !== 'ADMIN') {
+      setPhase('deny');
+      return;
+    }
+    setAccount(cached);
+    setPhase('ok');
+  }, []);
+
   const verifyAdminSession = useCallback(
     async (isLive: () => boolean) => {
       const result = await loadAccount(window.sessionStorage);
       if (!isLive()) return;
       if (result.status === 'offline') {
-        setPhase('offline');
+        setPhase((curr) => (curr === 'ok' ? curr : 'offline'));
         return;
       }
       if (result.status !== 'ok') {
+        clearCachedAccount();
         const hadToken = readAccessToken(window.sessionStorage) !== null;
         if (hadToken || result.status === 'disabled') clearSession(window.sessionStorage);
         const next = safeAdminHref(pathnameRef.current) ?? '/admin/tenants';
@@ -43,7 +58,9 @@ export function AdminGate({ children }: { children: ReactNode }) {
         router.replace(`/login?${query.toString()}`);
         return;
       }
+      writeCachedAccount(window.sessionStorage, result.account);
       if (result.account.role !== 'ADMIN') {
+        setAccount(null);
         setPhase('deny');
         return;
       }
@@ -124,6 +141,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
         </Link>
         <Button
           onClick={() => {
+            clearCachedAccount();
             void logoutSession(window.sessionStorage).then(() => router.replace('/login'));
           }}
         >

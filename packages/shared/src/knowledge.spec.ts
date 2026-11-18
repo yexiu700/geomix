@@ -79,6 +79,7 @@ describe('knowledge shared helpers', () => {
       } satisfies KnowledgeBaseRecord,
     ]);
     expect(exported.rows[0]?.[2]).toBe('安克创新（Anker）');
+    expect(exported.rows[0]?.[3]).toBe('2026-11-18 08:00:00');
 
     const invalidSummary = knowledgeWriteSchema.safeParse({
       name: '超长汇总',

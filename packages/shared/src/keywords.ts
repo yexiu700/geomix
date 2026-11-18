@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CRUD_ORDERS, CRUD_PAGE_SIZES, type CrudOrder, type CrudPageSize } from './crud';
+import { formatShanghaiDateTime } from './ux-foundation';
 
 export const KEYWORD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const KEYWORD_MAIN_MIN = 3;
@@ -307,7 +308,7 @@ export function keywordExportTable(rows: readonly KeywordRecord[]): {
       row.brands.join('，'),
       String(row.questionCount),
       KEYWORD_OPT_LABELS[row.optStatus],
-      row.createdAt.replace('T', ' ').slice(0, 19),
+      formatShanghaiDateTime(row.createdAt, { seconds: true }),
     ]),
   };
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formatShanghaiDateTime } from './ux-foundation';
 
 export const PROMPT_KINDS = ['ARTICLE', 'TITLE', 'REWRITE'] as const;
 export type PromptKindName = (typeof PROMPT_KINDS)[number];
@@ -235,7 +236,7 @@ export function promptExportTable(rows: readonly PromptTemplateRecord[]): {
     rows: rows.map((row) => [
       row.name,
       PROMPT_KIND_LABELS[row.kind],
-      row.createdAt.slice(0, 19).replace('T', ' '),
+      formatShanghaiDateTime(row.createdAt, { seconds: true }),
     ]),
   };
 }

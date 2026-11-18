@@ -244,13 +244,6 @@ export function RewriteSingleScreen({
     },
   });
 
-  useEffect(() => {
-    if (!active || tabId !== '/rewrite/single' || typeof window === 'undefined') return;
-    if (window.location.pathname !== '/rewrite/single') {
-      window.history.replaceState(window.history.state, '', '/rewrite/single');
-    }
-  }, [active, tabId]);
-
   // Poll every 5s if any single record is RUNNING/PENDING
   useEffect(() => {
     const hasActive = items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING');

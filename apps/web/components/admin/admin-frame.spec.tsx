@@ -2,6 +2,7 @@
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearCachedAccount, writeCachedAccount } from '../../lib/account-cache';
 import type { AccountProfile } from '../../lib/api';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, saveSession } from '../../lib/session';
 import { AdminGate } from './admin-frame';
@@ -60,6 +61,7 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
   beforeEach(() => {
     mockPathname = '/admin/tenants';
     document.title = 'GeoMix';
+    clearCachedAccount();
     window.sessionStorage.clear();
     window.localStorage.clear();
     pushMock.mockReset();
@@ -69,6 +71,7 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
   });
 
   afterEach(() => {
+    clearCachedAccount();
     cleanup();
   });
 
@@ -136,5 +139,21 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
     });
     expect(document.title).toContain('GeoMix 管理');
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it('renders immediately from warm account cache without boot flash (#203)', () => {
+    saveSession(window.sessionStorage, 'tok-admin', 'ref-admin');
+    writeCachedAccount(window.sessionStorage, adminAccount);
+    loadAccountMock.mockReturnValue(new Promise(() => undefined));
+
+    render(
+      <AdminGate>
+        <div>租户管理正文</div>
+      </AdminGate>,
+    );
+
+    expect(screen.queryByText('正在确认登录')).toBeNull();
+    expect(screen.getByText('租户管理正文')).toBeTruthy();
+    expect(document.title).toBe('租户 · GeoMix 管理');
   });
 });

@@ -456,23 +456,10 @@ describe('RewriteBatchScreen', () => {
     });
   });
 
-  it('disables unconfigured remote search upfront (#174), unifies brand & gallery copy (#173), deduplicates modal copy, syncs URL on tab activation, and exposes bulk delete (#176)', async () => {
-    window.history.replaceState(null, '', '/rewrite/single');
+  it('disables unconfigured remote search upfront (#174), unifies brand & gallery copy (#173), deduplicates modal copy, and exposes bulk delete (#176)', async () => {
     const { gateway } = makeGateway([makeBatch({ id: 'rwb_del_1', status: 'COMPLETED' })]);
 
-    const { rerender } = render(
-      <RewriteBatchScreen
-        title="批量爆文复刻"
-        tabId="/rewrite/batch"
-        active={false}
-        pollIntervalMs={0}
-        gateway={gateway}
-      />,
-    );
-    expect(window.location.pathname).toBe('/rewrite/single');
-
-    // Switching tab to active immediately updates address bar URL to /rewrite/batch (#176)
-    rerender(
+    render(
       <RewriteBatchScreen
         title="批量爆文复刻"
         tabId="/rewrite/batch"
@@ -481,9 +468,6 @@ describe('RewriteBatchScreen', () => {
         gateway={gateway}
       />,
     );
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/rewrite/batch');
-    });
 
     // Header copy avoids R&D jargon and uses unified 企业画像图库 term (#173, #176)
     expect(screen.getByText(/按实际成功篇数扣点/)).toBeTruthy();
@@ -495,12 +479,18 @@ describe('RewriteBatchScreen', () => {
     expect(bulkDeleteBtn.disabled).toBe(true);
 
     // Selecting a terminal row enables bulk delete and invokes bulkDelete on confirm
+    await waitFor(() => {
+      expect(
+        document.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]').length,
+      ).toBeGreaterThan(0);
+    });
     const checkboxes = Array.from(
       document.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]'),
     );
-    expect(checkboxes.length).toBeGreaterThan(0);
     fireEvent.click(checkboxes[0]!);
-    expect(bulkDeleteBtn.disabled).toBe(false);
+    await waitFor(() => {
+      expect(bulkDeleteBtn.disabled).toBe(false);
+    });
 
     fireEvent.click(bulkDeleteBtn);
     await waitFor(() => {

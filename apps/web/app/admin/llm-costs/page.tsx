@@ -1,14 +1,11 @@
-'use client';
+import { SITE_NAME } from '@geomix/shared';
+import type { Metadata } from 'next';
+import { AdminPageClient } from '../../../components/admin/admin-page-client';
 
-import { useEffect, useState } from 'react';
-import { LlmCostAdmin } from '../../../components/admin/llm-cost-admin';
-import { httpAdmin, type AdminClient } from '../../../lib/admin-client';
+export const metadata: Metadata = {
+  title: `LLM成本日报 · ${SITE_NAME} 管理`,
+};
 
 export default function Page() {
-  const [client, setClient] = useState<AdminClient | null>(null);
-  useEffect(() => {
-    setClient(httpAdmin(window.sessionStorage));
-  }, []);
-  if (!client) return null;
-  return <LlmCostAdmin client={client} />;
+  return <AdminPageClient section="llm-costs" />;
 }
