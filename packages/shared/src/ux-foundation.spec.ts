@@ -61,8 +61,20 @@ describe('ux-foundation', () => {
     expect(VISIBILITY_TASK_STATUS_LABELS.COMPLETED).toBe('监测完成');
     expect(VISIBILITY_TASK_STATUS_LABELS.FAILED).toBe('监测失败');
 
-    expect(formatCollectorDisplayLabel('fake')).toBe('内置引擎采集');
+    expect(formatCollectorDisplayLabel('fake')).toBe('模拟演示采集');
+    expect(formatCollectorDisplayLabel('mock-collector')).toBe('模拟演示采集');
+    expect(formatCollectorDisplayLabel('llm_api')).toBe('大模型直连采集');
+    expect(formatCollectorDisplayLabel('remote_scraper')).toBe('联网搜索采集');
+    expect(formatCollectorDisplayLabel('live')).toBe('实时引擎采集');
+
     expect(formatJudgeModelDisplayLabel('deterministic-fallback')).toBe('规则语义判别');
+    expect(formatJudgeModelDisplayLabel('deepseek-flash:deterministic-fallback')).toBe(
+      '规则语义判别',
+    );
+    expect(formatJudgeModelDisplayLabel('deterministic-skip')).toBe('规则语义判别');
+    expect(formatJudgeModelDisplayLabel('deterministic-domain')).toBe('规则语义判别');
+    expect(formatJudgeModelDisplayLabel('fake-cheap')).toBe('规则语义判别');
+    expect(formatJudgeModelDisplayLabel('judge-mock')).toBe('规则语义判别');
     expect(formatJudgeModelDisplayLabel('deepseek-chat')).toBe('deepseek-chat');
   });
 

@@ -73,6 +73,7 @@ export type LlmCompleteInput = {
   maxRetries?: number;
   preferFastModel?: boolean;
   disableThinking?: boolean;
+  preferredProvider?: string;
 };
 
 type ProviderCall = {
@@ -325,7 +326,13 @@ export class LlmRouter {
     const effectiveMaxRetries = input.maxRetries ?? this.options.maxRetries;
     const deadline = input.timeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined;
     const providerConfig = this.route.route[input.scene];
-    const chain = [providerConfig.primary, ...providerConfig.backup];
+    const baseChain = [providerConfig.primary, ...providerConfig.backup];
+    const preferred = input.preferredProvider?.trim();
+    const preferredConfig = preferred ? this.route.providers[preferred] : undefined;
+    const chain =
+      preferred && preferredConfig && preferredConfig.kind !== 'fake'
+        ? [preferred, ...baseChain.filter((name) => name !== preferred)]
+        : baseChain;
     let last: ProviderError | null = null;
     for (const name of chain) {
       const provider = this.providers[name];
@@ -539,6 +546,7 @@ export class LlmService {
           temperature: input.temperature ?? null,
           maxTokens: input.maxTokens ?? null,
           ...(input.disableThinking ? { disableThinking: true } : {}),
+          ...(input.preferredProvider ? { preferredProvider: input.preferredProvider } : {}),
         }),
       )
       .digest('hex');

@@ -1,6 +1,7 @@
 // Portions adapted from elmohq/elmo (https://github.com/elmohq/elmo), Copyright (c) 2026 Blue Whale Software, LLC, MIT License.
 
 import { z } from 'zod';
+import { FAKE_MARK } from './adapters';
 import { CRUD_PAGE_SIZES, type CrudPageSize } from './crud';
 import { TASK_STATUSES, type ItemStatusName, type TaskStatusName } from './writing-tasks';
 
@@ -845,6 +846,419 @@ export function normalizeFanOutQueries(queries: readonly string[], promptText: s
   return cleaned;
 }
 
+export type TopicRelevanceContext = {
+  brandName?: string;
+  brandAliases?: readonly string[];
+  competitorNames?: readonly string[];
+};
+
+export type TopicRelevanceResult = {
+  relevant: boolean;
+  reason: string | null;
+  matchedTokens: string[];
+  expectedTokens: string[];
+};
+
+const CN_STOP_PHRASES = [
+  '怎么样',
+  '怎么看',
+  '怎么选',
+  '怎么做',
+  '好不好',
+  '好用吗',
+  '值得买吗',
+  '值得选吗',
+  '为什么',
+  '有什么',
+  '排行榜',
+  '多少钱',
+  '哪家好',
+  '哪款好',
+  '哪个好',
+  '服务商',
+  '怎么',
+  '如何',
+  '什么',
+  '哪家',
+  '哪款',
+  '哪个',
+  '哪些',
+  '哪里',
+  '值得',
+  '推荐',
+  '对比',
+  '评测',
+  '测评',
+  '横评',
+  '实测',
+  '排行',
+  '榜单',
+  '排名',
+  '价格',
+  '费用',
+  '成本',
+  '效果',
+  '优势',
+  '缺点',
+  '适合',
+  '可以',
+  '是否',
+  '能否',
+  '还是',
+  '或者',
+  '以及',
+  '问题',
+  '方案',
+  '品牌',
+  '产品',
+  '工具',
+  '系统',
+  '平台',
+  '公司',
+  '企业',
+  '行业',
+  '市场',
+  '目前',
+  '当前',
+  '近期',
+  '现在',
+  '好的',
+  '吗',
+  '呢',
+  '啊',
+  '吧',
+  '的',
+  '了',
+  '和',
+  '与',
+  '及',
+  '在',
+  '是',
+  '有',
+  '用',
+  '给',
+  '把',
+  '被',
+  '对',
+  '为',
+  '等',
+  '中',
+  '上',
+  '下',
+];
+
+const EN_STOP_WORDS = new Set([
+  'what',
+  'which',
+  'how',
+  'why',
+  'who',
+  'where',
+  'when',
+  'best',
+  'top',
+  'good',
+  'better',
+  'vs',
+  'versus',
+  'compare',
+  'comparison',
+  'review',
+  'reviews',
+  'recommend',
+  'recommendation',
+  'recommendations',
+  'for',
+  'with',
+  'and',
+  'or',
+  'the',
+  'is',
+  'are',
+  'to',
+  'in',
+  'on',
+  'of',
+  'a',
+  'an',
+  'worth',
+  'tips',
+  'about',
+]);
+
+const GEO_PROMPT_SIGNALS =
+  /(?:geo|seo|可见性|可见度|声量|引用|溯源|蒸馏|内容运营|内容矩阵|营销工具|大模型|ai搜索|生成式引擎|词库|审计|合规|复盘)/iu;
+
+const OFF_TOPIC_GEO_BOILERPLATE_CUES = [
+  '数据可审计性',
+  '合规边界',
+  '长期运维成本',
+  '中文语义理解',
+  '引用溯源归类',
+  '团队协作闭环',
+  '词库与周度复盘',
+  '生成式引擎优化',
+  '可见率、声量占比',
+  '多引擎可见性诊断',
+  '内容矩阵协同',
+  '多维度看板',
+  '行业基准对比',
+  '基础词条管理',
+  '标准化报表模板',
+] as const;
+
+const GENERIC_CJK_BIGRAMS = new Set([
+  '控制',
+  '管理',
+  '分析',
+  '处理',
+  '优化',
+  '提升',
+  '支持',
+  '使用',
+  '体验',
+  '服务',
+  '表现',
+  '配置',
+  '能力',
+  '模式',
+  '结构',
+  '效率',
+  '质量',
+  '标准',
+  '流程',
+  '策略',
+  '技术',
+  '数据',
+  '内容',
+  '系统',
+  '平台',
+  '方案',
+  '品牌',
+  '产品',
+  '工具',
+  '行业',
+  '市场',
+  '用户',
+  '企业',
+  '团队',
+  '人员',
+  '操作',
+  '功能',
+  '性能',
+  '情况',
+  '方面',
+  '问题',
+  '方法',
+  '方式',
+  '条件',
+  '要求',
+  '需求',
+  '应用',
+  '场景',
+  '环境',
+  '状态',
+  '结果',
+  '影响',
+  '作用',
+  '价值',
+  '优势',
+  '特点',
+  '基础',
+  '核心',
+  '关键',
+  '主要',
+  '综合',
+  '整体',
+  '日常',
+  '长期',
+  '稳定',
+  '安全',
+  '可靠',
+  '成熟',
+  '专业',
+  '高效',
+  '便捷',
+  '灵活',
+]);
+
+function stripQuotedPromptEchoes(text: string, promptText: string): string {
+  const normPrompt = normalizeForEchoCompare(promptText);
+  if (normPrompt.length < 4) return text;
+  return text.replace(/[「『“"《]([^」』”"》\r\n]{2,160})[」』”"》]/gu, (full, inner: string) => {
+    const normInner = normalizeForEchoCompare(inner);
+    if (
+      normInner.length >= 4 &&
+      (normInner.includes(normPrompt) || normPrompt.includes(normInner))
+    ) {
+      return ' ';
+    }
+    return full;
+  });
+}
+
+function extractPromptTopicTokens(
+  promptText: string,
+  context: TopicRelevanceContext = {},
+): string[] {
+  let cleaned = promptText;
+  const excludeTerms = [
+    context.brandName ?? '',
+    ...(context.brandAliases ?? []),
+    ...(context.competitorNames ?? []),
+  ]
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  for (const term of excludeTerms) {
+    cleaned = cleaned.replace(wholeWordPattern(term), ' ');
+  }
+
+  // Strip year tokens like 2025年 / 2026
+  cleaned = cleaned.replace(/\b20\d{2}年?\b/gu, ' ');
+
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  const pushToken = (raw: string) => {
+    const t = raw.trim().toLowerCase();
+    if (!t || t.length < 2) return;
+    if (EN_STOP_WORDS.has(t)) return;
+    if (seen.has(t)) return;
+    seen.add(t);
+    tokens.push(t);
+  };
+
+  for (const m of cleaned.matchAll(/[a-z0-9][a-z0-9._+-]{1,31}/giu)) {
+    pushToken(m[0]);
+  }
+
+  // Split CJK runs and peel CN stop phrases
+  let cjkSource = cleaned.replace(/[a-z0-9._+-]+/giu, ' ');
+  for (const phrase of CN_STOP_PHRASES) {
+    if (phrase.length >= 2) {
+      cjkSource = cjkSource.split(phrase).join(' ');
+    }
+  }
+  const singleCharStops = new Set(CN_STOP_PHRASES.filter((p) => p.length === 1));
+  for (const run of cjkSource.matchAll(/[\p{Script=Han}]{2,}/gu)) {
+    let segment = run[0];
+    while (segment.length > 2 && singleCharStops.has(segment[0] ?? '')) {
+      segment = segment.slice(1);
+    }
+    while (segment.length > 2 && singleCharStops.has(segment[segment.length - 1] ?? '')) {
+      segment = segment.slice(0, -1);
+    }
+    if (segment.length >= 2) {
+      pushToken(segment);
+    }
+  }
+
+  return tokens;
+}
+
+function doesTokenMatchBody(token: string, bodyText: string, bodyLower: string): boolean {
+  if (/^[a-z0-9._+-]+$/i.test(token)) {
+    if (wholeWordPattern(token).test(bodyText)) return true;
+    return token.length >= 3 && bodyLower.includes(token);
+  }
+  if (bodyLower.includes(token)) return true;
+  if (token.length === 3) {
+    for (let i = 0; i <= token.length - 2; i += 1) {
+      const gram = token.slice(i, i + 2);
+      if (!GENERIC_CJK_BIGRAMS.has(gram) && bodyLower.includes(gram)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (token.length >= 4) {
+    for (let i = 0; i <= token.length - 3; i += 1) {
+      const trigram = token.slice(i, i + 3);
+      if (bodyLower.includes(trigram)) return true;
+    }
+    let matchedBigrams = 0;
+    const seenGrams = new Set<string>();
+    for (let i = 0; i <= token.length - 2; i += 1) {
+      const gram = token.slice(i, i + 2);
+      if (seenGrams.has(gram) || GENERIC_CJK_BIGRAMS.has(gram)) continue;
+      seenGrams.add(gram);
+      if (bodyLower.includes(gram)) {
+        matchedBigrams += 1;
+        if (matchedBigrams >= 2) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 校验 AI 回答正文与监测问题的主题相关性（#217 跑题护栏）。
+ * - 剥离首句提问复述与原题引号引用，防止"复述原题 + 无关模板正文"绕过校验；
+ * - 识别开发占位标记（【FAKE】）及非 GEO 问题的通用 GEO/运维模板话术；
+ * - 对长篇实质正文（>=60 字）若完全未覆盖任何非品牌核心主题词则判定为可能跑题。
+ */
+export function assessAnswerTopicRelevance(
+  promptText: string,
+  answerText: string,
+  context: TopicRelevanceContext = {},
+): TopicRelevanceResult {
+  const safePrompt = typeof promptText === 'string' ? promptText.trim() : '';
+  const safeAnswer = typeof answerText === 'string' ? answerText.trim() : '';
+  if (!safePrompt || !safeAnswer) {
+    return { relevant: true, reason: null, matchedTokens: [], expectedTokens: [] };
+  }
+
+  if (safeAnswer.startsWith(FAKE_MARK)) {
+    return {
+      relevant: false,
+      reason: '回答内容为开发占位输出，非真实主题回答',
+      matchedTokens: [],
+      expectedTokens: [],
+    };
+  }
+
+  const introEnd = findQuestionEchoIntroEnd(safeAnswer, safePrompt);
+  const bodyWithoutIntro = safeAnswer.slice(introEnd).trim();
+  const bodyText = stripQuotedPromptEchoes(bodyWithoutIntro || safeAnswer, safePrompt).trim();
+  const bodyLower = bodyText.toLowerCase();
+
+  const expectedTokens = extractPromptTopicTokens(safePrompt, context);
+  const matchedTokens = expectedTokens.filter((tok) =>
+    doesTokenMatchBody(tok, bodyText, bodyLower),
+  );
+
+  const isGeoPrompt = GEO_PROMPT_SIGNALS.test(safePrompt);
+  if (!isGeoPrompt) {
+    const boilerplateHits = OFF_TOPIC_GEO_BOILERPLATE_CUES.filter((cue) => bodyText.includes(cue));
+    if (boilerplateHits.length >= 2 && matchedTokens.length === 0) {
+      return {
+        relevant: false,
+        reason: '回答正文疑似通用 GEO/运维模板话术，未围绕监测问题核心主题展开',
+        matchedTokens,
+        expectedTokens,
+      };
+    }
+  }
+
+  const compactBodyLen = bodyText.replace(/\s+/g, '').length;
+  if (compactBodyLen >= 60 && expectedTokens.length >= 1 && matchedTokens.length === 0) {
+    return {
+      relevant: false,
+      reason: '回答正文未覆盖监测问题核心主题词，可能存在跑题',
+      matchedTokens,
+      expectedTokens,
+    };
+  }
+
+  return {
+    relevant: true,
+    reason: null,
+    matchedTokens,
+    expectedTokens,
+  };
+}
+
 export type RawCitationForMetrics = {
   url: string;
   domain?: string | null;
@@ -859,6 +1273,7 @@ export type RawObservationForMetrics = {
   brandMentioned?: boolean | null;
   brandPosition?: number | null;
   brandSentiment?: string | null;
+  topicRelevant?: boolean | null;
   competitorHits?: unknown;
   citations?: readonly RawCitationForMetrics[] | null;
 };
@@ -944,6 +1359,7 @@ export function recomputeRunMetrics(
   const ownedDomains = profile.ownedDomains ?? [];
   const competitors = profile.competitors ?? [];
   const competitorDomains = competitors.flatMap((comp) => comp.domains ?? []);
+  const competitorNames = competitors.map((comp) => comp.name);
   const competitorMentionCounts = new Map<string, number>();
   for (const comp of competitors) {
     competitorMentionCounts.set(comp.name, 0);
@@ -968,10 +1384,23 @@ export function recomputeRunMetrics(
       ? { promptText: obs.promptText }
       : undefined;
 
+    const isOffTopic =
+      obs.topicRelevant === false ||
+      (Boolean(obs.promptText) &&
+        Boolean(obs.answerText) &&
+        !assessAnswerTopicRelevance(obs.promptText ?? '', obs.answerText ?? '', {
+          brandName: profile.brandName,
+          brandAliases: profile.brandAliases,
+          competitorNames,
+        }).relevant);
+
     let brandMentioned: boolean;
     let brandPosition: number | null = obs.brandPosition ?? null;
 
-    if (typeof obs.brandMentioned === 'boolean') {
+    if (isOffTopic) {
+      brandMentioned = false;
+      brandPosition = null;
+    } else if (typeof obs.brandMentioned === 'boolean') {
       brandMentioned = obs.brandMentioned;
     } else {
       const brandOffsets = findSubjectMentionOffsets(
@@ -1718,6 +2147,8 @@ export type VisibilityObservationRecord = {
   brandPosition: number | null;
   brandSentiment: VisibilitySentiment | null;
   brandPassage: string | null;
+  topicRelevant?: boolean;
+  relevanceReason?: string | null;
   competitorHits: CompetitorHit[];
   fanOutQueries: string[];
   judgeModel: string | null;

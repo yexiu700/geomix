@@ -96,7 +96,7 @@ export function CitationTrace({
       id: e.id,
       x1: 316,
       y1: pY.get(e.promptId)!,
-      x2: 456,
+      x2: 412,
       y2: eY.get(e.engine)!,
       color: GM.sig[e.tone],
       count: e.count,
@@ -104,7 +104,7 @@ export function CitationTrace({
     })),
     ...graph.edgesED.map((e) => ({
       id: e.id,
-      x1: 504,
+      x1: 548,
       y1: eY.get(e.engine)!,
       x2: 644,
       y2: dY.get(e.domainId)!,
@@ -175,8 +175,8 @@ export function CitationTrace({
         >
           {(
             [
-              [24, 'PROMPT'],
-              [468, 'AI 引擎'],
+              [24, '监测问题'],
+              [412, 'AI 引擎'],
               [648, '信源域名'],
             ] as const
           ).map(([x, t]) => (
@@ -218,16 +218,16 @@ export function CitationTrace({
               <g key={eng.id} {...np('engine', eng.id, eng.label)}>
                 <title>{eng.label}</title>
                 <rect
-                  x={456}
+                  x={412}
                   y={y - 10}
-                  width={48}
+                  width={136}
                   height={20}
                   rx={4}
                   fill={GM.bg.elevated}
                   stroke={GM.line.l2}
                 />
                 <text x={480} y={y + 4} textAnchor="middle" fontSize={11} fill={GM.fg.f2}>
-                  {trunc(eng.label, 4)}
+                  {eng.label}
                 </text>
               </g>
             );

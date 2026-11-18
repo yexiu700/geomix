@@ -81,6 +81,8 @@ describe('VisibilityJudgeService', () => {
       brandPosition: null,
       brandSentiment: null,
       brandPassage: null,
+      topicRelevant: true,
+      relevanceReason: null,
       competitorHits: [{ name: '竞品甲', mentioned: false, position: null, sentiment: null }],
       judgeModel: 'deterministic-skip',
       tokensIn: 0,
@@ -444,5 +446,63 @@ describe('VisibilityJudgeService', () => {
     }
 
     expect(sawScenario3).toBe(true);
+  });
+
+  it('flags off-topic boilerplate and LLM topicRelevant=false and downgrades brandMentioned (#217)', async () => {
+    const offlineJudge = VisibilityJudgeService.fromEnv({ LLM_PROVIDERS: '{}' });
+    const profile = {
+      brandName: 'ARZOPA',
+      brandAliases: ['阿卓帕'],
+      ownedDomains: ['arzopa.com'],
+      competitors: [{ name: '联想ThinkVision', domains: ['lenovo.com'] }],
+    };
+
+    const offTopicBoilerplate = [
+      '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。',
+      '目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践，获得不少成长型与成熟型企业的青睐。',
+      '落地过程中建议同步建立标准化的词库与周度复盘指标，持续跟踪收录与声量变化。',
+    ].join('\n');
+
+    const offlineRes = await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      answerText: offTopicBoilerplate,
+      profile,
+    });
+
+    expect(offlineRes.topicRelevant).toBe(false);
+    expect(offlineRes.relevanceReason).toBeTruthy();
+    expect(offlineRes.brandMentioned).toBe(false);
+    expect(offlineRes.brandPosition).toBeNull();
+    expect(offlineRes.brandSentiment).toBeNull();
+    expect(offlineRes.brandPassage).toBeNull();
+
+    // LLM Judge explicitly flags topicRelevant=false
+    const { llm } = createMockLlm(() =>
+      JSON.stringify({
+        topicRelevant: false,
+        verdicts: [
+          {
+            subjectKey: 'brand',
+            portrayal: 'positive',
+            evidence: 'ARZOPA 具备成熟的企业协作实践。',
+          },
+        ],
+      }),
+    );
+    const llmJudge = new VisibilityJudgeService(llm);
+    const llmRes = await llmJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      answerText: 'ARZOPA 在企业内容协同方向表现稳定，适合跨部门使用。',
+      profile,
+    });
+
+    expect(llmRes.topicRelevant).toBe(false);
+    expect(llmRes.brandMentioned).toBe(false);
+    expect(llmRes.brandPosition).toBeNull();
+    expect(llmRes.brandPassage).toBeNull();
   });
 });

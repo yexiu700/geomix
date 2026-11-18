@@ -9,6 +9,7 @@ import {
   QUESTION_TEXT_MAX,
   VISIBILITY_BRAND_NAME_MAX,
   VISIBILITY_MAX_COMPETITORS,
+  assessAnswerTopicRelevance,
   classifyCitationSource,
   computeAvgPosition,
   computeSentimentSummary,
@@ -226,10 +227,12 @@ function shanghaiWindowFromQuery(input: { days: number; from?: string; to?: stri
 
 type LoadedRunRow = Prisma.VisibilityRunGetPayload<{
   include: {
-    profile: { select: { id: true; name: true; brandName: true } };
+    profile: {
+      select: { id: true; name: true; brandName: true; brandAliases: true; competitors: true };
+    };
     keyword: { select: { id: true; main: true } };
     observations: {
-      select: { status: true; brandMentioned: true };
+      select: { status: true; brandMentioned: true; promptText: true; answerText: true };
     };
   };
 }>;
@@ -557,10 +560,18 @@ export class VisibilityService {
         skip,
         take: query.pageSize,
         include: {
-          profile: { select: { id: true, name: true, brandName: true } },
+          profile: {
+            select: {
+              id: true,
+              name: true,
+              brandName: true,
+              brandAliases: true,
+              competitors: true,
+            },
+          },
           keyword: { select: { id: true, main: true } },
           observations: {
-            select: { status: true, brandMentioned: true },
+            select: { status: true, brandMentioned: true, promptText: true, answerText: true },
           },
         },
       }),
@@ -608,6 +619,8 @@ export class VisibilityService {
           id: row.profile.id,
           name: row.profile.name,
           brandName: row.profile.brandName,
+          brandAliases: row.profile.brandAliases,
+          competitors: row.profile.competitors,
         },
       },
     ]);
@@ -637,40 +650,57 @@ export class VisibilityService {
       },
     );
 
-    const observations: VisibilityObservationRecord[] = row.observations.map((obs) => ({
-      id: obs.id,
-      runId: obs.runId,
-      profileId: obs.profileId,
-      questionId: obs.questionId,
-      promptText: obs.promptText,
-      engine: isVisibilityEngine(obs.engine) ? obs.engine : obs.engine,
-      status: obs.status,
-      collectorKind: obs.collectorKind,
-      answerText: obs.answerText,
-      brandMentioned: obs.brandMentioned,
-      brandPosition: obs.brandPosition,
-      brandSentiment:
-        obs.brandSentiment && isVisibilitySentiment(obs.brandSentiment) ? obs.brandSentiment : null,
-      brandPassage: obs.brandPassage,
-      competitorHits: parseStoredCompetitorHits(obs.competitorHits),
-      fanOutQueries: obs.fanOutQueries,
-      judgeModel: obs.judgeModel,
-      tokensIn: obs.tokensIn,
-      tokensOut: obs.tokensOut,
-      error: obs.error,
-      checkedAt: obs.checkedAt ? obs.checkedAt.toISOString() : null,
-      createdAt: obs.createdAt.toISOString(),
-      citations: obs.citations.map((cite): VisibilityCitationRecord => ({
-        id: cite.id,
-        url: cite.url,
-        domain: cite.domain,
-        title: cite.title,
-        snippet: cite.snippet,
-        sourceKind: isCitationSourceKind(cite.sourceKind) ? cite.sourceKind : 'OTHER',
-        position: cite.position,
-        createdAt: cite.createdAt.toISOString(),
-      })),
-    }));
+    const competitorNames = competitors.map((comp) => comp.name);
+    const observations: VisibilityObservationRecord[] = row.observations.map((obs) => {
+      const relevance =
+        obs.status === 'SUCCESS' && obs.answerText
+          ? assessAnswerTopicRelevance(obs.promptText, obs.answerText, {
+              brandName: row.profile.brandName,
+              brandAliases: row.profile.brandAliases,
+              competitorNames,
+            })
+          : { relevant: true, reason: null };
+      const allowBrand = relevance.relevant;
+
+      return {
+        id: obs.id,
+        runId: obs.runId,
+        profileId: obs.profileId,
+        questionId: obs.questionId,
+        promptText: obs.promptText,
+        engine: isVisibilityEngine(obs.engine) ? obs.engine : obs.engine,
+        status: obs.status,
+        collectorKind: obs.collectorKind,
+        answerText: obs.answerText,
+        brandMentioned: allowBrand ? obs.brandMentioned : false,
+        brandPosition: allowBrand ? obs.brandPosition : null,
+        brandSentiment:
+          allowBrand && obs.brandSentiment && isVisibilitySentiment(obs.brandSentiment)
+            ? obs.brandSentiment
+            : null,
+        brandPassage: allowBrand ? obs.brandPassage : null,
+        topicRelevant: relevance.relevant,
+        relevanceReason: relevance.reason,
+        competitorHits: parseStoredCompetitorHits(obs.competitorHits),
+        fanOutQueries: obs.fanOutQueries,
+        judgeModel: obs.judgeModel,
+        tokensIn: obs.tokensIn,
+        tokensOut: obs.tokensOut,
+        error: obs.error,
+        checkedAt: obs.checkedAt ? obs.checkedAt.toISOString() : null,
+        createdAt: obs.createdAt.toISOString(),
+        citations: obs.citations.map((cite): VisibilityCitationRecord => ({
+          id: cite.id,
+          url: cite.url,
+          domain: cite.domain,
+          title: cite.title,
+          snippet: cite.snippet,
+          sourceKind: isCitationSourceKind(cite.sourceKind) ? cite.sourceKind : 'OTHER',
+          position: cite.position,
+          createdAt: cite.createdAt.toISOString(),
+        })),
+      };
+    });
 
     return {
       ...baseRecord!,
@@ -1068,7 +1098,17 @@ export class VisibilityService {
         engineBucket.set(obs.engine, cell);
       }
       cell.completed += 1;
-      if (obs.brandMentioned) {
+      const profCtx =
+        overviewCtx.profilesById.get(obs.profileId) ?? overviewCtx.fallbackProfileForMetrics;
+      const relevant =
+        !obs.promptText ||
+        !obs.answerText ||
+        assessAnswerTopicRelevance(obs.promptText, obs.answerText, {
+          brandName: profCtx.brandName,
+          brandAliases: profCtx.brandAliases,
+          competitorNames: (profCtx.competitors ?? []).map((c) => c.name),
+        }).relevant;
+      if (obs.brandMentioned && relevant) {
         cell.mentioned += 1;
         cell.positions.push(obs.brandPosition);
       }
@@ -1607,8 +1647,18 @@ export class VisibilityService {
     const reservationById = new Map(reservations.map((r) => [r.id, r]));
 
     return rows.map((row) => {
+      const competitorNames = parseProfileCompetitors(row.profile.competitors).map((c) => c.name);
+      const brandAliases = row.profile.brandAliases ?? [];
       const completedObs = row.observations.filter((obs) => obs.status === 'SUCCESS');
-      const mentionedObs = completedObs.filter((obs) => obs.brandMentioned);
+      const mentionedObs = completedObs.filter((obs) => {
+        if (!obs.brandMentioned) return false;
+        if (!obs.promptText || !obs.answerText) return true;
+        return assessAnswerTopicRelevance(obs.promptText, obs.answerText, {
+          brandName: row.profile.brandName,
+          brandAliases,
+          competitorNames,
+        }).relevant;
+      });
       const skipCount = row.observations.filter((obs) => obs.status === 'SKIPPED').length;
       const resv = row.reservationId ? reservationById.get(row.reservationId) : undefined;
 
@@ -2100,14 +2150,13 @@ export class VisibilityService {
         };
       }
 
-      const mentionedChecks = dayObs.filter((obs) => obs.brandMentioned).length;
       const { metrics } = this.computeOverviewMetricsAndGroups(dayObs, ctx);
       return {
         date,
         engine,
         completedChecks,
-        mentionedChecks,
-        visibilityPct: computeVisibilityPct(mentionedChecks, completedChecks),
+        mentionedChecks: metrics.mentionedChecks,
+        visibilityPct: metrics.visibilityPct,
         shareOfVoicePct: metrics.shareOfVoice.brandSharePct,
       };
     };

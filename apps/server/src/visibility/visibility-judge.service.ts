@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  assessAnswerTopicRelevance,
   extractEvidencePassages,
   findSubjectMentionOffsets,
   isVisibilitySentiment,
@@ -102,6 +103,7 @@ const CONTRAST_CUES = [
 ] as const;
 
 const llmJudgeVerdictSchema = z.object({
+  topicRelevant: z.boolean().optional(),
   verdicts: z
     .array(
       z.object({
@@ -143,6 +145,8 @@ export type VisibilityJudgeResult = {
   brandPosition: number | null;
   brandSentiment: VisibilitySentiment | null;
   brandPassage: string | null;
+  topicRelevant: boolean;
+  relevanceReason: string | null;
   competitorHits: CompetitorHit[];
   judgeModel: string;
   tokensIn: number;
@@ -174,6 +178,11 @@ export class VisibilityJudgeService {
   async evaluate(input: VisibilityJudgeInput): Promise<VisibilityJudgeResult> {
     const answerText = input.answerText ?? '';
     const citedUrls = (input.citations ?? []).map((item) => item.url);
+    const relevance = assessAnswerTopicRelevance(input.promptText, answerText, {
+      brandName: input.profile.brandName,
+      brandAliases: input.profile.brandAliases,
+      competitorNames: (input.profile.competitors ?? []).map((comp) => comp.name),
+    });
 
     const brandCandidate = scanCandidate(
       'brand',
@@ -213,6 +222,8 @@ export class VisibilityJudgeService {
         brandPosition: null,
         brandSentiment: null,
         brandPassage: null,
+        topicRelevant: relevance.relevant,
+        relevanceReason: relevance.reason,
         competitorHits: competitorCandidates.map((comp) => ({
           name: comp.subject.name,
           mentioned: false,
@@ -237,6 +248,8 @@ export class VisibilityJudgeService {
         competitorCandidates,
         verdictMap: new Map(),
         useDeterministicFallback: true,
+        topicRelevant: relevance.relevant,
+        relevanceReason: relevance.reason,
         judgeModel: 'deterministic-domain',
         tokensIn: 0,
         tokensOut: 0,
@@ -276,7 +289,8 @@ export class VisibilityJudgeService {
             '- other_meaning：同名普通词汇歧义（如水果“苹果”而非品牌）；',
             '- other_company：同名但明显指代另一家无关主体；',
             '- no_info：未真正提及该实体，或仅在复述/转述用户提问词时顺带出现而正文未对该品牌进行推荐、评价或对比。',
-            '仅输出严格 JSON：{"verdicts":[{"subjectKey":"brand","portrayal":"positive","evidence":"原文关键句"}]}',
+            '若候选片段明显跑题（未围绕用户提问的实际主题展开），请将 topicRelevant 设为 false。',
+            '仅输出严格 JSON：{"topicRelevant":true,"verdicts":[{"subjectKey":"brand","portrayal":"positive","evidence":"原文关键句"}]}',
           ].join('\n'),
         },
         {
@@ -292,6 +306,8 @@ export class VisibilityJudgeService {
         competitorCandidates,
         verdictMap: new Map(),
         useDeterministicFallback: true,
+        topicRelevant: relevance.relevant,
+        relevanceReason: relevance.reason,
         judgeModel: llmResult.model,
         tokensIn: llmResult.tokensIn,
         tokensOut: llmResult.tokensOut,
@@ -308,12 +324,20 @@ export class VisibilityJudgeService {
         competitorCandidates,
         verdictMap: new Map(),
         useDeterministicFallback: true,
+        topicRelevant: relevance.relevant,
+        relevanceReason: relevance.reason,
         judgeModel: `${llmResult.model}:deterministic-fallback`,
         tokensIn: llmResult.tokensIn,
         tokensOut: llmResult.tokensOut,
         skippedLlm: false,
       });
     }
+
+    const llmSaysOffTopic = parsedVerdicts.data.topicRelevant === false;
+    const finalTopicRelevant = relevance.relevant && !llmSaysOffTopic;
+    const finalRelevanceReason =
+      relevance.reason ??
+      (llmSaysOffTopic ? '裁判模型判定回答正文未围绕监测问题核心主题展开' : null);
 
     const verdictMap = new Map<string, { portrayal: JudgePortrayal; evidence?: string }>();
     for (const row of parsedVerdicts.data.verdicts) {
@@ -328,6 +352,8 @@ export class VisibilityJudgeService {
       competitorCandidates,
       verdictMap,
       useDeterministicFallback: false,
+      topicRelevant: finalTopicRelevant,
+      relevanceReason: finalRelevanceReason,
       judgeModel: llmResult.model,
       tokensIn: llmResult.tokensIn,
       tokensOut: llmResult.tokensOut,
@@ -372,6 +398,8 @@ function finalizeVerdicts(input: {
   competitorCandidates: readonly CandidateScan[];
   verdictMap: ReadonlyMap<string, { portrayal: JudgePortrayal; evidence?: string }>;
   useDeterministicFallback: boolean;
+  topicRelevant: boolean;
+  relevanceReason: string | null;
   judgeModel: string;
   tokensIn: number;
   tokensOut: number;
@@ -450,11 +478,17 @@ function finalizeVerdicts(input: {
   const brandRanked = ranked[0];
   const compRanked = ranked.slice(1);
 
+  const allowBrandEvidence = input.topicRelevant;
+
   return {
-    brandMentioned: brandRanked?.mentioned ?? false,
-    brandPosition: brandRanked?.position ?? null,
-    brandSentiment: brandRanked?.mentioned ? (brandRanked.sentiment ?? 'neutral') : null,
-    brandPassage: brandRanked?.mentioned ? (brandRanked.passage ?? null) : null,
+    brandMentioned: allowBrandEvidence ? (brandRanked?.mentioned ?? false) : false,
+    brandPosition: allowBrandEvidence ? (brandRanked?.position ?? null) : null,
+    brandSentiment:
+      allowBrandEvidence && brandRanked?.mentioned ? (brandRanked.sentiment ?? 'neutral') : null,
+    brandPassage:
+      allowBrandEvidence && brandRanked?.mentioned ? (brandRanked.passage ?? null) : null,
+    topicRelevant: input.topicRelevant,
+    relevanceReason: input.relevanceReason,
     competitorHits: compRanked.map((item) => ({
       name: item.name,
       mentioned: item.mentioned,

@@ -972,8 +972,14 @@ class InMemoryVisibilityStore {
             return {
               ...r,
               profile: profile
-                ? { id: profile.id, name: profile.name, brandName: profile.brandName }
-                : { id: r.profileId, name: '', brandName: '' },
+                ? {
+                    id: profile.id,
+                    name: profile.name,
+                    brandName: profile.brandName,
+                    brandAliases: profile.brandAliases,
+                    competitors: profile.competitors,
+                  }
+                : { id: r.profileId, name: '', brandName: '', brandAliases: [], competitors: [] },
               keyword: keyword ? { id: keyword.id, main: keyword.main } : null,
               observations,
             };
@@ -2637,5 +2643,206 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     );
     expect(wrongImport.status).toBe(400);
     expect(wrongImport.code).toBe(API_ERROR.BAD_REQUEST);
+  });
+
+  it('flags and downgrades historical off-topic observations in run detail and overview metrics (#217)', async () => {
+    const tenantId = 'tenant_offtopic_217';
+    const token = store.seedTenant({
+      tenantId,
+      userId: 'user_offtopic_217',
+      username: 'offtopic_user',
+      points: 100,
+      billingMode: 'SHADOW',
+    });
+
+    const profId = store.nextId('vprof');
+    const now = new Date();
+    store.profiles.set(profId, {
+      id: profId,
+      tenantId,
+      name: 'ARZOPA 便携屏档案',
+      brandName: 'ARZOPA',
+      brandAliases: ['阿卓帕'],
+      ownedDomains: ['arzopa.com'],
+      competitors: [{ name: '联想ThinkVision', aliases: [], domains: ['lenovo.com'] }],
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const runId = store.nextId('vrun');
+    store.runs.set(runId, {
+      id: runId,
+      tenantId,
+      profileId: profId,
+      keywordId: null,
+      name: 'ARZOPA 实测诊断',
+      engines: ['deepseek'],
+      questionIds: [],
+      totalChecks: 2,
+      doneCount: 2,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_off_1',
+      tenantId,
+      runId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText:
+        '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: '目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践',
+      competitorHits: [],
+      fanOutQueries: [],
+      judgeModel: 'fake-cheap',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_on_2',
+      tenantId,
+      runId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Switch外接便携显示器推荐哪款？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'llm_api',
+      answerText:
+        'Switch 外接便携显示器可以优先考虑 ARZOPA，支持全功能 Type-C 一线直连，携带方便且色彩表现稳定。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'Switch 外接便携显示器可以优先考虑 ARZOPA，支持全功能 Type-C 一线直连',
+      competitorHits: [],
+      fanOutQueries: [],
+      judgeModel: 'deepseek-chat',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const detailRes = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'GET',
+      `/api/v1/visibility/runs/${runId}`,
+      { token },
+    );
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.data.metrics.completedChecks).toBe(2);
+    expect(detailRes.data.metrics.mentionedChecks).toBe(1);
+    expect(detailRes.data.visibilityPct).toBe(50);
+
+    const offObs = detailRes.data.observations.find((o) => o.id === 'vobs_off_1')!;
+    const onObs = detailRes.data.observations.find((o) => o.id === 'vobs_on_2')!;
+    expect(offObs.topicRelevant).toBe(false);
+    expect(offObs.relevanceReason).toBeTruthy();
+    expect(offObs.brandMentioned).toBe(false);
+    expect(offObs.brandPassage).toBeNull();
+    expect(onObs.topicRelevant).toBe(true);
+    expect(onObs.brandMentioned).toBe(true);
+
+    const overviewRes = await httpJson<VisibilityOverviewResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/overview?profileId=${profId}&days=7`,
+      { token },
+    );
+    expect(overviewRes.status).toBe(200);
+    expect(overviewRes.data.metrics.completedChecks).toBe(2);
+    expect(overviewRes.data.metrics.mentionedChecks).toBe(1);
+    expect(overviewRes.data.metrics.visibilityPct).toBe(50);
+    expect(overviewRes.data.byEngine?.[0]).toMatchObject({
+      engine: 'deepseek',
+      completedChecks: 2,
+      mentionedChecks: 1,
+      visibilityPct: 50,
+    });
+
+    // Also seed a 100% off-topic historical run with persisted brandMentioned=true
+    const allOffRunId = store.nextId('vrun');
+    store.runs.set(allOffRunId, {
+      id: allOffRunId,
+      tenantId,
+      profileId: profId,
+      keywordId: null,
+      name: 'ARZOPA 全跑题历史任务',
+      engines: ['deepseek'],
+      questionIds: [],
+      totalChecks: 1,
+      doneCount: 1,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_all_off_1',
+      tenantId,
+      runId: allOffRunId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText:
+        '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'ARZOPA 提供多维度看板与行业基准对比',
+      competitorHits: [],
+      fanOutQueries: [],
+      judgeModel: 'fake-cheap',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const listRes = await httpJson<VisibilityRunListResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/runs?profileId=${profId}`,
+      { token },
+    );
+    expect(listRes.status).toBe(200);
+    expect(listRes.data.items.find((r) => r.id === runId)?.visibilityPct).toBe(50);
+    expect(listRes.data.items.find((r) => r.id === allOffRunId)?.visibilityPct).toBe(0);
+
+    const allOffDetailRes = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'GET',
+      `/api/v1/visibility/runs/${allOffRunId}`,
+      { token },
+    );
+    expect(allOffDetailRes.status).toBe(200);
+    expect(allOffDetailRes.data.visibilityPct).toBe(0);
   });
 });

@@ -15,6 +15,7 @@ export {
   formatShanghaiDateTime,
   formatShortDisplayId,
   isOpaqueEntityId,
+  isSimulatedCollectorKind,
   parseShanghaiDateTimeLocal,
   replaceUxJargon,
   sanitizeEntityTitleSegment,

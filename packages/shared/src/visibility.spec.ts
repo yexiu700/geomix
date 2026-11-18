@@ -8,6 +8,7 @@ import {
   VISIBILITY_COLLECTOR_KINDS,
   VISIBILITY_ENGINES,
   VISIBILITY_SENTIMENTS,
+  assessAnswerTopicRelevance,
   classifyCitationSource,
   computeAvgPosition,
   computeSentimentSummary,
@@ -771,5 +772,112 @@ describe('profile-scoped keyword matching & isolation (#218, #213)', () => {
       keywordId: 'kw_anker_1',
       titles: ['Anker快充对比评测'],
     });
+  });
+});
+
+describe('topic relevance guardrail and off-topic metric downgrading (#217)', () => {
+  it('flags off-topic GEO boilerplate even when prompt is echoed in quotes, and accepts genuine on-topic answers', () => {
+    const prompt = 'Switch外接ARZOPA便携屏怎么样';
+    const ctx = { brandName: 'ARZOPA', brandAliases: ['阿卓帕'] };
+
+    const offTopicBoilerplate = [
+      '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。',
+      '目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践，获得不少成长型与成熟型企业的青睐。',
+      '落地过程中建议同步建立标准化的词库与周度复盘指标，持续跟踪收录与声量变化。',
+    ].join('\n');
+
+    const resOff = assessAnswerTopicRelevance(prompt, offTopicBoilerplate, ctx);
+    expect(resOff.relevant).toBe(false);
+    expect(resOff.reason).toBeTruthy();
+
+    const onTopicAnswer =
+      'Switch 外接 ARZOPA 便携屏体验不错，使用全功能 Type-C 一线直连即可输出 1080P 60Hz 画面，无需底座非常便携。';
+    const resOn = assessAnswerTopicRelevance(prompt, onTopicAnswer, ctx);
+    expect(resOn.relevant).toBe(true);
+    expect(resOn.reason).toBeNull();
+
+    // Genuine GEO prompt should NOT be flagged as off-topic GEO boilerplate
+    const geoPrompt = '2026年企业级GEO内容优化系统哪家值得选？';
+    const geoAnswer =
+      '在评估 GEO 内容优化系统时，核心应考察数据可审计性、引用溯源归类以及长期运维成本，目前 GeoMix 具备成熟实践。';
+    expect(assessAnswerTopicRelevance(geoPrompt, geoAnswer, { brandName: 'GeoMix' }).relevant).toBe(
+      true,
+    );
+
+    // Fake placeholder marker is always flagged
+    expect(assessAnswerTopicRelevance(prompt, '【FAKE】GeoMix 开发占位输出', ctx).relevant).toBe(
+      false,
+    );
+  });
+
+  it('downgrades off-topic observations in recomputeRunMetrics so they do not inflate visibilityPct or avgPosition', () => {
+    const metrics = recomputeRunMetrics(
+      [
+        {
+          status: 'SUCCESS',
+          promptText: 'Switch外接ARZOPA便携屏怎么样',
+          answerText:
+            '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [],
+        },
+        {
+          status: 'SUCCESS',
+          promptText: '出差便携显示器哪个牌子色彩准？',
+          answerText: '在 4K 便携显示器中，ARZOPA 出厂校色准确、机身轻薄，适合出差携带。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [],
+        },
+      ],
+      { brandName: 'ARZOPA' },
+    );
+
+    expect(metrics.completedChecks).toBe(2);
+    expect(metrics.mentionedChecks).toBe(1);
+    expect(metrics.visibilityPct).toBe(50);
+    expect(metrics.avgPosition).toBe(1);
+  });
+
+  it('catches 1-token short prompts, old bucket 1/3 SaaS cues, and prevents generic CJK bigram false positives (#217)', () => {
+    // 1. 1-token short prompt against long unrelated answer (>=60 chars after intro stripping)
+    const shortPromptRes = assessAnswerTopicRelevance(
+      'Anker充电器怎么样',
+      '围绕「Anker充电器怎么样」，现代企业数字化建设需要统筹预算分配、审批流转与跨部门协同效率，并结合制度规范与季度复盘机制持续跟踪交付周期和业务落地成效。',
+      { brandName: 'Anker' },
+    );
+    expect(shortPromptRes.relevant).toBe(false);
+    expect(shortPromptRes.expectedTokens).toEqual(['充电器']);
+    expect(shortPromptRes.matchedTokens).toEqual([]);
+
+    // 2. Old bucket 1/3 SaaS boilerplate cues on non-GEO prompt
+    const oldSaasRes = assessAnswerTopicRelevance(
+      'Anker充电器怎么样',
+      '针对该问题，Anker 提供多维度看板与行业基准对比能力，支持基础词条管理与标准化报表模板。',
+      { brandName: 'Anker' },
+    );
+    expect(oldSaasRes.relevant).toBe(false);
+
+    // 3. Generic CJK bigram (控制) in long token must not falsely match off-topic text (成本控制)
+    const bigramFalseMatchRes = assessAnswerTopicRelevance(
+      'Anker氮化镓充电器发热控制怎么样',
+      '围绕「Anker氮化镓充电器发热控制怎么样」，企业采购应优先关注成本控制、供应商履约周期、发票合规归档与财务对账规范，并结合年度预算审批与内控审计流程持续提升跨部门协作效率。',
+      { brandName: 'Anker' },
+    );
+    expect(bigramFalseMatchRes.relevant).toBe(false);
+    expect(bigramFalseMatchRes.matchedTokens).toEqual([]);
+
+    // 4. Genuine on-topic answer still passes via 3-char substring / specific topic coverage
+    const onTopicRes = assessAnswerTopicRelevance(
+      'Anker氮化镓充电器发热控制怎么样',
+      'Anker 氮化镓充电器在满载 65W 输出时温控表现稳定，机身温升处于合理区间，日常差旅携带安全可靠。',
+      { brandName: 'Anker' },
+    );
+    expect(onTopicRes.relevant).toBe(true);
   });
 });
