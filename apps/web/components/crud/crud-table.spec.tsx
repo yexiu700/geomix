@@ -71,6 +71,53 @@ describe('crud table', () => {
     expect(screen.getByText('没有找到匹配的记录')).toBeTruthy();
   });
 
+  it('does not render emptyText while loading is true (#155)', () => {
+    const view = render(
+      <CrudTable
+        rows={[]}
+        columns={[
+          { key: 'name', title: '名称', hideable: false, render: (row: { id: string }) => row.id },
+        ]}
+        total={0}
+        page={1}
+        pageSize={10}
+        loading={true}
+        selectedIds={[]}
+        searchOpen={false}
+        search={search}
+        onSearchOpenChange={() => undefined}
+        onSearch={() => undefined}
+        onPageChange={() => undefined}
+        onSelectionChange={() => undefined}
+        onExport={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    );
+    expect(screen.queryByText('没有找到匹配的记录')).toBeNull();
+    view.rerender(
+      <CrudTable
+        rows={[]}
+        columns={[
+          { key: 'name', title: '名称', hideable: false, render: (row: { id: string }) => row.id },
+        ]}
+        total={0}
+        page={1}
+        pageSize={10}
+        loading={false}
+        selectedIds={[]}
+        searchOpen={false}
+        search={search}
+        onSearchOpenChange={() => undefined}
+        onSearch={() => undefined}
+        onPageChange={() => undefined}
+        onSelectionChange={() => undefined}
+        onExport={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    );
+    expect(screen.getByText('没有找到匹配的记录')).toBeTruthy();
+  });
+
   it('searches, selects and exports from the toolbar', () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: '搜索' }));
@@ -89,7 +136,7 @@ describe('crud table', () => {
     expect(screen.queryByRole('button', { name: '停用' })).toBeNull();
     expect(screen.queryByRole('combobox', { name: '状态筛选' })).toBeNull();
     expect(screen.queryByRole('combobox', { name: '排序方向' })).toBeNull();
-  }, 20_000);
+  });
 
   it('renders working enable, disable, status filter, and sort controls when configured (#69)', () => {
     const onEnable = vi.fn();

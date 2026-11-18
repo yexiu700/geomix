@@ -204,4 +204,76 @@ describe('tab stack', () => {
     expect(restored.prefs.menuCollapsed).toBe(false);
     expect(restored.prefs.submenusAlwaysVisible).toBe(false);
   });
+
+  it('coalesces /material/questions and /material/questions?keywordId=... in-place without duplicate tabs (#206)', () => {
+    let state = openAll(['/dashboard', '/material/keywords']);
+    // Drill down from keywords -> opens filtered tab with sourceId
+    state = reduceShell(state, {
+      type: 'open',
+      href: '/material/questions?keywordId=kw_1',
+      sourceId: '/material/keywords',
+    });
+    state = reduceShell(state, {
+      type: 'draft',
+      id: '/material/questions?keywordId=kw_1',
+      value: '草稿内容',
+    });
+    expect(state.tabs.filter((t) => t.href.startsWith('/material/questions'))).toHaveLength(1);
+
+    // Click sidebar 写作标题 (/material/questions) -> coalesces in-place, clears sourceId, migrates draft
+    state = reduceShell(state, { type: 'open', href: '/material/questions' });
+    const qTabs = state.tabs.filter((t) => t.href.startsWith('/material/questions'));
+    expect(qTabs).toHaveLength(1);
+    expect(qTabs[0]?.id).toBe('/material/questions');
+    expect(qTabs[0]?.title).toBe('写作标题');
+    expect(qTabs[0]?.sourceId).toBeUndefined();
+    expect(state.activeId).toBe('/material/questions');
+    expect(state.drafts['/material/questions']).toBe('草稿内容');
+    expect(state.drafts['/material/questions?keywordId=kw_1']).toBeUndefined();
+
+    // Drill down again to kw_2 -> coalesces in-place with new sourceId and migrates draft
+    state = reduceShell(state, {
+      type: 'open',
+      href: '/material/questions?keywordId=kw_2',
+      sourceId: '/material/keywords',
+    });
+    const qTabs2 = state.tabs.filter((t) => t.href.startsWith('/material/questions'));
+    expect(qTabs2).toHaveLength(1);
+    expect(qTabs2[0]?.id).toBe('/material/questions?keywordId=kw_2');
+    expect(qTabs2[0]?.sourceId).toBe('/material/keywords');
+    expect(state.activeId).toBe('/material/questions?keywordId=kw_2');
+    expect(state.drafts['/material/questions?keywordId=kw_2']).toBe('草稿内容');
+
+    // Drill down to kw_3 without passing sourceId -> preserves existing sourceId
+    state = reduceShell(state, {
+      type: 'open',
+      href: '/material/questions?keywordId=kw_3',
+    });
+    expect(state.tabs.filter((t) => t.href.startsWith('/material/questions'))).toHaveLength(1);
+    expect(state.tabs.find((t) => t.id === '/material/questions?keywordId=kw_3')?.sourceId).toBe(
+      '/material/keywords',
+    );
+  });
+
+  it('deduplicates persisted duplicate /material/questions tabs when loading from storage (#206)', () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      SHELL_STORAGE_KEY,
+      JSON.stringify({
+        tabs: [
+          { href: '/dashboard' },
+          { href: '/material/questions?keywordId=kw_1', sourceId: '/material/keywords' },
+          { href: '/material/questions' },
+        ],
+        activeId: '/material/questions',
+        prefs: { multiTab: true },
+      }),
+    );
+
+    const restored = loadShell(storage);
+    const qTabs = restored.tabs.filter((t) => t.href.startsWith('/material/questions'));
+    expect(qTabs).toHaveLength(1);
+    expect(qTabs[0]?.id).toBe('/material/questions');
+    expect(restored.activeId).toBe('/material/questions');
+  });
 });

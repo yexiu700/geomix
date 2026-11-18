@@ -2,6 +2,7 @@
 
 import {
   PROMPT_MISSING_CONVERSION_WARN,
+  PROMPT_PLACEHOLDERS,
   PROMPT_REWRITE_BRAND_SWAP_WARN,
   PROMPT_TITLE_LOOKS_LIKE_BODY_WARN,
   analyzePromptWarnings,
@@ -134,7 +135,14 @@ function makeGateway() {
 
   const gateway: PromptGateway = {
     async list(query) {
-      const filtered = userItems.filter((item) => !query.kind || item.kind === query.kind);
+      const needle = query.q?.trim().toLowerCase() ?? '';
+      const filtered = userItems.filter(
+        (item) =>
+          (!query.kind || item.kind === query.kind) &&
+          (!needle ||
+            item.name.toLowerCase().includes(needle) ||
+            item.content.toLowerCase().includes(needle)),
+      );
       return {
         items: filtered,
         total: filtered.length,
@@ -253,7 +261,8 @@ describe('PromptScreen', () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain('系统·问题先答');
       expect(document.body.textContent).toContain('系统·手工品牌槽位');
-      expect(document.body.textContent).toContain('含手工槽位·不入随机池');
+      expect(document.body.textContent).toContain('含对比品牌槽位·需先克隆填写');
+      expect(document.body.textContent).not.toContain('含手工槽位·不入随机池');
       // Full body is visible (not just name!)
       expect(document.body.textContent).toContain('先用两句话直接回答{问题}');
     });
@@ -359,5 +368,124 @@ describe('PromptScreen', () => {
     } finally {
       scrollSpy.mockRestore();
     }
+  });
+
+  it('documents all 5 PROMPT_PLACEHOLDERS in the top Alert and shows prompt names & impact in delete modal (#155)', async () => {
+    const { gateway } = makeGateway();
+    render(<PromptScreen title="写作指令" gateway={gateway} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('工程机械选型指南指令');
+    });
+
+    const topAlert = document.querySelector('.ant-alert-warning');
+    expect(topAlert).toBeTruthy();
+    for (const ph of PROMPT_PLACEHOLDERS) {
+      expect(topAlert?.textContent).toContain(ph.token);
+      expect(topAlert?.textContent).toContain(ph.description);
+    }
+
+    // Row-level delete shows the exact prompt name and impact notice
+    const rowDeleteBtns = Array.from(document.querySelectorAll('tbody tr td button')).filter((b) =>
+      (b.textContent ?? '').replace(/\s+/g, '').includes('删除'),
+    );
+    fireEvent.click(rowDeleteBtns[0]!);
+    await waitFor(() => {
+      const dialog = document.querySelector('.ant-modal-content');
+      expect(dialog?.textContent).toContain('「工程机械选型指南指令」');
+      expect(dialog?.textContent).toContain(
+        '删除后不可恢复，历史已生成任务不受影响；进行中的任务引用的指令禁止删除',
+      );
+    });
+    clickBtn('取消');
+
+    // Bulk delete shows selected prompt names
+    const checkboxes = Array.from(
+      document.querySelectorAll('tbody input[type="checkbox"]'),
+    ) as HTMLInputElement[];
+    fireEvent.click(checkboxes[0]!);
+    fireEvent.click(checkboxes[1]!);
+    clickBtn('删除');
+    await waitFor(() => {
+      const dialog = document.querySelector('.ant-modal-content');
+      expect(dialog?.textContent).toContain('「工程机械选型指南指令」');
+      expect(dialog?.textContent).toContain('「简明咨询标题指令」');
+    });
+  });
+
+  it('prevents empty-state flash on 清空 after 0-result search and ignores stale out-of-order list responses (#155)', async () => {
+    const { gateway } = makeGateway();
+    const baseList = gateway.list;
+    const heldResolvers: Array<{ q?: string; release: () => void }> = [];
+    let holdPattern: 'NONE' | 'CLEAR' | 'STALE_SEARCH' = 'NONE';
+
+    gateway.list = async (query) => {
+      const result = await baseList(query);
+      if (
+        (holdPattern === 'CLEAR' && !query.q) ||
+        (holdPattern === 'STALE_SEARCH' && Boolean(query.q))
+      ) {
+        await new Promise<void>((resolve) => {
+          heldResolvers.push({ q: query.q, release: resolve });
+        });
+      }
+      return result;
+    };
+
+    render(<PromptScreen title="写作指令" gateway={gateway} />);
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('工程机械选型指南指令');
+    });
+
+    // Search for a non-existent keyword -> shows empty state
+    clickBtn('搜索');
+    const searchInput = document.querySelector(
+      'input[aria-label="搜索关键字"]',
+    ) as HTMLInputElement;
+    fireEvent.change(searchInput, { target: { value: '完全不存在的指令' } });
+    clickBtn('查询');
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('没有找到匹配的记录');
+    });
+
+    // Hold the cleared list request and click 清空 -> loading must suppress emptyText immediately
+    holdPattern = 'CLEAR';
+    clickBtn('清空');
+
+    expect(document.body.textContent).not.toContain('没有找到匹配的记录');
+
+    await waitFor(() => {
+      expect(heldResolvers.some((entry) => !entry.q)).toBe(true);
+    });
+    await act(async () => {
+      heldResolvers.splice(0).forEach((entry) => entry.release());
+    });
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('工程机械选型指南指令');
+      expect(document.body.textContent).not.toContain('没有找到匹配的记录');
+    });
+
+    // Trigger a slow search, then immediately clear before it finishes;
+    // resolving the stale 0-result search afterwards must not overwrite the cleared list.
+    holdPattern = 'STALE_SEARCH';
+    fireEvent.change(searchInput, { target: { value: '过期慢查询' } });
+    clickBtn('查询');
+    await waitFor(() => {
+      expect(heldResolvers.some((entry) => entry.q === '过期慢查询')).toBe(true);
+    });
+
+    holdPattern = 'NONE';
+    clickBtn('清空');
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('工程机械选型指南指令');
+    });
+
+    await act(async () => {
+      heldResolvers.splice(0).forEach((entry) => entry.release());
+    });
+    expect(document.body.textContent).toContain('工程机械选型指南指令');
+    expect(document.body.textContent).not.toContain('没有找到匹配的记录');
   });
 });

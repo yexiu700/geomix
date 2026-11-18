@@ -185,7 +185,10 @@ describe('QuestionScreen', () => {
     await screen.findByText('工业机器人哪家服务好？');
     await clickBtn('添加');
     await clickBtn('确定');
-    expect(await screen.findByText('请选择蒸馏主词')).toBeTruthy();
+    await waitFor(() => {
+      const dialog = screen.getByRole('dialog', { name: '添加写作标题' });
+      expect(dialog.querySelector('.ant-alert-error')?.textContent).toContain('请选择蒸馏主词');
+    });
     await clickBtn('关闭');
 
     // Edit first row
@@ -254,9 +257,11 @@ describe('QuestionScreen', () => {
     expect(addFooterBtns).toEqual(['取消', '重置', '确定']);
 
     await clickBtn('确定');
-    expect(await screen.findByText('请选择蒸馏主词')).toBeTruthy();
+    await waitFor(() => {
+      expect(addDialog.querySelector('.ant-alert-error')?.textContent).toContain('请选择蒸馏主词');
+    });
     await clickBtn('重置');
-    expect(screen.queryByText('请选择蒸馏主词')).toBeNull();
+    expect(addDialog.querySelector('.ant-alert-error')).toBeNull();
 
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => {
@@ -347,5 +352,51 @@ describe('QuestionScreen', () => {
     await waitFor(() => {
       expect(screen.getByText('Anker氮化镓充电器')).toBeTruthy();
     });
+  });
+
+  it('keeps 创建日期 range in a nowrap group, uses UTC+8 (+08:00) boundaries, and omits 不选择 from required * 蒸馏主词 select (#206, #203)', async () => {
+    const gateway = createGatewayMock();
+    render(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('工业机器人哪家服务好？');
+
+    const dateRange = document.querySelector('[data-testid="question-date-range"]') as HTMLElement;
+    expect(dateRange).toBeTruthy();
+    expect(dateRange.style.display).toBe('inline-flex');
+    expect(dateRange.style.flexWrap).toBe('nowrap');
+    expect(dateRange.style.whiteSpace).toBe('nowrap');
+    expect(dateRange.textContent).toContain('创建日期：');
+    expect(dateRange.textContent).toContain('至');
+
+    const startInput = screen.getByLabelText('开始日期') as HTMLInputElement;
+    const endInput = screen.getByLabelText('结束日期') as HTMLInputElement;
+    fireEvent.change(startInput, { target: { value: '2026-11-18' } });
+    fireEvent.change(endInput, { target: { value: '2026-11-18' } });
+
+    await waitFor(() => {
+      const last = gateway.queries.at(-1);
+      expect(last?.createdAtFrom).toBe('2026-11-18T00:00:00+08:00');
+      expect(last?.createdAtTo).toBe('2026-11-18T23:59:59.999+08:00');
+    });
+    expect(startInput.value).toBe('2026-11-18');
+    expect(endInput.value).toBe('2026-11-18');
+
+    await clickBtn('添加');
+    const addDialog = screen.getByRole('dialog', { name: '添加写作标题' });
+    expect(addDialog.textContent).toContain('请选择蒸馏主词');
+    const keywordSelect = screen.getByRole('combobox', { name: '蒸馏主词' });
+    fireEvent.mouseDown(keywordSelect);
+    await waitFor(() => {
+      expect(document.querySelector('.ant-select-dropdown')).toBeTruthy();
+    });
+    expect(document.querySelector('.ant-select-dropdown')?.textContent).not.toContain('不选择');
   });
 });

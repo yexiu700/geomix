@@ -159,7 +159,7 @@ export const UX_TERMS = {
   billingShadow: '免费体验期',
   billingStrict: '正式计费',
   manualSlotBadge: '含对比品牌槽位·仅手动选用',
-  systemManualSlotBadge: '含手工槽位·不入随机池',
+  systemManualSlotBadge: '含对比品牌槽位·需先克隆填写',
   postGenerateArticleStatus: '生成后文章状态',
   viewSavedArticle: '查看文章',
   exportEmptyNotice: '当前列表暂无可导出数据',
