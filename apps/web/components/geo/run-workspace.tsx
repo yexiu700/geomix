@@ -14,6 +14,7 @@ import type { JSX, KeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
 import { AnswerLens, type AnswerLensHandle } from './answer-lens';
+import { CitationTrace } from './citation-trace';
 import {
   EngineChip,
   SentimentDot,
@@ -336,8 +337,15 @@ export function RunWorkspace({
 
       {/* Main Content */}
       {viewMode === 'topology' ? (
-        <div style={{ padding: 24 }}>
-          <SignalEmpty title="引用拓扑即将接入" />
+        <div style={{ padding: 16 }}>
+          <CitationTrace
+            observations={filteredObservations}
+            loading={loading}
+            onSelectObservation={(id) => {
+              setSelectedId(id);
+              setViewMode('detail');
+            }}
+          />
         </div>
       ) : (
         <div className="gm-run-ws-main">
