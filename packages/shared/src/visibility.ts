@@ -1497,6 +1497,7 @@ export type VisibilityTrendPoint = {
   completedChecks: number;
   mentionedChecks: number;
   visibilityPct: number;
+  shareOfVoicePct?: number | null;
 };
 
 export type VisibilityEngineBreakdownItem = {
@@ -1507,11 +1508,20 @@ export type VisibilityEngineBreakdownItem = {
   avgPosition: number | null;
 };
 
+export type VisibilityBrandShareOfVoiceGroup = {
+  brandName: string;
+  completedChecks: number;
+  mentionedChecks: number;
+  visibilityPct: number;
+  shareOfVoice: ShareOfVoiceSummary;
+};
+
 export type VisibilityOverviewResponse = {
   profileId: string | null;
   metrics: RecomputedRunMetrics;
   trend: VisibilityTrendPoint[];
   byEngine?: VisibilityEngineBreakdownItem[];
+  brandGroups?: VisibilityBrandShareOfVoiceGroup[];
 };
 
 export const visibilityCitationQuerySchema = z.object({

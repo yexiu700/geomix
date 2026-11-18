@@ -23,6 +23,7 @@ import {
   type VisibilityOpportunityGapItem,
   type VisibilityOverviewResponse,
   type VisibilityProfileRecord,
+  type VisibilityBrandShareOfVoiceGroup,
   type VisibilityTrendPoint,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Space, Table, Tabs, Tooltip, Typography, message } from 'antd';
@@ -33,6 +34,7 @@ import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { useSyncTabTitle } from '../../lib/ux-foundation';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
+import { TableClampText } from '../crud/table-clamp-text';
 import {
   EngineChipList,
   SignalEmpty,
@@ -41,7 +43,6 @@ import {
   SignalPill,
   SignalSkeleton,
   SourceKindChip,
-  TruncText,
 } from '../geo/primitives';
 import { SonarDial } from '../geo/sonar-dial';
 
@@ -97,9 +98,7 @@ type OverviewFilterState = {
   to: string;
 };
 
-type TrendSeriesPoint = VisibilityTrendPoint & {
-  shareOfVoicePct?: number;
-};
+type TrendSeriesPoint = VisibilityTrendPoint;
 
 function readInitialProfileId(href?: string): string | undefined {
   if (!href) return undefined;
@@ -157,14 +156,20 @@ function normalizePageSize(val: number): CrudPageSize {
   return 10;
 }
 
+function getPointSovPct(pt: TrendSeriesPoint): number | null {
+  if (pt.completedChecks <= 0) return null;
+  if (typeof pt.shareOfVoicePct === 'number' && Number.isFinite(pt.shareOfVoicePct)) {
+    return pt.shareOfVoicePct;
+  }
+  return null;
+}
+
 function VisibilityTrendChartSvg({
   points,
-  periodSoVPct,
   activeIndex,
   onHoverIndex,
 }: {
   points: TrendSeriesPoint[];
-  periodSoVPct: number;
   activeIndex: number | null;
   onHoverIndex: (idx: number | null) => void;
 }) {
@@ -200,13 +205,23 @@ function VisibilityTrendChartSvg({
     })
     .join(' ');
 
-  const sovPolyline = points
-    .map((pt, idx) => {
-      const cx = padLeft + idx * colW + colW / 2;
-      const sov = typeof pt.shareOfVoicePct === 'number' ? pt.shareOfVoicePct : periodSoVPct;
-      return `${cx},${yPct(sov)}`;
-    })
-    .join(' ');
+  const sovSegments: string[][] = [];
+  let currentSovSegment: string[] = [];
+  points.forEach((pt, idx) => {
+    const sov = getPointSovPct(pt);
+    if (sov === null) {
+      if (currentSovSegment.length > 0) {
+        sovSegments.push(currentSovSegment);
+        currentSovSegment = [];
+      }
+      return;
+    }
+    const cx = padLeft + idx * colW + colW / 2;
+    currentSovSegment.push(`${cx},${yPct(sov)}`);
+  });
+  if (currentSovSegment.length > 0) {
+    sovSegments.push(currentSovSegment);
+  }
 
   const labelStep = points.length > 16 ? 4 : points.length > 9 ? 2 : 1;
 
@@ -300,16 +315,20 @@ function VisibilityTrendChartSvg({
         );
       })}
 
-      {/* Share of Voice % polyline */}
-      {points.length > 1 ? (
-        <polyline
-          fill="none"
-          stroke={GM.chart.c1}
-          strokeWidth="1.5"
-          strokeDasharray="4 3"
-          points={sovPolyline}
-        />
-      ) : null}
+      {/* Share of Voice % dashed polylines (gapped when sample count is 0) */}
+      {sovSegments.map((seg, segIdx) =>
+        seg.length > 1 ? (
+          <polyline
+            key={`sov-seg-${segIdx}`}
+            data-testid="visibility-sov-line"
+            fill="none"
+            stroke={GM.chart.c1}
+            strokeWidth="1.5"
+            strokeDasharray="4 3"
+            points={seg.join(' ')}
+          />
+        ) : null,
+      )}
 
       {/* Visibility % solid polyline */}
       {points.length > 1 ? (
@@ -320,19 +339,22 @@ function VisibilityTrendChartSvg({
       {points.map((pt, idx) => {
         const cx = padLeft + idx * colW + colW / 2;
         const cy = yPct(pt.visibilityPct);
-        const sov = typeof pt.shareOfVoicePct === 'number' ? pt.shareOfVoicePct : periodSoVPct;
+        const sov = getPointSovPct(pt);
         const isHovered = activeIndex === idx;
         return (
           <g key={`${pt.date}-nodes`} onMouseEnter={() => onHoverIndex(idx)}>
-            <circle
-              cx={cx}
-              cy={yPct(sov)}
-              r={isHovered ? 4.5 : 3}
-              fill={GM.bg.surface}
-              stroke={GM.chart.c1}
-              strokeWidth="1.5"
-              className="gm-trend-node"
-            />
+            {sov !== null ? (
+              <circle
+                data-testid={`visibility-sov-node-${pt.date}`}
+                cx={cx}
+                cy={yPct(sov)}
+                r={isHovered ? 4.5 : 3}
+                fill={GM.bg.surface}
+                stroke={GM.chart.c1}
+                strokeWidth="1.5"
+                className="gm-trend-node"
+              />
+            ) : null}
             <circle
               cx={cx}
               cy={cy}
@@ -913,22 +935,50 @@ export function VisibilityOverviewScreen({
 
       {/* Top Filter Bar */}
       <div className="gm-filterbar">
-        <select
-          aria-label="看板监测档案"
-          style={{ ...COMPACT_SELECT_STYLE, width: 190 }}
-          value={filterDraft.profileId}
-          onChange={(e) => {
-            const nextProfileId = e.target.value;
-            setFilterDraft((curr) => ({ ...curr, profileId: nextProfileId }));
-          }}
-        >
-          <option value="">全部监测档案</option>
-          {profiles.map((prof) => (
-            <option key={prof.id} value={prof.id}>
-              {prof.name}（{prof.brandName}）
-            </option>
-          ))}
-        </select>
+        {(() => {
+          const activeProf = profiles.find((p) => p.id === filterDraft.profileId);
+          const profileTitle = activeProf
+            ? `${activeProf.name}（${activeProf.brandName}）`
+            : '全部监测档案';
+          return (
+            <select
+              aria-label="看板监测档案"
+              title={profileTitle}
+              style={{
+                ...COMPACT_SELECT_STYLE,
+                minWidth: 220,
+                maxWidth: 320,
+                width: 'auto',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              value={filterDraft.profileId}
+              onChange={(e) => {
+                const nextProfileId = e.target.value;
+                setFilterError(null);
+                setCitationPage(1);
+                const nextDraft: OverviewFilterState = {
+                  ...filterDraft,
+                  profileId: nextProfileId,
+                };
+                setFilterDraft(nextDraft);
+                if (nextDraft.from && nextDraft.to && nextDraft.from > nextDraft.to) {
+                  setAppliedFilter((curr) => ({ ...curr, profileId: nextProfileId }));
+                } else {
+                  setAppliedFilter(nextDraft);
+                }
+              }}
+            >
+              <option value="">全部监测档案</option>
+              {profiles.map((prof) => (
+                <option key={prof.id} value={prof.id}>
+                  {prof.name}（{prof.brandName}）
+                </option>
+              ))}
+            </select>
+          );
+        })()}
 
         <select
           aria-label="看板AI引擎"
@@ -1154,7 +1204,11 @@ export function VisibilityOverviewScreen({
                 <div className="gm-panel-title">可见度与声量变化趋势</div>
                 <div className="gm-panel-sub gm-num">
                   {activeTrendPoint
-                    ? `${activeTrendPoint.date}：检测 ${activeTrendPoint.completedChecks} 次 · 提及 ${activeTrendPoint.mentionedChecks} 次 · 提及率 ${activeTrendPoint.visibilityPct.toFixed(1)}%`
+                    ? `${activeTrendPoint.date}：检测 ${activeTrendPoint.completedChecks} 次 · 提及 ${activeTrendPoint.mentionedChecks} 次 · 提及率 ${activeTrendPoint.visibilityPct.toFixed(1)}% · 声量占比 ${
+                        getPointSovPct(activeTrendPoint) !== null
+                          ? `${getPointSovPct(activeTrendPoint)!.toFixed(1)}%`
+                          : '—'
+                      }`
                     : '展示周期内每日品牌提及率（实线）、声量占比（虚线）与有效检测量（柱状）'}
                 </div>
               </div>
@@ -1208,7 +1262,6 @@ export function VisibilityOverviewScreen({
             ) : (
               <VisibilityTrendChartSvg
                 points={dailyTrendSeries}
-                periodSoVPct={metrics.shareOfVoice.brandSharePct}
                 activeIndex={hoveredTrendIdx}
                 onHoverIndex={setHoveredTrendIdx}
               />
@@ -1223,67 +1276,124 @@ export function VisibilityOverviewScreen({
                 <div className="gm-panel-title" style={{ marginBottom: 8 }}>
                   品牌 vs 竞品声量对比榜（Share of Voice）
                 </div>
-                {metrics.shareOfVoice.entries.length === 0 ? (
-                  <SignalEmpty title="暂无品牌与竞品对比数据" />
-                ) : (
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    {metrics.shareOfVoice.entries.map((entry) => {
-                      const visPct = computeVisibilityPct(entry.mentions, metrics.completedChecks);
-                      return (
-                        <Tooltip
-                          key={`${entry.isBrand ? 'brand' : 'comp'}-${entry.name}`}
-                          title={`提及 ${entry.mentions} 次 · 可见率 ${visPct.toFixed(1)}%`}
+                {(() => {
+                  const brandGroups: VisibilityBrandShareOfVoiceGroup[] =
+                    overviewData.brandGroups ?? [];
+                  const renderSovRow = (
+                    entry: RecomputedRunMetrics['shareOfVoice']['entries'][number],
+                    idx: number,
+                    denominatorChecks: number,
+                  ) => {
+                    const visPct = computeVisibilityPct(entry.mentions, denominatorChecks);
+                    return (
+                      <Tooltip
+                        key={`${entry.isBrand ? 'brand' : 'comp'}-${entry.name}-${idx}`}
+                        title={`提及 ${entry.mentions} 次 · 可见率 ${visPct.toFixed(1)}%`}
+                      >
+                        <div
+                          data-testid={
+                            entry.isBrand ? 'sov-brand-row' : `sov-comp-row-${entry.name}`
+                          }
+                          className="gm-sov-row"
                         >
                           <div
-                            data-testid={
-                              entry.isBrand ? 'sov-brand-row' : `sov-comp-row-${entry.name}`
-                            }
-                            className="gm-sov-row"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              minWidth: 0,
+                            }}
+                          >
+                            <Tooltip title={entry.name}>
+                              <span
+                                className="gm-clamp-1"
+                                style={{ fontSize: 13, color: GM.fg.f1 }}
+                              >
+                                {entry.name}
+                              </span>
+                            </Tooltip>
+                            {entry.isBrand ? <SignalPill tone="cited">我方</SignalPill> : null}
+                          </div>
+                          <div className="gm-sov-track">
+                            <div
+                              className="gm-sov-fill"
+                              style={{
+                                width: `${Math.max(0, Math.min(100, entry.sharePct))}%`,
+                                background: entry.isBrand ? GM.sig.cited : GM.sig.competitor,
+                              }}
+                            />
+                          </div>
+                          <span
+                            className="gm-num"
+                            style={{
+                              fontSize: 12,
+                              textAlign: 'right',
+                              color: entry.isBrand ? GM.sig.cited : GM.fg.f2,
+                            }}
+                          >
+                            <span className="gm-sr-only">{`声量 ${entry.sharePct.toFixed(1)}%`}</span>
+                            <span aria-hidden="true">{entry.sharePct.toFixed(1)}%</span>
+                          </span>
+                        </div>
+                      </Tooltip>
+                    );
+                  };
+
+                  if (brandGroups.length > 1) {
+                    return (
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {brandGroups.map((group) => (
+                          <div
+                            key={group.brandName}
+                            data-testid={`sov-group-${group.brandName}`}
+                            style={{
+                              display: 'grid',
+                              gap: 4,
+                              padding: '8px 10px',
+                              borderRadius: 8,
+                              border: '1px solid var(--gm-line-1)',
+                              background: 'var(--gm-bg-elevated)',
+                            }}
                           >
                             <div
                               style={{
                                 display: 'flex',
+                                justifyContent: 'space-between',
                                 alignItems: 'center',
-                                gap: 4,
-                                minWidth: 0,
+                                gap: 8,
+                                flexWrap: 'wrap',
+                                marginBottom: 2,
                               }}
                             >
-                              <Tooltip title={entry.name}>
-                                <span
-                                  className="gm-clamp-1"
-                                  style={{ fontSize: 13, color: GM.fg.f1 }}
-                                >
-                                  {entry.name}
-                                </span>
-                              </Tooltip>
-                              {entry.isBrand ? <SignalPill tone="cited">我方</SignalPill> : null}
+                              <span style={{ fontSize: 12, fontWeight: 600, color: GM.fg.f1 }}>
+                                {group.brandName}
+                              </span>
+                              <span className="gm-num" style={{ fontSize: 11, color: GM.fg.f3 }}>
+                                观测 {group.completedChecks} 次 · 提及率{' '}
+                                {group.visibilityPct.toFixed(1)}%
+                              </span>
                             </div>
-                            <div className="gm-sov-track">
-                              <div
-                                className="gm-sov-fill"
-                                style={{
-                                  width: `${Math.max(0, Math.min(100, entry.sharePct))}%`,
-                                  background: entry.isBrand ? GM.sig.cited : GM.sig.competitor,
-                                }}
-                              />
-                            </div>
-                            <span
-                              className="gm-num"
-                              style={{
-                                fontSize: 12,
-                                textAlign: 'right',
-                                color: entry.isBrand ? GM.sig.cited : GM.fg.f2,
-                              }}
-                            >
-                              <span className="gm-sr-only">{`声量 ${entry.sharePct.toFixed(1)}%`}</span>
-                              <span aria-hidden="true">{entry.sharePct.toFixed(1)}%</span>
-                            </span>
+                            {group.shareOfVoice.entries.map((entry, idx) =>
+                              renderSovRow(entry, idx, group.completedChecks),
+                            )}
                           </div>
-                        </Tooltip>
-                      );
-                    })}
-                  </div>
-                )}
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  if (metrics.shareOfVoice.entries.length === 0) {
+                    return <SignalEmpty title="暂无品牌与竞品对比数据" />;
+                  }
+
+                  return (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      {metrics.shareOfVoice.entries.map((entry, idx) =>
+                        renderSovRow(entry, idx, metrics.completedChecks),
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Right: Sentiment Distribution */}
@@ -1443,7 +1553,7 @@ export function VisibilityOverviewScreen({
                         size="middle"
                         loading={citationsLoading}
                         dataSource={citationsData.items}
-                        scroll={{ x: 740 }}
+                        scroll={{ x: 980 }}
                         locale={{
                           emptyText: (
                             <SignalEmpty title="当前筛选条件下暂无 AI 引用信源记录，完成可见度监测后将自动汇总高权重引用域名与具体落地页" />
@@ -1468,6 +1578,7 @@ export function VisibilityOverviewScreen({
                             title: '排名',
                             width: 64,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (_val, _row, index) => (
                               <span className="gm-num" style={{ color: GM.fg.f3 }}>
                                 #{(citationPage - 1) * citationPageSize + index + 1}
@@ -1479,6 +1590,7 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'domain',
                             title: '引用域名',
                             width: 220,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (domain: string) => {
                               const truncated =
                                 domain.length > 40 ? truncateMiddle(domain, 40) : domain;
@@ -1500,6 +1612,7 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'sourceKind',
                             title: '信源分类',
                             width: 120,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (kind: CitationSourceKind) => <SourceKindChip kind={kind} />,
                           },
                           {
@@ -1508,6 +1621,7 @@ export function VisibilityOverviewScreen({
                             title: '被引用次数',
                             width: 120,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (count: number) => {
                               const pct =
                                 maxCitationCount > 0
@@ -1529,11 +1643,14 @@ export function VisibilityOverviewScreen({
                             title: '覆盖问题数',
                             width: 110,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (count: number) => <span className="gm-num">{count} 题</span>,
                           },
                           {
                             key: 'topUrls',
                             title: '热门被引用页面（Top URLs）',
+                            width: 340,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (_val, row) => {
                               if (row.topUrls.length === 0) {
                                 return <span style={{ color: GM.fg.f3 }}>—</span>;
@@ -1631,7 +1748,14 @@ export function VisibilityOverviewScreen({
                       <span style={{ fontSize: 13, color: GM.fg.f2 }}>目标主词：</span>
                       <select
                         aria-label="目标主词"
-                        style={{ ...COMPACT_SELECT_STYLE, minWidth: 180 }}
+                        style={{
+                          ...COMPACT_SELECT_STYLE,
+                          minWidth: 180,
+                          maxWidth: 280,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
                         value={selectedKeywordId}
                         disabled={keywords.length === 0 || readOnly}
                         onChange={(e) => setSelectedKeywordId(e.target.value)}
@@ -1690,7 +1814,7 @@ export function VisibilityOverviewScreen({
                         loading={opportunitiesLoading}
                         dataSource={opportunitiesData.gaps}
                         pagination={false}
-                        scroll={{ x: 680 }}
+                        scroll={{ x: 920 }}
                         locale={{
                           emptyText: (
                             <SignalEmpty title="当前筛选条件下暂无竞品命中但本品牌未提及的缺口问题" />
@@ -1701,6 +1825,7 @@ export function VisibilityOverviewScreen({
                             key: 'select',
                             title: '选择',
                             width: 56,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (_val, row) => (
                               <Checkbox
                                 aria-label={`勾选缺口问题-${row.promptText}`}
@@ -1716,10 +1841,16 @@ export function VisibilityOverviewScreen({
                             key: 'promptText',
                             dataIndex: 'promptText',
                             title: '缺口问题（Prompt）',
+                            width: 340,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (text: string) => (
-                              <span style={{ color: GM.fg.f1, fontWeight: 500 }}>
-                                <TruncText text={text} lines={2} />
-                              </span>
+                              <TableClampText
+                                text={text}
+                                lines={2}
+                                strong
+                                maxWidth={320}
+                                style={{ color: GM.fg.f1 }}
+                              />
                             ),
                           },
                           {
@@ -1727,6 +1858,7 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'competitors',
                             title: '命中竞品',
                             width: 220,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (comps: string[]) => (
                               <Space size={[4, 4]} wrap>
                                 {comps.slice(0, 3).map((c) => (
@@ -1751,6 +1883,7 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'engines',
                             title: '出现引擎',
                             width: 200,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (engines: VisibilityEngineKey[]) => (
                               <EngineChipList engines={engines} max={3} />
                             ),
@@ -1761,6 +1894,7 @@ export function VisibilityOverviewScreen({
                             title: '出现次数',
                             width: 96,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (count: number) => <span className="gm-num">{count} 次</span>,
                           },
                         ]}
@@ -1780,7 +1914,7 @@ export function VisibilityOverviewScreen({
                         loading={opportunitiesLoading}
                         dataSource={opportunitiesData.fanOutQueries}
                         pagination={false}
-                        scroll={{ x: 680 }}
+                        scroll={{ x: 1040 }}
                         locale={{
                           emptyText: (
                             <SignalEmpty title="当前筛选条件下暂无 AI 引擎搜索拆解词（Query Fan-Out）记录" />
@@ -1791,6 +1925,7 @@ export function VisibilityOverviewScreen({
                             key: 'select',
                             title: '选择',
                             width: 56,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (_val, row) => (
                               <Checkbox
                                 aria-label={`勾选拆解词-${row.query}`}
@@ -1807,8 +1942,15 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'query',
                             title: '搜索拆解词（Fan-Out Query）',
                             width: 240,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (q: string) => (
-                              <span style={{ color: GM.fg.f1, fontWeight: 500 }}>{q}</span>
+                              <TableClampText
+                                text={q}
+                                lines={2}
+                                strong
+                                maxWidth={224}
+                                style={{ color: GM.fg.f1 }}
+                              />
                             ),
                           },
                           {
@@ -1817,6 +1959,7 @@ export function VisibilityOverviewScreen({
                             title: '出现频次',
                             width: 96,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (freq: number) => (
                               <SignalPill tone="info">
                                 <span className="gm-num">{freq} 次</span>
@@ -1829,6 +1972,7 @@ export function VisibilityOverviewScreen({
                             title: '品牌覆盖率',
                             width: 136,
                             align: 'right',
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (pct?: number) => {
                               if (typeof pct !== 'number') {
                                 return <span style={{ color: GM.fg.f3 }}>—</span>;
@@ -1850,6 +1994,7 @@ export function VisibilityOverviewScreen({
                             dataIndex: 'engines',
                             title: '引擎',
                             width: 180,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (engines: VisibilityEngineKey[]) => (
                               <EngineChipList engines={engines} max={3} />
                             ),
@@ -1858,11 +2003,16 @@ export function VisibilityOverviewScreen({
                             key: 'sourcePrompts',
                             dataIndex: 'sourcePrompts',
                             title: '来源问题预览',
+                            width: 340,
+                            onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }),
                             render: (prompts: string[]) =>
                               prompts.length > 0 ? (
-                                <span style={{ color: GM.fg.f3, fontSize: 12 }}>
-                                  <TruncText text={prompts.join('；')} lines={2} />
-                                </span>
+                                <TableClampText
+                                  text={prompts.join('；')}
+                                  lines={2}
+                                  maxWidth={320}
+                                  style={{ color: GM.fg.f3, fontSize: 12 }}
+                                />
                               ) : (
                                 <span style={{ color: GM.fg.f3 }}>—</span>
                               ),

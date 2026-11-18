@@ -1264,6 +1264,12 @@ input:not([class*='ant-']):hover {
   margin-bottom: 16px;
 }
 
+.gm-filterbar select {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .gm-day-pill {
   height: 26px;
   padding: 0 10px;
