@@ -1,7 +1,11 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { PrismaClient } = require('@prisma/client');
+const { createRequire } = require('node:module');
+const path = require('node:path');
+
+const dbRequire = createRequire(path.resolve(__dirname, '../../packages/db/package.json'));
+const { PrismaClient } = dbRequire('@prisma/client');
 
 function encodeBase64Url(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
