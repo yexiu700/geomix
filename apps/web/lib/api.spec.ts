@@ -1,6 +1,6 @@
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadAccount, refreshAccessToken } from './api';
+import { loadAccount, postJson, refreshAccessToken } from './api';
 import { saveSession, type SessionStorageLike } from './session';
 
 function memoryStorage(): SessionStorageLike {
@@ -100,5 +100,20 @@ describe('account session', () => {
     );
     await expect(loadAccount(storage)).resolves.toEqual({ status: 'offline' });
     await expect(refreshAccessToken(storage)).resolves.toBeNull();
+  });
+
+  it('forwards AbortSignal to fetch in postJson', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal);
+      return jsonResponse({ code: 0, msg: 'ok', data: { ok: true } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await postJson<{ ok: boolean }>('/auth/captcha', {}, undefined, {
+      signal: controller.signal,
+    });
+    expect(res).toEqual({ code: 0, msg: 'ok', data: { ok: true } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { LoginPanel } from './login-panel';
+import { CAPTCHA_LOAD_TIMEOUT_MS, LoginPanel } from './login-panel';
 
 const replaceMock = vi.fn();
 const postJsonMock = vi.fn();
@@ -10,6 +11,9 @@ const loadAccountMock = vi.fn();
 
 const routerMock = { replace: replaceMock };
 const searchParamsMock = new URLSearchParams();
+
+const TINY_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => routerMock,
@@ -38,6 +42,7 @@ beforeAll(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   window.sessionStorage.clear();
   replaceMock.mockReset();
@@ -77,7 +82,7 @@ describe('LoginPanel captcha readiness (#64)', () => {
     // Clicking while disabled does not send an empty captchaId to /auth/login
     fireEvent.click(submitBtn);
     expect(postJsonMock).toHaveBeenCalledTimes(1);
-    expect(postJsonMock).toHaveBeenCalledWith('/auth/captcha', {});
+    expect(postJsonMock.mock.calls[0]?.slice(0, 2)).toEqual(['/auth/captcha', {}]);
 
     // Resolve captcha
     resolveCaptcha({
@@ -85,16 +90,19 @@ describe('LoginPanel captcha readiness (#64)', () => {
       msg: 'ok',
       data: {
         captchaId: 'cap_ready_123',
-        image:
-          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        image: TINY_PNG,
       },
     });
 
-    await waitFor(() => {
-      expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
-        false,
-      );
-    });
+    await waitFor(
+      () => {
+        expect(screen.queryByRole('status')).toBeNull();
+      },
+      { timeout: 5000 },
+    );
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
     expect(screen.getByRole('img', { name: '验证码' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'demo' } });
@@ -104,14 +112,239 @@ describe('LoginPanel captcha readiness (#64)', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
-    await waitFor(() => {
-      expect(postJsonMock).toHaveBeenCalledWith('/auth/login', {
-        username: 'demo',
-        password: 'geomix-demo-dev',
-        captchaCode: '0000',
-        captchaId: 'cap_ready_123',
-      });
-    });
+    await waitFor(
+      () => {
+        expect(postJsonMock).toHaveBeenCalledWith('/auth/login', {
+          username: 'demo',
+          password: 'geomix-demo-dev',
+          captchaCode: '0000',
+          captchaId: 'cap_ready_123',
+        });
+      },
+      { timeout: 5000 },
+    );
     expect(replaceMock).toHaveBeenCalledWith('/dashboard');
+  });
+});
+
+describe('LoginPanel captcha abort, timeout and retry recovery (#126)', () => {
+  it('auto-retries once when initial captcha request is aborted during navigation and succeeds', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
+        }
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: 'cap_retry_ok', image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(<LoginPanel />);
+
+    await waitFor(
+      () => {
+        expect(container.querySelector('[role="img"][aria-label="验证码"]')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+    expect(calls).toBe(2);
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole('button', { name: '换一张' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('shows clickable retry prompt and unlocks 换一张 when captcha loading fails persistently', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        if (calls <= 2) {
+          return Promise.reject(new DOMException('Aborted', 'AbortError'));
+        }
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: 'cap_manual_retry', image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(<LoginPanel />);
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText('验证码加载失败，点击重试')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+    const retryBtn = screen.getByRole('button', { name: '验证码加载失败，点击重试' });
+    expect(screen.queryByText(/正在加载验证码/)).toBeNull();
+    expect((screen.getByRole('button', { name: '换一张' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    fireEvent.click(retryBtn);
+
+    await waitFor(
+      () => {
+        expect(container.querySelector('[role="img"][aria-label="验证码"]')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it('falls back on timeout, unlocks 换一张, and recovers when 换一张 is clicked', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let calls = 0;
+      let capturedSignal: AbortSignal | undefined;
+
+      postJsonMock.mockImplementation(
+        (path: string, _body: unknown, _token?: string, options?: { signal?: AbortSignal }) => {
+          if (path === '/auth/captcha') {
+            calls += 1;
+            if (calls === 1) {
+              capturedSignal = options?.signal;
+              return new Promise(() => {});
+            }
+            return Promise.resolve({
+              code: 0,
+              msg: 'ok',
+              data: { captchaId: 'cap_after_timeout', image: TINY_PNG },
+            });
+          }
+          return Promise.reject(new Error(`Unexpected path: ${path}`));
+        },
+      );
+
+      render(<LoginPanel />);
+      expect(screen.getByRole('status').textContent).toContain('正在加载验证码');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CAPTCHA_LOAD_TIMEOUT_MS + 50);
+      });
+
+      expect(capturedSignal?.aborted).toBe(true);
+      expect(screen.getByRole('button', { name: '验证码加载失败，点击重试' })).toBeTruthy();
+      const refreshBtn = screen.getByRole('button', { name: '换一张' }) as HTMLButtonElement;
+      expect(refreshBtn.disabled).toBe(false);
+
+      await act(async () => {
+        fireEvent.click(refreshBtn);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByRole('img', { name: '验证码' })).toBeTruthy();
+      expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('handles 换一张 failure without unhandled rejection and keeps 换一张 clickable', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve({
+            code: 0,
+            msg: 'ok',
+            data: { captchaId: 'cap_1', image: TINY_PNG },
+          });
+        }
+        if (calls === 2) {
+          return Promise.reject(new Error('network down'));
+        }
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: 'cap_3', image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(<LoginPanel />);
+    await waitFor(
+      () => {
+        expect(container.querySelector('[role="img"][aria-label="验证码"]')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '换一张' }));
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText('验证码加载失败，点击重试')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+    const retryBtn = screen.getByRole('button', { name: '验证码加载失败，点击重试' });
+    expect((screen.getByRole('button', { name: '换一张' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    fireEvent.click(retryBtn);
+    await waitFor(
+      () => {
+        expect(container.querySelector('[role="img"][aria-label="验证码"]')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+  });
+
+  it('deduplicates initial captcha fetch in React StrictMode without aborting', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: 'cap_strict', image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(
+      <StrictMode>
+        <LoginPanel />
+      </StrictMode>,
+    );
+
+    await waitFor(
+      () => {
+        expect(container.querySelector('[role="img"][aria-label="验证码"]')).toBeTruthy();
+      },
+      { timeout: 5000 },
+    );
+    expect(calls).toBe(1);
+    expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });

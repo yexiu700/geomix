@@ -7,10 +7,72 @@ import { loadAccount, postJson } from '../lib/api';
 import { safeConsoleHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
 
+export const CAPTCHA_LOAD_TIMEOUT_MS = 10_000;
+
 const NOTICES: Record<string, string> = {
   disabled: '账号已停用',
   session: '登录已失效',
 };
+
+type CaptchaAttemptResult =
+  | { kind: 'ok'; captchaId: string; image: string }
+  | { kind: 'api-error'; message: string }
+  | { kind: 'aborted' }
+  | { kind: 'timeout' }
+  | { kind: 'network-error' };
+
+function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof DOMException && error.name === 'AbortError') ||
+    (typeof error === 'object' &&
+      error !== null &&
+      'name' in error &&
+      (error as { name?: unknown }).name === 'AbortError')
+  );
+}
+
+async function fetchCaptchaAttempt(controller: AbortController): Promise<CaptchaAttemptResult> {
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let onAbort: (() => void) | null = null;
+
+  try {
+    const abortPromise = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      };
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CAPTCHA_LOAD_TIMEOUT_MS);
+
+    const result = await Promise.race([
+      postJson<{ captchaId: string; image: string }>('/auth/captcha', {}, undefined, {
+        signal: controller.signal,
+      }),
+      abortPromise,
+    ]);
+
+    if (result.code !== 0 || !result.data?.captchaId || !result.data.image) {
+      return { kind: 'api-error', message: result.msg || '验证码获取失败' };
+    }
+    return { kind: 'ok', captchaId: result.data.captchaId, image: result.data.image };
+  } catch (error) {
+    if (timedOut) return { kind: 'timeout' };
+    if (isAbortError(error) || controller.signal.aborted) return { kind: 'aborted' };
+    return { kind: 'network-error' };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+    if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+  }
+}
 
 export function LoginPanel() {
   const router = useRouter();
@@ -20,33 +82,95 @@ export function LoginPanel() {
   const [captchaId, setCaptchaId] = useState('');
   const [captchaImage, setCaptchaImage] = useState('');
   const [captchaLoading, setCaptchaLoading] = useState(true);
+  const [captchaFailed, setCaptchaFailed] = useState(false);
   const [error, setError] = useState(preset);
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(true);
-  const inFlightCaptchaRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const captchaSeqRef = useRef(0);
+  const inFlightCaptchaRef = useRef<{
+    seq: number;
+    promise: Promise<void>;
+    controller: AbortController;
+  } | null>(null);
 
-  const loadCaptcha = useCallback(async () => {
-    if (inFlightCaptchaRef.current) {
-      return inFlightCaptchaRef.current;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadCaptcha = useCallback(async (options?: { force?: boolean }) => {
+    if (!options?.force && inFlightCaptchaRef.current) {
+      return inFlightCaptchaRef.current.promise;
     }
-    setCaptchaLoading(true);
-    setCaptchaId('');
+    if (options?.force && inFlightCaptchaRef.current) {
+      inFlightCaptchaRef.current.controller.abort();
+      inFlightCaptchaRef.current = null;
+    }
+
+    const seq = ++captchaSeqRef.current;
+    const controller = new AbortController();
+
+    if (mountedRef.current) {
+      setCaptchaLoading(true);
+      setCaptchaFailed(false);
+      setCaptchaId('');
+      setCaptchaImage('');
+      if (options?.force) {
+        setError('');
+      }
+    }
+
+    const entry = {
+      seq,
+      controller,
+      promise: Promise.resolve(),
+    };
+
     const task = (async () => {
       try {
-        const result = await postJson<{ captchaId: string; image: string }>('/auth/captcha', {});
-        if (result.code !== 0 || !result.data?.captchaId || !result.data.image) {
-          setCaptchaImage('');
-          setError(result.msg || '验证码获取失败');
+        let outcome = await fetchCaptchaAttempt(controller);
+        if (outcome.kind === 'aborted' && seq === captchaSeqRef.current && mountedRef.current) {
+          const retryController = new AbortController();
+          entry.controller = retryController;
+          outcome = await fetchCaptchaAttempt(retryController);
+        }
+
+        if (!mountedRef.current || seq !== captchaSeqRef.current) {
           return;
         }
-        setCaptchaId(result.data.captchaId);
-        setCaptchaImage(result.data.image);
+
+        if (outcome.kind === 'ok') {
+          setCaptchaId(outcome.captchaId);
+          setCaptchaImage(outcome.image);
+          setCaptchaFailed(false);
+          return;
+        }
+
+        setCaptchaId('');
+        setCaptchaImage('');
+        setCaptchaFailed(true);
+        if (outcome.kind === 'api-error') {
+          setError(outcome.message);
+        } else if (outcome.kind === 'timeout') {
+          setError('验证码加载超时，请点击重试');
+        } else {
+          setError('无法连接接口');
+        }
       } finally {
-        inFlightCaptchaRef.current = null;
-        setCaptchaLoading(false);
+        if (inFlightCaptchaRef.current?.seq === seq) {
+          inFlightCaptchaRef.current = null;
+        }
+        if (mountedRef.current && seq === captchaSeqRef.current) {
+          setCaptchaLoading(false);
+        }
       }
     })();
-    inFlightCaptchaRef.current = task;
+
+    entry.promise = task;
+    inFlightCaptchaRef.current = entry;
     return task;
   }, []);
 
@@ -54,7 +178,7 @@ export function LoginPanel() {
     const token = readAccessToken(window.sessionStorage);
     if (!token) {
       setChecking(false);
-      void loadCaptcha().catch(() => setError('无法连接接口'));
+      void loadCaptcha();
       return;
     }
     let live = true;
@@ -70,7 +194,7 @@ export function LoginPanel() {
       }
       if (result.status === 'offline') setError('无法连接接口');
       setChecking(false);
-      void loadCaptcha().catch(() => setError('无法连接接口'));
+      void loadCaptcha();
     });
     return () => {
       live = false;
@@ -92,7 +216,7 @@ export function LoginPanel() {
         captchaId,
       });
       if (result.code !== 0 || !result.data?.accessToken || !result.data.refreshToken) {
-        await loadCaptcha();
+        await loadCaptcha({ force: true });
         setError(result.msg || '登录失败');
         return;
       }
@@ -145,7 +269,7 @@ export function LoginPanel() {
                 title="点击刷新验证码"
                 onClick={() => {
                   if (!busy && !captchaLoading) {
-                    void loadCaptcha();
+                    void loadCaptcha({ force: true });
                   }
                 }}
                 style={{
@@ -158,6 +282,17 @@ export function LoginPanel() {
                   backgroundSize: 'contain',
                 }}
               />
+            ) : captchaFailed ? (
+              <div style={{ marginBottom: 12 }}>
+                <Button
+                  type="dashed"
+                  danger
+                  disabled={busy}
+                  onClick={() => void loadCaptcha({ force: true })}
+                >
+                  验证码加载失败，点击重试
+                </Button>
+              </div>
             ) : null}
             <div>
               <Button type="primary" htmlType="submit" loading={busy} disabled={!captchaReady}>
@@ -166,7 +301,7 @@ export function LoginPanel() {
               <Button
                 style={{ marginLeft: 8 }}
                 disabled={busy || captchaLoading}
-                onClick={() => void loadCaptcha()}
+                onClick={() => void loadCaptcha({ force: true })}
               >
                 换一张
               </Button>
