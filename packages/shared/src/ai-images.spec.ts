@@ -89,5 +89,6 @@ describe('ai-images shared helpers and schemas', () => {
     ]);
     expect(table.headers).toContain('归属图库分组');
     expect(table.rows[0]).toContain('未存入图库');
+    expect(table.rows[0]?.[table.headers.indexOf('创建时间')]).toBe('2026-11-18 08:00:00');
   });
 });

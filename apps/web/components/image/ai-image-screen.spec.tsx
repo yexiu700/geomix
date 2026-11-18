@@ -159,8 +159,49 @@ function buildMockGateway(initialJobs: AiImageJobItem[] = [createSampleJob()]) {
             previewAssets: [],
             createdAt: '2026-11-17T00:00:00.000Z',
           },
+          {
+            id: 'mcat_02',
+            name: '办公场景图库',
+            type: 1,
+            assetCount: 2,
+            previewAssets: [],
+            createdAt: '2026-11-17T00:00:00.000Z',
+          },
         ],
-        galleryAssets: [],
+        galleryAssets: [
+          {
+            id: 'med_mwlsapy3d4cb6885bd68',
+            categoryId: 'mcat_01',
+            categoryName: '产品实景图库',
+            origin: 'UPLOAD',
+            objectKey: 't1/prod-1.jpg',
+            originalName: '桌面充电器实拍.jpg',
+            url: '/api/v1/media-assets/med_mwlsapy3d4cb6885bd68/file',
+            thumbUrl: '/api/v1/media-assets/med_mwlsapy3d4cb6885bd68/thumb',
+            width: 800,
+            height: 600,
+            bytes: 32000,
+            mime: 'image/jpeg',
+            usedCount: 1,
+            createdAt: '2026-11-17T02:00:00.000Z',
+          },
+          {
+            id: 'med_office_002',
+            categoryId: 'mcat_02',
+            categoryName: '办公场景图库',
+            origin: 'AI_IMAGE',
+            objectKey: 't1/office-2.jpg',
+            originalName: null,
+            url: '/api/v1/media-assets/med_office_002/file',
+            thumbUrl: '/api/v1/media-assets/med_office_002/thumb',
+            width: 1280,
+            height: 720,
+            bytes: 48000,
+            mime: 'image/jpeg',
+            usedCount: 0,
+            createdAt: '2026-11-17T03:00:00.000Z',
+          },
+        ],
         keywords: [
           {
             id: 'kw_01',
@@ -260,19 +301,122 @@ describe('AiImageScreen', () => {
     });
   });
 
-  it('supports Save to Gallery flow without duplicating storage (#183)', async () => {
+  it('supports Save to Gallery flow without duplicating storage and distinguishes saved button state (#183, #184)', async () => {
     const { gateway, savedCalls } = buildMockGateway();
 
     render(<AiImageScreen title="AI生图" gateway={gateway} pollIntervalMs={0} />);
 
     await screen.findByText('IMG20261117-001ABC');
 
-    fireEvent.click(screen.getByText('存入图库'));
+    const saveBtnBefore = screen.getByRole('button', { name: '存入图库' });
+    expect(saveBtnBefore.getAttribute('data-saved')).toBe('false');
+
+    fireEvent.click(saveBtnBefore);
     await screen.findByText('存入企业画像图库');
     fireEvent.click(screen.getByText('确认存入'));
 
     await waitFor(() => {
       expect(savedCalls).toEqual([{ id: 'img_demo_001', categoryId: 'mcat_01' }]);
+    });
+
+    const savedBtnAfter = await screen.findByRole('button', { name: '已存入（更换）' });
+    expect(savedBtnAfter.getAttribute('data-saved')).toBe('true');
+    expect(screen.queryByRole('button', { name: '存入图库' })).toBeNull();
+
+    // Clicking 已存入（更换） opens category-change modal with updated title/okText
+    fireEvent.click(savedBtnAfter);
+    await screen.findByText('更换企业画像图库分组');
+    expect(screen.getByRole('button', { name: '确认更换' })).toBeTruthy();
+  });
+
+  it('displays UTC+8 creation time, dedicated 订单编号 column aligned with search placeholder (#184)', async () => {
+    const utcMorningJob: AiImageJobItem = {
+      ...createSampleJob(),
+      createdAt: '2026-11-18T06:05:00.000Z',
+    };
+    const { gateway } = buildMockGateway([utcMorningJob]);
+
+    render(<AiImageScreen title="AI生图" gateway={gateway} pollIntervalMs={0} />);
+
+    await screen.findByText('IMG20261117-001ABC');
+
+    // 2026-11-18T06:05:00Z -> 2026-11-18 14:05 (Asia/Shanghai UTC+8)
+    expect(screen.getByText('2026-11-18 14:05')).toBeTruthy();
+    expect(screen.queryByText('2026-11-18 06:05')).toBeNull();
+
+    // Table header has dedicated 订单编号 column matching search placeholder
+    expect(screen.getByRole('columnheader', { name: '订单编号' })).toBeTruthy();
+    const searchInput = screen.getByPlaceholderText('搜索提示词或订单编号');
+    expect(searchInput).toBeTruthy();
+  });
+
+  it('renders visual thumbnail cards with category filter for 从图库选择 and validates empty selection on submit (#210)', async () => {
+    const { gateway, createdPayloads } = buildMockGateway();
+
+    render(<AiImageScreen title="AI生图" gateway={gateway} pollIntervalMs={0} />);
+
+    await screen.findByText('IMG20261117-001ABC');
+
+    fireEvent.click(screen.getByLabelText('添加'));
+    await screen.findByText('添加 AI 生图任务');
+
+    // Switch reference image mode to 从图库选择
+    fireEvent.click(screen.getByRole('radio', { name: '从图库选择' }));
+
+    const picker = await screen.findByTestId('ai-image-ref-gallery-picker');
+    expect(within(picker).queryByRole('combobox', { name: '选择图库参考图' })).toBeNull();
+
+    // Renders thumbnails + friendly names without exposing raw med_ IDs
+    const img1 = within(picker).getByRole('img', {
+      name: '桌面充电器实拍.jpg',
+    }) as HTMLImageElement;
+    expect(img1.getAttribute('src')).toContain(
+      '/api/v1/media-assets/med_mwlsapy3d4cb6885bd68/thumb',
+    );
+    expect(within(picker).getByText('桌面充电器实拍.jpg')).toBeTruthy();
+    expect(within(picker).getByText('AI生成图片-ce_002.jpg')).toBeTruthy();
+    expect(picker.textContent).not.toContain('med_mwlsapy3d4cb6885bd68');
+
+    // Submitting without selecting an image shows explicit error (even before prompt is entered)
+    fireEvent.click(screen.getByText('生成图片（5点数/张，合计预冻 5 点）'));
+    const inlineError = await screen.findByTestId('ai-image-ref-gallery-error');
+    expect(inlineError.textContent).toContain('请从图库中选择一张参考图片');
+    expect(createdPayloads).toHaveLength(0);
+
+    // When prompt is filled but no gallery image is selected, footer alert also shows exact message
+    const promptBox = screen.getByLabelText('画面提示词');
+    fireEvent.change(promptBox, { target: { value: '极简现代办公桌面与氮化镓产品陈列' } });
+    fireEvent.click(screen.getByText('生成图片（5点数/张，合计预冻 5 点）'));
+    const dialog = screen.getByRole('dialog', { name: '添加 AI 生图任务' });
+    const footerAlert = within(dialog)
+      .getAllByRole('alert')
+      .find((el) => el.classList.contains('gm-crud-error'));
+    expect(footerAlert?.textContent).toBe('请从图库中选择一张参考图片');
+    expect(createdPayloads).toHaveLength(0);
+
+    // Filter by category -> shows only assets in that category
+    const categorySelect = within(picker).getByLabelText('按图库分类筛选');
+    fireEvent.change(categorySelect, { target: { value: 'mcat_02' } });
+    expect(within(picker).queryByText('桌面充电器实拍.jpg')).toBeNull();
+    expect(within(picker).getByText('AI生成图片-ce_002.jpg')).toBeTruthy();
+
+    // Switch back to all categories, select first card, and submit
+    fireEvent.change(categorySelect, { target: { value: '' } });
+    const card = within(picker).getByRole('radio', { name: /桌面充电器实拍\.jpg/ });
+    fireEvent.click(card);
+    expect(card.getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByTestId('ai-image-ref-gallery-error')).toBeNull();
+    expect(within(picker).getByTestId('ai-image-ref-gallery-selected').textContent).toContain(
+      '桌面充电器实拍.jpg',
+    );
+
+    fireEvent.click(screen.getByText('生成图片（5点数/张，合计预冻 5 点）'));
+
+    await waitFor(() => {
+      expect(createdPayloads).toHaveLength(1);
+    });
+    expect(createdPayloads[0]).toMatchObject({
+      refAssetId: 'med_mwlsapy3d4cb6885bd68',
     });
   });
 

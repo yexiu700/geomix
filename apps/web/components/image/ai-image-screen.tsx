@@ -15,12 +15,14 @@ import {
   CRUD_PAGE_SIZES,
   formatAiImageSubmitLabel,
   quoteAiImagePoints,
+  safeMediaDisplayName,
   type AiImageCount,
   type AiImageGeneratedAsset,
   type AiImageJobItem,
   type AiImageJobListQuery,
   type AiImageRatio,
   type CrudExportFormat,
+  type MediaAssetRecord,
   type TaskStatusName,
 } from '@geomix/shared';
 import {
@@ -50,11 +52,7 @@ import {
 import { resolveMediaUrl } from '../../lib/gallery';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import {
-  formatShanghaiDateTime,
-  formatShortDisplayId,
-  triggerBlobDownload,
-} from '../../lib/ux-foundation';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
@@ -107,6 +105,7 @@ type ModalState = {
 };
 
 type ColumnKey =
+  | 'orderNo'
   | 'thumb'
   | 'prompt'
   | 'styleRatio'
@@ -118,6 +117,7 @@ type ColumnKey =
   | 'actions';
 
 const ALL_COLUMN_KEYS: { key: ColumnKey; label: string }[] = [
+  { key: 'orderNo', label: '订单编号' },
   { key: 'thumb', label: '缩略图' },
   { key: 'prompt', label: '提示词' },
   { key: 'styleRatio', label: '风格/比例' },
@@ -148,6 +148,24 @@ function buildInitialDraft(): CreateDraft {
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   return formatShanghaiDateTime(iso);
+}
+
+function resolveGalleryAssetLabel(asset: MediaAssetRecord): string {
+  const explicit = asset.displayName?.trim();
+  if (explicit) return explicit;
+  return safeMediaDisplayName({
+    id: asset.id,
+    origin: asset.origin,
+    originalName: asset.originalName,
+  });
+}
+
+function isJobSavedToGallery(job: AiImageJobItem): boolean {
+  return Boolean(
+    job.saveCategoryId ||
+    job.saveCategoryName ||
+    job.assets.some((asset) => Boolean(asset.categoryId || asset.categoryName)),
+  );
 }
 
 function statusTagColor(status: TaskStatusName): string {
@@ -256,6 +274,12 @@ export function AiImageScreen({
   const [formOptions, setFormOptions] = useState<AiImageFormOptions | null>(null);
   const [modalState, setModalState] = useState<ModalState | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [refValidationError, setRefValidationError] = useState<string | null>(null);
+  const [refGalleryCategoryId, setRefGalleryCategoryId] = useState<string>('');
+  const [refGalleryAssets, setRefGalleryAssets] = useState<MediaAssetRecord[] | null>(null);
+  const [refGalleryLoading, setRefGalleryLoading] = useState(false);
+  const [refGalleryLoadError, setRefGalleryLoadError] = useState<string | null>(null);
+  const refGalleryRequestSeq = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
 
@@ -345,6 +369,11 @@ export function AiImageScreen({
 
   const openCreateModal = async () => {
     setModalError(null);
+    setRefValidationError(null);
+    setRefGalleryCategoryId('');
+    setRefGalleryAssets(null);
+    setRefGalleryLoadError(null);
+    setRefGalleryLoading(false);
     const initial = buildInitialDraft();
     setModalState({
       initial,
@@ -353,6 +382,30 @@ export function AiImageScreen({
       maximized: false,
     });
     await ensureFormOptions();
+  };
+
+  const handleRefCategoryChange = async (nextCategoryId: string) => {
+    setRefGalleryCategoryId(nextCategoryId);
+    setRefGalleryLoadError(null);
+    if (!api.listGalleryAssets) {
+      return;
+    }
+    const seq = ++refGalleryRequestSeq.current;
+    setRefGalleryLoading(true);
+    try {
+      const assets = await api.listGalleryAssets(nextCategoryId || undefined);
+      if (refGalleryRequestSeq.current === seq) {
+        setRefGalleryAssets(assets);
+      }
+    } catch (err) {
+      if (refGalleryRequestSeq.current === seq) {
+        setRefGalleryLoadError(err instanceof Error ? err.message : '加载图库图片失败');
+      }
+    } finally {
+      if (refGalleryRequestSeq.current === seq) {
+        setRefGalleryLoading(false);
+      }
+    }
   };
 
   const handleOptimizePrompt = async () => {
@@ -421,20 +474,45 @@ export function AiImageScreen({
     if (!modalState) return;
     const { draft } = modalState;
     const trimmedPrompt = draft.prompt.trim();
-    if (trimmedPrompt.length < AI_IMAGE_PROMPT_MIN) {
+    const promptTooShort = trimmedPrompt.length < AI_IMAGE_PROMPT_MIN;
+    const promptTooLong = trimmedPrompt.length > AI_IMAGE_PROMPT_MAX;
+    const missingUploadRef = draft.refMode === 'upload' && !draft.refImageBase64;
+    const missingGalleryRef = draft.refMode === 'gallery' && !draft.refAssetId;
+
+    if (missingGalleryRef) {
+      const refMsg = '请从图库中选择一张参考图片';
+      setRefValidationError(refMsg);
+      if (promptTooShort) {
+        setModalError(`${refMsg}，且画面提示词至少填写 ${AI_IMAGE_PROMPT_MIN} 个字`);
+      } else if (promptTooLong) {
+        setModalError(`${refMsg}，且画面提示词不能超过 ${AI_IMAGE_PROMPT_MAX} 个字`);
+      } else {
+        setModalError(refMsg);
+      }
+      return;
+    }
+
+    if (missingUploadRef) {
+      const uploadMsg = '请选择需要上传的本地参考图片，或切换为「不使用参考图」';
+      setRefValidationError(uploadMsg);
+      if (promptTooShort) {
+        setModalError(`画面提示词至少填写 ${AI_IMAGE_PROMPT_MIN} 个字；${uploadMsg}`);
+      } else if (promptTooLong) {
+        setModalError(`画面提示词不能超过 ${AI_IMAGE_PROMPT_MAX} 个字；${uploadMsg}`);
+      } else {
+        setModalError(uploadMsg);
+      }
+      return;
+    }
+
+    setRefValidationError(null);
+
+    if (promptTooShort) {
       setModalError(`画面提示词至少填写 ${AI_IMAGE_PROMPT_MIN} 个字`);
       return;
     }
-    if (trimmedPrompt.length > AI_IMAGE_PROMPT_MAX) {
+    if (promptTooLong) {
       setModalError(`画面提示词不能超过 ${AI_IMAGE_PROMPT_MAX} 个字`);
-      return;
-    }
-    if (draft.refMode === 'upload' && !draft.refImageBase64) {
-      setModalError('请选择需要上传的本地参考图片，或切换为「不使用参考图」');
-      return;
-    }
-    if (draft.refMode === 'gallery' && !draft.refAssetId) {
-      setModalError('请选择图库中的参考图片，或切换为「不使用参考图」');
       return;
     }
 
@@ -478,6 +556,7 @@ export function AiImageScreen({
       setSaveModalError('请先选择目标企业画像图库分组');
       return;
     }
+    const wasSaved = isJobSavedToGallery(saveTargetJob);
     setSaveModalError(null);
     setSavingGallery(true);
     try {
@@ -486,7 +565,7 @@ export function AiImageScreen({
       });
       setSaveTargetJob(null);
       setBannerInfo(
-        `已将 ${res.savedCount} 张生成图片存入图库分组「${res.categoryName}」，AI 写作可直接选用！`,
+        `已将 ${res.savedCount} 张生成图片${wasSaved ? '更换至' : '存入'}图库分组「${res.categoryName}」，AI 写作可直接选用！`,
       );
       await loadList(false);
     } catch (err) {
@@ -558,6 +637,16 @@ export function AiImageScreen({
   const draftQuote = quoteAiImagePoints(modalState?.draft.count ?? 1, unitPoints);
   const submitButtonLabel = formatAiImageSubmitLabel(modalState?.draft.count ?? 1, unitPoints);
 
+  const allGalleryAssets = refGalleryAssets ?? formOptions?.galleryAssets ?? [];
+  const filteredGalleryAssets = refGalleryCategoryId
+    ? allGalleryAssets.filter((asset) => asset.categoryId === refGalleryCategoryId)
+    : allGalleryAssets;
+  const selectedRefAsset = modalState?.draft.refAssetId
+    ? ([...(refGalleryAssets ?? []), ...(formOptions?.galleryAssets ?? [])].find(
+        (asset) => asset.id === modalState.draft.refAssetId,
+      ) ?? null)
+    : null;
+
   const columns = [
     {
       title: '序号',
@@ -566,6 +655,25 @@ export function AiImageScreen({
       render: (_: unknown, __: AiImageJobItem, idx: number) =>
         (query.page - 1) * query.pageSize + idx + 1,
     },
+    ...(visibleCols.includes('orderNo')
+      ? [
+          {
+            title: '订单编号',
+            dataIndex: 'orderNo',
+            key: 'orderNo',
+            width: 175,
+            render: (val: string) => (
+              <Typography.Text
+                code
+                className="gm-num"
+                style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+              >
+                {val}
+              </Typography.Text>
+            ),
+          },
+        ]
+      : []),
     ...(visibleCols.includes('thumb')
       ? [
           {
@@ -630,15 +738,10 @@ export function AiImageScreen({
           {
             title: '提示词',
             key: 'prompt',
-            width: 380,
+            width: 340,
             render: (_: unknown, row: AiImageJobItem) => (
-              <div style={{ maxWidth: 380 }}>
-                <div style={{ marginBottom: 2 }}>
-                  <Typography.Text code style={{ fontSize: 12 }}>
-                    {row.orderNo}
-                  </Typography.Text>
-                </div>
-                <TableClampText text={row.prompt} lines={3} maxWidth={380} />
+              <div style={{ maxWidth: 340 }}>
+                <TableClampText text={row.prompt} lines={3} maxWidth={340} />
                 {row.error ? (
                   <div
                     style={{
@@ -762,6 +865,7 @@ export function AiImageScreen({
             render: (_: unknown, row: AiImageJobItem) => {
               const hasAssets = row.assets.length > 0;
               const isRunning = row.status === 'QUEUED' || row.status === 'RUNNING';
+              const savedToGallery = isJobSavedToGallery(row);
               return (
                 <Space size={4} wrap>
                   <Button
@@ -780,9 +884,20 @@ export function AiImageScreen({
                     size="small"
                     type="link"
                     disabled={readOnly || !hasAssets}
+                    data-saved={savedToGallery ? 'true' : 'false'}
+                    title={
+                      savedToGallery
+                        ? row.saveCategoryName
+                          ? `已存入「${row.saveCategoryName}」，点击可更换图库分组`
+                          : '已存入图库，点击可更换图库分组'
+                        : '存入企业画像图库'
+                    }
+                    style={
+                      savedToGallery ? { color: 'var(--gm-sig-cited)', fontWeight: 500 } : undefined
+                    }
                     onClick={() => void openSaveGalleryModal(row)}
                   >
-                    存入图库
+                    {savedToGallery ? '已存入（更换）' : '存入图库'}
                   </Button>
                   <Button
                     size="small"
@@ -866,7 +981,7 @@ export function AiImageScreen({
           }}
         >
           <Input
-            aria-label="搜索提示词或订单号"
+            aria-label="搜索提示词或订单编号"
             placeholder="搜索提示词或订单编号"
             style={{ width: 240 }}
             value={searchInput}
@@ -1003,6 +1118,7 @@ export function AiImageScreen({
         loading={loading}
         columns={columns}
         dataSource={items}
+        scroll={{ x: 'max-content' }}
         locale={{ emptyText: CRUD_EMPTY_TEXT }}
         rowSelection={{
           selectedRowKeys: selectedIds,
@@ -1050,9 +1166,14 @@ export function AiImageScreen({
               {submitButtonLabel}
             </Button>
           }
-          onClose={() => setModalState(null)}
+          onClose={() => {
+            setRefValidationError(null);
+            setModalState(null);
+          }}
           onReset={() => {
             setModalError(null);
+            setRefValidationError(null);
+            setRefGalleryCategoryId('');
             setModalState((prev) => (prev ? { ...prev, draft: prev.initial } : null));
           }}
           onMinimize={() => setModalState((prev) => (prev ? { ...prev, minimized: true } : null))}
@@ -1331,7 +1452,9 @@ export function AiImageScreen({
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      onClick={() =>
+                      onClick={() => {
+                        setRefValidationError(null);
+                        setModalError(null);
                         setModalState((prev) =>
                           prev
                             ? {
@@ -1342,8 +1465,8 @@ export function AiImageScreen({
                                 },
                               }
                             : null,
-                        )
-                      }
+                        );
+                      }}
                       style={{
                         height: 32,
                         padding: '0 14px',
@@ -1378,7 +1501,10 @@ export function AiImageScreen({
                     aria-label="上传参考图片文件"
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
-                    onChange={(e) => void handleUploadRefFile(e.target.files?.[0])}
+                    onChange={(e) => {
+                      setRefValidationError(null);
+                      void handleUploadRefFile(e.target.files?.[0]);
+                    }}
                   />
                   <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
                     支持 JPG / PNG / WebP，单张不超过 10MB
@@ -1386,34 +1512,258 @@ export function AiImageScreen({
                       ? ` · 已选择：${modalState.draft.refImageFilename}`
                       : ''}
                   </div>
+                  {refValidationError && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message={refValidationError}
+                    />
+                  )}
                 </div>
               )}
 
               {modalState.draft.refMode === 'gallery' && (
-                <div style={{ marginTop: 8 }}>
-                  <select
-                    aria-label="选择图库参考图"
-                    style={NATIVE_SELECT_STYLE}
-                    value={modalState.draft.refAssetId}
-                    onChange={(e) =>
-                      setModalState((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              draft: { ...prev.draft, refAssetId: e.target.value },
-                            }
-                          : null,
-                      )
-                    }
+                <div
+                  data-testid="ai-image-ref-gallery-picker"
+                  style={{
+                    marginTop: 8,
+                    padding: 10,
+                    borderRadius: 8,
+                    border: refValidationError
+                      ? '1px solid var(--gm-danger)'
+                      : '1px solid var(--gm-line-1)',
+                    background: 'var(--gm-bg-surface)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                    }}
                   >
-                    <option value="">请选择一张已上传的企业画像图片</option>
-                    {(formOptions?.galleryAssets ?? []).map((asset) => (
-                      <option key={asset.id} value={asset.id}>
-                        {asset.categoryName ? `[${asset.categoryName}] ` : ''}
-                        {formatShortDisplayId(asset.id, '图片')}（{asset.width}×{asset.height}）
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      aria-label="按图库分类筛选"
+                      style={{ ...COMPACT_SELECT_STYLE, minWidth: 180 }}
+                      value={refGalleryCategoryId}
+                      onChange={(e) => void handleRefCategoryChange(e.target.value)}
+                    >
+                      <option value="">全部分类</option>
+                      {(formOptions?.mediaCategories ?? []).map((cat) => (
+                        <option key={cat.id} value={cat.id}>
+                          {cat.name}（{cat.assetCount} 张）
+                        </option>
+                      ))}
+                    </select>
+
+                    {selectedRefAsset ? (
+                      <div
+                        data-testid="ai-image-ref-gallery-selected"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 12,
+                          color: 'var(--gm-fg-1)',
+                        }}
+                      >
+                        <Tag color="green" style={{ margin: 0 }}>
+                          已选：{resolveGalleryAssetLabel(selectedRefAsset)}（
+                          {selectedRefAsset.width}×{selectedRefAsset.height}）
+                        </Tag>
+                        <Button
+                          size="small"
+                          type="link"
+                          onClick={() =>
+                            setModalState((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    draft: { ...prev.draft, refAssetId: '' },
+                                  }
+                                : null,
+                            )
+                          }
+                        >
+                          取消选中
+                        </Button>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                        点击下方图片卡片选择一张参考图
+                      </span>
+                    )}
+                  </div>
+
+                  {refValidationError && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      data-testid="ai-image-ref-gallery-error"
+                      message={refValidationError}
+                    />
+                  )}
+
+                  {refGalleryLoadError && (
+                    <Alert type="warning" showIcon message={refGalleryLoadError} />
+                  )}
+
+                  {refGalleryLoading ? (
+                    <div
+                      style={{
+                        padding: '24px 0',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: 8,
+                        color: 'var(--gm-fg-2)',
+                        fontSize: 13,
+                      }}
+                    >
+                      <Spin size="small" />
+                      <span>正在加载图库图片…</span>
+                    </div>
+                  ) : filteredGalleryAssets.length === 0 ? (
+                    <div
+                      data-testid="ai-image-ref-gallery-empty"
+                      style={{
+                        padding: '18px 12px',
+                        textAlign: 'center',
+                        fontSize: 12,
+                        color: 'var(--gm-fg-3)',
+                      }}
+                    >
+                      当前分类下暂无可选图库图片，请切换其他分类或使用「上传参考图片」
+                    </div>
+                  ) : (
+                    <div
+                      role="radiogroup"
+                      aria-label="选择图库参考图"
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(126px, 1fr))',
+                        gap: 8,
+                        maxHeight: 248,
+                        overflowY: 'auto',
+                        paddingRight: 2,
+                      }}
+                    >
+                      {filteredGalleryAssets.map((asset) => {
+                        const isSelected = modalState.draft.refAssetId === asset.id;
+                        const label = resolveGalleryAssetLabel(asset);
+                        return (
+                          <button
+                            key={asset.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={isSelected}
+                            aria-label={`${label}${asset.categoryName ? `（${asset.categoryName}）` : ''} ${asset.width}×${asset.height}`}
+                            onClick={() => {
+                              setRefValidationError(null);
+                              setModalError(null);
+                              setModalState((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      draft: { ...prev.draft, refAssetId: asset.id },
+                                    }
+                                  : null,
+                              );
+                            }}
+                            style={{
+                              position: 'relative',
+                              padding: 6,
+                              borderRadius: 6,
+                              border: isSelected
+                                ? '2px solid var(--gm-phosphor)'
+                                : '1px solid var(--gm-line-2)',
+                              background: isSelected
+                                ? 'var(--gm-bg-selected)'
+                                : 'var(--gm-bg-elevated)',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: 'relative',
+                                width: '100%',
+                                height: 74,
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                background: 'var(--gm-bg-base)',
+                              }}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={resolveMediaUrl(asset.thumbUrl || asset.url)}
+                                alt={label}
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover',
+                                  display: 'block',
+                                }}
+                              />
+                              {isSelected && (
+                                <span
+                                  style={{
+                                    position: 'absolute',
+                                    top: 4,
+                                    right: 4,
+                                    padding: '1px 6px',
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    background: 'var(--gm-phosphor)',
+                                    color: '#0b0e12',
+                                  }}
+                                >
+                                  已选
+                                </span>
+                              )}
+                            </div>
+                            <div
+                              title={label}
+                              style={{
+                                fontSize: 12,
+                                fontWeight: isSelected ? 600 : 500,
+                                color: 'var(--gm-fg-1)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {label}
+                            </div>
+                            <div
+                              className="gm-num"
+                              style={{
+                                fontSize: 11,
+                                color: 'var(--gm-fg-3)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {asset.categoryName ? `${asset.categoryName} · ` : ''}
+                              {asset.width}×{asset.height}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1453,12 +1803,16 @@ export function AiImageScreen({
       {/* Save to Gallery Modal */}
       <Modal
         open={Boolean(saveTargetJob)}
-        title="存入企业画像图库"
+        title={
+          saveTargetJob && isJobSavedToGallery(saveTargetJob)
+            ? '更换企业画像图库分组'
+            : '存入企业画像图库'
+        }
         keyboard
         transitionName=""
         maskTransitionName=""
         confirmLoading={savingGallery}
-        okText="确认存入"
+        okText={saveTargetJob && isJobSavedToGallery(saveTargetJob) ? '确认更换' : '确认存入'}
         cancelText="取消"
         onCancel={() => {
           if (!savingGallery) setSaveTargetJob(null);
@@ -1470,7 +1824,11 @@ export function AiImageScreen({
             <Alert
               type="info"
               showIcon
-              message={`将订单 ${saveTargetJob.orderNo} 生成的 ${saveTargetJob.assets.length} 张图片归入所选图库分组（不重复占用存储空间配额）。`}
+              message={
+                isJobSavedToGallery(saveTargetJob)
+                  ? `订单 ${saveTargetJob.orderNo} 当前已存入「${saveTargetJob.saveCategoryName ?? '企业画像图库'}」，确认后将迁移至新选择的图库分组（不重复占用存储空间配额）。`
+                  : `将订单 ${saveTargetJob.orderNo} 生成的 ${saveTargetJob.assets.length} 张图片归入所选图库分组（不重复占用存储空间配额）。`
+              }
             />
             {saveModalError && <Alert type="error" showIcon message={saveModalError} />}
             <div>

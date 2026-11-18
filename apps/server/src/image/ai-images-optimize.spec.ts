@@ -9,7 +9,7 @@ import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import type { StorageService } from '../infra/storage';
 import type { PrismaService } from '../prisma/prisma.service';
 import { runInTenant } from '../tenant/tenant-context';
-import { AiImagesService } from './ai-images.service';
+import { AiImagesService, formatAiImageOrderNo } from './ai-images.service';
 import type { ImageJobEnqueuer } from './image-job.runner';
 import {
   containsPromptLeakage,
@@ -351,5 +351,11 @@ describe('AiImagesService.list keyword orderNo search', () => {
         ],
       },
     });
+  });
+
+  it('formats orderNo date prefix in Asia/Shanghai (UTC+8) (#184)', () => {
+    expect(formatAiImageOrderNo(new Date('2026-11-17T17:05:00.000Z'), 'img_abc123')).toBe(
+      'IMG20261118-ABC123',
+    );
   });
 });
