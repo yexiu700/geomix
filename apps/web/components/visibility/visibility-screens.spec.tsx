@@ -990,4 +990,299 @@ describe('VisibilityOverviewScreen', () => {
       href: '/writing/tasks?keywordId=kw_projector_02',
     });
   });
+
+  it('does not backfill or flatline SoV on 0-sample historical dates in trend SVG (#186)', async () => {
+    const base = buildMockGateway();
+    let scenario: 'single-day' | 'two-days' = 'single-day';
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async getOverview(query) {
+        const res = await base.gateway.getOverview(query);
+        const trend =
+          scenario === 'single-day'
+            ? [
+                {
+                  date: '2026-11-14',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-15',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-16',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-17',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-18',
+                  engine: 'all' as const,
+                  completedChecks: 3,
+                  mentionedChecks: 2,
+                  visibilityPct: 66.7,
+                  shareOfVoicePct: 66.7,
+                },
+              ]
+            : [
+                {
+                  date: '2026-11-14',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-15',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-16',
+                  engine: 'all' as const,
+                  completedChecks: 0,
+                  mentionedChecks: 0,
+                  visibilityPct: 0,
+                  shareOfVoicePct: null,
+                },
+                {
+                  date: '2026-11-17',
+                  engine: 'all' as const,
+                  completedChecks: 4,
+                  mentionedChecks: 2,
+                  visibilityPct: 50.0,
+                  shareOfVoicePct: 40.0,
+                },
+                {
+                  date: '2026-11-18',
+                  engine: 'all' as const,
+                  completedChecks: 3,
+                  mentionedChecks: 2,
+                  visibilityPct: 66.7,
+                  shareOfVoicePct: 66.7,
+                },
+              ];
+
+        return {
+          ...res,
+          metrics: {
+            ...res.metrics,
+            shareOfVoice: {
+              ...res.metrics.shareOfVoice,
+              brandSharePct: 66.7,
+            },
+          },
+          trend,
+        };
+      },
+    };
+
+    render(
+      <VisibilityOverviewScreen
+        title="AI数据看板"
+        href="/visibility/overview?profileId=vprof_starview"
+        gateway={gateway}
+      />,
+    );
+
+    const svg = await screen.findByTestId('visibility-trend-svg');
+    expect(svg.querySelector('[data-testid="visibility-sov-line"]')).toBeNull();
+    expect(svg.querySelector('[data-testid="visibility-sov-node-2026-11-14"]')).toBeNull();
+    expect(svg.querySelector('[data-testid="visibility-sov-node-2026-11-17"]')).toBeNull();
+    expect(svg.querySelector('[data-testid="visibility-sov-node-2026-11-18"]')).toBeTruthy();
+
+    scenario = 'two-days';
+    fireEvent.click(screen.getByLabelText('近7天'));
+
+    await waitFor(() => {
+      const updatedSvg = screen.getByTestId('visibility-trend-svg');
+      const sovLine = updatedSvg.querySelector('[data-testid="visibility-sov-line"]');
+      expect(sovLine).toBeTruthy();
+      const pts = (sovLine?.getAttribute('points') ?? '').trim().split(/\s+/).filter(Boolean);
+      expect(pts).toHaveLength(2);
+      expect(updatedSvg.querySelector('[data-testid="visibility-sov-node-2026-11-16"]')).toBeNull();
+      expect(
+        updatedSvg.querySelector('[data-testid="visibility-sov-node-2026-11-17"]'),
+      ).toBeTruthy();
+      expect(
+        updatedSvg.querySelector('[data-testid="visibility-sov-node-2026-11-18"]'),
+      ).toBeTruthy();
+    });
+  });
+
+  it('renders separate brand-competitor SoV groups for each own-brand under 全部监测档案 (#211)', async () => {
+    const base = buildMockGateway();
+    const multiProfiles: VisibilityProfileRecord[] = [
+      ...buildSampleProfiles().map((p) => ({
+        ...p,
+        id: 'vprof_arzopa',
+        name: 'ARZOPA便携屏全链路监测档案',
+        brandName: '阿卓帕',
+      })),
+      {
+        id: 'vprof_anker',
+        name: '安克创新（Anker）全品类监测档案',
+        brandName: '安克创新',
+        brandAliases: ['Anker'],
+        ownedDomains: ['anker.com'],
+        competitors: [
+          { name: '绿联 UGREEN', aliases: [], domains: ['ugreen.com'] },
+          { name: '倍思 Baseus', aliases: [], domains: ['baseus.com'] },
+        ],
+        runCount: 1,
+        createdAt: '2026-11-16T09:00:00.000Z',
+        updatedAt: '2026-11-16T09:00:00.000Z',
+      },
+    ];
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        const res = await base.gateway.listProfiles();
+        return { ...res, items: multiProfiles };
+      },
+      async getOverview(query) {
+        const res = await base.gateway.getOverview(query);
+        return {
+          ...res,
+          profileId: null,
+          brandGroups: [
+            {
+              brandName: '阿卓帕',
+              completedChecks: 8,
+              mentionedChecks: 8,
+              visibilityPct: 100,
+              shareOfVoice: {
+                totalMentions: 12,
+                brandMentions: 8,
+                brandSharePct: 66.7,
+                entries: [
+                  { name: '阿卓帕', isBrand: true, mentions: 8, sharePct: 66.7 },
+                  { name: '联想ThinkVision', isBrand: false, mentions: 4, sharePct: 33.3 },
+                ],
+              },
+            },
+            {
+              brandName: '安克创新',
+              completedChecks: 8,
+              mentionedChecks: 6,
+              visibilityPct: 75,
+              shareOfVoice: {
+                totalMentions: 10,
+                brandMentions: 6,
+                brandSharePct: 60.0,
+                entries: [
+                  { name: '安克创新', isBrand: true, mentions: 6, sharePct: 60.0 },
+                  { name: '绿联 UGREEN', isBrand: false, mentions: 4, sharePct: 40.0 },
+                ],
+              },
+            },
+          ],
+        } as VisibilityOverviewResponse;
+      },
+    };
+
+    render(<VisibilityOverviewScreen title="AI数据看板" gateway={gateway} />);
+
+    const groupArzopa = await screen.findByTestId('sov-group-阿卓帕');
+    const groupAnker = await screen.findByTestId('sov-group-安克创新');
+
+    expect(within(groupArzopa).getByTestId('sov-brand-row').textContent).toContain('阿卓帕');
+    expect(within(groupArzopa).getByTestId('sov-brand-row').textContent).toContain('66.7%');
+    expect(within(groupArzopa).queryByText('绿联 UGREEN')).toBeNull();
+
+    expect(within(groupAnker).getByTestId('sov-brand-row').textContent).toContain('安克创新');
+    expect(within(groupAnker).getByTestId('sov-brand-row').textContent).toContain('60.0%');
+    expect(within(groupAnker).queryByText('联想ThinkVision')).toBeNull();
+  });
+
+  it('auto-refreshes on 看板监测档案 change, keeps select single-line, and sets nowrap headers on Query Fan-Out table (#214)', async () => {
+    const base = buildMockGateway();
+    const longName = '安克创新（Anker）全品类AI搜索引擎可见度与竞品监测档案';
+    const profiles: VisibilityProfileRecord[] = [
+      ...buildSampleProfiles(),
+      {
+        id: 'vprof_anker',
+        name: longName,
+        brandName: '安克创新',
+        brandAliases: ['Anker'],
+        ownedDomains: ['anker.com'],
+        competitors: [],
+        runCount: 1,
+        createdAt: '2026-11-16T09:00:00.000Z',
+        updatedAt: '2026-11-16T09:00:00.000Z',
+      },
+    ];
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        const res = await base.gateway.listProfiles();
+        return { ...res, items: profiles };
+      },
+      async getOverview(query) {
+        const res = await base.gateway.getOverview(query);
+        if (query.profileId === 'vprof_anker') {
+          return {
+            ...res,
+            profileId: 'vprof_anker',
+            metrics: { ...res.metrics, visibilityPct: 88.8 },
+          };
+        }
+        return res;
+      },
+    };
+
+    render(<VisibilityOverviewScreen title="AI数据看板" gateway={gateway} />);
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId('kpi-visibility')).getByText('65.0%')).toBeTruthy();
+    });
+
+    const profileSelect = screen.getByLabelText('看板监测档案') as HTMLSelectElement;
+    expect(profileSelect.style.whiteSpace).toBe('nowrap');
+    expect(profileSelect.style.textOverflow).toBe('ellipsis');
+
+    // Selecting a profile must immediately refresh without clicking 查询
+    fireEvent.change(profileSelect, { target: { value: 'vprof_anker' } });
+    await waitFor(() => {
+      expect(base.overviewQueries.some((q) => q.profileId === 'vprof_anker')).toBe(true);
+      expect(within(screen.getByTestId('kpi-visibility')).getByText('88.8%')).toBeTruthy();
+    });
+    expect(profileSelect.title).toContain(longName);
+
+    // Switch to Opportunities tab and check 来源问题预览 header cell nowrap
+    const oppTabLabel = await screen.findByText(/优化机会 & 搜索拆解词（Query Fan-Out/);
+    const oppTab = oppTabLabel.closest('[role="tab"]');
+    expect(oppTab).toBeTruthy();
+    fireEvent.click(oppTab!);
+    const sourceHeaders = await screen.findAllByText('来源问题预览');
+    const sourceHeader = sourceHeaders
+      .map((el) => el.closest('th'))
+      .find((th): th is HTMLTableCellElement => th !== null);
+    expect(sourceHeader?.style.whiteSpace).toBe('nowrap');
+  });
 });

@@ -11,6 +11,7 @@ import {
   VISIBILITY_MAX_COMPETITORS,
   classifyCitationSource,
   computeAvgPosition,
+  computeSentimentSummary,
   computeVisibilityPct,
   escapeLikeLiteral,
   isCitationSourceKind,
@@ -22,9 +23,13 @@ import {
   toShanghaiDateKey,
   type CitationSourceKind,
   type CompetitorHit,
+  type DomainMetricItem,
   type ImportQuestionsInput,
   type ImportQuestionsResult,
   type ProfileForMetrics,
+  type RecomputedRunMetrics,
+  type ShareOfVoiceEntry,
+  type VisibilityBrandShareOfVoiceGroup,
   type VisibilityCitationListResponse,
   type VisibilityCitationQuery,
   type VisibilityCitationRecord,
@@ -49,6 +54,7 @@ import {
   type VisibilityRunListQuery,
   type VisibilityRunListResponse,
   type VisibilityRunRecord,
+  type VisibilitySentiment,
   type VisibilityTrendPoint,
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
@@ -960,10 +966,7 @@ export class VisibilityService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    const { resolvedProfileId, profileForMetrics } = await this.resolveProfileContext(
-      tenantId,
-      query.profileId,
-    );
+    const overviewCtx = await this.loadOverviewProfileContexts(tenantId, query.profileId);
     const window = shanghaiWindowFromQuery({
       days: query.days,
       from: query.from,
@@ -989,26 +992,12 @@ export class VisibilityService {
       },
     });
 
-    const metrics = recomputeRunMetrics(
-      observations.map((obs) => ({
-        id: obs.id,
-        status: obs.status,
-        promptText: obs.promptText,
-        answerText: obs.answerText,
-        brandMentioned: obs.brandMentioned,
-        brandPosition: obs.brandPosition,
-        brandSentiment: obs.brandSentiment,
-        competitorHits: obs.competitorHits,
-        citations: obs.citations.map((cite) => ({
-          url: cite.url,
-          domain: cite.domain,
-          sourceKind: cite.sourceKind,
-        })),
-      })),
-      profileForMetrics,
+    const { metrics, brandGroups } = this.computeOverviewMetricsAndGroups(
+      observations,
+      overviewCtx,
     );
 
-    const trend = this.buildDailyTrend(observations, window.keys, query.engine);
+    const trend = this.buildDailyTrend(observations, window.keys, overviewCtx, query.engine);
     const engineBucket = new Map<
       VisibilityEngineKey,
       { completed: number; mentioned: number; positions: Array<number | null> }
@@ -1040,10 +1029,11 @@ export class VisibilityService {
       });
 
     return {
-      profileId: resolvedProfileId,
+      profileId: overviewCtx.resolvedProfileId,
       metrics,
       trend,
       byEngine,
+      brandGroups,
     };
   }
 
@@ -1632,87 +1622,472 @@ export class VisibilityService {
     };
   }
 
+  private async loadOverviewProfileContexts(
+    tenantId: string,
+    profileId?: string,
+  ): Promise<OverviewProfileContext> {
+    const emptyFallback: ProfileForMetrics = {
+      brandName: '本品牌',
+      brandAliases: [],
+      ownedDomains: [],
+      competitors: [],
+    };
+
+    const profiles = profileId
+      ? await (async () => {
+          const single = await this.prisma.base.visibilityProfile.findFirst({
+            where: { id: profileId, tenantId },
+          });
+          if (!single) {
+            throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
+          }
+          return [single];
+        })()
+      : await this.prisma.base.visibilityProfile.findMany({
+          where: { tenantId },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
+
+    if (profiles.length === 0) {
+      return {
+        resolvedProfileId: null,
+        profilesById: new Map(),
+        brandEntries: [],
+        fallbackProfileForMetrics: emptyFallback,
+      };
+    }
+
+    const profilesById = new Map<string, ProfileForMetrics>();
+    const brandMap = new Map<
+      string,
+      {
+        brandName: string;
+        profileIds: string[];
+        rawAliases: string[];
+        ownedDomains: string[];
+        rawCompetitors: VisibilityCompetitor[];
+      }
+    >();
+
+    for (const prof of profiles) {
+      const comps = parseProfileCompetitors(prof.competitors);
+      profilesById.set(prof.id, {
+        brandName: prof.brandName,
+        brandAliases: prof.brandAliases,
+        ownedDomains: prof.ownedDomains,
+        competitors: comps,
+      });
+
+      const brandKey = prof.brandName.trim().toLowerCase() || prof.id;
+      const existing = brandMap.get(brandKey);
+      if (existing) {
+        existing.profileIds.push(prof.id);
+        existing.rawAliases.push(...prof.brandAliases);
+        existing.ownedDomains.push(...prof.ownedDomains);
+        existing.rawCompetitors.push(...comps);
+      } else {
+        brandMap.set(brandKey, {
+          brandName: prof.brandName.trim() || '本品牌',
+          profileIds: [prof.id],
+          rawAliases: [...prof.brandAliases],
+          ownedDomains: [...prof.ownedDomains],
+          rawCompetitors: [...comps],
+        });
+      }
+    }
+
+    const brandEntries = [...brandMap.values()].map((entry) => ({
+      brandName: entry.brandName,
+      profileIds: entry.profileIds,
+      profileForMetrics: {
+        brandName: entry.brandName,
+        brandAliases: dedupeStringsCaseInsensitive(entry.rawAliases, entry.brandName),
+        ownedDomains: [...new Set(entry.ownedDomains)],
+        competitors: normalizeCompetitorsList(entry.rawCompetitors),
+      },
+    }));
+
+    const resolvedProfileId = profileId
+      ? profiles[0]!.id
+      : profiles.length === 1
+        ? profiles[0]!.id
+        : null;
+
+    return {
+      resolvedProfileId,
+      profilesById,
+      brandEntries,
+      fallbackProfileForMetrics: brandEntries[0]?.profileForMetrics ?? emptyFallback,
+    };
+  }
+
+  private computeOverviewMetricsAndGroups(
+    observations: ReadonlyArray<OverviewObservationRow>,
+    ctx: OverviewProfileContext,
+  ): {
+    metrics: RecomputedRunMetrics;
+    brandGroups: VisibilityBrandShareOfVoiceGroup[];
+  } {
+    if (ctx.brandEntries.length === 0) {
+      const metrics = recomputeRunMetrics(
+        observations.map(toMetricObservation),
+        ctx.fallbackProfileForMetrics,
+      );
+      return { metrics, brandGroups: [] };
+    }
+
+    if (ctx.brandEntries.length === 1) {
+      const single = ctx.brandEntries[0]!;
+      const metrics = recomputeRunMetrics(
+        observations.map(toMetricObservation),
+        single.profileForMetrics,
+      );
+      return {
+        metrics,
+        brandGroups: [
+          {
+            brandName: single.brandName,
+            completedChecks: metrics.completedChecks,
+            mentionedChecks: metrics.mentionedChecks,
+            visibilityPct: metrics.visibilityPct,
+            shareOfVoice: metrics.shareOfVoice,
+          },
+        ],
+      };
+    }
+
+    const obsByProfileId = new Map<string, OverviewObservationRow[]>();
+    const orphanObs: OverviewObservationRow[] = [];
+    for (const obs of observations) {
+      if (ctx.profilesById.has(obs.profileId)) {
+        const list = obsByProfileId.get(obs.profileId);
+        if (list) list.push(obs);
+        else obsByProfileId.set(obs.profileId, [obs]);
+      } else {
+        orphanObs.push(obs);
+      }
+    }
+
+    const perProfileMetrics = new Map<string, RecomputedRunMetrics>();
+    for (const [profId, profMetricsConfig] of ctx.profilesById.entries()) {
+      const profObs = obsByProfileId.get(profId) ?? [];
+      perProfileMetrics.set(
+        profId,
+        recomputeRunMetrics(profObs.map(toMetricObservation), profMetricsConfig),
+      );
+    }
+
+    const brandGroups: VisibilityBrandShareOfVoiceGroup[] = ctx.brandEntries.map((entry) => {
+      let completedChecks = 0;
+      let mentionedChecks = 0;
+      let brandMentions = 0;
+      const compMentionsMap = new Map<string, number>();
+
+      for (const comp of entry.profileForMetrics.competitors ?? []) {
+        compMentionsMap.set(comp.name, 0);
+      }
+
+      for (const pid of entry.profileIds) {
+        const pm = perProfileMetrics.get(pid);
+        if (!pm) continue;
+        completedChecks += pm.completedChecks;
+        mentionedChecks += pm.mentionedChecks;
+        brandMentions += pm.shareOfVoice.brandMentions;
+        for (const item of pm.shareOfVoice.entries) {
+          if (item.isBrand) continue;
+          compMentionsMap.set(item.name, (compMentionsMap.get(item.name) ?? 0) + item.mentions);
+        }
+      }
+
+      const compTotal = [...compMentionsMap.values()].reduce((acc, v) => acc + v, 0);
+      const totalMentions = brandMentions + compTotal;
+      const roundPct = (num: number, den: number) =>
+        den > 0 ? Math.round((num / den) * 1000) / 10 : 0;
+
+      const entries: ShareOfVoiceEntry[] = [
+        {
+          name: entry.brandName,
+          isBrand: true,
+          mentions: brandMentions,
+          sharePct: roundPct(brandMentions, totalMentions),
+        },
+        ...[...compMentionsMap.entries()].map(([name, mentions]) => ({
+          name,
+          isBrand: false,
+          mentions,
+          sharePct: roundPct(mentions, totalMentions),
+        })),
+      ].sort((a, b) => {
+        if (b.mentions !== a.mentions) return b.mentions - a.mentions;
+        if (a.isBrand !== b.isBrand) return a.isBrand ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      return {
+        brandName: entry.brandName,
+        completedChecks,
+        mentionedChecks,
+        visibilityPct: computeVisibilityPct(mentionedChecks, completedChecks),
+        shareOfVoice: {
+          totalMentions,
+          brandMentions,
+          brandSharePct: roundPct(brandMentions, totalMentions),
+          entries,
+        },
+      };
+    });
+
+    brandGroups.sort((a, b) => {
+      if (b.shareOfVoice.brandMentions !== a.shareOfVoice.brandMentions) {
+        return b.shareOfVoice.brandMentions - a.shareOfVoice.brandMentions;
+      }
+      if (b.completedChecks !== a.completedChecks) {
+        return b.completedChecks - a.completedChecks;
+      }
+      return a.brandName.localeCompare(b.brandName);
+    });
+
+    const allProfileMetricList = [...perProfileMetrics.values()];
+    if (orphanObs.length > 0) {
+      allProfileMetricList.push(
+        recomputeRunMetrics(orphanObs.map(toMetricObservation), ctx.fallbackProfileForMetrics),
+      );
+    }
+
+    let completedChecks = 0;
+    let mentionedChecks = 0;
+    let totalCitations = 0;
+    let ownedCitations = 0;
+    let ownedCitationChecks = 0;
+    const domainAgg = new Map<string, DomainMetricItem>();
+
+    for (const pm of allProfileMetricList) {
+      completedChecks += pm.completedChecks;
+      mentionedChecks += pm.mentionedChecks;
+      totalCitations += pm.totalCitations;
+      ownedCitations += pm.ownedCitations;
+      ownedCitationChecks += pm.ownedCitationChecks;
+      for (const dom of pm.topDomains) {
+        const prev = domainAgg.get(dom.domain);
+        if (prev) {
+          prev.count += dom.count;
+          prev.observationCount += dom.observationCount;
+          prev.sourceKind = higherPrioritySourceKind(prev.sourceKind, dom.sourceKind);
+        } else {
+          domainAgg.set(dom.domain, { ...dom });
+        }
+      }
+    }
+
+    const topDomains = [...domainAgg.values()].sort((left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.domain.localeCompare(right.domain);
+    });
+
+    const positions: Array<number | null> = [];
+    const sentiments: Array<VisibilitySentiment | null> = [];
+    for (const obs of observations) {
+      if (!obs.brandMentioned) continue;
+      positions.push(obs.brandPosition);
+      sentiments.push(
+        isVisibilitySentiment(obs.brandSentiment ?? '')
+          ? (obs.brandSentiment as VisibilitySentiment)
+          : null,
+      );
+    }
+
+    const totalBrandMentions = brandGroups.reduce(
+      (acc, g) => acc + g.shareOfVoice.brandMentions,
+      0,
+    );
+    const totalAllMentions = brandGroups.reduce((acc, g) => acc + g.shareOfVoice.totalMentions, 0);
+    const roundPct = (num: number, den: number) =>
+      den > 0 ? Math.round((num / den) * 1000) / 10 : 0;
+
+    const mergedCompetitorMentions = new Map<string, number>();
+    for (const group of brandGroups) {
+      for (const item of group.shareOfVoice.entries) {
+        if (item.isBrand) continue;
+        mergedCompetitorMentions.set(
+          item.name,
+          (mergedCompetitorMentions.get(item.name) ?? 0) + item.mentions,
+        );
+      }
+    }
+
+    const combinedEntries: ShareOfVoiceEntry[] = [
+      ...brandGroups.map((group) => ({
+        name: group.brandName,
+        isBrand: true,
+        mentions: group.shareOfVoice.brandMentions,
+        sharePct: roundPct(group.shareOfVoice.brandMentions, totalAllMentions),
+      })),
+      ...[...mergedCompetitorMentions.entries()].map(([name, mentions]) => ({
+        name,
+        isBrand: false,
+        mentions,
+        sharePct: roundPct(mentions, totalAllMentions),
+      })),
+    ].sort((a, b) => {
+      if (b.mentions !== a.mentions) return b.mentions - a.mentions;
+      if (a.isBrand !== b.isBrand) return a.isBrand ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return {
+      metrics: {
+        completedChecks,
+        mentionedChecks,
+        visibilityPct: computeVisibilityPct(mentionedChecks, completedChecks),
+        shareOfVoice: {
+          totalMentions: totalAllMentions,
+          brandMentions: totalBrandMentions,
+          brandSharePct: roundPct(totalBrandMentions, totalAllMentions),
+          entries: combinedEntries,
+        },
+        avgPosition: computeAvgPosition(positions),
+        sentimentSummary: computeSentimentSummary(sentiments),
+        totalCitations,
+        ownedCitations,
+        ownedCitationChecks,
+        ownedCitationRatePct: computeVisibilityPct(ownedCitations, totalCitations),
+        ownedCitationCheckRatePct: computeVisibilityPct(ownedCitationChecks, completedChecks),
+        topDomains,
+      },
+      brandGroups,
+    };
+  }
+
   private buildDailyTrend(
-    observations: ReadonlyArray<{
-      engine: string;
-      brandMentioned: boolean;
-      checkedAt: Date | null;
-      createdAt: Date;
-    }>,
+    observations: ReadonlyArray<OverviewObservationRow>,
     dateKeys: readonly string[],
+    ctx: OverviewProfileContext,
     selectedEngine?: VisibilityEngineKey,
   ): VisibilityTrendPoint[] {
-    const allByDate = new Map<string, { completed: number; mentioned: number }>();
-    const byEngineDate = new Map<string, Map<string, { completed: number; mentioned: number }>>();
+    const allByDate = new Map<string, OverviewObservationRow[]>();
+    const byEngineDate = new Map<string, Map<string, OverviewObservationRow[]>>();
 
     for (const key of dateKeys) {
-      allByDate.set(key, { completed: 0, mentioned: 0 });
+      allByDate.set(key, []);
     }
 
     for (const obs of observations) {
       const dateKey = toShanghaiDateKey(obs.checkedAt ?? obs.createdAt);
       const dayAll = allByDate.get(dateKey);
       if (dayAll) {
-        dayAll.completed += 1;
-        if (obs.brandMentioned) dayAll.mentioned += 1;
+        dayAll.push(obs);
       }
 
       if (isVisibilityEngine(obs.engine)) {
         let engMap = byEngineDate.get(obs.engine);
         if (!engMap) {
-          engMap = new Map(dateKeys.map((k) => [k, { completed: 0, mentioned: 0 }]));
+          engMap = new Map(dateKeys.map((k) => [k, []]));
           byEngineDate.set(obs.engine, engMap);
         }
         const cell = engMap.get(dateKey);
         if (cell) {
-          cell.completed += 1;
-          if (obs.brandMentioned) cell.mentioned += 1;
+          cell.push(obs);
         }
       }
     }
 
-    if (selectedEngine) {
-      const engMap = byEngineDate.get(selectedEngine);
-      return dateKeys.map((date) => {
-        const cell = engMap?.get(date) ?? { completed: 0, mentioned: 0 };
+    const toTrendPoint = (
+      date: string,
+      engine: VisibilityEngineKey | 'all',
+      dayObs: readonly OverviewObservationRow[],
+    ): VisibilityTrendPoint => {
+      const completedChecks = dayObs.length;
+      if (completedChecks === 0) {
         return {
           date,
-          engine: selectedEngine,
-          completedChecks: cell.completed,
-          mentionedChecks: cell.mentioned,
-          visibilityPct: computeVisibilityPct(cell.mentioned, cell.completed),
+          engine,
+          completedChecks: 0,
+          mentionedChecks: 0,
+          visibilityPct: 0,
+          shareOfVoicePct: null,
         };
-      });
+      }
+
+      const mentionedChecks = dayObs.filter((obs) => obs.brandMentioned).length;
+      const { metrics } = this.computeOverviewMetricsAndGroups(dayObs, ctx);
+      return {
+        date,
+        engine,
+        completedChecks,
+        mentionedChecks,
+        visibilityPct: computeVisibilityPct(mentionedChecks, completedChecks),
+        shareOfVoicePct: metrics.shareOfVoice.brandSharePct,
+      };
+    };
+
+    if (selectedEngine) {
+      const engMap = byEngineDate.get(selectedEngine);
+      return dateKeys.map((date) => toTrendPoint(date, selectedEngine, engMap?.get(date) ?? []));
     }
 
     const points: VisibilityTrendPoint[] = [];
     for (const date of dateKeys) {
-      const cell = allByDate.get(date) ?? { completed: 0, mentioned: 0 };
-      points.push({
-        date,
-        engine: 'all',
-        completedChecks: cell.completed,
-        mentionedChecks: cell.mentioned,
-        visibilityPct: computeVisibilityPct(cell.mentioned, cell.completed),
-      });
+      points.push(toTrendPoint(date, 'all', allByDate.get(date) ?? []));
     }
 
     for (const [engineKey, engMap] of byEngineDate.entries()) {
       if (!isVisibilityEngine(engineKey)) continue;
       for (const date of dateKeys) {
-        const cell = engMap.get(date) ?? { completed: 0, mentioned: 0 };
-        points.push({
-          date,
-          engine: engineKey,
-          completedChecks: cell.completed,
-          mentionedChecks: cell.mentioned,
-          visibilityPct: computeVisibilityPct(cell.mentioned, cell.completed),
-        });
+        points.push(toTrendPoint(date, engineKey, engMap.get(date) ?? []));
       }
     }
 
     return points;
   }
+}
+
+type OverviewObservationRow = {
+  id: string;
+  profileId: string;
+  engine: string;
+  status: string;
+  promptText?: string | null;
+  answerText: string | null;
+  brandMentioned: boolean;
+  brandPosition: number | null;
+  brandSentiment: string | null;
+  competitorHits: unknown;
+  checkedAt: Date | null;
+  createdAt: Date;
+  citations: ReadonlyArray<{
+    url: string;
+    domain: string;
+    sourceKind: string;
+  }>;
+};
+
+type OverviewProfileContext = {
+  resolvedProfileId: string | null;
+  profilesById: Map<string, ProfileForMetrics>;
+  brandEntries: Array<{
+    brandName: string;
+    profileIds: string[];
+    profileForMetrics: ProfileForMetrics;
+  }>;
+  fallbackProfileForMetrics: ProfileForMetrics;
+};
+
+function toMetricObservation(obs: OverviewObservationRow) {
+  return {
+    id: obs.id,
+    status: obs.status,
+    promptText: obs.promptText,
+    answerText: obs.answerText,
+    brandMentioned: obs.brandMentioned,
+    brandPosition: obs.brandPosition,
+    brandSentiment: obs.brandSentiment,
+    competitorHits: obs.competitorHits,
+    citations: obs.citations.map((cite) => ({
+      url: cite.url,
+      domain: cite.domain,
+      sourceKind: cite.sourceKind,
+    })),
+  };
 }
 
 function higherPrioritySourceKind(

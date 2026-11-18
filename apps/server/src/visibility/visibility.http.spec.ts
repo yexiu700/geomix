@@ -2254,4 +2254,296 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     expect(expiredImportRes.status).toBe(403);
     expect(expiredImportRes.code).toBe(API_ERROR.TENANT_EXPIRED);
   });
+
+  it('returns null SoV on 0-sample dates in trend (#186) and preserves separate own-brands & competitor tracks under 全部监测档案 (#211)', async () => {
+    const tenantMulti = 'ten_multi_brand';
+    const tokenMulti = store.seedTenant({
+      tenantId: tenantMulti,
+      userId: 'usr_multi_brand',
+      username: 'merchant_multi_brand',
+      points: 300,
+      billingMode: 'SHADOW',
+    });
+
+    const now = new Date();
+    const profArzopaId = store.nextId('vprof');
+    store.profiles.set(profArzopaId, {
+      id: profArzopaId,
+      tenantId: tenantMulti,
+      name: 'ARZOPA便携屏全链路监测档案',
+      brandName: '阿卓帕',
+      brandAliases: ['ARZOPA'],
+      ownedDomains: ['arzopa.example.com'],
+      competitors: [
+        { name: '联想ThinkVision', aliases: [], domains: ['lenovo.example.com'] },
+        { name: '小米', aliases: [], domains: ['mi.example.com'] },
+      ],
+      createdAt: new Date(now.getTime() - 20_000),
+      updatedAt: now,
+    });
+
+    const profAnkerId = store.nextId('vprof');
+    store.profiles.set(profAnkerId, {
+      id: profAnkerId,
+      tenantId: tenantMulti,
+      name: '安克创新（Anker）全品类监测档案',
+      brandName: '安克创新',
+      brandAliases: ['Anker'],
+      ownedDomains: ['anker.example.com'],
+      competitors: [
+        { name: '绿联 UGREEN', aliases: [], domains: ['ugreen.example.com'] },
+        { name: '倍思 Baseus', aliases: [], domains: ['baseus.example.com'] },
+      ],
+      createdAt: new Date(now.getTime() - 10_000),
+      updatedAt: now,
+    });
+
+    const runArzopaId = store.nextId('vrun');
+    store.runs.set(runArzopaId, {
+      id: runArzopaId,
+      tenantId: tenantMulti,
+      profileId: profArzopaId,
+      keywordId: null,
+      name: '阿卓帕今日监测',
+      engines: ['deepseek'],
+      questionIds: [],
+      totalChecks: 2,
+      doneCount: 2,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+
+    const runAnkerId = store.nextId('vrun');
+    store.runs.set(runAnkerId, {
+      id: runAnkerId,
+      tenantId: tenantMulti,
+      profileId: profAnkerId,
+      keywordId: null,
+      name: '安克创新今日监测',
+      engines: ['deepseek'],
+      questionIds: [],
+      totalChecks: 2,
+      doneCount: 2,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+
+    const obsArz1 = store.nextId('vobs');
+    store.observations.set(obsArz1, {
+      id: obsArz1,
+      tenantId: tenantMulti,
+      runId: runArzopaId,
+      profileId: profArzopaId,
+      questionId: null,
+      promptText: '便携显示器推荐哪款？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '首推阿卓帕便携屏，其次可看联想ThinkVision。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: '首推阿卓帕便携屏',
+      competitorHits: [
+        { name: '联想ThinkVision', mentioned: true, position: 2, sentiment: 'neutral' },
+        { name: '小米', mentioned: false, position: null, sentiment: null },
+      ],
+      fanOutQueries: [],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 100,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+    store.citations.set(store.nextId('vcite'), {
+      id: 'vcite_arz_1',
+      tenantId: tenantMulti,
+      observationId: obsArz1,
+      url: 'https://arzopa.example.com/guide',
+      domain: 'arzopa.example.com',
+      title: '阿卓帕官方指南',
+      snippet: '便携屏评测',
+      sourceKind: 'OWNED',
+      position: 1,
+      createdAt: now,
+    });
+
+    const obsArz2 = store.nextId('vobs');
+    store.observations.set(obsArz2, {
+      id: obsArz2,
+      tenantId: tenantMulti,
+      runId: runArzopaId,
+      profileId: profArzopaId,
+      questionId: null,
+      promptText: '出差外接屏哪个牌子好？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '阿卓帕轻量便携屏体验不错。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: '阿卓帕轻量便携屏体验不错',
+      competitorHits: [
+        { name: '联想ThinkVision', mentioned: false, position: null, sentiment: null },
+        { name: '小米', mentioned: false, position: null, sentiment: null },
+      ],
+      fanOutQueries: [],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 100,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const obsAnk1 = store.nextId('vobs');
+    store.observations.set(obsAnk1, {
+      id: obsAnk1,
+      tenantId: tenantMulti,
+      runId: runAnkerId,
+      profileId: profAnkerId,
+      questionId: null,
+      promptText: '氮化镓充电头哪家好？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '推荐安克创新和绿联 UGREEN。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: '推荐安克创新和绿联 UGREEN',
+      competitorHits: [
+        { name: '绿联 UGREEN', mentioned: true, position: 2, sentiment: 'neutral' },
+        { name: '倍思 Baseus', mentioned: false, position: null, sentiment: null },
+      ],
+      fanOutQueries: [],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 100,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+    store.citations.set(store.nextId('vcite'), {
+      id: 'vcite_ank_1',
+      tenantId: tenantMulti,
+      observationId: obsAnk1,
+      url: 'https://anker.example.com/gan',
+      domain: 'anker.example.com',
+      title: '安克创新氮化镓白皮书',
+      snippet: '快充技术',
+      sourceKind: 'OWNED',
+      position: 1,
+      createdAt: now,
+    });
+
+    const obsAnk2 = store.nextId('vobs');
+    store.observations.set(obsAnk2, {
+      id: obsAnk2,
+      tenantId: tenantMulti,
+      runId: runAnkerId,
+      profileId: profAnkerId,
+      questionId: null,
+      promptText: '100W桌面快充推荐？',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '绿联 UGREEN 与倍思 Baseus 都有多口方案。',
+      brandMentioned: false,
+      brandPosition: null,
+      brandSentiment: null,
+      brandPassage: null,
+      competitorHits: [
+        { name: '绿联 UGREEN', mentioned: true, position: 1, sentiment: 'positive' },
+        { name: '倍思 Baseus', mentioned: true, position: 2, sentiment: 'neutral' },
+      ],
+      fanOutQueries: [],
+      judgeModel: 'fake-judge',
+      tokensIn: 100,
+      tokensOut: 100,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    // #186: Single profile overview with 6 historical 0-sample days + 1 active day
+    const singleOverview = await httpJson<VisibilityOverviewResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/overview?profileId=${profArzopaId}&days=7`,
+      { token: tokenMulti },
+    );
+    expect(singleOverview.status).toBe(200);
+    const allTrend = singleOverview.data.trend.filter((pt) => pt.engine === 'all');
+    expect(allTrend).toHaveLength(7);
+    for (const emptyDay of allTrend.slice(0, 6)) {
+      expect(emptyDay.completedChecks).toBe(0);
+      expect(emptyDay.visibilityPct).toBe(0);
+      expect((emptyDay as { shareOfVoicePct?: number | null }).shareOfVoicePct).toBeNull();
+    }
+    const activeDay = allTrend[6]!;
+    expect(activeDay.completedChecks).toBe(2);
+    expect((activeDay as { shareOfVoicePct?: number | null }).shareOfVoicePct).toBe(66.7);
+
+    // #211: All profiles overview preserves both own-brands and separates their competitor tracks
+    const multiOverview = await httpJson<VisibilityOverviewResponse>(
+      base,
+      'GET',
+      '/api/v1/visibility/overview?days=7',
+      { token: tokenMulti },
+    );
+    expect(multiOverview.status).toBe(200);
+    expect(multiOverview.data.profileId).toBeNull();
+    expect(multiOverview.data.metrics.completedChecks).toBe(4);
+    expect(multiOverview.data.metrics.mentionedChecks).toBe(3);
+    expect(multiOverview.data.metrics.ownedCitations).toBe(2);
+
+    const brandEntries = multiOverview.data.metrics.shareOfVoice.entries.filter((e) => e.isBrand);
+    expect(brandEntries.map((e) => e.name).sort()).toEqual(['安克创新', '阿卓帕']);
+
+    const groups = (
+      multiOverview.data as VisibilityOverviewResponse & {
+        brandGroups?: Array<{
+          brandName: string;
+          completedChecks: number;
+          mentionedChecks: number;
+          visibilityPct: number;
+          shareOfVoice: {
+            brandSharePct: number;
+            entries: Array<{ name: string; isBrand: boolean; mentions: number; sharePct: number }>;
+          };
+        }>;
+      }
+    ).brandGroups;
+    expect(groups).toHaveLength(2);
+
+    const arzopaGroup = groups?.find((g) => g.brandName === '阿卓帕');
+    const ankerGroup = groups?.find((g) => g.brandName === '安克创新');
+    expect(arzopaGroup?.shareOfVoice.brandSharePct).toBe(66.7);
+    expect(arzopaGroup?.shareOfVoice.entries.map((e) => e.name)).toEqual([
+      '阿卓帕',
+      '联想ThinkVision',
+      '小米',
+    ]);
+    expect(ankerGroup?.shareOfVoice.brandSharePct).toBe(25);
+    expect(ankerGroup?.shareOfVoice.entries.map((e) => e.name)).toEqual([
+      '绿联 UGREEN',
+      '安克创新',
+      '倍思 Baseus',
+    ]);
+  });
 });
