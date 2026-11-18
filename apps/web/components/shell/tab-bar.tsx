@@ -31,12 +31,81 @@ export function TabBar({
   const current = tabs.find((tab) => tab.id === menu?.id);
 
   return (
-    <div className="gm-tabs" role="tablist" aria-label="已打开的页面" data-testid="tab-stack">
+    <div
+      className="gm-tabs"
+      role="tablist"
+      aria-label="已打开的页面"
+      data-testid="tab-stack"
+      style={{
+        height: 36,
+        padding: '0 12px',
+        gap: 4,
+        borderBottom: '1px solid var(--gm-line-1)',
+        background: 'var(--gm-bg-base)',
+        overflowX: 'auto',
+        scrollbarWidth: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        maskImage:
+          'linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%)',
+        WebkitMaskImage:
+          'linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%)',
+      }}
+    >
+      <style>{`
+        .gm-tabs::-webkit-scrollbar { display: none; }
+        .gm-tabs .gm-tab {
+          height: 26px;
+          padding: 0 8px 0 10px;
+          border-radius: 6px;
+          font-size: 12px;
+          color: var(--gm-fg-3);
+          border: 1px solid transparent;
+          background: transparent;
+          gap: 4px;
+          transition: background-color var(--gm-dur-fast) var(--gm-ease-out), border-color var(--gm-dur-fast) var(--gm-ease-out), color var(--gm-dur-fast) var(--gm-ease-out);
+        }
+        .gm-tabs .gm-tab:hover {
+          color: var(--gm-fg-1);
+          background: var(--gm-bg-hover);
+        }
+        .gm-tabs .gm-tab.active {
+          color: var(--gm-fg-1);
+          background: var(--gm-bg-surface);
+          border-color: var(--gm-line-2);
+        }
+        .gm-tabs .gm-tab button[role='tab'] {
+          padding: 0;
+          color: inherit;
+          font-size: inherit;
+          max-width: 160px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .gm-tabs .gm-tab-close {
+          width: 14px;
+          height: 14px;
+          padding: 0;
+          border-radius: 4px;
+          color: var(--gm-fg-3);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          line-height: 1;
+        }
+        .gm-tabs .gm-tab-close:hover {
+          background: rgba(255, 255, 255, 0.08);
+          color: var(--gm-fg-1);
+        }
+      `}</style>
       {tabs.map((tab) => (
         <div key={tab.id} className={tab.id === activeId ? 'gm-tab active' : 'gm-tab'}>
           <button
             type="button"
             role="tab"
+            title={tab.title}
             aria-selected={tab.id === activeId}
             aria-label={tab.title}
             onClick={() => onDispatch({ type: 'activate', id: tab.id })}

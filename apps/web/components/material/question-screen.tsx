@@ -520,7 +520,7 @@ export function QuestionScreen({
             {formError ? <Alert type="error" showIcon message={formError} /> : null}
             <div>
               <label htmlFor="gm-qst-keyword" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: '#ff4d4f' }}>*</span> 蒸馏主词
+                <span style={{ color: 'var(--gm-danger)' }}>*</span> 蒸馏主词
               </label>
               <Select<string>
                 id="gm-qst-keyword"
@@ -538,7 +538,7 @@ export function QuestionScreen({
 
             <div>
               <label htmlFor="gm-qst-lines" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: '#ff4d4f' }}>*</span> 拓展问题
+                <span style={{ color: 'var(--gm-danger)' }}>*</span> 拓展问题
               </label>
               <Input.TextArea
                 id="gm-qst-lines"
@@ -597,7 +597,7 @@ export function QuestionScreen({
             </div>
             <div>
               <label htmlFor="gm-qst-edit-text" style={{ display: 'block', marginBottom: 4 }}>
-                <span style={{ color: '#ff4d4f' }}>*</span> 问题内容
+                <span style={{ color: 'var(--gm-danger)' }}>*</span> 问题内容
               </label>
               <Input
                 id="gm-qst-edit-text"

@@ -494,7 +494,7 @@ export function PromptScreen({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Typography.Text strong style={{ marginRight: 12 }}>
-              <span style={{ color: '#ff4d4f' }}>* </span>创作类型
+              <span style={{ color: 'var(--gm-danger)' }}>* </span>创作类型
             </Typography.Text>
             <Radio.Group
               value={draft.kind}
@@ -512,7 +512,7 @@ export function PromptScreen({
 
           <div>
             <Typography.Text strong>
-              <span style={{ color: '#ff4d4f' }}>* </span>指令名称
+              <span style={{ color: 'var(--gm-danger)' }}>* </span>指令名称
             </Typography.Text>
             <Input
               aria-label="指令名称"
@@ -535,7 +535,7 @@ export function PromptScreen({
               }}
             >
               <Typography.Text strong>
-                <span style={{ color: '#ff4d4f' }}>* </span>指令内容
+                <span style={{ color: 'var(--gm-danger)' }}>* </span>指令内容
               </Typography.Text>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {Array.from(draft.content).length}/{PROMPT_CONTENT_MAX}
@@ -579,7 +579,7 @@ export function PromptScreen({
               style={{
                 width: '100%',
                 padding: '8px 11px',
-                border: '1px solid #d9d9d9',
+                border: '1px solid var(--gm-line-2)',
                 borderRadius: 6,
                 fontSize: 14,
                 lineHeight: 1.65,
@@ -662,8 +662,8 @@ export function PromptScreen({
                     fontFamily: 'inherit',
                     fontSize: 13,
                     lineHeight: 1.7,
-                    color: '#333',
-                    background: '#fafafa',
+                    color: 'var(--gm-fg-1)',
+                    background: 'var(--gm-bg-elevated)',
                     padding: '8px 10px',
                     borderRadius: 6,
                   }}

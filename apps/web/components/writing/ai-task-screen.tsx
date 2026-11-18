@@ -52,10 +52,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 11px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -831,7 +831,7 @@ export function AiTaskScreen({
               {/* 1. 任务名称 */}
               <div>
                 <label htmlFor="gm-aitask-name" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: '#ff4d4f' }}>*</span> 任务名称
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 任务名称
                 </label>
                 <Input
                   id="gm-aitask-name"
@@ -877,7 +877,7 @@ export function AiTaskScreen({
               {/* 3. 蒸馏训练词 */}
               <div>
                 <label htmlFor="gm-aitask-keyword" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: '#ff4d4f' }}>*</span> 蒸馏训练词
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 蒸馏训练词
                 </label>
                 <select
                   id="gm-aitask-keyword"
@@ -904,7 +904,7 @@ export function AiTaskScreen({
               {/* 4. 画像图库 */}
               <div>
                 <label htmlFor="gm-aitask-gallery" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: '#ff4d4f' }}>*</span> 画像图库
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库
                 </label>
                 <select
                   id="gm-aitask-gallery"
@@ -1093,7 +1093,7 @@ export function AiTaskScreen({
               {/* 10. AI 创作数量 */}
               <div>
                 <label htmlFor="gm-aitask-target" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: '#ff4d4f' }}>*</span> AI 创作数量（1–100 篇）
+                  <span style={{ color: 'var(--gm-danger)' }}>*</span> AI 创作数量（1–100 篇）
                 </label>
                 <InputNumber
                   id="gm-aitask-target"

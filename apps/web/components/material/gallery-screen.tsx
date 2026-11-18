@@ -44,9 +44,9 @@ function StorageQuotaBanner({ storage }: { storage: MediaStorageSummary | null }
         gap: 12,
         marginBottom: 12,
         padding: '8px 12px',
-        background: '#f8fafc',
+        background: 'var(--gm-bg-elevated)',
         borderRadius: 6,
-        border: '1px solid #e2e8f0',
+        border: '1px solid var(--gm-line-1)',
       }}
     >
       <Typography.Text strong>图片存储空间：</Typography.Text>
@@ -239,7 +239,7 @@ export function GalleryCategoryScreen({
                 height: 44,
                 objectFit: 'cover',
                 borderRadius: 4,
-                border: '1px solid #d9d9d9',
+                border: '1px solid var(--gm-line-1)',
                 cursor: 'pointer',
               }}
               onClick={() => openAssetList(row.id)}
@@ -586,11 +586,11 @@ export function GalleryAssetScreen({
               height: 48,
               objectFit: 'cover',
               borderRadius: 4,
-              border: '1px solid #d9d9d9',
+              border: '1px solid var(--gm-line-1)',
             }}
           />
           <div>
-            <div style={{ fontSize: 12, color: '#334155' }}>
+            <div className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
               {row.width} × {row.height} · {formatGalleryBytes(row.bytes)}
             </div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -784,7 +784,7 @@ export function GalleryAssetScreen({
                     alignItems: 'center',
                     gap: 10,
                     padding: 6,
-                    border: '1px solid #e2e8f0',
+                    border: '1px solid var(--gm-line-1)',
                     borderRadius: 6,
                   }}
                 >

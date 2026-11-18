@@ -65,10 +65,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -76,10 +76,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -590,8 +590,8 @@ export function RewriteBatchScreen({
           flexWrap: 'wrap',
           gap: 12,
           padding: '14px 18px',
-          background: '#ffffff',
-          border: '1px solid #f0f0f0',
+          background: 'var(--gm-bg-surface)',
+          border: '1px solid var(--gm-line-1)',
           borderRadius: 8,
         }}
       >
@@ -603,7 +603,7 @@ export function RewriteBatchScreen({
             <Tag color="blue">{unitPoints} 点数/篇 · 预冻按成功篇数结算</Tag>
             <Tag color="cyan">凑满最大改写量即停 · 差额自动退还</Tag>
           </Space>
-          <div style={{ marginTop: 4, fontSize: 13, color: '#666' }}>
+          <div style={{ marginTop: 4, fontSize: 13, color: 'var(--gm-fg-2)' }}>
             默认支持粘贴最多 {REWRITE_BATCH_LINK_LIST_MAX}{' '}
             条公开文章链接批量抓取与结构重构；单链失败或超时自动跳过不扣点，所有插图仅取自商户自有图库。
           </div>
@@ -653,8 +653,8 @@ export function RewriteBatchScreen({
           flexWrap: 'wrap',
           gap: 10,
           padding: '12px 16px',
-          background: '#ffffff',
-          border: '1px solid #f0f0f0',
+          background: 'var(--gm-bg-surface)',
+          border: '1px solid var(--gm-line-1)',
           borderRadius: 8,
         }}
       >
@@ -752,8 +752,8 @@ export function RewriteBatchScreen({
       {/* Main Batch Table */}
       <div
         style={{
-          background: '#ffffff',
-          border: '1px solid #f0f0f0',
+          background: 'var(--gm-bg-surface)',
+          border: '1px solid var(--gm-line-1)',
           borderRadius: 8,
           padding: 12,
         }}
@@ -804,8 +804,8 @@ export function RewriteBatchScreen({
               key: 'name',
               render: (_val: unknown, row: RewriteBatchItem) => (
                 <div>
-                  <div style={{ fontWeight: 600, color: '#1f1f1f' }}>{row.name}</div>
-                  <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 2 }}>
+                  <div style={{ fontWeight: 600, color: 'var(--gm-fg-1)' }}>{row.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 2 }}>
                     归档分类：
                     <Button
                       type="link"
@@ -843,7 +843,7 @@ export function RewriteBatchScreen({
               dataIndex: 'maxCount',
               key: 'maxCount',
               width: 110,
-              render: (val: number) => <span>{val} 篇</span>,
+              render: (val: number) => <span className="gm-num">{val} 篇</span>,
             },
             {
               title: '当前数量',
@@ -851,10 +851,10 @@ export function RewriteBatchScreen({
               width: 190,
               render: (_val: unknown, row: RewriteBatchItem) => (
                 <div>
-                  <div style={{ fontWeight: 600 }}>
+                  <div className="gm-num" style={{ fontWeight: 600 }}>
                     {row.doneCount} / {row.maxCount} 篇
                   </div>
-                  <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                  <div className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
                     预冻 {row.reservedPoints} · 已结 {row.settledPoints} · 已退 {row.releasedPoints}{' '}
                     点
                   </div>
@@ -875,7 +875,7 @@ export function RewriteBatchScreen({
                     <div
                       style={{
                         fontSize: 12,
-                        color: row.status === 'FAILED' ? '#cf1322' : '#666',
+                        color: row.status === 'FAILED' ? 'var(--gm-danger)' : 'var(--gm-fg-2)',
                         marginTop: 4,
                         lineHeight: 1.4,
                       }}
@@ -902,7 +902,9 @@ export function RewriteBatchScreen({
               key: 'createdAt',
               width: 150,
               render: (val: string) => (
-                <span style={{ fontSize: 13, color: '#595959' }}>{formatTime(val)}</span>
+                <span className="gm-num" style={{ fontSize: 13, color: 'var(--gm-fg-2)' }}>
+                  {formatTime(val)}
+                </span>
               ),
             },
             {
@@ -994,8 +996,8 @@ export function RewriteBatchScreen({
               style={{
                 padding: '12px 14px',
                 borderRadius: 8,
-                background: '#f0f5ff',
-                border: '1px solid #adc6ff',
+                background: 'var(--gm-bg-elevated)',
+                border: '1px solid rgba(111,168,255,0.32)',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
@@ -1004,11 +1006,11 @@ export function RewriteBatchScreen({
               }}
             >
               <div>
-                <div style={{ fontWeight: 600, color: '#1d39c4' }}>
+                <div className="gm-num" style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
                   计费标准：{unitPoints} 点数/篇 · 本次最多 {modalState.draft.maxCount} 篇 · 预冻结{' '}
                   {estimatedFreezePoints} 点数
                 </div>
-                <div style={{ fontSize: 12, color: '#595959', marginTop: 2 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
                   按成功生成篇数逐篇结算；单链失败、防爬拦截、超时无响应或凑满即停的剩余点数自动全额退回账户，不占用
                   AI 写作配额。
                 </div>
@@ -1024,7 +1026,7 @@ export function RewriteBatchScreen({
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
               <div>
                 <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                  任务名称 <span style={{ color: '#ff4d4f' }}>*</span>
+                  任务名称 <span style={{ color: 'var(--gm-danger)' }}>*</span>
                 </div>
                 <Input
                   aria-label="任务名称"
@@ -1040,7 +1042,7 @@ export function RewriteBatchScreen({
               </div>
               <div>
                 <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                  最大改写量（凑满即停） <span style={{ color: '#ff4d4f' }}>*</span>
+                  最大改写量（凑满即停） <span style={{ color: 'var(--gm-danger)' }}>*</span>
                 </div>
                 <InputNumber
                   aria-label="最大改写量"
@@ -1105,10 +1107,11 @@ export function RewriteBatchScreen({
                     }}
                   >
                     <span style={{ fontWeight: 500 }}>
-                      公开文章链接清单（一行一条） <span style={{ color: '#ff4d4f' }}>*</span>
+                      公开文章链接清单（一行一条）{' '}
+                      <span style={{ color: 'var(--gm-danger)' }}>*</span>
                     </span>
                     {draftLinkAnalysis && (
-                      <span style={{ fontSize: 12, color: '#595959' }}>
+                      <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
                         有效候选 <b>{draftLinkAnalysis.candidates.length}</b> 条
                         {draftLinkAnalysis.duplicateLines.length > 0
                           ? ` · 去重 ${draftLinkAnalysis.duplicateLines.length} 条`
@@ -1174,7 +1177,7 @@ export function RewriteBatchScreen({
             ) : (
               <div>
                 <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                  流量关键词 <span style={{ color: '#ff4d4f' }}>*</span>
+                  流量关键词 <span style={{ color: 'var(--gm-danger)' }}>*</span>
                 </div>
                 <Input
                   aria-label="流量关键词"
@@ -1217,7 +1220,7 @@ export function RewriteBatchScreen({
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>
-                    文章配图（自有图库分类） <span style={{ color: '#ff4d4f' }}>*</span>
+                    文章配图（自有图库分类） <span style={{ color: 'var(--gm-danger)' }}>*</span>
                   </span>
                   <Button
                     type="link"
@@ -1247,10 +1250,10 @@ export function RewriteBatchScreen({
                     </option>
                   ))}
                 </select>
-                <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
                   按原文篇幅自动插图（&lt;600字 1 张 / 600字以上 2 张），严禁使用来源站原图。
                   {selectedMediaCat && selectedMediaCat.assetCount === 0 && (
-                    <span style={{ color: '#cf1322', marginLeft: 4 }}>
+                    <span style={{ color: 'var(--gm-danger)', marginLeft: 4 }}>
                       当前图库分类暂无图片，请先上传图片！
                     </span>
                   )}
@@ -1267,7 +1270,8 @@ export function RewriteBatchScreen({
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>
-                    爆文改写指令（仅流量复刻类型） <span style={{ color: '#ff4d4f' }}>*</span>
+                    爆文改写指令（仅流量复刻类型）{' '}
+                    <span style={{ color: 'var(--gm-danger)' }}>*</span>
                   </span>
                   <Button
                     type="link"
@@ -1464,7 +1468,7 @@ export function RewriteBatchScreen({
                       <div
                         style={{
                           fontSize: 12,
-                          color: '#8c8c8c',
+                          color: 'var(--gm-fg-3)',
                           wordBreak: 'break-all',
                           maxWidth: 260,
                         }}
@@ -1516,7 +1520,7 @@ export function RewriteBatchScreen({
                         {ITEM_STATUS_LABELS[rec.status] ?? rec.status}
                       </Tag>
                       {rec.error && (
-                        <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 3 }}>
+                        <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 3 }}>
                           {rec.error}
                         </div>
                       )}

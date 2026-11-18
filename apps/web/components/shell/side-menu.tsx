@@ -72,7 +72,19 @@ export function SideMenu({
         if (item.type === 'section') {
           return (
             <div key={item.key}>
-              <div className="gm-menu-title">{item.title}</div>
+              <div
+                className="gm-menu-title"
+                style={{
+                  padding: '16px 16px 6px',
+                  fontSize: 11,
+                  lineHeight: '16px',
+                  letterSpacing: '0.06em',
+                  color: 'var(--gm-fg-3)',
+                  fontWeight: 500,
+                }}
+              >
+                {item.title}
+              </div>
               <Menu
                 {...menuProps}
                 items={toAntdItems(item.children)}
@@ -126,7 +138,26 @@ function MenuLabel({ title, badge }: { title: string; badge?: MenuBadge }) {
   return (
     <span className="gm-menu-label">
       <span>{title}</span>
-      {badge === 'new' ? <span className="gm-badge">新上</span> : null}
+      {badge === 'new' ? (
+        <span
+          className="gm-badge"
+          style={{
+            height: 16,
+            padding: '0 5px',
+            borderRadius: 4,
+            background: 'var(--gm-phosphor-a16)',
+            color: 'var(--gm-phosphor)',
+            fontSize: 10,
+            fontWeight: 600,
+            marginLeft: 6,
+            lineHeight: '16px',
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          新上
+        </span>
+      ) : null}
     </span>
   );
 }

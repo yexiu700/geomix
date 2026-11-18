@@ -37,10 +37,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -48,10 +48,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -522,9 +522,9 @@ export function RewriteSingleScreen({
           alignItems: 'center',
           marginBottom: 12,
           padding: '10px 12px',
-          background: '#fafafa',
+          background: 'var(--gm-bg-surface)',
           borderRadius: 8,
-          border: '1px solid #f0f0f0',
+          border: '1px solid var(--gm-line-1)',
         }}
       >
         <Input

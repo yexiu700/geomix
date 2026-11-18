@@ -43,10 +43,10 @@ const NATIVE_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 14,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -54,10 +54,10 @@ const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
   padding: '0 10px',
   borderRadius: 6,
-  border: '1px solid #d9d9d9',
-  backgroundColor: '#ffffff',
+  border: '1px solid var(--gm-line-2)',
+  backgroundColor: 'var(--gm-bg-elevated)',
   fontSize: 13,
-  color: 'rgba(0, 0, 0, 0.88)',
+  color: 'var(--gm-fg-1)',
   outline: 'none',
 };
 
@@ -830,12 +830,12 @@ export function ArticleManageScreen({
             padding: 12,
             marginBottom: 12,
             borderRadius: 8,
-            background: '#fafafa',
-            border: '1px solid #f0f0f0',
+            background: 'var(--gm-bg-surface)',
+            border: '1px solid var(--gm-line-1)',
           }}
         >
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>分类</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>分类</div>
             <select
               aria-label="分类筛选"
               style={NATIVE_SELECT_STYLE}
@@ -852,7 +852,7 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>AI 任务</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>AI 任务</div>
             <select
               aria-label="AI 任务筛选"
               style={NATIVE_SELECT_STYLE}
@@ -869,7 +869,7 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>标题</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>标题</div>
             <Input
               aria-label="标题筛选"
               placeholder="输入标题关键词"
@@ -880,7 +880,7 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>发送次数</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>发送次数</div>
             <Input
               aria-label="发送次数筛选"
               placeholder="例如 0"
@@ -890,7 +890,7 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>转视频次数</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>转视频次数</div>
             <Input
               aria-label="转视频次数筛选"
               placeholder="例如 0"
@@ -900,7 +900,7 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>状态</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>状态</div>
             <select
               aria-label="状态筛选"
               style={NATIVE_SELECT_STYLE}
@@ -917,7 +917,9 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>创建开始日期</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+              创建开始日期
+            </div>
             <Input
               type="date"
               aria-label="创建开始日期"
@@ -927,7 +929,9 @@ export function ArticleManageScreen({
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>创建结束日期</div>
+            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+              创建结束日期
+            </div>
             <Input
               type="date"
               aria-label="创建结束日期"
@@ -1010,7 +1014,7 @@ export function ArticleManageScreen({
                       height: 36,
                       objectFit: 'cover',
                       borderRadius: 4,
-                      border: '1px solid #f0f0f0',
+                      border: '1px solid var(--gm-line-1)',
                       flexShrink: 0,
                     }}
                   />
@@ -1024,14 +1028,16 @@ export function ArticleManageScreen({
                       alignItems: 'center',
                       gap: 6,
                       fontSize: 12,
-                      color: '#8c8c8c',
+                      color: 'var(--gm-fg-3)',
                     }}
                   >
                     <span style={{ whiteSpace: 'nowrap' }}>
                       {ARTICLE_SOURCE_LABELS[row.source]}
                     </span>
                     <span>·</span>
-                    <span style={{ whiteSpace: 'nowrap' }}>{row.wordCount} 字</span>
+                    <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+                      {row.wordCount} 字
+                    </span>
                     {row.aiTaskName ? (
                       <>
                         <span>·</span>
@@ -1287,8 +1293,8 @@ export function ArticleManageScreen({
               style={{
                 padding: '8px 10px',
                 borderRadius: 6,
-                border: '1px dashed #d9d9d9',
-                background: '#fafafa',
+                border: '1px dashed var(--gm-line-1)',
+                background: 'var(--gm-bg-surface)',
               }}
             >
               <div
@@ -1313,7 +1319,7 @@ export function ArticleManageScreen({
                           height: 34,
                           objectFit: 'cover',
                           borderRadius: 4,
-                          border: '2px solid #1677ff',
+                          border: '2px solid var(--gm-phosphor)',
                         }}
                       />
                       <span style={{ display: 'none' }}>{editor.draft.coverUrl}</span>
@@ -1322,7 +1328,7 @@ export function ArticleManageScreen({
                     <Tag>未设置封面</Tag>
                   )}
                   {galleryLoading ? (
-                    <span style={{ fontSize: 12, color: '#8c8c8c' }}>加载图库图片中...</span>
+                    <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>加载图库图片中...</span>
                   ) : null}
                 </Space>
                 <Space size={8}>
@@ -1369,7 +1375,7 @@ export function ArticleManageScreen({
                     marginTop: 8,
                   }}
                 >
-                  <span style={{ fontSize: 12, color: '#666' }}>候选封面：</span>
+                  <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>候选封面：</span>
                   {galleryAssets.slice(0, 8).map((asset, idx) => {
                     const active = editor.draft.coverUrl === asset.url;
                     return (
@@ -1384,11 +1390,13 @@ export function ArticleManageScreen({
                         }
                         style={{
                           padding: 0,
-                          border: active ? '2px solid #1677ff' : '1px solid #d9d9d9',
+                          border: active
+                            ? '2px solid var(--gm-phosphor)'
+                            : '1px solid var(--gm-line-1)',
                           borderRadius: 4,
                           overflow: 'hidden',
                           cursor: 'pointer',
-                          background: '#fff',
+                          background: 'var(--gm-bg-surface)',
                         }}
                       >
                         <img
@@ -1408,9 +1416,9 @@ export function ArticleManageScreen({
               <div
                 role="note"
                 style={{
-                  color: '#cf1322',
-                  background: '#fff1f0',
-                  border: '1px solid #ffa39e',
+                  color: 'var(--gm-danger)',
+                  background: 'rgba(240,96,93,0.08)',
+                  border: '1px solid rgba(240,96,93,0.32)',
                   borderRadius: 6,
                   padding: '5px 10px',
                   fontSize: 12,
@@ -1431,7 +1439,7 @@ export function ArticleManageScreen({
 
               <div
                 style={{
-                  border: '1px solid #d9d9d9',
+                  border: '1px solid var(--gm-line-1)',
                   borderRadius: 6,
                   overflow: 'hidden',
                 }}
@@ -1444,8 +1452,8 @@ export function ArticleManageScreen({
                     flexWrap: 'wrap',
                     gap: 6,
                     padding: '6px 10px',
-                    background: '#fafafa',
-                    borderBottom: '1px solid #f0f0f0',
+                    background: 'var(--gm-bg-elevated)',
+                    borderBottom: '1px solid var(--gm-line-1)',
                   }}
                 >
                   <Space size={4} wrap>
@@ -1503,10 +1511,14 @@ export function ArticleManageScreen({
                       {plainCopied ? '已复制纯文本' : '复制纯文本'}
                     </Button>
                     <span
+                      className="gm-num"
                       aria-label="字数统计"
                       style={{
                         fontSize: 12,
-                        color: editorWordCount > SHORT_VIDEO_WORD_LIMIT ? '#cf1322' : '#595959',
+                        color:
+                          editorWordCount > SHORT_VIDEO_WORD_LIMIT
+                            ? 'var(--gm-danger)'
+                            : 'var(--gm-fg-2)',
                         fontWeight: 500,
                       }}
                     >
@@ -1541,7 +1553,7 @@ export function ArticleManageScreen({
                       maxHeight: 200,
                       overflowY: 'auto',
                       padding: 12,
-                      background: '#ffffff',
+                      background: 'var(--gm-bg-surface)',
                     }}
                     dangerouslySetInnerHTML={{ __html: sanitizedPreviewHtml }}
                   />
