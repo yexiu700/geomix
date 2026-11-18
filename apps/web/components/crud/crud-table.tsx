@@ -8,11 +8,13 @@ import {
 } from '@geomix/shared';
 import { Button, Checkbox, Dropdown, Input, Select, Space, Table } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
+import { ExportAction } from './export-action';
 
 export type CrudColumn<T> = {
   key: string;
   title: string;
   width?: number;
+  fixed?: 'left' | 'right';
   hideable?: boolean;
   render: (row: T, index: number) => ReactNode;
 };
@@ -34,6 +36,7 @@ export function CrudTable<T extends { id: string }>({
   selectedIds,
   searchOpen,
   search,
+  searchPlaceholder = '输入关键词搜索',
   sortOptions,
   statusFilter,
   emptyText = CRUD_EMPTY_TEXT,
@@ -61,6 +64,7 @@ export function CrudTable<T extends { id: string }>({
   selectedIds: string[];
   searchOpen: boolean;
   search: CrudSearch;
+  searchPlaceholder?: string;
   sortOptions?: { value: string; label: string }[];
   statusFilter?: boolean;
   emptyText?: string;
@@ -71,7 +75,7 @@ export function CrudTable<T extends { id: string }>({
   onSearch: (search: CrudSearch) => void;
   onPageChange: (page: number, pageSize: CrudPageSize) => void;
   onSelectionChange: (ids: string[]) => void;
-  onExport: (format: 'csv' | 'xlsx') => void;
+  onExport: (format: 'csv' | 'xlsx') => void | Promise<void>;
   onRefresh: () => void;
   onCreate?: () => void;
   onDelete?: () => void;
@@ -137,6 +141,10 @@ export function CrudTable<T extends { id: string }>({
   const visible = columns.filter(
     (column) => column.hideable === false || !hidden.includes(column.key),
   );
+
+  const submitSearch = () => {
+    onSearch({ ...draft, keyword: draft.keyword.trim() });
+  };
 
   const refreshBtn = (
     <Button key="refresh" aria-label="刷新" onClick={onRefresh}>
@@ -214,18 +222,7 @@ export function CrudTable<T extends { id: string }>({
           >
             <Button aria-label="列">列</Button>
           </Dropdown>
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: [
-                { key: 'csv', label: 'CSV' },
-                { key: 'xlsx', label: 'Excel' },
-              ],
-              onClick: ({ key }) => onExport(key === 'xlsx' ? 'xlsx' : 'csv'),
-            }}
-          >
-            <Button aria-label="导出">导出</Button>
-          </Dropdown>
+          <ExportAction empty={!loading && total === 0 && rows.length === 0} onExport={onExport} />
           <Button aria-label="搜索" onClick={() => onSearchOpenChange(!searchOpen)}>
             搜索
           </Button>
@@ -236,10 +233,12 @@ export function CrudTable<T extends { id: string }>({
           <Input
             aria-label="搜索关键字"
             value={draft.keyword}
-            placeholder="名称或备注"
+            placeholder={searchPlaceholder}
+            style={{ width: 240, maxWidth: '100%' }}
             onChange={(event) =>
               setDraft((current) => ({ ...current, keyword: event.target.value }))
             }
+            onPressEnter={submitSearch}
           />
           {showStatusFilter ? (
             <Select
@@ -285,11 +284,7 @@ export function CrudTable<T extends { id: string }>({
               />
             </>
           ) : null}
-          <Button
-            aria-label="查询"
-            type="primary"
-            onClick={() => onSearch({ ...draft, keyword: draft.keyword.trim() })}
-          >
+          <Button aria-label="查询" type="primary" onClick={submitSearch}>
             查询
           </Button>
           <Button
@@ -315,6 +310,7 @@ export function CrudTable<T extends { id: string }>({
           pageSize,
           total,
           showSizeChanger: true,
+          showTotal: (count) => `共 ${count} 条`,
           pageSizeOptions: CRUD_PAGE_SIZES.map(String),
           onChange: (nextPage, nextSize) => {
             const size = normalizePageSize(nextSize);
@@ -330,6 +326,7 @@ export function CrudTable<T extends { id: string }>({
           dataIndex: column.key,
           title: column.title,
           width: column.width,
+          fixed: column.fixed,
           render: (_value: unknown, row: T, index: number) => column.render(row, index),
         }))}
       />

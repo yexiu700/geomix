@@ -101,7 +101,7 @@ describe('article categories', () => {
     );
     expect(await screen.findByText('测试分类')).toBeTruthy();
     expect(screen.getByText('序号')).toBeTruthy();
-    expect(screen.getByText('分组名')).toBeTruthy();
+    expect(screen.getByText('分类名称')).toBeTruthy();
     expect(screen.getByText('文章数量')).toBeTruthy();
     expect(screen.getByText('文章剩余量')).toBeTruthy();
     expect(screen.getAllByText('查看文章').length).toBeGreaterThan(0);

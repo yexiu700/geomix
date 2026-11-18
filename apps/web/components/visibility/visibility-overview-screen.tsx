@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { GM, formatPct, truncateMiddle } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { useSyncTabTitle } from '../../lib/ux-foundation';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
 import {
   EngineChipList,
@@ -802,11 +803,23 @@ export function VisibilityOverviewScreen({
     [citationsData.items],
   );
 
+  const resolvedTitle = useMemo(() => {
+    const activeProfile = appliedFilter.profileId
+      ? profiles.find((p) => p.id === appliedFilter.profileId)
+      : undefined;
+    if (activeProfile) {
+      return `AI数据看板 · ${activeProfile.name}`;
+    }
+    return title;
+  }, [appliedFilter.profileId, profiles, title]);
+
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
   if (!featureEnabled) {
     return (
       <section>
         <Typography.Title level={3} style={{ marginTop: 0 }}>
-          {title}
+          {resolvedTitle}
         </Typography.Title>
         <Alert
           type="info"
@@ -832,7 +845,7 @@ export function VisibilityOverviewScreen({
       <section style={{ minWidth: 0 }}>
         <div className="gm-overview-header">
           <div>
-            <h1 className="gm-overview-title">{title}</h1>
+            <h1 className="gm-overview-title">{resolvedTitle}</h1>
             <div className="gm-overview-desc">
               全景追踪企业品牌在各大生成式 AI 引擎中的提及率、行业声量占比（Share of
               Voice）、推荐顺位与引用信源分布
@@ -887,7 +900,7 @@ export function VisibilityOverviewScreen({
       {/* Page Header */}
       <div className="gm-overview-header">
         <div>
-          <h1 className="gm-overview-title">{title}</h1>
+          <h1 className="gm-overview-title">{resolvedTitle}</h1>
           <div className="gm-overview-desc">
             全景追踪企业品牌在各大生成式 AI 引擎中的提及率、行业声量占比（Share of
             Voice）、推荐顺位与引用信源分布
@@ -1441,6 +1454,7 @@ export function VisibilityOverviewScreen({
                           pageSize: citationPageSize,
                           total: citationsData.total,
                           showSizeChanger: true,
+                          showTotal: (count) => `共 ${count} 条`,
                           pageSizeOptions: CRUD_PAGE_SIZES.map(String),
                           onChange: (nextPage, nextSize) => {
                             const normalized = normalizePageSize(nextSize);

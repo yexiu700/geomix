@@ -129,6 +129,11 @@ describe('LlmCostAdmin (#24)', () => {
     fireEvent.click(screen.getByRole('button', { name: /导出\s*CSV/ }));
     expect(createObjectUrl).toHaveBeenCalledTimes(1);
     expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:geomix-llm-costs');
+    await waitFor(
+      () => {
+        expect(revokeObjectUrl).toHaveBeenCalledWith('blob:geomix-llm-costs');
+      },
+      { timeout: 2000 },
+    );
   });
 });

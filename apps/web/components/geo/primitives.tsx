@@ -178,7 +178,7 @@ export function StatusPill(p: {
   const isTask = p.kind === 'task';
   const label =
     (isTask
-      ? S.TASK_STATUS_LABELS[p.status as S.TaskStatusName]
+      ? S.VISIBILITY_TASK_STATUS_LABELS[p.status as S.TaskStatusName]
       : S.ITEM_STATUS_LABELS[p.status as S.ItemStatusName]) ?? p.status;
   const color =
     (isTask

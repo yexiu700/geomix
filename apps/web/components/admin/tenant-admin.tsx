@@ -4,6 +4,7 @@ import type { CreateTenantInput, QuotaKeyName } from '@geomix/shared';
 import { Alert, Button, Input, Select, Space, Switch, Table, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
+import { formatShanghaiDate } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 
 const QUOTA_FIELDS: ReadonlyArray<readonly [QuotaKeyName, string]> = [
@@ -96,7 +97,12 @@ export function TenantAdmin({
       <Table<TenantRow>
         rowKey="id"
         dataSource={rows}
-        pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '25', '50'] }}
+        pagination={{
+          pageSize: 10,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '25', '50'],
+          showTotal: (total) => `共 ${total} 条记录`,
+        }}
         columns={[
           { title: '名称', dataIndex: 'name' },
           { title: '用户名', dataIndex: 'username' },
@@ -107,7 +113,7 @@ export function TenantAdmin({
           },
           {
             title: '有效期',
-            render: (_value, row) => row.expiresAt.slice(0, 10),
+            render: (_value, row) => formatShanghaiDate(row.expiresAt),
           },
           {
             title: '状态',

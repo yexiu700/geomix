@@ -10,6 +10,7 @@ import {
   type LedgerPage,
   type MoneyItem,
 } from '../../lib/account-client';
+import { triggerBlobDownload } from '../../lib/ux-foundation';
 
 const EMPTY: MoneyListQuery = {
   page: 1,
@@ -22,19 +23,6 @@ const EMPTY: MoneyListQuery = {
   to: undefined,
   export: undefined,
 };
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
-  if (typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 export function MoneyScreen({
   title,
@@ -87,12 +75,34 @@ export function MoneyScreen({
     };
   }, [read, query]);
 
+  function applyFilter(): void {
+    const amount = draft.amount.trim();
+    if (amount !== '' && !/^-?\d+(\.\d{1,2})?$/.test(amount)) {
+      setError('金额格式不正确');
+      return;
+    }
+    const fromIso = draft.from ? new Date(draft.from).toISOString() : undefined;
+    const toIso = draft.to ? new Date(draft.to).toISOString() : undefined;
+    if (fromIso && toIso && fromIso > toIso) {
+      setError('开始时间不能晚于结束时间');
+      return;
+    }
+    setError(null);
+    setQuery({
+      ...EMPTY,
+      title: draft.title.trim(),
+      amount: amount || undefined,
+      from: fromIso,
+      to: toIso,
+    });
+  }
+
   async function handleExport(format: 'csv' | 'xlsx'): Promise<void> {
     setExporting(true);
     setError(null);
     try {
       const file = await download(query, format);
-      triggerDownload(file);
+      triggerBlobDownload(file);
     } catch (reason) {
       setError(reason instanceof AccountApiError ? reason.message : '导出失败');
     } finally {
@@ -111,12 +121,14 @@ export function MoneyScreen({
           placeholder="项目"
           value={draft.title}
           onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+          onPressEnter={applyFilter}
         />
         <Input
           aria-label="金额"
           placeholder="金额"
           value={draft.amount}
           onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
+          onPressEnter={applyFilter}
         />
         <Input
           aria-label="开始时间"
@@ -130,31 +142,7 @@ export function MoneyScreen({
           value={draft.to}
           onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))}
         />
-        <Button
-          type="primary"
-          aria-label="查询"
-          onClick={() => {
-            const amount = draft.amount.trim();
-            if (amount !== '' && !/^-?\d+(\.\d{1,2})?$/.test(amount)) {
-              setError('金额格式不正确');
-              return;
-            }
-            const fromIso = draft.from ? new Date(draft.from).toISOString() : undefined;
-            const toIso = draft.to ? new Date(draft.to).toISOString() : undefined;
-            if (fromIso && toIso && fromIso > toIso) {
-              setError('开始时间不能晚于结束时间');
-              return;
-            }
-            setError(null);
-            setQuery({
-              ...EMPTY,
-              title: draft.title.trim(),
-              amount: amount || undefined,
-              from: fromIso,
-              to: toIso,
-            });
-          }}
-        >
+        <Button type="primary" aria-label="查询" onClick={applyFilter}>
           查询
         </Button>
         <Button
@@ -189,6 +177,7 @@ export function MoneyScreen({
           pageSize: page?.pageSize ?? 10,
           total: page?.total ?? 0,
           showSizeChanger: false,
+          showTotal: (total) => `共 ${total} 条记录`,
           onChange: (next) => setQuery((current) => ({ ...current, page: next })),
         }}
         columns={[

@@ -1,10 +1,11 @@
 'use client';
 
-import { ConfigProvider, unstableSetRender } from 'antd';
+import { App, ConfigProvider, unstableSetRender } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GM_ANTD_THEME } from '../lib/design-tokens';
+import { UxFeedbackProvider } from './crud/ux-feedback';
 
 type ContainerWithRoot = (Element | DocumentFragment) & {
   _reactRoot?: ReturnType<typeof createRoot>;
@@ -25,7 +26,9 @@ unstableSetRender((node, container) => {
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider locale={zhCN} theme={GM_ANTD_THEME} button={{ autoInsertSpace: false }}>
-      {children}
+      <App>
+        <UxFeedbackProvider>{children}</UxFeedbackProvider>
+      </App>
     </ConfigProvider>
   );
 }

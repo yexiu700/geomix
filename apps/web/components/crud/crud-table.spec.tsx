@@ -144,4 +144,33 @@ describe('crud table', () => {
     expect(onEnable).toHaveBeenCalledTimes(1);
     expect(onDisable).toHaveBeenCalledTimes(1);
   });
+
+  it('supports contextual searchPlaceholder, Enter key submission, and total count display', () => {
+    const onSearch = vi.fn();
+    render(
+      <CrudTable
+        rows={[{ id: 'row-1', name: '激光切割机' }]}
+        columns={[{ key: 'name', title: '主关键词', hideable: false, render: (row) => row.name }]}
+        total={1}
+        page={1}
+        pageSize={10}
+        selectedIds={[]}
+        searchOpen
+        searchPlaceholder="搜索主关键词、公司或品牌"
+        search={search}
+        onSearchOpenChange={() => undefined}
+        onSearch={onSearch}
+        onPageChange={() => undefined}
+        onSelectionChange={() => undefined}
+        onExport={() => undefined}
+        onRefresh={() => undefined}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText('搜索主关键词、公司或品牌');
+    fireEvent.change(input, { target: { value: '光纤激光' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', charCode: 13 });
+    expect(onSearch).toHaveBeenCalledWith(expect.objectContaining({ keyword: '光纤激光' }));
+    expect(screen.getByText('共 1 条')).toBeTruthy();
+  });
 });

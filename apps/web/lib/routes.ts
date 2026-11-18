@@ -1,5 +1,7 @@
 /** 后台英文语义路由和分组菜单。旧地址不放在这里。 */
 
+import { isOpaqueEntityId } from '@geomix/shared';
+
 export type RouteMatch = {
   href: string;
   path: string;
@@ -205,7 +207,7 @@ export function matchRoute(input: string): RouteMatch | null {
     const id = GALLERY_DETAIL.exec(path)?.[1];
     if (!id) return null;
     path = `/material/gallery/${id}`;
-    title = `企业画像图库 · ${id}`;
+    title = isOpaqueEntityId(id) ? '企业画像图库 · 图库详情' : `企业画像图库 · ${id}`;
     parent = '/material/gallery';
   }
 
@@ -301,9 +303,11 @@ function cleanParam(value: string | null): string {
 }
 
 function paramLabel(key: string, value: string): string {
-  if (key === 'categoryId') return `分类 ${value}`;
-  if (key === 'taskId') return `任务 ${value}`;
-  if (key === 'profileId') return `档案 ${value}`;
-  if (key === 'runId') return `任务 ${value}`;
-  return value;
+  const opaque = isOpaqueEntityId(value);
+  if (key === 'categoryId') return opaque ? '按分类筛选' : `分类 ${value}`;
+  if (key === 'taskId') return opaque ? '按任务筛选' : `任务 ${value}`;
+  if (key === 'profileId') return opaque ? '当前监测档案' : `档案 ${value}`;
+  if (key === 'runId') return opaque ? '当前诊断任务' : `任务 ${value}`;
+  if (key === 'keywordId') return opaque ? '按主词筛选' : value;
+  return opaque ? '已筛选' : value;
 }

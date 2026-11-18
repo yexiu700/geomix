@@ -149,4 +149,18 @@ describe('tab stack', () => {
     expect(state.drafts['/material/keywords']).toBeUndefined();
     expect(state.reloadNonce['/material/keywords']).toBe(1);
   });
+
+  it('updates tab title via retitle action once entity name resolves', () => {
+    const cuid = 'cm8x9abcde12345fghij67890';
+    const href = `/material/gallery/${cuid}`;
+    let state = reduceShell(initialSnapshot(), { type: 'open', href });
+    expect(state.tabs.find((t) => t.id === href)?.title).toBe('企业画像图库 · 图库详情');
+
+    state = reduceShell(state, {
+      type: 'retitle',
+      id: href,
+      title: '图片列表 · 工业激光实拍图库',
+    });
+    expect(state.tabs.find((t) => t.id === href)?.title).toBe('图片列表 · 工业激光实拍图库');
+  });
 });

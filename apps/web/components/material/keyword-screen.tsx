@@ -30,6 +30,7 @@ import { KeywordApiError, httpKeywordGateway, type KeywordGateway } from '../../
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 
@@ -452,17 +453,7 @@ export function KeywordScreen({
   async function download(format: 'csv' | 'xlsx'): Promise<void> {
     try {
       const file = await client.download(query, format);
-      const bytes = file.body.buffer.slice(
-        file.body.byteOffset,
-        file.body.byteOffset + file.body.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([bytes], { type: file.mime });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload({ body: file.body, filename: file.filename, mime: file.mime });
     } catch (reason) {
       setError(messageOf(reason));
     }
@@ -519,6 +510,7 @@ export function KeywordScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索主关键词或品牌词"
         writeDisabled={writeLocked}
         search={{
           keyword: query.keyword,
@@ -546,7 +538,7 @@ export function KeywordScreen({
           setQuery((curr) => ({ ...curr, page, pageSize }));
         }}
         onSelectionChange={setSelectedIds}
-        onExport={(format) => void download(format)}
+        onExport={download}
         onRefresh={() => setReloadKey((v) => v + 1)}
         onCreate={
           writeLocked
@@ -591,6 +583,7 @@ export function KeywordScreen({
           {
             key: 'questionCount',
             title: '问题数量',
+            width: 110,
             render: (row) => (
               <Button
                 type="link"
@@ -610,6 +603,7 @@ export function KeywordScreen({
           {
             key: 'optStatus',
             title: '优化状态',
+            width: 110,
             render: (row) => (
               <Tag
                 color={
@@ -627,11 +621,13 @@ export function KeywordScreen({
           {
             key: 'createdAt',
             title: '创建时间',
-            render: (row) => row.createdAt.replace('T', ' ').slice(0, 16),
+            width: 156,
+            render: (row) => formatShanghaiDateTime(row.createdAt),
           },
           {
             key: 'actions',
             title: '操作',
+            width: 210,
             hideable: false,
             render: (row) => (
               <Space size={8}>

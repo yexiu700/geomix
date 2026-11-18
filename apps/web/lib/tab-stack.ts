@@ -46,6 +46,8 @@ export type ShellAction =
   | { type: 'close-all' }
   | { type: 'refresh'; id: string }
   | { type: 'draft'; id: string; value: string }
+  | { type: 'retitle'; id: string; title: string }
+  | { type: 'navigate'; id: string; href: string }
   | { type: 'back'; id: string }
   | { type: 'prefs'; patch: Partial<LayoutPrefs> };
 
@@ -98,6 +100,10 @@ export function reduceShell(state: ShellSnapshot, action: ShellAction): ShellSna
       return refreshTab(state, action.id);
     case 'draft':
       return setDraft(state, action.id, action.value);
+    case 'retitle':
+      return retitleTab(state, action.id, action.title);
+    case 'navigate':
+      return navigateTab(state, action.id, action.href);
     case 'back':
       return goBack(state, action.id);
     case 'prefs':
@@ -283,6 +289,43 @@ function setDraft(state: ShellSnapshot, id: string, value: string): ShellSnapsho
   }
   if (state.drafts[id] === value) return state;
   return { ...state, drafts: { ...state.drafts, [id]: value } };
+}
+
+function retitleTab(state: ShellSnapshot, id: string, title: string): ShellSnapshot {
+  const nextTitle = title.trim();
+  if (!nextTitle) return state;
+  const idx = state.tabs.findIndex((tab) => tab.id === id);
+  if (idx < 0 || state.tabs[idx]?.title === nextTitle) return state;
+  const tabs = state.tabs.map((tab, i) => (i === idx ? { ...tab, title: nextTitle } : tab));
+  return { ...state, tabs };
+}
+
+function navigateTab(state: ShellSnapshot, id: string, href: string): ShellSnapshot {
+  const idx = state.tabs.findIndex((tab) => tab.id === id);
+  const current = idx >= 0 ? state.tabs[idx] : undefined;
+  if (!current || current.pinned) return state;
+  const replacement = tabFromHref(href, current.sourceId);
+  if (!replacement || replacement.id === current.id) return state;
+
+  // 若目标路由已有独立标签，关闭当前带筛选参数的标签并激活目标标签
+  const collision = state.tabs.find((tab, i) => i !== idx && tab.id === replacement.id);
+  if (collision) {
+    const closed = closeTab(state, id);
+    return activateTab(closed, collision.id);
+  }
+
+  const tabs = state.tabs.map((tab, i) => (i === idx ? replacement : tab));
+  const drafts = { ...state.drafts };
+  if (id in drafts) {
+    drafts[replacement.id] = drafts[id]!;
+    delete drafts[id];
+  }
+  return {
+    ...state,
+    tabs,
+    activeId: state.activeId === id ? replacement.id : state.activeId,
+    drafts,
+  };
 }
 
 function goBack(state: ShellSnapshot, id: string): ShellSnapshot {

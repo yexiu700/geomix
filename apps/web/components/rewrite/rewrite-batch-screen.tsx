@@ -38,7 +38,6 @@ import {
   Drawer,
   Input,
   InputNumber,
-  Modal,
   Radio,
   Space,
   Table,
@@ -48,14 +47,16 @@ import {
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { ExportAction } from '../crud/export-action';
+import { useUxFeedback } from '../crud/ux-feedback';
 import {
   httpRewriteBatchGateway,
   type RewriteBatchFormOptions,
   type RewriteBatchGateway,
 } from '../../lib/rewrite-batches';
-import type { RewriteDownloadFile } from '../../lib/rewrites';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_BATCH_MAX_COUNT = 1;
@@ -122,7 +123,7 @@ function buildInitialDraft(_options: RewriteBatchFormOptions | null): CreateDraf
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 function batchStatusTagColor(status: TaskStatusName): string {
@@ -183,19 +184,6 @@ function isTerminalBatchStatus(status: TaskStatusName): boolean {
   );
 }
 
-function triggerBrowserDownload(file: RewriteDownloadFile): void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return;
-  const blob = new Blob([new Uint8Array(file.body)], { type: file.mime });
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = file.filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
-}
-
 export function RewriteBatchScreen({
   title,
   tabId,
@@ -213,6 +201,7 @@ export function RewriteBatchScreen({
   gateway?: RewriteBatchGateway;
   onDispatch?: (action: ShellAction) => void;
 }) {
+  const feedback = useUxFeedback();
   const gateway = useMemo(() => {
     if (injectedGateway) return injectedGateway;
     const browserStorage: SessionStorageLike =
@@ -535,7 +524,7 @@ export function RewriteBatchScreen({
     setErrorMsg(null);
     try {
       const file = await gateway.downloadTable(query, format);
-      triggerBrowserDownload(file);
+      triggerBlobDownload(file);
       setFeedbackMsg(`已导出 ${file.filename}`);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : '导出失败');
@@ -556,7 +545,7 @@ export function RewriteBatchScreen({
       setModalError(null);
       return;
     }
-    Modal.confirm({
+    feedback.confirm({
       title: '放弃未提交的批量复刻草稿？',
       content: '已填写的任务配置与链接清单尚未提交，确定关闭吗？',
       okText: '放弃并关闭',
@@ -610,12 +599,11 @@ export function RewriteBatchScreen({
         </div>
 
         <Space wrap>
-          <Button onClick={() => void handleExport('csv')} disabled={busy}>
-            导出 CSV
-          </Button>
-          <Button onClick={() => void handleExport('xlsx')} disabled={busy}>
-            导出 XLSX
-          </Button>
+          <ExportAction
+            disabled={busy}
+            empty={!loading && total === 0 && items.length === 0}
+            onExport={handleExport}
+          />
           {!readOnly && (
             <Button type="primary" onClick={() => void openCreateModal()} disabled={busy}>
               新建批量复刻
@@ -1091,7 +1079,7 @@ export function RewriteBatchScreen({
                 <Radio.Button value="link_list">
                   粘贴公开文章链接清单（默认推荐，最多 {REWRITE_BATCH_LINK_LIST_MAX} 条）
                 </Radio.Button>
-                <Radio.Button value="remote">关键词全网搜索（检索适配器）</Radio.Button>
+                <Radio.Button value="remote">关键词全网搜索</Radio.Button>
               </Radio.Group>
             </div>
 
@@ -1345,9 +1333,9 @@ export function RewriteBatchScreen({
               </div>
 
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>复刻落库状态</div>
+                <div style={{ fontWeight: 500, marginBottom: 6 }}>生成后文章状态</div>
                 <select
-                  aria-label="复刻落库状态"
+                  aria-label="生成后文章状态"
                   style={NATIVE_SELECT_STYLE}
                   value={modalState.draft.resultStatus}
                   onChange={(e) =>

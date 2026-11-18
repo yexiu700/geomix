@@ -44,6 +44,11 @@ import { CrudTable, type CrudColumn } from '../crud/crud-table';
 import { httpAiTaskGateway, type AiTaskFormOptions, type AiTaskGateway } from '../../lib/ai-tasks';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import {
+  formatShanghaiDateTime,
+  triggerBlobDownload,
+  useSyncTabTitle,
+} from '../../lib/ux-foundation';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
@@ -112,7 +117,7 @@ function defaultCreateDraft(
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 function statusTagColor(status: TaskStatusName): string {
@@ -157,19 +162,6 @@ function isActiveTaskStatus(status: TaskStatusName): boolean {
 
 function isControllableStatus(status: TaskStatusName): boolean {
   return status === 'QUEUED' || status === 'RUNNING' || status === 'PAUSED';
-}
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }) {
-  if (typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 export function AiTaskScreen({
@@ -224,6 +216,13 @@ export function AiTaskScreen({
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const resolvedTitle = useMemo(() => {
+    if (!initialKeywordId) return title;
+    const matched = formOptions?.keywords.find((kw) => kw.id === initialKeywordId)?.main;
+    return matched ? `AI写作任务 · ${matched}` : title;
+  }, [formOptions, initialKeywordId, title]);
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
   // Detail drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -377,7 +376,7 @@ export function AiTaskScreen({
       return;
     }
     if (selectedKb && selectedKb.indexStatus === 'INDEXING') {
-      setFormError('所选企业知识库正在建立向量索引，请变为「可用」后再提交任务');
+      setFormError('所选企业知识库正在建立智能检索，请变为「可用」后再提交任务');
       return;
     }
     if (manualSlotBlocked) {
@@ -514,7 +513,7 @@ export function AiTaskScreen({
   async function handleExport(format: 'csv' | 'xlsx') {
     try {
       const file = await client.download(query, format);
-      triggerDownload(file);
+      triggerBlobDownload(file);
     } catch (err: unknown) {
       setBanner({ type: 'error', text: err instanceof Error ? err.message : '导出失败' });
     }
@@ -696,14 +695,14 @@ export function AiTaskScreen({
   return (
     <section>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        {title}
+        {resolvedTitle}
       </Typography.Title>
 
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        message="AI 写作任务按整单预冻点数、逐篇落库结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章保留 30 天，到期后系统自动删除清理；注意：文章成功发布后会在一段时间后自动删除，请及时导出保存。"
+        message="AI 写作任务按提交预冻点数、按完成篇数逐篇结算运行：基础写作 10 点/篇，勾选企业知识库附加 +5 点/篇（共 15 点/篇）；列表每 5 秒自动刷新进度，单篇失败或中途终止未用点数自动退回。生成的文章保留 30 天，到期后系统自动删除清理；注意：文章成功发布后会在一段时间后自动删除，请及时导出保存。"
       />
 
       {banner ? (
@@ -753,6 +752,7 @@ export function AiTaskScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索任务名称或蒸馏词"
         writeDisabled={readOnly}
         emptyText="暂无 AI 写作任务，点击「添加」配置训练词与素材即可批量创作"
         search={{
@@ -783,7 +783,7 @@ export function AiTaskScreen({
           setQuery((curr) => ({ ...curr, page, pageSize }));
         }}
         onSelectionChange={setSelectedIds}
-        onExport={(format) => void handleExport(format)}
+        onExport={handleExport}
         onRefresh={() => setReloadTick((n) => n + 1)}
         onCreate={readOnly ? undefined : () => void openCreateModal()}
         onDelete={readOnly ? undefined : () => setDeleteIds(selectedIds)}
@@ -1280,7 +1280,7 @@ export function AiTaskScreen({
                         size="small"
                         onClick={() => openCreatedArticles(activeDetail)}
                       >
-                        已落库查看
+                        查看文章
                       </Button>
                     ) : (
                       <Typography.Text type="secondary">—</Typography.Text>

@@ -105,4 +105,21 @@ describe('console routes', () => {
       parents: [],
     });
   });
+
+  it('strips opaque CUIDs from detail and query tab titles', () => {
+    const cuidA = 'cm8x9abcde12345fghij67890';
+    const cuidB = 'cm9z1zyxwv98765utsrq43210';
+
+    const gallery = matchRoute(`/material/gallery/${cuidA}`);
+    expect(gallery?.title).toBe('企业画像图库 · 图库详情');
+    expect(gallery?.title).not.toContain(cuidA);
+
+    const articles = matchRoute(`/writing/articles?categoryId=${cuidA}&taskId=${cuidB}`);
+    expect(articles?.title).toBe('文章列表 · 按分类筛选 · 按任务筛选');
+    expect(articles?.title).not.toContain(cuidA);
+    expect(articles?.title).not.toContain(cuidB);
+
+    const monitors = matchRoute(`/visibility/monitors?profileId=${cuidA}&runId=${cuidB}`);
+    expect(monitors?.title).toBe('AI可见度诊断 · 当前监测档案 · 当前诊断任务');
+  });
 });

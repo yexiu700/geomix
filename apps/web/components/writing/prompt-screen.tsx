@@ -28,6 +28,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CrudTable, type CrudColumn, type CrudSearch } from '../crud/crud-table';
 import { PromptApiError, httpPromptGateway, type PromptGateway } from '../../lib/prompts';
+import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 
 type KindFilter = 'ALL' | PromptKindName;
 
@@ -51,30 +52,6 @@ function kindTagColor(kind: PromptKindName): string {
   if (kind === 'ARTICLE') return 'blue';
   if (kind === 'TITLE') return 'cyan';
   return 'purple';
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
-}
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
-  if (typeof window === 'undefined' || typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = file.filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function PromptScreen({
@@ -323,7 +300,7 @@ export function PromptScreen({
         },
         format,
       );
-      triggerDownload(file);
+      triggerBlobDownload(file);
     } catch (err: unknown) {
       setBanner({
         type: 'error',
@@ -342,7 +319,7 @@ export function PromptScreen({
         <Space size={6} wrap>
           <Typography.Text strong>{row.name}</Typography.Text>
           {row.clonedFrom ? <Tag>克隆</Tag> : null}
-          {!row.randomPool ? <Tag color="warning">手动槽位·不入随机池</Tag> : null}
+          {!row.randomPool ? <Tag color="warning">{UX_TERMS.manualSlotBadge}</Tag> : null}
         </Space>
       ),
     },
@@ -356,7 +333,7 @@ export function PromptScreen({
       key: 'createdAt',
       title: '创建时间',
       width: 180,
-      render: (row) => formatTime(row.createdAt),
+      render: (row) => formatShanghaiDateTime(row.createdAt),
     },
     {
       key: 'actions',
@@ -457,6 +434,7 @@ export function PromptScreen({
         selectedIds={selectedIds}
         searchOpen={searchOpen}
         search={search}
+        searchPlaceholder="搜索指令名称或正文"
         writeDisabled={readOnly}
         onSearchOpenChange={setSearchOpen}
         onSearch={(next) => {

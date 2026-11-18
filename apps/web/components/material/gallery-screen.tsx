@@ -18,21 +18,13 @@ import {
 } from '@geomix/shared';
 import { httpGalleryGateway, resolveMediaUrl, type GalleryGateway } from '../../lib/gallery';
 import type { ShellAction } from '../../lib/tab-stack';
+import {
+  formatShanghaiDateTime,
+  triggerBlobDownload,
+  useSyncTabTitle,
+} from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
-
-function triggerDownload(file: { filename: string; mime: string; body: Uint8Array }): void {
-  if (typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function StorageQuotaBanner({ storage }: { storage: MediaStorageSummary | null }) {
   if (!storage) return null;
@@ -254,11 +246,13 @@ export function GalleryCategoryScreen({
     {
       key: 'createdAt',
       title: '创建时间',
-      render: (row) => row.createdAt.slice(0, 16).replace('T', ' '),
+      width: 156,
+      render: (row) => formatShanghaiDateTime(row.createdAt),
     },
     {
       key: 'actions',
       title: '操作',
+      width: 210,
       render: (row) => (
         <Space size={6}>
           <Button size="small" onClick={() => openAssetList(row.id)}>
@@ -312,6 +306,7 @@ export function GalleryCategoryScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索素材分类名称"
         writeDisabled={readOnly}
         search={{
           keyword: q,
@@ -334,13 +329,16 @@ export function GalleryCategoryScreen({
           setPage(nextPage);
           setPageSize(nextPageSize);
         }}
-        onExport={(format) => {
-          void gateway
-            .downloadCategories({ page: 1, pageSize: 100, q: q.trim() || undefined }, format)
-            .then(triggerDownload)
-            .catch((err: unknown) => {
-              setBannerError(err instanceof Error ? err.message : '导出失败');
-            });
+        onExport={async (format) => {
+          try {
+            const file = await gateway.downloadCategories(
+              { page: 1, pageSize: 100, q: q.trim() || undefined },
+              format,
+            );
+            triggerBlobDownload(file);
+          } catch (err: unknown) {
+            setBannerError(err instanceof Error ? err.message : '导出失败');
+          }
         }}
       />
 
@@ -561,10 +559,14 @@ export function GalleryAssetScreen({
     }
   }
 
+  const resolvedTitle = categoryName ? `图片列表 · ${categoryName}` : title;
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
   const columns: CrudColumn<MediaAssetRecord>[] = [
     {
       key: 'seq',
       title: '序号',
+      width: 72,
       render: (_row, index) => (page - 1) * pageSize + index + 1,
     },
     {
@@ -603,16 +605,19 @@ export function GalleryAssetScreen({
     {
       key: 'usedCount',
       title: '使用次数',
+      width: 110,
       render: (row) => <Tag color={row.usedCount > 0 ? 'green' : 'default'}>{row.usedCount}</Tag>,
     },
     {
       key: 'createdAt',
       title: '创建时间',
-      render: (row) => row.createdAt.slice(0, 16).replace('T', ' '),
+      width: 156,
+      render: (row) => formatShanghaiDateTime(row.createdAt),
     },
     {
       key: 'actions',
       title: '操作',
+      width: 110,
       render: (row) => (
         <Button
           size="small"
@@ -629,7 +634,7 @@ export function GalleryAssetScreen({
   return (
     <section>
       <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 4 }}>
-        {categoryName ? `图片列表 · ${categoryName}` : title}
+        {resolvedTitle}
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
         支持多选批量上传企业图片，自动压缩去隐私元数据并统计使用次数；已被引用的图片受保护禁止删除。
@@ -669,6 +674,7 @@ export function GalleryAssetScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索图片文件名"
         writeDisabled={readOnly}
         search={{
           keyword: q,
@@ -692,16 +698,16 @@ export function GalleryAssetScreen({
           setPage(nextPage);
           setPageSize(nextPageSize);
         }}
-        onExport={(format) => {
-          void gateway
-            .downloadAssets(
+        onExport={async (format) => {
+          try {
+            const file = await gateway.downloadAssets(
               { categoryId, page: 1, pageSize: 100, q: q.trim() || undefined },
               format,
-            )
-            .then(triggerDownload)
-            .catch((err: unknown) => {
-              setBannerError(err instanceof Error ? err.message : '导出失败');
-            });
+            );
+            triggerBlobDownload(file);
+          } catch (err: unknown) {
+            setBannerError(err instanceof Error ? err.message : '导出失败');
+          }
         }}
       />
 

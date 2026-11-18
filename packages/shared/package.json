@@ -76,6 +76,10 @@
     "./visibility": {
       "types": "./dist/visibility.d.ts",
       "default": "./dist/visibility.js"
+    },
+    "./ux-foundation": {
+      "types": "./dist/ux-foundation.d.ts",
+      "default": "./dist/ux-foundation.js"
     }
   },
   "scripts": {

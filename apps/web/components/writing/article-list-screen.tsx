@@ -11,6 +11,7 @@ import {
 } from '../../lib/categories';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { formatShanghaiDateTime, useSyncTabTitle } from '../../lib/ux-foundation';
 
 export function ArticleListScreen({
   title,
@@ -76,6 +77,10 @@ export function ArticleListScreen({
     onDispatch({ type: 'back', id: tabId });
   }
 
+  const category = page?.category;
+  const resolvedTitle = category?.name ? `${title} · ${category.name}` : title;
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
   if (!categoryId) {
     return (
       <section>
@@ -90,16 +95,14 @@ export function ArticleListScreen({
     );
   }
 
-  const category = page?.category;
-
   return (
     <section>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        {title}
+        {resolvedTitle}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
         {category
-          ? `分组名 ${category.name}。文章数量 ${category.total}，文章剩余量 ${category.remaining}。`
+          ? `分类名称 ${category.name}。文章数量 ${category.total}，文章剩余量 ${category.remaining}。`
           : '正在读取这个分类下的文章。'}
         剩余量只统计状态为正常且发送次数为 0 的文章。这里只查看，不在这里添加或修改文章。
       </Typography.Paragraph>
@@ -123,6 +126,7 @@ export function ArticleListScreen({
           pageSize: query.pageSize,
           total: page?.total ?? 0,
           showSizeChanger: true,
+          showTotal: (count) => `共 ${count} 条`,
           pageSizeOptions: ['10', '25', '50'],
           onChange: (nextPage, nextSize) => {
             const pageSize = nextSize === 25 || nextSize === 50 ? nextSize : 10;
@@ -139,21 +143,24 @@ export function ArticleListScreen({
             title: '状态',
             dataIndex: 'status',
             key: 'status',
+            width: 110,
             render: (status: string) =>
               isArticleStatus(status) ? ARTICLE_STATUS_LABEL[status] : status,
           },
-          { title: '发送次数', dataIndex: 'sendCount', key: 'sendCount' },
+          { title: '发送次数', dataIndex: 'sendCount', key: 'sendCount', width: 110 },
           {
             title: '计入剩余量',
             dataIndex: 'countsAsRemaining',
             key: 'countsAsRemaining',
+            width: 120,
             render: (value: boolean) => (value ? '是' : '否'),
           },
           {
             title: '创建时间',
             dataIndex: 'createdAt',
             key: 'createdAt',
-            render: (value: string) => value.replace('T', ' ').slice(0, 16),
+            width: 156,
+            render: (value: string) => formatShanghaiDateTime(value),
           },
         ]}
       />

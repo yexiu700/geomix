@@ -7,11 +7,12 @@ import {
   type CategoryListQuery,
   type CategorySort,
 } from '@geomix/shared';
-import { Alert, Button, Input, Space, Typography } from 'antd';
+import { Alert, Button, Input, Modal, Space, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { CategoryApiError, httpCategoryGateway, type CategoryGateway } from '../../lib/categories';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 
@@ -64,6 +65,7 @@ export function CategoryScreen({
   const [formError, setFormError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [locked, setLocked] = useState(false);
   const writeLocked = readOnly || locked;
@@ -116,8 +118,9 @@ export function CategoryScreen({
   }
 
   async function removePending(): Promise<void> {
-    if (writeLocked || !pendingDeleteIds || pendingDeleteIds.length === 0) return;
+    if (writeLocked || deleting || !pendingDeleteIds || pendingDeleteIds.length === 0) return;
     setError(null);
+    setDeleting(true);
     try {
       await client.remove(pendingDeleteIds);
       setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
@@ -127,23 +130,15 @@ export function CategoryScreen({
       setPendingDeleteIds(null);
       setError(messageOf(reason));
       noteLock(reason, setLocked);
+    } finally {
+      setDeleting(false);
     }
   }
 
   async function download(format: 'csv' | 'xlsx'): Promise<void> {
     try {
       const file = await client.download(query, format);
-      const bytes = file.body.buffer.slice(
-        file.body.byteOffset,
-        file.body.byteOffset + file.body.byteLength,
-      ) as ArrayBuffer;
-      const blob = new Blob([bytes], { type: file.mime });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = file.filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload({ body: file.body, filename: file.filename, mime: file.mime });
     } catch (reason) {
       setError(messageOf(reason));
     }
@@ -169,6 +164,7 @@ export function CategoryScreen({
         loading={loading}
         selectedIds={selectedIds}
         searchOpen={searchOpen}
+        searchPlaceholder="搜索分类名称"
         writeDisabled={writeLocked}
         search={{
           keyword: query.keyword,
@@ -178,7 +174,7 @@ export function CategoryScreen({
         }}
         sortOptions={[
           { value: 'createdAt', label: '创建时间' },
-          { value: 'name', label: '分组名' },
+          { value: 'name', label: '分类名称' },
           { value: 'total', label: '文章数量' },
           { value: 'remaining', label: '文章剩余量' },
         ]}
@@ -198,7 +194,7 @@ export function CategoryScreen({
           setQuery((current) => ({ ...current, page, pageSize }));
         }}
         onSelectionChange={setSelectedIds}
-        onExport={(format) => void download(format)}
+        onExport={download}
         onRefresh={() => setReloadKey((value) => value + 1)}
         onCreate={
           writeLocked
@@ -227,15 +223,16 @@ export function CategoryScreen({
           },
           {
             key: 'name',
-            title: '分组名',
+            title: '分类名称',
             hideable: false,
             render: (row) => row.name,
           },
-          { key: 'total', title: '文章数量', render: (row) => row.total },
-          { key: 'remaining', title: '文章剩余量', render: (row) => row.remaining },
+          { key: 'total', title: '文章数量', width: 110, render: (row) => row.total },
+          { key: 'remaining', title: '文章剩余量', width: 120, render: (row) => row.remaining },
           {
             key: 'articles',
             title: '查看文章',
+            width: 120,
             hideable: false,
             render: (row) => (
               <Button
@@ -256,11 +253,13 @@ export function CategoryScreen({
           {
             key: 'createdAt',
             title: '创建时间',
-            render: (row) => row.createdAt.replace('T', ' ').slice(0, 16),
+            width: 156,
+            render: (row) => formatShanghaiDateTime(row.createdAt),
           },
           {
             key: 'actions',
             title: '操作',
+            width: 140,
             hideable: false,
             render: (row) => (
               <Space size={4}>
@@ -357,26 +356,22 @@ export function CategoryScreen({
           {nameError ? <p className="gm-form-error">{nameError}</p> : null}
         </form>
       </CrudModal>
-      <CrudModal
+      <Modal
         open={Boolean(pendingDeleteIds && pendingDeleteIds.length > 0)}
         title="删除所选分类"
-        minimized={false}
-        maximized={false}
-        onMinimize={() => undefined}
-        onRestore={() => undefined}
-        onMaximize={() => undefined}
-        onClose={() => setPendingDeleteIds(null)}
-        onReset={() => setPendingDeleteIds(null)}
-        ok={
-          <Button aria-label="确定" type="primary" danger onClick={() => void removePending()}>
-            确定
-          </Button>
-        }
+        transitionName=""
+        maskTransitionName=""
+        confirmLoading={deleting}
+        okText="确定"
+        cancelText="取消"
+        okButtonProps={{ danger: true }}
+        onOk={() => void removePending()}
+        onCancel={() => setPendingDeleteIds(null)}
       >
         <p>
           将删除 {pendingDeleteIds?.length ?? 0} 个当前账号的文章分类。分类下的文章会变为未分类。
         </p>
-      </CrudModal>
+      </Modal>
     </section>
   );
 }

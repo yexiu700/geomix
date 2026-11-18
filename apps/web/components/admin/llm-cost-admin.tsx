@@ -13,6 +13,7 @@ import {
 import { Alert, Button, Card, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
+import { formatShortDisplayId, triggerBlobDownload } from '../../lib/ux-foundation';
 
 export type LlmCostAdminClient = Pick<AdminClient, 'llmCosts'> &
   Partial<Pick<AdminClient, 'listTenants'>>;
@@ -69,13 +70,11 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
   const handleExportCsv = () => {
     if (!report) return;
     const csv = llmDailyReportToCsv(report);
-    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `geomix-llm-costs-${report.windowEndDate || 'report'}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    triggerBlobDownload({
+      filename: `geomix-llm-costs-${report.windowEndDate || 'report'}.csv`,
+      mime: 'text/csv;charset=utf-8;',
+      body: new TextEncoder().encode(`\uFEFF${csv}`),
+    });
   };
 
   return (
@@ -145,8 +144,8 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
           style={{ marginBottom: 16 }}
           message={
             report.rateConfigured
-              ? `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（Asia/Shanghai）：已启用自定义模型单价（LLM_COST_RATES_JSON），本报表仅用于运维成本核算，不触发租户钱包扣点。`
-              : `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（Asia/Shanghai）：当前按默认占位微元费率估算，与租户 SHADOW/STRICT 点数账本相互独立；接入真实模型后可通过环境变量 LLM_COST_RATES_JSON 配置千 Token 单价。`
+              ? `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（北京时间）：已启用自定义模型单价核算，本报表仅用于运维成本统计，不触发租户点数扣减。`
+              : `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（北京时间）：当前按默认参考费率估算，与租户点数账本相互独立；可在系统费率配置中设置各模型千 Token 单价。`
           }
         />
       ) : null}
@@ -206,7 +205,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                   { title: '输出 Token', dataIndex: 'tokensOut' },
                   { title: '总 Token', dataIndex: 'totalTokens' },
                   {
-                    title: '预估成本(元)',
+                    title: '预估成本（元）',
                     dataIndex: 'costYuan',
                     render: (val: string) => `¥${val}`,
                   },
@@ -231,7 +230,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                   { title: '输出 Token', dataIndex: 'tokensOut' },
                   { title: '总 Token', dataIndex: 'totalTokens' },
                   {
-                    title: '预估成本(元)',
+                    title: '预估成本（元）',
                     dataIndex: 'costYuan',
                     render: (val: string) => `¥${val}`,
                   },
@@ -260,7 +259,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                   { title: '调用次数', dataIndex: 'calls' },
                   { title: '总 Token', dataIndex: 'totalTokens' },
                   {
-                    title: '预估成本(元)',
+                    title: '预估成本（元）',
                     dataIndex: 'costYuan',
                     render: (val: string) => `¥${val}`,
                   },
@@ -279,11 +278,19 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                 pagination={false}
                 columns={[
                   { title: '租户名称', dataIndex: 'tenantName' },
-                  { title: '租户编号', dataIndex: 'tenantId' },
+                  {
+                    title: '租户编号',
+                    dataIndex: 'tenantId',
+                    render: (val: string) => (
+                      <Typography.Text code title={val}>
+                        {formatShortDisplayId(val, '')}
+                      </Typography.Text>
+                    ),
+                  },
                   { title: '调用次数', dataIndex: 'calls' },
                   { title: '总 Token', dataIndex: 'totalTokens' },
                   {
-                    title: '预估成本(元)',
+                    title: '预估成本（元）',
                     dataIndex: 'costYuan',
                     render: (val: string) => `¥${val}`,
                   },

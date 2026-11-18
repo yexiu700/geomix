@@ -23,10 +23,11 @@ import {
   type CrudPageSize,
   type MediaAssetRecord,
 } from '@geomix/shared';
-import { Alert, Button, Dropdown, Input, Modal, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Input, Modal, Space, Table, Tag, Typography } from 'antd';
 import type { CSSProperties, ChangeEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
+import { ExportAction } from '../crud/export-action';
 import {
   articleQueryFromHref,
   httpArticleManageGateway,
@@ -37,6 +38,11 @@ import {
 import { resolveMediaUrl } from '../../lib/gallery';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import {
+  formatShanghaiDateTime,
+  triggerBlobDownload,
+  useSyncTabTitle,
+} from '../../lib/ux-foundation';
 
 const NATIVE_SELECT_STYLE: CSSProperties = {
   width: '100%',
@@ -106,7 +112,7 @@ type EditorModalState = {
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return iso.replace('T', ' ').slice(0, 16);
+  return formatShanghaiDateTime(iso);
 }
 
 function statusTagColor(status: ArticleStatusName): string {
@@ -126,19 +132,6 @@ function parseOptionalIntInput(raw: string): number | undefined {
   if (!trimmed) return undefined;
   if (!/^(0|[1-9]\d{0,5})$/.test(trimmed)) return undefined;
   return Number(trimmed);
-}
-
-function triggerDownload(file: ArticleDownloadFile) {
-  if (typeof URL.createObjectURL !== 'function') return;
-  const copy = new Uint8Array(file.body.byteLength);
-  copy.set(file.body);
-  const blob = new Blob([copy], { type: file.mime });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = file.filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 function buildDefaultCreateDraft(
@@ -241,6 +234,22 @@ export function ArticleManageScreen({
   const [archiveFormat, setArchiveFormat] = useState<ArticleArchiveFormat>('md');
   const [exportingZip, setExportingZip] = useState(false);
 
+  const resolvedTitle = useMemo(() => {
+    if (!title.includes('·')) return title;
+    const baseTitle = title.split('·')[0]?.trim() || '文章列表';
+    if (categorySummary?.name) return `${baseTitle} · ${categorySummary.name}`;
+    if (query.categoryId) {
+      const catName = formOptions?.categories.find((c) => c.id === query.categoryId)?.name;
+      if (catName) return `${baseTitle} · ${catName}`;
+    }
+    if (query.taskId) {
+      const taskName = formOptions?.tasks.find((t) => t.id === query.taskId)?.name;
+      if (taskName) return `${baseTitle} · ${taskName}`;
+    }
+    return title;
+  }, [categorySummary, formOptions, query.categoryId, query.taskId, title]);
+  useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
   const [banner, setBanner] = useState<{
     type: 'success' | 'warning' | 'error';
     text: string;
@@ -266,7 +275,7 @@ export function ArticleManageScreen({
       if (onDownload) {
         onDownload(file);
       } else {
-        triggerDownload(file);
+        triggerBlobDownload(file);
       }
     },
     [onDownload],
@@ -441,6 +450,7 @@ export function ArticleManageScreen({
 
   const resetFilters = () => {
     setSelectedIds([]);
+    setCategorySummary(null);
     setFilterDraft({
       categoryId: '',
       taskId: '',
@@ -467,6 +477,9 @@ export function ArticleManageScreen({
       sort: 'createdAt',
       order: 'desc',
     }));
+    if (href.includes('?')) {
+      onDispatch?.({ type: 'navigate', id: tabId, href: '/writing/articles' });
+    }
   };
 
   const handleBulkSetNormal = async () => {
@@ -533,6 +546,10 @@ export function ArticleManageScreen({
   };
 
   const handleExportZip = async (format: ArticleArchiveFormat) => {
+    if (!loading && total === 0 && rows.length === 0 && selectedIds.length === 0) {
+      setBanner({ type: 'warning', text: '当前列表暂无可导出数据' });
+      return;
+    }
     setExportingZip(true);
     try {
       const file = await client.exportZip({
@@ -706,7 +723,7 @@ export function ArticleManageScreen({
       >
         <Space align="center" wrap>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            {title}
+            {resolvedTitle}
           </Typography.Title>
           {categorySummary ? (
             <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px' }}>
@@ -799,18 +816,16 @@ export function ArticleManageScreen({
           >
             打包导出 (.zip)
           </Button>
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: [
-                { key: 'csv', label: 'CSV 列表' },
-                { key: 'xlsx', label: 'Excel 列表' },
-              ],
-              onClick: ({ key }) => void handleExportTable(key === 'xlsx' ? 'xlsx' : 'csv'),
-            }}
-          >
-            <Button aria-label="导出表格">导出表格</Button>
-          </Dropdown>
+          <ExportAction
+            label="导出表格"
+            ariaLabel="导出表格"
+            empty={!loading && total === 0 && rows.length === 0}
+            options={[
+              { key: 'csv', label: 'CSV 列表' },
+              { key: 'xlsx', label: 'Excel 列表' },
+            ]}
+            onExport={handleExportTable}
+          />
           <Button
             aria-label={filterOpen ? '收起筛选' : '展开筛选'}
             onClick={() => setFilterOpen((v) => !v)}
