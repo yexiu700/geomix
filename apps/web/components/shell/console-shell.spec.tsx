@@ -138,4 +138,30 @@ describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
     expect(screen.getAllByRole('tab')[0]?.textContent).toBe('首页');
     expect(window.localStorage.getItem('geomix.shell.user')).toBe(merchantAccount.id);
   });
+
+  it('re-applies active tab document.title when Next.js pathname commits after tab dispatch (#195)', async () => {
+    mockPathname = '/dashboard';
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+
+    const rendered = render(<ConsoleShell />);
+
+    await waitFor(() => {
+      expect(document.title).toBe('首页 · GeoMix');
+    });
+
+    // Simulate clicking sidebar item -> dispatches open(/me/rights), then router.push commits /me/rights
+    useShellStore.getState().dispatch({ type: 'open', href: '/me/rights' });
+    await waitFor(() => {
+      expect(document.title).toBe('账号权益 · GeoMix');
+    });
+
+    // Simulate Next.js App Router resetting <title> to root metadata when pathname updates
+    document.title = 'GeoMix';
+    mockPathname = '/me/rights';
+    rendered.rerender(<ConsoleShell />);
+
+    await waitFor(() => {
+      expect(document.title).toBe('账号权益 · GeoMix');
+    });
+  });
 });

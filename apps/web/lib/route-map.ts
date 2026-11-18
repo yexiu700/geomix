@@ -38,8 +38,39 @@ export function legacyPathname(pathname: string): string | null {
   return null;
 }
 
+const ADMIN_ROUTES = new Set([
+  '/admin/tenants',
+  '/admin/pricing',
+  '/admin/announcements',
+  '/admin/templates',
+  '/admin/llm-costs',
+]);
+
 /** 登录后的 next 只允许回到本后台的英文路由，避免跳到站外。 */
 export function safeConsoleHref(value: string | null): string | null {
   if (!value) return null;
   return matchRoute(value)?.href ?? null;
+}
+
+/** 校验管理后台路由（/admin/*），拦截外链与路径穿越。 */
+export function safeAdminHref(value: string | null): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) return null;
+  if (trimmed.split(/[?#]/, 1)[0]?.split('/').includes('..')) return null;
+  try {
+    const url = new URL(trimmed, 'http://localhost');
+    if (url.origin !== 'http://localhost' || url.username || url.password) return null;
+    let path = url.pathname;
+    if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+    if (path === '/admin') return '/admin/tenants';
+    return ADMIN_ROUTES.has(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 登录成功后的 next 允许回到工作台或管理后台的合法站内路由。 */
+export function safePostLoginHref(value: string | null): string | null {
+  return safeConsoleHref(value) ?? safeAdminHref(value);
 }

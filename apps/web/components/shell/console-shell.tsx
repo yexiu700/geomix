@@ -146,7 +146,7 @@ export function ConsoleShell() {
     const active = state.tabs.find((tab) => tab.id === state.activeId);
     if (!active) return;
     document.title = `${active.title} · ${SITE_NAME}`;
-  }, [state.activeId, state.tabs]);
+  }, [state.activeId, state.tabs, href]);
 
   function onDispatch(action: ShellAction) {
     useShellStore.getState().dispatch(action);

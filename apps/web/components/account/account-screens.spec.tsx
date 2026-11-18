@@ -118,6 +118,56 @@ describe('personal center screens', () => {
     expect(screen.getAllByText('0')).toHaveLength(8);
     expect(screen.getByRole('article', { name: '主关键词' }).textContent).toContain('0 / 100');
     expect(document.querySelectorAll('.gm-right-card')).toHaveLength(18);
+    expect(screen.queryByText(/额度来自配额表|模型收录计数留到后续模块/)).toBeNull();
+  });
+
+  it('refreshes /me/rights usage when returning to the keep-alive tab (#195)', async () => {
+    const initial: RightsView = {
+      points: 1000,
+      money: '0.00',
+      billingMode: 'SHADOW',
+      cards: [
+        { key: 'MAIN_KEYWORD', label: '主关键词', text: '2 / 100', used: '2', limit: '100' },
+        { key: 'AI_WRITE', label: 'AI写作数量', text: '0 / 10000', used: '0', limit: '10000' },
+        {
+          key: 'STORAGE_BYTES',
+          label: '图片存储空间',
+          text: '0 MB / 100 MB',
+          used: '0',
+          limit: '104857600',
+        },
+      ],
+      models: [],
+    };
+    const updated: RightsView = {
+      ...initial,
+      cards: [
+        { key: 'MAIN_KEYWORD', label: '主关键词', text: '2 / 100', used: '2', limit: '100' },
+        { key: 'AI_WRITE', label: 'AI写作数量', text: '1 / 10000', used: '1', limit: '10000' },
+        {
+          key: 'STORAGE_BYTES',
+          label: '图片存储空间',
+          text: '5 KB / 100 MB',
+          used: '5120',
+          limit: '104857600',
+        },
+      ],
+    };
+    const load = vi
+      .fn<() => Promise<RightsView>>()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(updated);
+
+    const view = render(<RightsScreen title="账号权益" active load={load} />);
+    expect(await screen.findByText('0 / 10000')).toBeTruthy();
+    expect(screen.getByText('0 MB / 100 MB')).toBeTruthy();
+
+    view.rerender(<RightsScreen title="账号权益" active={false} load={load} />);
+    view.rerender(<RightsScreen title="账号权益" active load={load} />);
+
+    expect(await screen.findByText('1 / 10000')).toBeTruthy();
+    expect(screen.getByText('5 KB / 100 MB')).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it('submits the placeholder verification form and blocks writes when read only', async () => {
