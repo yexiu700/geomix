@@ -507,7 +507,7 @@ describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
     await waitFor(() => {
       expect(gateway.uploadAssets).toHaveBeenCalledTimes(2);
       expect(screen.getByText('最近上传成功（1 张）：')).toBeTruthy();
-      expect(screen.getByText('完成并关闭')).toBeTruthy();
+      expect(screen.getByLabelText('完成').tagName).toBe('BUTTON');
     });
 
     vi.unstubAllGlobals();
@@ -607,17 +607,25 @@ describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
     });
     clickBtn('确定');
 
-    // Even before background reload resolves, modal switches to 完成并关闭 without spinning 确定
+    // Even before background reload resolves, modal switches to 完成 without spinning 确定
     await waitFor(() => {
       expect(screen.getByText('最近上传成功（1 张）：')).toBeTruthy();
       expect(screen.getByText('laser-bench.png')).toBeTruthy();
-      expect(screen.getByLabelText('完成并关闭').tagName).toBe('BUTTON');
+      expect(screen.getByLabelText('完成').tagName).toBe('BUTTON');
     });
     expect(document.body.textContent).not.toContain('tenants/');
     expect(document.body.innerHTML).not.toContain('media-ok-0.jpg');
     expect(document.querySelector('.gm-crud-footer .ant-btn-loading')).toBeNull();
 
-    clickBtn('完成并关闭');
+    // Ensure Playwright substring matching for '关闭' resolves to only the header close button
+    const closeMatches = Array.from(document.querySelectorAll('button')).filter(
+      (btn) =>
+        (btn.getAttribute('aria-label') ?? '').includes('关闭') ||
+        (btn.textContent ?? '').includes('关闭'),
+    );
+    expect(closeMatches).toHaveLength(1);
+
+    clickBtn('完成');
     await waitFor(() => {
       expect(screen.queryByLabelText('添加图片素材')).toBeNull();
     });

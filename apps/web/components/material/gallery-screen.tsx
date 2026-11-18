@@ -811,10 +811,10 @@ export function GalleryAssetScreen({
               key="upload-done"
               type="primary"
               loading={false}
-              aria-label="完成并关闭"
+              aria-label="完成"
               onClick={() => setUploadModalOpen(false)}
             >
-              完成并关闭
+              完成
             </Button>
           ) : (
             <Button
