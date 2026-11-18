@@ -9,7 +9,7 @@ export default defineConfig({
     pool: 'threads',
     maxWorkers: '100%',
     testTimeout: 30000,
-    include: ['lib/**/*.spec.ts', 'lib/**/*.spec.tsx', 'components/**/*.spec.tsx'],
+    include: ['lib/**/*.spec.{ts,tsx}', 'components/**/*.spec.{ts,tsx}'],
     setupFiles: ['./vitest.setup.ts'],
     deps: {
       optimizer: {
