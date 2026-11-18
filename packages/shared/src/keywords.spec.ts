@@ -71,4 +71,19 @@ describe('keywords shared helpers', () => {
     expect(parsed.unique).toHaveLength(2);
     expect(parsed.skippedDuplicates).toBe(1);
   });
+
+  it('formats keywordExportTable createdAt in Asia/Shanghai (UTC+8) (#203)', async () => {
+    const { keywordExportTable } = await import('./keywords');
+    const table = keywordExportTable([
+      {
+        id: 'kw_1',
+        main: '工业机器人',
+        brands: ['智造甲'],
+        optStatus: 'NONE',
+        questionCount: 3,
+        createdAt: '2026-11-18T00:00:00.000Z',
+      },
+    ]);
+    expect(table.rows[0]?.[4]).toBe('2026-11-18 08:00:00');
+  });
 });

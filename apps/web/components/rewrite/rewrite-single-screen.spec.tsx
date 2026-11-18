@@ -416,28 +416,6 @@ describe('RewriteSingleScreen', () => {
     });
   });
 
-  it('syncs browser URL to /rewrite/single immediately when tab becomes active (#176)', async () => {
-    window.history.replaceState(null, '', '/rewrite/batch');
-    const { gateway } = makeGateway([]);
-
-    const { rerender } = render(
-      <RewriteSingleScreen
-        title="全网爆文复刻"
-        tabId="/rewrite/single"
-        active={false}
-        gateway={gateway}
-      />,
-    );
-    expect(window.location.pathname).toBe('/rewrite/batch');
-
-    rerender(
-      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
-    );
-    await waitFor(() => {
-      expect(window.location.pathname).toBe('/rewrite/single');
-    });
-  });
-
   it('protects 复刻新标题 column from single-character vertical collapse via clamp/ellipsis and table scroll (#208)', async () => {
     const longTitle = '2026 氮化镓多口快充充电器：落地评估维度与执行核对指南';
     const { gateway } = makeGateway([

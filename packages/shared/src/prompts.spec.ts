@@ -85,4 +85,26 @@ describe('prompts shared rules', () => {
     });
     expect(parsePromptListQuery({ kind: 'INVALID' }).kind).toBeUndefined();
   });
+
+  it('formats promptExportTable createdAt in Asia/Shanghai (UTC+8) (#203)', async () => {
+    const { promptExportTable } = await import('./prompts');
+    const table = promptExportTable([
+      {
+        id: 'prm_1',
+        tenantId: 't_1',
+        isSystem: false,
+        kind: 'ARTICLE',
+        name: '测试指令',
+        content: '内容',
+        randomPool: true,
+        hasManualSlot: false,
+        sort: 1,
+        clonedFrom: null,
+        warnings: [],
+        createdAt: '2026-11-18T00:00:00.000Z',
+        updatedAt: '2026-11-18T00:00:00.000Z',
+      },
+    ]);
+    expect(table.rows[0]?.[2]).toBe('2026-11-18 08:00:00');
+  });
 });

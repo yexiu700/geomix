@@ -1,14 +1,11 @@
-'use client';
+import { SITE_NAME } from '@geomix/shared';
+import type { Metadata } from 'next';
+import { AdminPageClient } from '../../../components/admin/admin-page-client';
 
-import { useEffect, useState } from 'react';
-import { TenantAdmin } from '../../../components/admin/tenant-admin';
-import { httpAdmin, type AdminClient } from '../../../lib/admin-client';
+export const metadata: Metadata = {
+  title: `租户 · ${SITE_NAME} 管理`,
+};
 
 export default function Page() {
-  const [client, setClient] = useState<AdminClient | null>(null);
-  useEffect(() => {
-    setClient(httpAdmin(window.sessionStorage));
-  }, []);
-  if (!client) return null;
-  return <TenantAdmin client={client} />;
+  return <AdminPageClient section="tenants" />;
 }

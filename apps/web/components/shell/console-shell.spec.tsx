@@ -2,7 +2,10 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearCachedAccount, writeCachedAccount } from '../../lib/account-cache';
+import { httpAnnouncements } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
+import { saveSession } from '../../lib/session';
 import { useShellStore } from '../../lib/shell-store';
 import { initialSnapshot } from '../../lib/tab-stack';
 import { ConsoleShell } from './console-shell';
@@ -60,6 +63,8 @@ const merchantAccount: AccountProfile = {
 describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
   beforeEach(() => {
     mockPathname = '/dashboard';
+    window.history.replaceState(null, '', '/dashboard');
+    clearCachedAccount();
     window.localStorage.clear();
     window.sessionStorage.clear();
     useShellStore.setState({ ...initialSnapshot(), hydrated: false });
@@ -67,9 +72,11 @@ describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
     replaceMock.mockReset();
     loadAccountMock.mockReset();
     saveAccountUiPrefsMock.mockReset().mockResolvedValue(true);
+    vi.mocked(httpAnnouncements).mockClear();
   });
 
   afterEach(() => {
+    clearCachedAccount();
     cleanup();
   });
 
@@ -163,5 +170,104 @@ describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
     await waitFor(() => {
       expect(document.title).toBe('账号权益 · GeoMix');
     });
+  });
+
+  it('toggles sidebar rapidly without re-fetching announcements or losing state (#133)', async () => {
+    loadAccountMock.mockResolvedValue({
+      status: 'ok',
+      account: {
+        ...merchantAccount,
+        uiPrefs: { multiTab: true, menuCollapsed: false },
+      },
+    });
+
+    render(<ConsoleShell />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
+    });
+    expect(vi.mocked(httpAnnouncements)).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
+    expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
+    expect(useShellStore.getState().prefs.menuCollapsed).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
+    expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
+    expect(useShellStore.getState().prefs.menuCollapsed).toBe(false);
+    expect(vi.mocked(httpAnnouncements)).toHaveBeenCalledTimes(1);
+  });
+
+  it('synchronizes browser URL immediately across tab/menu switches and popstate (#203)', async () => {
+    mockPathname = '/material/gallery/pic_1';
+    window.history.replaceState(null, '', '/material/gallery/pic_1');
+    loadAccountMock.mockResolvedValue({
+      status: 'ok',
+      account: {
+        ...merchantAccount,
+        uiPrefs: {
+          multiTab: true,
+          menuCollapsed: false,
+          submenusAlwaysVisible: true,
+          autoExpand: true,
+          multiLevel: true,
+        },
+      },
+    });
+
+    render(<ConsoleShell />);
+
+    await waitFor(() => {
+      expect(document.title).toBe('企业画像图库 · pic_1 · GeoMix');
+    });
+
+    // Open 企业知识库, then switch back to gallery detail, then click 企业知识库 again (existing tab!)
+    fireEvent.click(screen.getByRole('menuitem', { name: '企业知识库' }));
+    expect(window.location.pathname).toBe('/material/knowledge');
+    expect(document.title).toBe('企业知识库 · GeoMix');
+
+    fireEvent.click(screen.getByRole('tab', { name: '企业画像图库 · pic_1' }));
+    expect(window.location.pathname).toBe('/material/gallery/pic_1');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '企业知识库' }));
+    expect(window.location.pathname).toBe('/material/knowledge');
+    expect(document.title).toBe('企业知识库 · GeoMix');
+
+    // Also verify /me/money -> /me/verify and /rewrite/single <-> /rewrite/batch
+    fireEvent.click(screen.getByRole('menuitem', { name: '余额明细' }));
+    expect(window.location.pathname).toBe('/me/money');
+    fireEvent.click(screen.getByRole('menuitem', { name: '实名认证' }));
+    expect(window.location.pathname).toBe('/me/verify');
+    expect(document.title).toBe('实名认证 · GeoMix');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '全网爆文复刻' }));
+    expect(window.location.pathname).toBe('/rewrite/single');
+    fireEvent.click(screen.getByRole('menuitem', { name: '批量爆文复刻' }));
+    expect(window.location.pathname).toBe('/rewrite/batch');
+
+    // Browser popstate back to /me/verify restores active tab and title
+    window.history.replaceState(null, '', '/me/verify');
+    fireEvent(window, new PopStateEvent('popstate'));
+    await waitFor(() => {
+      expect(useShellStore.getState().activeId).toBe('/me/verify');
+      expect(document.title).toBe('实名认证 · GeoMix');
+    });
+  });
+
+  it('renders console immediately without 正在确认登录 boot flash when account cache is warm (#203)', async () => {
+    saveSession(window.sessionStorage, 'tok-warm', 'ref-warm');
+    writeCachedAccount(window.sessionStorage, {
+      ...merchantAccount,
+      role: 'ADMIN',
+      uiPrefs: { multiTab: true, menuCollapsed: false },
+    });
+    // Keep loadAccount unresolved to prove initial render doesn't block on network
+    loadAccountMock.mockReturnValue(new Promise(() => undefined));
+
+    render(<ConsoleShell />);
+
+    expect(screen.queryByText('正在确认登录')).toBeNull();
+    expect(screen.getByRole('heading', { name: '首页' })).toBeTruthy();
+    expect(document.title).toBe('首页 · GeoMix');
   });
 });

@@ -112,6 +112,22 @@ describe('gallery shared helpers', () => {
       },
     ]);
     expect(table.rows[0]?.[2]).toBe('arzopa-1.png');
+    expect(table.rows[0]?.[6]).toBe('2026-11-18 16:00:00');
     expect(table.rows[0]?.join(',')).not.toContain('seed_tenant_platform');
+  });
+
+  it('formats gallery category export createdAt in Asia/Shanghai (UTC+8) (#203)', async () => {
+    const { mediaCategoryExportTable } = await import('./gallery');
+    const table = mediaCategoryExportTable([
+      {
+        id: 'cat_tz_1',
+        name: '工厂实景',
+        type: 1,
+        assetCount: 2,
+        previewAssets: [],
+        createdAt: '2026-11-18T00:00:00.000Z',
+      },
+    ]);
+    expect(table.rows[0]?.[3]).toBe('2026-11-18 08:00:00');
   });
 });

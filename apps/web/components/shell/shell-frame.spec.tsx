@@ -368,4 +368,42 @@ describe('admin shell', { timeout: 60_000 }, () => {
       expect(screen.queryByRole('dialog', { name: '修改密码' })).toBeNull();
     });
   });
+
+  it('handles rapid consecutive desktop collapse/expand toggles without dropping state and marks collapsed Sider class (#133)', () => {
+    const prevWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 1440,
+    });
+    try {
+      render(<Harness initial={initialSnapshot()} />);
+
+      const sider = document.querySelector<HTMLElement>('.gm-sider');
+      expect(sider).not.toBeNull();
+      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
+
+      // Rapid collapse -> expand -> collapse -> expand sequence
+      fireEvent.click(labeled('收起菜单'));
+      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(true);
+      expect(labeled('展开菜单').style.flexShrink).toBe('0');
+
+      fireEvent.click(labeled('展开菜单'));
+      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
+      expect(labeled('收起菜单')).toBeTruthy();
+
+      fireEvent.click(labeled('收起菜单'));
+      fireEvent.click(labeled('展开菜单'));
+      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
+      expect(
+        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
+      ).toBeTruthy();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: prevWidth,
+      });
+    }
+  });
 });

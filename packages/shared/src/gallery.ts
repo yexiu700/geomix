@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IMAGE_MAX_INPUT_BYTES, IMAGE_WARN_WIDTH } from './adapters';
+import { formatShanghaiDateTime } from './ux-foundation';
 
 export const GALLERY_CATEGORY_TYPE_IMAGE = 1 as const;
 export const GALLERY_PREVIEW_LIMIT = 3 as const;
@@ -235,7 +236,7 @@ export function mediaCategoryExportTable(rows: readonly MediaCategoryRecord[]): 
       String(idx + 1),
       row.name,
       String(row.assetCount),
-      row.createdAt.slice(0, 19).replace('T', ' '),
+      formatShanghaiDateTime(row.createdAt, { seconds: true }),
     ]),
   };
 }
@@ -284,7 +285,7 @@ export function mediaAssetExportTable(rows: readonly MediaAssetRecord[]): {
       `${row.width}×${row.height}`,
       formatGalleryBytes(row.bytes),
       String(row.usedCount),
-      row.createdAt.slice(0, 19).replace('T', ' '),
+      formatShanghaiDateTime(row.createdAt, { seconds: true }),
     ]),
   };
 }

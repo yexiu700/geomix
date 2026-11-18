@@ -3,7 +3,13 @@
 import { SITE_NAME, replaceUxJargon } from '@geomix/shared';
 import { Button } from 'antd';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  clearCachedAccount,
+  patchCachedAccountUiPrefs,
+  readCachedAccount,
+  writeCachedAccount,
+} from '../../lib/account-cache';
 import { httpAnnouncements } from '../../lib/account-client';
 import {
   changePassword,
@@ -26,6 +32,8 @@ import {
   type ShellAction,
 } from '../../lib/tab-stack';
 import { ShellFrame } from './shell-frame';
+
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 const SHELL_USER_KEY = 'geomix.shell.user';
 
@@ -50,12 +58,15 @@ export function ConsoleShell() {
   hrefRef.current = href;
   const state = useShellStore();
   const [account, setAccount] = useState<AccountProfile | null>(null);
+  const accountRef = useRef<AccountProfile | null>(null);
+  accountRef.current = account;
   const [announcement, setAnnouncement] = useState(SHELL_ANNOUNCEMENT);
   const [offline, setOffline] = useState(false);
   const [booting, setBooting] = useState(true);
   const persistEnabled = useRef(true);
+  const localPrefsDirtyRef = useRef(false);
 
-  function applyLoadedAccount(nextAccount: AccountProfile) {
+  function applyLoadedAccount(nextAccount: AccountProfile, options?: { fromCache?: boolean }) {
     const prevUserId = window.localStorage.getItem(SHELL_USER_KEY);
     if (prevUserId && prevUserId !== nextAccount.id) {
       window.localStorage.removeItem(SHELL_STORAGE_KEY);
@@ -69,18 +80,23 @@ export function ConsoleShell() {
         store.dispatch({ type: 'close', id: '/workbench/samples' });
       }
     }
-    if (nextAccount.uiPrefs) {
+    if (!options?.fromCache && !localPrefsDirtyRef.current && nextAccount.uiPrefs) {
       useShellStore.getState().dispatch({ type: 'prefs', patch: nextAccount.uiPrefs });
     }
+    accountRef.current = nextAccount;
     setAccount(nextAccount);
     setOffline(false);
     setBooting(false);
   }
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const storage = window.localStorage;
     const loaded = loadShell(storage);
     useShellStore.getState().markHydrated(loaded);
+    const cached = readCachedAccount(window.sessionStorage);
+    if (cached) {
+      applyLoadedAccount(cached, { fromCache: true });
+    }
     let last = serializeShell(useShellStore.getState());
     const unsub = useShellStore.subscribe((next) => {
       if (!persistEnabled.current || !next.hydrated) return;
@@ -97,14 +113,18 @@ export function ConsoleShell() {
     void loadAccount(window.sessionStorage).then((result) => {
       if (!live) return;
       if (result.status === 'ok') {
+        writeCachedAccount(window.sessionStorage, result.account);
         applyLoadedAccount(result.account);
         return;
       }
       if (result.status === 'offline') {
-        setOffline(true);
-        setBooting(false);
+        if (!accountRef.current) {
+          setOffline(true);
+          setBooting(false);
+        }
         return;
       }
+      clearCachedAccount();
       const hadToken = readAccessToken(window.sessionStorage) !== null;
       if (hadToken || result.status === 'disabled') clearSession(window.sessionStorage);
       const next = safeConsoleHref(hrefRef.current) ?? '/dashboard';
@@ -118,8 +138,9 @@ export function ConsoleShell() {
     };
   }, [router]);
 
+  const accountId = account?.id ?? null;
   useEffect(() => {
-    if (!account) return;
+    if (!accountId) return;
     let live = true;
     void httpAnnouncements(window.sessionStorage).then(
       (items) => {
@@ -131,38 +152,90 @@ export function ConsoleShell() {
     return () => {
       live = false;
     };
-  }, [account]);
+  }, [accountId]);
 
+  const accountReady = account !== null;
   useEffect(() => {
-    if (!state.hydrated || !account) return;
+    const activeAccount = accountRef.current;
+    if (!state.hydrated || !accountReady || !activeAccount) return;
     const match = tabFromHref(href);
-    if (!match || !isConsoleRouteAccessible(match.href, account.role)) return;
+    if (!match || !isConsoleRouteAccessible(match.href, activeAccount.role)) return;
     if (match.href !== href) router.replace(match.href);
     if (useShellStore.getState().activeId === match.href) return;
     useShellStore.getState().dispatch({ type: 'open', href: match.href });
-  }, [account, href, router, state.hydrated]);
+  }, [accountReady, href, router, state.hydrated]);
 
   useEffect(() => {
-    const active = state.tabs.find((tab) => tab.id === state.activeId);
-    if (!active) return;
-    document.title = `${active.title} · ${SITE_NAME}`;
-  }, [state.activeId, state.tabs, href]);
+    if (typeof window === 'undefined') return undefined;
+    const onPopState = () => {
+      const activeAccount = accountRef.current;
+      if (!useShellStore.getState().hydrated || !activeAccount) return;
+      const browserHref = `${window.location.pathname}${window.location.search}`;
+      const match = tabFromHref(browserHref);
+      if (!match || !isConsoleRouteAccessible(match.href, activeAccount.role)) return;
+      if (useShellStore.getState().activeId === match.href) return;
+      useShellStore.getState().dispatch({ type: 'open', href: match.href });
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeId);
+  const expectedTitle = activeTab ? `${activeTab.title} · ${SITE_NAME}` : null;
+
+  useEffect(() => {
+    if (!expectedTitle || typeof document === 'undefined') return undefined;
+    if (document.title !== expectedTitle) {
+      document.title = expectedTitle;
+    }
+    const titleEl = document.querySelector('title');
+    if (!titleEl) return undefined;
+    const observer = new MutationObserver(() => {
+      if (document.title !== expectedTitle) {
+        document.title = expectedTitle;
+      }
+    });
+    observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [expectedTitle, href]);
 
   function onDispatch(action: ShellAction) {
     useShellStore.getState().dispatch(action);
     if (action.type === 'prefs') {
+      localPrefsDirtyRef.current = true;
       const nextPrefs = useShellStore.getState().prefs;
-      setAccount((curr) => (curr ? { ...curr, uiPrefs: nextPrefs } : curr));
+      patchCachedAccountUiPrefs(window.sessionStorage, nextPrefs);
       void saveAccountUiPrefs(window.sessionStorage, nextPrefs);
     }
     if (!NAVIGATING.has(action.type)) return;
     const next = useShellStore.getState();
     const active = next.tabs.find((tab) => tab.id === next.activeId);
-    if (active && active.href !== hrefRef.current) router.push(active.href);
+    if (!active) return;
+    if (typeof window !== 'undefined') {
+      const currentHref = `${window.location.pathname}${window.location.search}`;
+      if (active.href !== currentHref) {
+        if (action.type === 'navigate') {
+          window.history.replaceState(null, '', active.href);
+        } else {
+          window.history.pushState(null, '', active.href);
+        }
+      }
+      return;
+    }
+    if (active.href !== hrefRef.current) router.push(active.href);
+  }
+
+  function onToggleMenu() {
+    const nextCollapsed = !useShellStore.getState().prefs.menuCollapsed;
+    onDispatch({
+      type: 'prefs',
+      patch: { menuCollapsed: nextCollapsed },
+    });
   }
 
   async function onLogout() {
     persistEnabled.current = false;
+    clearCachedAccount();
     window.localStorage.removeItem(SHELL_STORAGE_KEY);
     window.localStorage.removeItem('geomix.shell.v1');
     window.localStorage.removeItem(SHELL_USER_KEY);
@@ -182,6 +255,7 @@ export function ConsoleShell() {
             setBooting(true);
             void loadAccount(window.sessionStorage).then((result) => {
               if (result.status === 'ok') {
+                writeCachedAccount(window.sessionStorage, result.account);
                 applyLoadedAccount(result.account);
                 return;
               }
@@ -219,6 +293,7 @@ export function ConsoleShell() {
       state={state}
       announcement={announcement}
       onDispatch={onDispatch}
+      onToggleMenu={onToggleMenu}
       onLogout={() => void onLogout()}
       onChangePassword={async (values) => {
         const result = await changePassword(window.sessionStorage, values);

@@ -2,7 +2,8 @@
 
 import { SITE_NAME } from '@geomix/shared';
 import { Alert, Button, Dropdown, Layout, Modal, Tooltip } from 'antd';
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
 import { PasswordForm } from '../password-form';
 import { SHELL_ANNOUNCEMENT, displayName, formatExpiry } from '../../lib/shell-copy';
 import type { AccountProfile } from '../../lib/api';
@@ -20,6 +21,7 @@ export function ShellFrame({
   account,
   state,
   onDispatch,
+  onToggleMenu,
   onLogout,
   onChangePassword,
   announcement = SHELL_ANNOUNCEMENT,
@@ -27,6 +29,7 @@ export function ShellFrame({
   account: AccountProfile;
   state: ShellSnapshot;
   onDispatch: (action: ShellAction) => void;
+  onToggleMenu?: () => void;
   onLogout: () => void;
   onChangePassword: (values: {
     currentPassword: string;
@@ -99,28 +102,59 @@ export function ShellFrame({
   const visibilityEnabled = account.features?.visibility !== false;
   const siderCollapsed = isMobile ? !mobileMenuOpen : state.prefs.menuCollapsed;
   const menuToggleLabel = siderCollapsed ? '展开菜单' : '收起菜单';
+  const desktopCollapsedRef = useRef(state.prefs.menuCollapsed);
+  desktopCollapsedRef.current = state.prefs.menuCollapsed;
 
   const toggleMenu = () => {
     if (isMobile) {
       setMobileMenuOpen((open) => !open);
       return;
     }
+    if (onToggleMenu) {
+      onToggleMenu();
+      return;
+    }
+    const nextCollapsed = !desktopCollapsedRef.current;
+    desktopCollapsedRef.current = nextCollapsed;
     onDispatch({
       type: 'prefs',
-      patch: { menuCollapsed: !state.prefs.menuCollapsed },
+      patch: { menuCollapsed: nextCollapsed },
     });
   };
 
   const handleDispatch = (action: ShellAction) => {
-    if (isMobile && action.type === 'prefs' && action.patch.menuCollapsed !== undefined) {
-      setMobileMenuOpen(!action.patch.menuCollapsed);
+    if (action.type === 'prefs' && action.patch.menuCollapsed !== undefined) {
+      desktopCollapsedRef.current = action.patch.menuCollapsed;
+      if (isMobile) {
+        setMobileMenuOpen(!action.patch.menuCollapsed);
+      }
     }
     onDispatch(action);
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ minHeight: '100vh', overflowX: 'clip' }}>
       <style>{`
+        .gm-sider {
+          overflow: hidden !important;
+          transition: none !important;
+        }
+        .gm-sider .ant-layout-sider-children {
+          overflow: hidden !important;
+        }
+        .gm-sider.gm-sider-collapsed {
+          width: 0 !important;
+          min-width: 0 !important;
+          max-width: 0 !important;
+          flex: 0 0 0px !important;
+          overflow: hidden !important;
+        }
+        .gm-sider:not(.gm-sider-collapsed) {
+          width: 232px !important;
+          min-width: 232px !important;
+          max-width: 232px !important;
+          flex: 0 0 232px !important;
+        }
         .gm-sider .ant-menu-item-selected {
           position: relative;
         }
@@ -183,6 +217,14 @@ export function ShellFrame({
           color: var(--gm-fg-1) !important;
         }
         @media (max-width: 768px) {
+          .gm-sider:not(.gm-sider-collapsed) {
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+          }
+          .gm-sider:not(.gm-sider-collapsed) .ant-layout-sider-children {
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+          }
           .gm-marquee {
             flex: 1 1 100%;
             min-width: 0;
@@ -206,7 +248,7 @@ export function ShellFrame({
       ) : null}
       <Sider
         id="gm-sider-nav"
-        className="gm-sider"
+        className={siderCollapsed ? 'gm-sider gm-sider-collapsed' : 'gm-sider'}
         width={232}
         collapsed={siderCollapsed}
         collapsedWidth={0}
@@ -215,6 +257,7 @@ export function ShellFrame({
         style={{
           background: 'var(--gm-bg-base)',
           borderRight: siderCollapsed ? 'none' : '1px solid var(--gm-line-1)',
+          overflow: 'hidden',
         }}
       >
         <SideMenu
@@ -299,9 +342,9 @@ export function ShellFrame({
             </kbd>
           </button>
           {account.role === 'ADMIN' ? (
-            <a className="gm-admin-link" href="/admin/tenants">
+            <Link className="gm-admin-link" href="/admin/tenants">
               管理后台
-            </a>
+            </Link>
           ) : null}
           <span
             className={account.tenant.readOnly ? 'gm-expiry warn' : 'gm-expiry'}
@@ -339,6 +382,7 @@ export function ShellFrame({
             aria-expanded={!siderCollapsed}
             aria-controls="gm-sider-nav"
             onClick={toggleMenu}
+            style={{ flexShrink: 0 }}
           >
             {menuToggleLabel}
           </Button>

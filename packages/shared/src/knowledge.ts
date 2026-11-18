@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { COPY_TYPES, CREATIVE_DIRECTIONS } from './catalog';
+import { formatShanghaiDateTime } from './ux-foundation';
 
 export const KB_MODES = ['DETAIL', 'SUMMARY'] as const;
 export type KbModeName = (typeof KB_MODES)[number];
@@ -438,7 +439,7 @@ export function knowledgeExportTable(rows: readonly KnowledgeBaseRecord[]): {
       row.name,
       KB_MODE_LABELS[row.mode],
       row.companyName ?? '',
-      row.createdAt.slice(0, 19).replace('T', ' '),
+      formatShanghaiDateTime(row.createdAt, { seconds: true }),
     ]),
   };
 }

@@ -337,13 +337,6 @@ export function RewriteBatchScreen({
     },
   });
 
-  useEffect(() => {
-    if (!active || tabId !== '/rewrite/batch' || typeof window === 'undefined') return;
-    if (window.location.pathname !== '/rewrite/batch') {
-      window.history.replaceState(window.history.state, '', '/rewrite/batch');
-    }
-  }, [active, tabId]);
-
   const drawerBatchId = drawerOpen && drawerDetail ? drawerDetail.batch.id : null;
   const drawerBatchActive =
     drawerOpen && drawerDetail !== null && isActiveBatchStatus(drawerDetail.batch.status);
