@@ -156,6 +156,7 @@ function makeGateway(overrides: Partial<GalleryGateway> = {}): GalleryGateway {
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   cleanup();
 });
 
@@ -380,5 +381,255 @@ describe('GalleryCategoryScreen & GalleryAssetScreen', () => {
       expect(screen.getByTestId('cat-thumb-med_new_3')).toBeTruthy();
       expect(screen.getByText(/已用 512 KB \/ 上限 100 MB/)).toBeTruthy();
     });
+  });
+
+  it('renders only one 图片列表 button per category row and accurate route copy (#145)', async () => {
+    const gateway = makeGateway({
+      listCategories: vi.fn(async () => ({
+        items: [
+          {
+            id: 'cat_empty_1',
+            name: '空素材分类',
+            type: 1,
+            assetCount: 0,
+            previewAssets: [],
+            createdAt: '2026-11-17T04:00:00.000Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+        storage: buildStorageSummary(0n, 100n * 1024n * 1024n),
+      })),
+    });
+
+    render(
+      <GalleryCategoryScreen
+        title="企业画像图库"
+        tabId="/material/gallery"
+        onDispatch={vi.fn()}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('空素材分类')).toBeTruthy();
+    });
+
+    const row = document.querySelector('tbody tr') as HTMLTableRowElement;
+    const listButtonsInRow = Array.from(row.querySelectorAll('button')).filter(
+      (b) => (b.textContent ?? '').replace(/\s+/g, '') === '图片列表',
+    );
+    expect(listButtonsInRow).toHaveLength(1);
+    expect(screen.getByText('暂无图片')).toBeTruthy();
+    expect(screen.queryByText(/在新标签打开/)).toBeNull();
+  });
+
+  it('switches progress to exception state with retry on upload error, supports dropzone, and warns <500px before submit (#138)', async () => {
+    let attempt = 0;
+    const closeBitmap = vi.fn();
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ width: 320, height: 240, close: closeBitmap })),
+    );
+
+    const gateway = makeGateway({
+      uploadAssets: vi.fn(
+        async (_categoryId: string, files: File[], onProgress?: (percent: number) => void) => {
+          attempt += 1;
+          onProgress?.(90);
+          if (attempt === 1) {
+            throw new Error('图片解码失败，请确认文件未损坏');
+          }
+          onProgress?.(100);
+          return {
+            items: files.map((f, idx) => ({
+              asset: {
+                id: `med_retry_${idx}`,
+                categoryId: 'cat_1',
+                categoryName: '车间实拍',
+                origin: 'UPLOAD' as const,
+                objectKey: `tenants/t1/media-retry-${idx}.jpg`,
+                originalName: f.name,
+                displayName: f.name,
+                url: `/api/v1/media-assets/med_retry_${idx}/file`,
+                thumbUrl: `/api/v1/media-assets/med_retry_${idx}/thumb`,
+                width: 320,
+                height: 240,
+                bytes: 12000,
+                mime: 'image/png',
+                usedCount: 0,
+                createdAt: '2026-11-18T02:00:00.000Z',
+              },
+              originalName: f.name,
+            })),
+            warnings: [],
+            storage: buildStorageSummary(12000n, 100n * 1024n * 1024n),
+          };
+        },
+      ),
+    });
+
+    render(
+      <GalleryAssetScreen
+        title="企业画像图库 · cat_1"
+        tabId="/material/gallery/cat_1"
+        categoryId="cat_1"
+        onDispatch={vi.fn()}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('图片列表 · 车间实拍')).toBeTruthy();
+    });
+
+    clickBtn('添加');
+    const dropzone = screen.getByTestId('gallery-upload-dropzone');
+    const smallFile = new File(['x'], 'tiny-device.png', { type: 'image/png' });
+    fireEvent.drop(dropzone, { dataTransfer: { files: [smallFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('上传前清晰度提示（仅提示，不影响上传）')).toBeTruthy();
+      expect(screen.getByText(/320px 小于建议值 500px/)).toBeTruthy();
+    });
+
+    clickBtn('确定');
+
+    await waitFor(() => {
+      expect(screen.getByText('图片上传失败')).toBeTruthy();
+      expect(screen.getByText('图片解码失败，请确认文件未损坏')).toBeTruthy();
+      expect(document.querySelector('.ant-progress-status-exception')).toBeTruthy();
+    });
+
+    clickBtn('重新上传');
+
+    await waitFor(() => {
+      expect(gateway.uploadAssets).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('最近上传成功（1 张）：')).toBeTruthy();
+      expect(screen.getByLabelText('完成').tagName).toBe('BUTTON');
+    });
+
+    vi.unstubAllGlobals();
+  });
+
+  it('unlocks upload CTA immediately at 100% before background reload finishes and never leaks objectKey (#204)', async () => {
+    let listCalls = 0;
+    let resolveReload: (() => void) | null = null;
+    const storage = buildStorageSummary(65536n, 100n * 1024n * 1024n);
+
+    const gateway = makeGateway({
+      listAssets: vi.fn(async () => {
+        listCalls += 1;
+        if (listCalls > 1) {
+          await new Promise<void>((resolve) => {
+            resolveReload = resolve;
+          });
+        }
+        return {
+          category: { id: 'cat_1', name: '车间实拍' },
+          items: [
+            {
+              id: 'med_1',
+              categoryId: 'cat_1',
+              categoryName: '车间实拍',
+              origin: 'UPLOAD' as const,
+              objectKey: 'tenants/seed_tenant_platform/media-secret.jpg',
+              originalName: '车间主机实拍.png',
+              displayName: '车间主机实拍.png',
+              url: '/api/v1/media-assets/med_1/file',
+              thumbUrl: '/api/v1/media-assets/med_1/thumb',
+              width: 1200,
+              height: 800,
+              bytes: 65536,
+              mime: 'image/jpeg',
+              usedCount: 2,
+              createdAt: '2026-11-17T04:00:00.000Z',
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 10,
+          storage,
+        };
+      }),
+      uploadAssets: vi.fn(
+        async (_categoryId: string, files: File[], onProgress?: (percent: number) => void) => {
+          onProgress?.(100);
+          return {
+            items: files.map((f, idx) => ({
+              asset: {
+                id: `med_ok_${idx}`,
+                categoryId: 'cat_1',
+                categoryName: '车间实拍',
+                origin: 'UPLOAD' as const,
+                objectKey: `tenants/seed_tenant_platform/media-ok-${idx}.jpg`,
+                originalName: f.name,
+                displayName: f.name,
+                url: `/api/v1/media-assets/med_ok_${idx}/file`,
+                thumbUrl: `/api/v1/media-assets/med_ok_${idx}/thumb`,
+                width: 800,
+                height: 600,
+                bytes: 24576,
+                mime: 'image/jpeg',
+                usedCount: 0,
+                createdAt: '2026-11-18T02:10:00.000Z',
+              },
+              originalName: f.name,
+            })),
+            warnings: [],
+            storage,
+          };
+        },
+      ),
+    });
+
+    render(
+      <GalleryAssetScreen
+        title="企业画像图库 · cat_1"
+        tabId="/material/gallery/cat_1"
+        categoryId="cat_1"
+        onDispatch={vi.fn()}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('车间主机实拍.png')).toBeTruthy();
+    });
+    expect(document.body.textContent).not.toContain('tenants/');
+    expect(document.body.innerHTML).not.toContain('media-secret.jpg');
+
+    clickBtn('添加');
+    const fileInput = document.querySelector('[aria-label="选择图片文件"]') as HTMLInputElement;
+    fireEvent.change(fileInput, {
+      target: { files: [new File(['img'], 'laser-bench.png', { type: 'image/png' })] },
+    });
+    clickBtn('确定');
+
+    // Even before background reload resolves, modal switches to 完成 without spinning 确定
+    await waitFor(() => {
+      expect(screen.getByText('最近上传成功（1 张）：')).toBeTruthy();
+      expect(screen.getByText('laser-bench.png')).toBeTruthy();
+      expect(screen.getByLabelText('完成').tagName).toBe('BUTTON');
+    });
+    expect(document.body.textContent).not.toContain('tenants/');
+    expect(document.body.innerHTML).not.toContain('media-ok-0.jpg');
+    expect(document.querySelector('.gm-crud-footer .ant-btn-loading')).toBeNull();
+
+    // Ensure Playwright substring matching for '关闭' resolves to only the header close button
+    const closeMatches = Array.from(document.querySelectorAll('button')).filter(
+      (btn) =>
+        (btn.getAttribute('aria-label') ?? '').includes('关闭') ||
+        (btn.textContent ?? '').includes('关闭'),
+    );
+    expect(closeMatches).toHaveLength(1);
+
+    clickBtn('完成');
+    await waitFor(() => {
+      expect(screen.queryByLabelText('添加图片素材')).toBeNull();
+    });
+
+    (resolveReload as (() => void) | null)?.();
   });
 });

@@ -59,12 +59,91 @@ export function resolveMediaUrl(pathOrUrl: string): string {
   return `${origin}/${pathOrUrl}`;
 }
 
+export async function readImageDimensions(
+  file: File,
+): Promise<{ width: number; height: number } | null> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      try {
+        if (bitmap.width > 0 && bitmap.height > 0) {
+          return { width: bitmap.width, height: bitmap.height };
+        }
+      } finally {
+        if (typeof bitmap.close === 'function') {
+          bitmap.close();
+        }
+      }
+    } catch {
+      // Fallback to Image element decoding below
+    }
+  }
+
+  if (
+    typeof window === 'undefined' ||
+    typeof Image === 'undefined' ||
+    typeof URL === 'undefined' ||
+    typeof URL.createObjectURL !== 'function'
+  ) {
+    return null;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    return await new Promise<{ width: number; height: number } | null>((resolve) => {
+      const img = new Image();
+      let settled = false;
+      const done = (dims: { width: number; height: number } | null) => {
+        if (settled) return;
+        settled = true;
+        img.onload = null;
+        img.onerror = null;
+        resolve(dims);
+      };
+      const timer = window.setTimeout(() => done(null), 3000);
+      img.onload = () => {
+        window.clearTimeout(timer);
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        done(w > 0 && h > 0 ? { width: w, height: h } : null);
+      };
+      img.onerror = () => {
+        window.clearTimeout(timer);
+        done(null);
+      };
+      img.src = objectUrl;
+    });
+  } finally {
+    if (typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+}
+
 async function unwrap<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) throw new GalleryApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
+  let json: Envelope<T> | null = null;
+  try {
+    json = JSON.parse(text) as Envelope<T>;
+  } catch {
+    json = null;
+  }
+  if (!json || typeof json !== 'object') {
+    const fallbackMsg =
+      response.status === 413
+        ? '上传文件过大，超出服务器或网关限制'
+        : response.status >= 500
+          ? `服务暂时不可用（HTTP ${response.status}）`
+          : `服务返回异常响应（HTTP ${response.status}）`;
+    throw new GalleryApiError(response.status, -1, fallbackMsg);
+  }
   if (!response.ok || json.code !== 0) {
-    throw new GalleryApiError(response.status, json.code ?? -1, json.msg || '操作失败');
+    throw new GalleryApiError(
+      response.status,
+      typeof json.code === 'number' ? json.code : -1,
+      json.msg || `操作失败（HTTP ${response.status}）`,
+    );
   }
   return json.data;
 }
@@ -157,7 +236,9 @@ export function httpGalleryGateway(storage: SessionStorageLike): GalleryGateway 
         const nextToken = await refreshAccessToken(storage);
         if (nextToken) res = await sendForm(nextToken);
       }
-      onProgress?.(90);
+      if (res.ok) {
+        onProgress?.(90);
+      }
       const data = await unwrap<MediaUploadResponse>(res);
       onProgress?.(100);
       return data;

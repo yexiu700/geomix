@@ -424,6 +424,7 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-crud-head {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -439,6 +440,8 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-crud-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -479,6 +482,7 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-crud-footer {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;

@@ -7,8 +7,11 @@ import {
   GALLERY_CATEGORY_EMPTY_MSG,
   GALLERY_UPLOAD_MAX_FILES,
   GALLERY_UPLOAD_NOTICE,
+  checkImageWidthWarning,
   formatGalleryBytes,
   mediaCategoryWriteSchema,
+  safeMediaDisplayName,
+  sanitizeMediaOriginalName,
   validateClientUploadFile,
   type CrudPageSize,
   type MediaAssetRecord,
@@ -16,7 +19,12 @@ import {
   type MediaStorageSummary,
   type MediaUploadResultItem,
 } from '@geomix/shared';
-import { httpGalleryGateway, resolveMediaUrl, type GalleryGateway } from '../../lib/gallery';
+import {
+  httpGalleryGateway,
+  readImageDimensions,
+  resolveMediaUrl,
+  type GalleryGateway,
+} from '../../lib/gallery';
 import type { ShellAction } from '../../lib/tab-stack';
 import {
   formatShanghaiDateTime,
@@ -25,6 +33,31 @@ import {
 } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
+
+type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
+
+type PendingUploadItem = {
+  key: string;
+  file: File;
+  width?: number;
+  height?: number;
+  widthWarning?: string;
+};
+
+function resolveAssetDisplayName(
+  asset: Pick<MediaAssetRecord, 'id' | 'origin' | 'displayName' | 'originalName'>,
+  fallbackOriginalName?: string | null,
+): string {
+  const explicit = asset.displayName?.trim();
+  if (explicit) return explicit;
+  const original = sanitizeMediaOriginalName(asset.originalName ?? fallbackOriginalName);
+  if (original) return original;
+  return safeMediaDisplayName({
+    id: asset.id,
+    origin: asset.origin,
+    originalName: asset.originalName ?? fallbackOriginalName,
+  });
+}
 
 function StorageQuotaBanner({ storage }: { storage: MediaStorageSummary | null }) {
   if (!storage) return null;
@@ -218,30 +251,30 @@ export function GalleryCategoryScreen({
     {
       key: 'preview',
       title: '素材',
-      render: (row) => (
-        <Space size={8} wrap align="center">
-          {row.previewAssets.slice(0, 3).map((asset) => (
-            <img
-              key={asset.id}
-              src={resolveMediaUrl(asset.thumbUrl)}
-              alt={`${row.name}缩略图`}
-              data-testid={`cat-thumb-${asset.id}`}
-              style={{
-                width: 44,
-                height: 44,
-                objectFit: 'cover',
-                borderRadius: 4,
-                border: '1px solid var(--gm-line-1)',
-                cursor: 'pointer',
-              }}
-              onClick={() => openAssetList(row.id)}
-            />
-          ))}
-          <Button size="small" type="link" onClick={() => openAssetList(row.id)}>
-            图片列表
-          </Button>
-        </Space>
-      ),
+      render: (row) =>
+        row.previewAssets.length === 0 ? (
+          <Typography.Text type="secondary">暂无图片</Typography.Text>
+        ) : (
+          <Space size={8} wrap align="center">
+            {row.previewAssets.slice(0, 3).map((asset) => (
+              <img
+                key={asset.id}
+                src={resolveMediaUrl(asset.thumbUrl)}
+                alt={`${row.name}缩略图`}
+                data-testid={`cat-thumb-${asset.id}`}
+                style={{
+                  width: 44,
+                  height: 44,
+                  objectFit: 'cover',
+                  borderRadius: 4,
+                  border: '1px solid var(--gm-line-1)',
+                  cursor: 'pointer',
+                }}
+                onClick={() => openAssetList(row.id)}
+              />
+            ))}
+          </Space>
+        ),
     },
     {
       key: 'createdAt',
@@ -281,7 +314,7 @@ export function GalleryCategoryScreen({
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
         按分类管理企业实拍与产品素材图片，「素材」列展示前 3
-        张缩略图，点击「图片列表」在新标签打开管理与多图上传。
+        张缩略图，点击操作列「图片列表」进入分类图片管理与多图上传。
       </Typography.Paragraph>
 
       <StorageQuotaBanner storage={storage} />
@@ -441,12 +474,16 @@ export function GalleryAssetScreen({
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [maximized, setMaximized] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingItems, setPendingItems] = useState<PendingUploadItem[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [dragActive, setDragActive] = useState(false);
   const [lastUploaded, setLastUploaded] = useState<MediaUploadResultItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingSeqRef = useRef(0);
+  const uploadSessionRef = useRef(0);
 
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -477,24 +514,33 @@ export function GalleryAssetScreen({
   }, [load]);
 
   function openUploadModal() {
-    setPendingFiles([]);
+    uploadSessionRef.current += 1;
+    setPendingItems([]);
     setUploadError(null);
+    setUploadStatus('idle');
     setUploadProgress(0);
+    setDragActive(false);
     setLastUploaded([]);
     setMinimized(false);
     setMaximized(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setUploadModalOpen(true);
   }
 
   function handleSelectFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
+    if (uploading || readOnly) return;
     setUploadError(null);
+    if (uploadStatus === 'error' || uploadStatus === 'success') {
+      setUploadStatus('idle');
+      setUploadProgress(0);
+    }
     const chosen = Array.from(fileList);
-    if (pendingFiles.length + chosen.length > GALLERY_UPLOAD_MAX_FILES) {
+    if (pendingItems.length + chosen.length > GALLERY_UPLOAD_MAX_FILES) {
       setUploadError(`单次最多选择 ${GALLERY_UPLOAD_MAX_FILES} 张图片`);
       return;
     }
-    const valid: File[] = [];
+    const valid: PendingUploadItem[] = [];
     for (const file of chosen) {
       const check = validateClientUploadFile({
         name: file.name,
@@ -505,21 +551,44 @@ export function GalleryAssetScreen({
         setUploadError(`${file.name}：${check.message}`);
         return;
       }
-      valid.push(file);
+      pendingSeqRef.current += 1;
+      valid.push({ key: `pending_${pendingSeqRef.current}`, file });
     }
-    setPendingFiles((prev) => [...prev, ...valid]);
+    setPendingItems((prev) => [...prev, ...valid]);
+    const session = uploadSessionRef.current;
+    for (const entry of valid) {
+      void readImageDimensions(entry.file).then((dims) => {
+        if (!dims || uploadSessionRef.current !== session) return;
+        const widthWarning = checkImageWidthWarning(dims.width);
+        setPendingItems((prev) =>
+          prev.map((item) =>
+            item.key === entry.key
+              ? { ...item, width: dims.width, height: dims.height, widthWarning }
+              : item,
+          ),
+        );
+      });
+    }
   }
 
   async function submitUpload() {
-    if (pendingFiles.length === 0) {
+    if (pendingItems.length === 0) {
       setUploadError('请至少选择一张图片');
       return;
     }
     setUploading(true);
+    setUploadStatus('uploading');
     setUploadError(null);
     setUploadProgress(10);
     try {
-      const res = await gateway.uploadAssets(categoryId, pendingFiles, setUploadProgress);
+      const res = await gateway.uploadAssets(
+        categoryId,
+        pendingItems.map((item) => item.file),
+        setUploadProgress,
+      );
+      setUploadProgress(100);
+      setUploadStatus('success');
+      setUploading(false);
       setLastUploaded(res.items);
       setStorage(res.storage);
       if (res.warnings.length > 0) {
@@ -527,15 +596,15 @@ export function GalleryAssetScreen({
       } else {
         setUploadWarnings([]);
       }
-      setPendingFiles([]);
+      setPendingItems([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      await load();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(GALLERY_MUTATED_EVENT, { detail: { categoryId } }));
       }
+      void load();
     } catch (err) {
+      setUploadStatus('error');
       setUploadError(err instanceof Error ? err.message : '上传图片失败');
-    } finally {
       setUploading(false);
     }
   }
@@ -577,30 +646,33 @@ export function GalleryAssetScreen({
     {
       key: 'asset',
       title: '素材',
-      render: (row) => (
-        <Space size={10} align="center">
-          <img
-            src={resolveMediaUrl(row.thumbUrl)}
-            alt={row.objectKey}
-            data-testid={`asset-thumb-${row.id}`}
-            style={{
-              width: 48,
-              height: 48,
-              objectFit: 'cover',
-              borderRadius: 4,
-              border: '1px solid var(--gm-line-1)',
-            }}
-          />
-          <div>
-            <div className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
-              {row.width} × {row.height} · {formatGalleryBytes(row.bytes)}
+      render: (row) => {
+        const displayName = resolveAssetDisplayName(row);
+        return (
+          <Space size={10} align="center">
+            <img
+              src={resolveMediaUrl(row.thumbUrl)}
+              alt={displayName}
+              data-testid={`asset-thumb-${row.id}`}
+              style={{
+                width: 48,
+                height: 48,
+                objectFit: 'cover',
+                borderRadius: 4,
+                border: '1px solid var(--gm-line-1)',
+              }}
+            />
+            <div>
+              <div className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
+                {row.width} × {row.height} · {formatGalleryBytes(row.bytes)}
+              </div>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {displayName}
+              </Typography.Text>
             </div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {row.objectKey}
-            </Typography.Text>
-          </div>
-        </Space>
-      ),
+          </Space>
+        );
+      },
     },
     {
       key: 'usedCount',
@@ -717,55 +789,146 @@ export function GalleryAssetScreen({
         minimized={minimized}
         maximized={maximized}
         confirmLoading={uploading}
-        error={uploadError}
+        showCancel={!(uploadStatus === 'success' && pendingItems.length === 0)}
+        error={uploadStatus === 'error' ? null : uploadError}
         onMinimize={() => setMinimized(true)}
         onRestore={() => setMinimized(false)}
         onMaximize={() => setMaximized((v) => !v)}
         onClose={() => setUploadModalOpen(false)}
         onReset={() => {
-          setPendingFiles([]);
+          uploadSessionRef.current += 1;
+          setPendingItems([]);
           setUploadError(null);
+          setUploadStatus('idle');
           setUploadProgress(0);
+          setDragActive(false);
           setLastUploaded([]);
           if (fileInputRef.current) fileInputRef.current.value = '';
         }}
         ok={
-          <Button
-            type="primary"
-            loading={uploading}
-            disabled={readOnly}
-            onClick={() => void submitUpload()}
-          >
-            确定
-          </Button>
+          uploadStatus === 'success' && pendingItems.length === 0 ? (
+            <Button
+              key="upload-done"
+              type="primary"
+              loading={false}
+              aria-label="完成"
+              onClick={() => setUploadModalOpen(false)}
+            >
+              完成
+            </Button>
+          ) : (
+            <Button
+              key="upload-submit"
+              type="primary"
+              loading={uploading}
+              disabled={readOnly}
+              onClick={() => void submitUpload()}
+            >
+              确定
+            </Button>
+          )
         }
       >
         <div style={{ display: 'grid', gap: 12 }}>
           <Alert type="info" showIcon message={GALLERY_UPLOAD_NOTICE} />
 
-          <div>
+          <div
+            data-testid="gallery-upload-dropzone"
+            onDragEnter={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!uploading && !readOnly) setDragActive(true);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!uploading && !readOnly) setDragActive(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragActive(false);
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragActive(false);
+              if (!uploading && !readOnly) {
+                handleSelectFiles(e.dataTransfer?.files ?? null);
+              }
+            }}
+            style={{
+              border: `1px dashed ${dragActive ? 'var(--gm-phosphor)' : 'var(--gm-line-2)'}`,
+              borderRadius: 8,
+              padding: 16,
+              textAlign: 'center',
+              background: dragActive ? 'var(--gm-phosphor-a08)' : 'var(--gm-bg-surface)',
+              transition: 'border-color 120ms ease, background-color 120ms ease',
+              display: 'grid',
+              gap: 8,
+              justifyItems: 'center',
+            }}
+          >
             <input
               ref={fileInputRef}
               aria-label="选择图片文件"
               type="file"
               multiple
+              disabled={uploading || readOnly}
               accept="image/jpeg,image/png,image/webp"
+              className="gm-sr-only"
               onChange={(e) => handleSelectFiles(e.target.files)}
             />
+            <Typography.Text strong>
+              {dragActive ? '松开鼠标即可添加图片' : '拖拽图片到此处，或点击按钮选择文件'}
+            </Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              支持 JPG / PNG / WebP，单次最多 {GALLERY_UPLOAD_MAX_FILES} 张
+            </Typography.Text>
+            <Button
+              size="small"
+              disabled={uploading || readOnly}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              选择图片
+            </Button>
           </div>
 
-          {pendingFiles.length > 0 ? (
+          {pendingItems.some((item) => Boolean(item.widthWarning)) ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="上传前清晰度提示（仅提示，不影响上传）"
+              description={pendingItems
+                .filter((item) => Boolean(item.widthWarning))
+                .map((item) => `${item.file.name}：${item.widthWarning}`)
+                .join('；')}
+            />
+          ) : null}
+
+          {pendingItems.length > 0 ? (
             <div>
-              <Typography.Text strong>待上传文件（{pendingFiles.length} 张）：</Typography.Text>
+              <Typography.Text strong>待上传文件（{pendingItems.length} 张）：</Typography.Text>
               <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
-                {pendingFiles.map((file, idx) => (
-                  <li key={`${file.name}-${idx}`}>
-                    {file.name}（{formatGalleryBytes(file.size)}）
+                {pendingItems.map((item) => (
+                  <li key={item.key}>
+                    {item.file.name}（{formatGalleryBytes(item.file.size)}
+                    {item.width && item.height ? ` · ${item.width}×${item.height}px` : ''}）
+                    {item.widthWarning ? (
+                      <Tag color="warning" style={{ marginLeft: 6 }}>
+                        宽度小于 500px
+                      </Tag>
+                    ) : null}
                     <Button
                       size="small"
                       type="link"
                       danger
-                      onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== idx))}
+                      disabled={uploading}
+                      onClick={() =>
+                        setPendingItems((prev) => prev.filter((entry) => entry.key !== item.key))
+                      }
                     >
                       移除
                     </Button>
@@ -775,40 +938,74 @@ export function GalleryAssetScreen({
             </div>
           ) : null}
 
-          {uploading || uploadProgress > 0 ? (
-            <Progress percent={uploadProgress} size="small" />
+          {uploading || uploadProgress > 0 || uploadStatus === 'error' ? (
+            <Progress
+              percent={uploadProgress}
+              status={
+                uploadStatus === 'error'
+                  ? 'exception'
+                  : uploadStatus === 'success'
+                    ? 'success'
+                    : 'active'
+              }
+              size="small"
+            />
+          ) : null}
+
+          {uploadStatus === 'error' && uploadError ? (
+            <Alert
+              type="error"
+              showIcon
+              message="图片上传失败"
+              description={uploadError}
+              action={
+                pendingItems.length > 0 ? (
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={readOnly || uploading}
+                    onClick={() => void submitUpload()}
+                  >
+                    重新上传
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : null}
 
           {lastUploaded.length > 0 ? (
             <div style={{ display: 'grid', gap: 8 }}>
               <Typography.Text strong>最近上传成功（{lastUploaded.length} 张）：</Typography.Text>
-              {lastUploaded.map((item) => (
-                <div
-                  key={item.asset.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: 6,
-                    border: '1px solid var(--gm-line-1)',
-                    borderRadius: 6,
-                  }}
-                >
-                  <img
-                    src={resolveMediaUrl(item.asset.thumbUrl)}
-                    alt={item.asset.objectKey}
-                    style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
-                  />
-                  <div style={{ fontSize: 12 }}>
-                    <div>{item.asset.objectKey}</div>
-                    {item.warning ? (
-                      <Typography.Text type="warning">{item.warning}</Typography.Text>
-                    ) : (
-                      <Typography.Text type="success">已压缩入库</Typography.Text>
-                    )}
+              {lastUploaded.map((item) => {
+                const displayName = resolveAssetDisplayName(item.asset, item.originalName);
+                return (
+                  <div
+                    key={item.asset.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: 6,
+                      border: '1px solid var(--gm-line-1)',
+                      borderRadius: 6,
+                    }}
+                  >
+                    <img
+                      src={resolveMediaUrl(item.asset.thumbUrl)}
+                      alt={displayName}
+                      style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4 }}
+                    />
+                    <div style={{ fontSize: 12 }}>
+                      <div>{displayName}</div>
+                      {item.warning ? (
+                        <Typography.Text type="warning">{item.warning}</Typography.Text>
+                      ) : (
+                        <Typography.Text type="success">已压缩入库</Typography.Text>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </div>
