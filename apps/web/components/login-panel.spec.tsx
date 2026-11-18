@@ -378,3 +378,102 @@ describe('LoginPanel captcha abort, timeout and retry recovery (#126)', () => {
     );
   });
 });
+
+describe('LoginPanel UX polish (#128 #129 #130)', () => {
+  it('places 换一张 in the captcha row with a clear refresh hint and keeps 登录 isolated in actions (#128)', async () => {
+    let calls = 0;
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        calls += 1;
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: `cap_${calls}`, image: TINY_PNG },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    const { container } = render(<LoginPanel />);
+
+    const captchaImg = await waitFor(() => screen.getByRole('img', { name: '验证码' }));
+    expect(captchaImg.getAttribute('title')).toBe('点击图片更换验证码');
+    expect(screen.getByText('点击图片更换验证码')).toBeTruthy();
+
+    const captchaRow = container.querySelector('.gm-login-captcha-row');
+    const actionsRow = container.querySelector('.gm-login-actions');
+    expect(captchaRow).toBeTruthy();
+    expect(actionsRow).toBeTruthy();
+
+    const refreshBtn = screen.getByRole('button', { name: '换一张' });
+    const submitBtn = screen.getByRole('button', { name: /登\s*录/ });
+    expect(captchaRow?.contains(captchaImg)).toBe(true);
+    expect(captchaRow?.contains(refreshBtn)).toBe(true);
+    expect(actionsRow?.contains(submitBtn)).toBe(true);
+    expect(actionsRow?.contains(refreshBtn)).toBe(false);
+
+    fireEvent.click(captchaImg);
+    await waitFor(() => {
+      expect(calls).toBe(2);
+    });
+  });
+
+  it('provides helpful placeholders on all required inputs and dark-mode captcha framing (#129)', async () => {
+    postJsonMock.mockResolvedValue({
+      code: 0,
+      msg: 'ok',
+      data: { captchaId: 'cap_placeholder', image: TINY_PNG },
+    });
+
+    render(<LoginPanel />);
+
+    const usernameInput = screen.getByLabelText('用户名') as HTMLInputElement;
+    const passwordInput = screen.getByLabelText('密码') as HTMLInputElement;
+    const captchaInput = screen.getByLabelText('验证码', { selector: 'input' }) as HTMLInputElement;
+
+    expect(usernameInput.placeholder).toBe('请输入用户名');
+    expect(passwordInput.placeholder).toBe('请输入密码');
+    expect(captchaInput.placeholder).toBe('请输入图形验证码');
+
+    const captchaImg = await waitFor(() => screen.getByRole('img', { name: '验证码' }));
+    expect(captchaImg.classList.contains('gm-login-captcha-img')).toBe(true);
+  });
+
+  it('toggles password visibility without moving focus into the password input (#130)', async () => {
+    postJsonMock.mockResolvedValue({
+      code: 0,
+      msg: 'ok',
+      data: { captchaId: 'cap_focus', image: TINY_PNG },
+    });
+
+    const { container } = render(<LoginPanel />);
+    await waitFor(() => {
+      expect(screen.getByRole('img', { name: '验证码' })).toBeTruthy();
+    });
+
+    const usernameInput = screen.getByLabelText('用户名') as HTMLInputElement;
+    const passwordInput = screen.getByLabelText('密码') as HTMLInputElement;
+    fireEvent.change(passwordInput, { target: { value: 's3cret-pass' } });
+
+    // Case 1: Nothing / body focused
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const eyeHiddenIcon = container.querySelector('.ant-input-password-icon') as HTMLElement;
+    expect(eyeHiddenIcon).toBeTruthy();
+    expect(passwordInput.type).toBe('password');
+
+    fireEvent.click(eyeHiddenIcon);
+    expect(passwordInput.type).toBe('text');
+    expect(container.querySelector('[aria-label="eye"]')).toBeTruthy();
+    expect(document.activeElement).not.toBe(passwordInput);
+
+    // Case 2: Another input is focused; toggling back keeps focus where it was
+    usernameInput.focus();
+    expect(document.activeElement).toBe(usernameInput);
+
+    const eyeVisibleIcon = container.querySelector('.ant-input-password-icon') as HTMLElement;
+    fireEvent.click(eyeVisibleIcon);
+    expect(passwordInput.type).toBe('password');
+    expect(container.querySelector('[aria-label="eye-invisible"]')).toBeTruthy();
+    expect(document.activeElement).toBe(usernameInput);
+  });
+});
