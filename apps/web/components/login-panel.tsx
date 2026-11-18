@@ -1,8 +1,8 @@
 'use client';
 
-import { Alert, Button, Card, Form, Input, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, Tooltip, Typography } from 'antd';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import { loadAccount, postJson } from '../lib/api';
 import { safePostLoginHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
@@ -72,6 +72,36 @@ async function fetchCaptchaAttempt(controller: AbortController): Promise<Captcha
     if (timer !== null) clearTimeout(timer);
     if (onAbort) controller.signal.removeEventListener('abort', onAbort);
   }
+}
+
+function LoginPasswordInput(props: ComponentProps<typeof Input.Password>) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div
+      onMouseDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('.ant-input-password-icon')) {
+          event.preventDefault();
+        }
+      }}
+      onClickCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('.ant-input-password-icon')) {
+          event.stopPropagation();
+          if (!props.disabled) {
+            setVisible((prev) => !prev);
+          }
+        }
+      }}
+    >
+      <Input.Password
+        {...props}
+        visibilityToggle={{
+          visible,
+          onVisibleChange: setVisible,
+        }}
+      />
+    </div>
+  );
 }
 
 export function LoginPanel() {
@@ -231,7 +261,7 @@ export function LoginPanel() {
 
   return (
     <main className="gm-boot">
-      <Card style={{ maxWidth: 420, width: '100%' }} title="GeoMix 登录">
+      <Card className="gm-login-card" title="GeoMix 登录">
         <Typography.Paragraph type="secondary">账号由管理员开通。</Typography.Paragraph>
         {checking ? <Typography.Paragraph>正在确认登录</Typography.Paragraph> : null}
         {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}
@@ -242,68 +272,95 @@ export function LoginPanel() {
               name="username"
               rules={[{ required: true, message: '请输入用户名' }]}
             >
-              <Input autoComplete="username" />
+              <Input autoComplete="username" placeholder="请输入用户名" />
             </Form.Item>
             <Form.Item
               label="密码"
               name="password"
               rules={[{ required: true, message: '请输入密码' }]}
             >
-              <Input.Password autoComplete="current-password" />
+              <LoginPasswordInput autoComplete="current-password" placeholder="请输入密码" />
             </Form.Item>
             <Form.Item
               label="验证码"
               name="captchaCode"
               rules={[{ required: true, message: '请输入验证码' }]}
             >
-              <Input autoComplete="off" />
+              <Input autoComplete="off" placeholder="请输入图形验证码" />
             </Form.Item>
-            {captchaLoading ? (
-              <Typography.Paragraph type="secondary" role="status" style={{ marginBottom: 12 }}>
-                正在加载验证码...
-              </Typography.Paragraph>
-            ) : captchaImage ? (
-              <div
-                role="img"
-                aria-label="验证码"
-                title="点击刷新验证码"
-                onClick={() => {
-                  if (!busy && !captchaLoading) {
-                    void loadCaptcha({ force: true });
-                  }
-                }}
-                style={{
-                  width: 132,
-                  height: 48,
-                  marginBottom: 12,
-                  cursor: busy || captchaLoading ? 'not-allowed' : 'pointer',
-                  backgroundImage: `url("${captchaImage}")`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundSize: 'contain',
-                }}
-              />
-            ) : captchaFailed ? (
-              <div style={{ marginBottom: 12 }}>
-                <Button
-                  type="dashed"
-                  danger
-                  disabled={busy}
-                  onClick={() => void loadCaptcha({ force: true })}
-                >
-                  验证码加载失败，点击重试
-                </Button>
+            <div className="gm-login-captcha-row">
+              <div className="gm-login-captcha-media">
+                {captchaLoading ? (
+                  <Typography.Paragraph
+                    type="secondary"
+                    role="status"
+                    className="gm-login-captcha-status"
+                  >
+                    正在加载验证码...
+                  </Typography.Paragraph>
+                ) : captchaImage ? (
+                  <>
+                    <Tooltip title="点击图片更换验证码">
+                      <div className="gm-login-captcha-frame">
+                        <div
+                          role="img"
+                          aria-label="验证码"
+                          title="点击图片更换验证码"
+                          tabIndex={0}
+                          className={`gm-login-captcha-img${busy || captchaLoading ? ' is-disabled' : ''}`}
+                          onClick={() => {
+                            if (!busy && !captchaLoading) {
+                              void loadCaptcha({ force: true });
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (
+                              (event.key === 'Enter' || event.key === ' ') &&
+                              !busy &&
+                              !captchaLoading
+                            ) {
+                              event.preventDefault();
+                              void loadCaptcha({ force: true });
+                            }
+                          }}
+                          style={{
+                            backgroundImage: `url("${captchaImage}")`,
+                          }}
+                        />
+                      </div>
+                    </Tooltip>
+                    <Typography.Text type="secondary" className="gm-login-captcha-hint">
+                      点击图片更换验证码
+                    </Typography.Text>
+                  </>
+                ) : captchaFailed ? (
+                  <Button
+                    type="dashed"
+                    danger
+                    disabled={busy}
+                    onClick={() => void loadCaptcha({ force: true })}
+                  >
+                    验证码加载失败，点击重试
+                  </Button>
+                ) : null}
               </div>
-            ) : null}
-            <div>
-              <Button type="primary" htmlType="submit" loading={busy} disabled={!captchaReady}>
-                登录
-              </Button>
               <Button
-                style={{ marginLeft: 8 }}
+                className="gm-login-captcha-refresh"
                 disabled={busy || captchaLoading}
                 onClick={() => void loadCaptcha({ force: true })}
               >
                 换一张
+              </Button>
+            </div>
+            <div className="gm-login-actions">
+              <Button
+                type="primary"
+                htmlType="submit"
+                block
+                loading={busy}
+                disabled={!captchaReady}
+              >
+                登录
               </Button>
             </div>
           </Form>

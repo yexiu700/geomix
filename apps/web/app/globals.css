@@ -2147,3 +2147,85 @@ input:not([class*='ant-']):hover {
     padding: 16px 12px;
   }
 }
+
+/* === login === */
+.gm-login-card {
+  max-width: 420px;
+  width: 100%;
+}
+
+.gm-login-captcha-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.gm-login-captcha-media {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+}
+
+.gm-login-captcha-status {
+  margin-bottom: 0 !important;
+  line-height: 48px;
+}
+
+.gm-login-captcha-frame {
+  display: inline-block;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid var(--gm-line-2);
+  background: var(--gm-bg-elevated);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  transition: border-color var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-login-captcha-frame:hover {
+  border-color: var(--gm-line-strong);
+}
+
+.gm-login-captcha-frame:focus-within {
+  box-shadow: var(--gm-focus-ring);
+}
+
+.gm-login-captcha-img {
+  display: block;
+  width: 132px;
+  height: 48px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  cursor: pointer;
+  filter: invert(0.9) hue-rotate(180deg) contrast(1.08);
+  transition: opacity var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-login-captcha-img:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.gm-login-captcha-img.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.gm-login-captcha-hint {
+  font-size: var(--gm-text-caption);
+  line-height: 16px;
+}
+
+.gm-login-captcha-refresh {
+  height: 48px;
+  flex: none;
+}
+
+.gm-login-actions {
+  margin-top: 4px;
+}
