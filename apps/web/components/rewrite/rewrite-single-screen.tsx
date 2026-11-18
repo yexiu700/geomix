@@ -242,6 +242,13 @@ export function RewriteSingleScreen({
     wasActiveRef.current = active;
   }, [active, loadOptions]);
 
+  useEffect(() => {
+    if (!active || tabId !== '/rewrite/single' || typeof window === 'undefined') return;
+    if (window.location.pathname !== '/rewrite/single') {
+      window.history.replaceState(window.history.state, '', '/rewrite/single');
+    }
+  }, [active, tabId]);
+
   // Poll every 5s if any single record is RUNNING/PENDING
   useEffect(() => {
     const hasActive = items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING');
@@ -314,7 +321,7 @@ export function RewriteSingleScreen({
     }
 
     if (d.imageCount > 0 && !d.mediaCategoryId) {
-      setModalError('请选择文章配图的企业图库分类');
+      setModalError(`请选择文章配图的${UX_TERMS.gallery}分类`);
       return;
     }
     if (!d.templateId) {
@@ -477,7 +484,8 @@ export function RewriteSingleScreen({
             {title}
           </Typography.Title>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            提取公开长文核心事实并重组原创结构，自动剥离原图与外链水印，仅混排企业自有图库配图（
+            提取公开长文核心事实并重组原创结构，自动剥离原图与外链水印，仅混排{UX_TERMS.gallery}
+            配图（
             {unitPoints} 点数/篇，失败自动退点，不计 AI 写作数量）。
           </Typography.Text>
         </div>
@@ -1044,7 +1052,7 @@ export function RewriteSingleScreen({
                     showIcon
                     message={
                       <span>
-                        当前暂无含图片的企业图库分类，可直接以「不配图（0 张）」提交，或
+                        当前暂无含图片的{UX_TERMS.gallery}分类，可直接以「不配图（0 张）」提交，或
                         {onDispatch ? (
                           <Button
                             type="link"
@@ -1206,10 +1214,12 @@ export function RewriteSingleScreen({
               </div>
 
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>产出结果状态</div>
+                <div style={{ fontWeight: 500, marginBottom: 6 }}>
+                  {UX_TERMS.postGenerateArticleStatus}
+                </div>
                 <div
                   role="radiogroup"
-                  aria-label="产出结果状态"
+                  aria-label={UX_TERMS.postGenerateArticleStatus}
                   style={{
                     display: 'flex',
                     alignItems: 'center',

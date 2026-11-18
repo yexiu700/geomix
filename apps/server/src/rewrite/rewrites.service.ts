@@ -317,7 +317,7 @@ export class RewritesService {
           throw new ApiError(
             400,
             API_ERROR.BAD_REQUEST,
-            '所选配图分类下暂无可用图片，请先前往企业图库上传图片或将配图张数设为 0',
+            '所选配图分类下暂无可用图片，请先前往企业画像图库上传图片或将配图张数设为 0',
           );
         }
       }
@@ -325,7 +325,7 @@ export class RewritesService {
       throw new ApiError(
         400,
         API_ERROR.BAD_REQUEST,
-        '请选择文章配图的企业图库分类（不配图时请将配图张数设为 0）',
+        '请选择文章配图的企业画像图库分类（不配图时请将配图张数设为 0）',
       );
     }
 

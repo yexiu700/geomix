@@ -371,7 +371,7 @@ export class RewriteBatchesService {
         throw new ApiError(
           400,
           API_ERROR.BAD_REQUEST,
-          '所选配图分类下暂无可用图片，请先上传至少 1 张企业图库配图，或选择「不配图（0 张）」',
+          '所选配图分类下暂无可用图片，请先上传至少 1 张企业画像图库配图，或选择「不配图（0 张）」',
         );
       }
     }

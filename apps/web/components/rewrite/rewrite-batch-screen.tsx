@@ -38,6 +38,7 @@ import {
   Drawer,
   Input,
   InputNumber,
+  Modal,
   Radio,
   Space,
   Table,
@@ -240,6 +241,7 @@ export function RewriteBatchScreen({
 
   const [modalState, setModalState] = useState<ModalState | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -258,6 +260,11 @@ export function RewriteBatchScreen({
         setTotal(res.total);
         setUnitPoints(res.unitPoints || REWRITE_DEFAULT_UNIT_POINTS);
         setRemoteSearchEnabled(res.remoteSearchEnabled);
+        setSelectedIds((prev) =>
+          prev.filter((id) =>
+            res.items.some((item) => item.id === id && isTerminalBatchStatus(item.status)),
+          ),
+        );
       } catch (err) {
         if (!silent) {
           setErrorMsg(err instanceof Error ? err.message : '加载批量爆文复刻列表失败');
@@ -298,6 +305,13 @@ export function RewriteBatchScreen({
     }
     wasActiveRef.current = active;
   }, [active, loadOptions]);
+
+  useEffect(() => {
+    if (!active || tabId !== '/rewrite/batch' || typeof window === 'undefined') return;
+    if (window.location.pathname !== '/rewrite/batch') {
+      window.history.replaceState(window.history.state, '', '/rewrite/batch');
+    }
+  }, [active, tabId]);
 
   const hasActiveBatch = useMemo(
     () =>
@@ -401,7 +415,7 @@ export function RewriteBatchScreen({
         issues.push(REWRITE_BATCH_URL_AS_KEYWORD_MSG);
       } else if (!remoteSearchEnabled) {
         issues.push(
-          '当前环境尚未启用联网关键词检索源，请切换至「粘贴链接清单」模式提交公开文章 URL',
+          '当前环境未配置第三方搜索源，「关键词全网搜索」暂未开通，请切换至「粘贴公开文章链接清单」',
         );
       }
     } else {
@@ -425,9 +439,9 @@ export function RewriteBatchScreen({
     }
 
     if (!draft.noImage && !draft.mediaCategoryId) {
-      issues.push(`请选择文章配图${UX_TERMS.gallery}分类（或选择「不配图（0 张）」）`);
+      issues.push(`请选择文章配图的${UX_TERMS.gallery}分类（或选择「不配图（0 张）」）`);
     } else if (!draft.noImage && selectedMediaCat && selectedMediaCat.assetCount === 0) {
-      issues.push('所选图库分类暂无图片，请先上传图片或选择「不配图（0 张）」');
+      issues.push(`所选${UX_TERMS.gallery}分类暂无图片，请先上传图片或选择「不配图（0 张）」`);
     }
 
     if (!draft.templateId) {
@@ -524,9 +538,11 @@ export function RewriteBatchScreen({
       const res = await gateway.bulkDelete(selectedIds);
       setFeedbackMsg(`已批量删除 ${res.affected} 条已结束的批量复刻任务`);
       setSelectedIds([]);
+      setBulkDeleteConfirmOpen(false);
       await loadList(query);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : '批量删除失败');
+      setBulkDeleteConfirmOpen(false);
     } finally {
       setBusy(false);
     }
@@ -607,12 +623,13 @@ export function RewriteBatchScreen({
             <Typography.Title level={4} style={{ margin: 0 }}>
               {title}
             </Typography.Title>
-            <Tag color="blue">{unitPoints} 点数/篇 · 预冻按成功篇数结算</Tag>
+            <Tag color="blue">{unitPoints} 点数/篇 · 按实际成功篇数扣点</Tag>
             <Tag color="cyan">凑满最大改写量即停 · 差额自动退还</Tag>
           </Space>
           <div style={{ marginTop: 4, fontSize: 13, color: 'var(--gm-fg-2)' }}>
             默认支持粘贴最多 {REWRITE_BATCH_LINK_LIST_MAX}{' '}
-            条公开文章链接批量抓取与结构重构；单链失败或超时自动跳过不扣点，所有插图仅取自商户自有图库。
+            条公开文章链接批量抓取与结构重构；单链失败或超时自动跳过不扣点，所有插图仅取自
+            {UX_TERMS.gallery}。
           </div>
         </div>
 
@@ -720,10 +737,16 @@ export function RewriteBatchScreen({
           </Button>
         </Space>
 
-        {!readOnly && selectedIds.length > 0 && (
+        {!readOnly && (
           <Space>
-            <Typography.Text type="secondary">已选 {selectedIds.length} 项</Typography.Text>
-            <Button danger onClick={() => void handleBulkDelete()} disabled={busy}>
+            {selectedIds.length > 0 && (
+              <Typography.Text type="secondary">已选 {selectedIds.length} 项</Typography.Text>
+            )}
+            <Button
+              danger
+              disabled={busy || selectedIds.length === 0}
+              onClick={() => setBulkDeleteConfirmOpen(true)}
+            >
               批量删除
             </Button>
           </Space>
@@ -1013,17 +1036,13 @@ export function RewriteBatchScreen({
             >
               <div>
                 <div className="gm-num" style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
-                  计费标准：{unitPoints} 点数/篇 · 本次最多 {modalState.draft.maxCount} 篇 · 预冻结{' '}
-                  {estimatedFreezePoints} 点数
+                  计费标准：{unitPoints} 点数/篇 · 本次上限 {modalState.draft.maxCount} 篇
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
-                  按成功生成篇数逐篇结算；单链失败、防爬拦截、超时无响应或凑满即停的剩余点数自动全额退回账户，不占用
+                  按成功生成篇数逐篇结算；单链失败、防爬拦截、超时无响应或凑满即停时，剩余点数自动全额退回账户，不占用
                   AI 写作配额。
                 </div>
               </div>
-              <Tag color="blue" style={{ fontSize: 13, padding: '3px 10px' }}>
-                预冻 {estimatedFreezePoints} 点
-              </Tag>
             </div>
 
             {/* Task Name & Max Count */}
@@ -1034,7 +1053,7 @@ export function RewriteBatchScreen({
                 </div>
                 <Input
                   aria-label="任务名称"
-                  placeholder="例如：激光切割机行业技术干货批量复刻"
+                  placeholder="例如：行业技术干货批量复刻"
                   maxLength={REWRITE_BATCH_NAME_MAX}
                   value={modalState.draft.name}
                   onChange={(e) =>
@@ -1078,6 +1097,10 @@ export function RewriteBatchScreen({
               <Radio.Group
                 value={modalState.draft.sourceType}
                 onChange={(e) => {
+                  const nextType = e.target.value as RewriteBatchSourceType;
+                  if (nextType === 'remote' && !remoteSearchEnabled) {
+                    return;
+                  }
                   setModalError(null);
                   setModalState((prev) =>
                     prev
@@ -1085,7 +1108,7 @@ export function RewriteBatchScreen({
                           ...prev,
                           draft: {
                             ...prev.draft,
-                            sourceType: e.target.value as RewriteBatchSourceType,
+                            sourceType: nextType,
                           },
                         }
                       : null,
@@ -1095,8 +1118,18 @@ export function RewriteBatchScreen({
                 <Radio.Button value="link_list">
                   粘贴公开文章链接清单（默认推荐，最多 {REWRITE_BATCH_LINK_LIST_MAX} 条）
                 </Radio.Button>
-                <Radio.Button value="remote">关键词全网搜索</Radio.Button>
+                <Radio.Button value="remote" disabled={!remoteSearchEnabled}>
+                  {remoteSearchEnabled ? '关键词全网搜索' : '关键词全网搜索（暂未开通）'}
+                </Radio.Button>
               </Radio.Group>
+              {!remoteSearchEnabled && (
+                <Typography.Text
+                  type="secondary"
+                  style={{ display: 'block', fontSize: 12, marginTop: 6 }}
+                >
+                  当前环境未配置第三方搜索源，「关键词全网搜索」暂未开通，请使用「粘贴公开文章链接清单」。
+                </Typography.Text>
+              )}
             </div>
 
             {modalState.draft.sourceType === 'link_list' ? (
@@ -1185,7 +1218,7 @@ export function RewriteBatchScreen({
                 </div>
                 <Input
                   aria-label="流量关键词"
-                  placeholder="请输入行业或产品关键词（例如：光纤激光切割机选型），切勿填写网页链接"
+                  placeholder="请输入行业或产品关键词（例如：企业数字化转型方案），切勿填写网页链接"
                   value={modalState.draft.keyword}
                   onChange={(e) =>
                     setModalState((prev) =>
@@ -1225,7 +1258,7 @@ export function RewriteBatchScreen({
                   }}
                 >
                   <span style={{ fontWeight: 500 }}>
-                    文章配图（自有图库分类）
+                    文章配图（{UX_TERMS.gallery}）
                     {!modalState.draft.noImage ? (
                       <>
                         {' '}
@@ -1294,7 +1327,8 @@ export function RewriteBatchScreen({
                     showIcon
                     message={
                       <span>
-                        当前暂无含图片的企业图库分类，已默认设为「不配图（0 张）」可直接提交，或
+                        当前暂无含图片的{UX_TERMS.gallery}
+                        分类，已默认设为「不配图（0 张）」可直接提交，或
                         {onDispatch ? (
                           <Button
                             type="link"
@@ -1321,7 +1355,7 @@ export function RewriteBatchScreen({
                       selectedMediaCat &&
                       selectedMediaCat.assetCount === 0 && (
                         <span style={{ color: 'var(--gm-danger)', marginLeft: 4 }}>
-                          当前图库分类暂无图片，请先上传图片或选择「不配图（0 张）」！
+                          当前{UX_TERMS.gallery}分类暂无图片，请先上传图片或选择「不配图（0 张）」！
                         </span>
                       )}
                   </div>
@@ -1429,10 +1463,10 @@ export function RewriteBatchScreen({
               </div>
 
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>品牌词融入（选填）</div>
+                <div style={{ fontWeight: 500, marginBottom: 6 }}>自然融入品牌词（选填）</div>
                 <Input
                   aria-label="品牌词融入"
-                  placeholder="选填，自动替换第三方品牌提法"
+                  placeholder="选填：重组时自然提及，不替换原文推荐品牌"
                   maxLength={40}
                   value={modalState.draft.brand}
                   onChange={(e) =>
@@ -1444,9 +1478,11 @@ export function RewriteBatchScreen({
               </div>
 
               <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>生成后文章状态</div>
+                <div style={{ fontWeight: 500, marginBottom: 6 }}>
+                  {UX_TERMS.postGenerateArticleStatus}
+                </div>
                 <select
-                  aria-label="生成后文章状态"
+                  aria-label={UX_TERMS.postGenerateArticleStatus}
                   style={NATIVE_SELECT_STYLE}
                   value={modalState.draft.resultStatus}
                   onChange={(e) =>
@@ -1463,9 +1499,7 @@ export function RewriteBatchScreen({
                     )
                   }
                 >
-                  <option value="PENDING">
-                    {REWRITE_RESULT_STATUS_LABELS.PENDING}（默认推荐）
-                  </option>
+                  <option value="PENDING">{REWRITE_RESULT_STATUS_LABELS.PENDING}</option>
                   <option value="NORMAL">{REWRITE_RESULT_STATUS_LABELS.NORMAL}</option>
                 </select>
               </div>
@@ -1655,6 +1689,22 @@ export function RewriteBatchScreen({
           </div>
         )}
       </Drawer>
+
+      <Modal
+        open={bulkDeleteConfirmOpen}
+        title={`确认删除选中的 ${selectedIds.length} 条批量复刻任务？`}
+        okText="确认删除"
+        cancelText="取消"
+        centered
+        destroyOnHidden
+        okButtonProps={{ danger: true, loading: busy }}
+        onCancel={() => {
+          if (!busy) setBulkDeleteConfirmOpen(false);
+        }}
+        onOk={() => void handleBulkDelete()}
+      >
+        <Typography.Text type="secondary">删除任务记录不会删除已生成的文章正文。</Typography.Text>
+      </Modal>
     </div>
   );
 }

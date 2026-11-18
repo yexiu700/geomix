@@ -959,7 +959,7 @@ export const rewriteSingleCreateSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['mediaCategoryId'],
-        message: '请选择文章配图的企业图库分类（不配图时请将配图张数设为 0）',
+        message: '请选择文章配图的企业画像图库分类（不配图时请将配图张数设为 0）',
       });
     }
     if (!val.pastedText) {
