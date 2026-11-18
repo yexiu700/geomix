@@ -20,12 +20,14 @@ test.describe('GeoMix 壳层、旧入口跳转与管理后台专项核验 (#23)'
       ['/user/quanyi', '/me/rights'],
     ];
 
-    for (const [legacyPath, expectedTarget] of cases) {
-      const response = await request.get(legacyPath, { maxRedirects: 0 });
-      expect(response.status()).toBe(307);
-      const location = response.headers()['location'] ?? '';
-      expect(new URL(location, 'http://127.0.0.1:3000').pathname).toBe(expectedTarget);
-    }
+    await Promise.all(
+      cases.map(async ([legacyPath, expectedTarget]) => {
+        const response = await request.get(legacyPath, { maxRedirects: 0 });
+        expect(response.status()).toBe(307);
+        const location = response.headers()['location'] ?? '';
+        expect(new URL(location, 'http://127.0.0.1:3000').pathname).toBe(expectedTarget);
+      }),
+    );
   });
 
   test('布局设置抽屉支持多标签与单页模式切换，实名认证占位页可提交回显', async ({ page }) => {

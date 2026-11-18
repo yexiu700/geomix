@@ -1,11 +1,14 @@
 'use strict';
 
-require('reflect-metadata');
 const http = require('node:http');
+const { createRequire } = require('node:module');
 const path = require('node:path');
-const { Logger } = require('@nestjs/common');
-const { NestFactory } = require('@nestjs/core');
-const { SITE_NAME, parseEnv } = require('@geomix/shared');
+
+const serverRequire = createRequire(path.resolve(__dirname, '../../apps/server/package.json'));
+serverRequire('reflect-metadata');
+const { Logger } = serverRequire('@nestjs/common');
+const { NestFactory } = serverRequire('@nestjs/core');
+const { SITE_NAME, parseEnv } = serverRequire('@geomix/shared');
 
 const serverDist = path.resolve(__dirname, '../../apps/server/dist');
 const { loadRootEnv } = require(path.join(serverDist, 'load-env.js'));

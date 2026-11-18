@@ -71,18 +71,21 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: 'pnpm --filter @geomix/server exec node ../../e2e/support/e2e-backend.cjs',
+          command: 'node ./e2e/support/e2e-backend.cjs',
           url: `${apiBase}/health`,
           reuseExistingServer: !process.env.CI,
           timeout: 90_000,
           env: sharedEnv,
         },
         {
-          command: 'pnpm --filter @geomix/web start',
+          command: `node ./apps/web/node_modules/next/dist/bin/next start apps/web --port ${sharedEnv.WEB_PORT}`,
           url: `${baseURL}/login`,
           reuseExistingServer: !process.env.CI,
           timeout: 90_000,
-          env: sharedEnv,
+          env: {
+            ...sharedEnv,
+            NEXT_TELEMETRY_DISABLED: '1',
+          },
         },
       ],
 });

@@ -48,6 +48,7 @@ jobs:
       FEATURE_AI_IMAGE: 'true'
       FEATURE_VISIBILITY: 'true'
       NEXT_PUBLIC_API_BASE: http://127.0.0.1:3001/api/v1
+      NEXT_E2E_FAST_BUILD: '1'
       E2E_BASE_URL: http://127.0.0.1:3000
       E2E_API_BASE: http://127.0.0.1:3001/api/v1
       E2E_PUBLIC_FIXTURE_HOST: public.e2e.example
@@ -65,7 +66,9 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          node packages/db/scripts/prisma-cli.mjs generate
 
       - name: Cache Turborepo and Next.js build
         uses: actions/cache@v4
@@ -94,17 +97,34 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Install Playwright system dependencies
+      - name: Ensure Playwright system dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
-
-      - name: Build packages and apps
-        run: pnpm build
-
-      - name: Apply database migrations and seed demo data
         run: |
-          pnpm db:migrate
-          pnpm db:seed
+          NEEDS_DEPS=0
+          mapfile -t BINS < <(find ~/.cache/ms-playwright -maxdepth 4 -type f \( -name "headless_shell" -o -name "chrome" \) 2>/dev/null)
+          if [ "${#BINS[@]}" -eq 0 ]; then
+            NEEDS_DEPS=1
+          else
+            for BIN in "${BINS[@]}"; do
+              if ldd "$BIN" 2>/dev/null | grep -q "not found"; then
+                NEEDS_DEPS=1
+                break
+              fi
+            done
+          fi
+          if [ "$NEEDS_DEPS" -eq 1 ]; then
+            pnpm exec playwright install-deps chromium
+          else
+            echo "All Chromium shared libraries are already satisfied on runner; skipping apt-get."
+          fi
+
+      - name: Build apps and prepare database
+        run: |
+          node packages/db/scripts/prisma-cli.mjs migrate deploy &
+          MIGRATE_PID=$!
+          pnpm build
+          wait "$MIGRATE_PID"
+          node packages/db/dist/seed-cli.js
 
       - name: Run Playwright end-to-end suite
         run: pnpm test:e2e
@@ -117,4 +137,5 @@ jobs:
           path: |
             playwright-report/
             test-results/
+          compression-level: 1
           retention-days: 14

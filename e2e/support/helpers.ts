@@ -14,25 +14,30 @@ export type MintedSession = {
 
 const repoRoot = resolve(__dirname, '../..');
 const screenshotDir = resolve(repoRoot, 'test-results/e2e-screenshots');
+const mintScriptPath = resolve(__dirname, 'mint-e2e-session.cjs');
+const sessionCache = new Map<string, MintedSession>();
 
 export function mintSessionTokens(username = 'demo'): MintedSession {
-  const raw = execFileSync(
-    'pnpm',
-    ['--filter', '@geomix/db', 'exec', 'node', '../../e2e/support/mint-e2e-session.cjs', username],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        DATABASE_URL:
-          process.env.DATABASE_URL ||
-          'postgresql://geomix:geomix@127.0.0.1:5432/geomix?schema=public',
-        JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'change-me-access',
-        JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'change-me-refresh',
-      },
+  const cached = sessionCache.get(username);
+  if (cached) {
+    return cached;
+  }
+
+  const raw = execFileSync(process.execPath, [mintScriptPath, username], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DATABASE_URL:
+        process.env.DATABASE_URL ||
+        'postgresql://geomix:geomix@127.0.0.1:5432/geomix?schema=public',
+      JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'change-me-access',
+      JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'change-me-refresh',
     },
-  );
-  return JSON.parse(raw) as MintedSession;
+  });
+  const minted = JSON.parse(raw) as MintedSession;
+  sessionCache.set(username, minted);
+  return minted;
 }
 
 export async function injectSessionBeforeLoad(

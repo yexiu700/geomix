@@ -256,13 +256,17 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect
       .poll(
         async () => {
+          const currentText = (await taskRow.textContent().catch(() => '')) ?? '';
+          if (currentText.includes('创作完成')) {
+            return currentText;
+          }
           const refreshBtn = pane.getByRole('button', { name: '刷新', exact: true });
           if (await refreshBtn.isVisible().catch(() => false)) {
             await refreshBtn.click();
           }
           return (await taskRow.textContent().catch(() => '')) ?? '';
         },
-        { timeout: 45_000, intervals: [1_000, 1_500, 2_000] },
+        { timeout: 45_000, intervals: [250, 500, 1_000] },
       )
       .toContain('创作完成');
     await expect(taskRow).toContainText('1 / 1');
@@ -398,13 +402,17 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect
       .poll(
         async () => {
+          const currentText = (await batchRow.textContent().catch(() => '')) ?? '';
+          if (currentText.includes('已完成')) {
+            return currentText;
+          }
           const refreshListBtn = pane.getByRole('button', { name: '刷新列表' });
           if (await refreshListBtn.isVisible().catch(() => false)) {
             await refreshListBtn.click();
           }
           return (await batchRow.textContent().catch(() => '')) ?? '';
         },
-        { timeout: 45_000, intervals: [1_000, 1_500, 2_000] },
+        { timeout: 45_000, intervals: [250, 500, 1_000] },
       )
       .toContain('已完成');
     await expect(batchRow).toContainText('1 / 1 篇');
