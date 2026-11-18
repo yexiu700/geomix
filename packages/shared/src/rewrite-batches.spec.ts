@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   REWRITE_BATCH_LINK_LIST_MAX,
+  REWRITE_BATCH_SHORT_SOURCE_MSG,
   REWRITE_BATCH_URL_AS_KEYWORD_MSG,
   batchRewriteImageCountForText,
   buildDefaultBatchCategoryName,
@@ -103,5 +104,8 @@ describe('rewrite-batches shared validation & candidate parsing', () => {
       REWRITE_BATCH_ITEM_TIMEOUT_MS: '1500',
     });
     expect(custom).toEqual({ batchTimeoutMs: 8000, itemTimeoutMs: 1500 });
+
+    expect(REWRITE_BATCH_SHORT_SOURCE_MSG).toContain('200 字');
+    expect(REWRITE_BATCH_SHORT_SOURCE_MSG).not.toContain('开启「粘贴原文」');
   });
 });

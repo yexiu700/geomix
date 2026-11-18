@@ -59,6 +59,7 @@ describe('phase-1 migration', () => {
       '20261118090000_announcement_audit_fields',
       '20261118120000_ai_task_nullable_media_category',
       '20261118130000_rewrite_optional_gallery',
+      '20261118150000_rewrite_batch_brand',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -134,6 +135,16 @@ describe('phase-1 migration', () => {
     expect(rewriteOptGallerySql).toContain('ON DELETE SET NULL');
     expect(rewriteOptGallerySql.toLowerCase()).not.toContain('drop table');
     expect(rewriteOptGallerySql.toLowerCase()).not.toContain('create extension');
+    const rewriteBatchBrandSql = readFileSync(
+      resolve(migrationsDir, '20261118150000_rewrite_batch_brand', 'migration.sql'),
+      'utf8',
+    );
+    expect(rewriteBatchBrandSql).toContain(
+      'ALTER TABLE "RewriteBatch" ADD COLUMN IF NOT EXISTS "brand" TEXT;',
+    );
+    expect(rewriteBatchBrandSql).toContain('ADD COLUMN IF NOT EXISTS "resultStatus"');
+    expect(rewriteBatchBrandSql.toLowerCase()).not.toContain('drop table');
+    expect(rewriteBatchBrandSql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);

@@ -540,4 +540,130 @@ describe('RewriteBatchScreen', () => {
     expect(within(modalDialog).getByPlaceholderText('例如：行业技术干货批量复刻')).toBeTruthy();
     expect(within(modalDialog).queryByPlaceholderText(/激光切割机/)).toBeNull();
   });
+
+  it('keeps keyword and brand independent, auto-syncs drawerDetail until terminal state, and protects table/drawer columns (#209)', async () => {
+    const batches: RewriteBatchItem[] = [];
+    const { gateway, submitted } = makeGateway(batches);
+    let detailCalls = 0;
+
+    gateway.create = vi.fn(async (payload) => {
+      submitted.push(payload);
+      const created = makeBatch({
+        id: 'rwb_sync_01',
+        name: payload.name,
+        keyword: payload.keyword ?? '',
+        brand: payload.brand ?? null,
+        maxCount: payload.maxCount,
+        doneCount: 0,
+        candidateCount: 2,
+        status: 'QUEUED',
+        note: '排队中，等待执行',
+      });
+      batches.unshift(created);
+      return {
+        batch: created,
+        records: [],
+      };
+    });
+
+    gateway.detail = vi.fn(async (id): Promise<RewriteBatchDetailResponse> => {
+      detailCalls += 1;
+      const done = detailCalls >= 2;
+      const terminalBatch = makeBatch({
+        id,
+        name: '氮化镓批量复刻',
+        keyword: 'Anker氮化镓充电器',
+        brand: 'Anker',
+        maxCount: 1,
+        doneCount: done ? 1 : 0,
+        candidateCount: 2,
+        status: done ? 'PARTIAL' : 'QUEUED',
+        note: done ? '完成 1/1 篇' : '排队中',
+      });
+      if (done && batches[0]?.id === id) {
+        batches[0] = terminalBatch;
+      }
+      return {
+        batch: terminalBatch,
+        records: done
+          ? [
+              makeRecord({
+                id: 'rec_sync_1',
+                batchId: id,
+                newTitle: '2026 氮化镓多口快充充电器：落地评估维度与执行核对指南',
+                status: 'SUCCESS',
+              }),
+              makeRecord({
+                id: 'rec_sync_2',
+                batchId: id,
+                newTitle: null,
+                articleId: null,
+                articleStatus: null,
+                similarity: null,
+                status: 'SKIPPED',
+                error:
+                  '源文有效正文不足 200 字，已自动跳过（本次未扣点数）；请更换长文链接，或前往「单篇爆文复刻」使用粘贴原文（当前仅 161 字）',
+              }),
+            ]
+          : [],
+      };
+    });
+
+    const { container } = render(
+      <RewriteBatchScreen
+        title="批量爆文复刻"
+        tabId="/rewrite/batch"
+        active
+        pollIntervalMs={80}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(findButton('新建批量复刻')).toBeTruthy();
+    });
+
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('任务名称')).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText('任务名称'), { target: { value: '氮化镓批量复刻' } });
+    fireEvent.change(screen.getByLabelText('主题标签'), { target: { value: 'Anker氮化镓充电器' } });
+    fireEvent.change(screen.getByLabelText('品牌词融入'), { target: { value: 'Anker' } });
+    fireEvent.change(screen.getByLabelText('公开文章链接清单'), {
+      target: { value: 'https://news.example.org/p1\nhttps://news.example.org/p2' },
+    });
+    fireEvent.change(screen.getByLabelText('文章配图图库分类'), { target: { value: 'mcat_001' } });
+    fireEvent.change(screen.getByLabelText('爆文改写指令'), {
+      target: { value: 'sys_rewrite_01' },
+    });
+
+    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻5点）'));
+
+    await waitFor(() => {
+      expect(submitted).toHaveLength(1);
+    });
+    expect(submitted[0]).toMatchObject({
+      keyword: 'Anker氮化镓充电器',
+      brand: 'Anker',
+    });
+
+    // Drawer opens and automatically transitions to PARTIAL without manual 刷新进度 click
+    await waitFor(
+      () => {
+        const drawer = document.querySelector('.ant-drawer-content');
+        expect(drawer).toBeTruthy();
+        expect(drawer?.textContent).toContain('部分完成');
+        expect(drawer?.textContent).toContain('Anker氮化镓充电器');
+        expect(drawer?.textContent).toContain('Anker');
+        expect(drawer?.textContent).toContain('1 / 1');
+      },
+      { timeout: 3_000 },
+    );
+
+    // Table & drawer columns use clamp/ellipsis/scroll protections
+    expect(container.querySelector('.ant-table-cell-ellipsis')).toBeTruthy();
+    expect(document.querySelectorAll('.gm-clamp-2').length).toBeGreaterThan(0);
+  });
 });

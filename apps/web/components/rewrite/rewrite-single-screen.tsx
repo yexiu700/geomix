@@ -24,6 +24,7 @@ import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { ExportAction } from '../crud/export-action';
+import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
 import {
   httpRewriteSingleGateway,
@@ -663,6 +664,7 @@ export function RewriteSingleScreen({
                 onChange: (keys) => setSelectedIds(keys.map(String)),
               }
         }
+        scroll={{ x: 1100 }}
         pagination={{
           current: query.page,
           pageSize: query.pageSize,
@@ -677,20 +679,29 @@ export function RewriteSingleScreen({
           {
             title: '序号',
             key: 'seq',
-            width: 68,
+            width: 60,
             render: (_val: unknown, _row: RewriteRecordItem, idx: number) =>
               (query.page - 1) * query.pageSize + idx + 1,
           },
           {
             title: '文章分类',
             dataIndex: 'categoryName',
-            width: 170,
+            width: 145,
+            ellipsis: { showTitle: false },
             render: (_val: unknown, row) =>
               row.categoryName ? (
                 <Button
                   type="link"
                   size="small"
-                  style={{ padding: 0 }}
+                  title={row.categoryName}
+                  style={{
+                    padding: 0,
+                    maxWidth: 125,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    display: 'inline-block',
+                  }}
                   onClick={() => openArticlesForCategory(row.categoryId)}
                 >
                   {row.categoryName}
@@ -702,9 +713,11 @@ export function RewriteSingleScreen({
           {
             title: '源链接 / 来源',
             dataIndex: 'url',
-            width: 260,
+            width: 215,
+            minWidth: 190,
+            ellipsis: { showTitle: false },
             render: (_val: unknown, row) => (
-              <div style={{ display: 'grid', gap: 2 }}>
+              <div style={{ display: 'grid', gap: 2, minWidth: 175, whiteSpace: 'normal' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   <Tag
                     color={row.pastedText ? 'purple' : 'geekblue'}
@@ -722,20 +735,19 @@ export function RewriteSingleScreen({
                       target="_blank"
                       rel="noreferrer"
                       ellipsis
-                      style={{ maxWidth: 175, fontSize: 12 }}
+                      style={{ maxWidth: 130, fontSize: 12 }}
                     >
                       {row.url}
                     </Typography.Link>
                   )}
                 </div>
                 {row.sourceTitle ? (
-                  <Typography.Text
-                    type="secondary"
-                    ellipsis={{ tooltip: row.sourceTitle }}
-                    style={{ fontSize: 12, maxWidth: 240 }}
-                  >
-                    源标题：{row.sourceTitle}
-                  </Typography.Text>
+                  <TableClampText
+                    text={`源标题：${row.sourceTitle}`}
+                    lines={1}
+                    tooltipThreshold={20}
+                    style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+                  />
                 ) : null}
               </div>
             ),
@@ -743,12 +755,13 @@ export function RewriteSingleScreen({
           {
             title: '复刻新标题',
             dataIndex: 'newTitle',
+            minWidth: 240,
+            width: 260,
+            ellipsis: { showTitle: false },
             render: (_val: unknown, row) => (
-              <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ display: 'grid', gap: 4, minWidth: 220, whiteSpace: 'normal' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <Typography.Text strong={Boolean(row.newTitle)}>
-                    {row.newTitle || '—'}
-                  </Typography.Text>
+                  <TableClampText text={row.newTitle} lines={2} strong tooltipThreshold={20} />
                   {row.highSimilarity ? (
                     <Tag color="warning" style={{ margin: 0, whiteSpace: 'nowrap' }}>
                       重合度偏高{' '}
@@ -757,9 +770,12 @@ export function RewriteSingleScreen({
                   ) : null}
                 </div>
                 {row.error ? (
-                  <Typography.Text type="danger" style={{ fontSize: 12 }}>
-                    原因：{row.error}
-                  </Typography.Text>
+                  <TableClampText
+                    text={`原因：${row.error}`}
+                    lines={2}
+                    tooltipThreshold={32}
+                    style={{ fontSize: 12, color: 'var(--gm-danger)' }}
+                  />
                 ) : null}
               </div>
             ),
@@ -767,7 +783,7 @@ export function RewriteSingleScreen({
           {
             title: '状态',
             dataIndex: 'status',
-            width: 175,
+            width: 145,
             render: (_val: unknown, row) => (
               <Space size={4} wrap>
                 <Tag
@@ -790,13 +806,14 @@ export function RewriteSingleScreen({
           {
             title: '改写时间',
             dataIndex: 'rewrittenAt',
-            width: 155,
+            width: 135,
             render: (_val: unknown, row) => formatTime(row.rewrittenAt ?? row.createdAt),
           },
           {
             title: '操作',
             key: 'actions',
-            width: 185,
+            width: 145,
+            fixed: 'right',
             render: (_val: unknown, row) => (
               <Space size={8} wrap>
                 {row.articleId ? (
