@@ -17,6 +17,7 @@ import { CrudTable } from '../crud/crud-table';
 import { QuestionApiError, httpQuestionGateway, type QuestionGateway } from '../../lib/questions';
 import type { ShellAction } from '../../lib/tab-stack';
 import {
+  formatShanghaiDate,
   formatShanghaiDateTime,
   triggerBlobDownload,
   useSyncTabTitle,
@@ -348,36 +349,48 @@ export function QuestionScreen({
             }));
           }}
         />
-        <span>创建日期：</span>
-        <Input
-          type="date"
-          aria-label="开始日期"
-          style={{ width: 150 }}
-          value={query.createdAtFrom ? query.createdAtFrom.slice(0, 10) : ''}
-          onChange={(e) => {
-            const val = e.target.value;
-            setQuery((curr) => ({
-              ...curr,
-              page: 1,
-              createdAtFrom: val ? `${val}T00:00:00.000Z` : undefined,
-            }));
+        <div
+          data-testid="question-date-range"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'nowrap',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
           }}
-        />
-        <span>至</span>
-        <Input
-          type="date"
-          aria-label="结束日期"
-          style={{ width: 150 }}
-          value={query.createdAtTo ? query.createdAtTo.slice(0, 10) : ''}
-          onChange={(e) => {
-            const val = e.target.value;
-            setQuery((curr) => ({
-              ...curr,
-              page: 1,
-              createdAtTo: val ? `${val}T23:59:59.999Z` : undefined,
-            }));
-          }}
-        />
+        >
+          <span>创建日期：</span>
+          <Input
+            type="date"
+            aria-label="开始日期"
+            style={{ width: 138 }}
+            value={query.createdAtFrom ? formatShanghaiDate(query.createdAtFrom, '') : ''}
+            onChange={(e) => {
+              const val = e.target.value;
+              setQuery((curr) => ({
+                ...curr,
+                page: 1,
+                createdAtFrom: val ? `${val}T00:00:00+08:00` : undefined,
+              }));
+            }}
+          />
+          <span>至</span>
+          <Input
+            type="date"
+            aria-label="结束日期"
+            style={{ width: 138 }}
+            value={query.createdAtTo ? formatShanghaiDate(query.createdAtTo, '') : ''}
+            onChange={(e) => {
+              const val = e.target.value;
+              setQuery((curr) => ({
+                ...curr,
+                page: 1,
+                createdAtTo: val ? `${val}T23:59:59.999+08:00` : undefined,
+              }));
+            }}
+          />
+        </div>
       </Space>
 
       <CrudTable
@@ -556,9 +569,10 @@ export function QuestionScreen({
               <Select<string>
                 id="gm-qst-keyword"
                 aria-label="蒸馏主词"
+                placeholder="请选择蒸馏主词"
                 style={{ width: '100%' }}
-                value={addEditor.draft.keywordId}
-                options={[{ value: '', label: '不选择' }, ...keywordOptions]}
+                value={addEditor.draft.keywordId || undefined}
+                options={keywordOptions}
                 onChange={(value) =>
                   setAddEditor((curr) =>
                     curr ? { ...curr, draft: { ...curr.draft, keywordId: value } } : curr,

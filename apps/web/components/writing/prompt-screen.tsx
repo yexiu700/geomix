@@ -129,8 +129,10 @@ export function PromptScreen({
   // Delete confirmation modal
   const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
+    const seq = ++requestSeqRef.current;
     let active = true;
     setLoading(true);
     client
@@ -141,18 +143,18 @@ export function PromptScreen({
         q: search.keyword.trim() || undefined,
       })
       .then((res) => {
-        if (!active) return;
+        if (!active || seq !== requestSeqRef.current) return;
         setRows(res.items);
         setTotal(res.total);
       })
       .catch((err: unknown) => {
-        if (!active) return;
+        if (!active || seq !== requestSeqRef.current) return;
         if (err instanceof PromptApiError && err.status !== 401) {
           setBanner({ type: 'error', text: err.message });
         }
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && seq === requestSeqRef.current) setLoading(false);
       });
     return () => {
       active = false;
@@ -390,6 +392,32 @@ export function PromptScreen({
     },
   ];
 
+  const placeholderRuleSummary = useMemo(
+    () => PROMPT_PLACEHOLDERS.map((ph) => `${ph.token}（${ph.description}）`).join('、'),
+    [],
+  );
+
+  const deleteTargets = useMemo(
+    () => (deleteIds ? rows.filter((row) => deleteIds.includes(row.id)) : []),
+    [deleteIds, rows],
+  );
+
+  const deleteSummary = useMemo(() => {
+    const count = deleteIds?.length ?? 0;
+    if (deleteTargets.length === 1 && count === 1) {
+      return `确定要删除写作指令「${deleteTargets[0]!.name}」吗？`;
+    }
+    if (deleteTargets.length > 0) {
+      const preview = deleteTargets
+        .slice(0, 3)
+        .map((item) => `「${item.name}」`)
+        .join('、');
+      const suffix = deleteTargets.length > 3 ? ` 等 ${count} 条` : '';
+      return `确定要删除选中的 ${count} 条写作指令（${preview}${suffix}）吗？`;
+    }
+    return `确定要删除选中的 ${count} 条写作指令吗？`;
+  }, [deleteIds, deleteTargets]);
+
   return (
     <section>
       <div
@@ -412,7 +440,7 @@ export function PromptScreen({
         style={{ marginBottom: 12 }}
         type="warning"
         showIcon
-        message="编写指令时请合理嵌入 {训练词占位符} 与 {转化词占位符} 以保障主题聚焦与品牌转化，严禁包含医疗、网贷、博彩、违禁品等禁做行业及绝对化极限宣传用语。"
+        message={`编写指令支持以下 ${PROMPT_PLACEHOLDERS.length} 个占位符：${placeholderRuleSummary}。请合理嵌入以保障主题聚焦与品牌转化，严禁包含医疗、网贷、博彩、违禁品等禁做行业及绝对化极限宣传用语。`}
       />
 
       {banner ? (
@@ -432,7 +460,11 @@ export function PromptScreen({
           buttonStyle="solid"
           value={kindFilter}
           onChange={(e) => {
-            setKindFilter(e.target.value as KindFilter);
+            const nextKind = e.target.value as KindFilter;
+            if (nextKind !== kindFilter || page !== 1) {
+              setLoading(true);
+            }
+            setKindFilter(nextKind);
             setPage(1);
             setSelectedIds([]);
           }}
@@ -460,16 +492,26 @@ export function PromptScreen({
         writeDisabled={readOnly}
         onSearchOpenChange={setSearchOpen}
         onSearch={(next) => {
+          const nextKeyword = next.keyword.trim();
+          if (nextKeyword !== search.keyword.trim() || page !== 1) {
+            setLoading(true);
+          }
           setPage(1);
-          setSearch(next);
+          setSearch({ ...next, keyword: nextKeyword });
         }}
         onPageChange={(nextPage, nextSize) => {
+          if (nextPage !== page || nextSize !== pageSize) {
+            setLoading(true);
+          }
           setPage(nextPage);
           setPageSize(nextSize);
         }}
         onSelectionChange={setSelectedIds}
         onExport={handleExport}
-        onRefresh={() => setReloadTick((n) => n + 1)}
+        onRefresh={() => {
+          setLoading(true);
+          setReloadTick((n) => n + 1);
+        }}
         onCreate={openCreateModal}
         onDelete={() => setDeleteIds(selectedIds)}
       />
@@ -696,8 +738,9 @@ export function PromptScreen({
         onOk={handleConfirmDelete}
         onCancel={() => setDeleteIds(null)}
       >
-        <Typography.Paragraph style={{ marginBottom: 0 }}>
-          确定要删除选中的 {deleteIds?.length ?? 0} 条写作指令吗？
+        <Typography.Paragraph style={{ marginBottom: 8 }}>{deleteSummary}</Typography.Paragraph>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          删除后不可恢复，历史已生成任务不受影响；进行中的任务引用的指令禁止删除。
         </Typography.Paragraph>
       </Modal>
     </section>

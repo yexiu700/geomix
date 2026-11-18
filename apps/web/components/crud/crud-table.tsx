@@ -330,7 +330,7 @@ export function CrudTable<T extends { id: string }>({
         loading={loading}
         dataSource={rows}
         scroll={scroll}
-        locale={{ emptyText }}
+        locale={{ emptyText: loading ? null : emptyText }}
         pagination={{
           current: page,
           pageSize,

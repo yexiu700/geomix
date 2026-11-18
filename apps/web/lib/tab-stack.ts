@@ -57,9 +57,12 @@ export type KeyValueStorage = {
   removeItem(key: string): void;
 };
 
-export function tabFromHref(href: string, sourceId?: string): ShellTab | null {
-  const match = matchRoute(href);
-  if (!match) return null;
+const COALESCED_TAB_PATHS = new Set(['/material/questions']);
+
+function tabFromMatch(
+  match: NonNullable<ReturnType<typeof matchRoute>>,
+  sourceId?: string,
+): ShellTab {
   const source = canonicalSource(sourceId, match.href);
   return {
     id: match.href,
@@ -68,6 +71,12 @@ export function tabFromHref(href: string, sourceId?: string): ShellTab | null {
     pinned: match.pinned,
     ...(source ? { sourceId: source } : {}),
   };
+}
+
+export function tabFromHref(href: string, sourceId?: string): ShellTab | null {
+  const match = matchRoute(href);
+  if (!match) return null;
+  return tabFromMatch(match, sourceId);
 }
 
 export function initialSnapshot(): ShellSnapshot {
@@ -114,24 +123,48 @@ export function reduceShell(state: ShellSnapshot, action: ShellAction): ShellSna
 }
 
 export function openTab(state: ShellSnapshot, href: string, sourceId?: string): ShellSnapshot {
-  const created = tabFromHref(href, sourceId);
-  if (!created) return state;
+  const match = matchRoute(href);
+  if (!match) return state;
+  const created = tabFromMatch(match, sourceId);
   const existing = state.tabs.find((tab) => tab.id === created.id);
   if (existing) return activateTab(state, existing.id);
+
+  const samePathTab = COALESCED_TAB_PATHS.has(match.path)
+    ? state.tabs.find((tab) => matchRoute(tab.href)?.path === match.path)
+    : undefined;
+  const inheritedSource =
+    samePathTab && !created.sourceId && created.href !== match.path
+      ? canonicalSource(samePathTab.sourceId, created.href)
+      : undefined;
+  const replacement: ShellTab =
+    samePathTab && inheritedSource ? { ...created, sourceId: inheritedSource } : created;
+
   if (!state.prefs.multiTab) {
-    const draft = state.drafts[created.id];
+    const draft =
+      state.drafts[replacement.id] ?? (samePathTab ? state.drafts[samePathTab.id] : undefined);
     return {
       ...state,
-      tabs: [created],
-      activeId: created.id,
-      drafts: draft ? { [created.id]: draft } : {},
+      tabs: [replacement],
+      activeId: replacement.id,
+      drafts: draft ? { [replacement.id]: draft } : {},
     };
   }
-  const tabs = evictOldest([...state.tabs, created], created.id);
+
+  if (samePathTab) {
+    const tabs = state.tabs.map((tab) => (tab.id === samePathTab.id ? replacement : tab));
+    return {
+      ...state,
+      tabs,
+      activeId: replacement.id,
+      drafts: migrateDraft(state.drafts, samePathTab.id, replacement.id),
+    };
+  }
+
+  const tabs = evictOldest([...state.tabs, replacement], replacement.id);
   return {
     ...state,
     tabs,
-    activeId: created.id,
+    activeId: replacement.id,
     drafts: pickDrafts(
       state.drafts,
       tabs.map((tab) => tab.id),
@@ -189,14 +222,24 @@ export function parseShell(
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.tabs)) return null;
 
+  const requested = typeof record.activeId === 'string' ? record.activeId : '';
   const tabs: ShellTab[] = [];
   for (const item of record.tabs) {
     if (!item || typeof item !== 'object') continue;
     const href = (item as { href?: unknown }).href;
     const source = (item as { sourceId?: unknown }).sourceId;
     if (typeof href !== 'string') continue;
-    const tab = tabFromHref(href, typeof source === 'string' ? source : undefined);
-    if (!tab || tabs.some((existing) => existing.id === tab.id)) continue;
+    const match = matchRoute(href);
+    if (!match) continue;
+    const tab = tabFromMatch(match, typeof source === 'string' ? source : undefined);
+    if (tabs.some((existing) => existing.id === tab.id)) continue;
+    if (COALESCED_TAB_PATHS.has(match.path)) {
+      const dupIdx = tabs.findIndex((existing) => matchRoute(existing.href)?.path === match.path);
+      if (dupIdx >= 0) {
+        if (tab.id === requested) tabs[dupIdx] = tab;
+        continue;
+      }
+    }
     tabs.push(tab);
     if (tabs.length === MAX_OPEN_TABS) break;
   }
@@ -208,7 +251,6 @@ export function parseShell(
     if (tabs.length > MAX_OPEN_TABS) tabs.pop();
   }
   if (tabs.length === 0) return null;
-  const requested = typeof record.activeId === 'string' ? record.activeId : '';
   const activeId = tabs.some((tab) => tab.id === requested) ? requested : (tabs[0]?.id ?? home.id);
   return { tabs, activeId, prefs: parsePrefs(record.prefs) };
 }
@@ -396,6 +438,18 @@ function pickDrafts(drafts: Record<string, string>, ids: string[]): Record<strin
   for (const [id, value] of Object.entries(drafts)) {
     if (keep.has(id) && value) next[id] = value;
   }
+  return next;
+}
+
+function migrateDraft(
+  drafts: Record<string, string>,
+  fromId: string,
+  toId: string,
+): Record<string, string> {
+  if (fromId === toId || !(fromId in drafts)) return drafts;
+  const next = { ...drafts };
+  next[toId] = next[fromId]!;
+  delete next[fromId];
   return next;
 }
 
