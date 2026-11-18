@@ -389,7 +389,7 @@ describe('AiImageScreen', () => {
       />,
     );
     const sider = document.querySelector<HTMLElement>('.gm-sider')!;
-    expect(within(sider).queryByText('AI生图/视频')).toBeNull();
+    expect(within(sider).queryByText(/\/视频/)).toBeNull();
     expect(within(sider).getByText('AI生图')).toBeTruthy();
 
     rerender(
