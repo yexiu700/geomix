@@ -43,6 +43,10 @@ export function CrudTable<T extends { id: string }>({
   writeDisabled = false,
   toolbarOrder = 'default',
   storageKey,
+  showCreate = true,
+  showDensityToggle = true,
+  showSearch = true,
+  showExport = true,
   onSearchOpenChange,
   onSearch,
   onPageChange,
@@ -71,6 +75,10 @@ export function CrudTable<T extends { id: string }>({
   writeDisabled?: boolean;
   toolbarOrder?: 'default' | 'create-first';
   storageKey?: string;
+  showCreate?: boolean;
+  showDensityToggle?: boolean;
+  showSearch?: boolean;
+  showExport?: boolean;
   onSearchOpenChange: (open: boolean) => void;
   onSearch: (search: CrudSearch) => void;
   onPageChange: (page: number, pageSize: CrudPageSize) => void;
@@ -163,11 +171,17 @@ export function CrudTable<T extends { id: string }>({
     </Button>
   );
 
+  const leftButtons = showCreate
+    ? toolbarOrder === 'create-first'
+      ? [createBtn, refreshBtn]
+      : [refreshBtn, createBtn]
+    : [refreshBtn];
+
   return (
     <div className="gm-crud">
       <div className="gm-crud-toolbar">
         <Space wrap>
-          {toolbarOrder === 'create-first' ? [createBtn, refreshBtn] : [refreshBtn, createBtn]}
+          {leftButtons}
           <Button
             aria-label="删除"
             danger
@@ -193,9 +207,11 @@ export function CrudTable<T extends { id: string }>({
           ) : null}
         </Space>
         <Space wrap>
-          <Button aria-label="切换" onClick={() => setCompact((value) => !value)}>
-            切换
-          </Button>
+          {showDensityToggle ? (
+            <Button aria-label="切换" onClick={() => setCompact((value) => !value)}>
+              切换
+            </Button>
+          ) : null}
           <Dropdown
             trigger={['click']}
             menu={{
@@ -222,13 +238,20 @@ export function CrudTable<T extends { id: string }>({
           >
             <Button aria-label="列">列</Button>
           </Dropdown>
-          <ExportAction empty={!loading && total === 0 && rows.length === 0} onExport={onExport} />
-          <Button aria-label="搜索" onClick={() => onSearchOpenChange(!searchOpen)}>
-            搜索
-          </Button>
+          {showExport ? (
+            <ExportAction
+              empty={!loading && total === 0 && rows.length === 0}
+              onExport={onExport}
+            />
+          ) : null}
+          {showSearch ? (
+            <Button aria-label="搜索" onClick={() => onSearchOpenChange(!searchOpen)}>
+              搜索
+            </Button>
+          ) : null}
         </Space>
       </div>
-      {searchOpen ? (
+      {showSearch && searchOpen ? (
         <div className="gm-crud-search">
           <Input
             aria-label="搜索关键字"

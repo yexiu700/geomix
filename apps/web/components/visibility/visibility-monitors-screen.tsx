@@ -43,11 +43,10 @@ import {
   Typography,
 } from 'antd';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GM, formatPct } from '../../lib/design-tokens';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
-import { PriceButton } from '../crud/price-button';
 import {
   EngineChipList,
   SignalEmpty,
@@ -60,7 +59,11 @@ import { RunWorkspace } from '../geo/run-workspace';
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { triggerBlobDownload, useSyncTabTitle } from '../../lib/ux-foundation';
+import {
+  sanitizeEntityTitleSegment,
+  triggerBlobDownload,
+  useSyncTabTitle,
+} from '../../lib/ux-foundation';
 import {
   createVisibilityIdempotencyKey,
   httpVisibilityGateway,
@@ -375,7 +378,8 @@ export function VisibilityMonitorsScreen({
     keyword: undefined,
   }));
   const [keywordDraft, setKeywordDraft] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
+  const profileFilterSelectRef = useRef<HTMLSelectElement | null>(null);
 
   const [runs, setRuns] = useState<VisibilityRunRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -455,12 +459,14 @@ export function VisibilityMonitorsScreen({
         ]),
       ]);
       setProfiles(profileRes.items);
+      setProfilesLoaded(true);
       if (profileRes.prefillSources) {
         setPrefillSources(profileRes.prefillSources);
       }
       setKeywords(kwList);
       setPrices(priceList);
     } catch (err) {
+      setProfilesLoaded(true);
       setBanner({
         type: 'error',
         text: err instanceof Error ? err.message : '加载监测档案失败',
@@ -1043,6 +1049,11 @@ export function VisibilityMonitorsScreen({
     onDispatch?.({ type: 'open', href: targetHref, sourceId: tabId });
   }
 
+  const baseTitle = useMemo(() => {
+    const sepIdx = title.indexOf(' · ');
+    return sepIdx > 0 ? title.slice(0, sepIdx) : title || 'AI可见度诊断';
+  }, [title]);
+
   const resolvedTitle = useMemo(() => {
     const activeProfileId = query.profileId || initialUrlParams.profileId;
     const matchedProfile = activeProfileId
@@ -1054,23 +1065,45 @@ export function VisibilityMonitorsScreen({
         : runs.find((r) => r.id === initialUrlParams.runId)?.name
       : undefined;
     const parts: string[] = [];
-    if (matchedProfile) parts.push(matchedProfile.name);
-    if (matchedRunName) parts.push(matchedRunName);
-    if (parts.length > 0) {
-      return `AI可见度诊断 · ${parts.join(' · ')}`;
+    if (activeProfileId) {
+      if (matchedProfile) {
+        parts.push(matchedProfile.name);
+      } else {
+        const safeSegment = sanitizeEntityTitleSegment(activeProfileId, '当前监测档案');
+        parts.push(safeSegment === '当前监测档案' ? '当前监测档案' : `档案 ${safeSegment}`);
+      }
     }
-    return title;
+    if (initialUrlParams.runId) {
+      if (matchedRunName) {
+        parts.push(matchedRunName);
+      } else {
+        const safeRun = sanitizeEntityTitleSegment(initialUrlParams.runId, '当前诊断任务');
+        parts.push(safeRun === '当前诊断任务' ? '当前诊断任务' : `任务 ${safeRun}`);
+      }
+    }
+    if (parts.length > 0) {
+      return `${baseTitle} · ${parts.join(' · ')}`;
+    }
+    return baseTitle;
   }, [
+    baseTitle,
     detailRun,
     initialUrlParams.profileId,
     initialUrlParams.runId,
     profiles,
     query.profileId,
     runs,
-    title,
   ]);
 
   useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
+
+  useEffect(() => {
+    const el = profileFilterSelectRef.current;
+    const desired = query.profileId ?? '';
+    if (el && el.value !== desired) {
+      el.value = desired;
+    }
+  }, [profiles, profilesLoaded, query.profileId]);
 
   // ===================== Filtered Observations in Drawer =====================
 
@@ -1424,6 +1457,15 @@ export function VisibilityMonitorsScreen({
     }
   };
 
+  const submitRunSearch = () => {
+    setSelectedIds([]);
+    setQuery((curr) => ({
+      ...curr,
+      page: 1,
+      keyword: keywordDraft.trim() || undefined,
+    }));
+  };
+
   return (
     <section style={{ minWidth: 0 }}>
       {/* Top Header */}
@@ -1450,12 +1492,9 @@ export function VisibilityMonitorsScreen({
           </div>
         </div>
         <Space wrap>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <PriceButton action="visibility_check" prices={prices} />
-            <SignalPill tone="warning">
-              <span className="gm-num">{unitPoints}</span> 点/次
-            </SignalPill>
-          </span>
+          <SignalPill tone="warning">
+            AI可见性监测 · <span className="gm-num">{unitPoints}</span> 点数/次
+          </SignalPill>
           <Button
             aria-label="新建品牌档案"
             disabled={readOnly}
@@ -1500,9 +1539,10 @@ export function VisibilityMonitorsScreen({
             label: `监测任务（${total}）`,
             children: (
               <div style={{ minWidth: 0 }}>
-                {/* Quick Filter Bar */}
+                {/* Unified Filter Bar */}
                 <div className="gm-filterbar">
                   <select
+                    ref={profileFilterSelectRef}
                     aria-label="筛选监测档案"
                     style={{ ...COMPACT_SELECT_STYLE, width: 180 }}
                     value={query.profileId ?? ''}
@@ -1513,6 +1553,11 @@ export function VisibilityMonitorsScreen({
                     }}
                   >
                     <option value="">全部监测档案</option>
+                    {query.profileId && !profiles.some((p) => p.id === query.profileId) ? (
+                      <option value={query.profileId}>
+                        {!profilesLoaded ? '正在加载监测档案…' : '当前监测档案'}
+                      </option>
+                    ) : null}
                     {profiles.map((prof) => (
                       <option key={prof.id} value={prof.id}>
                         {prof.name}（{prof.brandName}）
@@ -1548,28 +1593,10 @@ export function VisibilityMonitorsScreen({
                     value={keywordDraft}
                     style={{ width: 220, maxWidth: '100%' }}
                     onChange={(e) => setKeywordDraft(e.target.value)}
-                    onPressEnter={() => {
-                      setSelectedIds([]);
-                      setQuery((curr) => ({
-                        ...curr,
-                        page: 1,
-                        keyword: keywordDraft.trim() || undefined,
-                      }));
-                    }}
+                    onPressEnter={submitRunSearch}
                   />
 
-                  <Button
-                    type="primary"
-                    aria-label="查询监测任务"
-                    onClick={() => {
-                      setSelectedIds([]);
-                      setQuery((curr) => ({
-                        ...curr,
-                        page: 1,
-                        keyword: keywordDraft.trim() || undefined,
-                      }));
-                    }}
-                  >
+                  <Button type="primary" aria-label="查询监测任务" onClick={submitRunSearch}>
                     查询
                   </Button>
 
@@ -1593,9 +1620,12 @@ export function VisibilityMonitorsScreen({
                     pageSize={query.pageSize}
                     loading={loading}
                     selectedIds={selectedIds}
-                    searchOpen={searchOpen}
+                    searchOpen={false}
                     searchPlaceholder="搜索任务名、品牌或主词"
                     writeDisabled={readOnly}
+                    showCreate={false}
+                    showDensityToggle={false}
+                    showSearch={false}
                     emptyText={
                       (loading ? (
                         <SignalSkeleton variant="row" rows={5} />
@@ -1627,16 +1657,8 @@ export function VisibilityMonitorsScreen({
                       sort: 'createdAt',
                       order: 'desc',
                     }}
-                    onSearchOpenChange={setSearchOpen}
-                    onSearch={(search) => {
-                      setKeywordDraft(search.keyword);
-                      setSelectedIds([]);
-                      setQuery((curr) => ({
-                        ...curr,
-                        page: 1,
-                        keyword: search.keyword.trim() || undefined,
-                      }));
-                    }}
+                    onSearchOpenChange={() => undefined}
+                    onSearch={() => undefined}
                     onPageChange={(page, pageSize) => {
                       setSelectedIds([]);
                       setQuery((curr) => ({ ...curr, page, pageSize }));

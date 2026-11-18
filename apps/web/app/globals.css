@@ -1273,13 +1273,14 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-sonar-ring-label {
-  font-size: 10px;
+  font-size: 9px;
   fill: var(--gm-fg-4);
-  dominant-baseline: middle;
+  opacity: 0.72;
+  dominant-baseline: auto;
 }
 
 .gm-sonar-center-val {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 600;
   fill: var(--gm-fg-1);
 }

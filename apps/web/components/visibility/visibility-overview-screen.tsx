@@ -28,11 +28,11 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Space, Table, Tabs, Tooltip, Typography, message } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GM, formatPct, truncateMiddle } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { useSyncTabTitle } from '../../lib/ux-foundation';
+import { sanitizeEntityTitleSegment, useSyncTabTitle } from '../../lib/ux-foundation';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
 import { TableClampText } from '../crud/table-clamp-text';
 import {
@@ -47,6 +47,7 @@ import {
 import { SonarDial } from '../geo/sonar-dial';
 
 const DEFAULT_PROFILE_STORAGE_KEY = 'geomix:visibility:default-profile-id';
+const SKIP_DEFAULT_PROFILE_ONCE_KEY = 'geomix:visibility:overview:skip-default-once';
 
 const COMPACT_SELECT_STYLE: CSSProperties = {
   height: 32,
@@ -476,7 +477,38 @@ export function VisibilityOverviewScreen({
     text: string;
   } | null>(null);
 
-  // Sync URL ?profileId=... if changed
+  const userInteractedProfileRef = useRef(false);
+  const initialUrlProfileIdRef = useRef(urlProfileId);
+  const skipDefaultProfileRef = useRef<boolean>(false);
+  const profileSelectRef = useRef<HTMLSelectElement | null>(null);
+
+  const syncProfileRoute = useCallback(
+    (nextProfileId: string) => {
+      if (!nextProfileId) {
+        try {
+          effectiveStorage.setItem(SKIP_DEFAULT_PROFILE_ONCE_KEY, '1');
+        } catch {
+          // ignore storage errors
+        }
+      } else {
+        try {
+          effectiveStorage.removeItem(SKIP_DEFAULT_PROFILE_ONCE_KEY);
+        } catch {
+          // ignore storage errors
+        }
+      }
+      if (!tabId || !onDispatch) return;
+      const targetHref = nextProfileId
+        ? `/visibility/overview?profileId=${encodeURIComponent(nextProfileId)}`
+        : '/visibility/overview';
+      if (href !== targetHref && tabId !== targetHref) {
+        onDispatch({ type: 'navigate', id: tabId, href: targetHref });
+      }
+    },
+    [effectiveStorage, href, onDispatch, tabId],
+  );
+
+  // Sync URL ?profileId=... if changed externally
   useEffect(() => {
     if (!urlProfileId) return;
     setFilterDraft((curr) =>
@@ -487,17 +519,38 @@ export function VisibilityOverviewScreen({
     );
   }, [urlProfileId]);
 
+  // Keep native <select> DOM value strictly synchronized across async profile loading & tab switches
+  useEffect(() => {
+    const el = profileSelectRef.current;
+    if (el && el.value !== filterDraft.profileId) {
+      el.value = filterDraft.profileId;
+    }
+  }, [filterDraft.profileId, profiles, profilesLoaded]);
+
   // Load profiles list and optionally initialize default profile if URL didn't specify one
   useEffect(() => {
     if (!featureEnabled) return;
     let cancelled = false;
+    try {
+      if (effectiveStorage.getItem(SKIP_DEFAULT_PROFILE_ONCE_KEY) === '1') {
+        skipDefaultProfileRef.current = true;
+        effectiveStorage.removeItem(SKIP_DEFAULT_PROFILE_ONCE_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
     void client
       .listProfiles()
       .then((res) => {
         if (cancelled) return;
         setProfiles(res.items);
         setProfilesLoaded(true);
-        if (!urlProfileId && res.items.length > 0) {
+        if (
+          !initialUrlProfileIdRef.current &&
+          !userInteractedProfileRef.current &&
+          !skipDefaultProfileRef.current &&
+          res.items.length > 0
+        ) {
           const savedDefault =
             typeof window !== 'undefined' && window.localStorage
               ? window.localStorage.getItem(DEFAULT_PROFILE_STORAGE_KEY)
@@ -518,7 +571,7 @@ export function VisibilityOverviewScreen({
     return () => {
       cancelled = true;
     };
-  }, [client, featureEnabled, urlProfileId]);
+  }, [client, effectiveStorage, featureEnabled]);
 
   // Load overview data when appliedFilter changes
   useEffect(() => {
@@ -722,6 +775,7 @@ export function VisibilityOverviewScreen({
   }, [filterDraft]);
 
   const handleResetFilters = useCallback(() => {
+    userInteractedProfileRef.current = true;
     const clean: OverviewFilterState = {
       profileId: '',
       engine: '',
@@ -734,7 +788,8 @@ export function VisibilityOverviewScreen({
     setCitationSourceKind('ALL');
     setCitationPage(1);
     setAppliedFilter(clean);
-  }, []);
+    syncProfileRoute('');
+  }, [syncProfileRoute]);
 
   const handleSelectEngine = useCallback((eng: VisibilityEngineKey | undefined) => {
     const nextEngine = eng ?? '';
@@ -825,15 +880,23 @@ export function VisibilityOverviewScreen({
     [citationsData.items],
   );
 
+  const baseTitle = useMemo(() => {
+    const sepIdx = title.indexOf(' · ');
+    return sepIdx > 0 ? title.slice(0, sepIdx) : title || 'AI数据看板';
+  }, [title]);
+
   const resolvedTitle = useMemo(() => {
-    const activeProfile = appliedFilter.profileId
-      ? profiles.find((p) => p.id === appliedFilter.profileId)
-      : undefined;
-    if (activeProfile) {
-      return `AI数据看板 · ${activeProfile.name}`;
+    if (!appliedFilter.profileId) {
+      return baseTitle;
     }
-    return title;
-  }, [appliedFilter.profileId, profiles, title]);
+    const activeProfile = profiles.find((p) => p.id === appliedFilter.profileId);
+    if (activeProfile) {
+      return `${baseTitle} · ${activeProfile.name}`;
+    }
+    const safeIdSegment = sanitizeEntityTitleSegment(appliedFilter.profileId, '当前监测档案');
+    const segment = safeIdSegment === '当前监测档案' ? '当前监测档案' : `档案 ${safeIdSegment}`;
+    return `${baseTitle} · ${segment}`;
+  }, [appliedFilter.profileId, baseTitle, profiles]);
 
   useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
@@ -934,14 +997,29 @@ export function VisibilityOverviewScreen({
       </div>
 
       {/* Top Filter Bar */}
-      <div className="gm-filterbar">
+      <div
+        className="gm-filterbar"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            handleApplySearch();
+          }
+        }}
+      >
         {(() => {
-          const activeProf = profiles.find((p) => p.id === filterDraft.profileId);
+          const activeProf = filterDraft.profileId
+            ? profiles.find((p) => p.id === filterDraft.profileId)
+            : undefined;
+          const hasMatchingOption = !filterDraft.profileId || Boolean(activeProf);
           const profileTitle = activeProf
             ? `${activeProf.name}（${activeProf.brandName}）`
-            : '全部监测档案';
+            : filterDraft.profileId
+              ? !profilesLoaded
+                ? '正在加载监测档案…'
+                : '当前监测档案'
+              : '全部监测档案';
           return (
             <select
+              ref={profileSelectRef}
               aria-label="看板监测档案"
               title={profileTitle}
               style={{
@@ -956,6 +1034,7 @@ export function VisibilityOverviewScreen({
               value={filterDraft.profileId}
               onChange={(e) => {
                 const nextProfileId = e.target.value;
+                userInteractedProfileRef.current = true;
                 setFilterError(null);
                 setCitationPage(1);
                 const nextDraft: OverviewFilterState = {
@@ -968,9 +1047,15 @@ export function VisibilityOverviewScreen({
                 } else {
                   setAppliedFilter(nextDraft);
                 }
+                syncProfileRoute(nextProfileId);
               }}
             >
               <option value="">全部监测档案</option>
+              {!hasMatchingOption ? (
+                <option value={filterDraft.profileId}>
+                  {!profilesLoaded ? '正在加载监测档案…' : '当前监测档案'}
+                </option>
+              ) : null}
               {profiles.map((prof) => (
                 <option key={prof.id} value={prof.id}>
                   {prof.name}（{prof.brandName}）

@@ -17,6 +17,7 @@ import type {
   VisibilityRunRecord,
 } from '@geomix/shared';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AccountProfile } from '../../lib/api';
 import { initialSnapshot, reduceShell } from '../../lib/tab-stack';
@@ -43,6 +44,7 @@ beforeAll(() => {
 
 afterEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
   cleanup();
 });
 
@@ -878,6 +880,84 @@ describe('VisibilityMonitorsScreen', () => {
       (screen.getByLabelText('删除档案-便携显示器核心监测档案') as HTMLButtonElement).disabled,
     ).toBe(true);
   });
+
+  it('eliminates dead AI可见性监测 button and duplicate search/add/toggle toolbar, supports Enter search, export, and tab switching (#190)', async () => {
+    const { gateway, listRunsQueries } = (() => {
+      const base = buildMockGateway();
+      const queries: unknown[] = [];
+      return {
+        listRunsQueries: queries,
+        gateway: {
+          ...base.gateway,
+          async listRuns(q: Parameters<VisibilityGateway['listRuns']>[0]) {
+            queries.push(q);
+            return base.gateway.listRuns(q);
+          },
+        },
+      };
+    })();
+    const downloaded: Array<{ filename: string; mime: string; body: Uint8Array }> = [];
+
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        gateway={gateway}
+        pollIntervalMs={0}
+        downloadFile={(file) => downloaded.push(file)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+
+    // 1. Dead button 'AI可见性监测（2点数/次）' must not exist as a clickable button
+    expect(screen.queryByRole('button', { name: /AI可见性监测/ })).toBeNull();
+    expect(screen.getByText(/点数\/次/)).toBeTruthy();
+
+    // 2. Duplicate CrudTable search, add, toggle buttons and redundant second 查询 must not exist
+    expect(screen.queryByRole('button', { name: '搜索' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '添加' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '切换' })).toBeNull();
+    expect(screen.queryByPlaceholderText('名称或备注')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /查询/ })).toHaveLength(1);
+
+    // 3. Pagination includes 共 X 条
+    expect(screen.getByText('共 1 条')).toBeTruthy();
+
+    // 4. Enter key in 搜索监测任务 submits search
+    const searchInput = screen.getByLabelText('搜索监测任务');
+    fireEvent.change(searchInput, { target: { value: '星图' } });
+    fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+
+    await waitFor(() => {
+      expect(listRunsQueries.some((q) => (q as { keyword?: string }).keyword === '星图')).toBe(
+        true,
+      );
+    });
+
+    // 5. Export CSV works cleanly
+    fireEvent.click(screen.getByRole('button', { name: '导出' }));
+    fireEvent.click(await screen.findByText('CSV'));
+    await waitFor(() => {
+      expect(downloaded).toHaveLength(1);
+    });
+    expect(downloaded[0]?.filename).toBe('geomix-visibility-runs.csv');
+    expect(new TextDecoder().decode(downloaded[0]?.body)).toContain(
+      '便携显示器11月国内主流引擎巡检',
+    );
+
+    // 6. Tab switching works cleanly
+    fireEvent.click(screen.getByRole('tab', { name: /品牌与竞品档案/ }));
+    await waitFor(() => {
+      expect(screen.getByText('星图触控便携屏')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /监测任务/ }));
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+  });
 });
 
 describe('VisibilityOverviewScreen', () => {
@@ -1284,5 +1364,138 @@ describe('VisibilityOverviewScreen', () => {
       .map((el) => el.closest('th'))
       .find((th): th is HTMLTableCellElement => th !== null);
     expect(sourceHeader?.style.whiteSpace).toBe('nowrap');
+  });
+
+  it('masks raw CUID, preserves ?profileId=... across async profile load & tab switches, and syncs title/tab/URL/draft on profile switch & reset (#188)', async () => {
+    const cuidArzopa = 'cmwlq3uem0019oiprcxr58lpa';
+    const cuidAnker = 'cmwlsq61a008joiprwh0bvh7a';
+    window.localStorage.setItem('geomix:visibility:default-profile-id', cuidAnker);
+
+    const base = buildMockGateway();
+    let resolveProfiles!: (items: VisibilityProfileRecord[]) => void;
+    const profilesPromise = new Promise<VisibilityProfileRecord[]>((resolve) => {
+      resolveProfiles = resolve;
+    });
+
+    const twoProfiles: VisibilityProfileRecord[] = [
+      {
+        ...buildSampleProfiles()[0]!,
+        id: cuidArzopa,
+        name: 'ARZOPA便携屏全链路监测档案',
+        brandName: '阿卓帕',
+      },
+      {
+        ...buildSampleProfiles()[0]!,
+        id: cuidAnker,
+        name: '安克创新全品类监测档案',
+        brandName: '安克创新',
+      },
+    ];
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        const res = await base.gateway.listProfiles();
+        const items = await profilesPromise;
+        return { ...res, items };
+      },
+    };
+
+    function OverviewShellHarness() {
+      const [state, setState] = useState(() => {
+        let s = initialSnapshot();
+        s = reduceShell(s, {
+          type: 'open',
+          href: `/visibility/overview?profileId=${cuidArzopa}`,
+        });
+        return s;
+      });
+      const activeTab = state.tabs.find((t) => t.id === state.activeId)!;
+      return (
+        <div>
+          <div data-testid="tab-bar">
+            {state.tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={t.id === state.activeId}
+                onClick={() =>
+                  setState((curr) => reduceShell(curr, { type: 'activate', id: t.id }))
+                }
+              >
+                {t.title}
+              </button>
+            ))}
+          </div>
+          <div data-testid="active-href">{activeTab.href}</div>
+          {state.tabs
+            .filter((t) => t.id.startsWith('/visibility/overview'))
+            .map((t) => (
+              <div key={t.id} hidden={t.id !== state.activeId}>
+                <VisibilityOverviewScreen
+                  title={t.title}
+                  tabId={t.id}
+                  href={t.href}
+                  gateway={gateway}
+                  onDispatch={(action) => setState((curr) => reduceShell(curr, action))}
+                />
+                <textarea aria-label={`${t.title}草稿`} readOnly value={state.drafts[t.id] ?? ''} />
+              </div>
+            ))}
+        </div>
+      );
+    }
+
+    render(<OverviewShellHarness />);
+
+    // Before profiles resolve: raw CUID must NEVER appear in H1, tab bar, or draft label
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('AI数据看板 · 当前监测档案');
+    expect(screen.getByTestId('tab-bar').textContent).not.toContain(cuidArzopa);
+    expect(screen.getByLabelText('AI数据看板 · 当前监测档案草稿')).toBeTruthy();
+    const selectBeforeLoad = screen.getByLabelText('看板监测档案') as HTMLSelectElement;
+    expect(selectBeforeLoad.value).toBe(cuidArzopa);
+
+    // Resolve profiles asynchronously
+    resolveProfiles(twoProfiles);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
+        'AI数据看板 · ARZOPA便携屏全链路监测档案',
+      );
+    });
+    expect(
+      screen.getByRole('tab', { name: 'AI数据看板 · ARZOPA便携屏全链路监测档案' }),
+    ).toBeTruthy();
+    expect(screen.getByLabelText('AI数据看板 · ARZOPA便携屏全链路监测档案草稿')).toBeTruthy();
+    expect((screen.getByLabelText('看板监测档案') as HTMLSelectElement).value).toBe(cuidArzopa);
+
+    // Switch to 首页 tab and switch back -> select must NOT revert to 全部监测档案
+    fireEvent.click(screen.getByRole('tab', { name: '首页' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'AI数据看板 · ARZOPA便携屏全链路监测档案' }));
+    expect((screen.getByLabelText('看板监测档案') as HTMLSelectElement).value).toBe(cuidArzopa);
+
+    // Switch profile dropdown to 安克创新 -> H1, tab title, draft label, and URL all update
+    fireEvent.change(screen.getByLabelText('看板监测档案'), { target: { value: cuidAnker } });
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
+        'AI数据看板 · 安克创新全品类监测档案',
+      );
+    });
+    expect(screen.getByRole('tab', { name: 'AI数据看板 · 安克创新全品类监测档案' })).toBeTruthy();
+    expect(screen.getByLabelText('AI数据看板 · 安克创新全品类监测档案草稿')).toBeTruthy();
+    expect(screen.getByTestId('active-href').textContent).toBe(
+      `/visibility/overview?profileId=${cuidAnker}`,
+    );
+
+    // Click 重置 -> H1, tab title, draft label, URL, and select all reset cleanly to 全部监测档案 (NOT snapping back to localStorage default)
+    fireEvent.click(screen.getByLabelText('重置看板筛选'));
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('AI数据看板');
+    });
+    expect(screen.getByRole('tab', { name: 'AI数据看板' })).toBeTruthy();
+    expect(screen.getByLabelText('AI数据看板草稿')).toBeTruthy();
+    expect(screen.getByTestId('active-href').textContent).toBe('/visibility/overview');
+    expect((screen.getByLabelText('看板监测档案') as HTMLSelectElement).value).toBe('');
   });
 });
