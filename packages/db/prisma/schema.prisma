@@ -537,8 +537,8 @@ model RewriteBatch {
   linkList        String[]
   categoryId      String
   category        ArticleCategory @relation(fields: [categoryId], references: [id])
-  mediaCategoryId String
-  mediaCategory   MediaCategory   @relation(fields: [mediaCategoryId], references: [id])
+  mediaCategoryId String?
+  mediaCategory   MediaCategory?  @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
   templateId      String
   template        PromptTemplate  @relation(fields: [templateId], references: [id])
   status          TaskStatus      @default(QUEUED)
@@ -562,8 +562,8 @@ model RewriteRecord {
   newTitle        String?
   categoryId      String?
   category        ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  mediaCategoryId String
-  mediaCategory   MediaCategory    @relation(fields: [mediaCategoryId], references: [id])
+  mediaCategoryId String?
+  mediaCategory   MediaCategory?   @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
   templateId      String
   template        PromptTemplate   @relation(fields: [templateId], references: [id])
   status          ItemStatus       @default(PENDING)

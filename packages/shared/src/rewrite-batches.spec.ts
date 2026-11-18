@@ -55,6 +55,12 @@ describe('rewrite-batches shared validation & candidate parsing', () => {
     const withInternal = parseBatchLinkList('http://127.0.0.1/secret\nhttp://169.254.169.254/meta');
     expect(withInternal.candidates).toHaveLength(0);
     expect(withInternal.invalidLines.map((i) => i.line)).toEqual([1, 2]);
+
+    const malformed = parseBatchLinkList('https://news.example.org/ok\nnot-a-valid-url');
+    expect(malformed.invalidLines).toHaveLength(1);
+    expect(malformed.invalidLines[0]?.line).toBe(2);
+    expect(malformed.invalidLines[0]?.reason).toContain('链接格式不正确');
+    expect(malformed.invalidLines[0]?.reason).not.toContain('Failed to construct');
   });
 
   it('enforces max 50 unique links on link_list mode and reports exact invalid line number', () => {

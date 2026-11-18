@@ -450,7 +450,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
     batchId: string;
     batchName: string;
     categoryId: string;
-    mediaCategoryId: string;
+    mediaCategoryId: string | null;
     templateContent: string;
     brandHint: string;
     recordId: string;
@@ -565,7 +565,9 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
             : {}),
         };
 
-        const imageCount = batchRewriteImageCountForText(extracted.charCount);
+        const imageCount = input.mediaCategoryId
+          ? batchRewriteImageCountForText(extracted.charCount)
+          : 0;
 
         // Atomically persist Article + RewriteRecord + increment doneCount ONLY if doneCount < maxCount
         const committed = await this.prisma.base.$transaction(async (tx) => {
@@ -597,28 +599,35 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
             return false;
           }
 
-          const assets = await tx.$queryRaw<Array<{ id: string; url: string }>>`
-            SELECT id, url
-            FROM "MediaAsset"
-            WHERE "tenantId" = ${input.tenantId} AND "categoryId" = ${input.mediaCategoryId}
-            ORDER BY "usedCount" ASC, "createdAt" ASC
-            LIMIT ${imageCount}
-            FOR UPDATE
-          `;
+          let finalContentHtml = best.contentHtml;
+          let coverUrl: string | null = null;
+          if (input.mediaCategoryId && imageCount > 0) {
+            const assets = await tx.$queryRaw<Array<{ id: string; url: string }>>`
+              SELECT id, url
+              FROM "MediaAsset"
+              WHERE "tenantId" = ${input.tenantId} AND "categoryId" = ${input.mediaCategoryId}
+              ORDER BY "usedCount" ASC, "createdAt" ASC
+              LIMIT ${imageCount}
+              FOR UPDATE
+            `;
 
-          const injected = injectGalleryImages({
-            contentHtml: best.contentHtml,
-            assets,
-            title: best.newTitle,
-            imageCount,
-            coverWhenNoImage: true,
-          });
-
-          if (injected.usedAssetIds.length > 0) {
-            await tx.mediaAsset.updateMany({
-              where: { id: { in: injected.usedAssetIds }, tenantId: input.tenantId },
-              data: { usedCount: { increment: 1 } },
+            const injected = injectGalleryImages({
+              contentHtml: best.contentHtml,
+              assets,
+              title: best.newTitle,
+              imageCount,
+              coverWhenNoImage: true,
             });
+
+            finalContentHtml = injected.contentHtml;
+            coverUrl = injected.coverUrl;
+
+            if (injected.usedAssetIds.length > 0) {
+              await tx.mediaAsset.updateMany({
+                where: { id: { in: injected.usedAssetIds }, tenantId: input.tenantId },
+                data: { usedCount: { increment: 1 } },
+              });
+            }
           }
 
           const article = await tx.article.create({
@@ -626,9 +635,9 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
               tenantId: input.tenantId,
               categoryId: input.categoryId,
               title: best.newTitle,
-              contentHtml: injected.contentHtml,
+              contentHtml: finalContentHtml,
               contentText: best.contentText,
-              coverUrl: injected.coverUrl,
+              coverUrl,
               status: 'PENDING',
               source: 'REWRITE_BATCH',
               sourceUrl: input.url,

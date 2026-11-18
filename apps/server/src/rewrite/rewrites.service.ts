@@ -299,22 +299,33 @@ export class RewritesService {
     const tenantId = requireTenant();
     await ensureBuiltInSystemTemplates(this.prisma);
 
-    // 1. Validate mediaCategory + available gallery images
-    const mediaCat = await this.prisma.base.mediaCategory.findFirst({
-      where: { id: input.mediaCategoryId, tenantId },
-      select: { id: true, name: true },
-    });
-    if (!mediaCat) {
-      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选配图分类不存在');
-    }
-    const assetCount = await this.prisma.base.mediaAsset.count({
-      where: { tenantId, categoryId: mediaCat.id },
-    });
-    if (assetCount < 1) {
+    // 1. Validate optional mediaCategory + available gallery images (required when imageCount > 0)
+    let mediaCat: { id: string; name: string } | null = null;
+    if (input.mediaCategoryId) {
+      mediaCat = await this.prisma.base.mediaCategory.findFirst({
+        where: { id: input.mediaCategoryId, tenantId },
+        select: { id: true, name: true },
+      });
+      if (!mediaCat) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选配图分类不存在');
+      }
+      if (input.imageCount > 0) {
+        const assetCount = await this.prisma.base.mediaAsset.count({
+          where: { tenantId, categoryId: mediaCat.id },
+        });
+        if (assetCount < 1) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            '所选配图分类下暂无可用图片，请先前往企业图库上传图片或将配图张数设为 0',
+          );
+        }
+      }
+    } else if (input.imageCount > 0) {
       throw new ApiError(
         400,
         API_ERROR.BAD_REQUEST,
-        '所选配图分类下暂无可用图片，请先前往企业图库上传图片',
+        '请选择文章配图的企业图库分类（不配图时请将配图张数设为 0）',
       );
     }
 
@@ -415,7 +426,7 @@ export class RewritesService {
         pastedText: input.pastedText,
         sourceTitle: input.pastedText && input.pastedTitle ? input.pastedTitle.trim() : null,
         categoryId: input.categoryId,
-        mediaCategoryId: mediaCat.id,
+        mediaCategoryId: mediaCat?.id ?? null,
         templateId: template.id,
         status: 'RUNNING',
       },
@@ -588,29 +599,36 @@ export class RewritesService {
           }
         }
 
-        const fetchLimit = Math.max(1, input.imageCount);
-        const assets = await tx.$queryRaw<Array<{ id: string; url: string }>>`
-          SELECT id, url
-          FROM "MediaAsset"
-          WHERE "tenantId" = ${tenantId} AND "categoryId" = ${mediaCat.id}
-          ORDER BY "usedCount" ASC, "createdAt" ASC
-          LIMIT ${fetchLimit}
-          FOR UPDATE
-        `;
+        let finalContentHtml = best.contentHtml;
+        let coverUrl: string | null = null;
+        if (mediaCat && input.imageCount > 0) {
+          const fetchLimit = Math.max(1, input.imageCount);
+          const assets = await tx.$queryRaw<Array<{ id: string; url: string }>>`
+            SELECT id, url
+            FROM "MediaAsset"
+            WHERE "tenantId" = ${tenantId} AND "categoryId" = ${mediaCat.id}
+            ORDER BY "usedCount" ASC, "createdAt" ASC
+            LIMIT ${fetchLimit}
+            FOR UPDATE
+          `;
 
-        const injected = injectGalleryImages({
-          contentHtml: best.contentHtml,
-          assets,
-          title: best.newTitle,
-          imageCount: input.imageCount,
-          coverWhenNoImage: true,
-        });
-
-        if (injected.usedAssetIds.length > 0) {
-          await tx.mediaAsset.updateMany({
-            where: { id: { in: injected.usedAssetIds }, tenantId },
-            data: { usedCount: { increment: 1 } },
+          const injected = injectGalleryImages({
+            contentHtml: best.contentHtml,
+            assets,
+            title: best.newTitle,
+            imageCount: input.imageCount,
+            coverWhenNoImage: true,
           });
+
+          finalContentHtml = injected.contentHtml;
+          coverUrl = injected.coverUrl;
+
+          if (injected.usedAssetIds.length > 0) {
+            await tx.mediaAsset.updateMany({
+              where: { id: { in: injected.usedAssetIds }, tenantId },
+              data: { usedCount: { increment: 1 } },
+            });
+          }
         }
 
         const article = await tx.article.create({
@@ -618,9 +636,9 @@ export class RewritesService {
             tenantId,
             categoryId: targetCategoryId,
             title: best.newTitle,
-            contentHtml: injected.contentHtml,
+            contentHtml: finalContentHtml,
             contentText: best.contentText,
-            coverUrl: injected.coverUrl,
+            coverUrl,
             status: input.resultStatus,
             source: 'REWRITE_SINGLE',
             sourceUrl: canonicalUrl.startsWith('paste://') ? null : canonicalUrl,

@@ -5,6 +5,7 @@ import type { INestApplication } from '@nestjs/common';
 import {
   AUTH_ERROR,
   resolveFetchSettings,
+  rewriteSingleCreateSchema,
   type ArticleDetailRecord,
   type RewriteRecordItem,
   type RewriteRecordListResponse,
@@ -138,6 +139,28 @@ describe('rewrites routes without a database', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  it('validates rewriteSingleCreateSchema with 0 images without gallery and requires gallery when imageCount > 0', () => {
+    const noImageParsed = rewriteSingleCreateSchema.safeParse({
+      url: 'https://news.example.org/a',
+      mediaCategoryId: null,
+      imageCount: 0,
+      templateId: 'sys_rewrite_01',
+    });
+    expect(noImageParsed.success).toBe(true);
+    if (noImageParsed.success) {
+      expect(noImageParsed.data.mediaCategoryId).toBeNull();
+      expect(noImageParsed.data.imageCount).toBe(0);
+    }
+
+    const withImagesNoGallery = rewriteSingleCreateSchema.safeParse({
+      url: 'https://news.example.org/a',
+      mediaCategoryId: null,
+      imageCount: 2,
+      templateId: 'sys_rewrite_01',
+    });
+    expect(withImagesNoGallery.success).toBe(false);
   });
 
   it('rejects anonymous list, check-url, and create requests', async () => {
@@ -567,6 +590,34 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       expect(csvRes.status).toBe(200);
       expect(csvRes.contentType).toContain('text/csv');
       expect(csvRes.raw.toString('utf8')).toContain('复刻新标题');
+
+      // 10. 0-image rewrite without gallery succeeds with no <img> tags and null coverUrl
+      const noImgRes = await httpCall<RewriteSingleCreateResponse>(
+        ctx.base,
+        'POST',
+        '/api/v1/rewrites',
+        {
+          token: merchant.token,
+          body: {
+            url: 'https://mp.weixin.qq.com/wechat-sensor?zero=1',
+            mediaCategoryId: null,
+            imageCount: 0,
+            templateId: 'sys_rewrite_01',
+            categoryId: customCat.id,
+          },
+        },
+      );
+      expect(noImgRes.status).toBe(200);
+      expect(noImgRes.data.record.mediaCategoryId).toBeNull();
+      const noImgArticle = await httpCall<ArticleDetailRecord>(
+        ctx.base,
+        'GET',
+        `/api/v1/articles/${noImgRes.data.record.articleId}`,
+        { token: merchant.token },
+      );
+      expect(noImgArticle.status).toBe(200);
+      expect(noImgArticle.data.coverUrl).toBeNull();
+      expect(noImgArticle.data.contentHtml).not.toMatch(/<img\b/i);
     });
   },
 );

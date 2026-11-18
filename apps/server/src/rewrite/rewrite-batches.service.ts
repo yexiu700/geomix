@@ -354,23 +354,26 @@ export class RewriteBatchesService {
       );
     }
 
-    // 1. Validate gallery category & available images
-    const mediaCat = await this.prisma.base.mediaCategory.findFirst({
-      where: { id: parsed.mediaCategoryId, tenantId },
-      select: { id: true },
-    });
-    if (!mediaCat) {
-      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选配图分类不存在');
-    }
-    const assetCount = await this.prisma.base.mediaAsset.count({
-      where: { tenantId, categoryId: mediaCat.id },
-    });
-    if (assetCount < 1) {
-      throw new ApiError(
-        400,
-        API_ERROR.BAD_REQUEST,
-        '所选配图分类下暂无可用图片，请先上传至少 1 张企业图库配图',
-      );
+    // 1. Validate optional gallery category & available images (null = 0 images, no source-site images)
+    let mediaCat: { id: string } | null = null;
+    if (parsed.mediaCategoryId) {
+      mediaCat = await this.prisma.base.mediaCategory.findFirst({
+        where: { id: parsed.mediaCategoryId, tenantId },
+        select: { id: true },
+      });
+      if (!mediaCat) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选配图分类不存在');
+      }
+      const assetCount = await this.prisma.base.mediaAsset.count({
+        where: { tenantId, categoryId: mediaCat.id },
+      });
+      if (assetCount < 1) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '所选配图分类下暂无可用图片，请先上传至少 1 张企业图库配图，或选择「不配图（0 张）」',
+        );
+      }
     }
 
     // 2. Validate REWRITE prompt template
@@ -442,7 +445,7 @@ export class RewriteBatchesService {
         sourceType: parsed.sourceType,
         linkList: canonicalLinks,
         categoryId,
-        mediaCategoryId: mediaCat.id,
+        mediaCategoryId: mediaCat?.id ?? null,
         templateId: template.id,
         status: 'QUEUED',
       },

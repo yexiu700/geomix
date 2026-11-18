@@ -7,6 +7,7 @@ import { NestFactory } from '@nestjs/core';
 import {
   API_ERROR,
   REWRITE_BATCH_URL_AS_KEYWORD_MSG,
+  rewriteBatchCreateSchema,
   type RewriteBatchDetailResponse,
   type RewriteBatchListResponse,
 } from '@geomix/shared';
@@ -130,6 +131,21 @@ describe('rewrite-batches routes without a database', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  it('validates rewriteBatchCreateSchema with nullable mediaCategoryId for 0-image batch rewrites', () => {
+    const parsed = rewriteBatchCreateSchema.safeParse({
+      name: '无图批量复刻测试',
+      maxCount: 2,
+      sourceType: 'link_list',
+      linksText: 'https://news.example.org/p1',
+      mediaCategoryId: null,
+      templateId: 'sys_rewrite_01',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.mediaCategoryId).toBeNull();
+    }
   });
 
   it('rejects anonymous list, detail, create, pause, resume, cancel, and delete calls', async () => {

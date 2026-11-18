@@ -182,6 +182,7 @@ export function ModuleScreen({
         <RewriteSingleScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />
@@ -195,6 +196,7 @@ export function ModuleScreen({
         <RewriteBatchScreen
           title={tab.title}
           tabId={tab.id}
+          active={active}
           readOnly={readOnly}
           onDispatch={onDispatch}
         />

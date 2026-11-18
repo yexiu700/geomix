@@ -321,4 +321,122 @@ describe('RewriteBatchScreen', () => {
       templateId: 'sys_rewrite_01',
     });
   });
+
+  it('navigates cleanly on 管理图库 / 管理指令 / 管理分类 without unsaved confirm, loads existing categories, and supports 0-image submission when gallery is empty', async () => {
+    const dispatched: ShellAction[] = [];
+    const { gateway, submitted } = makeGateway([]);
+    gateway.loadFormOptions = vi.fn(async () => ({
+      ...makeOptions(),
+      categories: [
+        {
+          id: 'cat_existing_b1',
+          name: '已有批量专栏分类',
+          total: 5,
+          remaining: 2,
+          createdAt: '2026-11-17T08:00:00.000Z',
+        },
+      ],
+      mediaCategories: [],
+    }));
+
+    render(
+      <RewriteBatchScreen
+        title="批量爆文复刻"
+        tabId="/rewrite/batch"
+        pollIntervalMs={0}
+        gateway={gateway}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(findButton('新建批量复刻')).toBeTruthy();
+    });
+
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(screen.getByText('新建批量爆文复刻任务')).toBeTruthy();
+    });
+
+    // Make draft dirty, then click 管理指令 -> navigates directly without triggering unsaved confirm
+    fireEvent.change(screen.getByLabelText('任务名称'), { target: { value: '草稿测试' } });
+    fireEvent.click(findButton('管理指令'));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/writing/prompts',
+      sourceId: '/rewrite/batch',
+    });
+    expect(screen.queryByText('放弃未提交的批量复刻草稿？')).toBeNull();
+
+    // Reopen and verify 管理图库 & 管理分类 & 0-image submission with existing category
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(findButton('管理图库')).toBeTruthy();
+    });
+    fireEvent.click(findButton('管理图库'));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/material/gallery',
+      sourceId: '/rewrite/batch',
+    });
+
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(findButton('管理分类')).toBeTruthy();
+    });
+    fireEvent.click(findButton('管理分类'));
+    expect(dispatched).toContainEqual({
+      type: 'open',
+      href: '/writing/categories',
+      sourceId: '/rewrite/batch',
+    });
+
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('归档文章分类')).toBeTruthy();
+    });
+
+    // Empty submit triggers unified synchronous validation in ONE place (CrudModal footer only, no duplicate top alert)
+    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻5点）'));
+    await waitFor(() => {
+      const errNodes = screen.getAllByText(/请填写任务名称/);
+      expect(errNodes).toHaveLength(1);
+      expect(errNodes[0]?.textContent).toContain('请至少粘贴 1 条公开文章链接');
+      expect(errNodes[0]?.textContent).toContain('请选择爆文改写指令');
+    });
+
+    // Malformed URL shows Chinese message instead of raw JS TypeError
+    fireEvent.change(screen.getByLabelText('公开文章链接清单'), {
+      target: { value: 'not-a-valid-url' },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/第 1 行：链接格式不正确/)).toBeTruthy();
+      expect(screen.queryByText(/Failed to construct/)).toBeNull();
+    });
+
+    const catSelect = screen.getByLabelText('归档文章分类') as HTMLSelectElement;
+    expect(Array.from(catSelect.options).some((o) => o.textContent === '已有批量专栏分类')).toBe(
+      true,
+    );
+    fireEvent.change(catSelect, { target: { value: 'cat_existing_b1' } });
+    fireEvent.change(screen.getByLabelText('任务名称'), { target: { value: '无图批量复刻测试' } });
+    fireEvent.change(screen.getByLabelText('公开文章链接清单'), {
+      target: { value: 'https://news.example.org/no-img-1' },
+    });
+    fireEvent.change(screen.getByLabelText('爆文改写指令'), {
+      target: { value: 'sys_rewrite_01' },
+    });
+
+    fireEvent.click(findButton('开始批量复刻（5点数/篇，预冻5点）'));
+
+    await waitFor(() => {
+      expect(submitted).toHaveLength(1);
+    });
+    expect(submitted[0]).toMatchObject({
+      name: '无图批量复刻测试',
+      mediaCategoryId: null,
+      categoryId: 'cat_existing_b1',
+      templateId: 'sys_rewrite_01',
+    });
+  });
 });
