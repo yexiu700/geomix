@@ -47,6 +47,7 @@ export async function postJson<T>(
   path: string,
   body: unknown,
   token?: string,
+  options?: { signal?: AbortSignal },
 ): Promise<Envelope<T>> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -54,6 +55,7 @@ export async function postJson<T>(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal: options?.signal,
   });
   return readEnvelope<T>(response);
 }
