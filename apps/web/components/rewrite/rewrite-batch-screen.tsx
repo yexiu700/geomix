@@ -59,6 +59,7 @@ import {
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_BATCH_MAX_COUNT = 1;
@@ -247,7 +248,6 @@ export function RewriteBatchScreen({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerDetail, setDrawerDetail] = useState<RewriteBatchDetailResponse | null>(null);
-  const wasActiveRef = useRef(active);
   const drawerStateRef = useRef<{ open: boolean; detail: RewriteBatchDetailResponse | null }>({
     open: false,
     detail: null,
@@ -329,12 +329,13 @@ export function RewriteBatchScreen({
     void loadOptions();
   }, [loadOptions]);
 
-  useEffect(() => {
-    if (!wasActiveRef.current && active) {
+  useTabFreshness({
+    active,
+    domains: ['categories', 'gallery', 'prompts', 'points'],
+    onRefresh: () => {
       void loadOptions();
-    }
-    wasActiveRef.current = active;
-  }, [active, loadOptions]);
+    },
+  });
 
   useEffect(() => {
     if (!active || tabId !== '/rewrite/batch' || typeof window === 'undefined') return;
@@ -507,6 +508,7 @@ export function RewriteBatchScreen({
       setFeedbackMsg(
         `批量复刻任务「${created.batch.name}」已入队（预冻 ${created.batch.reservedPoints} 点数，按实际成功篇数结算并自动退差额）`,
       );
+      invalidateFreshness('articles', 'categories', 'points');
       setDrawerDetail(created);
       setDrawerOpen(true);
       await Promise.all([
@@ -1110,7 +1112,10 @@ export function RewriteBatchScreen({
             setModalState((prev) => (prev ? { ...prev, draft: prev.initial } : null));
           }}
           onMinimize={() => setModalState((prev) => (prev ? { ...prev, minimized: true } : null))}
-          onRestore={() => setModalState((prev) => (prev ? { ...prev, minimized: false } : null))}
+          onRestore={() => {
+            setModalState((prev) => (prev ? { ...prev, minimized: false } : null));
+            void loadOptions();
+          }}
           onMaximize={() =>
             setModalState((prev) => (prev ? { ...prev, maximized: !prev.maximized } : null))
           }

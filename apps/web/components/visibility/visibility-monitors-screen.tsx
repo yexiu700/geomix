@@ -66,6 +66,7 @@ import {
   triggerBlobDownload,
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import {
   createVisibilityIdempotencyKey,
   httpVisibilityGateway,
@@ -338,6 +339,7 @@ export function VisibilityMonitorsScreen({
   title,
   tabId,
   href,
+  active = true,
   readOnly = false,
   featureEnabled = true,
   storage,
@@ -349,6 +351,7 @@ export function VisibilityMonitorsScreen({
   title: string;
   tabId?: string;
   href?: string;
+  active?: boolean;
   readOnly?: boolean;
   featureEnabled?: boolean;
   storage?: SessionStorageLike;
@@ -514,6 +517,15 @@ export function VisibilityMonitorsScreen({
   useEffect(() => {
     void loadMeta();
   }, [loadMeta]);
+
+  useTabFreshness({
+    active,
+    domains: ['keywords', 'knowledge', 'visibility-profiles', 'visibility-runs', 'points'],
+    onRefresh: () => {
+      void loadMeta();
+      setReloadTick((n) => n + 1);
+    },
+  });
 
   // Load runs list when query or reloadTick changes
   useEffect(() => {
@@ -724,6 +736,7 @@ export function VisibilityMonitorsScreen({
       minimized: false,
       maximized: false,
     });
+    void loadMeta();
   }
 
   function openEditProfileModal(profile: VisibilityProfileRecord) {
@@ -738,6 +751,7 @@ export function VisibilityMonitorsScreen({
       minimized: false,
       maximized: false,
     });
+    void loadMeta();
   }
 
   function applyKeywordPrefill(keywordId: string) {
@@ -947,6 +961,7 @@ export function VisibilityMonitorsScreen({
         }
       }
 
+      invalidateFreshness('visibility-profiles');
       setProfileModal(null);
       setProfileFieldErrors({});
       setProfileTouched({});
@@ -972,6 +987,7 @@ export function VisibilityMonitorsScreen({
         setQuery((curr) => ({ ...curr, page: 1, profileId: undefined }));
       }
       setDeleteProfileTarget(null);
+      invalidateFreshness('visibility-profiles');
       setBanner({ type: 'success', text: `已删除监测档案「${removedName}」` });
     } catch (err) {
       setBanner({
@@ -1009,6 +1025,7 @@ export function VisibilityMonitorsScreen({
       minimized: false,
       maximized: false,
     });
+    void loadMeta();
   }
 
   function patchRunDraft(updater: (prev: RunCreateDraft) => RunCreateDraft) {
@@ -1089,6 +1106,7 @@ export function VisibilityMonitorsScreen({
         text: `已发起监测任务「${created.name}」，共 ${created.totalChecks} 次检测（预冻 ${created.frozenPoints ?? created.totalChecks * created.unitPrice} 点数）`,
       });
       setReloadTick((n) => n + 1);
+      invalidateFreshness('visibility-runs', 'points');
       void loadMeta();
     } catch (err) {
       setRunModalError(err instanceof Error ? err.message : '发起监测任务失败');
@@ -1154,6 +1172,7 @@ export function VisibilityMonitorsScreen({
       setDeleteRunIds(null);
       setBanner({ type: 'success', text: `已删除 ${res.deleted} 条监测任务记录` });
       setReloadTick((n) => n + 1);
+      invalidateFreshness('visibility-runs', 'points');
       void loadMeta();
     } catch (err) {
       setBanner({ type: 'error', text: err instanceof Error ? err.message : '删除监测任务失败' });
@@ -2103,7 +2122,10 @@ export function VisibilityMonitorsScreen({
         confirmLoading={profileSubmitting}
         error={profileModalError}
         onMinimize={() => setProfileModal((curr) => (curr ? { ...curr, minimized: true } : curr))}
-        onRestore={() => setProfileModal((curr) => (curr ? { ...curr, minimized: false } : curr))}
+        onRestore={() => {
+          setProfileModal((curr) => (curr ? { ...curr, minimized: false } : curr));
+          void loadMeta();
+        }}
         onMaximize={() =>
           setProfileModal((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }
@@ -2540,7 +2562,10 @@ export function VisibilityMonitorsScreen({
         confirmLoading={runSubmitting}
         error={runModalError}
         onMinimize={() => setRunModal((curr) => (curr ? { ...curr, minimized: true } : curr))}
-        onRestore={() => setRunModal((curr) => (curr ? { ...curr, minimized: false } : curr))}
+        onRestore={() => {
+          setRunModal((curr) => (curr ? { ...curr, minimized: false } : curr));
+          void loadMeta();
+        }}
         onMaximize={() =>
           setRunModal((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }

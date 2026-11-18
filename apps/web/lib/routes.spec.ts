@@ -1,13 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MENU,
   STATIC_ROUTES,
   buildMenu,
   collectHrefs,
+  isCommandPaletteRoute,
   isConsoleRouteAccessible,
   matchRoute,
   menuSelection,
 } from './routes';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('console routes', () => {
   it('hides /workbench/samples from merchant menu and nests AI生图 inside AI创作-文章&素材', () => {
@@ -38,17 +43,43 @@ describe('console routes', () => {
     expect(collectHrefs(buildMenu({ aiImageEnabled: false })).includes('/image')).toBe(false);
     expect(isConsoleRouteAccessible('/workbench/samples', 'MERCHANT')).toBe(false);
     expect(isConsoleRouteAccessible('/workbench/samples', 'ADMIN')).toBe(true);
+
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(isConsoleRouteAccessible('/workbench/samples', 'ADMIN')).toBe(false);
+    expect(isCommandPaletteRoute('/workbench/samples', 'ADMIN')).toBe(false);
+    expect(isCommandPaletteRoute('/workbench/samples', 'MERCHANT')).toBe(false);
   });
 
-  it('hides aidata and visibility sections when visibilityEnabled is false', () => {
+  it('flattens single-child visibility sections and converges disabled soon items (#134)', () => {
+    // No disabled 'soon' items in main MENU
+    const hasSoon = (items: typeof MENU): boolean =>
+      items.some(
+        (item) =>
+          item.type === 'soon' ||
+          ((item.type === 'section' || item.type === 'submenu') && hasSoon(item.children)),
+      );
+    expect(hasSoon(MENU)).toBe(false);
+
+    // Visibility items are flattened to single-level links without duplicate group titles
+    expect(MENU.some((item) => item.type === 'link' && item.href === '/visibility/overview')).toBe(
+      true,
+    );
+    expect(MENU.some((item) => item.type === 'link' && item.href === '/visibility/monitors')).toBe(
+      true,
+    );
+    expect(MENU.some((item) => item.type === 'section' && item.key === 'visibility')).toBe(false);
+    expect(MENU.some((item) => item.type === 'section' && item.key === 'aidata')).toBe(false);
+  });
+
+  it('hides visibility links and command palette entries when visibilityEnabled is false', () => {
     const filtered = buildMenu({ visibilityEnabled: false });
     const hrefs = collectHrefs(filtered);
     expect(hrefs).not.toContain('/visibility/overview');
     expect(hrefs).not.toContain('/visibility/monitors');
-    expect(filtered.some((item) => item.type === 'section' && item.key === 'aidata')).toBe(false);
-    expect(filtered.some((item) => item.type === 'section' && item.key === 'visibility')).toBe(
-      false,
-    );
+    expect(
+      isCommandPaletteRoute('/visibility/monitors', 'MERCHANT', { visibilityEnabled: false }),
+    ).toBe(false);
+    expect(isCommandPaletteRoute('/image', 'MERCHANT', { aiImageEnabled: false })).toBe(false);
   });
 
   it('canonicalizes query tabs and gallery detail', () => {

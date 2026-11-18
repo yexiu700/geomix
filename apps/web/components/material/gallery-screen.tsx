@@ -31,6 +31,7 @@ import {
   triggerBlobDownload,
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
 
@@ -208,6 +209,7 @@ export function GalleryCategoryScreen({
         await gateway.createCategory(parsed.data);
       }
       setModalOpen(false);
+      invalidateFreshness('gallery');
       await load();
     } catch (err) {
       setModalError(err instanceof Error ? err.message : '保存分类失败');
@@ -223,6 +225,7 @@ export function GalleryCategoryScreen({
       await gateway.deleteCategories(pendingDeleteIds);
       setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
       setPendingDeleteIds(null);
+      invalidateFreshness('gallery');
       await load();
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : '删除分类失败');
@@ -613,6 +616,7 @@ export function GalleryAssetScreen({
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(GALLERY_MUTATED_EVENT, { detail: { categoryId } }));
       }
+      invalidateFreshness('gallery');
       void load();
     } catch (err) {
       setUploadStatus('error');
@@ -628,6 +632,7 @@ export function GalleryAssetScreen({
       await gateway.deleteAssets(pendingDeleteIds);
       setSelectedIds((prev) => prev.filter((id) => !pendingDeleteIds.includes(id)));
       setPendingDeleteIds(null);
+      invalidateFreshness('gallery');
       await load();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(GALLERY_MUTATED_EVENT, { detail: { categoryId } }));

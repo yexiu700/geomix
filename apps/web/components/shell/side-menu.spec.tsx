@@ -115,4 +115,23 @@ describe('SideMenu submenu popup lifecycle & openKeys isolation (#131)', () => {
     // 素材源力 should remain expanded instead of being wiped by 个人中心's onOpenChange
     expect(screen.getByText('关键词')).toBeTruthy();
   });
+
+  it('renders single-level visibility entries with no disabled placeholder menu items (#134)', () => {
+    const onDispatch = vi.fn();
+    render(
+      <SideMenu
+        activeHref="/dashboard"
+        collapsed={false}
+        prefs={defaultPrefs()}
+        onDispatch={onDispatch}
+      />,
+    );
+
+    expect(document.querySelectorAll('.ant-menu-item-disabled')).toHaveLength(0);
+    expect(screen.getAllByRole('menuitem', { name: 'AI可见度诊断' })).toHaveLength(1);
+    expect(screen.getAllByRole('menuitem', { name: 'AI数据看板' })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: '更多功能敬请期待' }));
+    expect(screen.getByText('二期功能规划 · 敬请期待')).toBeTruthy();
+  });
 });

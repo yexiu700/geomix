@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import type { AiTaskDetailRecord, AiTaskRecord, PromptTemplateRecord } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiTaskFormOptions, AiTaskGateway } from '../../lib/ai-tasks';
+import { invalidateFreshness, resetFreshnessForTests } from '../../lib/tab-freshness';
 import type { ShellAction } from '../../lib/tab-stack';
 import { AiTaskScreen } from './ai-task-screen';
 
@@ -534,6 +535,90 @@ describe('AiTaskScreen', () => {
       titleTplId: null,
       resultStatus: 'PENDING',
       target: 5,
+    });
+  });
+
+  it('refreshes open modal dropdown options automatically when switching back to /writing/tasks tab (#215)', async () => {
+    resetFreshnessForTests();
+    const baseOptions = makeFormOptions();
+    let keywordAdded = false;
+
+    const gateway: AiTaskGateway = {
+      list: vi.fn(async () => ({ items: [makeTaskRow()], total: 1, page: 1, pageSize: 10 })),
+      detail: vi.fn(),
+      create: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      cancel: vi.fn(),
+      bulkDelete: vi.fn(),
+      download: vi.fn(),
+      loadFormOptions: vi.fn(async () => ({
+        ...baseOptions,
+        keywords: keywordAdded
+          ? [
+              ...baseOptions.keywords,
+              {
+                id: 'kw_new',
+                main: 'Anker氮化镓充电器',
+                brands: ['Anker'],
+                optStatus: 'NONE' as const,
+                questionCount: 4,
+                createdAt: '2026-11-18T00:00:00.000Z',
+                updatedAt: '2026-11-18T00:00:00.000Z',
+              },
+            ]
+          : baseOptions.keywords,
+      })),
+    };
+
+    const view = render(
+      <AiTaskScreen
+        title="AI写作任务"
+        tabId="/writing/tasks"
+        active={true}
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('十篇激光选型计划')).toBeTruthy();
+    });
+
+    fireEvent.click(findButton('添加'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('蒸馏训练词')).toBeTruthy();
+    });
+    expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).textContent).not.toContain(
+      'Anker氮化镓充电器',
+    );
+
+    // Switch away, mutate keyword in another tab, switch back
+    view.rerender(
+      <AiTaskScreen
+        title="AI写作任务"
+        tabId="/writing/tasks"
+        active={false}
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+    keywordAdded = true;
+    invalidateFreshness('keywords');
+    view.rerender(
+      <AiTaskScreen
+        title="AI写作任务"
+        tabId="/writing/tasks"
+        active={true}
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).textContent).toContain(
+        'Anker氮化镓充电器',
+      );
     });
   });
 });

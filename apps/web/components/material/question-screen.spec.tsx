@@ -277,4 +277,75 @@ describe('QuestionScreen', () => {
       expect(screen.queryByRole('dialog', { name: '编辑写作标题' })).toBeNull();
     });
   });
+
+  it('refreshes keyword dropdown when returning to /material/questions tab (#215)', async () => {
+    const gateway = createGatewayMock();
+    let added = false;
+    gateway.listKeywords = async () => [
+      {
+        id: 'kw_1',
+        main: '工业机器人',
+        brands: ['星图'],
+        optStatus: 'NONE',
+        questionCount: 2,
+        createdAt: '2026-11-13T00:00:00.000Z',
+        updatedAt: '2026-11-13T00:00:00.000Z',
+      },
+      ...(added
+        ? [
+            {
+              id: 'kw_3',
+              main: 'Anker氮化镓充电器',
+              brands: ['Anker'],
+              optStatus: 'NONE' as const,
+              questionCount: 0,
+              createdAt: '2026-11-18T00:00:00.000Z',
+              updatedAt: '2026-11-18T00:00:00.000Z',
+            },
+          ]
+        : []),
+    ];
+
+    const view = render(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        active={true}
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('工业机器人哪家服务好？');
+
+    view.rerender(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        active={false}
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+    added = true;
+    view.rerender(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        active={true}
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await clickBtn('添加');
+    const keywordSelect = screen.getByRole('combobox', { name: '蒸馏主词' });
+    fireEvent.mouseDown(keywordSelect);
+    await waitFor(() => {
+      expect(screen.getByText('Anker氮化镓充电器')).toBeTruthy();
+    });
+  });
 });

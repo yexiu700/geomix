@@ -1,0 +1,113 @@
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  invalidateFreshness,
+  resetFreshnessForTests,
+  useTabFreshness,
+  type FreshnessDomain,
+  type FreshnessRefreshReason,
+} from './tab-freshness';
+
+function Probe({
+  active,
+  domains,
+  refreshOnActivate = true,
+  onRefresh,
+}: {
+  active: boolean;
+  domains: FreshnessDomain[];
+  refreshOnActivate?: boolean;
+  onRefresh: (reason: FreshnessRefreshReason) => void;
+}) {
+  useTabFreshness({ active, domains, refreshOnActivate, onRefresh });
+  return createElement('div', { 'data-testid': 'probe' }, active ? 'active' : 'inactive');
+}
+
+describe('useTabFreshness (#215)', () => {
+  beforeEach(() => {
+    resetFreshnessForTests();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('does not trigger extra refresh on initial mount and refreshes on tab re-activation', async () => {
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      createElement(Probe, { active: true, domains: ['keywords'], onRefresh }),
+    );
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    rerender(createElement(Probe, { active: false, domains: ['keywords'], onRefresh }));
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    rerender(createElement(Probe, { active: true, domains: ['keywords'], onRefresh }));
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+    expect(onRefresh).toHaveBeenCalledWith('activated');
+  });
+
+  it('queues background domain invalidations while inactive and flushes on activation', async () => {
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      createElement(Probe, {
+        active: false,
+        domains: ['keywords', 'knowledge'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+
+    // Unrelated domain should not trigger refresh
+    invalidateFreshness('prompts');
+    rerender(
+      createElement(Probe, {
+        active: true,
+        domains: ['keywords', 'knowledge'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // Switch back to inactive, then mutate a subscribed domain
+    rerender(
+      createElement(Probe, {
+        active: false,
+        domains: ['keywords', 'knowledge'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+    invalidateFreshness('knowledge');
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    // Reactivate -> flushes dirty state
+    rerender(
+      createElement(Probe, {
+        active: true,
+        domains: ['keywords', 'knowledge'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('probe').textContent).toBe('active');
+  });
+
+  it('refreshes immediately when an invalidation arrives while tab is active', () => {
+    const onRefresh = vi.fn();
+    render(createElement(Probe, { active: true, domains: ['gallery'], onRefresh }));
+
+    invalidateFreshness('gallery');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledWith('invalidated');
+  });
+});

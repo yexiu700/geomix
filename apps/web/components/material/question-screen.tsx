@@ -11,7 +11,7 @@ import {
   type QuestionRecord,
 } from '@geomix/shared';
 import { Alert, Button, Input, Modal, Select, Space, Tag, Typography } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
 import { QuestionApiError, httpQuestionGateway, type QuestionGateway } from '../../lib/questions';
@@ -21,6 +21,7 @@ import {
   triggerBlobDownload,
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 
 type BatchDraft = {
   keywordId: string;
@@ -46,6 +47,7 @@ export function QuestionScreen({
   title,
   tabId,
   href,
+  active = true,
   readOnly = false,
   gateway,
   onDispatch,
@@ -53,6 +55,7 @@ export function QuestionScreen({
   title: string;
   tabId: string;
   href?: string;
+  active?: boolean;
   readOnly?: boolean;
   gateway?: QuestionGateway;
   onDispatch?: (action: ShellAction) => void;
@@ -120,18 +123,27 @@ export function QuestionScreen({
     );
   }, [initialKeywordId]);
 
+  const loadKeywords = useCallback(async () => {
+    try {
+      const items = await client.listKeywords();
+      setKeywords(items);
+    } catch {
+      // keep existing keyword options if transient error occurs
+    }
+  }, [client]);
+
   useEffect(() => {
-    let active = true;
-    void client
-      .listKeywords()
-      .then((items) => {
-        if (active) setKeywords(items);
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [client, reloadKey]);
+    void loadKeywords();
+  }, [loadKeywords, reloadKey]);
+
+  useTabFreshness({
+    active,
+    domains: ['keywords', 'questions'],
+    onRefresh: () => {
+      void loadKeywords();
+      setReloadKey((v) => v + 1);
+    },
+  });
 
   useEffect(() => {
     let active = true;
@@ -170,6 +182,7 @@ export function QuestionScreen({
       minimized: false,
       maximized: false,
     });
+    void loadKeywords();
   }
 
   async function submitBatchAdd(): Promise<void> {
@@ -197,6 +210,7 @@ export function QuestionScreen({
         }`,
       );
       setReloadKey((v) => v + 1);
+      invalidateFreshness('questions', 'keywords');
     } catch (reason) {
       setFormError(messageOf(reason));
       noteLock(reason, setLocked);
@@ -223,6 +237,7 @@ export function QuestionScreen({
       setEditEditor(null);
       setNotice('已保存问题修改');
       setReloadKey((v) => v + 1);
+      invalidateFreshness('questions', 'keywords');
     } catch (reason) {
       setFormError(messageOf(reason));
       noteLock(reason, setLocked);
@@ -240,6 +255,7 @@ export function QuestionScreen({
       setConfirmDeleteIds(null);
       setNotice(`已删除 ${res.affected} 条写作标题，并同步释放写作问题配额`);
       setReloadKey((v) => v + 1);
+      invalidateFreshness('questions', 'keywords');
     } catch (reason) {
       setConfirmDeleteIds(null);
       setError(messageOf(reason));
@@ -500,7 +516,10 @@ export function QuestionScreen({
         maximized={addEditor?.maximized ?? false}
         confirmLoading={saving}
         onMinimize={() => setAddEditor((curr) => (curr ? { ...curr, minimized: true } : curr))}
-        onRestore={() => setAddEditor((curr) => (curr ? { ...curr, minimized: false } : curr))}
+        onRestore={() => {
+          setAddEditor((curr) => (curr ? { ...curr, minimized: false } : curr));
+          void loadKeywords();
+        }}
         onMaximize={() =>
           setAddEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }

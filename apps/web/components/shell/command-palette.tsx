@@ -3,7 +3,7 @@
 import { Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountProfile } from '../../lib/api';
-import { STATIC_ROUTES, isConsoleRouteAccessible } from '../../lib/routes';
+import { STATIC_ROUTES, isCommandPaletteRoute } from '../../lib/routes';
 import type { ShellAction, ShellSnapshot } from '../../lib/tab-stack';
 
 export type CommandPaletteProps = {
@@ -12,6 +12,8 @@ export type CommandPaletteProps = {
   role: AccountProfile['role'];
   tabs: ShellSnapshot['tabs'];
   activeId: string;
+  aiImageEnabled?: boolean;
+  visibilityEnabled?: boolean;
   onDispatch: (action: ShellAction) => void;
   onOpenLayout: () => void;
   onToggleMenu: () => void;
@@ -37,6 +39,8 @@ export function CommandPalette({
   role,
   tabs,
   activeId: _activeId,
+  aiImageEnabled = true,
+  visibilityEnabled = true,
   onDispatch,
   onOpenLayout,
   onToggleMenu,
@@ -50,7 +54,7 @@ export function CommandPalette({
 
   const allItems = useMemo<CommandItem[]>(() => {
     const pages: CommandItem[] = Object.entries(STATIC_ROUTES)
-      .filter(([href]) => isConsoleRouteAccessible(href, role))
+      .filter(([href]) => isCommandPaletteRoute(href, role, { aiImageEnabled, visibilityEnabled }))
       .map(([href, route]) => ({
         id: `page:${href}`,
         group: '页面',
@@ -95,7 +99,17 @@ export function CommandPalette({
     ];
 
     return [...pages, ...openTabs, ...actions];
-  }, [onChangePassword, onDispatch, onLogout, onOpenLayout, onToggleMenu, role, tabs]);
+  }, [
+    aiImageEnabled,
+    onChangePassword,
+    onDispatch,
+    onLogout,
+    onOpenLayout,
+    onToggleMenu,
+    role,
+    tabs,
+    visibilityEnabled,
+  ]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();

@@ -19,6 +19,7 @@ import {
 import { formatCompact, GM } from '../../lib/design-tokens';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
+import { useTabFreshness } from '../../lib/tab-freshness';
 import { httpVisibilityGateway } from '../../lib/visibility';
 import { GeoSignalStrip } from '../geo/geo-signal-strip';
 import { SignalPill, SignalSkeleton } from '../geo/primitives';
@@ -218,6 +219,7 @@ function TrendChartSvg({ days }: { days: DashboardTrendDay[] }) {
 export function DashboardScreen({
   title,
   tabId,
+  active = true,
   aiImageEnabled = true,
   visibilityEnabled = true,
   storage,
@@ -228,6 +230,7 @@ export function DashboardScreen({
 }: {
   title: string;
   tabId?: string;
+  active?: boolean;
   aiImageEnabled?: boolean;
   visibilityEnabled?: boolean;
   storage?: SessionStorageLike;
@@ -298,6 +301,26 @@ export function DashboardScreen({
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
+
+  useTabFreshness({
+    active,
+    domains: [
+      'keywords',
+      'questions',
+      'gallery',
+      'knowledge',
+      'prompts',
+      'categories',
+      'tasks',
+      'articles',
+      'visibility-profiles',
+      'visibility-runs',
+      'points',
+    ],
+    onRefresh: () => {
+      void loadSummary();
+    },
+  });
 
   const effectiveAiImage = aiImageEnabled && summary.features.aiImage;
   const effectiveVisibility = visibilityEnabled && summary.features.visibility !== false;
