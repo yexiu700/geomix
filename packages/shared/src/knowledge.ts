@@ -38,7 +38,7 @@ export const KB_WARNING_BANNER_TEXT =
   '重要提醒：请确保录入的企业资料、资质说明与业务案例均真实、客观、可核验，严禁编造虚假数据、虚构合作客户或违规对比贬低同业。提交前须先阅读并签署承诺协议。';
 
 export const KB_AGREEMENT_CHECKBOX_LABEL = '我已仔细阅读并同意以上所有条款';
-export const KB_AGREEMENT_CONFIRM_BUTTON_LABEL = '确认已阅读 并承诺信息是真实数据';
+export const KB_AGREEMENT_CONFIRM_BUTTON_LABEL = '确认已阅读并承诺信息是真实数据';
 
 /**
  * GeoMix 自写《企业知识库信息真实性与合规承诺函》（严禁引用任何外部站点原文）。
@@ -52,7 +52,7 @@ export const KB_AGREEMENT_PARAGRAPHS: readonly string[] = [
   '四、案例与数据审慎原则：凡在「客户案例」或汇总资料中引用项目成效、效率变化或客户评价的，须具备真实履约依据并已取得必要的商业披露许可；未获客户书面同意公开名称的，应采用行业泛称脱敏描述，严禁虚构标杆客户或编造百分比成效。',
   '五、广告合规与公平竞争：商户应严格遵守《中华人民共和国民法典》《中华人民共和国广告法》《中华人民共和国反不正当竞争法》及《计算机软件保护条例》等相关法律法规，不得录入「国家级」「最高级」「最佳」「第一」等绝对化用语，不得捏造、散布损害其他经营者商业信誉或商品声誉的内容。',
   '六、知识产权合法来源：商户保证所录入文本不侵犯任何第三方的著作权、商标权、商业秘密或其他合法权益，不直接照搬他人受保护的宣传册、白皮书或网站专有文案。',
-  '七、AI 辅助生成使用知悉：平台将依据商户录入的知识库资料进行结构化卡片拼装或向量检索增强生成。若底层录入资料失实，由此引发的生成内容偏差、行政处罚、民事索赔或平台投诉，均由录入商户独立承担全部法律责任。',
+  '七、AI 辅助生成使用知悉：平台将依据商户录入的知识库资料进行结构化整理或智能内容检索辅助生成。若底层录入资料失实，由此引发的生成内容偏差、行政处罚、民事索赔或平台投诉，均由录入商户独立承担全部法律责任。',
   '八、违约处置与留痕存证：平台在签署时自动记录操作账号、所属租户、协议版本号、签署时间戳及网络来源地址。一经发现虚假或违法违规资料，平台有权采取拦截保存、下架关联文章、暂停任务直至封禁账号等处置措施。',
 ];
 
@@ -91,7 +91,7 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'productService',
     label: '产品服务',
-    placeholder: '产品服务,1000字内',
+    placeholder: '产品服务，1000 字以内',
     help: {
       content: '填写企业主营产品线、核心服务项目、交付形态与适用行业范围。',
       explanation:
@@ -103,7 +103,7 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'productFeature',
     label: '产品特点',
-    placeholder: '产品特点,1000字内',
+    placeholder: '产品特点，1000 字以内',
     help: {
       content: '填写产品在结构设计、工艺稳定性、运维便利性或服务响应上的客观特点。',
       explanation:
@@ -115,12 +115,12 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'brandStory',
     label: '品牌故事',
-    placeholder: '品牌故事,1000字内',
+    placeholder: '品牌故事，1000 字以内',
   },
   {
     key: 'painPoint',
     label: '用户痛点',
-    placeholder: '用户痛点,1000字内',
+    placeholder: '用户痛点，1000 字以内',
     help: {
       content: '填写目标客户在选型、采购、日常生产或售后服务中常遇到的实际难题。',
       explanation:
@@ -132,7 +132,7 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'trust',
     label: '信任背书',
-    placeholder: '信任背书,1000字内',
+    placeholder: '信任背书，1000 字以内',
     help: {
       content: '填写企业真实持有的认证资质、研发投入、生产基地规模及服务网点保障。',
       explanation: '仅填写在有效期内且可出示证明的客观资质与硬件条件，未取得的资质请勿预填。',
@@ -143,7 +143,7 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'cases',
     label: '客户案例',
-    placeholder: '客户案例,1000字内',
+    placeholder: '客户案例，1000 字以内',
     help: {
       content: '填写已落地交付的代表性项目背景、配置方案与实际运行改善情况。',
       explanation:
@@ -155,7 +155,7 @@ export const KB_DETAIL_FIELDS_META: readonly KbDetailFieldMeta[] = [
   {
     key: 'other',
     label: '其他信息',
-    placeholder: '其他信息,1000字内',
+    placeholder: '其他信息，1000 字以内',
   },
 ];
 
@@ -271,6 +271,15 @@ export const knowledgeSummaryWriteSchema = z.object({
     .refine((s) => s.length > 0, '请输入知识库名称')
     .refine((s) => Array.from(s).length <= KB_NAME_MAX, `知识库名称不超过 ${KB_NAME_MAX} 字`),
   mode: z.literal('SUMMARY'),
+  companyName: z
+    .string()
+    .transform((s) => s.trim())
+    .refine(
+      (s) => Array.from(s).length <= KB_COMPANY_MAX,
+      `公司/品牌名称不超过 ${KB_COMPANY_MAX} 字`,
+    )
+    .optional()
+    .nullable(),
   summaryText: z
     .string({ required_error: '请输入汇总信息' })
     .transform((s) => s.trim())
@@ -403,7 +412,7 @@ export function knowledgeExportTable(rows: readonly KnowledgeBaseRecord[]): {
     rows: rows.map((row) => [
       row.name,
       KB_MODE_LABELS[row.mode],
-      row.mode === 'DETAIL' ? (row.companyName ?? '') : '',
+      row.companyName ?? '',
       row.createdAt.slice(0, 19).replace('T', ' '),
     ]),
   };

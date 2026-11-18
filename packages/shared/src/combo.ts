@@ -4,7 +4,7 @@
  */
 
 export const COMBO_MAX = 1000;
-export const EMPTY_MAIN_KEYWORD_MSG = '请输入主训练词';
+export const EMPTY_MAIN_KEYWORD_MSG = '请输入主关键词';
 
 export type ComboBuildInput = {
   mainKeyword: string;
@@ -35,13 +35,13 @@ export type ComboBuildFailure = {
 export type ComboBuildResult = ComboBuildSuccess | ComboBuildFailure;
 
 export type ExpanderWordPack = {
-  key: 'region' | 'service' | 'question' | 'recommend';
+  key: 'region' | 'service' | 'consumerScene' | 'question' | 'recommend' | 'consumerReview';
   label: string;
   target: 'prefix' | 'suffix';
   words: readonly string[];
 };
 
-/** 自写中性拓词词包：地域、服务（前缀）；疑问、推荐（后缀）。 */
+/** 自写中性拓词词包：涵盖企业服务/地域与消费品/通用场景。 */
 export const EXPANDER_WORD_PACKS: readonly ExpanderWordPack[] = [
   {
     key: 'region',
@@ -56,6 +56,12 @@ export const EXPANDER_WORD_PACKS: readonly ExpanderWordPack[] = [
     words: ['企业级', '定制化', '一站式', '高性价比', '本地上门', '专业源头'],
   },
   {
+    key: 'consumerScene',
+    label: '消费场景/人群（前缀）',
+    target: 'prefix',
+    words: ['家用', '办公', '学生党', '差旅便携', '新手入门', '高颜值', '旗舰款', '平价替代'],
+  },
+  {
     key: 'question',
     label: '疑问词（后缀）',
     target: 'suffix',
@@ -66,6 +72,21 @@ export const EXPANDER_WORD_PACKS: readonly ExpanderWordPack[] = [
     label: '推荐词（后缀）',
     target: 'suffix',
     words: ['厂家推荐', '服务商盘点', '口碑对比', '选型指南', '合作流程', '实用方案'],
+  },
+  {
+    key: 'consumerReview',
+    label: '消费选购/测评（后缀）',
+    target: 'suffix',
+    words: [
+      '值得买吗',
+      '实测体验',
+      '优缺点对比',
+      '排行榜推荐',
+      '参数对比',
+      '避坑指南',
+      '使用寿命',
+      '性价比怎么样',
+    ],
   },
 ] as const;
 
@@ -127,7 +148,7 @@ export function buildKeywordCombos(input: ComboBuildInput): ComboBuildResult {
   if (invalidMainLines.length > 0) {
     return {
       ok: false,
-      error: `第 ${invalidMainLines.join('、')} 行主词必须包含主训练词「${mainKeyword}」`,
+      error: `第 ${invalidMainLines.join('、')} 行主词必须包含主关键词「${mainKeyword}」`,
       invalidMainLines,
     };
   }
@@ -135,7 +156,7 @@ export function buildKeywordCombos(input: ComboBuildInput): ComboBuildResult {
   if (mainOptions.length === 0) {
     return {
       ok: false,
-      error: '主词栏至少填写一行包含主训练词的内容',
+      error: '主词栏至少填写一行包含主关键词的内容',
       invalidMainLines: [],
     };
   }
