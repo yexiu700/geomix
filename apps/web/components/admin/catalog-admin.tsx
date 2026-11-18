@@ -1,6 +1,7 @@
 'use client';
 
-import { Alert, Button, Input, Select, Space, Switch, Table, Typography } from 'antd';
+import { formatAdminDateTime, getPricingActionMeta } from '@geomix/shared';
+import { Alert, Button, Input, Modal, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import {
   AdminApiError,
@@ -11,14 +12,32 @@ import {
 } from '../../lib/admin-client';
 import { CrudModal } from '../crud/crud-modal';
 
+type PriceDraft = {
+  unitPoints: string;
+  enabled: boolean;
+};
+
+function toPriceDrafts(items: PriceRow[]): Record<string, PriceDraft> {
+  return Object.fromEntries(
+    items.map((item) => [
+      item.action,
+      { unitPoints: String(item.unitPoints), enabled: item.enabled },
+    ]),
+  );
+}
+
 export function PricingAdmin({
   client,
 }: {
-  client: Pick<AdminClient, 'listPrices' | 'updatePrice'>;
+  client: Pick<AdminClient, 'listPrices' | 'updatePrice'> &
+    Partial<Pick<AdminClient, 'updatePrices'>>;
 }) {
   const [rows, setRows] = useState<PriceRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, PriceDraft>>({});
+  const [savingBatch, setSavingBatch] = useState(false);
+  const [savingAction, setSavingAction] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -26,7 +45,7 @@ export function PricingAdmin({
       (items) => {
         if (!live) return;
         setRows(items);
-        setDrafts(Object.fromEntries(items.map((item) => [item.action, String(item.unitPoints)])));
+        setDrafts(toPriceDrafts(items));
       },
       (reason: unknown) => {
         if (!live) return;
@@ -38,77 +57,243 @@ export function PricingAdmin({
     };
   }, [client]);
 
+  const isRowDirty = (row: PriceRow): boolean => {
+    const draft = drafts[row.action];
+    if (!draft) return false;
+    return draft.unitPoints !== String(row.unitPoints) || draft.enabled !== row.enabled;
+  };
+
+  const dirtyRows = rows.filter(isRowDirty);
+  const hasUnsaved = dirtyRows.length > 0;
+
+  const parseDraftPoints = (row: PriceRow): number | null => {
+    const raw = drafts[row.action]?.unitPoints ?? '';
+    const trimmed = raw.trim();
+    if (!/^[1-9][0-9]*$/.test(trimmed)) return null;
+    const num = Number(trimmed);
+    if (!Number.isSafeInteger(num) || num < 1 || num > 1_000_000) return null;
+    return num;
+  };
+
+  const handleBatchSave = async () => {
+    if (dirtyRows.length === 0) return;
+    const updates: Array<{ action: string; unitPoints: number; enabled: boolean }> = [];
+    for (const row of dirtyRows) {
+      const meta = getPricingActionMeta(row.action);
+      const label = row.label ?? meta.label;
+      const unitPoints = parseDraftPoints(row);
+      if (unitPoints === null) {
+        setNotice(null);
+        setError(`${label} 价格不正确（请填写 1 ~ 1000000 的整数）`);
+        return;
+      }
+      updates.push({
+        action: row.action,
+        unitPoints,
+        enabled: drafts[row.action]?.enabled ?? row.enabled,
+      });
+    }
+
+    setError(null);
+    setNotice(null);
+    setSavingBatch(true);
+    try {
+      let nextItems: PriceRow[] = rows;
+      if (client.updatePrices) {
+        const res = await client.updatePrices({ items: updates });
+        nextItems = res.items;
+      } else {
+        for (const item of updates) {
+          const res = await client.updatePrice(item);
+          nextItems = res.items;
+        }
+      }
+      setRows(nextItems);
+      setDrafts(toPriceDrafts(nextItems));
+      setNotice(`已批量保存 ${updates.length} 项价格配置`);
+    } catch (reason: unknown) {
+      setError(messageOf(reason));
+    } finally {
+      setSavingBatch(false);
+    }
+  };
+
+  const handleSingleSave = async (row: PriceRow) => {
+    const meta = getPricingActionMeta(row.action);
+    const label = row.label ?? meta.label;
+    const unitPoints = parseDraftPoints(row);
+    if (unitPoints === null) {
+      setNotice(null);
+      setError(`${label} 价格不正确（请填写 1 ~ 1000000 的整数）`);
+      return;
+    }
+    const enabled = drafts[row.action]?.enabled ?? row.enabled;
+    setError(null);
+    setNotice(null);
+    setSavingAction(row.action);
+    try {
+      const next = await client.updatePrice({ action: row.action, unitPoints, enabled });
+      setRows(next.items);
+      setDrafts(toPriceDrafts(next.items));
+      setNotice(`已保存「${label}」价格配置`);
+    } catch (reason: unknown) {
+      setError(messageOf(reason));
+    } finally {
+      setSavingAction(null);
+    }
+  };
+
   return (
     <section aria-label="价格">
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
-        价格
-      </Typography.Title>
-      {error ? <Alert type="error" showIcon message={error} /> : null}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 12,
+        }}
+      >
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          价格管理
+        </Typography.Title>
+        <Space wrap>
+          {hasUnsaved ? (
+            <Tag color="warning">有 {dirtyRows.length} 项未保存修改</Tag>
+          ) : (
+            <Tag>全部已保存</Tag>
+          )}
+          <Button
+            disabled={!hasUnsaved || savingBatch || savingAction !== null}
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+              setDrafts(toPriceDrafts(rows));
+            }}
+          >
+            重置修改
+          </Button>
+          <Button
+            type="primary"
+            loading={savingBatch}
+            disabled={!hasUnsaved || savingAction !== null}
+            onClick={() => void handleBatchSave()}
+          >
+            {hasUnsaved ? `批量保存 (${dirtyRows.length})` : '批量保存'}
+          </Button>
+        </Space>
+      </div>
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {notice ? (
+        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+      ) : null}
       <Table<PriceRow>
         rowKey="action"
         dataSource={rows}
         pagination={false}
         columns={[
-          { title: '项目', dataIndex: 'action' },
+          {
+            title: '项目',
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              const label = row.label ?? meta.label;
+              const unit = row.unit ?? meta.unit;
+              return (
+                <Space size={6} wrap>
+                  <Typography.Text strong>{`${label}（${unit}）`}</Typography.Text>
+                  {isRowDirty(row) ? <Tag color="warning">未保存</Tag> : null}
+                </Space>
+              );
+            },
+          },
+          {
+            title: '业务说明',
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              return (
+                <Typography.Text type="secondary">
+                  {row.description ?? meta.description}
+                </Typography.Text>
+              );
+            },
+          },
+          {
+            title: '计费单位',
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              return <Tag>{row.unit ?? meta.unit}</Tag>;
+            },
+          },
           {
             title: '点数',
-            render: (_value, row) => (
-              <Input
-                aria-label={`${row.action} 点数`}
-                value={drafts[row.action] ?? ''}
-                onChange={(event) =>
-                  setDrafts((current) => ({ ...current, [row.action]: event.target.value }))
-                }
-              />
-            ),
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              const label = row.label ?? meta.label;
+              const unit = row.unit ?? meta.unit;
+              return (
+                <Input
+                  aria-label={`${label} 点数`}
+                  style={{ width: 150 }}
+                  suffix={unit}
+                  value={drafts[row.action]?.unitPoints ?? ''}
+                  onChange={(event) => {
+                    setError(null);
+                    setNotice(null);
+                    const value = event.target.value;
+                    setDrafts((current) => ({
+                      ...current,
+                      [row.action]: {
+                        unitPoints: value,
+                        enabled: current[row.action]?.enabled ?? row.enabled,
+                      },
+                    }));
+                  }}
+                />
+              );
+            },
           },
           {
             title: '启用',
-            render: (_value, row) => (
-              <Switch
-                aria-label={`${row.action} 启用`}
-                checked={row.enabled}
-                onChange={(enabled) => {
-                  const parsed = Number(drafts[row.action] ?? row.unitPoints);
-                  const unitPoints =
-                    Number.isInteger(parsed) && parsed >= 1 ? parsed : row.unitPoints;
-                  setError(null);
-                  void client.updatePrice({ action: row.action, unitPoints, enabled }).then(
-                    (next) => {
-                      setError(null);
-                      setRows(next.items);
-                    },
-                    (reason: unknown) => setError(messageOf(reason)),
-                  );
-                }}
-              />
-            ),
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              const label = row.label ?? meta.label;
+              const checked = drafts[row.action]?.enabled ?? row.enabled;
+              return (
+                <Switch
+                  aria-label={`${label} 启用`}
+                  checked={checked}
+                  onChange={(enabled) => {
+                    setError(null);
+                    setNotice(null);
+                    setDrafts((current) => ({
+                      ...current,
+                      [row.action]: {
+                        unitPoints: current[row.action]?.unitPoints ?? String(row.unitPoints),
+                        enabled,
+                      },
+                    }));
+                  }}
+                />
+              );
+            },
           },
           {
             title: '操作',
-            render: (_value, row) => (
-              <Button
-                onClick={() => {
-                  const unitPoints = Number(drafts[row.action]);
-                  if (!Number.isInteger(unitPoints) || unitPoints < 1) {
-                    setError('价格不正确');
-                    return;
-                  }
-                  setError(null);
-                  void client
-                    .updatePrice({ action: row.action, unitPoints, enabled: row.enabled })
-                    .then(
-                      (next) => {
-                        setError(null);
-                        setRows(next.items);
-                      },
-                      (reason: unknown) => setError(messageOf(reason)),
-                    );
-                }}
-              >
-                保存
-              </Button>
-            ),
+            render: (_value, row) => {
+              const meta = getPricingActionMeta(row.action);
+              const label = row.label ?? meta.label;
+              return (
+                <Button
+                  aria-label={`保存 ${label}`}
+                  loading={savingAction === row.action}
+                  disabled={!isRowDirty(row) || savingBatch}
+                  onClick={() => void handleSingleSave(row)}
+                >
+                  保存
+                </Button>
+              );
+            },
           },
         ]}
       />
@@ -119,11 +304,26 @@ export function PricingAdmin({
 export function AnnouncementAdmin({
   client,
 }: {
-  client: Pick<AdminClient, 'listAnnouncements' | 'createAnnouncement' | 'updateAnnouncement'>;
+  client: Pick<
+    AdminClient,
+    'listAnnouncements' | 'createAnnouncement' | 'updateAnnouncement' | 'deleteAnnouncement'
+  >;
 }) {
   const [rows, setRows] = useState<AnnouncementRow[]>([]);
   const [content, setContent] = useState('');
+  const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [editing, setEditing] = useState<AnnouncementRow | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [editEnabled, setEditEnabled] = useState(true);
+  const [editSort, setEditSort] = useState('0');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+
+  const [deletingTarget, setDeletingTarget] = useState<AnnouncementRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -142,36 +342,112 @@ export function AnnouncementAdmin({
     };
   }, [client]);
 
+  const handlePublish = async () => {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      setNotice(null);
+      setError('请填写公告');
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setPublishing(true);
+    try {
+      const row = await client.createAnnouncement({
+        content: trimmed,
+        enabled: true,
+        sort: rows.length,
+      });
+      setRows((current) => [...current, row]);
+      setContent('');
+      setNotice('公告已发布');
+    } catch (reason: unknown) {
+      setError(messageOf(reason));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const openEditModal = (row: AnnouncementRow) => {
+    setEditModalError(null);
+    setEditing(row);
+    setEditContent(row.content);
+    setEditEnabled(row.enabled);
+    setEditSort(String(row.sort));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing) return;
+    const trimmed = editContent.trim();
+    if (!trimmed) {
+      setEditModalError('请填写公告');
+      return;
+    }
+    const sortNum = Number(editSort.trim());
+    if (!/^[0-9]+$/.test(editSort.trim()) || !Number.isSafeInteger(sortNum) || sortNum > 9999) {
+      setEditModalError('排序权重需为 0 ~ 9999 的整数');
+      return;
+    }
+    setEditModalError(null);
+    setError(null);
+    setNotice(null);
+    setEditSaving(true);
+    try {
+      const updated = await client.updateAnnouncement(editing.id, {
+        content: trimmed,
+        enabled: editEnabled,
+        sort: sortNum,
+      });
+      setRows((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setEditing(null);
+      setNotice('公告已更新');
+    } catch (reason: unknown) {
+      setEditModalError(messageOf(reason));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingTarget) return;
+    setError(null);
+    setNotice(null);
+    setDeleting(true);
+    try {
+      await client.deleteAnnouncement(deletingTarget.id);
+      const removedId = deletingTarget.id;
+      setRows((current) => current.filter((item) => item.id !== removedId));
+      setDeletingTarget(null);
+      setNotice('公告已删除');
+    } catch (reason: unknown) {
+      setDeletingTarget(null);
+      setError(messageOf(reason));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <section aria-label="公告">
       <Typography.Title level={3} style={{ marginTop: 0 }}>
-        公告
+        公告管理
       </Typography.Title>
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Input
           aria-label="公告内容"
           value={content}
+          maxLength={200}
           placeholder="写一条 GeoMix 公告"
           onChange={(event) => setContent(event.target.value)}
         />
-        <Button
-          type="primary"
-          onClick={() => {
-            setError(null);
-            void client.createAnnouncement({ content, enabled: true, sort: rows.length }).then(
-              (row) => {
-                setError(null);
-                setRows((current) => [...current, row]);
-                setContent('');
-              },
-              (reason: unknown) => setError(messageOf(reason)),
-            );
-          }}
-        >
+        <Button type="primary" loading={publishing} onClick={() => void handlePublish()}>
           发布
         </Button>
       </Space.Compact>
-      {error ? <Alert type="error" showIcon message={error} /> : null}
+      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {notice ? (
+        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+      ) : null}
       <Table<AnnouncementRow>
         rowKey="id"
         dataSource={rows}
@@ -185,21 +461,107 @@ export function AnnouncementAdmin({
                 aria-label={`启用 ${row.content}`}
                 checked={row.enabled}
                 onChange={(enabled) => {
+                  setError(null);
+                  setNotice(null);
                   void client
                     .updateAnnouncement(row.id, { content: row.content, enabled, sort: row.sort })
                     .then(
-                      (next) =>
+                      (next) => {
                         setRows((current) =>
                           current.map((item) => (item.id === next.id ? next : item)),
-                        ),
+                        );
+                        setNotice(enabled ? '公告已启用' : '公告已停用');
+                      },
                       (reason: unknown) => setError(messageOf(reason)),
                     );
                 }}
               />
             ),
           },
+          {
+            title: '创建时间',
+            render: (_value, row) => formatAdminDateTime(row.createdAt),
+          },
+          {
+            title: '操作人',
+            render: (_value, row) => row.operatorName?.trim() || '—',
+          },
+          {
+            title: '操作',
+            render: (_value, row) => (
+              <Space>
+                <Button aria-label={`编辑 ${row.content}`} onClick={() => openEditModal(row)}>
+                  编辑
+                </Button>
+                <Button
+                  danger
+                  aria-label={`删除 ${row.content}`}
+                  onClick={() => setDeletingTarget(row)}
+                >
+                  删除
+                </Button>
+              </Space>
+            ),
+          },
         ]}
       />
+
+      <Modal
+        open={editing !== null}
+        title="编辑公告"
+        okText="保存"
+        cancelText="取消"
+        destroyOnHidden
+        okButtonProps={{ loading: editSaving }}
+        onCancel={() => {
+          if (!editSaving) {
+            setEditing(null);
+            setEditModalError(null);
+          }
+        }}
+        onOk={() => void handleSaveEdit()}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {editModalError ? <Alert type="error" showIcon message={editModalError} /> : null}
+          <Input.TextArea
+            aria-label="编辑公告内容"
+            rows={3}
+            maxLength={200}
+            value={editContent}
+            onChange={(event) => setEditContent(event.target.value)}
+          />
+          <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+            <Space>
+              <span>启用状态</span>
+              <Switch aria-label="编辑公告启用" checked={editEnabled} onChange={setEditEnabled} />
+            </Space>
+            <Space>
+              <Typography.Text>排序权重</Typography.Text>
+              <Input
+                aria-label="编辑公告排序"
+                style={{ width: 100 }}
+                value={editSort}
+                onChange={(event) => setEditSort(event.target.value)}
+              />
+            </Space>
+          </Space>
+        </Space>
+      </Modal>
+
+      <Modal
+        open={deletingTarget !== null}
+        title="确认删除公告"
+        okText="确认删除"
+        cancelText="取消"
+        destroyOnHidden
+        okButtonProps={{ danger: true, loading: deleting }}
+        onCancel={() => {
+          if (!deleting) setDeletingTarget(null);
+        }}
+        onOk={() => void handleConfirmDelete()}
+      >
+        <p>确定要删除公告「{deletingTarget?.content}」吗？删除后将无法恢复，且不再在用户端展示。</p>
+      </Modal>
     </section>
   );
 }

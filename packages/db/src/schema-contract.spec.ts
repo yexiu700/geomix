@@ -56,6 +56,7 @@ describe('phase-1 migration', () => {
       '20261117010000_crud_sample',
       '20261117120000_visibility',
       '20261118083000_media_asset_original_name',
+      '20261118090000_announcement_audit_fields',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -109,6 +110,15 @@ describe('phase-1 migration', () => {
     );
     expect(mediaNameSql).toContain('ALTER TABLE "MediaAsset" ADD COLUMN "originalName" TEXT');
     expect(mediaNameSql.toLowerCase()).not.toContain('drop');
+    const announcementSql = readFileSync(
+      resolve(migrationsDir, '20261118090000_announcement_audit_fields', 'migration.sql'),
+      'utf8',
+    );
+    expect(announcementSql).toContain('ALTER TABLE "Announcement"');
+    expect(announcementSql).toContain('ADD COLUMN IF NOT EXISTS "createdAt"');
+    expect(announcementSql).toContain('ADD COLUMN IF NOT EXISTS "operatorName"');
+    expect(announcementSql.toLowerCase()).not.toContain('drop table');
+    expect(announcementSql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(PHASE1_MODELS);

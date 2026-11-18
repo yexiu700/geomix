@@ -11,6 +11,7 @@ import {
   aggregateLlmDailyReport,
   escapeLikeLiteral,
   formatMoney,
+  getPricingActionMeta,
   isQuotaKeyName,
   parseEnv,
   parseLlmCostQuery,
@@ -21,6 +22,7 @@ import {
   type CreateTenantInput,
   type LlmDailyCostReport,
   type LlmUsageEventInput,
+  type PricingBatchUpdateInput,
   type PricingUpdateInput,
   type QuotaUpdateInput,
   type TemplateWriteInput,
@@ -264,18 +266,30 @@ export class AdminOfficeService {
     }
     const nowIso = new Date().toISOString();
     const items = [
-      ...rows.map((row) => ({
-        action: row.action,
-        unitPoints: row.unitPoints,
-        enabled: row.enabled,
-        updatedAt: row.updatedAt.toISOString(),
-      })),
-      ...missingDefaults.map((item) => ({
-        action: item.action,
-        unitPoints: item.unitPoints,
-        enabled: true,
-        updatedAt: nowIso,
-      })),
+      ...rows.map((row) => {
+        const meta = getPricingActionMeta(row.action);
+        return {
+          action: row.action,
+          unitPoints: row.unitPoints,
+          enabled: row.enabled,
+          updatedAt: row.updatedAt.toISOString(),
+          label: meta.label,
+          unit: meta.unit,
+          description: meta.description,
+        };
+      }),
+      ...missingDefaults.map((item) => {
+        const meta = getPricingActionMeta(item.action);
+        return {
+          action: item.action,
+          unitPoints: item.unitPoints,
+          enabled: true,
+          updatedAt: nowIso,
+          label: meta.label,
+          unit: meta.unit,
+          description: meta.description,
+        };
+      }),
     ].sort((a, b) => a.action.localeCompare(b.action));
     return { items };
   }
@@ -327,9 +341,82 @@ export class AdminOfficeService {
     return this.listPrices();
   }
 
+  async updatePrices(actor: Actor, input: PricingBatchUpdateInput, idempotencyKey?: string) {
+    assertAdmin(actor);
+    const seen = new Set<string>();
+    for (const item of input.items) {
+      if (seen.has(item.action)) throw badRequest('存在重复的价格项目');
+      seen.add(item.action);
+    }
+    const digest = [...input.items]
+      .sort((a, b) => a.action.localeCompare(b.action))
+      .map((item) => `${item.action}:${item.unitPoints}:${item.enabled ? 1 : 0}`)
+      .join('|');
+    if (idempotencyKey) {
+      const prior = await this.findReplay('pricing_batch_update', idempotencyKey);
+      if (prior) {
+        if (prior !== digest) throw conflict('幂等记录与本次请求不一致');
+        return this.listPrices();
+      }
+    }
+    const actions = input.items.map((item) => item.action);
+    const existingRows = await this.prisma.base.pricingItem.findMany({
+      where: { action: { in: actions } },
+    });
+    const existingByAction = new Map(existingRows.map((row) => [row.action, row]));
+    for (const item of input.items) {
+      const hasExisting = existingByAction.has(item.action);
+      const hasDefault = PRICING_DEFAULTS.some((def) => def.action === item.action);
+      if (!hasExisting && !hasDefault) throw notFound('价格项不存在');
+    }
+    await this.prisma.base.$transaction(async (tx) => {
+      const changes: Array<{
+        action: string;
+        from: { unitPoints: number; enabled: boolean };
+        to: { unitPoints: number; enabled: boolean };
+      }> = [];
+      for (const item of input.items) {
+        const current = existingByAction.get(item.action);
+        const fallback = PRICING_DEFAULTS.find((def) => def.action === item.action);
+        const priorValues = current
+          ? { unitPoints: current.unitPoints, enabled: current.enabled }
+          : { unitPoints: fallback!.unitPoints, enabled: true };
+        if (current) {
+          await tx.pricingItem.update({
+            where: { action: item.action },
+            data: { unitPoints: item.unitPoints, enabled: item.enabled },
+          });
+        } else {
+          await tx.pricingItem.upsert({
+            where: { action: item.action },
+            create: { action: item.action, unitPoints: item.unitPoints, enabled: item.enabled },
+            update: { unitPoints: item.unitPoints, enabled: item.enabled },
+          });
+        }
+        changes.push({
+          action: item.action,
+          from: priorValues,
+          to: { unitPoints: item.unitPoints, enabled: item.enabled },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: actor.userId,
+          action: 'pricing_batch_update',
+          payload: {
+            idempotencyKey: idempotencyKey ?? null,
+            tenantId: digest,
+            changes,
+          },
+        },
+      });
+    });
+    return this.listPrices();
+  }
+
   async listAnnouncements() {
     const rows = await this.prisma.base.announcement.findMany({
-      orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+      orderBy: [{ sort: 'asc' }, { createdAt: 'desc' }, { id: 'asc' }],
     });
     return { items: rows.map(presentAnnouncement) };
   }
@@ -340,12 +427,20 @@ export class AdminOfficeService {
       const prior = await this.findReplay('announcement_save', idempotencyKey);
       if (prior) return this.oneAnnouncement(prior);
     }
+    const operatorName = await this.resolveOperatorName(actor.userId);
     const row = await this.prisma.base.announcement.create({
-      data: { content: input.content, enabled: input.enabled, sort: input.sort },
+      data: {
+        content: input.content,
+        enabled: input.enabled,
+        sort: input.sort,
+        operatorId: actor.userId,
+        operatorName,
+      },
     });
     await this.audit(actor, null, 'announcement_save', {
       idempotencyKey: idempotencyKey ?? null,
       tenantId: row.id,
+      operatorName,
     });
     return presentAnnouncement(row);
   }
@@ -366,15 +461,53 @@ export class AdminOfficeService {
     }
     const existing = await this.prisma.base.announcement.findUnique({ where: { id } });
     if (!existing) throw notFound('公告不存在');
+    const operatorName = await this.resolveOperatorName(actor.userId);
     const row = await this.prisma.base.announcement.update({
       where: { id },
-      data: { content: input.content, enabled: input.enabled, sort: input.sort },
+      data: {
+        content: input.content,
+        enabled: input.enabled,
+        sort: input.sort,
+        operatorId: actor.userId,
+        operatorName,
+      },
     });
     await this.audit(actor, null, 'announcement_update', {
       idempotencyKey: idempotencyKey ?? null,
       tenantId: id,
+      operatorName,
     });
     return presentAnnouncement(row);
+  }
+
+  async deleteAnnouncement(actor: Actor, id: string, idempotencyKey?: string) {
+    assertAdmin(actor);
+    if (idempotencyKey) {
+      const prior = await this.findReplay('announcement_delete', idempotencyKey);
+      if (prior) {
+        this.assertSame(prior, id);
+        return { deleted: true, id };
+      }
+    }
+    const existing = await this.prisma.base.announcement.findUnique({ where: { id } });
+    if (!existing) throw notFound('公告不存在');
+    await this.prisma.base.$transaction(async (tx) => {
+      await tx.announcement.delete({ where: { id } });
+      await tx.auditLog.create({
+        data: {
+          tenantId: null,
+          userId: actor.userId,
+          action: 'announcement_delete',
+          payload: {
+            idempotencyKey: idempotencyKey ?? null,
+            tenantId: id,
+            announcementId: id,
+            content: existing.content,
+          },
+        },
+      });
+    });
+    return { deleted: true, id };
   }
 
   async listTemplates() {
@@ -629,6 +762,16 @@ export class AdminOfficeService {
     if (found !== expected) throw conflict('幂等记录与本次请求不一致');
   }
 
+  private async resolveOperatorName(userId: string): Promise<string> {
+    const user = await this.prisma.base.user.findUnique({
+      where: { id: userId },
+      select: { username: true, nickname: true },
+    });
+    if (!user) return userId;
+    const nick = user.nickname?.trim();
+    return nick && nick !== user.username ? `${nick} (${user.username})` : user.username;
+  }
+
   private async audit(
     actor: Actor,
     tenantId: string | null,
@@ -666,8 +809,26 @@ function presentTenant(row: TenantRow) {
   };
 }
 
-function presentAnnouncement(row: { id: string; content: string; enabled: boolean; sort: number }) {
-  return { id: row.id, content: row.content, enabled: row.enabled, sort: row.sort };
+function presentAnnouncement(row: {
+  id: string;
+  content: string;
+  enabled: boolean;
+  sort: number;
+  operatorId?: string | null;
+  operatorName?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+}) {
+  return {
+    id: row.id,
+    content: row.content,
+    enabled: row.enabled,
+    sort: row.sort,
+    operatorId: row.operatorId ?? null,
+    operatorName: row.operatorName ?? null,
+    createdAt: row.createdAt ? row.createdAt.toISOString() : null,
+    updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
+  };
 }
 
 function presentTemplate(row: {

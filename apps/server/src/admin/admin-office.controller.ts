@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
@@ -19,6 +20,7 @@ import {
   announcementSchema,
   createTenantSchema,
   ok,
+  pricingBatchUpdateSchema,
   pricingUpdateSchema,
   quotaUpdateSchema,
   readIdempotencyKey,
@@ -97,6 +99,17 @@ export class AdminOfficeController {
     );
   }
 
+  @Put('pricing')
+  async updatePrices(@Req() request: unknown, @Body() body: unknown) {
+    return ok(
+      await this.office.updatePrices(
+        requireActor(request),
+        parseBody(pricingBatchUpdateSchema, body),
+        optionalKey(request),
+      ),
+    );
+  }
+
   @Get('announcements')
   async announcements() {
     return ok(await this.office.listAnnouncements());
@@ -127,6 +140,13 @@ export class AdminOfficeController {
         parseBody(announcementSchema, body),
         optionalKey(request),
       ),
+    );
+  }
+
+  @Delete('announcements/:id')
+  async deleteAnnouncement(@Req() request: unknown, @Param('id') id: string) {
+    return ok(
+      await this.office.deleteAnnouncement(requireActor(request), readId(id), optionalKey(request)),
     );
   }
 

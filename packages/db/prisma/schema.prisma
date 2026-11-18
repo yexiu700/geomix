@@ -274,10 +274,14 @@ model AgreementSignature {
 }
 
 model Announcement {
-  id      String  @id @default(cuid())
-  content String
-  enabled Boolean @default(true)
-  sort    Int     @default(0)
+  id           String   @id @default(cuid())
+  content      String
+  enabled      Boolean  @default(true)
+  sort         Int      @default(0)
+  operatorId   String?
+  operatorName String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 model AuditLog {

@@ -2,6 +2,7 @@ import type {
   AnnouncementInput,
   CreateTenantInput,
   LlmDailyCostReport,
+  PricingBatchUpdateInput,
   PricingUpdateInput,
   QuotaUpdateInput,
   TemplateWriteInput,
@@ -29,6 +30,9 @@ export type PriceRow = {
   unitPoints: number;
   enabled: boolean;
   updatedAt: string;
+  label?: string;
+  unit?: string;
+  description?: string;
 };
 
 export type AnnouncementRow = {
@@ -36,6 +40,10 @@ export type AnnouncementRow = {
   content: string;
   enabled: boolean;
   sort: number;
+  operatorId?: string | null;
+  operatorName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type TemplateRow = {
@@ -93,6 +101,8 @@ export function httpAdmin(storage: SessionStorageLike) {
     },
     updatePrice: (input: PricingUpdateInput) =>
       readJson<{ items: PriceRow[] }>(storage, 'PATCH', '/admin/pricing', input, freshKey()),
+    updatePrices: (input: PricingBatchUpdateInput) =>
+      readJson<{ items: PriceRow[] }>(storage, 'PUT', '/admin/pricing', input, freshKey()),
     listAnnouncements: async () => {
       const data = await readJson<{ items: AnnouncementRow[] }>(
         storage,
@@ -105,6 +115,14 @@ export function httpAdmin(storage: SessionStorageLike) {
       readJson<AnnouncementRow>(storage, 'POST', '/admin/announcements', input, freshKey()),
     updateAnnouncement: (id: string, input: AnnouncementInput) =>
       readJson<AnnouncementRow>(storage, 'PATCH', `/admin/announcements/${id}`, input, freshKey()),
+    deleteAnnouncement: (id: string) =>
+      readJson<{ deleted: boolean; id: string }>(
+        storage,
+        'DELETE',
+        `/admin/announcements/${id}`,
+        undefined,
+        freshKey(),
+      ),
     listTemplates: async () => {
       const data = await readJson<{ items: TemplateRow[] }>(storage, 'GET', '/admin/templates');
       return data.items;

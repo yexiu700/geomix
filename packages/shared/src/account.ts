@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { QUOTA_DEFAULTS, type QuotaKeyName } from './catalog';
+import { QUOTA_DEFAULTS, type PricingAction, type QuotaKeyName } from './catalog';
 
 export { QUOTA_DEFAULTS };
 import {
@@ -189,6 +189,13 @@ export function formatLedgerTime(iso: string): string {
   return `${read('year')}-${read('month')}-${read('day')} ${hour}:${read('minute')}:${read('second')}`;
 }
 
+export function formatAdminDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return formatLedgerTime(iso);
+}
+
 /**
  * 权益页的 10 张卡。
  * 配额项直接读 Quota 表。已收录不是配额行，按写作标题里 included 的条数展示。
@@ -368,6 +375,93 @@ export const pricingUpdateSchema = z
   .strict();
 
 export type PricingUpdateInput = z.infer<typeof pricingUpdateSchema>;
+
+export type PricingActionMeta = {
+  action: PricingAction | string;
+  label: string;
+  unit: string;
+  unitSuffix: string;
+  description: string;
+};
+
+export const PRICING_ACTION_META: Record<PricingAction, PricingActionMeta> = {
+  ai_write: {
+    action: 'ai_write',
+    label: 'AI 文章写作',
+    unit: '点/篇',
+    unitSuffix: '篇',
+    description: '基于主词、写作问题与模板生成单篇 GeoMix 合规文章',
+  },
+  kb_addon: {
+    action: 'kb_addon',
+    label: '知识库增强附加费',
+    unit: '点/篇',
+    unitSuffix: '篇',
+    description: 'AI 写作开启企业知识库检索增强时的单篇附加扣点',
+  },
+  distill: {
+    action: 'distill',
+    label: 'AI 蒸馏拓展',
+    unit: '点/次',
+    unitSuffix: '次',
+    description: '围绕训练主词批量蒸馏拓展长尾写作问题（按次计费）',
+  },
+  rewrite_single: {
+    action: 'rewrite_single',
+    label: '单篇流量复刻',
+    unit: '点/篇',
+    unitSuffix: '篇',
+    description: '单篇文章参考改写与品牌自然融入创作',
+  },
+  rewrite_batch: {
+    action: 'rewrite_batch',
+    label: '批量流量复刻',
+    unit: '点/篇',
+    unitSuffix: '篇',
+    description: '批量链接列表改写任务（按成功生成篇数计费）',
+  },
+  image_gen: {
+    action: 'image_gen',
+    label: 'AI 生图',
+    unit: '点/张',
+    unitSuffix: '张',
+    description: 'AI 配图生成并存入企业图库（按生成张数计费）',
+  },
+  visibility_check: {
+    action: 'visibility_check',
+    label: 'AI 可见性监测',
+    unit: '点/次',
+    unitSuffix: '次',
+    description: '在目标 AI 引擎中执行单次问答品牌可见性监测',
+  },
+};
+
+export function getPricingActionMeta(action: string): PricingActionMeta {
+  if (Object.prototype.hasOwnProperty.call(PRICING_ACTION_META, action)) {
+    return PRICING_ACTION_META[action as PricingAction];
+  }
+  return {
+    action,
+    label: action,
+    unit: '点/次',
+    unitSuffix: '次',
+    description: '计费项目配置',
+  };
+}
+
+export const pricingBatchUpdateSchema = z
+  .object({
+    items: z
+      .array(pricingUpdateSchema)
+      .min(1, '请至少修改一条价格配置')
+      .max(50, '单次最多保存 50 条价格配置'),
+  })
+  .strict()
+  .refine((value) => new Set(value.items.map((item) => item.action)).size === value.items.length, {
+    message: '存在重复的价格项目',
+  });
+
+export type PricingBatchUpdateInput = z.infer<typeof pricingBatchUpdateSchema>;
 
 export const announcementSchema = z
   .object({
