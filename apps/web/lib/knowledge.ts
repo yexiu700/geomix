@@ -7,19 +7,11 @@ import {
   type KnowledgeBaseRecord,
   type KnowledgeWriteInput,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import type { SessionStorageLike } from './session';
 
-export class KnowledgeApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'KnowledgeApiError';
-  }
-}
+export class KnowledgeApiError extends GatewayApiError {}
 
 export type KnowledgeGateway = {
   list(query: KnowledgeBaseListQuery): Promise<KnowledgeBaseListResponse>;
@@ -45,15 +37,7 @@ function buildQueryString(query: KnowledgeBaseListQuery & { export?: 'csv' | 'xl
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new KnowledgeApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0) {
-    throw new KnowledgeApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(KnowledgeApiError, { requireData: false });
 
 export function httpKnowledgeGateway(storage: SessionStorageLike): KnowledgeGateway {
   return {

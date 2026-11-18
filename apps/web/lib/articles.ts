@@ -13,22 +13,14 @@ import {
   type MediaAssetRecord,
   type MediaCategoryRecord,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
 import { httpAiTaskGateway } from './ai-tasks';
 import { httpCategoryGateway } from './categories';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import { httpGalleryGateway } from './gallery';
 import type { SessionStorageLike } from './session';
 
-export class ArticleManageApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'ArticleManageApiError';
-  }
-}
+export class ArticleManageApiError extends GatewayApiError {}
 
 export type ArticleFormOptions = {
   categories: ArticleCategoryRecord[];
@@ -90,15 +82,7 @@ export function buildArticleManageQueryString(query: ArticleManageQuery): string
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new ArticleManageApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0 || json.data === null || json.data === undefined) {
-    throw new ArticleManageApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(ArticleManageApiError);
 
 async function readBinaryDownload(
   response: Response,

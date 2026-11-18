@@ -7,19 +7,11 @@ import type {
   PromptTemplateRecord,
   PromptWriteInput,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
+import { GatewayApiError, createEnvelopeUnwrapper } from './envelope';
 import type { SessionStorageLike } from './session';
 
-export class PromptApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'PromptApiError';
-  }
-}
+export class PromptApiError extends GatewayApiError {}
 
 export type PromptGateway = {
   list(query: PromptListQuery): Promise<PromptListResponse>;
@@ -45,15 +37,7 @@ function buildQueryString(query: PromptListQuery & { export?: 'csv' | 'xlsx' }):
   return params.toString();
 }
 
-async function unwrap<T>(response: Response): Promise<T> {
-  const text = await response.text();
-  if (!text) throw new PromptApiError(response.status, -1, '服务响应为空');
-  const json = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || json.code !== 0) {
-    throw new PromptApiError(response.status, json.code ?? -1, json.msg || '操作失败');
-  }
-  return json.data;
-}
+const unwrap = createEnvelopeUnwrapper(PromptApiError, { requireData: false });
 
 export function httpPromptGateway(storage: SessionStorageLike): PromptGateway {
   return {
