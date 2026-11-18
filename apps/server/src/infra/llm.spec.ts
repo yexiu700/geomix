@@ -442,6 +442,123 @@ describe('llm routing', () => {
     expect(requestedModels).toEqual(['deepseek-chat']);
     expect(res.model).toBe('deepseek-chat');
   });
+
+  it('suppresses reasoning_content fallback, strips closed/unclosed thinking tags, and retries on 400 when disableThinking=true (#178)', async () => {
+    const seenPayloads: Array<Record<string, unknown>> = [];
+
+    // 1) reasoning_content-only response is rejected as contract error instead of leaking reasoning
+    await expect(
+      openai(async (req) => {
+        seenPayloads.push(JSON.parse(req.body ?? '{}') as Record<string, unknown>);
+        return {
+          status: 200,
+          headers: {},
+          body: Buffer.from(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: null,
+                    reasoning_content: '内部思考：用户需要扩写提示词...',
+                  },
+                },
+              ],
+            }),
+          ),
+        };
+      }, 'https://192.0.2.10/v1').complete({
+        ...callTo(),
+        scene: 'image_prompt',
+        model: 'qwen3-32b',
+        disableThinking: true,
+      }),
+    ).rejects.toMatchObject({ kind: 'contract' });
+    expect(seenPayloads[0]?.enable_thinking).toBe(false);
+
+    // 2) Unclosed <think> content is rejected instead of returning raw thinking monologue
+    await expect(
+      openai(
+        async () => ({
+          status: 200,
+          headers: {},
+          body: Buffer.from(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: '<think>用户需要把简短描述扩写成配图提示词，硬性约束...',
+                  },
+                },
+              ],
+            }),
+          ),
+        }),
+        'https://192.0.2.10/v1',
+      ).complete({
+        ...callTo(),
+        scene: 'image_prompt',
+        disableThinking: true,
+      }),
+    ).rejects.toMatchObject({ kind: 'contract' });
+
+    // 3) Closed <think> block is stripped cleanly when valid answer follows
+    const withThink = await openai(
+      async () => ({
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '<thinking>先分析构图和光线</thinking>\n{"prompt":"咖啡厅木质桌面实拍"}',
+                },
+              },
+            ],
+          }),
+        ),
+      }),
+      'https://192.0.2.10/v1',
+    ).complete({
+      ...callTo(),
+      scene: 'image_prompt',
+      disableThinking: true,
+    });
+    expect(withThink.text).toBe('{"prompt":"咖啡厅木质桌面实拍"}');
+
+    // 4) Upstream rejecting extra thinking-disable parameter with 400 falls back cleanly
+    const retryPayloads: Array<Record<string, unknown>> = [];
+    const fallbackOn400 = await openai(async (req) => {
+      const payload = JSON.parse(req.body ?? '{}') as Record<string, unknown>;
+      retryPayloads.push(payload);
+      if ('enable_thinking' in payload || 'thinking' in payload) {
+        return {
+          status: 400,
+          headers: {},
+          body: Buffer.from(
+            JSON.stringify({ error: { message: 'Extra inputs are not permitted' } }),
+          ),
+        };
+      }
+      return {
+        status: 200,
+        headers: {},
+        body: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content: '{"prompt":"干净商业实拍画面"}' } }],
+          }),
+        ),
+      };
+    }, 'https://192.0.2.10/v1').complete({
+      ...callTo(),
+      scene: 'image_prompt',
+      disableThinking: true,
+    });
+    expect(retryPayloads).toHaveLength(2);
+    expect(retryPayloads[1]).not.toHaveProperty('enable_thinking');
+    expect(retryPayloads[1]).not.toHaveProperty('thinking');
+    expect(fallbackOn400.text).toBe('{"prompt":"干净商业实拍画面"}');
+  });
 });
 
 function router(

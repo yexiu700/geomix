@@ -72,6 +72,7 @@ export type LlmCompleteInput = {
   timeoutMs?: number;
   maxRetries?: number;
   preferFastModel?: boolean;
+  disableThinking?: boolean;
 };
 
 type ProviderCall = {
@@ -82,6 +83,7 @@ type ProviderCall = {
   maxTokens: number;
   timeoutMs?: number;
   signal: AbortSignal;
+  disableThinking?: boolean;
 };
 
 export interface LlmProvider {
@@ -239,13 +241,22 @@ export class OpenAiLlm implements LlmProvider {
     const effectiveMaxTokens = isReasoner
       ? Math.max(input.maxTokens, requestTimeoutMs <= 25_000 ? 3000 : 4096)
       : input.maxTokens;
-    let response = await send({
+    const basePayload: Record<string, unknown> = {
       model: input.model,
       messages: input.messages,
       temperature: input.temperature,
       max_tokens: effectiveMaxTokens,
       stream: false,
-    });
+    };
+    const thinkingHint = input.disableThinking
+      ? resolveDisableThinkingPayload(this.name, this.config.baseUrl, input.model)
+      : undefined;
+
+    let response = await send(thinkingHint ? { ...basePayload, ...thinkingHint } : basePayload);
+
+    if (thinkingHint && (response.status === 400 || response.status === 422)) {
+      response = await send(basePayload);
+    }
 
     if (
       (response.status === 400 || response.status === 422) &&
@@ -276,7 +287,10 @@ export class OpenAiLlm implements LlmProvider {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
     }
 
-    const parsed = parseUpstreamCompletion(response.body.toString('utf8'), promptText);
+    const parsed = parseUpstreamCompletion(response.body.toString('utf8'), promptText, {
+      allowReasoningFallback: !input.disableThinking,
+      stripAllThinking: Boolean(input.disableThinking),
+    });
     return {
       provider: this.name,
       model: input.model,
@@ -367,6 +381,7 @@ export class LlmRouter {
                 maxTokens,
                 timeoutMs: callTimeoutMs,
                 signal: input.signal,
+                disableThinking: input.disableThinking,
               }),
             {
               maxRetries: mIdx === 0 ? effectiveMaxRetries : 0,
@@ -523,6 +538,7 @@ export class LlmService {
           messages: input.messages,
           temperature: input.temperature ?? null,
           maxTokens: input.maxTokens ?? null,
+          ...(input.disableThinking ? { disableThinking: true } : {}),
         }),
       )
       .digest('hex');
@@ -699,6 +715,18 @@ function resolveChatCompletionsUrls(base: string): URL[] {
   return [parsed];
 }
 
+function resolveDisableThinkingPayload(
+  providerName: string,
+  baseUrl: string,
+  model: string,
+): Record<string, unknown> {
+  const hint = `${providerName} ${baseUrl} ${model}`;
+  if (/doubao|seed|ark|volces|glm|zhipu/i.test(hint)) {
+    return { thinking: { type: 'disabled' } };
+  }
+  return { enable_thinking: false };
+}
+
 function isUnsupportedParamError(rawBody: string): boolean {
   const lower = rawBody.toLowerCase();
   return (
@@ -712,9 +740,15 @@ function isUnsupportedParamError(rawBody: string): boolean {
   );
 }
 
+type UpstreamParseOptions = {
+  allowReasoningFallback?: boolean;
+  stripAllThinking?: boolean;
+};
+
 function parseUpstreamCompletion(
   rawBody: string,
   promptText: string,
+  options: UpstreamParseOptions = {},
 ): { text: string; tokensIn: number; tokensOut: number } {
   const trimmed = rawBody.replace(/^\uFEFF/, '').trim();
   if (!trimmed) {
@@ -725,7 +759,7 @@ function parseUpstreamCompletion(
   try {
     json = JSON.parse(trimmed) as unknown;
   } catch {
-    const sse = parseSseCompletion(trimmed, promptText);
+    const sse = parseSseCompletion(trimmed, promptText, options);
     if (sse) return sse;
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'json');
   }
@@ -750,7 +784,7 @@ function parseUpstreamCompletion(
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
   }
 
-  const text = extractChoiceText(choice);
+  const text = extractChoiceText(choice, options);
   if (!text) {
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
   }
@@ -767,6 +801,7 @@ function parseUpstreamCompletion(
 function parseSseCompletion(
   raw: string,
   promptText: string,
+  options: UpstreamParseOptions = {},
 ): { text: string; tokensIn: number; tokensOut: number } | null {
   if (!raw.startsWith('data:') && !raw.includes('\ndata:')) return null;
   const contentChunks: string[] = [];
@@ -810,7 +845,10 @@ function parseSseCompletion(
   }
 
   if (parsedFrames === 0) return null;
-  const text = stripThinkingTags((contentChunks.join('') || reasoningChunks.join('')).trim());
+  const rawCombined =
+    contentChunks.join('') ||
+    (options.allowReasoningFallback === false ? '' : reasoningChunks.join(''));
+  const text = stripThinkingTags(rawCombined.trim(), { stripAll: options.stripAllThinking });
   if (!text) {
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
   }
@@ -821,22 +859,36 @@ function parseSseCompletion(
   };
 }
 
-function stripThinkingTags(raw: string): string {
+function stripThinkingTags(raw: string, options: { stripAll?: boolean } = {}): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
+  if (options.stripAll) {
+    const withoutClosed = trimmed
+      .replace(/<(think|thinking|thought)\b[^>]*>[\s\S]*?<\/\1>/gi, '\n')
+      .trim();
+    return withoutClosed.replace(/<(think|thinking|thought)\b[^>]*>[\s\S]*$/gi, '').trim();
+  }
   const stripped = trimmed.replace(/^<think>[\s\S]*?<\/think>\s*/i, '').trim();
   return stripped || trimmed;
 }
 
-function extractChoiceText(choice: z.infer<typeof choiceSchema>): string {
-  const messageContent = stripThinkingTags(flattenContent(choice.message?.content));
+function extractChoiceText(
+  choice: z.infer<typeof choiceSchema>,
+  options: UpstreamParseOptions = {},
+): string {
+  const stripOpts = { stripAll: options.stripAllThinking };
+  const messageContent = stripThinkingTags(flattenContent(choice.message?.content), stripOpts);
   if (messageContent) return messageContent;
-  const deltaContent = stripThinkingTags(flattenContent(choice.delta?.content));
+  const deltaContent = stripThinkingTags(flattenContent(choice.delta?.content), stripOpts);
   if (deltaContent) return deltaContent;
-  const legacyText = stripThinkingTags(choice.text ?? '');
+  const legacyText = stripThinkingTags(choice.text ?? '', stripOpts);
   if (legacyText) return legacyText;
+  if (options.allowReasoningFallback === false) {
+    return '';
+  }
   const reasoning = stripThinkingTags(
     choice.message?.reasoning_content ?? choice.delta?.reasoning_content ?? '',
+    stripOpts,
   );
   return reasoning;
 }
