@@ -1566,6 +1566,25 @@ input:not([class*='ant-']):hover {
   overflow-x: auto;
 }
 
+.gm-monitors-table-wrap .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.gm-profile-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--gm-line-1);
+}
+
+.gm-profile-card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
 .gm-monitors-name-btn {
   display: block;
   width: 100%;

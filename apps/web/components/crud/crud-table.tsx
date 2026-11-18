@@ -47,6 +47,7 @@ export function CrudTable<T extends { id: string }>({
   showDensityToggle = true,
   showSearch = true,
   showExport = true,
+  scroll,
   onSearchOpenChange,
   onSearch,
   onPageChange,
@@ -79,6 +80,7 @@ export function CrudTable<T extends { id: string }>({
   showDensityToggle?: boolean;
   showSearch?: boolean;
   showExport?: boolean;
+  scroll?: { x?: number | string | true; y?: number | string };
   onSearchOpenChange: (open: boolean) => void;
   onSearch: (search: CrudSearch) => void;
   onPageChange: (page: number, pageSize: CrudPageSize) => void;
@@ -327,6 +329,7 @@ export function CrudTable<T extends { id: string }>({
         size={compact ? 'small' : 'middle'}
         loading={loading}
         dataSource={rows}
+        scroll={scroll}
         locale={{ emptyText }}
         pagination={{
           current: page,

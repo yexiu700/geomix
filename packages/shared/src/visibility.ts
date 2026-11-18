@@ -1190,9 +1190,9 @@ export const visibilityCompetitorSchema = z.object({
 
 export const visibilityProfileCreateSchema = z.object({
   name: z
-    .string({ required_error: '请填写监测档案名称' })
+    .string({ required_error: '请填写档案名称' })
     .trim()
-    .min(1, '请填写监测档案名称')
+    .min(1, '请填写档案名称')
     .max(VISIBILITY_PROFILE_NAME_MAX, `档案名称不超过 ${VISIBILITY_PROFILE_NAME_MAX} 字`),
   brandName: z
     .string({ required_error: '请填写主品牌名称' })
@@ -1214,9 +1214,9 @@ export const visibilityProfileUpdateSchema = visibilityProfileCreateSchema
 export const visibilityProfileCreateWithPrefillSchema = z
   .object({
     name: z
-      .string({ required_error: '请填写监测档案名称' })
+      .string({ required_error: '请填写档案名称' })
       .trim()
-      .min(1, '请填写监测档案名称')
+      .min(1, '请填写档案名称')
       .max(VISIBILITY_PROFILE_NAME_MAX, `档案名称不超过 ${VISIBILITY_PROFILE_NAME_MAX} 字`),
     brandName: z
       .string()

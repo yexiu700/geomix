@@ -958,6 +958,207 @@ describe('VisibilityMonitorsScreen', () => {
       expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
     });
   });
+
+  it('keeps existing default profile when creating new profile with default switch OFF, blocks deleting active runs, closes modals on Escape, and clears success banner on tab switch (#192)', async () => {
+    const { gateway } = buildMockGateway();
+
+    render(
+      <div className="gm-page" data-tab-id="/visibility/monitors">
+        <VisibilityMonitorsScreen
+          title="AI可见度诊断"
+          tabId="/visibility/monitors"
+          gateway={gateway}
+          pollIntervalMs={0}
+        />
+      </div>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+
+    // 1. Selecting a RUNNING run and clicking bulk 删除 must NOT claim "已结束监测任务记录"
+    const rowCheckboxes = document.querySelectorAll<HTMLInputElement>(
+      '.ant-table-tbody input[type="checkbox"]',
+    );
+    expect(rowCheckboxes.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(rowCheckboxes[0]!);
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+
+    expect(await screen.findByText('无法删除进行中的监测任务')).toBeTruthy();
+    expect(screen.queryByText(/已结束监测任务记录/)).toBeNull();
+    expect(screen.getByText(/禁止直接删除/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: '立即终止该任务' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    await waitFor(() => {
+      expect(screen.queryByText('无法删除进行中的监测任务')).toBeNull();
+    });
+
+    // 2. Switch to 品牌与竞品档案; existing profile vprof_starview is default even when localStorage starts empty
+    fireEvent.click(screen.getByRole('tab', { name: /品牌与竞品档案/ }));
+    const existingCard = await screen.findByTestId('profile-card-vprof_starview');
+    expect(within(existingCard).getByText('默认档案')).toBeTruthy();
+
+    // Open create modal with switch OFF, test Escape closes modal, reopen & submit
+    fireEvent.click(screen.getByLabelText('新增品牌与竞品档案'));
+    expect(screen.getByRole('dialog', { name: '新建品牌与竞品档案' })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '新建品牌与竞品档案' })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByLabelText('新增品牌与竞品档案'));
+    const defaultSwitch = screen.getByRole('switch', { name: '设为默认档案' });
+    expect(defaultSwitch.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.change(screen.getByLabelText('档案名称'), {
+      target: { value: '安克创新（Anker）全品类监测档案' },
+    });
+    fireEvent.change(screen.getByLabelText('主品牌名称'), {
+      target: { value: '安克创新' },
+    });
+    fireEvent.click(screen.getByLabelText('保存品牌档案'));
+
+    const newCard = await screen.findByTestId('profile-card-vprof_new_2');
+    expect(within(newCard).queryByText('默认档案')).toBeNull();
+    expect(within(existingCard).getByText('默认档案')).toBeTruthy();
+    expect(window.localStorage.getItem('geomix:visibility:default-profile-id')).toBe(
+      'vprof_starview',
+    );
+
+    // 3. Success banner clears on sub-tab switch
+    expect(screen.getByText(/已创建监测档案「安克创新（Anker）全品类监测档案」/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: /监测任务/ }));
+    await waitFor(() => {
+      expect(screen.queryByText(/已创建监测档案「安克创新（Anker）全品类监测档案」/)).toBeNull();
+    });
+
+    // 4. Success banner also clears when ShellFrame hides .gm-page on shell tab switch
+    fireEvent.click(screen.getByRole('tab', { name: /品牌与竞品档案/ }));
+    fireEvent.click(await screen.findByLabelText('设为默认-安克创新（Anker）全品类监测档案'));
+    expect(
+      await screen.findByText(/已将「安克创新（Anker）全品类监测档案」设为默认监测档案/),
+    ).toBeTruthy();
+
+    const pageEl = document.querySelector('.gm-page') as HTMLElement;
+    pageEl.setAttribute('hidden', '');
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/已将「安克创新（Anker）全品类监测档案」设为默认监测档案/),
+      ).toBeNull();
+    });
+  });
+
+  it('sets max-content horizontal scroll and non-crushed cell widths, two-row card action layout, and leading red asterisks (#193)', async () => {
+    const { gateway } = buildMockGateway();
+
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+
+    // 1. Table scroll={{ x: 'max-content' }} & cell minWidth / nowrap guards
+    const tableEl = document.querySelector('.gm-monitors-table-wrap table') as HTMLTableElement;
+    expect(tableEl).toBeTruthy();
+    expect(tableEl.style.width).toBe('max-content');
+    expect(tableEl.style.minWidth).toBe('100%');
+
+    const profileCell = screen.getByTestId('run-profile-cell-vrun_demo_001');
+    expect(profileCell.style.minWidth).toBe('168px');
+    const keywordCell = screen.getByTestId('run-keyword-cell-vrun_demo_001');
+    expect(keywordCell.style.minWidth).toBe('112px');
+
+    // 2. Two-row aligned profile card footer across default and non-default cards
+    fireEvent.click(screen.getByRole('tab', { name: /品牌与竞品档案/ }));
+    const actionsBox = await screen.findByTestId('profile-card-actions-vprof_starview');
+    const rows = actionsBox.querySelectorAll('.gm-profile-card-actions-row');
+    expect(rows).toHaveLength(2);
+    expect(
+      within(rows[0] as HTMLElement).getByLabelText('发起监测-便携显示器核心监测档案'),
+    ).toBeTruthy();
+    expect(
+      within(rows[0] as HTMLElement).getByLabelText('档案看板-便携显示器核心监测档案'),
+    ).toBeTruthy();
+    expect(
+      within(rows[1] as HTMLElement).getByLabelText('编辑档案-便携显示器核心监测档案'),
+    ).toBeTruthy();
+    expect(
+      within(rows[1] as HTMLElement).getByLabelText('删除档案-便携显示器核心监测档案'),
+    ).toBeTruthy();
+
+    // 3. Leading red asterisks in Profile modal and Run modal
+    fireEvent.click(screen.getByLabelText('新增品牌与竞品档案'));
+    const profileDialog = screen.getByRole('dialog', { name: '新建品牌与竞品档案' });
+    const profileMarks = profileDialog.querySelectorAll('.gm-required-mark');
+    expect(profileMarks).toHaveLength(2);
+    expect(profileMarks[0]?.parentElement?.textContent).toMatch(/^\*\s*档案名称$/);
+    expect(profileMarks[1]?.parentElement?.textContent).toMatch(/^\*\s*主品牌名称$/);
+    expect((profileMarks[0] as HTMLElement).style.color).toBe('var(--gm-danger)');
+    fireEvent.click(within(profileDialog).getByRole('button', { name: '取消' }));
+
+    fireEvent.click(screen.getByLabelText('新建监测任务'));
+    const runDialog = await screen.findByRole('dialog', { name: '新建 AI 可见度监测任务' });
+    const runMarks = runDialog.querySelectorAll('.gm-required-mark');
+    expect(runMarks).toHaveLength(2);
+    expect(runMarks[0]?.parentElement?.textContent).toMatch(/^\*\s*选择监测档案$/);
+    expect(runMarks[1]?.parentElement?.textContent).toMatch(/^\*\s*目标 AI 引擎/);
+  });
+
+  it('validates required profile name inline on blur and change with consistent field-label wording (#220)', async () => {
+    const { gateway } = buildMockGateway();
+
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('便携显示器11月国内主流引擎巡检')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText('新建品牌档案'));
+    const nameInput = screen.getByLabelText('档案名称') as HTMLInputElement;
+
+    // 1. Blur empty 档案名称 immediately shows inline error matching label '档案名称'
+    fireEvent.focus(nameInput);
+    fireEvent.blur(nameInput);
+
+    const inlineErr = await screen.findByTestId('profile-name-error');
+    expect(inlineErr.textContent).toBe('请填写档案名称');
+    expect(nameInput.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.queryByText(/请填写监测档案名称/)).toBeNull();
+
+    // 2. Typing clears inline error; clearing re-triggers it
+    fireEvent.change(nameInput, { target: { value: '星图海外监测' } });
+    expect(screen.queryByTestId('profile-name-error')).toBeNull();
+    expect(nameInput.getAttribute('aria-invalid')).toBeNull();
+
+    fireEvent.change(nameInput, { target: { value: '' } });
+    expect((await screen.findByTestId('profile-name-error')).textContent).toBe('请填写档案名称');
+
+    // 3. Clicking 保存档案 directly on empty form shows consistent '请填写档案名称' (never '监测档案名称')
+    fireEvent.click(screen.getByLabelText('重置'));
+    fireEvent.click(screen.getByLabelText('保存品牌档案'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('profile-name-error').textContent).toBe('请填写档案名称');
+    });
+    expect(screen.getAllByText('请填写档案名称').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/请填写监测档案名称/)).toBeNull();
+  });
 });
 
 describe('VisibilityOverviewScreen', () => {
