@@ -1,13 +1,17 @@
 'use client';
 
 import {
+  FAKE_MARK,
   VISIBILITY_ENGINE_LABELS,
   VISIBILITY_SENTIMENT_LABELS,
   VISIBILITY_SENTIMENTS,
+  assessAnswerTopicRelevance,
   formatCollectorDisplayLabel,
   formatJudgeModelDisplayLabel,
   formatShanghaiDateTime,
+  isSimulatedCollectorKind,
   isVisibilitySentiment,
+  wholeWordPattern,
   type VisibilityObservationRecord,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
@@ -16,7 +20,7 @@ import { Button, Segmented, Tooltip } from 'antd';
 import type { JSX, KeyboardEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
-import { AnswerLens, type AnswerLensHandle } from './answer-lens';
+import { AnswerLens, buildLensSegments, type AnswerLensHandle } from './answer-lens';
 import { CitationTrace } from './citation-trace';
 import {
   EngineChip,
@@ -156,6 +160,58 @@ export function RunWorkspace({
     [filteredObservations, selectedObs, viewMode],
   );
 
+  const brandSubject = useMemo(
+    () => ({
+      name: profile?.brandName ?? run?.brandName ?? '',
+      aliases: profile?.brandAliases ?? [],
+    }),
+    [profile?.brandName, profile?.brandAliases, run?.brandName],
+  );
+
+  const competitorSubjects = useMemo(() => {
+    const base =
+      profile && profile.competitors.length > 0
+        ? profile.competitors.map((c) => ({ name: c.name, aliases: c.aliases }))
+        : [];
+    const seen = new Set(base.map((c) => c.name));
+    for (const hit of selectedObs?.competitorHits ?? []) {
+      if (!seen.has(hit.name)) {
+        seen.add(hit.name);
+        base.push({ name: hit.name, aliases: [] });
+      }
+    }
+    return base;
+  }, [profile, selectedObs]);
+
+  const selectedObsRelevance = useMemo(() => {
+    if (!selectedObs || selectedObs.status !== 'SUCCESS' || !selectedObs.answerText) {
+      return { relevant: true, reason: null as string | null };
+    }
+    if (selectedObs.topicRelevant === false) {
+      return {
+        relevant: false,
+        reason:
+          selectedObs.relevanceReason ??
+          '回答正文未围绕监测问题核心主题展开，已降权且不计入推荐证据',
+      };
+    }
+    return assessAnswerTopicRelevance(selectedObs.promptText, selectedObs.answerText, {
+      brandName: brandSubject.name,
+      brandAliases: brandSubject.aliases,
+      competitorNames: competitorSubjects.map((c) => c.name),
+    });
+  }, [selectedObs, brandSubject.name, brandSubject.aliases, competitorSubjects]);
+
+  const lensCompetitorHitCount = useMemo(() => {
+    if (!selectedObs?.answerText) return 0;
+    return buildLensSegments(
+      selectedObs.answerText,
+      brandSubject,
+      competitorSubjects,
+      selectedObs.citations,
+    ).filter((s) => s.kind === 'competitor').length;
+  }, [selectedObs, brandSubject, competitorSubjects]);
+
   if (loading && !run) {
     return (
       <div className="gm-run-ws-root">
@@ -187,15 +243,16 @@ export function RunWorkspace({
   const skipPct =
     total > 0 ? Math.min(100 - donePct - failPct, ((run.skipCount ?? 0) / total) * 100) : 0;
 
-  const brandSubject = {
-    name: profile?.brandName ?? run.brandName,
-    aliases: profile?.brandAliases ?? [],
-  };
+  const hasSimulatedObservations = run.observations.some(
+    (obs) =>
+      isSimulatedCollectorKind(obs.collectorKind) ||
+      Boolean(obs.answerText?.trimStart().startsWith(FAKE_MARK)),
+  );
 
-  const competitorSubjects =
-    profile && profile.competitors.length > 0
-      ? profile.competitors.map((c) => ({ name: c.name, aliases: c.aliases }))
-      : (selectedObs?.competitorHits ?? []).map((c) => ({ name: c.name, aliases: [] }));
+  const selectedObsIsSimulated = selectedObs
+    ? isSimulatedCollectorKind(selectedObs.collectorKind) ||
+      Boolean(selectedObs.answerText?.trimStart().startsWith(FAKE_MARK))
+    : false;
 
   const answerExpanded = selectedObs ? !collapsedAnswerIds[selectedObs.id] : true;
 
@@ -220,6 +277,16 @@ export function RunWorkspace({
             </span>
           </div>
         </div>
+
+        {hasSimulatedObservations ? (
+          <div className="gm-run-ws-notice gm-run-ws-notice-sim" role="status">
+            <strong>演示模式</strong>
+            <span>
+              当前任务包含模拟采集数据（非真实 AI
+              引擎输出），仅用于流程演示；接入真实模型或采集网关后将显示实时结果。
+            </span>
+          </div>
+        ) : null}
 
         {/* Segmented Progress Bar */}
         <div className="gm-run-ws-progress-track" aria-hidden="true">
@@ -416,7 +483,7 @@ export function RunWorkspace({
           {/* Right Detail Panel */}
           <div className="gm-run-ws-detail">
             {!selectedObs ? (
-              <SignalEmpty title="选择左侧任一 Prompt 查看 AI 原文" />
+              <SignalEmpty title="选择左侧任一监测问题查看 AI 原文" />
             ) : (
               <div
                 data-testid={`observation-card-${selectedObs.id}`}
@@ -429,6 +496,12 @@ export function RunWorkspace({
                 <div className="gm-run-ws-meta-row">
                   <EngineChip engine={selectedObs.engine} />
                   <StatusPill kind="item" status={selectedObs.status} />
+                  {selectedObsIsSimulated ? (
+                    <SignalPill tone="warning">模拟演示数据</SignalPill>
+                  ) : null}
+                  {!selectedObsRelevance.relevant ? (
+                    <SignalPill tone="warning">可能跑题</SignalPill>
+                  ) : null}
                   <span className="gm-num">{formatCheckedAt(selectedObs.checkedAt)}</span>
                   {formatCollectorDisplayLabel(selectedObs.collectorKind) ? (
                     <span className="gm-mono">
@@ -440,16 +513,21 @@ export function RunWorkspace({
                       {formatJudgeModelDisplayLabel(selectedObs.judgeModel)}
                     </span>
                   ) : null}
-                  {selectedObs.tokensIn !== null || selectedObs.tokensOut !== null ? (
-                    <span className="gm-mono gm-num">
-                      Token {selectedObs.tokensIn ?? 0}/{selectedObs.tokensOut ?? 0}
-                    </span>
-                  ) : null}
                   {selectedObs.brandSentiment &&
                   isVisibilitySentiment(selectedObs.brandSentiment) ? (
                     <SentimentDot sentiment={selectedObs.brandSentiment} />
                   ) : null}
                 </div>
+
+                {!selectedObsRelevance.relevant ? (
+                  <div className="gm-run-ws-notice gm-run-ws-notice-warn" role="alert">
+                    <strong>主题相关性预警：</strong>
+                    <span>
+                      {selectedObsRelevance.reason || '回答正文疑似偏离监测问题核心主题'}
+                      （已自动降权，不计入推荐证据）
+                    </span>
+                  </div>
+                ) : null}
 
                 {selectedObs.error ? <SignalError message={selectedObs.error} /> : null}
 
@@ -457,31 +535,68 @@ export function RunWorkspace({
                 <div className="gm-run-ws-section">
                   <div className="gm-run-ws-section-label">品牌证据段落</div>
                   <div className="gm-run-ws-evidence">
-                    {selectedObs.brandPassage ? (
+                    {selectedObsRelevance.relevant && selectedObs.brandPassage ? (
                       selectedObs.brandPassage
                     ) : (
-                      <span style={{ color: 'var(--gm-fg-3)' }}>本次回答未出现品牌证据段落</span>
+                      <span style={{ color: 'var(--gm-fg-3)' }}>
+                        {!selectedObsRelevance.relevant
+                          ? '该回答疑似跑题，已降权处理且不计为品牌推荐证据'
+                          : '本次回答未出现品牌证据段落'}
+                      </span>
                     )}
                   </div>
                 </div>
 
-                {/* 4. Competitor Hits */}
-                {selectedObs.competitorHits.length > 0 ? (
-                  <div className="gm-run-ws-section">
-                    <div className="gm-run-ws-section-label">同题命中竞品</div>
-                    <div className="gm-run-ws-comp-list">
-                      {selectedObs.competitorHits.map((comp) => (
-                        <span key={comp.name} className="gm-run-ws-comp-hit">
-                          <SignalPill tone={comp.mentioned ? 'competitor' : 'absent'}>
-                            {comp.name}
-                            {comp.position !== null ? ` · #${comp.position}` : ''}
-                          </SignalPill>
-                          <SentimentDot sentiment={comp.sentiment} />
-                        </span>
-                      ))}
+                {/* 4. Competitor Hits (mentioned only, with explicit empty & domain-only clarity) */}
+                {(() => {
+                  const mentionedComps = selectedObs.competitorHits.filter((c) => c.mentioned);
+                  const showSection =
+                    mentionedComps.length > 0 ||
+                    selectedObs.competitorHits.length > 0 ||
+                    Boolean(profile && profile.competitors.length > 0);
+                  if (!showSection) return null;
+
+                  const domainOnlyAll = mentionedComps.length > 0 && lensCompetitorHitCount === 0;
+
+                  return (
+                    <div className="gm-run-ws-section">
+                      <div className="gm-run-ws-section-label">
+                        同题命中竞品
+                        {domainOnlyAll ? (
+                          <span className="gm-run-ws-comp-note">
+                            （含信源域名归因，正文中未直接出现词面）
+                          </span>
+                        ) : null}
+                      </div>
+                      {mentionedComps.length === 0 ? (
+                        <div className="gm-run-ws-comp-empty">本次回答未命中已配置竞品</div>
+                      ) : (
+                        <div className="gm-run-ws-comp-list">
+                          {mentionedComps.map((comp) => {
+                            const subj = competitorSubjects.find((s) => s.name === comp.name);
+                            const terms = [comp.name, ...(subj?.aliases ?? [])].filter(Boolean);
+                            const hasTextMatch =
+                              Boolean(selectedObs.answerText) &&
+                              terms.some((t) => wholeWordPattern(t).test(selectedObs.answerText!));
+
+                            return (
+                              <span key={comp.name} className="gm-run-ws-comp-hit">
+                                <SignalPill tone="competitor">
+                                  {comp.name}
+                                  {comp.position !== null ? ` · #${comp.position}` : ''}
+                                </SignalPill>
+                                <SentimentDot sentiment={comp.sentiment} />
+                                {!hasTextMatch ? (
+                                  <span className="gm-run-ws-meta-tag">信源域名归因</span>
+                                ) : null}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ) : null}
+                  );
+                })()}
 
                 {/* 5. Query Fan-Out */}
                 {selectedObs.fanOutQueries.length > 0 ? (
@@ -490,8 +605,8 @@ export function RunWorkspace({
                     <div className="gm-run-ws-fanout-list">
                       {selectedObs.fanOutQueries.map((fq) => (
                         <Tooltip key={fq} title={fq}>
-                          <span className="gm-engine-chip gm-run-ws-fanout-chip">
-                            <span className="gm-clamp-1">{fq}</span>
+                          <span className="gm-run-ws-fanout-chip">
+                            <span className="gm-run-ws-fanout-chip-text">{fq}</span>
                           </span>
                         </Tooltip>
                       ))}

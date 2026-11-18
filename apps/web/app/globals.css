@@ -1796,13 +1796,39 @@ input:not([class*='ant-']):hover {
 .gm-run-ws-meta-tag {
   display: inline-flex;
   align-items: center;
-  height: 22px;
-  padding: 0 8px;
+  min-height: 22px;
+  height: auto;
+  padding: 2px 8px;
+  white-space: nowrap;
   border-radius: var(--gm-radius-xs);
   border: 1px solid var(--gm-line-1);
   background: var(--gm-bg-surface);
   font-size: 11px;
+  line-height: 16px;
   color: var(--gm-fg-2);
+}
+
+.gm-run-ws-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--gm-radius-sm);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.gm-run-ws-notice-sim {
+  border: 1px solid rgba(255, 191, 71, 0.35);
+  background: rgba(255, 191, 71, 0.08);
+  color: var(--gm-fg-1);
+}
+
+.gm-run-ws-notice-warn {
+  border: 1px solid rgba(255, 191, 71, 0.38);
+  background: rgba(255, 191, 71, 0.08);
+  color: var(--gm-fg-1);
 }
 
 .gm-run-ws-progress-track {
@@ -1995,6 +2021,20 @@ input:not([class*='ant-']):hover {
   gap: 6px;
 }
 
+.gm-run-ws-comp-empty {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--gm-fg-3);
+}
+
+.gm-run-ws-comp-note {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--gm-fg-3);
+}
+
 .gm-run-ws-fanout-list {
   display: flex;
   flex-wrap: wrap;
@@ -2002,7 +2042,26 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-run-ws-fanout-chip {
-  max-width: 280px;
+  display: inline-flex;
+  align-items: center;
+  max-width: min(360px, 100%);
+  min-width: 0;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: var(--gm-radius-xs);
+  border: 1px solid var(--gm-line-2);
+  background: var(--gm-bg-surface);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--gm-fg-2);
+}
+
+.gm-run-ws-fanout-chip-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .gm-run-ws-cite-list {
@@ -2127,7 +2186,14 @@ input:not([class*='ant-']):hover {
   white-space: nowrap;
 }
 
+.gm-lens-nav-btn-wrap {
+  display: inline-flex;
+}
+
 .gm-lens-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -2137,8 +2203,7 @@ input:not([class*='ant-']):hover {
   color: var(--gm-fg-1);
   font-family: var(--gm-font-mono);
   font-size: 12px;
-  line-height: 22px;
-  text-align: center;
+  line-height: 1;
   cursor: pointer;
   transition:
     border-color var(--gm-dur-fast) var(--gm-ease-out),

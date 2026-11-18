@@ -143,4 +143,27 @@ describe('CitationTrace component', () => {
     );
     expect(screen.getByText('本批回答未附带信源链接')).toBeTruthy();
   });
+
+  it('renders Chinese 监测问题 header and full engine names without 4-char truncation (#191)', () => {
+    const obs = [
+      makeObs({ id: 'o-ds', promptText: '便携屏对比', engine: 'deepseek', brandMentioned: true }),
+      makeObs({
+        id: 'o-gaio',
+        promptText: '便携屏对比',
+        engine: 'google_aio',
+        brandMentioned: false,
+      }),
+    ];
+    const { container } = render(
+      <CitationTrace observations={obs} onSelectObservation={vi.fn()} />,
+    );
+    expect(screen.getByText('监测问题')).toBeTruthy();
+    expect(screen.queryByText('PROMPT')).toBeNull();
+    const svgTexts = [...container.querySelectorAll('svg text')].map((el) => el.textContent);
+    expect(svgTexts).toContain('DeepSeek');
+    expect(svgTexts).toContain('Google AI Overviews');
+    const rects = container.querySelectorAll('svg rect');
+    expect(rects.length).toBeGreaterThanOrEqual(2);
+    expect(Number(rects[0]?.getAttribute('width'))).toBeGreaterThanOrEqual(120);
+  });
 });

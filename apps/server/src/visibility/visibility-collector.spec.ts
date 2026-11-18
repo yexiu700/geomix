@@ -138,9 +138,128 @@ describe('VisibilityCollectorService - fake driver', () => {
     expect(sawBrandMention).toBe(true);
     expect(sawCompetitorOnlyGap).toBe(true);
   });
+
+  it('keeps fake collector topic-aware for consumer hardware prompts without injecting GEO/audit boilerplate (#217)', async () => {
+    const collector = VisibilityCollectorService.fromEnv({ VISIBILITY_COLLECTOR: 'fake' });
+    const forbiddenBoilerplate = [
+      '数据可审计性',
+      '合规边界',
+      '中文语义理解',
+      '引用溯源归类',
+      '生成式引擎优化（GEO）',
+    ];
+
+    for (let i = 1; i <= 16; i += 1) {
+      const sample = await collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: `Switch外接ARZOPA便携屏怎么样 实测${i}`,
+        brandName: 'ARZOPA',
+        ownedDomains: ['arzopa.com'],
+        competitors: [
+          { name: '联想ThinkVision', domains: ['lenovo.com'] },
+          { name: '小米', domains: ['mi.com'] },
+        ],
+      });
+
+      expect(sample.rawMeta?.simulated).toBe(true);
+      for (const bad of forbiddenBoilerplate) {
+        expect(sample.answerText).not.toContain(bad);
+      }
+    }
+  });
 });
 
 describe('VisibilityCollectorService - llm_api driver', () => {
+  it('rejects fake LLM fallback output instead of persisting 【FAKE】 placeholder text (#217)', async () => {
+    const fakeLlm = LlmService.fromEnv({ LLM_PROVIDERS: '{}' });
+    const collector = VisibilityCollectorService.fromEnv(
+      { VISIBILITY_COLLECTOR: 'llm_api' },
+      { llm: fakeLlm },
+    );
+
+    await expect(
+      collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: 'Switch外接ARZOPA便携屏怎么样',
+        brandName: 'ARZOPA',
+      }),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'fake_fallback_rejected',
+    });
+  });
+
+  it('routes llm_api collection to provider matching target engine when configured (#217)', async () => {
+    const calledProviders: string[] = [];
+    const makeProv = (name: string): LlmProvider => ({
+      name,
+      async complete(call) {
+        calledProviders.push(name);
+        return {
+          provider: name,
+          model: call.model,
+          fake: false,
+          text: JSON.stringify({
+            answerText: `由 ${name} 回答：Switch 外接 ARZOPA 便携屏支持 Type-C 一线直连。`,
+            citations: [],
+            fanOutQueries: ['Switch便携屏一线直连'],
+          }),
+          tokensIn: 20,
+          tokensOut: 30,
+        };
+      },
+    });
+    const route: LlmRouteConfig = {
+      providers: {
+        deepseek: {
+          kind: 'openai',
+          baseUrl: 'https://ds.example.com/v1',
+          apiKeyEnv: 'DS_KEY',
+          cheapModel: 'deepseek-chat',
+          qualityModel: 'deepseek-chat',
+        },
+        tongyi: {
+          kind: 'openai',
+          baseUrl: 'https://ty.example.com/v1',
+          apiKeyEnv: 'TY_KEY',
+          cheapModel: 'qwen-plus',
+          qualityModel: 'qwen-max',
+        },
+      },
+      route: {
+        distill: { primary: 'deepseek', backup: ['tongyi'] },
+        title: { primary: 'deepseek', backup: ['tongyi'] },
+        body: { primary: 'deepseek', backup: ['tongyi'] },
+        rewrite: { primary: 'deepseek', backup: ['tongyi'] },
+        image_prompt: { primary: 'deepseek', backup: ['tongyi'] },
+      },
+    };
+    const llm = new LlmService(
+      new LlmRouter(
+        route,
+        { deepseek: makeProv('deepseek'), tongyi: makeProv('tongyi') },
+        { maxRetries: 0, timeoutMs: 5_000, retryDelayMs: 0 },
+      ),
+    );
+    const collector = VisibilityCollectorService.fromEnv(
+      { VISIBILITY_COLLECTOR: 'llm_api' },
+      { llm },
+    );
+
+    const res = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'tongyi',
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      brandName: 'ARZOPA',
+    });
+
+    expect(calledProviders).toEqual(['tongyi']);
+    expect(res.rawMeta?.provider).toBe('tongyi');
+    expect(res.answerText).toContain('tongyi');
+  });
+
   it('parses fenced JSON collector output and normalizes citations & fanOutQueries', async () => {
     const llm = createScriptedLlm(
       [

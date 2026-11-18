@@ -502,24 +502,48 @@ export const AnswerLens = forwardRef<AnswerLensHandle, AnswerLensProps>(function
 
         <div className="gm-lens-nav">
           <span className="gm-lens-heat-label">提及热区</span>
-          <button
-            type="button"
-            className="gm-lens-nav-btn"
-            aria-label="上一个命中"
-            disabled={totalHits === 0}
-            onClick={prevHit}
-          >
-            [
-          </button>
-          <button
-            type="button"
-            className="gm-lens-nav-btn"
-            aria-label="下一个命中"
-            disabled={totalHits === 0}
-            onClick={nextHit}
-          >
-            ]
-          </button>
+          <Tooltip title="上一处提及（快捷键 [）">
+            <span className="gm-lens-nav-btn-wrap">
+              <button
+                type="button"
+                className="gm-lens-nav-btn"
+                aria-label="上一个命中"
+                disabled={totalHits === 0}
+                onClick={prevHit}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M7.5 2.5L4 6L7.5 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </span>
+          </Tooltip>
+          <Tooltip title="下一处提及（快捷键 ]）">
+            <span className="gm-lens-nav-btn-wrap">
+              <button
+                type="button"
+                className="gm-lens-nav-btn"
+                aria-label="下一个命中"
+                disabled={totalHits === 0}
+                onClick={nextHit}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <path
+                    d="M4.5 2.5L8 6L4.5 9.5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </span>
+          </Tooltip>
           <span className="gm-lens-nav-count gm-num">
             {currentDisplay} / {totalDisplay}
           </span>

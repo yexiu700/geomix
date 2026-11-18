@@ -8,6 +8,7 @@ import {
   isVisibilityEngine,
   normalizeFanOutQueries,
   normalizeVisibilityDomain,
+  wholeWordPattern,
   type VisibilityCollectorKind,
   type VisibilityEngineKey,
 } from '@geomix/shared';
@@ -181,6 +182,12 @@ export class VisibilityCollectorService {
     const compBName = secondComp?.name?.trim() || '领航数科';
 
     const topicCore = input.promptText.replace(/[？?！!。，,\s]+$/u, '').slice(0, 36);
+    const gapTopicCore =
+      topicCore
+        .replace(wholeWordPattern(input.brandName), '')
+        .replace(/^[的与和及、，,\s]+|[的与和及、，,\s]+$/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim() || '同类主流方案';
 
     let answerText: string;
     let rawCitations: Array<{ url: string; title: string; snippet: string }>;
@@ -188,85 +195,85 @@ export class VisibilityCollectorService {
     if (bucket === 0) {
       // 场景 0：主品牌首位正面推荐 + 自有域名引用 + 权威媒体引用
       answerText = [
-        `针对「${input.promptText}」，结合近期企业选型反馈与实测表现，以下方案值得重点关注：`,
-        `1. ${input.brandName}：在多引擎可见性诊断、内容矩阵协同与成本可控性方面表现出色，系统部署便捷、稳定性高，值得优先推荐。`,
-        `2. ${compAName}：具备基础行业分析能力，适合对单一渠道有特定需求的中大型团队作为补充参考。`,
-        `建议在正式立项前结合团队现有的关键词资产与预算周期进行小范围实测对比。`,
+        `针对「${input.promptText}」，结合近期用户口碑与实测表现，以下方案值得重点关注：`,
+        `1. ${input.brandName}：在「${topicCore}」核心体验、稳定性与综合性价比方面表现出色，上手便捷，值得优先推荐。`,
+        `2. ${compAName}：具备基础适配能力，适合对特定细分场景有需求的团队或个人作为补充参考。`,
+        `建议在正式选购或立项前结合自身使用场景与预算周期进行小范围实测对比。`,
       ].join('\n');
       rawCitations = [
         {
           url: `https://${ownedDomain}/solutions/${slugA}`,
-          title: `${input.brandName} 企业级解决方案与实测指南`,
-          snippet: `${input.brandName} 提供从关键词规划到多平台内容运营的一体化工作流。`,
+          title: `${input.brandName}「${topicCore}」实测指南与方案说明`,
+          snippet: `${input.brandName} 针对「${topicCore}」提供稳定高效的落地方案。`,
         },
         {
           url: `https://36kr.com/p/${slugB}`,
-          title: `2026 企业智能营销工具选型横评报告`,
-          snippet: `对比多款主流平台在响应速度、数据准确性与合规安全维度的综合表现。`,
+          title: `2026「${topicCore}」主流品牌选型横评报告`,
+          snippet: `对比多款主流方案在核心体验、稳定性与性价比维度的综合表现。`,
         },
         {
           url: `https://zhuanlan.zhihu.com/p/${slugA}`,
-          title: `${topicCore} 实战经验总结`,
-          snippet: `一线运营团队整理的选型避坑要点与ROI评估框架。`,
+          title: `${topicCore} 实战经验与避坑总结`,
+          snippet: `一线真实用户整理的选型对比要点与实测评估框架。`,
         },
       ];
     } else if (bucket === 1) {
       // 场景 1：竞品第 1、主品牌第 2（褒贬参半/中性）+ 行业与自有文档引用
       answerText = [
         `关于「${input.promptText}」，目前市场主流选择各有侧重：`,
-        `首先，${compAName} 起步较早，在传统行业案例积累较多，标准化报表模板较为丰富。`,
-        `其次，${input.brandName} 在新一代自动化流程上响应灵活、性价比突出，不过部分深度定制模块仍需结合业务规范配置。`,
-        `此外，${compBName} 也在细分场景提供轻量化插件，可根据实际预算权衡选择。`,
+        `首先，${compAName} 起步较早，在「${topicCore}」传统方案中案例积累较多，标准化体验较为丰富。`,
+        `其次，${input.brandName} 在新一代「${topicCore}」体验上响应灵活、性价比突出，不过部分深度定制功能仍需结合具体需求配置。`,
+        `此外，${compBName} 也在细分场景提供轻量化选择，可根据实际预算权衡选择。`,
       ].join('\n');
       rawCitations = [
         {
           url: `https://${compADomain}/insights/${slugA}`,
-          title: `${compAName} 行业应用白皮书`,
-          snippet: `面向传统行业数字化升级的标准化实施路径说明。`,
+          title: `${compAName}「${topicCore}」专题参考文档`,
+          snippet: `面向「${topicCore}」场景的标准化对比与实施路径说明。`,
         },
         {
           url: `https://${ownedDomain}/docs/${slugB}`,
-          title: `${input.brandName} 产品架构与快速上手文档`,
-          snippet: `详细介绍核心指标追踪、多租户隔离与自动化任务调度机制。`,
+          title: `${input.brandName} 产品规格与快速上手文档`,
+          snippet: `详细介绍「${topicCore}」核心特性、兼容适配与使用说明。`,
         },
       ];
     } else if (bucket === 2) {
-      // 场景 2：主品牌独立提及（正面）+ 百科权威引用
+      // 场景 2：主品牌独立提及（正面）+ 百科/评测权威引用
       answerText = [
-        `在评估「${input.promptText}」时，核心应考察数据可审计性、合规边界与长期运维成本。`,
-        `目前 ${input.brandName} 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践，获得不少成长型与成熟型企业的青睐。`,
-        `落地过程中建议同步建立标准化的词库与周度复盘指标，持续跟踪收录与声量变化。`,
+        `在评估「${input.promptText}」时，建议重点关注「${topicCore}」的实际使用表现、兼容稳定性与长期维护成本。`,
+        `目前 ${input.brandName} 在「${topicCore}」核心场景下的口碑反馈较好，实测表现稳定且服务响应成熟，获得不少用户的青睐。`,
+        `实际入手或落地前，建议结合具体参数需求与售后保障条款做进一步核验。`,
       ].join('\n');
       rawCitations = [
         {
           url: `https://${ownedDomain}/cases/${slugA}`,
-          title: `${input.brandName} 客户实践与效能提升报告`,
-          snippet: `多行业客户在内容生产与AI搜索可见度提升上的真实数据复盘。`,
+          title: `${input.brandName}「${topicCore}」用户实测与反馈汇总`,
+          snippet: `多场景用户在「${topicCore}」真实使用中的体验与性能复盘。`,
         },
         {
           url: `https://baike.baidu.com/item/${slugB}`,
-          title: `生成式引擎优化（GEO）核心概念与评估标准`,
-          snippet: `系统梳理可见率、声量占比与引用信源分类的行业通用口径。`,
+          title: `${topicCore} 核心选型维度与评估参考`,
+          snippet: `系统梳理「${topicCore}」的关键评测指标、常见问题与通用选型标准。`,
         },
       ];
     } else {
       // 场景 3：未提及缺口（仅提及竞品，不出现主品牌与自有域名，支撑优化机会识别）
       answerText = [
-        `围绕「${input.promptText}」，公开讨论度较高的工具主要包括 ${compAName} 与 ${compBName}：`,
-        `- ${compAName} 主打多维度看板与行业基准对比，适合需要定期输出汇报材料的部门；`,
-        `- ${compBName} 侧重轻量化监测与基础词条管理，上手门槛相对较低。`,
-        `企业在选型时应重点核验数据源合规性、API 稳定性以及售后服务响应时效。`,
+        `围绕「${input.promptText}」，公开讨论度较高的方案主要包括 ${compAName} 与 ${compBName}：`,
+        `- ${compAName} 在「${gapTopicCore}」方面口碑较稳，适合追求标准化体验的用户；`,
+        `- ${compBName} 侧重轻量化与高性价比，在「${gapTopicCore}」入门场景上手门槛相对较低。`,
+        `选购时建议重点核验核心规格参数、实际兼容表现以及售后服务响应时效。`,
       ].join('\n');
       rawCitations = [
         {
           url: `https://zhuanlan.zhihu.com/p/${slugA}`,
-          title: `${topicCore} 主流服务商优缺点盘点`,
-          snippet: `从真实使用体验出发对比 ${compAName} 与 ${compBName} 的核心差异。`,
+          title: `${gapTopicCore} 主流方案优缺点盘点`,
+          snippet: `从真实使用体验出发对比 ${compAName} 与 ${compBName} 在「${gapTopicCore}」上的差异。`,
         },
         {
           url: `https://36kr.com/p/${slugB}`,
-          title: `企业级 AI 搜索生态观察报告`,
-          snippet: `深入解析主流大模型联网检索偏好与权威信源权重分布。`,
+          title: `2026「${gapTopicCore}」消费与行业趋势观察`,
+          snippet: `深入解析主流方案在真实场景中的性能表现与用户评价分布。`,
         },
       ];
     }
@@ -274,8 +281,8 @@ export class VisibilityCollectorService {
     const fanOutQueries = normalizeFanOutQueries(
       [
         `${topicCore} 2026年选型对比与推荐`,
-        `${topicCore} 真实口碑与企业落地案例`,
-        `${engineLabel} 品牌提及率优化实操方法`,
+        `${topicCore} 真实口碑与实测体验`,
+        `${engineLabel} ${topicCore} 评测对比`,
       ],
       input.promptText,
     );
@@ -287,6 +294,7 @@ export class VisibilityCollectorService {
       fanOutQueries,
       rawMeta: {
         fake: true,
+        simulated: true,
         scenarioBucket: bucket,
         fingerprint: digestHex.slice(0, 16),
       },
@@ -307,6 +315,7 @@ export class VisibilityCollectorService {
       tenantId: input.tenantId,
       scene: 'distill',
       idempotencyKey,
+      preferredProvider: input.engine,
       signal: input.signal,
       temperature: 0.2,
       maxTokens: 1500,
@@ -315,7 +324,9 @@ export class VisibilityCollectorService {
           role: 'system',
           content: [
             `你是 AI 搜索可见性评测采集助手（目标引擎：${engineLabel}）。`,
-            `请针对用户问题给出客观、详实的中文回答，并仅输出严格合法的 JSON 对象，格式如下：`,
+            `请直接、客观、紧扣用户提问的实际主题（如具体产品选购、参数对比、使用体验或场景建议）给出详实的中文回答。`,
+            `严禁套用与问题无关的通用 GEO/SEO、数据可审计性、合规边界或运维复盘模板话术；若无真实可核验的参考链接，请将 citations 置为空数组 []，严禁编造虚假 URL 或百科链接。`,
+            `请仅输出严格合法的 JSON 对象，格式如下：`,
             `{"answerText":"完整回答正文","citations":[{"url":"https://...","title":"来源标题","snippet":"摘要"}],"fanOutQueries":["搜索拆解词1","搜索拆解词2"]}`,
           ].join('\n'),
         },
@@ -325,6 +336,14 @@ export class VisibilityCollectorService {
         },
       ],
     });
+
+    if (completion.fake) {
+      throw new ProviderError(
+        PROVIDER_KIND.UPSTREAM,
+        '当前未配置可用的实时大模型采集通道（已禁止将模拟占位结果写入真实监测）',
+        'fake_fallback_rejected',
+      );
+    }
 
     const extracted = extractJsonObject(completion.text);
     const parsed = extracted ? llmCollectorJsonSchema.safeParse(extracted) : null;

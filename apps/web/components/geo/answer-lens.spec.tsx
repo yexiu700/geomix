@@ -105,13 +105,20 @@ describe('AnswerLens component', () => {
     expect(document.querySelectorAll('mark[data-hit="brand"]')).toHaveLength(1);
     expect(document.querySelectorAll('mark[data-hit="competitor"]')).toHaveLength(1);
 
-    // Navigate next hit
-    fireEvent.click(screen.getByLabelText('下一个命中'));
+    // Navigate next hit (chevron icon buttons instead of raw [ ] brackets)
+    const nextBtn = screen.getByLabelText('下一个命中');
+    const prevBtn = screen.getByLabelText('上一个命中');
+    expect(nextBtn.textContent?.trim()).toBe('');
+    expect(prevBtn.textContent?.trim()).toBe('');
+    expect(nextBtn.querySelector('svg')).not.toBeNull();
+    expect(prevBtn.querySelector('svg')).not.toBeNull();
+
+    fireEvent.click(nextBtn);
     expect(screen.getByText('1 / 2')).toBeTruthy();
     expect(document.querySelectorAll('mark.gm-lens-hit-active')).toHaveLength(1);
 
     // Navigate prev hit wraps to 2 / 2
-    fireEvent.click(screen.getByLabelText('上一个命中'));
+    fireEvent.click(prevBtn);
     expect(screen.getByText('2 / 2')).toBeTruthy();
 
     // Jump via heatmap tick

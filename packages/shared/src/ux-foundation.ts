@@ -178,25 +178,42 @@ export const VISIBILITY_TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
   CANCELLED: '已终止',
 };
 
-const INTERNAL_DEBUG_TOKEN_RE = /^(?:fake(?:[-_].*)?|mock(?:[-_].*)?|deterministic[-_]fallback)$/i;
+const INTERNAL_DEBUG_TOKEN_RE =
+  /(?:^|[:/_\-\s])(?:fake|mock)(?:$|[:/_\-\sa-z0-9]*)|deterministic[-_](?:fallback|skip|domain|citation|judge|rule)/i;
 
 /**
- * 净化采集器标识：对商户隐藏 `fake` / `mock` 等内部调试桩名称
+ * 判断采集器标识是否属于模拟/演示桩（fake / mock 等）
+ */
+export function isSimulatedCollectorKind(kind: string | null | undefined): boolean {
+  const trimmed = kind?.trim() ?? '';
+  if (!trimmed) return false;
+  return INTERNAL_DEBUG_TOKEN_RE.test(trimmed);
+}
+
+/**
+ * 净化采集器标识：将 fake/mock 显式标识为「模拟演示采集」，将真实采集通道映射为可读中文名称
  */
 export function formatCollectorDisplayLabel(kind: string | null | undefined): string | null {
   const trimmed = kind?.trim() ?? '';
   if (!trimmed) return null;
   if (INTERNAL_DEBUG_TOKEN_RE.test(trimmed)) {
-    return '内置引擎采集';
+    return '模拟演示采集';
   }
-  if (trimmed === 'live' || trimmed === 'real') {
+  const lower = trimmed.toLowerCase();
+  if (lower === 'llm_api') {
+    return '大模型直连采集';
+  }
+  if (lower === 'remote_scraper') {
+    return '联网搜索采集';
+  }
+  if (lower === 'live' || lower === 'real') {
     return '实时引擎采集';
   }
   return trimmed;
 }
 
 /**
- * 净化判别模型标识：对商户隐藏 `deterministic-fallback` / `fake-*` 等内部实现标记
+ * 净化判别模型标识：对商户隐藏 `deterministic-*` / `fake-*` / `mock-*` 等内部实现标记
  */
 export function formatJudgeModelDisplayLabel(model: string | null | undefined): string | null {
   const trimmed = model?.trim() ?? '';

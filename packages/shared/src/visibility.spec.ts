@@ -8,6 +8,7 @@ import {
   VISIBILITY_COLLECTOR_KINDS,
   VISIBILITY_ENGINES,
   VISIBILITY_SENTIMENTS,
+  assessAnswerTopicRelevance,
   classifyCitationSource,
   computeAvgPosition,
   computeSentimentSummary,
@@ -771,5 +772,75 @@ describe('profile-scoped keyword matching & isolation (#218, #213)', () => {
       keywordId: 'kw_anker_1',
       titles: ['Anker快充对比评测'],
     });
+  });
+});
+
+describe('topic relevance guardrail and off-topic metric downgrading (#217)', () => {
+  it('flags off-topic GEO boilerplate even when prompt is echoed in quotes, and accepts genuine on-topic answers', () => {
+    const prompt = 'Switch外接ARZOPA便携屏怎么样';
+    const ctx = { brandName: 'ARZOPA', brandAliases: ['阿卓帕'] };
+
+    const offTopicBoilerplate = [
+      '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。',
+      '目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践，获得不少成长型与成熟型企业的青睐。',
+      '落地过程中建议同步建立标准化的词库与周度复盘指标，持续跟踪收录与声量变化。',
+    ].join('\n');
+
+    const resOff = assessAnswerTopicRelevance(prompt, offTopicBoilerplate, ctx);
+    expect(resOff.relevant).toBe(false);
+    expect(resOff.reason).toBeTruthy();
+
+    const onTopicAnswer =
+      'Switch 外接 ARZOPA 便携屏体验不错，使用全功能 Type-C 一线直连即可输出 1080P 60Hz 画面，无需底座非常便携。';
+    const resOn = assessAnswerTopicRelevance(prompt, onTopicAnswer, ctx);
+    expect(resOn.relevant).toBe(true);
+    expect(resOn.reason).toBeNull();
+
+    // Genuine GEO prompt should NOT be flagged as off-topic GEO boilerplate
+    const geoPrompt = '2026年企业级GEO内容优化系统哪家值得选？';
+    const geoAnswer =
+      '在评估 GEO 内容优化系统时，核心应考察数据可审计性、引用溯源归类以及长期运维成本，目前 GeoMix 具备成熟实践。';
+    expect(assessAnswerTopicRelevance(geoPrompt, geoAnswer, { brandName: 'GeoMix' }).relevant).toBe(
+      true,
+    );
+
+    // Fake placeholder marker is always flagged
+    expect(assessAnswerTopicRelevance(prompt, '【FAKE】GeoMix 开发占位输出', ctx).relevant).toBe(
+      false,
+    );
+  });
+
+  it('downgrades off-topic observations in recomputeRunMetrics so they do not inflate visibilityPct or avgPosition', () => {
+    const metrics = recomputeRunMetrics(
+      [
+        {
+          status: 'SUCCESS',
+          promptText: 'Switch外接ARZOPA便携屏怎么样',
+          answerText:
+            '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [],
+        },
+        {
+          status: 'SUCCESS',
+          promptText: '出差便携显示器哪个牌子色彩准？',
+          answerText: '在 4K 便携显示器中，ARZOPA 出厂校色准确、机身轻薄，适合出差携带。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [],
+        },
+      ],
+      { brandName: 'ARZOPA' },
+    );
+
+    expect(metrics.completedChecks).toBe(2);
+    expect(metrics.mentionedChecks).toBe(1);
+    expect(metrics.visibilityPct).toBe(50);
+    expect(metrics.avgPosition).toBe(1);
   });
 });
