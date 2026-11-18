@@ -1,9 +1,7 @@
 'use client';
 
 import {
-  CITATION_SOURCE_LABELS,
   DOMESTIC_VISIBILITY_ENGINE_KEYS,
-  ITEM_STATUS_LABELS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
   VISIBILITY_BRAND_NAME_MAX,
@@ -13,11 +11,7 @@ import {
   VISIBILITY_MAX_COMPETITORS,
   VISIBILITY_PROFILE_NAME_MAX,
   VISIBILITY_RUN_NAME_MAX,
-  VISIBILITY_SENTIMENTS,
-  VISIBILITY_SENTIMENT_LABELS,
   isTaskStatus,
-  isVisibilityEngine,
-  isVisibilitySentiment,
   normalizeVisibilityDomain,
   quoteVisibilityRunPoints,
   type CitationSourceKind,
@@ -27,13 +21,11 @@ import {
   type TaskStatusName,
   type VisibilityCompetitor,
   type VisibilityEngineKey,
-  type VisibilityObservationRecord,
   type VisibilityPrefillSources,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
   type VisibilityRunListQuery,
   type VisibilityRunRecord,
-  type VisibilitySentiment,
 } from '@geomix/shared';
 import {
   Alert,
@@ -45,7 +37,6 @@ import {
   Space,
   Switch,
   Tabs,
-  Tag,
   Tooltip,
   Typography,
 } from 'antd';
@@ -63,6 +54,7 @@ import {
   StatusPill,
   TruncText,
 } from '../geo/primitives';
+import { RunWorkspace } from '../geo/run-workspace';
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
@@ -192,73 +184,6 @@ function formatTime(iso: string | null | undefined): string {
   return iso.replace('T', ' ').slice(0, 16);
 }
 
-function statusTagColor(status: TaskStatusName): string {
-  switch (status) {
-    case 'RUNNING':
-      return 'processing';
-    case 'COMPLETED':
-      return 'success';
-    case 'PAUSED':
-      return 'warning';
-    case 'PARTIAL':
-      return 'gold';
-    case 'FAILED':
-      return 'error';
-    case 'CANCELLED':
-      return 'default';
-    case 'QUEUED':
-    default:
-      return 'blue';
-  }
-}
-
-function itemStatusTagColor(status: VisibilityObservationRecord['status']): string {
-  switch (status) {
-    case 'SUCCESS':
-      return 'success';
-    case 'RUNNING':
-      return 'processing';
-    case 'FAILED':
-      return 'error';
-    case 'SKIPPED':
-      return 'default';
-    case 'PENDING':
-    default:
-      return 'blue';
-  }
-}
-
-/** 色盲友好情感色板（蓝绿/中性灰/琥珀/玫瑰红） */
-function sentimentBadgeStyle(sentiment: VisibilitySentiment): CSSProperties {
-  switch (sentiment) {
-    case 'positive':
-      return {
-        background: '#e6fffb',
-        color: '#006d75',
-        border: '1px solid #87e8de',
-      };
-    case 'mixed':
-      return {
-        background: '#fff7e6',
-        color: '#ad4e00',
-        border: '1px solid #ffd591',
-      };
-    case 'negative':
-      return {
-        background: '#fff1f0',
-        color: '#a8071a',
-        border: '1px solid #ffa39e',
-      };
-    case 'neutral':
-    default:
-      return {
-        background: '#f1f5f9',
-        color: '#334155',
-        border: '1px solid #cbd5e1',
-      };
-  }
-}
-
 export function citationSourceBadgeColor(kind: CitationSourceKind): string {
   switch (kind) {
     case 'OWNED':
@@ -277,10 +202,6 @@ export function citationSourceBadgeColor(kind: CitationSourceKind): string {
 
 function isControllableRunStatus(status: TaskStatusName): boolean {
   return status === 'QUEUED' || status === 'RUNNING' || status === 'PAUSED';
-}
-
-function engineLabelOf(engine: string): string {
-  return isVisibilityEngine(engine) ? VISIBILITY_ENGINE_LABELS[engine] : engine;
 }
 
 function defaultDownloadHandler(file: VisibilityExportFile): void {
@@ -498,8 +419,6 @@ export function VisibilityMonitorsScreen({
     'all',
   );
   const [obsSentimentFilter, setObsSentimentFilter] = useState<string>('');
-  const [expandedAnswerIds, setExpandedAnswerIds] = useState<Record<string, boolean>>({});
-  const [expandedCitationIds, setExpandedCitationIds] = useState<Record<string, boolean>>({});
 
   const effectiveDefaultProfileId = useMemo(() => {
     if (defaultProfileId && profiles.some((p) => p.id === defaultProfileId)) {
@@ -594,8 +513,6 @@ export function VisibilityMonitorsScreen({
       setObsEngineFilter('');
       setObsMentionFilter('all');
       setObsSentimentFilter('');
-      setExpandedAnswerIds({});
-      setExpandedCitationIds({});
       try {
         const detail = await client.getRun(runId);
         setDetailRun(detail);
@@ -2640,7 +2557,8 @@ export function VisibilityMonitorsScreen({
       <Drawer
         open={drawerOpen}
         title={detailRun ? `可见度诊断明细 · ${detailRun.name}` : '可见度诊断明细'}
-        width="min(880px, 100vw)"
+        width="min(1200px, 100vw)"
+        styles={{ body: { padding: 0, background: 'var(--gm-bg-base)' } }}
         onClose={() => setDrawerOpen(false)}
         extra={
           detailRun ? (
@@ -2667,404 +2585,23 @@ export function VisibilityMonitorsScreen({
           ) : null
         }
       >
-        {detailLoading && !detailRun ? (
-          <Typography.Text type="secondary">正在加载诊断明细…</Typography.Text>
-        ) : detailRun ? (
-          <div style={{ minWidth: 0 }}>
-            {/* Summary Status Strip */}
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 12,
-              }}
-            >
-              <Tag color={statusTagColor(detailRun.status)}>
-                {TASK_STATUS_LABELS[detailRun.status]}
-              </Tag>
-              <Tag color="geekblue">主品牌：{detailRun.brandName}</Tag>
-              <Tag>监测档案：{detailRun.profileName}</Tag>
-              <Tag>
-                进度：{detailRun.doneCount}/{detailRun.totalChecks}
-              </Tag>
-              <Tag>
-                计费：预冻 {detailRun.frozenPoints ?? detailRun.totalChecks * detailRun.unitPrice}{' '}
-                点 / 已结 {detailRun.settledPoints ?? 0} 点
-              </Tag>
-            </div>
-
-            {/* 4 Core Summary Cards */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))',
-                gap: 10,
-                marginBottom: 14,
-              }}
-            >
-              <div className="gm-right-card">
-                <div className="label">总提及率（Visibility）</div>
-                <div className="value">{detailRun.metrics.visibilityPct.toFixed(1)}%</div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  提及 {detailRun.metrics.mentionedChecks} / 有效{' '}
-                  {detailRun.metrics.completedChecks} 次
-                </div>
-              </div>
-              <div className="gm-right-card">
-                <div className="label">声量占比（SoV）</div>
-                <div className="value">
-                  {detailRun.metrics.shareOfVoice.brandSharePct.toFixed(1)}%
-                </div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  本品牌 {detailRun.metrics.shareOfVoice.brandMentions} / 总提及{' '}
-                  {detailRun.metrics.shareOfVoice.totalMentions}
-                </div>
-              </div>
-              <div className="gm-right-card">
-                <div className="label">平均推荐顺位</div>
-                <div className="value">
-                  {detailRun.metrics.avgPosition !== null
-                    ? `#${detailRun.metrics.avgPosition.toFixed(1)}`
-                    : '—'}
-                </div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  {detailRun.metrics.avgPosition !== null
-                    ? '数字越小推荐越靠前'
-                    : '暂无品牌命中顺位'}
-                </div>
-              </div>
-              <div className="gm-right-card">
-                <div className="label">自有域名引用率</div>
-                <div className="value">{detailRun.metrics.ownedCitationRatePct.toFixed(1)}%</div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                  自有 {detailRun.metrics.ownedCitations} / 总引用{' '}
-                  {detailRun.metrics.totalCitations}
-                </div>
-              </div>
-            </div>
-
-            {/* Drawer Filter Bar */}
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 8,
-                padding: 10,
-                marginBottom: 12,
-                borderRadius: 8,
-                border: '1px solid #e6eaf0',
-                background: '#f8fafc',
-              }}
-            >
-              <select
-                aria-label="筛选明细引擎"
-                style={{ ...COMPACT_SELECT_STYLE, width: 150 }}
-                value={obsEngineFilter}
-                onChange={(e) => setObsEngineFilter(e.target.value)}
-              >
-                <option value="">全部引擎</option>
-                {detailRun.engines.map((eng) => (
-                  <option key={eng} value={eng}>
-                    {VISIBILITY_ENGINE_LABELS[eng] ?? eng}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                aria-label="筛选提及状态"
-                style={{ ...COMPACT_SELECT_STYLE, width: 140 }}
-                value={obsMentionFilter}
-                onChange={(e) =>
-                  setObsMentionFilter(
-                    e.target.value === 'mentioned' || e.target.value === 'unmentioned'
-                      ? e.target.value
-                      : 'all',
-                  )
-                }
-              >
-                <option value="all">全部提及状态</option>
-                <option value="mentioned">已提及本品牌</option>
-                <option value="unmentioned">未提及本品牌</option>
-              </select>
-
-              <select
-                aria-label="筛选情感倾向"
-                style={{ ...COMPACT_SELECT_STYLE, width: 140 }}
-                value={obsSentimentFilter}
-                onChange={(e) => setObsSentimentFilter(e.target.value)}
-              >
-                <option value="">全部情感倾向</option>
-                {VISIBILITY_SENTIMENTS.map((s) => (
-                  <option key={s} value={s}>
-                    {VISIBILITY_SENTIMENT_LABELS[s]}
-                  </option>
-                ))}
-              </select>
-
-              <Button
-                size="small"
-                aria-label="重置明细筛选"
-                onClick={() => {
-                  setObsEngineFilter('');
-                  setObsMentionFilter('all');
-                  setObsSentimentFilter('');
-                }}
-              >
-                重置
-              </Button>
-
-              <Typography.Text type="secondary" style={{ fontSize: 12, marginInlineStart: 'auto' }}>
-                当前展示 {filteredObservations.length} / {detailRun.observations.length} 条观测
-              </Typography.Text>
-            </div>
-
-            {/* Observations List */}
-            {filteredObservations.length === 0 ? (
-              <Alert type="info" showIcon message="当前筛选条件下暂无匹配的诊断观测记录" />
-            ) : (
-              <div style={{ display: 'grid', gap: 12 }}>
-                {filteredObservations.map((obs) => {
-                  const answerExpanded = Boolean(expandedAnswerIds[obs.id]);
-                  const citationsExpanded = Boolean(expandedCitationIds[obs.id]);
-                  const mentionedCompetitors = obs.competitorHits.filter((c) => c.mentioned);
-
-                  return (
-                    <div
-                      key={obs.id}
-                      data-testid={`observation-card-${obs.id}`}
-                      style={{
-                        padding: 14,
-                        borderRadius: 10,
-                        border: '1px solid #e6eaf0',
-                        background: '#ffffff',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 8,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <Typography.Text strong style={{ fontSize: 15 }}>
-                          {obs.promptText}
-                        </Typography.Text>
-                        <Space size={[4, 4]} wrap>
-                          <Tag color="blue">{engineLabelOf(obs.engine)}</Tag>
-                          <Tag color={itemStatusTagColor(obs.status)}>
-                            {ITEM_STATUS_LABELS[obs.status]}
-                          </Tag>
-                          {obs.status === 'SUCCESS' ? (
-                            obs.brandMentioned ? (
-                              <Tag color="success">已提及品牌</Tag>
-                            ) : (
-                              <Tag>未提及品牌</Tag>
-                            )
-                          ) : null}
-                          {obs.brandPosition !== null ? (
-                            <Tag color="geekblue">顺位 #{obs.brandPosition}</Tag>
-                          ) : null}
-                          {obs.brandSentiment && isVisibilitySentiment(obs.brandSentiment) ? (
-                            <span
-                              style={{
-                                ...sentimentBadgeStyle(obs.brandSentiment),
-                                display: 'inline-block',
-                                padding: '1px 8px',
-                                borderRadius: 6,
-                                fontSize: 12,
-                                lineHeight: '18px',
-                              }}
-                            >
-                              情感：{VISIBILITY_SENTIMENT_LABELS[obs.brandSentiment]}
-                            </span>
-                          ) : null}
-                        </Space>
-                      </div>
-
-                      {obs.error ? (
-                        <Alert
-                          type="error"
-                          showIcon
-                          message={obs.error}
-                          style={{ marginBottom: 8 }}
-                        />
-                      ) : null}
-
-                      {/* Brand Evidence Passage */}
-                      {obs.brandPassage ? (
-                        <div
-                          style={{
-                            padding: '8px 12px',
-                            marginBottom: 8,
-                            borderLeft: '3px solid #0d9488',
-                            borderRadius: '0 6px 6px 0',
-                            background: '#f0fdfa',
-                            fontSize: 13,
-                            color: '#134e4a',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          <strong style={{ marginInlineEnd: 6 }}>命中证据片段：</strong>
-                          {obs.brandPassage}
-                        </div>
-                      ) : null}
-
-                      {/* Competitor Hits */}
-                      {mentionedCompetitors.length > 0 ? (
-                        <div style={{ marginBottom: 8, fontSize: 13 }}>
-                          <Typography.Text type="secondary">同题命中竞品：</Typography.Text>
-                          <Space size={[4, 4]} wrap style={{ marginInlineStart: 4 }}>
-                            {mentionedCompetitors.map((comp) => (
-                              <Tag key={comp.name} color="orange" style={{ marginInlineEnd: 0 }}>
-                                {comp.name}
-                                {comp.position !== null ? ` #${comp.position}` : ''}
-                              </Tag>
-                            ))}
-                          </Space>
-                        </div>
-                      ) : null}
-
-                      {/* Query Fan-Out */}
-                      {obs.fanOutQueries.length > 0 ? (
-                        <div style={{ marginBottom: 8, fontSize: 13 }}>
-                          <Typography.Text type="secondary">搜索拆解词：</Typography.Text>
-                          <Space size={[4, 4]} wrap style={{ marginInlineStart: 4 }}>
-                            {obs.fanOutQueries.map((fq) => (
-                              <Tag key={fq} color="purple" style={{ marginInlineEnd: 0 }}>
-                                {fq}
-                              </Tag>
-                            ))}
-                          </Space>
-                        </div>
-                      ) : null}
-
-                      {/* Citations */}
-                      {obs.citations.length > 0 ? (
-                        <div style={{ marginBottom: 8 }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              alignItems: 'center',
-                              gap: 6,
-                            }}
-                          >
-                            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                              引用信源（{obs.citations.length}）：
-                            </Typography.Text>
-                            {obs.citations.map((cite) => (
-                              <Tag
-                                key={cite.id}
-                                color={citationSourceBadgeColor(cite.sourceKind)}
-                                style={{ marginInlineEnd: 0 }}
-                              >
-                                [{CITATION_SOURCE_LABELS[cite.sourceKind]}] {cite.domain}
-                              </Tag>
-                            ))}
-                            <Button
-                              type="link"
-                              size="small"
-                              aria-label={
-                                citationsExpanded
-                                  ? `收起引用链接-${obs.id}`
-                                  : `展开引用链接-${obs.id}`
-                              }
-                              onClick={() =>
-                                setExpandedCitationIds((curr) => ({
-                                  ...curr,
-                                  [obs.id]: !citationsExpanded,
-                                }))
-                              }
-                            >
-                              {citationsExpanded ? '收起引用详情' : '展开引用详情'}
-                            </Button>
-                          </div>
-
-                          {citationsExpanded ? (
-                            <div
-                              style={{
-                                marginTop: 6,
-                                padding: 10,
-                                borderRadius: 6,
-                                background: '#f8fafc',
-                                border: '1px solid #edf2f7',
-                                display: 'grid',
-                                gap: 6,
-                              }}
-                            >
-                              {obs.citations.map((cite) => (
-                                <div key={cite.id} style={{ fontSize: 12, wordBreak: 'break-all' }}>
-                                  <Tag
-                                    color={citationSourceBadgeColor(cite.sourceKind)}
-                                    style={{ marginInlineEnd: 6 }}
-                                  >
-                                    #{cite.position} {CITATION_SOURCE_LABELS[cite.sourceKind]}
-                                  </Tag>
-                                  {cite.title ? (
-                                    <strong style={{ marginInlineEnd: 6 }}>{cite.title}</strong>
-                                  ) : null}
-                                  <span style={{ color: '#475569' }}>{cite.url}</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {/* Collapsible Raw AI Answer */}
-                      {obs.answerText ? (
-                        <div>
-                          <Button
-                            size="small"
-                            aria-label={
-                              answerExpanded ? `收起原始回答-${obs.id}` : `展开原始回答-${obs.id}`
-                            }
-                            onClick={() =>
-                              setExpandedAnswerIds((curr) => ({
-                                ...curr,
-                                [obs.id]: !answerExpanded,
-                              }))
-                            }
-                          >
-                            {answerExpanded ? '收起原始 AI 回答全文' : '展开原始 AI 回答全文'}
-                          </Button>
-                          {answerExpanded ? (
-                            <pre
-                              data-testid={`raw-answer-${obs.id}`}
-                              style={{
-                                marginTop: 8,
-                                marginBottom: 0,
-                                padding: 12,
-                                borderRadius: 8,
-                                background: '#f8fafc',
-                                border: '1px solid #e6eaf0',
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-word',
-                                fontSize: 13,
-                                lineHeight: 1.65,
-                                color: '#1e293b',
-                                fontFamily: 'inherit',
-                              }}
-                            >
-                              {obs.answerText}
-                            </pre>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : null}
+        <RunWorkspace
+          run={detailRun}
+          loading={detailLoading}
+          profile={profiles.find((p) => p.id === detailRun?.profileId)}
+          obsEngineFilter={obsEngineFilter}
+          onObsEngineFilterChange={setObsEngineFilter}
+          obsMentionFilter={obsMentionFilter}
+          onObsMentionFilterChange={setObsMentionFilter}
+          obsSentimentFilter={obsSentimentFilter}
+          onObsSentimentFilterChange={setObsSentimentFilter}
+          filteredObservations={filteredObservations}
+          onResetFilters={() => {
+            setObsEngineFilter('');
+            setObsMentionFilter('all');
+            setObsSentimentFilter('');
+          }}
+        />
       </Drawer>
 
       {/* ===================== Confirm Modals ===================== */}
