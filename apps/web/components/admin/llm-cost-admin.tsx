@@ -1,6 +1,11 @@
 'use client';
 
 import {
+  formatCountNumber,
+  formatLlmModelDisplayLabel,
+  formatLlmProviderDisplayLabel,
+  formatLlmTenantDisplayName,
+  formatYuanAmount,
   LLM_COST_DAY_OPTIONS,
   LLM_COST_DEFAULT_DAYS,
   llmDailyReportToCsv,
@@ -13,7 +18,13 @@ import {
 import { Alert, Button, Card, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
-import { formatShortDisplayId, triggerBlobDownload } from '../../lib/ux-foundation';
+import {
+  formatShanghaiDate,
+  formatShortDisplayId,
+  isOpaqueEntityId,
+  replaceUxJargon,
+  triggerBlobDownload,
+} from '../../lib/ux-foundation';
 
 export type LlmCostAdminClient = Pick<AdminClient, 'llmCosts'> &
   Partial<Pick<AdminClient, 'listTenants'>>;
@@ -55,7 +66,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
         });
         setReport(data);
       } catch (reason: unknown) {
-        setError(messageOf(reason));
+        setError(replaceUxJargon(messageOf(reason)));
       } finally {
         setLoading(false);
       }
@@ -76,6 +87,11 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
       body: new TextEncoder().encode(`\uFEFF${csv}`),
     });
   };
+
+  const windowStart = report
+    ? formatShanghaiDate(report.windowStartDate, report.windowStartDate)
+    : '';
+  const windowEnd = report ? formatShanghaiDate(report.windowEndDate, report.windowEndDate) : '';
 
   return (
     <section aria-label="LLM成本日报">
@@ -110,15 +126,18 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
               style={{ width: 180 }}
               options={[
                 { value: '', label: '全部租户' },
-                ...tenants.map((t) => ({ value: t.id, label: `${t.name} (${t.username})` })),
+                ...tenants.map((t) => ({
+                  value: t.id,
+                  label: `${t.name}（${t.username}）`,
+                })),
               ]}
               onChange={(value) => setTenantId(value)}
             />
           ) : null}
           <Space size={6}>
-            <span>含占位假调用</span>
+            <span>含模拟调用</span>
             <Switch
-              aria-label="含占位假调用"
+              aria-label="含模拟调用"
               checked={includeFake}
               onChange={(checked) => setIncludeFake(checked)}
             />
@@ -144,8 +163,8 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
           style={{ marginBottom: 16 }}
           message={
             report.rateConfigured
-              ? `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（北京时间）：已启用自定义模型单价核算，本报表仅用于运维成本统计，不触发租户点数扣减。`
-              : `统计区间 ${report.windowStartDate} 至 ${report.windowEndDate}（北京时间）：当前按默认参考费率估算，与租户点数账本相互独立；可在系统费率配置中设置各模型千 Token 单价。`
+              ? `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：已启用自定义模型单价核算，本报表仅用于运维成本统计，不触发租户点数扣减。`
+              : `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：当前按系统参考费率估算，与租户点数账本相互独立；可在系统费率配置中设置各模型千 Token 单价。`
           }
         />
       ) : null}
@@ -159,28 +178,29 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
         }}
       >
         <Card size="small" title="总调用次数">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {report?.totals.calls ?? 0}
+          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+            {formatCountNumber(report?.totals.calls)}
           </Typography.Title>
-          <Typography.Text type="secondary">
-            真实 {report?.totals.realCalls ?? 0} / 占位 {report?.totals.fakeCalls ?? 0}
+          <Typography.Text type="secondary" className="gm-num">
+            真实 {formatCountNumber(report?.totals.realCalls)} / 模拟{' '}
+            {formatCountNumber(report?.totals.fakeCalls)}
           </Typography.Text>
         </Card>
         <Card size="small" title="总 Token 消耗">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {(report?.totals.totalTokens ?? 0).toLocaleString('en-US')}
+          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+            {formatCountNumber(report?.totals.totalTokens)}
           </Typography.Title>
-          <Typography.Text type="secondary">
-            输入 {(report?.totals.tokensIn ?? 0).toLocaleString('en-US')} / 输出{' '}
-            {(report?.totals.tokensOut ?? 0).toLocaleString('en-US')}
+          <Typography.Text type="secondary" className="gm-num">
+            输入 {formatCountNumber(report?.totals.tokensIn)} / 输出{' '}
+            {formatCountNumber(report?.totals.tokensOut)}
           </Typography.Text>
         </Card>
         <Card size="small" title="预估总成本（元）">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            ¥{report?.totals.costYuan ?? '0.0000'}
+          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+            {formatYuanAmount(report?.totals.costYuan)}
           </Typography.Title>
-          <Typography.Text type="secondary">
-            {(report?.totals.costMicro ?? 0).toLocaleString('en-US')} 微元
+          <Typography.Text type="secondary" className="gm-num">
+            {formatCountNumber(report?.totals.costMicro)} 微元
           </Typography.Text>
         </Card>
       </div>
@@ -195,19 +215,64 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                 rowKey="date"
                 loading={loading}
                 dataSource={report?.daily ?? []}
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
-                  { title: '日期', dataIndex: 'date' },
-                  { title: '总调用', dataIndex: 'calls' },
-                  { title: '真实调用', dataIndex: 'realCalls' },
-                  { title: '占位调用', dataIndex: 'fakeCalls' },
-                  { title: '输入 Token', dataIndex: 'tokensIn' },
-                  { title: '输出 Token', dataIndex: 'tokensOut' },
-                  { title: '总 Token', dataIndex: 'totalTokens' },
+                  {
+                    title: '日期',
+                    dataIndex: 'date',
+                    render: (val: string) => (
+                      <span className="gm-num">{formatShanghaiDate(val, val)}</span>
+                    ),
+                  },
+                  {
+                    title: '总调用',
+                    dataIndex: 'calls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '真实调用',
+                    dataIndex: 'realCalls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '模拟调用',
+                    dataIndex: 'fakeCalls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '输入 Token',
+                    dataIndex: 'tokensIn',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '输出 Token',
+                    dataIndex: 'tokensOut',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '总 Token',
+                    dataIndex: 'totalTokens',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
                   {
                     title: '预估成本（元）',
                     dataIndex: 'costYuan',
-                    render: (val: string) => `¥${val}`,
+                    render: (val: string) => (
+                      <span className="gm-num">{formatYuanAmount(val)}</span>
+                    ),
                   },
                 ]}
               />
@@ -221,18 +286,45 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                 rowKey="scene"
                 loading={loading}
                 dataSource={report?.byScene ?? []}
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
                   { title: '业务场景', dataIndex: 'label' },
                   { title: '场景编码', dataIndex: 'scene' },
-                  { title: '调用次数', dataIndex: 'calls' },
-                  { title: '输入 Token', dataIndex: 'tokensIn' },
-                  { title: '输出 Token', dataIndex: 'tokensOut' },
-                  { title: '总 Token', dataIndex: 'totalTokens' },
+                  {
+                    title: '调用次数',
+                    dataIndex: 'calls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '输入 Token',
+                    dataIndex: 'tokensIn',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '输出 Token',
+                    dataIndex: 'tokensOut',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '总 Token',
+                    dataIndex: 'totalTokens',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
                   {
                     title: '预估成本（元）',
                     dataIndex: 'costYuan',
-                    render: (val: string) => `¥${val}`,
+                    render: (val: string) => (
+                      <span className="gm-num">{formatYuanAmount(val)}</span>
+                    ),
                   },
                 ]}
               />
@@ -246,22 +338,45 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                 rowKey={(row) => `${row.provider}-${row.model}-${row.fake ? 'fake' : 'real'}`}
                 loading={loading}
                 dataSource={report?.byModel ?? []}
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
-                  { title: '服务商', dataIndex: 'provider' },
-                  { title: '模型', dataIndex: 'model' },
+                  {
+                    title: '服务商',
+                    dataIndex: 'provider',
+                    render: (val: string, row) => formatLlmProviderDisplayLabel(val, row.fake),
+                  },
+                  {
+                    title: '模型',
+                    dataIndex: 'model',
+                    render: (val: string, row) => formatLlmModelDisplayLabel(val, row.fake),
+                  },
                   {
                     title: '类型',
                     dataIndex: 'fake',
                     render: (fake: boolean) =>
-                      fake ? <Tag>开发占位</Tag> : <Tag color="blue">真实模型</Tag>,
+                      fake ? <Tag>内置模拟</Tag> : <Tag color="blue">真实模型</Tag>,
                   },
-                  { title: '调用次数', dataIndex: 'calls' },
-                  { title: '总 Token', dataIndex: 'totalTokens' },
+                  {
+                    title: '调用次数',
+                    dataIndex: 'calls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '总 Token',
+                    dataIndex: 'totalTokens',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
                   {
                     title: '预估成本（元）',
                     dataIndex: 'costYuan',
-                    render: (val: string) => `¥${val}`,
+                    render: (val: string) => (
+                      <span className="gm-num">{formatYuanAmount(val)}</span>
+                    ),
                   },
                 ]}
               />
@@ -275,24 +390,43 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                 rowKey="tenantId"
                 loading={loading}
                 dataSource={report?.byTenant ?? []}
+                scroll={{ x: 'max-content' }}
                 pagination={false}
                 columns={[
-                  { title: '租户名称', dataIndex: 'tenantName' },
+                  {
+                    title: '租户名称',
+                    dataIndex: 'tenantName',
+                    render: (val: string, row) => formatLlmTenantDisplayName(val, row.tenantId),
+                  },
                   {
                     title: '租户编号',
                     dataIndex: 'tenantId',
                     render: (val: string) => (
-                      <Typography.Text code title={val}>
+                      <Typography.Text code title={isOpaqueEntityId(val) ? undefined : val}>
                         {formatShortDisplayId(val, '')}
                       </Typography.Text>
                     ),
                   },
-                  { title: '调用次数', dataIndex: 'calls' },
-                  { title: '总 Token', dataIndex: 'totalTokens' },
+                  {
+                    title: '调用次数',
+                    dataIndex: 'calls',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
+                  {
+                    title: '总 Token',
+                    dataIndex: 'totalTokens',
+                    render: (val: number) => (
+                      <span className="gm-num">{formatCountNumber(val)}</span>
+                    ),
+                  },
                   {
                     title: '预估成本（元）',
                     dataIndex: 'costYuan',
-                    render: (val: string) => `¥${val}`,
+                    render: (val: string) => (
+                      <span className="gm-num">{formatYuanAmount(val)}</span>
+                    ),
                   },
                 ]}
               />

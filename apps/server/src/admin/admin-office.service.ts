@@ -10,6 +10,7 @@ import {
   QUOTA_DEFAULTS,
   aggregateLlmDailyReport,
   escapeLikeLiteral,
+  formatLlmTenantDisplayName,
   formatMoney,
   getPricingActionMeta,
   isQuotaKeyName,
@@ -717,7 +718,10 @@ export class AdminOfficeService {
 
     const enriched = rawEvents.map((ev) => ({
       ...ev,
-      tenantName: ev.tenantId ? (tenantNameById.get(ev.tenantId) ?? ev.tenantId) : '系统任务',
+      tenantName: formatLlmTenantDisplayName(
+        ev.tenantId ? tenantNameById.get(ev.tenantId) : null,
+        ev.tenantId,
+      ),
     }));
 
     let rates = {};

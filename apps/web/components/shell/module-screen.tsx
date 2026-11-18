@@ -89,8 +89,8 @@ export function ModuleScreen({
       </div>
     );
   }
-  if (path === '/me/points') return <PointsScreen title={tab.title} />;
-  if (path === '/me/money') return <MoneyScreen title={tab.title} />;
+  if (path === '/me/points') return <PointsScreen title={tab.title} active={active} />;
+  if (path === '/me/money') return <MoneyScreen title={tab.title} active={active} />;
   if (path === '/me/rights') return <RightsScreen title={tab.title} active={active} />;
   if (path === '/me/verify') return <VerifyScreen title={tab.title} readOnly={readOnly} />;
   if (path === '/material/keywords') {

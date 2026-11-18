@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { message } from 'antd';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LedgerPage, MoneyItem, PointItem, RightsView } from '../../lib/account-client';
 import { MoneyScreen } from './money-screen';
@@ -10,6 +11,7 @@ import { VerifyScreen } from './verify-screen';
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 function pointPage(items: PointItem[]): LedgerPage<PointItem> {
@@ -20,8 +22,21 @@ function moneyPage(items: MoneyItem[]): LedgerPage<MoneyItem> {
   return { items, total: items.length, page: 1, pageSize: 10 };
 }
 
+function summaryStub(overrides?: Partial<RightsView>): RightsView {
+  return {
+    points: 1500,
+    pointsReserved: 100,
+    available: 1400,
+    money: '128.50',
+    billingMode: 'SHADOW',
+    cards: [],
+    models: [],
+    ...overrides,
+  };
+}
+
 describe('personal center screens', () => {
-  it('shows +500 管理员充值 and can filter by project and delta', async () => {
+  it('shows points summary, filters without checkboxes, and avoids duplicate phrase concatenation (#201)', async () => {
     const load = vi.fn(async () =>
       pointPage([
         {
@@ -34,10 +49,32 @@ describe('personal center screens', () => {
           createdAt: '2026-11-16T02:00:00.000Z',
           status: 'SETTLED',
         },
+        {
+          id: 'p2',
+          title: 'AI写作-ARZOPA便携屏选型实测（免费期）',
+          delta: 0,
+          listPrice: 10,
+          phrase: '0 AI写作-ARZOPA便携屏选型实测（免费期）',
+          pointsText: '0（原价 10）',
+          createdAt: '2026-11-16T03:30:00.000Z',
+          status: 'SETTLED',
+        },
       ]),
     );
-    render(<PointsScreen title="点数明细" load={load} />);
-    expect(await screen.findByText('+500 管理员充值')).toBeTruthy();
+    render(<PointsScreen title="点数明细" load={load} loadSummary={async () => summaryStub()} />);
+    expect(await screen.findByText('管理员充值')).toBeTruthy();
+    expect(screen.getByText('+500')).toBeTruthy();
+    expect(screen.getByText('0（原价 10）')).toBeTruthy();
+    expect(screen.getByText('1,400 点')).toBeTruthy();
+    expect(screen.getByText('免费体验期')).toBeTruthy();
+    expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
+
+    // No duplicate phrase concatenation in 点数 column and no useless checkbox column
+    expect(screen.queryByText('+500 管理员充值')).toBeNull();
+    expect(screen.queryByText('0 AI写作-ARZOPA便携屏选型实测（免费期）')).toBeNull();
+    expect(document.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(document.querySelector('.ant-table-selection')).toBeNull();
+
     expect(screen.getByRole('columnheader', { name: '序号' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '项目' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '点数' })).toBeTruthy();
@@ -54,7 +91,59 @@ describe('personal center screens', () => {
     );
   });
 
-  it('renders money rows without a checkbox or sequence column', async () => {
+  it('sanitizes CoT reasoning leakage, truncates long titles, and warns on empty points export (#201)', async () => {
+    const warnSpy = vi
+      .spyOn(message, 'warning')
+      .mockImplementation(() => (() => undefined) as never);
+    const longValidTitle = 'AI写作-面向华东工业制造企业的激光切割机选型对比与维护指南长标题示例';
+    const load = vi
+      .fn<() => Promise<LedgerPage<PointItem>>>()
+      .mockResolvedValueOnce(
+        pointPage([
+          {
+            id: 'p-cot',
+            title: 'AI生图-用户需要把简短描述扩写成配图提示词，80-220（免费期）',
+            delta: 0,
+            listPrice: 10,
+            phrase: '0 AI生图-用户需要把简短描述扩写成配图提示词，80-220（免费期）',
+            pointsText: '0（原价 10）',
+            createdAt: '2026-11-16T04:00:00.000Z',
+            status: 'SETTLED',
+          },
+          {
+            id: 'p-long',
+            title: longValidTitle,
+            delta: -10,
+            listPrice: 10,
+            phrase: `-10 ${longValidTitle}`,
+            pointsText: '-10',
+            createdAt: '2026-11-16T05:00:00.000Z',
+            status: 'SETTLED',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(pointPage([]));
+    const exportFile = vi.fn();
+
+    render(<PointsScreen title="点数明细" load={load} exportFile={exportFile} />);
+    expect(await screen.findByText('AI生图（免费期）')).toBeTruthy();
+    expect(screen.queryByText(/用户需要把简短描述扩写成配图提示词/)).toBeNull();
+    expect(document.querySelector('.gm-clamp-1')).toBeTruthy();
+
+    // Filter to empty result and verify export warns instead of silently triggering download
+    fireEvent.change(screen.getByRole('textbox', { name: '项目名称' }), {
+      target: { value: '不存在' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '查询' }));
+    expect(await screen.findByText('没有找到匹配的记录')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
+    expect(await screen.findByText('当前列表暂无可导出数据')).toBeTruthy();
+    expect(warnSpy).toHaveBeenCalledWith('当前列表暂无可导出数据');
+    expect(exportFile).not.toHaveBeenCalled();
+  });
+
+  it('renders money rows without a checkbox or sequence column and shows balance summary', async () => {
     const load = vi.fn(async () =>
       moneyPage([
         {
@@ -66,16 +155,36 @@ describe('personal center screens', () => {
         },
       ]),
     );
-    render(<MoneyScreen title="余额明细" load={load} />);
+    const exportFile = vi.fn(async () => ({
+      filename: 'geomix-money.csv',
+      mime: 'text/csv',
+      body: new Uint8Array([1, 2]),
+    }));
+    render(
+      <MoneyScreen
+        title="余额明细"
+        load={load}
+        loadSummary={async () => summaryStub({ money: '1234.50', available: 1400 })}
+        exportFile={exportFile}
+      />,
+    );
     expect(await screen.findByText('余额示例')).toBeTruthy();
+    expect(screen.getByText('¥1,234.50')).toBeTruthy();
+    expect(screen.getByText('1,400 点')).toBeTruthy();
     expect(screen.getByText('12.50')).toBeTruthy();
     expect(screen.getByText('说明示例')).toBeTruthy();
+    expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
     for (const name of ['项目', '金额', '说明', '消耗时间']) {
       expect(screen.getByRole('columnheader', { name })).toBeTruthy();
     }
     expect(screen.queryByRole('columnheader', { name: '序号' })).toBeNull();
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     expect(document.querySelector('.ant-table-selection')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
+    await waitFor(() => {
+      expect(exportFile).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), 'csv');
+    });
   });
 
   it('shows quota ratios, storage used and limit, and eight model cards', async () => {
@@ -221,7 +330,10 @@ describe('personal center screens', () => {
     expect(document.querySelector('.ant-form-item-has-error')).not.toBeNull();
   });
 
-  it('validates amount format, resets filters, and exports money ledger', async () => {
+  it('validates amount format, resets filters, and notifies on empty money export (#201)', async () => {
+    const warnSpy = vi
+      .spyOn(message, 'warning')
+      .mockImplementation(() => (() => undefined) as never);
     const load = vi.fn(async () => moneyPage([]));
     const exportFile = vi.fn(async () => ({
       filename: 'geomix-money.csv',
@@ -242,6 +354,12 @@ describe('personal center screens', () => {
     expect(screen.queryByText('金额格式不正确')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
-    expect(exportFile).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), 'csv');
+    expect(await screen.findByText('当前列表暂无可导出数据')).toBeTruthy();
+    expect(warnSpy).toHaveBeenCalledWith('当前列表暂无可导出数据');
+    expect(exportFile).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '导出 XLSX' }));
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(exportFile).not.toHaveBeenCalled();
   });
 });

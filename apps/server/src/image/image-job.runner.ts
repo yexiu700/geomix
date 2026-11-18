@@ -7,6 +7,7 @@ import {
   GALLERY_CATEGORY_TYPE_IMAGE,
   GALLERY_THUMB_MAX_EDGE,
   PRICING_DEFAULTS,
+  buildImageLedgerTitle,
   isAiImageRatio,
   parseEnv,
   type AiImageCount,
@@ -180,7 +181,7 @@ export class ImageJobRunner implements ImageJobHandler {
     let successCount = 0;
     let resolvedModel: string | null = null;
     const errors: string[] = [];
-    const shortPrompt = job.prompt.replace(/\s+/g, ' ').trim().slice(0, 24);
+    const ledgerSubject = buildImageLedgerTitle(job.prompt);
 
     for (let idx = 0; idx < rawResult.items.length; idx += 1) {
       const rawItem = rawResult.items[idx];
@@ -206,7 +207,7 @@ export class ImageJobRunner implements ImageJobHandler {
             unitKey,
             action: 'image_gen',
             amount: unitPoints,
-            title: `AI生图-${shortPrompt}`,
+            title: ledgerSubject,
             detail: { jobId: job.id, seq, ratio },
           });
         }
@@ -275,7 +276,7 @@ export class ImageJobRunner implements ImageJobHandler {
             unitKey,
             action: 'image_gen',
             amount: unitPoints,
-            title: `AI生图-${shortPrompt}`,
+            title: ledgerSubject,
             detail: { jobId: job.id, seq, assetId, ratio },
           });
         }

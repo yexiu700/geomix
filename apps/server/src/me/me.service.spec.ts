@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { describe, expect, it, vi } from 'vitest';
+import { parseMoneyListQuery, parsePointListQuery } from '@geomix/shared';
 import type { PrismaService } from '../prisma/prisma.service';
 import { MeService } from './me.service';
 
@@ -106,5 +107,47 @@ describe('MeService.rights quota reconciliation (#195)', () => {
 
     expect(rights.cards.find((c) => c.key === 'AI_WRITE')?.text).toBe('4 / 10000');
     expect(rights.cards.find((c) => c.key === 'STORAGE_BYTES')?.text).toBe('2 KB / 100 MB');
+  });
+
+  it('sanitizes CoT reasoning leakage from historical PointLog and MoneyLog records (#201)', async () => {
+    const prisma = {
+      base: {
+        pointLog: {
+          count: vi.fn().mockResolvedValue(1),
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'pt_1',
+              title: 'AI生图-用户需要把简短描述扩写成配图提示词，80-220（免费期）',
+              delta: 0,
+              listPrice: 10,
+              createdAt: new Date('2026-11-18T02:00:00.000Z'),
+              status: 'SETTLED',
+            },
+          ]),
+        },
+        moneyLog: {
+          count: vi.fn().mockResolvedValue(1),
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'ml_1',
+              title: 'AI生图-<think>内部推理</think>（免费期）',
+              amount: { toString: () => '12.50' },
+              remark: '影子计费测试备注',
+              createdAt: new Date('2026-11-18T02:00:00.000Z'),
+            },
+          ]),
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new MeService(prisma);
+    const pointsPage = await service.points('tenant_1', parsePointListQuery({}));
+    expect(pointsPage.items[0]?.title).toBe('AI生图（免费期）');
+    expect(pointsPage.items[0]?.phrase).toBe('0 AI生图（免费期）');
+    expect(pointsPage.items[0]?.pointsText).toBe('0（原价 10）');
+
+    const moneyPage = await service.money('tenant_1', parseMoneyListQuery({}));
+    expect(moneyPage.items[0]?.title).toBe('AI生图（免费期）');
+    expect(moneyPage.items[0]?.remark).toBe('免费体验期测试备注');
   });
 });
