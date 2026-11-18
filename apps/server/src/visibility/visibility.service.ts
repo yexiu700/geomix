@@ -227,10 +227,12 @@ function shanghaiWindowFromQuery(input: { days: number; from?: string; to?: stri
 
 type LoadedRunRow = Prisma.VisibilityRunGetPayload<{
   include: {
-    profile: { select: { id: true; name: true; brandName: true } };
+    profile: {
+      select: { id: true; name: true; brandName: true; brandAliases: true; competitors: true };
+    };
     keyword: { select: { id: true; main: true } };
     observations: {
-      select: { status: true; brandMentioned: true };
+      select: { status: true; brandMentioned: true; promptText: true; answerText: true };
     };
   };
 }>;
@@ -558,10 +560,18 @@ export class VisibilityService {
         skip,
         take: query.pageSize,
         include: {
-          profile: { select: { id: true, name: true, brandName: true } },
+          profile: {
+            select: {
+              id: true,
+              name: true,
+              brandName: true,
+              brandAliases: true,
+              competitors: true,
+            },
+          },
           keyword: { select: { id: true, main: true } },
           observations: {
-            select: { status: true, brandMentioned: true },
+            select: { status: true, brandMentioned: true, promptText: true, answerText: true },
           },
         },
       }),
@@ -609,6 +619,8 @@ export class VisibilityService {
           id: row.profile.id,
           name: row.profile.name,
           brandName: row.profile.brandName,
+          brandAliases: row.profile.brandAliases,
+          competitors: row.profile.competitors,
         },
       },
     ]);
@@ -1635,8 +1647,18 @@ export class VisibilityService {
     const reservationById = new Map(reservations.map((r) => [r.id, r]));
 
     return rows.map((row) => {
+      const competitorNames = parseProfileCompetitors(row.profile.competitors).map((c) => c.name);
+      const brandAliases = row.profile.brandAliases ?? [];
       const completedObs = row.observations.filter((obs) => obs.status === 'SUCCESS');
-      const mentionedObs = completedObs.filter((obs) => obs.brandMentioned);
+      const mentionedObs = completedObs.filter((obs) => {
+        if (!obs.brandMentioned) return false;
+        if (!obs.promptText || !obs.answerText) return true;
+        return assessAnswerTopicRelevance(obs.promptText, obs.answerText, {
+          brandName: row.profile.brandName,
+          brandAliases,
+          competitorNames,
+        }).relevant;
+      });
       const skipCount = row.observations.filter((obs) => obs.status === 'SKIPPED').length;
       const resv = row.reservationId ? reservationById.get(row.reservationId) : undefined;
 

@@ -1001,7 +1001,86 @@ const OFF_TOPIC_GEO_BOILERPLATE_CUES = [
   '可见率、声量占比',
   '多引擎可见性诊断',
   '内容矩阵协同',
+  '多维度看板',
+  '行业基准对比',
+  '基础词条管理',
+  '标准化报表模板',
 ] as const;
+
+const GENERIC_CJK_BIGRAMS = new Set([
+  '控制',
+  '管理',
+  '分析',
+  '处理',
+  '优化',
+  '提升',
+  '支持',
+  '使用',
+  '体验',
+  '服务',
+  '表现',
+  '配置',
+  '能力',
+  '模式',
+  '结构',
+  '效率',
+  '质量',
+  '标准',
+  '流程',
+  '策略',
+  '技术',
+  '数据',
+  '内容',
+  '系统',
+  '平台',
+  '方案',
+  '品牌',
+  '产品',
+  '工具',
+  '行业',
+  '市场',
+  '用户',
+  '企业',
+  '团队',
+  '人员',
+  '操作',
+  '功能',
+  '性能',
+  '情况',
+  '方面',
+  '问题',
+  '方法',
+  '方式',
+  '条件',
+  '要求',
+  '需求',
+  '应用',
+  '场景',
+  '环境',
+  '状态',
+  '结果',
+  '影响',
+  '作用',
+  '价值',
+  '优势',
+  '特点',
+  '基础',
+  '核心',
+  '关键',
+  '主要',
+  '综合',
+  '整体',
+  '日常',
+  '长期',
+  '稳定',
+  '安全',
+  '可靠',
+  '成熟',
+  '专业',
+  '高效',
+  '便捷',
+  '灵活',
+]);
 
 function stripQuotedPromptEchoes(text: string, promptText: string): string {
   const normPrompt = normalizeForEchoCompare(promptText);
@@ -1084,10 +1163,30 @@ function doesTokenMatchBody(token: string, bodyText: string, bodyLower: string):
     return token.length >= 3 && bodyLower.includes(token);
   }
   if (bodyLower.includes(token)) return true;
-  if (token.length >= 3) {
+  if (token.length === 3) {
     for (let i = 0; i <= token.length - 2; i += 1) {
       const gram = token.slice(i, i + 2);
-      if (bodyLower.includes(gram)) return true;
+      if (!GENERIC_CJK_BIGRAMS.has(gram) && bodyLower.includes(gram)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (token.length >= 4) {
+    for (let i = 0; i <= token.length - 3; i += 1) {
+      const trigram = token.slice(i, i + 3);
+      if (bodyLower.includes(trigram)) return true;
+    }
+    let matchedBigrams = 0;
+    const seenGrams = new Set<string>();
+    for (let i = 0; i <= token.length - 2; i += 1) {
+      const gram = token.slice(i, i + 2);
+      if (seenGrams.has(gram) || GENERIC_CJK_BIGRAMS.has(gram)) continue;
+      seenGrams.add(gram);
+      if (bodyLower.includes(gram)) {
+        matchedBigrams += 1;
+        if (matchedBigrams >= 2) return true;
+      }
     }
   }
   return false;
@@ -1143,7 +1242,7 @@ export function assessAnswerTopicRelevance(
   }
 
   const compactBodyLen = bodyText.replace(/\s+/g, '').length;
-  if (compactBodyLen >= 60 && expectedTokens.length >= 2 && matchedTokens.length === 0) {
+  if (compactBodyLen >= 60 && expectedTokens.length >= 1 && matchedTokens.length === 0) {
     return {
       relevant: false,
       reason: '回答正文未覆盖监测问题核心主题词，可能存在跑题',

@@ -52,6 +52,12 @@ function formatCheckedAt(iso: string | null): string {
   return formatShanghaiDateTime(iso);
 }
 
+function formatMerchantJudgeLabel(model: string | null | undefined): string | null {
+  const formatted = formatJudgeModelDisplayLabel(model);
+  if (!formatted) return null;
+  return formatted === '规则语义判别' ? '规则语义判别' : '大模型语义判别';
+}
+
 export function RunWorkspace({
   run,
   loading = false,
@@ -508,9 +514,9 @@ export function RunWorkspace({
                       {formatCollectorDisplayLabel(selectedObs.collectorKind)}
                     </span>
                   ) : null}
-                  {formatJudgeModelDisplayLabel(selectedObs.judgeModel) ? (
+                  {formatMerchantJudgeLabel(selectedObs.judgeModel) ? (
                     <span className="gm-mono">
-                      {formatJudgeModelDisplayLabel(selectedObs.judgeModel)}
+                      {formatMerchantJudgeLabel(selectedObs.judgeModel)}
                     </span>
                   ) : null}
                   {selectedObs.brandSentiment &&

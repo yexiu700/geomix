@@ -235,4 +235,18 @@ describe('RunWorkspace observation detail & fidelity (#191, #217)', () => {
     expect(within(card).getByRole('alert').textContent).toContain('主题相关性预警');
     expect(within(card).getByText('该回答疑似跑题，已降权处理且不计为品牌推荐证据')).toBeTruthy();
   });
+
+  it('masks internal Judge LLM model slugs like gemini-4-hydrogen-xhigh with 大模型语义判别 (#191)', () => {
+    const obs = makeObservation({
+      id: 'obs_llm_judge',
+      collectorKind: 'llm_api',
+      judgeModel: 'gemini-4-hydrogen-xhigh',
+    });
+
+    renderWorkspace([obs]);
+    const card = screen.getByTestId('observation-card-obs_llm_judge');
+
+    expect(card.textContent).not.toContain('gemini-4-hydrogen-xhigh');
+    expect(within(card).getByText('大模型语义判别')).toBeTruthy();
+  });
 });

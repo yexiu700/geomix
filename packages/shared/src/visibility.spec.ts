@@ -843,4 +843,41 @@ describe('topic relevance guardrail and off-topic metric downgrading (#217)', ()
     expect(metrics.visibilityPct).toBe(50);
     expect(metrics.avgPosition).toBe(1);
   });
+
+  it('catches 1-token short prompts, old bucket 1/3 SaaS cues, and prevents generic CJK bigram false positives (#217)', () => {
+    // 1. 1-token short prompt against long unrelated answer (>=60 chars after intro stripping)
+    const shortPromptRes = assessAnswerTopicRelevance(
+      'Anker充电器怎么样',
+      '围绕「Anker充电器怎么样」，现代企业数字化建设需要统筹预算分配、审批流转与跨部门协同效率，并结合制度规范与季度复盘机制持续跟踪交付周期和业务落地成效。',
+      { brandName: 'Anker' },
+    );
+    expect(shortPromptRes.relevant).toBe(false);
+    expect(shortPromptRes.expectedTokens).toEqual(['充电器']);
+    expect(shortPromptRes.matchedTokens).toEqual([]);
+
+    // 2. Old bucket 1/3 SaaS boilerplate cues on non-GEO prompt
+    const oldSaasRes = assessAnswerTopicRelevance(
+      'Anker充电器怎么样',
+      '针对该问题，Anker 提供多维度看板与行业基准对比能力，支持基础词条管理与标准化报表模板。',
+      { brandName: 'Anker' },
+    );
+    expect(oldSaasRes.relevant).toBe(false);
+
+    // 3. Generic CJK bigram (控制) in long token must not falsely match off-topic text (成本控制)
+    const bigramFalseMatchRes = assessAnswerTopicRelevance(
+      'Anker氮化镓充电器发热控制怎么样',
+      '围绕「Anker氮化镓充电器发热控制怎么样」，企业采购应优先关注成本控制、供应商履约周期、发票合规归档与财务对账规范，并结合年度预算审批与内控审计流程持续提升跨部门协作效率。',
+      { brandName: 'Anker' },
+    );
+    expect(bigramFalseMatchRes.relevant).toBe(false);
+    expect(bigramFalseMatchRes.matchedTokens).toEqual([]);
+
+    // 4. Genuine on-topic answer still passes via 3-char substring / specific topic coverage
+    const onTopicRes = assessAnswerTopicRelevance(
+      'Anker氮化镓充电器发热控制怎么样',
+      'Anker 氮化镓充电器在满载 65W 输出时温控表现稳定，机身温升处于合理区间，日常差旅携带安全可靠。',
+      { brandName: 'Anker' },
+    );
+    expect(onTopicRes.relevant).toBe(true);
+  });
 });

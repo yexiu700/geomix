@@ -972,8 +972,14 @@ class InMemoryVisibilityStore {
             return {
               ...r,
               profile: profile
-                ? { id: profile.id, name: profile.name, brandName: profile.brandName }
-                : { id: r.profileId, name: '', brandName: '' },
+                ? {
+                    id: profile.id,
+                    name: profile.name,
+                    brandName: profile.brandName,
+                    brandAliases: profile.brandAliases,
+                    competitors: profile.competitors,
+                  }
+                : { id: r.profileId, name: '', brandName: '', brandAliases: [], competitors: [] },
               keyword: keyword ? { id: keyword.id, main: keyword.main } : null,
               observations,
             };
@@ -2772,5 +2778,71 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
       mentionedChecks: 1,
       visibilityPct: 50,
     });
+
+    // Also seed a 100% off-topic historical run with persisted brandMentioned=true
+    const allOffRunId = store.nextId('vrun');
+    store.runs.set(allOffRunId, {
+      id: allOffRunId,
+      tenantId,
+      profileId: profId,
+      keywordId: null,
+      name: 'ARZOPA 全跑题历史任务',
+      engines: ['deepseek'],
+      questionIds: [],
+      totalChecks: 1,
+      doneCount: 1,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_all_off_1',
+      tenantId,
+      runId: allOffRunId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Switch外接ARZOPA便携屏怎么样',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText:
+        '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'ARZOPA 提供多维度看板与行业基准对比',
+      competitorHits: [],
+      fanOutQueries: [],
+      judgeModel: 'fake-cheap',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const listRes = await httpJson<VisibilityRunListResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/runs?profileId=${profId}`,
+      { token },
+    );
+    expect(listRes.status).toBe(200);
+    expect(listRes.data.items.find((r) => r.id === runId)?.visibilityPct).toBe(50);
+    expect(listRes.data.items.find((r) => r.id === allOffRunId)?.visibilityPct).toBe(0);
+
+    const allOffDetailRes = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'GET',
+      `/api/v1/visibility/runs/${allOffRunId}`,
+      { token },
+    );
+    expect(allOffDetailRes.status).toBe(200);
+    expect(allOffDetailRes.data.visibilityPct).toBe(0);
   });
 });

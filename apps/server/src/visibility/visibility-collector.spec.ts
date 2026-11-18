@@ -168,6 +168,40 @@ describe('VisibilityCollectorService - fake driver', () => {
       }
     }
   });
+
+  it('strips brandAliases in addition to brandName from collectFake bucket 3 gapTopicCore (#217)', async () => {
+    const collector = VisibilityCollectorService.fromEnv({ VISIBILITY_COLLECTOR: 'fake' });
+    let sawBucket3 = false;
+
+    for (let i = 1; i <= 24; i += 1) {
+      const sample = await collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: `阿卓帕便携屏实测${i}`,
+        brandName: 'ARZOPA',
+        brandAliases: ['阿卓帕'],
+        ownedDomains: ['arzopa.com'],
+        competitors: [
+          { name: '联想ThinkVision', domains: ['lenovo.com'] },
+          { name: '小米', domains: ['mi.com'] },
+        ],
+      });
+      if (Number(sample.rawMeta?.scenarioBucket) !== 3) continue;
+      sawBucket3 = true;
+
+      // Strip quoted prompt echo in line 1, then verify brand & brandAlias do not appear in gap body or citation titles
+      const bodyLines = sample.answerText.split('\n').slice(1).join('\n');
+      expect(bodyLines).not.toContain('ARZOPA');
+      expect(bodyLines).not.toContain('阿卓帕');
+      for (const cite of sample.citations) {
+        expect(cite.title ?? '').not.toContain('阿卓帕');
+        expect(cite.snippet ?? '').not.toContain('阿卓帕');
+      }
+      break;
+    }
+
+    expect(sawBucket3).toBe(true);
+  });
 });
 
 describe('VisibilityCollectorService - llm_api driver', () => {

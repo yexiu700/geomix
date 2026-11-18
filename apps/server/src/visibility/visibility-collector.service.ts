@@ -182,9 +182,16 @@ export class VisibilityCollectorService {
     const compBName = secondComp?.name?.trim() || '领航数科';
 
     const topicCore = input.promptText.replace(/[？?！!。，,\s]+$/u, '').slice(0, 36);
+    const brandTermsToStrip = [input.brandName, ...(input.brandAliases ?? [])]
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    let strippedGapTopic = topicCore;
+    for (const term of brandTermsToStrip) {
+      strippedGapTopic = strippedGapTopic.replace(wholeWordPattern(term), '');
+    }
     const gapTopicCore =
-      topicCore
-        .replace(wholeWordPattern(input.brandName), '')
+      strippedGapTopic
         .replace(/^[的与和及、，,\s]+|[的与和及、，,\s]+$/gu, '')
         .replace(/\s+/g, ' ')
         .trim() || '同类主流方案';
