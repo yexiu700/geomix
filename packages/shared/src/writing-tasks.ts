@@ -10,6 +10,7 @@ import {
   type CrudOrder,
   type CrudPageSize,
 } from './crud';
+import { isTaskStatus, type ItemStatusName, type TaskStatusName } from './task-status';
 import { UX_TERMS } from './ux-foundation';
 
 export const AI_TASK_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -25,16 +26,13 @@ export const AI_TASK_MAX_CONSECUTIVE_FAILS = 3;
 export const AI_TASK_TENANT_CONCURRENCY = 2;
 export const AI_TASK_AUTO_CATEGORY = 'AUTO';
 
-export const TASK_STATUSES = [
-  'QUEUED',
-  'RUNNING',
-  'PAUSED',
-  'COMPLETED',
-  'PARTIAL',
-  'FAILED',
-  'CANCELLED',
-] as const;
-export type TaskStatusName = (typeof TASK_STATUSES)[number];
+export {
+  ITEM_STATUSES,
+  TASK_STATUSES,
+  isTaskStatus,
+  type ItemStatusName,
+  type TaskStatusName,
+} from './task-status';
 
 export const TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
   QUEUED: '排队中',
@@ -46,9 +44,6 @@ export const TASK_STATUS_LABELS: Record<TaskStatusName, string> = {
   CANCELLED: '已终止',
 };
 
-export const ITEM_STATUSES = ['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'SKIPPED'] as const;
-export type ItemStatusName = (typeof ITEM_STATUSES)[number];
-
 export const ITEM_STATUS_LABELS: Record<ItemStatusName, string> = {
   PENDING: '待执行',
   RUNNING: '生成中',
@@ -59,10 +54,6 @@ export const ITEM_STATUS_LABELS: Record<ItemStatusName, string> = {
 
 export const AI_TASK_RESULT_STATUSES = ['PENDING', 'NORMAL'] as const;
 export type AiTaskResultStatus = (typeof AI_TASK_RESULT_STATUSES)[number];
-
-export function isTaskStatus(value: string | undefined): value is TaskStatusName {
-  return Boolean(value && (TASK_STATUSES as readonly string[]).includes(value));
-}
 
 const optionalIdField = z
   .union([z.string().trim(), z.null(), z.undefined()])

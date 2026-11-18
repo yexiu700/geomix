@@ -80,6 +80,46 @@
     "./ux-foundation": {
       "types": "./dist/ux-foundation.d.ts",
       "default": "./dist/ux-foundation.js"
+    },
+    "./account-costs-ux": {
+      "types": "./dist/account-costs-ux.d.ts",
+      "default": "./dist/account-costs-ux.js"
+    },
+    "./articles": {
+      "types": "./dist/articles.d.ts",
+      "default": "./dist/articles.js"
+    },
+    "./dashboard": {
+      "types": "./dist/dashboard.d.ts",
+      "default": "./dist/dashboard.js"
+    },
+    "./ops": {
+      "types": "./dist/ops.d.ts",
+      "default": "./dist/ops.js"
+    },
+    "./qa": {
+      "types": "./dist/qa.d.ts",
+      "default": "./dist/qa.js"
+    },
+    "./rewrite-batches": {
+      "types": "./dist/rewrite-batches.d.ts",
+      "default": "./dist/rewrite-batches.js"
+    },
+    "./rewrites": {
+      "types": "./dist/rewrites.d.ts",
+      "default": "./dist/rewrites.js"
+    },
+    "./shanghai-time": {
+      "types": "./dist/shanghai-time.d.ts",
+      "default": "./dist/shanghai-time.js"
+    },
+    "./task-status": {
+      "types": "./dist/task-status.d.ts",
+      "default": "./dist/task-status.js"
+    },
+    "./writing-categories": {
+      "types": "./dist/writing-categories.d.ts",
+      "default": "./dist/writing-categories.js"
     }
   },
   "scripts": {

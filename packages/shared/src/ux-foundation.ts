@@ -1,4 +1,4 @@
-import type { TaskStatusName } from './writing-tasks';
+import type { TaskStatusName } from './task-status';
 
 /**
  * 公共 UX 底座常量与统一工具（跨模块共性规范单一事实源）
