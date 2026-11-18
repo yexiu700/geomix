@@ -122,7 +122,7 @@ function makeGateway(opts?: { signed?: boolean }) {
         id: `kb_new_${createdPayloads.length}`,
         name: payload.name,
         mode: payload.mode,
-        companyName: payload.mode === 'DETAIL' ? payload.companyName : null,
+        companyName: payload.companyName?.trim() ? payload.companyName.trim() : null,
         brandShort: payload.mode === 'DETAIL' ? payload.brandShort : null,
         directions: payload.mode === 'DETAIL' ? payload.directions : [],
         copyTypes: payload.mode === 'DETAIL' ? payload.copyTypes : [],
@@ -168,7 +168,7 @@ function makeGateway(opts?: { signed?: boolean }) {
 }
 
 describe('KnowledgeScreen', () => {
-  it('renders exact 5 columns without 序号, shows companyName only for DETAIL, and disables toolbar delete until selected', async () => {
+  it('renders page guidance and 6 columns with 状态 (可用/索引中), widened 名称, and companyName support (#205, #146)', async () => {
     const { gateway } = makeGateway({ signed: true });
     render(<KnowledgeScreen title="企业知识库" gateway={gateway} />);
 
@@ -176,26 +176,101 @@ describe('KnowledgeScreen', () => {
       expect(document.body.textContent).toContain('激光装备产品库');
     });
 
+    // Page subtitle explains 细分模式 vs 汇总模式 without RAG jargon (#146)
+    expect(document.body.textContent).toContain('细分模式');
+    expect(document.body.textContent).toContain('汇总模式');
+    expect(document.body.textContent).not.toMatch(/整段注入|切分向量索引/);
+
     const headers = Array.from(document.querySelectorAll('thead th'))
       .map((th) => (th.textContent ?? '').trim())
       .filter((txt) => txt.length > 0);
-    expect(headers).toEqual(['名称', '类型', '公司名', '创建时间', '操作']);
+    expect(headers).toEqual(['名称', '类型', '状态', '公司名', '创建时间', '操作']);
+
+    // Widened 名称 column to avoid wrapping parentheses like （Anker） (#205)
+    const nameCol = document.querySelector('colgroup col:nth-child(2)') as HTMLElement | null;
+    if (nameCol?.style.width) {
+      expect(Number.parseInt(nameCol.style.width, 10)).toBeGreaterThanOrEqual(280);
+    }
 
     expect(document.body.textContent).toContain('苏州智造装备有限公司');
-    expect(document.body.textContent).toContain('细分模式');
-    expect(document.body.textContent).toContain('汇总模式');
     expect(document.body.textContent).toContain('可用');
 
-    // Summary row cell for companyName displays '-'
+    // Summary row cell for companyName displays '—' when omitted, and 状态 column shows 可用
     const rows = Array.from(document.querySelectorAll('tbody tr'));
     const summaryRow = rows.find((tr) => (tr.textContent ?? '').includes('两万字工艺总览'));
     expect(summaryRow).toBeTruthy();
     const summaryCells = Array.from(summaryRow!.querySelectorAll('td'));
-    // td[0]=checkbox, td[1]=名称, td[2]=类型, td[3]=公司名
-    expect(summaryCells[3]?.textContent?.trim()).toBe('-');
+    // td[0]=checkbox, td[1]=名称, td[2]=类型, td[3]=状态, td[4]=公司名
+    expect(summaryCells[3]?.textContent?.trim()).toBe('可用');
+    expect(summaryCells[4]?.textContent?.trim()).toBe('—');
 
     const toolbarDelete = document.querySelector('button[aria-label="删除"]') as HTMLButtonElement;
     expect(toolbarDelete.disabled).toBe(true);
+  });
+
+  it('validates * 汇总信息 on empty submit, saves optional 公司/品牌名称 in SUMMARY mode, uses CrudModal, and renames help modal to 填写说明与示例 (#205, #146)', async () => {
+    const { gateway, createdPayloads } = makeGateway({ signed: true });
+    render(<KnowledgeScreen title="企业知识库" gateway={gateway} />);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('激光装备产品库');
+    });
+
+    clickBtn('添加');
+
+    // Uses CrudModal with minimize/maximize/reset controls
+    const dialog = document.querySelector('.gm-crud-dialog[role="dialog"]');
+    expect(dialog).toBeTruthy();
+    expect(document.querySelector('button[aria-label="最小化"]')).toBeTruthy();
+    expect(document.querySelector('button[aria-label="最大化"]')).toBeTruthy();
+
+    // Switch to SUMMARY mode and submit empty -> BOTH 知识库名称 and 汇总信息 must trigger validation!
+    const summaryRadio = Array.from(document.querySelectorAll('input[type="radio"]')).find(
+      (el) => (el as HTMLInputElement).value === 'SUMMARY',
+    )!;
+    fireEvent.click(summaryRadio);
+
+    expect(document.body.textContent).not.toMatch(/整段注入|切分向量索引/);
+    expect(document.querySelector('input[aria-label="公司/品牌名称"]')).toBeTruthy();
+
+    await act(async () => {
+      clickBtn('确定');
+    });
+    expect(createdPayloads).toHaveLength(0);
+    expect(document.body.textContent).toContain('请输入知识库名称');
+    expect(document.body.textContent).toContain('请输入汇总信息');
+
+    // Fill name, optional companyName, and summaryText -> saves and renders companyName in table
+    fireEvent.change(document.querySelector('input[aria-label="知识库名称"]')!, {
+      target: { value: '安克创新（Anker）品牌与产品矩阵知识库' },
+    });
+    fireEvent.change(document.querySelector('input[aria-label="公司/品牌名称"]')!, {
+      target: { value: '安克创新（Anker）' },
+    });
+    fireEvent.change(document.querySelector('textarea[aria-label="汇总信息"]')!, {
+      target: { value: '专注智能充电、储能与影音硬件研发制造。' },
+    });
+
+    await act(async () => {
+      clickBtn('确定');
+    });
+    await waitFor(() => {
+      expect(createdPayloads).toHaveLength(1);
+    });
+    expect(createdPayloads[0]).toEqual({
+      name: '安克创新（Anker）品牌与产品矩阵知识库',
+      mode: 'SUMMARY',
+      companyName: '安克创新（Anker）',
+      summaryText: '专注智能充电、储能与影音硬件研发制造。',
+    });
+
+    await waitFor(() => {
+      const createdRow = Array.from(document.querySelectorAll('tbody tr')).find((tr) =>
+        (tr.textContent ?? '').includes('安克创新（Anker）品牌与产品矩阵知识库'),
+      );
+      expect(createdRow).toBeTruthy();
+      expect(createdRow!.textContent).toContain('安克创新（Anker）');
+    });
   });
 
   it('preserves DETAIL & SUMMARY drafts independently when switching modes, shows 查看说明 on exact 5 fields, blocks unsigned save, and unlocks agreement after scrolling to bottom', async () => {
@@ -217,9 +292,10 @@ describe('KnowledgeScreen', () => {
     expect(document.querySelector('button[aria-label="查看说明-品牌故事"]')).toBeNull();
     expect(document.querySelector('button[aria-label="查看说明-其他信息"]')).toBeNull();
 
-    // Open 查看说明 preview modal
+    // Open 查看说明 modal -> title must be 填写说明与示例 (not 预览)
     fireEvent.click(document.querySelector('button[aria-label="查看说明-产品服务"]')!);
-    expect(document.body.textContent).toContain('预览');
+    expect(document.body.textContent).toContain('填写说明与示例');
+    expect(document.querySelector('.ant-modal-title')?.textContent?.trim()).toBe('填写说明与示例');
     expect(document.body.textContent).toContain('内容：');
     expect(document.body.textContent).toContain('说明：');
     expect(document.body.textContent).toContain('实例：');
@@ -332,6 +408,7 @@ describe('KnowledgeScreen', () => {
     expect(createdPayloads[0]).toEqual({
       name: '智能制造通用库',
       mode: 'SUMMARY',
+      companyName: undefined,
       summaryText: '本企业汇总资料：提供钣金柔性折弯中心与产线集成交付。',
     });
   });

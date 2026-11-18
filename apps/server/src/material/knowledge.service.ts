@@ -70,7 +70,7 @@ function normalizeDetailFields(raw: Prisma.JsonValue | null): KbDetailFields {
 
 function collectWriteText(input: KnowledgeWriteInput): string {
   if (input.mode === 'SUMMARY') {
-    return [input.name, input.summaryText].filter(Boolean).join('\n');
+    return [input.name, input.companyName, input.summaryText].filter(Boolean).join('\n');
   }
   return [
     input.name,
@@ -238,7 +238,7 @@ export class KnowledgeService {
               tenantId,
               name: input.name,
               mode: 'SUMMARY',
-              companyName: null,
+              companyName: input.companyName?.trim() || null,
               brandShort: null,
               directions: [],
               copyTypes: [],
@@ -304,7 +304,7 @@ export class KnowledgeService {
             : {
                 name: input.name,
                 mode: 'SUMMARY',
-                companyName: null,
+                companyName: input.companyName?.trim() || null,
                 brandShort: null,
                 directions: [],
                 copyTypes: [],
@@ -414,7 +414,7 @@ export class KnowledgeService {
       id: row.id,
       name: row.name,
       mode: row.mode,
-      companyName: isDetail ? (row.companyName ?? '') : null,
+      companyName: isDetail ? (row.companyName ?? '') : (row.companyName ?? null),
       brandShort: isDetail ? (row.brandShort ?? '') : null,
       directions: isDetail ? row.directions : [],
       copyTypes: isDetail ? row.copyTypes : [],

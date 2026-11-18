@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  KB_AGREEMENT_CONFIRM_BUTTON_LABEL,
+  KB_AGREEMENT_PARAGRAPHS,
   KB_CHUNK_SIZE,
   KB_DETAIL_FIELDS_META,
   chunkKnowledgeText,
   formatKnowledgeFactCard,
   isAgreementScrolledToBottom,
+  knowledgeExportTable,
   knowledgeWriteSchema,
   requiresKbVectorIndex,
+  type KnowledgeBaseRecord,
 } from './knowledge';
 
 describe('knowledge shared helpers', () => {
@@ -15,7 +19,17 @@ describe('knowledge shared helpers', () => {
     expect(withHelp).toEqual(['productService', 'productFeature', 'painPoint', 'trust', 'cases']);
   });
 
-  it('validates DETAIL and SUMMARY schemas independently', () => {
+  it('uses clean Chinese punctuation in placeholders and clean copy in agreement (#146)', () => {
+    expect(KB_AGREEMENT_CONFIRM_BUTTON_LABEL).toBe('确认已阅读并承诺信息是真实数据');
+    for (const meta of KB_DETAIL_FIELDS_META) {
+      expect(meta.placeholder).not.toContain(',');
+      expect(meta.placeholder).toContain('，1000 字以内');
+    }
+    const agreementText = KB_AGREEMENT_PARAGRAPHS.join('\n');
+    expect(agreementText).not.toMatch(/向量检索|整段注入|切分向量索引/);
+  });
+
+  it('validates DETAIL and SUMMARY schemas independently and accepts optional companyName in SUMMARY (#205)', () => {
     const validDetail = knowledgeWriteSchema.safeParse({
       name: '激光设备知识库',
       mode: 'DETAIL',
@@ -34,6 +48,37 @@ describe('knowledge shared helpers', () => {
       },
     });
     expect(validDetail.success).toBe(true);
+
+    const summaryWithCompany = knowledgeWriteSchema.safeParse({
+      name: '安克创新（Anker）品牌与产品矩阵知识库',
+      mode: 'SUMMARY',
+      companyName: '  安克创新（Anker）  ',
+      summaryText: '专注消费电子充电与储能硬件研发。',
+    });
+    expect(summaryWithCompany.success).toBe(true);
+    if (summaryWithCompany.success && summaryWithCompany.data.mode === 'SUMMARY') {
+      expect(summaryWithCompany.data.companyName).toBe('安克创新（Anker）');
+    }
+
+    const exported = knowledgeExportTable([
+      {
+        id: 'kb_sum_company',
+        name: '安克创新（Anker）品牌与产品矩阵知识库',
+        mode: 'SUMMARY',
+        companyName: '安克创新（Anker）',
+        brandShort: null,
+        directions: [],
+        copyTypes: [],
+        fields: null,
+        summaryText: '汇总资料',
+        indexStatus: 'READY',
+        chunkCount: 10,
+        signatureId: 'sig_1',
+        createdAt: '2026-11-18T00:00:00.000Z',
+        updatedAt: '2026-11-18T00:00:00.000Z',
+      } satisfies KnowledgeBaseRecord,
+    ]);
+    expect(exported.rows[0]?.[2]).toBe('安克创新（Anker）');
 
     const invalidSummary = knowledgeWriteSchema.safeParse({
       name: '超长汇总',

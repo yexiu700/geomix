@@ -23,6 +23,7 @@ import {
   Space,
   Switch,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
@@ -30,9 +31,10 @@ import { KeywordApiError, httpKeywordGateway, type KeywordGateway } from '../../
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
 import { CrudTable } from '../crud/crud-table';
+import { useUxFeedback } from '../crud/ux-feedback';
 
 type KeywordDraft = {
   main: string;
@@ -78,6 +80,7 @@ export function KeywordScreen({
   storage?: SessionStorageLike;
   onDispatch?: (action: ShellAction) => void;
 }) {
+  const feedback = useUxFeedback();
   const client = useMemo(
     () => gateway ?? httpKeywordGateway(storage ?? window.sessionStorage),
     [gateway, storage],
@@ -106,9 +109,10 @@ export function KeywordScreen({
   const [reloadKey, setReloadKey] = useState(0);
   const [locked, setLocked] = useState(false);
 
-  // Distill confirmation & loading
+  // Distill confirmation, loading & constructive fallback
   const [distillConfirmOpen, setDistillConfirmOpen] = useState(false);
   const [distilling, setDistilling] = useState(false);
+  const [distillFallback, setDistillFallback] = useState<string | null>(null);
 
   // Preview checkbox modal (shared by AI distill & manual combo)
   const [preview, setPreview] = useState<PreviewModalState | null>(null);
@@ -209,6 +213,7 @@ export function KeywordScreen({
         questionsText: detail.questions.map((q) => q.text).join('\n'),
       };
       setFormError(null);
+      setDistillFallback(null);
       setEditor({
         mode: 'edit',
         id: detail.id,
@@ -248,11 +253,12 @@ export function KeywordScreen({
           questionsText: editor.draft.questionsText,
           questionItems,
         });
-        setNotice(
+        const msg =
           res.skippedDuplicates > 0
-            ? `已保存主词「${res.keyword.main}」，新增 ${res.addedQuestions} 条问题（自动跳过 ${res.skippedDuplicates} 条重复问题）`
-            : `已保存主词「${res.keyword.main}」，共写入 ${res.addedQuestions} 条拓展问题`,
-        );
+            ? `已保存${UX_TERMS.mainKeyword}「${res.keyword.main}」，新增 ${res.addedQuestions} 条问题（自动跳过 ${res.skippedDuplicates} 条重复问题）`
+            : `已保存${UX_TERMS.mainKeyword}「${res.keyword.main}」，共写入 ${res.addedQuestions} 条拓展问题`;
+        setNotice(msg);
+        feedback.notifySuccess(msg);
       } else if (editor.id) {
         const res = await client.update(editor.id, {
           main: checked.value,
@@ -260,12 +266,17 @@ export function KeywordScreen({
           questionsText: editor.draft.questionsText,
           questionItems,
         });
-        setNotice(`已更新主词「${res.keyword.main}」，当前共 ${res.keyword.questionCount} 条问题`);
+        const msg = `已更新${UX_TERMS.mainKeyword}「${res.keyword.main}」，当前共 ${res.keyword.questionCount} 条问题`;
+        setNotice(msg);
+        feedback.notifySuccess(msg);
       }
       setEditor(null);
+      setDistillFallback(null);
       setReloadKey((v) => v + 1);
     } catch (reason) {
-      setFormError(messageOf(reason));
+      const msg = messageOf(reason);
+      setFormError(msg);
+      feedback.notifyError(msg);
       noteLock(reason, setLocked);
     } finally {
       setSaving(false);
@@ -280,6 +291,7 @@ export function KeywordScreen({
       return;
     }
     setFormError(null);
+    setDistillFallback(null);
     setDistillConfirmOpen(true);
   }
 
@@ -293,6 +305,7 @@ export function KeywordScreen({
     }
     setDistilling(true);
     setFormError(null);
+    setDistillFallback(null);
     try {
       const idem = `distill-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const res = await client.distill({
@@ -309,7 +322,9 @@ export function KeywordScreen({
       });
     } catch (reason) {
       setDistillConfirmOpen(false);
-      setFormError(messageOf(reason));
+      const msg = messageOf(reason);
+      setFormError(msg);
+      setDistillFallback(msg);
       noteLock(reason, setLocked);
     } finally {
       setDistilling(false);
@@ -465,7 +480,7 @@ export function KeywordScreen({
         {title}
       </Typography.Title>
       <Typography.Paragraph type="secondary">
-        管理主训练词与公司转化词，支持 AI
+        管理{UX_TERMS.mainKeyword}与公司品牌词，支持 AI
         蒸馏拓展、手动批量三栏组合及免费拓词词包回填。保存后拓展问题立即同步至写作标题列表。
       </Typography.Paragraph>
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
@@ -520,7 +535,7 @@ export function KeywordScreen({
         }}
         sortOptions={[
           { value: 'createdAt', label: '创建时间' },
-          { value: 'main', label: '主词' },
+          { value: 'main', label: UX_TERMS.mainKeyword },
         ]}
         onSearchOpenChange={setSearchOpen}
         onSearch={(search) => {
@@ -545,6 +560,7 @@ export function KeywordScreen({
             ? undefined
             : () => {
                 setFormError(null);
+                setDistillFallback(null);
                 setSourceRegistry({});
                 setEditor({
                   mode: 'create',
@@ -567,7 +583,7 @@ export function KeywordScreen({
           },
           {
             key: 'main',
-            title: '主词',
+            title: UX_TERMS.mainKeyword,
             hideable: false,
             render: (row) => (
               <Space direction="vertical" size={2}>
@@ -664,6 +680,7 @@ export function KeywordScreen({
       <CrudModal
         open={editor !== null}
         title={editor?.mode === 'edit' ? '编辑关键词' : '添加关键词'}
+        width={780}
         minimized={editor?.minimized ?? false}
         maximized={editor?.maximized ?? false}
         confirmLoading={saving}
@@ -673,9 +690,13 @@ export function KeywordScreen({
         onMaximize={() =>
           setEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
         }
-        onClose={() => setEditor(null)}
+        onClose={() => {
+          setEditor(null);
+          setDistillFallback(null);
+        }}
         onReset={() => {
           setFormError(null);
+          setDistillFallback(null);
           setEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
         }}
         ok={
@@ -690,35 +711,55 @@ export function KeywordScreen({
           </Button>
         }
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label>
-            <span>主关键词（必填，不少于 3 个字，只能填一个）</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Typography.Text strong>
+              <span style={{ color: 'var(--gm-danger)' }}>* </span>
+              {UX_TERMS.mainKeyword}（必填，不少于 3 个字，只能填一个）
+            </Typography.Text>
             <Input
               aria-label="主关键词"
-              placeholder="主关键词，只能一个，不低于3个字"
+              placeholder="请输入主关键词，只能一个，不低于 3 个字"
               value={editor?.draft.main ?? ''}
-              onChange={(e) =>
+              onChange={(e) => {
+                setDistillFallback(null);
                 setEditor((curr) =>
                   curr ? { ...curr, draft: { ...curr.draft, main: e.target.value } } : curr,
-                )
-              }
+                );
+              }}
             />
-          </label>
-          <label>
-            <span>公司或品牌（选填，多个品牌用逗号分隔）</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Space size={6} align="center">
+              <Typography.Text strong>
+                公司或品牌 / 达标命中词（选填，多个词用逗号分隔）
+              </Typography.Text>
+              <Tooltip title="用于判断生成文章或 AI 回答是否成功提及您的品牌：回答中出现此处填写的任意公司名、品牌简称或产品词，即视为「达标命中 / 收录命中」。">
+                <Button
+                  type="text"
+                  size="small"
+                  aria-label="达标命中说明"
+                  style={{ padding: '0 6px', height: 20, color: 'var(--gm-fg-3)' }}
+                >
+                  ?
+                </Button>
+              </Tooltip>
+            </Space>
             <Input
               aria-label="公司或品牌"
-              placeholder="输入达标命中信息，逗号隔开..."
+              placeholder="请输入公司名、品牌简称等达标命中词，多个用逗号隔开（如：安克创新, Anker）"
               value={editor?.draft.brands ?? ''}
-              onChange={(e) =>
+              onChange={(e) => {
+                setDistillFallback(null);
                 setEditor((curr) =>
                   curr ? { ...curr, draft: { ...curr.draft, brands: e.target.value } } : curr,
-                )
-              }
+                );
+              }}
             />
-          </label>
+          </div>
 
-          <Space wrap>
+          <Space wrap style={{ paddingTop: 2, paddingBottom: 2 }}>
             <Button
               type="primary"
               ghost
@@ -747,11 +788,44 @@ export function KeywordScreen({
             </Button>
           </Space>
 
-          <label>
-            <span>一行一个拓展问题（保存不收费；保存前可自由增删改，保存后占用写作问题配额）</span>
+          {distillFallback ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`AI 蒸馏未生成足够的有效问题：${distillFallback}`}
+              description={
+                <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                  <span>
+                    未扣除点数。建议换用更具体的品类词（如去掉过长修饰或确认「公司或品牌」未与主关键词重叠）后重试，也可立即使用免费拓词方案：
+                  </span>
+                  <Space wrap>
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      onClick={() => {
+                        setFormError(null);
+                        setExpanderOpen(true);
+                      }}
+                    >
+                      改用免费拓词工具
+                    </Button>
+                    <Button size="small" onClick={openComboModal}>
+                      改用手动批量添加
+                    </Button>
+                  </Space>
+                </Space>
+              }
+            />
+          ) : null}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Typography.Text strong>
+              一行一个拓展问题（保存不收费；保存前可自由增删改，保存后占用写作问题配额）
+            </Typography.Text>
             <Input.TextArea
               aria-label="一行一个拓展问题"
-              rows={8}
+              rows={6}
               placeholder="每行输入一条包含主关键词的咨询问题"
               value={editor?.draft.questionsText ?? ''}
               onChange={(e) =>
@@ -765,7 +839,7 @@ export function KeywordScreen({
                 )
               }
             />
-          </label>
+          </div>
         </div>
       </CrudModal>
 
@@ -782,11 +856,18 @@ export function KeywordScreen({
         onCancel={() => setDistillConfirmOpen(false)}
       >
         <p>
-          将围绕主训练词「<strong>{editor?.draft.main.trim()}</strong>」生成潜在客户咨询问题。
+          将围绕{UX_TERMS.mainKeyword}「<strong>{editor?.draft.main.trim()}</strong>
+          」生成潜在客户咨询问题。
         </p>
         <p>
-          本次标价 <strong>{distillUnitPrice} 点/次</strong>；若有效问题少于 5
-          条或上游异常，系统自动退还预扣点数。返回后可勾选预览再追加到问题框。
+          <strong>有效判定标准与计费说明：</strong>本次标价{' '}
+          <strong>{distillUnitPrice} 点/次</strong>。系统需筛选出
+          <strong>至少 5 条</strong>
+          「完整包含主关键词、不含额外品牌词且与现有问题不重复」的合规问题才判定为有效。
+        </p>
+        <p style={{ marginBottom: 0 }}>
+          <strong>不扣点保障：</strong>若有效问题不足 5 条或上游服务异常，系统
+          <strong>不会扣除点数</strong>（预扣将自动全额退还）。返回后可勾选预览再追加到问题框。
         </p>
       </Modal>
 
@@ -826,19 +907,19 @@ export function KeywordScreen({
               <Input.TextArea
                 aria-label="组合前缀"
                 rows={7}
-                placeholder="如：华东&#10;深圳&#10;企业级"
+                placeholder="如：华东&#10;深圳&#10;家用"
                 value={comboPrefixes}
                 onChange={(e) => setComboPrefixes(e.target.value)}
               />
             </div>
             <div>
               <div style={{ marginBottom: 4 }}>
-                <span>主词（每行须含主训练词）</span>
+                <span>主词（每行须含{UX_TERMS.mainKeyword}）</span>
               </div>
               <Input.TextArea
                 aria-label="组合主词"
                 rows={7}
-                placeholder="每行必须包含当前主训练词"
+                placeholder={`每行必须包含当前${UX_TERMS.mainKeyword}`}
                 value={comboMains}
                 onChange={(e) => setComboMains(e.target.value)}
               />
@@ -859,7 +940,7 @@ export function KeywordScreen({
               <Input.TextArea
                 aria-label="组合后缀"
                 rows={7}
-                placeholder="如：哪家好&#10;厂家推荐&#10;收费标准"
+                placeholder="如：哪家好&#10;值得买吗&#10;参数对比"
                 value={comboSuffixes}
                 onChange={(e) => setComboSuffixes(e.target.value)}
               />
@@ -889,7 +970,7 @@ export function KeywordScreen({
       {/* 免费拓词工具弹层 */}
       <Modal
         open={expanderOpen}
-        width={720}
+        width={760}
         title="拓词工具（免费词包，不扣点）"
         transitionName=""
         maskTransitionName=""
@@ -906,8 +987,28 @@ export function KeywordScreen({
       >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           <Typography.Text type="secondary">
-            勾选并按需修改下方词包（地域、服务作为前缀；疑问、推荐作为后缀），不调用大模型、不消耗点数，可直接回填到当前关键词表单。
+            勾选并按需修改下方词包（支持消费品/数码场景与企业服务场景；前缀与后缀自动组合），不调用大模型、不消耗点数，可直接回填到当前关键词表单。
           </Typography.Text>
+          <Space wrap size={8}>
+            <Button
+              size="small"
+              onClick={() => setSelectedPacks(['consumerScene', 'question', 'consumerReview'])}
+            >
+              消费品/数码常用组合
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setSelectedPacks(['region', 'service', 'question', 'recommend'])}
+            >
+              企业服务/工业常用组合
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setSelectedPacks(EXPANDER_WORD_PACKS.map((p) => p.key))}
+            >
+              全选
+            </Button>
+          </Space>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {EXPANDER_WORD_PACKS.map((pack) => {
               const checked = selectedPacks.includes(pack.key);
@@ -928,7 +1029,7 @@ export function KeywordScreen({
                   </Checkbox>
                   <Input.TextArea
                     aria-label={pack.label}
-                    rows={4}
+                    rows={3}
                     style={{ marginTop: 8 }}
                     value={packTexts[pack.key] ?? ''}
                     onChange={(e) =>
@@ -1035,8 +1136,8 @@ export function KeywordScreen({
         onCancel={() => setConfirmDeleteIds(null)}
       >
         <p>
-          将删除所选 {confirmDeleteIds?.length ?? 0}{' '}
-          个主词及其关联的写作问题，并同步回退主词与写作问题配额。
+          将删除所选 {confirmDeleteIds?.length ?? 0} 个{UX_TERMS.mainKeyword}
+          及其关联的写作问题，并同步回退{UX_TERMS.mainKeyword}与写作问题配额。
         </p>
       </Modal>
     </section>

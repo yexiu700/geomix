@@ -12,7 +12,6 @@ import {
   KB_COMPANY_MAX,
   KB_DETAIL_FIELDS_META,
   KB_DETAIL_FIELD_MAX,
-  KB_INDEX_STATUS_LABELS,
   KB_MODE_LABELS,
   KB_NAME_MAX,
   KB_SUMMARY_MAX,
@@ -32,8 +31,10 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Modal, Radio, Select, Space, Tag, Typography } from 'antd';
 import { useEffect, useMemo, useRef, useState, type UIEvent } from 'react';
+import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn, type CrudSearch } from '../crud/crud-table';
 import { TableClampText } from '../crud/table-clamp-text';
+import { useUxFeedback } from '../crud/ux-feedback';
 import {
   KnowledgeApiError,
   httpKnowledgeGateway,
@@ -50,6 +51,7 @@ type DetailModeDraft = {
 };
 
 type SummaryModeDraft = {
+  companyName: string;
   summaryText: string;
 };
 
@@ -60,6 +62,18 @@ type FormDraft = {
   detail: DetailModeDraft;
   summary: SummaryModeDraft;
 };
+
+type FormFieldErrorKey =
+  | 'name'
+  | 'companyName'
+  | 'brandShort'
+  | 'directions'
+  | 'copyTypes'
+  | 'summaryCompanyName'
+  | 'summaryText'
+  | KbDetailFieldKey;
+
+type FormFieldErrors = Partial<Record<FormFieldErrorKey, string>>;
 
 function createEmptyFormDraft(): FormDraft {
   return {
@@ -74,6 +88,7 @@ function createEmptyFormDraft(): FormDraft {
       fields: emptyKbDetailFields(),
     },
     summary: {
+      companyName: '',
       summaryText: '',
     },
   };
@@ -95,16 +110,16 @@ function draftFromRecord(row: KnowledgeBaseRecord): FormDraft {
           : emptyKbDetailFields(),
     },
     summary: {
+      companyName: row.mode === 'SUMMARY' ? (row.companyName ?? '') : '',
       summaryText: row.mode === 'SUMMARY' ? (row.summaryText ?? '') : '',
     },
   };
 }
 
-function indexStatusColor(status: KbIndexStatusName): string {
-  if (status === 'READY') return 'success';
-  if (status === 'INDEXING') return 'processing';
-  if (status === 'FAILED') return 'error';
-  return 'default';
+function statusTagView(status: KbIndexStatusName): { color: string; label: string } {
+  if (status === 'INDEXING') return { color: 'processing', label: '索引中' };
+  if (status === 'FAILED') return { color: 'error', label: '索引失败' };
+  return { color: 'success', label: '可用' };
 }
 
 export function KnowledgeScreen({
@@ -116,6 +131,7 @@ export function KnowledgeScreen({
   readOnly?: boolean;
   gateway?: KnowledgeGateway;
 }) {
+  const feedback = useUxFeedback();
   const client = useMemo(
     () =>
       gateway ??
@@ -157,7 +173,11 @@ export function KnowledgeScreen({
 
   // Add / Edit modal state
   const [modalOpen, setModalOpen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+  const [initialDraft, setInitialDraft] = useState<FormDraft>(createEmptyFormDraft);
   const [draft, setDraft] = useState<FormDraft>(createEmptyFormDraft);
+  const [fieldErrors, setFieldErrors] = useState<FormFieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const errorAlertRef = useRef<HTMLDivElement | null>(null);
@@ -226,15 +246,34 @@ export function KnowledgeScreen({
   const copyTypeOptions = useMemo(() => COPY_TYPES.map((c) => ({ value: c, label: c })), []);
 
   function openCreateModal() {
-    setDraft(createEmptyFormDraft());
+    const empty = createEmptyFormDraft();
+    setInitialDraft(empty);
+    setDraft(empty);
+    setFieldErrors({});
     setFormError(null);
+    setMinimized(false);
+    setMaximized(false);
     setModalOpen(true);
   }
 
   function openEditModal(row: KnowledgeBaseRecord) {
-    setDraft(draftFromRecord(row));
+    const next = draftFromRecord(row);
+    setInitialDraft(next);
+    setDraft(next);
+    setFieldErrors({});
     setFormError(null);
+    setMinimized(false);
+    setMaximized(false);
     setModalOpen(true);
+  }
+
+  function clearFieldError(key: FormFieldErrorKey) {
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const copy = { ...prev };
+      delete copy[key];
+      return copy;
+    });
   }
 
   function openAgreementModal() {
@@ -266,16 +305,20 @@ export function KnowledgeScreen({
       if (formError === KB_UNSIGNED_ERROR_MSG) {
         setFormError(null);
       }
-      setBanner({ type: 'success', text: '已签署企业知识库信息真实性与合规承诺协议' });
+      const msg = '已签署企业知识库信息真实性与合规承诺协议';
+      setBanner({ type: 'success', text: msg });
+      feedback.notifySuccess(msg);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '签署协议失败';
       setFormError(msg);
+      feedback.notifyError(msg);
     } finally {
       setSigning(false);
     }
   }
 
   function updateDetailField(key: KbDetailFieldKey, value: string) {
+    clearFieldError(key);
     setDraft((prev) => ({
       ...prev,
       detail: {
@@ -289,50 +332,64 @@ export function KnowledgeScreen({
   }
 
   function validateAndBuildPayload(): KnowledgeWriteInput | null {
+    const nextErrors: FormFieldErrors = {};
+    const messages: string[] = [];
+
     const trimmedName = draft.name.trim();
     if (!trimmedName) {
-      setFormError('请输入知识库名称');
-      return null;
-    }
-    if (Array.from(trimmedName).length > KB_NAME_MAX) {
-      setFormError(`知识库名称不超过 ${KB_NAME_MAX} 字`);
-      return null;
+      nextErrors.name = '请输入知识库名称';
+      messages.push('请输入知识库名称');
+    } else if (Array.from(trimmedName).length > KB_NAME_MAX) {
+      const msg = `知识库名称不超过 ${KB_NAME_MAX} 字`;
+      nextErrors.name = msg;
+      messages.push(msg);
     }
 
     if (draft.mode === 'DETAIL') {
       const companyName = draft.detail.companyName.trim();
       const brandShort = draft.detail.brandShort.trim();
       if (!companyName) {
-        setFormError('请输入公司名称');
-        return null;
-      }
-      if (Array.from(companyName).length > KB_COMPANY_MAX) {
-        setFormError(`公司名称不超过 ${KB_COMPANY_MAX} 字`);
-        return null;
+        nextErrors.companyName = '请输入公司名称';
+        messages.push('请输入公司名称');
+      } else if (Array.from(companyName).length > KB_COMPANY_MAX) {
+        const msg = `公司名称不超过 ${KB_COMPANY_MAX} 字`;
+        nextErrors.companyName = msg;
+        messages.push(msg);
       }
       if (!brandShort) {
-        setFormError('请输入品牌简称');
-        return null;
-      }
-      if (Array.from(brandShort).length > KB_BRAND_SHORT_MAX) {
-        setFormError(`品牌简称不超过 ${KB_BRAND_SHORT_MAX} 字`);
-        return null;
+        nextErrors.brandShort = '请输入品牌简称';
+        messages.push('请输入品牌简称');
+      } else if (Array.from(brandShort).length > KB_BRAND_SHORT_MAX) {
+        const msg = `品牌简称不超过 ${KB_BRAND_SHORT_MAX} 字`;
+        nextErrors.brandShort = msg;
+        messages.push(msg);
       }
       if (draft.detail.directions.length === 0) {
-        setFormError('请至少选择 1 个创作方向');
-        return null;
+        nextErrors.directions = '请至少选择 1 个创作方向';
+        messages.push('请至少选择 1 个创作方向');
       }
       if (draft.detail.copyTypes.length === 0) {
-        setFormError('请至少选择 1 个文案类型');
-        return null;
+        nextErrors.copyTypes = '请至少选择 1 个文案类型';
+        messages.push('请至少选择 1 个文案类型');
       }
       for (const meta of KB_DETAIL_FIELDS_META) {
         const val = draft.detail.fields[meta.key] ?? '';
         if (Array.from(val).length > KB_DETAIL_FIELD_MAX) {
-          setFormError(`${meta.label}不能超过 ${KB_DETAIL_FIELD_MAX} 字`);
-          return null;
+          const msg = `${meta.label}不能超过 ${KB_DETAIL_FIELD_MAX} 字`;
+          nextErrors[meta.key] = msg;
+          messages.push(msg);
         }
       }
+
+      if (messages.length > 0) {
+        setFieldErrors(nextErrors);
+        setFormError(
+          messages.length === 1 ? messages[0]! : `请完善以下内容：${messages.join('；')}`,
+        );
+        return null;
+      }
+
+      setFieldErrors({});
       return {
         name: trimmedName,
         mode: 'DETAIL',
@@ -344,32 +401,48 @@ export function KnowledgeScreen({
       };
     }
 
+    const summaryCompany = draft.summary.companyName.trim();
+    if (Array.from(summaryCompany).length > KB_COMPANY_MAX) {
+      const msg = `公司/品牌名称不超过 ${KB_COMPANY_MAX} 字`;
+      nextErrors.summaryCompanyName = msg;
+      messages.push(msg);
+    }
+
     const summaryText = draft.summary.summaryText.trim();
     if (!summaryText) {
-      setFormError('请输入汇总信息');
+      nextErrors.summaryText = '请输入汇总信息';
+      messages.push('请输入汇总信息');
+    } else if (Array.from(summaryText).length > KB_SUMMARY_MAX) {
+      const msg = `汇总信息不能超过 ${KB_SUMMARY_MAX} 字`;
+      nextErrors.summaryText = msg;
+      messages.push(msg);
+    }
+
+    if (messages.length > 0) {
+      setFieldErrors(nextErrors);
+      setFormError(messages.length === 1 ? messages[0]! : `请完善以下内容：${messages.join('；')}`);
       return null;
     }
-    if (Array.from(summaryText).length > KB_SUMMARY_MAX) {
-      setFormError(`汇总信息不能超过 ${KB_SUMMARY_MAX} 字`);
-      return null;
-    }
+
+    setFieldErrors({});
     return {
       name: trimmedName,
       mode: 'SUMMARY',
+      companyName: summaryCompany || undefined,
       summaryText,
     };
   }
 
   async function handleSave() {
     setFormError(null);
+    const payload = validateAndBuildPayload();
+    if (!payload) return;
+
     if (!agreement.signed) {
       setFormError(KB_UNSIGNED_ERROR_MSG);
       openAgreementModal();
       return;
     }
-
-    const payload = validateAndBuildPayload();
-    if (!payload) return;
 
     setSubmitting(true);
     try {
@@ -380,16 +453,19 @@ export function KnowledgeScreen({
       setSelectedIds([]);
       setPage(1);
       setReloadTick((n) => n + 1);
+      const okMsg =
+        saved.indexStatus === 'INDEXING'
+          ? `已保存「${saved.name}」，后台正在分段建立智能检索，完成后状态将更新为「可用」`
+          : `已保存知识库「${saved.name}」`;
       setBanner({
         type: 'success',
-        text:
-          saved.indexStatus === 'INDEXING'
-            ? `已保存「${saved.name}」，后台正在分段建立智能检索，完成后状态将更新为「可用」`
-            : `已保存知识库「${saved.name}」`,
+        text: okMsg,
       });
+      feedback.notifySuccess(okMsg);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '保存失败';
       setFormError(msg);
+      feedback.notifyError(msg);
       if (msg.includes('承诺协议')) {
         setAgreement((prev) => ({ ...prev, signed: false, signatureId: null }));
         openAgreementModal();
@@ -407,10 +483,13 @@ export function KnowledgeScreen({
       setDeleteIds(null);
       setSelectedIds([]);
       setReloadTick((n) => n + 1);
-      setBanner({ type: 'success', text: `已删除 ${res.deleted} 个企业知识库` });
+      const msg = `已删除 ${res.deleted} 个企业知识库`;
+      setBanner({ type: 'success', text: msg });
+      feedback.notifySuccess(msg);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '删除失败';
       setBanner({ type: 'error', text: msg });
+      feedback.notifyError(msg);
       setDeleteIds(null);
     } finally {
       setDeleting(false);
@@ -432,40 +511,36 @@ export function KnowledgeScreen({
     }
   }
 
-  // Strictly 5 columns per Issue #13: 名称、类型、公司名、创建时间、操作（无序号列、无独立状态列）
   const columns: CrudColumn<KnowledgeBaseRecord>[] = [
     {
       key: 'name',
       title: '名称',
-      width: 240,
+      width: 300,
       hideable: false,
-      render: (row) => <TableClampText text={row.name} lines={2} strong maxWidth={320} />,
+      render: (row) => <TableClampText text={row.name} lines={2} strong maxWidth={340} />,
     },
     {
       key: 'mode',
       title: '类型',
-      width: 190,
+      width: 110,
       render: (row) => (
-        <Space size={4}>
-          <Tag color={row.mode === 'DETAIL' ? 'blue' : 'purple'}>{KB_MODE_LABELS[row.mode]}</Tag>
-          {row.mode === 'SUMMARY' && row.indexStatus !== 'NONE' ? (
-            <Tag color={indexStatusColor(row.indexStatus)}>
-              {KB_INDEX_STATUS_LABELS[row.indexStatus]}
-            </Tag>
-          ) : null}
-        </Space>
+        <Tag color={row.mode === 'DETAIL' ? 'blue' : 'purple'}>{KB_MODE_LABELS[row.mode]}</Tag>
       ),
+    },
+    {
+      key: 'indexStatus',
+      title: '状态',
+      width: 110,
+      render: (row) => {
+        const view = statusTagView(row.indexStatus);
+        return <Tag color={view.color}>{view.label}</Tag>;
+      },
     },
     {
       key: 'companyName',
       title: '公司名',
       width: 220,
-      render: (row) =>
-        row.mode === 'DETAIL' && row.companyName ? (
-          <TableClampText text={row.companyName} lines={2} maxWidth={280} />
-        ) : (
-          '-'
-        ),
+      render: (row) => <TableClampText text={row.companyName} lines={2} maxWidth={260} />,
     },
     {
       key: 'createdAt',
@@ -502,6 +577,11 @@ export function KnowledgeScreen({
       <Typography.Title level={3} style={{ marginTop: 0 }}>
         {title}
       </Typography.Title>
+      <Typography.Paragraph type="secondary">
+        支持「细分模式」（按企业主体、产品服务、特点、痛点、背书与案例分栏填写，适合精细化写作）与「汇总模式」（直接粘贴最多
+        20,000 字综合长文档，6,000 字以内直接用于写作参考，超过 6,000
+        字保存后将自动拆分处理，处理完成后状态更新为「可用」）。
+      </Typography.Paragraph>
 
       {banner ? (
         <Alert
@@ -544,17 +624,34 @@ export function KnowledgeScreen({
       />
 
       {/* 添加 / 编辑企业知识库弹窗 */}
-      <Modal
-        title={draft.editingId ? '编辑企业知识库' : '添加企业知识库'}
+      <CrudModal
         open={modalOpen}
+        title={draft.editingId ? '编辑企业知识库' : '添加企业知识库'}
         width={780}
-        transitionName=""
-        maskTransitionName=""
+        minimized={minimized}
+        maximized={maximized}
         confirmLoading={submitting}
-        okText="确定"
-        cancelText="取消"
-        onOk={handleSave}
-        onCancel={() => setModalOpen(false)}
+        error={formError}
+        onMinimize={() => setMinimized(true)}
+        onRestore={() => setMinimized(false)}
+        onMaximize={() => setMaximized((value) => !value)}
+        onClose={() => setModalOpen(false)}
+        onReset={() => {
+          setDraft(initialDraft);
+          setFieldErrors({});
+          setFormError(null);
+        }}
+        ok={
+          <Button
+            aria-label="确定"
+            type="primary"
+            loading={submitting}
+            disabled={readOnly}
+            onClick={() => void handleSave()}
+          >
+            确定
+          </Button>
+        }
       >
         <Alert
           type="warning"
@@ -587,7 +684,7 @@ export function KnowledgeScreen({
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
             <Typography.Text strong>
               <span style={{ color: 'var(--gm-danger)' }}>* </span>知识库名称
@@ -596,10 +693,22 @@ export function KnowledgeScreen({
               aria-label="知识库名称"
               style={{ marginTop: 6 }}
               maxLength={KB_NAME_MAX}
+              status={fieldErrors.name ? 'error' : undefined}
               placeholder="请输入知识库名称"
               value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => {
+                clearFieldError('name');
+                setDraft((prev) => ({ ...prev, name: e.target.value }));
+              }}
             />
+            {fieldErrors.name ? (
+              <Typography.Text
+                type="danger"
+                style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+              >
+                {fieldErrors.name}
+              </Typography.Text>
+            ) : null}
           </div>
 
           <div>
@@ -608,13 +717,23 @@ export function KnowledgeScreen({
             </Typography.Text>
             <Radio.Group
               value={draft.mode}
-              onChange={(e) =>
-                setDraft((prev) => ({ ...prev, mode: e.target.value as KbModeName }))
-              }
+              onChange={(e) => {
+                setFieldErrors({});
+                setFormError(null);
+                setDraft((prev) => ({ ...prev, mode: e.target.value as KbModeName }));
+              }}
             >
               <Radio value="DETAIL">细分模式</Radio>
               <Radio value="SUMMARY">汇总模式</Radio>
             </Radio.Group>
+            <Typography.Paragraph
+              type="secondary"
+              style={{ marginTop: 4, marginBottom: 0, fontSize: 12 }}
+            >
+              {draft.mode === 'DETAIL'
+                ? '细分模式：按公司名称、品牌简称与业务维度分栏录入，生成文章时事实更精准。'
+                : '汇总模式：适合直接粘贴整篇企业介绍或产品白皮书（最多 20,000 字），填写公司/品牌名称后将在列表「公司名」列展示。'}
+            </Typography.Paragraph>
           </div>
 
           {draft.mode === 'DETAIL' ? (
@@ -628,15 +747,25 @@ export function KnowledgeScreen({
                     aria-label="公司名称"
                     style={{ marginTop: 6 }}
                     maxLength={KB_COMPANY_MAX}
+                    status={fieldErrors.companyName ? 'error' : undefined}
                     placeholder="请输入完整公司名称"
                     value={draft.detail.companyName}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      clearFieldError('companyName');
                       setDraft((prev) => ({
                         ...prev,
                         detail: { ...prev.detail, companyName: e.target.value },
-                      }))
-                    }
+                      }));
+                    }}
                   />
+                  {fieldErrors.companyName ? (
+                    <Typography.Text
+                      type="danger"
+                      style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                    >
+                      {fieldErrors.companyName}
+                    </Typography.Text>
+                  ) : null}
                 </div>
                 <div>
                   <Typography.Text strong>
@@ -646,15 +775,25 @@ export function KnowledgeScreen({
                     aria-label="品牌简称"
                     style={{ marginTop: 6 }}
                     maxLength={KB_BRAND_SHORT_MAX}
+                    status={fieldErrors.brandShort ? 'error' : undefined}
                     placeholder="请输入品牌简称"
                     value={draft.detail.brandShort}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      clearFieldError('brandShort');
                       setDraft((prev) => ({
                         ...prev,
                         detail: { ...prev.detail, brandShort: e.target.value },
-                      }))
-                    }
+                      }));
+                    }}
                   />
+                  {fieldErrors.brandShort ? (
+                    <Typography.Text
+                      type="danger"
+                      style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                    >
+                      {fieldErrors.brandShort}
+                    </Typography.Text>
+                  ) : null}
                 </div>
               </div>
 
@@ -668,16 +807,26 @@ export function KnowledgeScreen({
                     mode="multiple"
                     allowClear
                     style={{ width: '100%', marginTop: 6 }}
+                    status={fieldErrors.directions ? 'error' : undefined}
                     placeholder="请选择创作方向（可多选）"
                     options={directionOptions}
                     value={draft.detail.directions}
-                    onChange={(values) =>
+                    onChange={(values) => {
+                      clearFieldError('directions');
                       setDraft((prev) => ({
                         ...prev,
                         detail: { ...prev.detail, directions: values },
-                      }))
-                    }
+                      }));
+                    }}
                   />
+                  {fieldErrors.directions ? (
+                    <Typography.Text
+                      type="danger"
+                      style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                    >
+                      {fieldErrors.directions}
+                    </Typography.Text>
+                  ) : null}
                 </div>
                 <div>
                   <Typography.Text strong>
@@ -688,21 +837,32 @@ export function KnowledgeScreen({
                     mode="multiple"
                     allowClear
                     style={{ width: '100%', marginTop: 6 }}
+                    status={fieldErrors.copyTypes ? 'error' : undefined}
                     placeholder="请选择文案类型（可多选）"
                     options={copyTypeOptions}
                     value={draft.detail.copyTypes}
-                    onChange={(values) =>
+                    onChange={(values) => {
+                      clearFieldError('copyTypes');
                       setDraft((prev) => ({
                         ...prev,
                         detail: { ...prev.detail, copyTypes: values },
-                      }))
-                    }
+                      }));
+                    }}
                   />
+                  {fieldErrors.copyTypes ? (
+                    <Typography.Text
+                      type="danger"
+                      style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                    >
+                      {fieldErrors.copyTypes}
+                    </Typography.Text>
+                  ) : null}
                 </div>
               </div>
 
               {KB_DETAIL_FIELDS_META.map((field) => {
                 const val = draft.detail.fields[field.key] ?? '';
+                const errText = fieldErrors[field.key];
                 return (
                   <div key={field.key}>
                     <div
@@ -735,59 +895,107 @@ export function KnowledgeScreen({
                       style={{ marginTop: 4 }}
                       rows={3}
                       maxLength={KB_DETAIL_FIELD_MAX}
+                      status={errText ? 'error' : undefined}
                       placeholder={field.placeholder}
                       value={val}
                       onChange={(e) => updateDetailField(field.key, e.target.value)}
                     />
+                    {errText ? (
+                      <Typography.Text
+                        type="danger"
+                        style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                      >
+                        {errText}
+                      </Typography.Text>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <Typography.Text strong>
-                  <span style={{ color: 'var(--gm-danger)' }}>* </span>汇总信息
-                </Typography.Text>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {Array.from(draft.summary.summaryText).length}/{KB_SUMMARY_MAX}
-                </Typography.Text>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <Typography.Text strong>公司/品牌名称（选填）</Typography.Text>
+                <Input
+                  aria-label="公司/品牌名称"
+                  style={{ marginTop: 6 }}
+                  maxLength={KB_COMPANY_MAX}
+                  status={fieldErrors.summaryCompanyName ? 'error' : undefined}
+                  placeholder="请输入关联的公司或品牌名称（选填，将展示在列表「公司名」列）"
+                  value={draft.summary.companyName}
+                  onChange={(e) => {
+                    clearFieldError('summaryCompanyName');
+                    setDraft((prev) => ({
+                      ...prev,
+                      summary: { ...prev.summary, companyName: e.target.value },
+                    }));
+                  }}
+                />
+                {fieldErrors.summaryCompanyName ? (
+                  <Typography.Text
+                    type="danger"
+                    style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                  >
+                    {fieldErrors.summaryCompanyName}
+                  </Typography.Text>
+                ) : null}
               </div>
-              <Input.TextArea
-                aria-label="汇总信息"
-                style={{ marginTop: 6 }}
-                rows={10}
-                maxLength={KB_SUMMARY_MAX}
-                placeholder="请输入企业综合介绍、主营产品与参数、服务流程、资质与脱敏案例（上限 20000 字）"
-                value={draft.summary.summaryText}
-                onChange={(e) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    summary: { summaryText: e.target.value },
-                  }))
-                }
-              />
-              <Typography.Paragraph
-                type="secondary"
-                style={{ marginTop: 6, marginBottom: 0, fontSize: 12 }}
-              >
-                说明：汇总资料 6000 字以内写作时完整带入参考；超过 6000
-                字保存后自动分段建立智能检索，准备完成后状态更新为「可用」。
-              </Typography.Paragraph>
+
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Typography.Text strong>
+                    <span style={{ color: 'var(--gm-danger)' }}>* </span>汇总信息
+                  </Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {Array.from(draft.summary.summaryText).length}/{KB_SUMMARY_MAX}
+                  </Typography.Text>
+                </div>
+                <Input.TextArea
+                  aria-label="汇总信息"
+                  style={{ marginTop: 6 }}
+                  rows={10}
+                  maxLength={KB_SUMMARY_MAX}
+                  status={fieldErrors.summaryText ? 'error' : undefined}
+                  placeholder="请输入企业综合介绍、主营产品与参数、服务流程、资质与脱敏案例（上限 20000 字）"
+                  value={draft.summary.summaryText}
+                  onChange={(e) => {
+                    clearFieldError('summaryText');
+                    setDraft((prev) => ({
+                      ...prev,
+                      summary: { ...prev.summary, summaryText: e.target.value },
+                    }));
+                  }}
+                />
+                {fieldErrors.summaryText ? (
+                  <Typography.Text
+                    type="danger"
+                    style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                  >
+                    {fieldErrors.summaryText}
+                  </Typography.Text>
+                ) : null}
+                <Typography.Paragraph
+                  type="secondary"
+                  style={{ marginTop: 6, marginBottom: 0, fontSize: 12 }}
+                >
+                  说明：汇总资料 6000 字以内直接用于写作参考；超过 6000
+                  字保存后将自动拆分处理，处理完成后状态更新为「可用」。
+                </Typography.Paragraph>
+              </div>
             </div>
           )}
         </div>
-      </Modal>
+      </CrudModal>
 
-      {/* 字段「查看说明」预览弹窗 */}
+      {/* 字段「查看说明」说明与示例弹窗 */}
       <Modal
-        title="预览"
+        title="填写说明与示例"
         open={Boolean(helpField)}
         transitionName=""
         maskTransitionName=""

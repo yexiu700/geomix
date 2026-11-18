@@ -70,7 +70,9 @@ describe('buildKeywordCombos', () => {
     expect(result.error).toContain('4');
   });
 
-  it('prompts 请输入主训练词 when mainKeyword is blank and truncates at COMBO_MAX', () => {
+  it('prompts 请输入主关键词 when mainKeyword is blank, uses 主关键词 in errors, truncates at COMBO_MAX, and exposes consumer packs (#144)', () => {
+    expect(EMPTY_MAIN_KEYWORD_MSG).toBe('请输入主关键词');
+
     const empty = buildKeywordCombos({
       mainKeyword: '   ',
       prefixesText: '上海',
@@ -79,9 +81,21 @@ describe('buildKeywordCombos', () => {
     });
     expect(empty).toEqual({
       ok: false,
-      error: EMPTY_MAIN_KEYWORD_MSG,
+      error: '请输入主关键词',
       invalidMainLines: [],
     });
+
+    const invalid = buildKeywordCombos({
+      mainKeyword: '氮化镓充电器',
+      prefixesText: '家用',
+      mainsText: '普通电源',
+      suffixesText: '值得买吗',
+    });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) {
+      expect(invalid.error).toContain('主关键词');
+      expect(invalid.error).not.toContain('主训练词');
+    }
 
     const prefixes = Array.from({ length: 40 }, (_, i) => `前缀${i}`).join('\n');
     const suffixes = Array.from({ length: 30 }, (_, i) => `后缀${i}`).join('\n');
@@ -100,8 +114,10 @@ describe('buildKeywordCombos', () => {
     expect(EXPANDER_WORD_PACKS.map((p) => p.key)).toEqual([
       'region',
       'service',
+      'consumerScene',
       'question',
       'recommend',
+      'consumerReview',
     ]);
   });
 });

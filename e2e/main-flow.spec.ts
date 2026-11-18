@@ -157,7 +157,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
     await expect(kbDialog.getByRole('button', { name: '查看说明-其他信息' })).toHaveCount(0);
 
     await kbDialog.getByRole('button', { name: '查看说明-产品服务' }).click();
-    const kbHelpModal = page.getByRole('dialog', { name: '预览' });
+    const kbHelpModal = page.getByRole('dialog', { name: '填写说明与示例' });
     await expect(kbHelpModal).toBeVisible();
     await expect(kbHelpModal.getByText('内容：')).toBeVisible();
     await expect(kbHelpModal.getByText('说明：')).toBeVisible();

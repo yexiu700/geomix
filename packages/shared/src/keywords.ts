@@ -8,7 +8,7 @@ export const KEYWORD_BRAND_MAX = 40;
 export const KEYWORD_BRANDS_LIMIT = 20;
 export const DISTILL_MIN_VALID_DEFAULT = 5;
 export const DISTILL_MAX_KEEP = 50;
-export const KEYWORD_EMPTY_MAIN_MSG = '请输入主训练词';
+export const KEYWORD_EMPTY_MAIN_MSG = '请输入主关键词';
 
 export const KEYWORD_OPT_STATUSES = ['NONE', 'OPTIMIZING', 'INCLUDED'] as const;
 export type KeywordOptStatusName = (typeof KEYWORD_OPT_STATUSES)[number];
@@ -195,7 +195,7 @@ export function cleanDistilledQuestions(input: {
   if (!mainNeedle) return [];
   const brandNeedles = input.brands
     .map((brand) => normalizeQuestionKey(brand))
-    .filter((brand) => brand.length > 0 && brand !== mainNeedle);
+    .filter((brand) => brand.length > 0 && !mainNeedle.includes(brand));
   const seen = new Set<string>(
     (input.existingQuestions ?? []).map((item) => normalizeQuestionKey(item)).filter(Boolean),
   );

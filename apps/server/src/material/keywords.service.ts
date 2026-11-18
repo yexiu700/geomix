@@ -298,7 +298,7 @@ export class KeywordsService {
       };
     } catch (error) {
       if (isUnique(error)) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该主训练词已存在');
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该主关键词已存在');
       }
       throw error;
     }
@@ -399,7 +399,7 @@ export class KeywordsService {
       };
     } catch (error) {
       if (isUnique(error)) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该主训练词已存在');
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该主关键词已存在');
       }
       throw error;
     }
