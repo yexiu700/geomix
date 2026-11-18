@@ -145,6 +145,9 @@ function makeGateway(records: RewriteRecordItem[]): {
 describe('RewriteSingleScreen', () => {
   afterEach(() => {
     cleanup();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.replaceState(null, '', '/');
+    }
   });
 
   it('renders status & high-similarity tags, checks 24h duplicate URL, and submits URL mode with editable timestamped category', async () => {
@@ -219,7 +222,7 @@ describe('RewriteSingleScreen', () => {
     // Submitting without choosing gallery/template validates cleanly
     fireEvent.click(findButton('复刻文章（5点数/篇）'));
     await waitFor(() => {
-      expect(screen.getByText('请选择文章配图的企业图库分类')).toBeTruthy();
+      expect(screen.getByText('请选择文章配图的企业画像图库分类')).toBeTruthy();
     });
     fireEvent.change(gallerySelect, { target: { value: 'mcat_001' } });
 
@@ -401,11 +404,37 @@ describe('RewriteSingleScreen', () => {
     await waitFor(() => {
       expect(findButton('管理指令')).toBeTruthy();
     });
+    expect(screen.getByText('生成后文章状态')).toBeTruthy();
+    expect(screen.getByText('自然融入品牌词（选填）')).toBeTruthy();
+    expect(screen.getByPlaceholderText('选填：重组时自然提及，不替换原文推荐品牌')).toBeTruthy();
+
     fireEvent.click(findButton('管理指令'));
     expect(dispatched).toContainEqual({
       type: 'open',
       href: '/writing/prompts',
       sourceId: '/rewrite/single',
+    });
+  });
+
+  it('syncs browser URL to /rewrite/single immediately when tab becomes active (#176)', async () => {
+    window.history.replaceState(null, '', '/rewrite/batch');
+    const { gateway } = makeGateway([]);
+
+    const { rerender } = render(
+      <RewriteSingleScreen
+        title="全网爆文复刻"
+        tabId="/rewrite/single"
+        active={false}
+        gateway={gateway}
+      />,
+    );
+    expect(window.location.pathname).toBe('/rewrite/batch');
+
+    rerender(
+      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
+    );
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/rewrite/single');
     });
   });
 });

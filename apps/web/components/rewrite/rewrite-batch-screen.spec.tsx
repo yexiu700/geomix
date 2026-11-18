@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import {
   REWRITE_BATCH_URL_AS_KEYWORD_MSG,
   type RewriteBatchCreateInput,
@@ -195,6 +195,9 @@ function makeGateway(
 describe('RewriteBatchScreen', () => {
   afterEach(() => {
     cleanup();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.replaceState(null, '', '/');
+    }
   });
 
   it('renders batch list with point settlement/refund summary and opens the 查看任务 drawer with candidate details', async () => {
@@ -232,8 +235,20 @@ describe('RewriteBatchScreen', () => {
     });
   });
 
-  it('displays upfront reserve pricing, rejects URLs typed into keyword search mode, validates SSRF/bad URLs, and submits valid link_list', async () => {
+  it('displays upfront reserve pricing, rejects URLs typed into keyword search mode when remote search is enabled, validates SSRF/bad URLs, and submits valid link_list', async () => {
     const { gateway, submitted } = makeGateway([]);
+    gateway.list = vi.fn(async (query) => ({
+      page: query.page,
+      pageSize: query.pageSize,
+      total: 0,
+      unitPoints: 5,
+      remoteSearchEnabled: true,
+      items: [],
+    }));
+    gateway.loadFormOptions = vi.fn(async () => ({
+      ...makeOptions(),
+      remoteSearchEnabled: true,
+    }));
 
     render(<RewriteBatchScreen title="批量爆文复刻" pollIntervalMs={0} gateway={gateway} />);
 
@@ -256,7 +271,8 @@ describe('RewriteBatchScreen', () => {
     expect(promptSelect.value).toBe('');
 
     // Switch to keyword search mode and enter a URL -> immediately warns that it's a link, not a keyword!
-    const remoteRadio = screen.getByDisplayValue('remote');
+    const remoteRadio = screen.getByDisplayValue('remote') as HTMLInputElement;
+    expect(remoteRadio.disabled).toBe(false);
     fireEvent.click(remoteRadio);
 
     const kwInput = screen.getByLabelText('流量关键词');
@@ -438,5 +454,90 @@ describe('RewriteBatchScreen', () => {
       categoryId: 'cat_existing_b1',
       templateId: 'sys_rewrite_01',
     });
+  });
+
+  it('disables unconfigured remote search upfront (#174), unifies brand & gallery copy (#173), deduplicates modal copy, syncs URL on tab activation, and exposes bulk delete (#176)', async () => {
+    window.history.replaceState(null, '', '/rewrite/single');
+    const { gateway } = makeGateway([makeBatch({ id: 'rwb_del_1', status: 'COMPLETED' })]);
+
+    const { rerender } = render(
+      <RewriteBatchScreen
+        title="批量爆文复刻"
+        tabId="/rewrite/batch"
+        active={false}
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+    expect(window.location.pathname).toBe('/rewrite/single');
+
+    // Switching tab to active immediately updates address bar URL to /rewrite/batch (#176)
+    rerender(
+      <RewriteBatchScreen
+        title="批量爆文复刻"
+        tabId="/rewrite/batch"
+        active
+        pollIntervalMs={0}
+        gateway={gateway}
+      />,
+    );
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/rewrite/batch');
+    });
+
+    // Header copy avoids R&D jargon and uses unified 企业画像图库 term (#173, #176)
+    expect(screen.getByText(/按实际成功篇数扣点/)).toBeTruthy();
+    expect(screen.queryByText(/预冻按成功篇数结算/)).toBeNull();
+    expect(screen.queryByText(/商户自有图库/)).toBeNull();
+
+    // Bulk delete button is always visible in toolbar even before selecting rows (#176)
+    const bulkDeleteBtn = findButton('批量删除');
+    expect(bulkDeleteBtn.disabled).toBe(true);
+
+    // Selecting a terminal row enables bulk delete and invokes bulkDelete on confirm
+    const checkboxes = Array.from(
+      document.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]'),
+    );
+    expect(checkboxes.length).toBeGreaterThan(0);
+    fireEvent.click(checkboxes[0]!);
+    expect(bulkDeleteBtn.disabled).toBe(false);
+
+    fireEvent.click(bulkDeleteBtn);
+    await waitFor(() => {
+      expect(screen.getByText('确认删除选中的 1 条批量复刻任务？')).toBeTruthy();
+    });
+    fireEvent.click(findButton('确认删除'));
+    await waitFor(() => {
+      expect(gateway.bulkDelete).toHaveBeenCalledWith(['rwb_del_1']);
+    });
+
+    // Open create modal and verify #173 / #174 / #176 copy & disabled remote search
+    fireEvent.click(findButton('新建批量复刻'));
+    await waitFor(() => {
+      expect(screen.getByText('新建批量爆文复刻任务')).toBeTruthy();
+    });
+
+    // #174: remote search disabled upfront with explicit status tag & guidance
+    const remoteRadio = screen.getByDisplayValue('remote') as HTMLInputElement;
+    expect(remoteRadio.disabled).toBe(true);
+    expect(screen.getByText('关键词全网搜索（暂未开通）')).toBeTruthy();
+    expect(screen.getByText(/当前环境未配置第三方搜索源，「关键词全网搜索」暂未开通/)).toBeTruthy();
+    fireEvent.click(remoteRadio);
+    expect((screen.getByDisplayValue('link_list') as HTMLInputElement).checked).toBe(true);
+
+    // #173: brand & gallery copy matches single-rewrite
+    expect(screen.getByText('自然融入品牌词（选填）')).toBeTruthy();
+    expect(screen.getByPlaceholderText('选填：重组时自然提及，不替换原文推荐品牌')).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/自动替换第三方品牌提法/)).toBeNull();
+    expect(screen.getByText(/文章配图（企业画像图库）/)).toBeTruthy();
+    expect(screen.queryByText(/自有图库分类/)).toBeNull();
+
+    // #176: deduplicated pre-freeze & pending option & generic task placeholder
+    const modalDialog = screen.getByRole('dialog', { name: '新建批量爆文复刻任务' });
+    expect(within(modalDialog).getAllByText(/预冻/)).toHaveLength(1);
+    expect(within(modalDialog).queryByText(/待审核（推荐）（默认推荐）/)).toBeNull();
+    expect(within(modalDialog).getByText('待审核（推荐）')).toBeTruthy();
+    expect(within(modalDialog).getByPlaceholderText('例如：行业技术干货批量复刻')).toBeTruthy();
+    expect(within(modalDialog).queryByPlaceholderText(/激光切割机/)).toBeNull();
   });
 });
