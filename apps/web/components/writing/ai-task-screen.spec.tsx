@@ -386,4 +386,154 @@ describe('AiTaskScreen', () => {
       target: 8,
     });
   });
+
+  it('allows pure-text submit with imageCount=0 and no gallery (#148), minimizes on 去新建图库, and refreshes dropdowns on restore', async () => {
+    let optionsLoadCount = 0;
+    const baseOptions = makeFormOptions();
+    baseOptions.mediaCategories = [];
+    const refreshedOptions = makeFormOptions();
+    refreshedOptions.mediaCategories.push({
+      id: 'gal_new',
+      name: '新建产线图库',
+      type: 1,
+      assetCount: 2,
+      previewAssets: [],
+      createdAt: '2026-11-18T00:00:00.000Z',
+    });
+    refreshedOptions.articlePrompts.user.push(
+      makePrompt({ id: 'usr_art_2', kind: 'ARTICLE', name: '新建纯文指令' }),
+    );
+
+    const createdPayloads: unknown[] = [];
+    const actions: ShellAction[] = [];
+    const gateway: AiTaskGateway = {
+      list: vi.fn(async () => ({
+        page: 1,
+        pageSize: 10,
+        total: 1,
+        items: [
+          makeTaskRow({
+            lastError: '模型调用超时：上游网关在 30 秒内未响应，已自动记录失败原因',
+          }),
+        ],
+      })),
+      detail: vi.fn(),
+      create: vi.fn(async (payload) => {
+        createdPayloads.push(payload);
+        return {
+          ...makeTaskRow({
+            name: payload.name,
+            mediaCategoryId: payload.mediaCategoryId ?? null,
+            mediaCategoryName: null,
+            imageCount: payload.imageCount,
+          }),
+          items: [],
+        };
+      }),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      cancel: vi.fn(),
+      bulkDelete: vi.fn(),
+      download: vi.fn(),
+      loadFormOptions: vi.fn(async () => {
+        optionsLoadCount += 1;
+        return optionsLoadCount >= 2 ? refreshedOptions : baseOptions;
+      }),
+    };
+
+    render(
+      <AiTaskScreen
+        title="AI写作任务"
+        tabId="tab_tasks"
+        pollIntervalMs={0}
+        gateway={gateway}
+        onDispatch={(act) => actions.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('十篇激光选型计划')).toBeTruthy();
+    });
+
+    // #154: doneCount ratio prevents slash line-wrapping; long lastError uses 2-line clamp
+    const ratioEl = screen.getByText('3 / 10');
+    expect(ratioEl.style.whiteSpace).toBe('nowrap');
+    const errorEl = screen.getByText('模型调用超时：上游网关在 30 秒内未响应，已自动记录失败原因');
+    expect(errorEl.className).toContain('gm-clamp-2');
+
+    fireEvent.click(findButton('添加'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('任务名称')).toBeTruthy();
+    });
+
+    // #151: submitting empty form renders CrudModal footer error alert with all missing required fields
+    fireEvent.click(findButton('开始写作（10点数/篇）'));
+    await waitFor(() => {
+      const errorText = document.querySelector('.gm-crud-error')?.textContent ?? '';
+      expect(errorText).toContain('请填写任务名称');
+      expect(errorText).toContain('请选择蒸馏训练词');
+      expect(errorText).toContain('请选择画像图库');
+    });
+
+    // Fill fields before minimizing via 去新建图库
+    fireEvent.change(screen.getByLabelText('任务名称'), {
+      target: { value: '纯文与还原刷新验证' },
+    });
+    fireEvent.change(screen.getByLabelText('蒸馏训练词'), {
+      target: { value: 'kw_1' },
+    });
+    fireEvent.change(screen.getByLabelText('AI 创作数量'), {
+      target: { value: '5' },
+    });
+
+    // #148: clicking 去新建图库 minimizes modal and navigates to /material/gallery
+    fireEvent.click(findButton('去新建图库'));
+    expect(actions).toContainEqual({
+      type: 'open',
+      href: '/material/gallery',
+      sourceId: 'tab_tasks',
+    });
+    expect(findButton('还原弹层')).toBeTruthy();
+
+    // #148: restoring minimized modal auto-refreshes gallery/prompt dropdowns AND preserves draft!
+    fireEvent.click(findButton('还原弹层'));
+    await waitFor(() => {
+      expect(optionsLoadCount).toBe(2);
+      expect((screen.getByLabelText('画像图库') as HTMLSelectElement).textContent).toContain(
+        '新建产线图库',
+      );
+    });
+    expect((screen.getByLabelText('内容创作指令') as HTMLSelectElement).textContent).toContain(
+      '新建纯文指令',
+    );
+    expect((screen.getByLabelText('任务名称') as HTMLInputElement).value).toBe(
+      '纯文与还原刷新验证',
+    );
+    expect((screen.getByLabelText('蒸馏训练词') as HTMLSelectElement).value).toBe('kw_1');
+    expect((screen.getByLabelText('AI 创作数量') as HTMLInputElement).value).toBe('5');
+
+    // #148: drag/click 文章配图 to 0 张 -> disables 画像图库, removes * required check, submits pure-text task
+    fireEvent.click(screen.getByText('0张'));
+    expect(screen.getByText('0 张/篇')).toBeTruthy();
+    const galSelect = screen.getByLabelText('画像图库') as HTMLSelectElement;
+    expect(galSelect.disabled).toBe(true);
+    expect(document.body.textContent).toContain('画像图库（0 张配图时无需选择）');
+
+    fireEvent.click(findButton('开始写作（10点数/篇）'));
+    await waitFor(() => {
+      expect(createdPayloads).toHaveLength(1);
+    });
+    expect(createdPayloads[0]).toEqual({
+      name: '纯文与还原刷新验证',
+      categoryId: null,
+      keywordId: 'kw_1',
+      mediaCategoryId: null,
+      imageCount: 0,
+      kbId: null,
+      contentTplId: null,
+      titleTplId: null,
+      resultStatus: 'PENDING',
+      target: 5,
+    });
+  });
 });

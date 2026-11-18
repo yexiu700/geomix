@@ -107,7 +107,7 @@ describe('article categories', () => {
     expect(screen.getAllByText('查看文章').length).toBeGreaterThan(0);
     expect(screen.getByText('创建时间')).toBeTruthy();
     expect(screen.getByText('操作')).toBeTruthy();
-    expect(findButton('返回上一级')).toBeTruthy();
+    expect(queryButton('返回上一级')).toBeNull();
     const row = screen.getByText('测试分类').closest('tr');
     expect(row?.textContent).toContain('2');
     expect(row?.textContent).toContain('1');
@@ -116,12 +116,13 @@ describe('article categories', () => {
     const dialog = document.querySelector('[role="dialog"]');
     if (!(dialog instanceof HTMLElement)) throw new Error('missing dialog');
     expect(dialog.textContent).toContain('添加分类');
+    expect(dialog.textContent).toContain('* 文章分类');
     expect(dialog.querySelectorAll('input, textarea').length).toBe(1);
     const nameInput = dialog.querySelector('input[aria-label="文章分类"]');
     if (!(nameInput instanceof HTMLInputElement)) throw new Error('missing name input');
     expect(dialog.querySelector('[aria-label="备注"]')).toBeNull();
     fireEvent.click(findButton('确定'));
-    expect((await screen.findAllByText('请填写文章分类')).length).toBeGreaterThan(0);
+    expect(await screen.findAllByText('请填写文章分类')).toHaveLength(1);
     expect(client.create).not.toHaveBeenCalled();
     fireEvent.change(nameInput, {
       target: { value: '新分类' },
@@ -133,19 +134,16 @@ describe('article categories', () => {
   });
 
   it('blocks writes for a read-only account and supports both toolbar and row-level delete (#73)', async () => {
-    const dispatched: ShellAction[] = [];
     const client = categoryGateway();
     const view = render(
       <CategoryScreen
         title="文章分类"
         tabId="/writing/categories"
         gateway={client}
-        onDispatch={(act) => dispatched.push(act)}
+        onDispatch={() => undefined}
       />,
     );
     expect(await screen.findByText('测试分类')).toBeTruthy();
-    fireEvent.click(findButton('返回上一级'));
-    expect(dispatched).toEqual([{ type: 'back', id: '/writing/categories' }]);
 
     view.rerender(
       <CategoryScreen
@@ -153,7 +151,7 @@ describe('article categories', () => {
         tabId="/writing/categories"
         readOnly
         gateway={client}
-        onDispatch={(act) => dispatched.push(act)}
+        onDispatch={() => undefined}
       />,
     );
     expect(findButton('添加')).toHaveProperty('disabled', true);
@@ -165,12 +163,12 @@ describe('article categories', () => {
         title="文章分类"
         tabId="/writing/categories"
         gateway={client}
-        onDispatch={(act) => dispatched.push(act)}
+        onDispatch={() => undefined}
       />,
     );
-    // Row-level delete confirmation (#73)
+    // Row-level delete confirmation (#73, #151)
     fireEvent.click(findButton('删除 测试分类'));
-    fireEvent.click(findButton('确定'));
+    fireEvent.click(findButton('确认删除'));
     await waitFor(() => {
       expect(client.remove).toHaveBeenCalledWith([CATEGORY]);
     });
@@ -180,7 +178,7 @@ describe('article categories', () => {
     if (!(box instanceof HTMLInputElement)) throw new Error('missing selection');
     fireEvent.click(box);
     fireEvent.click(findButton('删除'));
-    fireEvent.click(findButton('确定'));
+    fireEvent.click(findButton('确认删除'));
     await waitFor(() => {
       expect(client.remove).toHaveBeenCalledTimes(2);
     });

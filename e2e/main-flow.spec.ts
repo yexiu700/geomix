@@ -283,7 +283,7 @@ test.describe('GeoMix 商户全链路端到端验收 (#23)', () => {
       expectedUrl: /\/writing\/categories$/,
     });
     await expect(pane.locator('thead th', { hasText: '序号' })).toBeVisible();
-    await expect(pane.getByRole('button', { name: '返回上一级' })).toBeVisible();
+    await expect(pane.getByRole('button', { name: '返回上一级' })).toHaveCount(0);
     const articleCatRow = pane.locator('tbody tr', { hasText: writingTaskName });
     await expect(articleCatRow).toBeVisible();
     await expect(articleCatRow.getByRole('button', { name: '删除' })).toBeVisible();

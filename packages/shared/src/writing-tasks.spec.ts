@@ -24,6 +24,28 @@ describe('writing-tasks shared algorithms', () => {
     expect(parsed.imageCount).toBe(1);
     expect(parsed.resultStatus).toBe('PENDING');
     expect(parsed.target).toBe(1);
+
+    // Pure-text mode (imageCount === 0) allows omitted/null/empty mediaCategoryId (#148)
+    const pureText = aiTaskCreateSchema.parse({
+      name: '纯文无配图任务',
+      keywordId: 'kw_123',
+      mediaCategoryId: null,
+      imageCount: 0,
+    });
+    expect(pureText.mediaCategoryId).toBeNull();
+    expect(pureText.imageCount).toBe(0);
+
+    // Non-zero imageCount still requires mediaCategoryId
+    const missingGallery = aiTaskCreateSchema.safeParse({
+      name: '缺图库拦截',
+      keywordId: 'kw_123',
+      mediaCategoryId: null,
+      imageCount: 1,
+    });
+    expect(missingGallery.success).toBe(false);
+    if (!missingGallery.success) {
+      expect(missingGallery.error.issues[0]?.message).toBe('请选择企业画像图库');
+    }
   });
 
   it('shuffles templates deterministically and rotates brands & direction/copyType Cartesian pairs', () => {

@@ -176,20 +176,26 @@ export class AiTasksService {
       );
     }
 
-    // 2. Verify mediaCategory & image assets
-    const mediaCat = await this.prisma.base.mediaCategory.findFirst({
-      where: { id: input.mediaCategoryId, tenantId },
-      select: { id: true, _count: { select: { assets: true } } },
-    });
-    if (!mediaCat) {
-      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选企业画像图库不存在');
-    }
-    if (input.imageCount > 0 && mediaCat._count.assets < 1) {
-      throw new ApiError(
-        400,
-        API_ERROR.BAD_REQUEST,
-        '所选图库分类暂无图片，请先上传图片或将配图数设为 0',
-      );
+    // 2. Verify mediaCategory & image assets (optional when imageCount === 0 for pure-text tasks)
+    let mediaCategoryId: string | null = null;
+    if (input.mediaCategoryId) {
+      const mediaCat = await this.prisma.base.mediaCategory.findFirst({
+        where: { id: input.mediaCategoryId, tenantId },
+        select: { id: true, _count: { select: { assets: true } } },
+      });
+      if (!mediaCat) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选企业画像图库不存在');
+      }
+      if (input.imageCount > 0 && mediaCat._count.assets < 1) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '所选图库分类暂无图片，请先上传图片或将配图数设为 0',
+        );
+      }
+      mediaCategoryId = mediaCat.id;
+    } else if (input.imageCount > 0) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请选择企业画像图库');
     }
 
     // 3. Verify optional knowledge base
@@ -282,7 +288,7 @@ export class AiTasksService {
         name: input.name,
         categoryId,
         keywordId: input.keywordId,
-        mediaCategoryId: input.mediaCategoryId,
+        mediaCategoryId,
         imageCount: input.imageCount,
         kbId: input.kbId,
         contentTplId: input.contentTplId,
@@ -557,7 +563,7 @@ export class AiTasksService {
         keywordId: row.keywordId,
         keywordMain: row.keyword.main,
         mediaCategoryId: row.mediaCategoryId,
-        mediaCategoryName: row.mediaCategory.name,
+        mediaCategoryName: row.mediaCategory?.name ?? null,
         imageCount: row.imageCount,
         kbId: row.kbId,
         kbName: row.kb?.name ?? null,

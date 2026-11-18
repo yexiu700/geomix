@@ -175,7 +175,7 @@ export function categoryExportTable(rows: ArticleCategoryRecord[]): {
   rows: string[][];
 } {
   return {
-    headers: ['分组名', '文章数量', '文章剩余量', '创建时间'],
+    headers: ['分类名称', '文章数量', '文章剩余量', '创建时间'],
     rows: rows.map((row) => [row.name, String(row.total), String(row.remaining), row.createdAt]),
   };
 }

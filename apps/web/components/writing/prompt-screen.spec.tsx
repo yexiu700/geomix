@@ -335,4 +335,29 @@ describe('PromptScreen', () => {
       content: '围绕{问题}介绍{训练词占位符}技术要点',
     });
   });
+
+  it('scrolls validation error into view inside prompt modal (#151)', async () => {
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, 'scrollIntoView');
+    const { gateway } = makeGateway();
+
+    try {
+      render(<PromptScreen title="写作指令" gateway={gateway} />);
+      await waitFor(() => {
+        expect(document.body.textContent).toContain('工程机械选型指南指令');
+      });
+
+      clickBtn('添加');
+      await act(async () => {
+        clickBtn('确定');
+      });
+
+      await waitFor(() => {
+        expect(document.body.textContent).toContain('请输入指令名称');
+        expect(document.body.textContent).toContain('请输入指令内容');
+        expect(scrollSpy).toHaveBeenCalled();
+      });
+    } finally {
+      scrollSpy.mockRestore();
+    }
+  });
 });
