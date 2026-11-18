@@ -83,7 +83,7 @@ test.describe('GeoMix 壳层、旧入口跳转与管理后台专项核验 (#23)'
     await expect(page.locator('aside.ant-layout-sider .gm-badge')).toContainText('新上');
 
     await openMenuLink(page, {
-      submenu: 'AI生图/视频',
+      submenu: 'AI生图',
       itemTitle: 'AI生图',
       expectedUrl: /\/image$/,
     });

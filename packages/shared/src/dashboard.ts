@@ -49,7 +49,7 @@ export type DashboardModuleStats = Record<DashboardStatKey, number>;
 
 export type DashboardEntryCardDef = {
   key: string;
-  group: '素材源力' | '文章写作' | '流量复刻' | 'AI生图/视频' | 'AI数据与诊断' | '二期规划';
+  group: '素材源力' | '文章写作' | '流量复刻' | 'AI生图' | 'AI数据与诊断' | '二期规划';
   title: string;
   desc: string;
   href: string | null;
@@ -167,12 +167,12 @@ export const DASHBOARD_ENTRY_CARDS: readonly DashboardEntryCardDef[] = [
     statKey: 'rewriteBatches',
     statUnit: '个批次',
   },
-  // AI生图/视频（受 FEATURE_AI_IMAGE 控制）
+  // AI生图（受 FEATURE_AI_IMAGE 控制）
   {
     key: 'image',
-    group: 'AI生图/视频',
+    group: 'AI生图',
     title: 'AI生图',
-    desc: '9 种商业比例与智能润色提示词，生成后一键保存到品牌图库',
+    desc: '9 种商业比例与智能润色提示词，生成后一键保存到企业画像图库',
     href: '/image',
     comingSoon: false,
     badge: '新上',

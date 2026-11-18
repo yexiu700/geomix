@@ -141,5 +141,14 @@ describe('dashboard shared helpers', () => {
     for (const term of bannedJargon) {
       expect(allText).not.toContain(term);
     }
+
+    const imageCard = DASHBOARD_ENTRY_CARDS.find((c) => c.key === 'image');
+    expect(imageCard).toMatchObject({
+      group: 'AI生图',
+      title: 'AI生图',
+    });
+    expect(imageCard?.desc).toContain('企业画像图库');
+    expect(imageCard?.desc).not.toContain('品牌图库');
+    expect(DASHBOARD_ENTRY_CARDS.some((c) => String(c.group).includes('/视频'))).toBe(false);
   });
 });

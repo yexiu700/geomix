@@ -239,7 +239,10 @@ describe('DashboardScreen (Issue #22, #135, #136, #219)', () => {
     );
 
     await screen.findByText('18 篇文章');
-    expect(screen.getByTestId('dashboard-card-image')).toBeTruthy();
+    const imageCard = screen.getByTestId('dashboard-card-image');
+    expect(imageCard).toBeTruthy();
+    expect(imageCard.textContent).toContain('企业画像图库');
+    expect(screen.queryByText(/\/视频/)).toBeNull();
 
     // Stale coming-soon visibility cards must be gone
     expect(screen.queryByTestId('dashboard-card-aidata-soon')).toBeNull();

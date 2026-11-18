@@ -28,7 +28,7 @@ const ENTRY_GROUP_ORDER: ReadonlyArray<DashboardEntryCardDef['group']> = [
   '文章写作',
   '流量复刻',
   'AI数据与诊断',
-  'AI生图/视频',
+  'AI生图',
   '二期规划',
 ];
 
