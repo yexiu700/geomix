@@ -14,14 +14,17 @@ import {
   computeShareOfVoice,
   computeVisibilityPct,
   extractEvidencePassages,
+  filterKeywordsForVisibilityProfile,
   findSubjectMentionOffsets,
   formatVisibilityRunSubmitLabel,
+  hasMultipleDistinctProfileBrands,
   importQuestionsInputSchema,
   isCitationSourceKind,
   isVisibilityCollectorKind,
   isVisibilityEngine,
   isVisibilitySentiment,
   matchesDomain,
+  matchesVisibilityProfileKeyword,
   normalizeFanOutQueries,
   normalizeVisibilityDomain,
   parseVisibilityCitationQuery,
@@ -31,6 +34,8 @@ import {
   quoteVisibilityRunPoints,
   rankTrackedSubjects,
   recomputeRunMetrics,
+  resolveDefaultKeywordIdForProfile,
+  resolveScopedOverviewKeywords,
   visibilityProfileCreateSchema,
   visibilityProfileUpdateSchema,
   visibilityRunCreateSchema,
@@ -629,6 +634,142 @@ describe('visibility Zod schemas and query parsers', () => {
       engine: undefined,
       days: 30,
       limit: 20,
+    });
+  });
+});
+
+describe('profile-scoped keyword matching & isolation (#218, #213)', () => {
+  const ankerProfile = {
+    id: 'vprof_anker',
+    name: '安克创新（Anker）全品类监测档案',
+    brandName: '安克创新',
+    brandAliases: ['Anker'],
+    ownedDomains: ['anker.com'],
+    competitors: [
+      { name: '绿联 UGREEN', aliases: ['UGREEN'], domains: ['ugreen.com'] },
+      { name: '倍思 Baseus', aliases: ['Baseus'], domains: ['baseus.com'] },
+    ],
+  };
+
+  const arzopaProfile = {
+    id: 'vprof_arzopa',
+    name: 'ARZOPA便携显示器北美监测档案',
+    brandName: 'ARZOPA',
+    brandAliases: ['Arzopa Portable Monitor', '便携显示器'],
+    ownedDomains: ['arzopa.com'],
+    competitors: [
+      { name: 'ASUS ZenScreen', aliases: ['华硕便携屏'], domains: ['asus.com'] },
+      { name: 'Lenovo ThinkVision', aliases: ['联想便携显示器'], domains: ['lenovo.com'] },
+    ],
+  };
+
+  const starviewProfile = {
+    id: 'vprof_starview',
+    name: '便携显示器核心监测档案',
+    brandName: '星图显示',
+    brandAliases: ['StarView', '星图触控便携屏'],
+    ownedDomains: ['starview.cn', 'docs.starview.cn'],
+    competitors: [{ name: '领航视界', aliases: ['NaviDisplay'], domains: ['navidisplay.cn'] }],
+  };
+
+  const allProfiles = [ankerProfile, arzopaProfile, starviewProfile];
+
+  const keywords = [
+    { id: 'kw_anker_1', main: 'Anker氮化镓充电器', brands: ['Anker'] },
+    { id: 'kw_anker_2', main: '100W桌面快充充电站', brands: ['安克'] },
+    { id: 'kw_anker_unbranded', main: 'Anker磁吸无线充电宝', brands: [] },
+    { id: 'kw_arzopa_1', main: 'Switch外接便携屏', brands: ['ARZOPA'] },
+    { id: 'kw_starview_1', main: '4K便携显示器', brands: ['星图显示', 'StarView'] },
+    { id: 'kw_starview_suffix', main: '出差双屏扩展器', brands: ['星图便携显示器'] },
+    { id: 'kw_competitor', main: '便携屏对比评测', brands: ['ASUS ZenScreen'] },
+    { id: 'kw_unrelated_crm', main: '企业客户关系管理CRM', brands: ['CloudDesk'] },
+  ];
+
+  it('matches own-brand keywords (brandName, aliases, domain stems, CJK brand stem) and rejects other brands & competitors', () => {
+    expect(matchesVisibilityProfileKeyword(keywords[0]!, ankerProfile, allProfiles)).toBe(true);
+    expect(matchesVisibilityProfileKeyword(keywords[1]!, ankerProfile, allProfiles)).toBe(true);
+    expect(matchesVisibilityProfileKeyword(keywords[2]!, ankerProfile, allProfiles)).toBe(true);
+
+    // ARZOPA must NEVER match Anker, StarView, competitor ASUS, or unrelated CloudDesk — even with generic alias '便携显示器'
+    expect(matchesVisibilityProfileKeyword(keywords[0]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[2]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[4]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[5]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[6]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[7]!, arzopaProfile, allProfiles)).toBe(false);
+    expect(matchesVisibilityProfileKeyword(keywords[3]!, arzopaProfile, allProfiles)).toBe(true);
+
+    expect(
+      filterKeywordsForVisibilityProfile(keywords, ankerProfile, allProfiles).map((k) => k.id),
+    ).toEqual(['kw_anker_1', 'kw_anker_2', 'kw_anker_unbranded']);
+    expect(
+      filterKeywordsForVisibilityProfile(keywords, arzopaProfile, allProfiles).map((k) => k.id),
+    ).toEqual(['kw_arzopa_1']);
+    expect(filterKeywordsForVisibilityProfile(keywords, null, allProfiles)).toEqual([]);
+  });
+
+  it('resolves default keyword ID safely and handles overview single-profile, unloaded, and multi-brand all-profiles modes', () => {
+    const noArzopaKeywords = keywords.filter((k) => k.id !== 'kw_arzopa_1');
+
+    expect(resolveDefaultKeywordIdForProfile(noArzopaKeywords, arzopaProfile, allProfiles)).toBe(
+      '',
+    );
+    expect(resolveDefaultKeywordIdForProfile(noArzopaKeywords, ankerProfile, allProfiles)).toBe(
+      'kw_anker_1',
+    );
+    expect(hasMultipleDistinctProfileBrands(allProfiles)).toBe(true);
+    expect(hasMultipleDistinctProfileBrands([ankerProfile])).toBe(false);
+
+    // Unloaded profiles -> never leak tenant keywords
+    expect(
+      resolveScopedOverviewKeywords({
+        keywords: noArzopaKeywords,
+        profiles: [],
+        profilesLoaded: false,
+        profileId: 'vprof_arzopa',
+      }),
+    ).toEqual({ scopedKeywords: [], defaultKeywordId: '' });
+
+    // Selected profile with 0 matching keywords -> empty scopedKeywords & '' defaultKeywordId
+    expect(
+      resolveScopedOverviewKeywords({
+        keywords: noArzopaKeywords,
+        profiles: allProfiles,
+        profilesLoaded: true,
+        profileId: 'vprof_arzopa',
+      }),
+    ).toEqual({ scopedKeywords: [], defaultKeywordId: '' });
+
+    // Multi-brand 全部监测档案 (profileId = '') -> all keywords available, defaultKeywordId = ''
+    const allMode = resolveScopedOverviewKeywords({
+      keywords: noArzopaKeywords,
+      profiles: allProfiles,
+      profilesLoaded: true,
+      profileId: '',
+    });
+    expect(allMode.scopedKeywords).toHaveLength(noArzopaKeywords.length);
+    expect(allMode.defaultKeywordId).toBe('');
+
+    // Single-brand tenant 全部监测档案 -> auto-selects first keyword
+    const singleBrandAllMode = resolveScopedOverviewKeywords({
+      keywords: [keywords[0]!],
+      profiles: [ankerProfile],
+      profilesLoaded: true,
+      profileId: '',
+    });
+    expect(singleBrandAllMode.defaultKeywordId).toBe('kw_anker_1');
+
+    // importQuestionsInputSchema accepts optional profileId
+    expect(
+      importQuestionsInputSchema.parse({
+        profileId: 'vprof_anker',
+        keywordId: 'kw_anker_1',
+        titles: ['Anker快充对比评测'],
+      }),
+    ).toEqual({
+      profileId: 'vprof_anker',
+      keywordId: 'kw_anker_1',
+      titles: ['Anker快充对比评测'],
     });
   });
 });

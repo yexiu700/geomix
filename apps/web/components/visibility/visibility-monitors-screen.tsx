@@ -11,10 +11,12 @@ import {
   VISIBILITY_PROFILE_NAME_MAX,
   VISIBILITY_RUN_NAME_MAX,
   VISIBILITY_TASK_STATUS_LABELS,
+  filterKeywordsForVisibilityProfile,
   formatShanghaiDateTime,
   isTaskStatus,
   normalizeVisibilityDomain,
   quoteVisibilityRunPoints,
+  resolveDefaultKeywordIdForProfile,
   toXlsx,
   type CitationSourceKind,
   type CrudExportFormat,
@@ -439,6 +441,7 @@ export function VisibilityMonitorsScreen({
   const [runSubmitting, setRunSubmitting] = useState(false);
   const [keywordQuestions, setKeywordQuestions] = useState<QuestionRecord[]>([]);
   const [questionsLoading, setQuestionsLoading] = useState(false);
+  const runKeywordSelectRef = useRef<HTMLSelectElement | null>(null);
 
   // Run Control Modals
   const [cancelTarget, setCancelTarget] = useState<VisibilityRunRecord | null>(null);
@@ -640,12 +643,51 @@ export function VisibilityMonitorsScreen({
     return () => observer.disconnect();
   }, []);
 
-  // Load questions whenever runModal opens or its selected keywordId changes
+  // Scope candidate keywords strictly to the currently selected profile in Run Create Modal (#218)
+  const activeModalProfileId = runModal?.draft.profileId ?? '';
+  const activeModalProfile = useMemo(
+    () => (activeModalProfileId ? profiles.find((p) => p.id === activeModalProfileId) : undefined),
+    [activeModalProfileId, profiles],
+  );
+  const modalKeywords = useMemo(
+    () => filterKeywordsForVisibilityProfile(keywords, activeModalProfile, profiles),
+    [activeModalProfile, keywords, profiles],
+  );
+
   const isRunModalOpen = runModal !== null;
   const activeModalKeywordId = runModal?.draft.keywordId ?? '';
+
+  // Guard against stale cross-brand keywordId if profiles/keywords reload while modal is open
+  useEffect(() => {
+    if (!isRunModalOpen || !activeModalKeywordId) return;
+    if (!modalKeywords.some((kw) => kw.id === activeModalKeywordId)) {
+      setRunModal((curr) => {
+        if (!curr || !curr.draft.keywordId) return curr;
+        if (modalKeywords.some((kw) => kw.id === curr.draft.keywordId)) return curr;
+        return {
+          ...curr,
+          draft: {
+            ...curr.draft,
+            keywordId: '',
+            questionIds: [],
+          },
+          idempotencyKey: createVisibilityIdempotencyKey('vrun'),
+        };
+      });
+    }
+  }, [activeModalKeywordId, isRunModalOpen, modalKeywords]);
+
+  useEffect(() => {
+    const el = runKeywordSelectRef.current;
+    if (el && el.value !== activeModalKeywordId) {
+      el.value = activeModalKeywordId;
+    }
+  }, [activeModalKeywordId, modalKeywords]);
+
+  // Load questions whenever runModal opens or its selected keywordId changes
   useEffect(() => {
     if (!isRunModalOpen) return;
-    if (!activeModalKeywordId) {
+    if (!activeModalKeywordId || !modalKeywords.some((kw) => kw.id === activeModalKeywordId)) {
       setKeywordQuestions([]);
       return;
     }
@@ -666,7 +708,7 @@ export function VisibilityMonitorsScreen({
     return () => {
       cancelled = true;
     };
-  }, [activeModalKeywordId, client, isRunModalOpen]);
+  }, [activeModalKeywordId, client, isRunModalOpen, modalKeywords]);
 
   // ===================== Profile Handlers =====================
 
@@ -956,7 +998,9 @@ export function VisibilityMonitorsScreen({
       return;
     }
     const targetProfileId = presetProfileId || query.profileId || effectiveDefaultProfileId;
-    const initial = buildDefaultRunDraft(targetProfileId, keywords[0]?.id ?? '');
+    const targetProfile = profiles.find((p) => p.id === targetProfileId);
+    const defaultKeywordId = resolveDefaultKeywordIdForProfile(keywords, targetProfile, profiles);
+    const initial = buildDefaultRunDraft(targetProfileId, defaultKeywordId);
     setRunModalError(null);
     setRunModal({
       initial,
@@ -2550,7 +2594,21 @@ export function VisibilityMonitorsScreen({
                 aria-label="选择监测档案"
                 style={NATIVE_SELECT_STYLE}
                 value={runModal.draft.profileId}
-                onChange={(e) => patchRunDraft((prev) => ({ ...prev, profileId: e.target.value }))}
+                onChange={(e) => {
+                  const nextProfileId = e.target.value;
+                  const nextProfile = profiles.find((prof) => prof.id === nextProfileId);
+                  const nextDefaultKeywordId = resolveDefaultKeywordIdForProfile(
+                    keywords,
+                    nextProfile,
+                    profiles,
+                  );
+                  patchRunDraft((prev) => ({
+                    ...prev,
+                    profileId: nextProfileId,
+                    keywordId: nextDefaultKeywordId,
+                    questionIds: [],
+                  }));
+                }}
               >
                 <option value="">请选择品牌监测档案</option>
                 {profiles.map((prof) => (
@@ -2575,6 +2633,7 @@ export function VisibilityMonitorsScreen({
             <label>
               <span>关联训练主词（可选，选中后可勾选该主词下的写作标题作为监测问题）</span>
               <select
+                ref={runKeywordSelectRef}
                 aria-label="关联训练主词"
                 style={NATIVE_SELECT_STYLE}
                 value={runModal.draft.keywordId}
@@ -2588,12 +2647,20 @@ export function VisibilityMonitorsScreen({
                 }}
               >
                 <option value="">不关联主词（仅使用下方自定义问题）</option>
-                {keywords.map((kw) => (
+                {modalKeywords.map((kw) => (
                   <option key={kw.id} value={kw.id}>
                     {kw.main}
                   </option>
                 ))}
               </select>
+              {runModal.draft.profileId && modalKeywords.length === 0 ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ display: 'block', marginTop: 4, fontSize: 12 }}
+                >
+                  当前监测档案暂无同品牌训练主词，可直接填写下方自定义监测问题。
+                </Typography.Text>
+              ) : null}
             </label>
 
             {runModal.draft.keywordId ? (

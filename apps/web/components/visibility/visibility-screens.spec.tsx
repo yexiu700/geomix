@@ -86,6 +86,14 @@ function buildSampleKeywords(): KeywordRecord[] {
       createdAt: '2026-11-14T08:00:00.000Z',
     },
     {
+      id: 'kw_starview_02',
+      main: 'Type-C触控便携副屏',
+      brands: ['星图显示'],
+      optStatus: 'NONE',
+      questionCount: 1,
+      createdAt: '2026-11-14T09:00:00.000Z',
+    },
+    {
       id: 'kw_projector_02',
       main: '商用激光投影仪',
       brands: ['曜石光学', 'ObsidianOptics'],
@@ -1159,6 +1167,144 @@ describe('VisibilityMonitorsScreen', () => {
     expect(screen.getAllByText('请填写档案名称').length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText(/请填写监测档案名称/)).toBeNull();
   });
+
+  it('isolates 关联训练主词 by selected profile, avoids prefilling other-brand keywords, and resets keyword & checked questions on profile switch (#218)', async () => {
+    const base = buildMockGateway();
+    const ankerProfile: VisibilityProfileRecord = {
+      id: 'vprof_anker',
+      name: '安克创新（Anker）全品类监测档案',
+      brandName: '安克创新',
+      brandAliases: ['Anker'],
+      ownedDomains: ['anker.com'],
+      competitors: [
+        { name: '绿联 UGREEN', aliases: ['UGREEN'], domains: ['ugreen.com'] },
+        { name: '倍思 Baseus', aliases: ['Baseus'], domains: ['baseus.com'] },
+      ],
+      runCount: 1,
+      createdAt: '2026-11-16T08:00:00.000Z',
+      updatedAt: '2026-11-16T08:00:00.000Z',
+    };
+    const arzopaProfile: VisibilityProfileRecord = {
+      id: 'vprof_arzopa',
+      name: 'ARZOPA便携显示器北美监测档案',
+      brandName: 'ARZOPA',
+      brandAliases: ['Arzopa Portable Monitor', '便携显示器'],
+      ownedDomains: ['arzopa.com'],
+      competitors: [
+        { name: 'ASUS ZenScreen', aliases: [], domains: ['asus.com'] },
+        { name: 'Lenovo ThinkVision', aliases: [], domains: ['lenovo.com'] },
+      ],
+      runCount: 0,
+      createdAt: '2026-11-17T08:00:00.000Z',
+      updatedAt: '2026-11-17T08:00:00.000Z',
+    };
+
+    const tenantKeywords: KeywordRecord[] = [
+      {
+        id: 'kw_anker_gan',
+        main: 'Anker氮化镓充电器',
+        brands: ['Anker'],
+        optStatus: 'INCLUDED',
+        questionCount: 2,
+        createdAt: '2026-11-15T08:00:00.000Z',
+      },
+      {
+        id: 'kw_clouddesk_crm',
+        main: '企业客户关系管理CRM',
+        brands: ['CloudDesk'],
+        optStatus: 'NONE',
+        questionCount: 1,
+        createdAt: '2026-11-15T09:00:00.000Z',
+      },
+    ];
+
+    const ankerQuestions: QuestionRecord[] = [
+      {
+        id: 'q_anker_01',
+        keywordId: 'kw_anker_gan',
+        keywordMain: 'Anker氮化镓充电器',
+        text: 'Anker氮化镓充电器发热控制与安全认证怎么样？',
+        included: true,
+        source: 'AI',
+        usedCount: 1,
+        createdAt: '2026-11-15T08:10:00.000Z',
+      },
+      {
+        id: 'q_anker_02',
+        keywordId: 'kw_anker_gan',
+        keywordMain: 'Anker氮化镓充电器',
+        text: 'Anker氮化镓充电器支持MacBook和iPhone快充吗？',
+        included: false,
+        source: 'MANUAL',
+        usedCount: 0,
+        createdAt: '2026-11-15T08:20:00.000Z',
+      },
+    ];
+
+    window.localStorage.setItem('geomix:visibility:default-profile-id', 'vprof_anker');
+
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        return {
+          items: [arzopaProfile, ankerProfile],
+          prefillSources: { keywords: [], knowledgeBases: [] },
+        };
+      },
+      async listKeywords() {
+        return tenantKeywords;
+      },
+      async listQuestionsByKeyword(keywordId) {
+        return keywordId === 'kw_anker_gan' ? ankerQuestions : [];
+      },
+    };
+
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    // 1. Go to 品牌与竞品档案 and click 发起监测 directly on ARZOPA (which has 0 matching keywords)
+    fireEvent.click(await screen.findByRole('tab', { name: /品牌与竞品档案/ }));
+    fireEvent.click(await screen.findByLabelText('发起监测-ARZOPA便携显示器北美监测档案'));
+
+    const runDialog = await screen.findByRole('dialog', { name: '新建 AI 可见度监测任务' });
+    const profileSelect = within(runDialog).getByLabelText('选择监测档案') as HTMLSelectElement;
+    const kwSelect = within(runDialog).getByLabelText('关联训练主词') as HTMLSelectElement;
+
+    expect(profileSelect.value).toBe('vprof_arzopa');
+    expect(kwSelect.value).toBe('');
+    const arzopaOptionValues = Array.from(kwSelect.options).map((o) => o.value);
+    expect(arzopaOptionValues).toEqual(['']);
+    expect(within(runDialog).queryByText(/Anker氮化镓充电器发热控制/)).toBeNull();
+
+    // 2. Switch profile inside modal to Anker -> Anker's keyword becomes available and preselected
+    fireEvent.change(profileSelect, { target: { value: 'vprof_anker' } });
+    await waitFor(() => {
+      expect(kwSelect.value).toBe('kw_anker_gan');
+    });
+    expect(Array.from(kwSelect.options).map((o) => o.value)).toEqual(['', 'kw_anker_gan']);
+    expect(
+      await within(runDialog).findByText('Anker氮化镓充电器发热控制与安全认证怎么样？'),
+    ).toBeTruthy();
+
+    // Check all Anker questions -> 2 questions × 4 engines = 8 checks
+    fireEvent.click(within(runDialog).getByLabelText('全选当前主词问题'));
+    expect(within(runDialog).getByText(/共 2 个问题 × 4 个引擎 = 8 次检测/)).toBeTruthy();
+
+    // 3. Switch profile back to ARZOPA -> keywordId and checked questionIds MUST reset immediately!
+    fireEvent.change(profileSelect, { target: { value: 'vprof_arzopa' } });
+    await waitFor(() => {
+      expect(kwSelect.value).toBe('');
+    });
+    expect(Array.from(kwSelect.options).map((o) => o.value)).toEqual(['']);
+    expect(within(runDialog).queryByText(/Anker氮化镓充电器发热控制/)).toBeNull();
+    expect(within(runDialog).getByText(/共 0 个问题 × 4 个引擎 = 0 次检测/)).toBeTruthy();
+  });
 });
 
 describe('VisibilityOverviewScreen', () => {
@@ -1243,10 +1389,11 @@ describe('VisibilityOverviewScreen', () => {
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Type-C一线通便携屏实测')).toBeTruthy();
 
-    // Select target Keyword
+    // Select target Keyword (must only offer vprof_starview's own keywords, excluding kw_projector_02)
     const kwSelect = screen.getByLabelText('目标主词') as HTMLSelectElement;
-    fireEvent.change(kwSelect, { target: { value: 'kw_projector_02' } });
-    expect(kwSelect.value).toBe('kw_projector_02');
+    expect(Array.from(kwSelect.options).map((o) => o.value)).not.toContain('kw_projector_02');
+    fireEvent.change(kwSelect, { target: { value: 'kw_starview_02' } });
+    expect(kwSelect.value).toBe('kw_starview_02');
 
     // Select 1 gap + 1 fan-out query
     fireEvent.click(screen.getByLabelText('勾选缺口问题-差旅办公便携屏哪个品牌性价比最高？'));
@@ -1259,16 +1406,16 @@ describe('VisibilityOverviewScreen', () => {
       expect(importedOpportunityCalls).toHaveLength(1);
     });
     expect(importedOpportunityCalls[0]).toEqual({
-      keywordId: 'kw_projector_02',
+      keywordId: 'kw_starview_02',
       titles: ['差旅办公便携屏哪个品牌性价比最高？', 'Type-C一线通便携屏实测'],
     });
     expect(await screen.findByText(/已导入「写作标题」：新增 2 条，跳过重复 0 条/)).toBeTruthy();
 
-    // Click 去创建写作任务 -> dispatches /writing/tasks?keywordId=kw_projector_02
+    // Click 去创建写作任务 -> dispatches /writing/tasks?keywordId=kw_starview_02
     fireEvent.click(screen.getByRole('button', { name: '去创建写作任务' }));
     expect(dispatched).toContainEqual({
       type: 'open',
-      href: '/writing/tasks?keywordId=kw_projector_02',
+      href: '/writing/tasks?keywordId=kw_starview_02',
     });
   });
 
@@ -1698,5 +1845,136 @@ describe('VisibilityOverviewScreen', () => {
     expect(screen.getByLabelText('AI数据看板草稿')).toBeTruthy();
     expect(screen.getByTestId('active-href').textContent).toBe('/visibility/overview');
     expect((screen.getByLabelText('看板监测档案') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('isolates 看板目标主词 by active profile, avoids preselecting other-brand keywords or async race leakage, and clears checked opportunities on profile switch (#213)', async () => {
+    const base = buildMockGateway();
+    let resolveProfiles!: (items: VisibilityProfileRecord[]) => void;
+    const profilesPromise = new Promise<VisibilityProfileRecord[]>((resolve) => {
+      resolveProfiles = resolve;
+    });
+
+    const multiProfiles: VisibilityProfileRecord[] = [
+      {
+        id: 'vprof_arzopa',
+        name: 'ARZOPA便携显示器北美监测档案',
+        brandName: 'ARZOPA',
+        brandAliases: ['Arzopa Portable Monitor', '便携显示器'],
+        ownedDomains: ['arzopa.com'],
+        competitors: [{ name: 'ASUS ZenScreen', aliases: [], domains: ['asus.com'] }],
+        runCount: 1,
+        createdAt: '2026-11-16T09:00:00.000Z',
+        updatedAt: '2026-11-16T09:00:00.000Z',
+      },
+      {
+        id: 'vprof_anker',
+        name: '安克创新（Anker）全品类监测档案',
+        brandName: '安克创新',
+        brandAliases: ['Anker'],
+        ownedDomains: ['anker.com'],
+        competitors: [{ name: '绿联 UGREEN', aliases: [], domains: ['ugreen.com'] }],
+        runCount: 1,
+        createdAt: '2026-11-16T10:00:00.000Z',
+        updatedAt: '2026-11-16T10:00:00.000Z',
+      },
+    ];
+
+    const tenantKeywords: KeywordRecord[] = [
+      {
+        id: 'kw_anker_gan',
+        main: 'Anker氮化镓充电器',
+        brands: ['Anker'],
+        optStatus: 'INCLUDED',
+        questionCount: 3,
+        createdAt: '2026-11-15T08:00:00.000Z',
+      },
+      {
+        id: 'kw_clouddesk_crm',
+        main: '企业客户关系管理CRM',
+        brands: ['CloudDesk'],
+        optStatus: 'NONE',
+        questionCount: 1,
+        createdAt: '2026-11-15T09:00:00.000Z',
+      },
+    ];
+
+    const dispatched: Array<{ type: string; href?: string }> = [];
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listProfiles() {
+        const items = await profilesPromise;
+        return { items, prefillSources: { keywords: [], knowledgeBases: [] } };
+      },
+      async listKeywords() {
+        return tenantKeywords;
+      },
+    };
+
+    render(
+      <VisibilityOverviewScreen
+        title="AI数据看板"
+        href="/visibility/overview?profileId=vprof_arzopa"
+        gateway={gateway}
+        onDispatch={(action) => dispatched.push(action as { type: string; href?: string })}
+      />,
+    );
+
+    const oppTab = await screen.findByRole('tab', { name: /优化机会 & 搜索拆解词（Query Fan-Out/ });
+    fireEvent.click(oppTab);
+
+    // 1. Even when listKeywords resolves BEFORE listProfiles, ARZOPA view must NEVER flash or select Anker's keyword
+    const kwSelect = screen.getByLabelText('目标主词') as HTMLSelectElement;
+    expect(kwSelect.value).toBe('');
+    expect(Array.from(kwSelect.options).map((o) => o.value)).not.toContain('kw_anker_gan');
+
+    // Resolve profiles -> ARZOPA has 0 matching keywords, so 目标主词 stays '' and disabled with empty hint
+    resolveProfiles(multiProfiles);
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 1 }).textContent).toContain(
+        'ARZOPA便携显示器北美监测档案',
+      );
+    });
+    expect(kwSelect.value).toBe('');
+    expect(kwSelect.disabled).toBe(true);
+    expect(Array.from(kwSelect.options).map((o) => o.value)).toEqual(['']);
+    expect(Array.from(kwSelect.options)[0]?.textContent).toContain('当前档案暂无关联主词');
+    expect(
+      (screen.getByRole('button', { name: '一键加入写作标题' }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    // Clicking 去创建写作任务 on ARZOPA must NOT leak ?keywordId=kw_anker_gan
+    fireEvent.click(screen.getByRole('button', { name: '去创建写作任务' }));
+    expect(dispatched).toContainEqual({ type: 'open', href: '/writing/tasks' });
+
+    // 2. Switch 看板监测档案 to Anker -> 目标主词 enables and auto-selects Anker氮化镓充电器 (excluding CloudDesk)
+    fireEvent.change(screen.getByLabelText('看板监测档案'), { target: { value: 'vprof_anker' } });
+    await waitFor(() => {
+      expect(kwSelect.disabled).toBe(false);
+      expect(kwSelect.value).toBe('kw_anker_gan');
+    });
+    expect(Array.from(kwSelect.options).map((o) => o.value)).not.toContain('kw_clouddesk_crm');
+
+    // Check an opportunity item under Anker, then switch back to ARZOPA -> checked titles & keywordId both reset!
+    fireEvent.click(await screen.findByLabelText('勾选拆解词-Type-C一线通便携屏实测'));
+    expect(screen.getByText('已选 1 条')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('看板监测档案'), { target: { value: 'vprof_arzopa' } });
+    await waitFor(() => {
+      expect(kwSelect.value).toBe('');
+      expect(kwSelect.disabled).toBe(true);
+    });
+    expect(screen.getByText('已选 0 条')).toBeTruthy();
+
+    // 3. Reset to 全部监测档案 in multi-brand tenant -> lists tenant keywords without forcing Anker preselection
+    fireEvent.click(screen.getByLabelText('重置看板筛选'));
+    await waitFor(() => {
+      expect(kwSelect.disabled).toBe(false);
+    });
+    expect(kwSelect.value).toBe('');
+    expect(Array.from(kwSelect.options).map((o) => o.value)).toEqual([
+      '',
+      'kw_anker_gan',
+      'kw_clouddesk_crm',
+    ]);
   });
 });

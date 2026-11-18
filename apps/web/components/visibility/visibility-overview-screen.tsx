@@ -9,6 +9,7 @@ import {
   computeVisibilityPct,
   isCitationSourceKind,
   isVisibilityEngine,
+  resolveScopedOverviewKeywords,
   type CitationSourceKind,
   type CrudPageSize,
   type KeywordRecord,
@@ -469,6 +470,7 @@ export function VisibilityOverviewScreen({
     fanOutQueries: [],
   });
   const [keywords, setKeywords] = useState<KeywordRecord[]>([]);
+  const [keywordsLoaded, setKeywordsLoaded] = useState<boolean>(false);
   const [selectedKeywordId, setSelectedKeywordId] = useState<string>('');
   const [selectedOpportunityTitles, setSelectedOpportunityTitles] = useState<string[]>([]);
   const [importingQuestions, setImportingQuestions] = useState<boolean>(false);
@@ -481,6 +483,9 @@ export function VisibilityOverviewScreen({
   const initialUrlProfileIdRef = useRef(urlProfileId);
   const skipDefaultProfileRef = useRef<boolean>(false);
   const profileSelectRef = useRef<HTMLSelectElement | null>(null);
+  const targetKeywordSelectRef = useRef<HTMLSelectElement | null>(null);
+  const prevAppliedProfileIdRef = useRef<string>(urlProfileId ?? '');
+  const initializedKeywordScopeRef = useRef<string | null>(null);
 
   const syncProfileRoute = useCallback(
     (nextProfileId: string) => {
@@ -676,15 +681,60 @@ export function VisibilityOverviewScreen({
       .then((list) => {
         if (cancelled) return;
         setKeywords(list);
-        setSelectedKeywordId((curr) =>
-          curr && list.some((k) => k.id === curr) ? curr : (list[0]?.id ?? ''),
-        );
+        setKeywordsLoaded(true);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setKeywordsLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
   }, [client, featureEnabled]);
+
+  // Isolate target keywords by the currently active monitoring profile (#213)
+  const { scopedKeywords, defaultKeywordId } = useMemo(
+    () =>
+      resolveScopedOverviewKeywords({
+        keywords,
+        profiles,
+        profilesLoaded,
+        profileId: appliedFilter.profileId,
+      }),
+    [appliedFilter.profileId, keywords, profiles, profilesLoaded],
+  );
+
+  useEffect(() => {
+    const profileChanged = prevAppliedProfileIdRef.current !== appliedFilter.profileId;
+    if (profileChanged) {
+      prevAppliedProfileIdRef.current = appliedFilter.profileId;
+      initializedKeywordScopeRef.current = null;
+      setSelectedOpportunityTitles([]);
+      setOpportunityFeedback(null);
+    }
+
+    if (!profilesLoaded || !keywordsLoaded) {
+      setSelectedKeywordId('');
+      return;
+    }
+
+    const scopeKey = appliedFilter.profileId || '__all__';
+    if (profileChanged || initializedKeywordScopeRef.current !== scopeKey) {
+      initializedKeywordScopeRef.current = scopeKey;
+      setSelectedKeywordId(defaultKeywordId);
+      return;
+    }
+
+    setSelectedKeywordId((curr) =>
+      curr && !scopedKeywords.some((kw) => kw.id === curr) ? defaultKeywordId : curr,
+    );
+  }, [appliedFilter.profileId, defaultKeywordId, keywordsLoaded, profilesLoaded, scopedKeywords]);
+
+  useEffect(() => {
+    const el = targetKeywordSelectRef.current;
+    if (el && el.value !== selectedKeywordId) {
+      el.value = selectedKeywordId;
+    }
+  }, [profilesLoaded, scopedKeywords, selectedKeywordId]);
 
   // Load opportunities (competitor gaps + fan-out queries) when appliedFilter changes
   useEffect(() => {
@@ -1832,6 +1882,7 @@ export function VisibilityOverviewScreen({
                     <Space wrap size={8}>
                       <span style={{ fontSize: 13, color: GM.fg.f2 }}>目标主词：</span>
                       <select
+                        ref={targetKeywordSelectRef}
                         aria-label="目标主词"
                         style={{
                           ...COMPACT_SELECT_STYLE,
@@ -1842,17 +1893,28 @@ export function VisibilityOverviewScreen({
                           textOverflow: 'ellipsis',
                         }}
                         value={selectedKeywordId}
-                        disabled={keywords.length === 0 || readOnly}
+                        disabled={!profilesLoaded || scopedKeywords.length === 0 || readOnly}
                         onChange={(e) => setSelectedKeywordId(e.target.value)}
                       >
-                        {keywords.length === 0 ? (
-                          <option value="">暂无可用主词</option>
+                        {!profilesLoaded ? (
+                          <option value="">正在匹配档案主词…</option>
+                        ) : scopedKeywords.length === 0 ? (
+                          <option value="">
+                            {appliedFilter.profileId && keywords.length > 0
+                              ? '当前档案暂无关联主词'
+                              : '暂无可用主词'}
+                          </option>
                         ) : (
-                          keywords.map((kw) => (
-                            <option key={kw.id} value={kw.id}>
-                              {kw.main}
-                            </option>
-                          ))
+                          <>
+                            {!appliedFilter.profileId || selectedKeywordId === '' ? (
+                              <option value="">请选择目标主词</option>
+                            ) : null}
+                            {scopedKeywords.map((kw) => (
+                              <option key={kw.id} value={kw.id}>
+                                {kw.main}
+                              </option>
+                            ))}
+                          </>
                         )}
                       </select>
                       <SignalPill tone={selectedOpportunityTitles.length > 0 ? 'info' : 'neutral'}>

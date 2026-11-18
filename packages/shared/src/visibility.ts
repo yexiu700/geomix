@@ -1131,6 +1131,360 @@ export function formatVisibilityRunSubmitLabel(totalChecks: number, unitPoints: 
   return `开始监测（${quote.unitPoints}点数/次，共 ${quote.totalChecks} 次检查，预冻 ${quote.totalPoints} 点）`;
 }
 
+// ===================== Profile–Keyword Brand Isolation (#218, #213) =====================
+
+export type VisibilityProfileKeywordTarget = {
+  id?: string;
+  name?: string;
+  brandName: string;
+  brandAliases?: readonly string[];
+  ownedDomains?: readonly string[];
+  competitors?: ReadonlyArray<{
+    name: string;
+    aliases?: readonly string[];
+    domains?: readonly string[];
+  }>;
+};
+
+export type VisibilityKeywordCandidate = {
+  id: string;
+  main: string;
+  brands: readonly string[];
+};
+
+const GENERIC_SUBDOMAIN_LABELS = new Set([
+  'www',
+  'docs',
+  'doc',
+  'blog',
+  'help',
+  'support',
+  'm',
+  'app',
+  'api',
+  'news',
+  'shop',
+  'store',
+  'mall',
+  'cn',
+  'en',
+  'us',
+  'de',
+  'uk',
+  'jp',
+  'global',
+]);
+
+const GENERIC_SECOND_LEVEL_DOMAINS = new Set([
+  'com',
+  'co',
+  'net',
+  'org',
+  'gov',
+  'edu',
+  'ac',
+  'example',
+  'localhost',
+]);
+
+function collapseTrim(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+function expandBrandPhraseVariants(raw: string): string[] {
+  const cleaned = collapseTrim(raw);
+  if (!cleaned) return [];
+
+  const out: string[] = [cleaned];
+  const outer = collapseTrim(cleaned.replace(/\s*[（(【\[][^）)】\]]+[）)】\]]\s*/gu, ' '));
+  if ([...outer].length >= 2 && outer.toLowerCase() !== cleaned.toLowerCase()) {
+    out.push(outer);
+  }
+
+  for (const match of cleaned.matchAll(/[（(【\[]([^）)】\]]+)[）)】\]]/gu)) {
+    const inner = collapseTrim(match[1] ?? '');
+    if ([...inner].length >= 2) {
+      out.push(inner);
+    }
+  }
+
+  const strippedLegal = collapseTrim(
+    (outer || cleaned).replace(
+      /(?:科技|信息|网络|电子|智能|数字|技术)?(?:股份)?(?:有限|有限责任)公司$/u,
+      '',
+    ),
+  );
+  if ([...strippedLegal].length >= 2) {
+    out.push(strippedLegal);
+  }
+
+  return dedupeTrimmedStrings(out);
+}
+
+function extractDomainBrandStems(domains: readonly string[] | undefined): string[] {
+  if (!domains || domains.length === 0) return [];
+  const stems: string[] = [];
+  for (const raw of domains) {
+    const normalized = normalizeVisibilityDomain(raw);
+    if (!normalized || IPV4_DOTTED.test(normalized)) continue;
+    const labels = normalized.split('.').filter(Boolean);
+    if (labels.length < 2) continue;
+    labels.pop(); // drop TLD
+    while (labels.length > 1 && GENERIC_SECOND_LEVEL_DOMAINS.has(labels[labels.length - 1] ?? '')) {
+      labels.pop();
+    }
+    while (labels.length > 1 && GENERIC_SUBDOMAIN_LABELS.has(labels[0] ?? '')) {
+      labels.shift();
+    }
+    const registrable = labels[labels.length - 1] ?? '';
+    if (
+      registrable.length >= 3 &&
+      !/^\d+$/.test(registrable) &&
+      !GENERIC_SECOND_LEVEL_DOMAINS.has(registrable) &&
+      !GENERIC_SUBDOMAIN_LABELS.has(registrable)
+    ) {
+      stems.push(registrable);
+    }
+  }
+  return dedupeTrimmedStrings(stems);
+}
+
+function isPureLatinBrandToken(term: string): boolean {
+  return (
+    term.length >= 2 &&
+    !/\s/.test(term) &&
+    /^[\p{Script=Latin}\p{Nd}_-]+$/u.test(term) &&
+    /[A-Za-z]/.test(term)
+  );
+}
+
+function extractProfileBrandTerms(profile: VisibilityProfileKeywordTarget): {
+  coreTerms: string[];
+  aliasTerms: string[];
+} {
+  const coreList: string[] = [
+    ...expandBrandPhraseVariants(profile.brandName),
+    ...extractDomainBrandStems(profile.ownedDomains),
+  ];
+  const aliasList: string[] = [];
+
+  for (const rawAlias of profile.brandAliases ?? []) {
+    for (const variant of expandBrandPhraseVariants(rawAlias)) {
+      if (isPureLatinBrandToken(variant)) {
+        coreList.push(variant);
+      } else {
+        aliasList.push(variant);
+      }
+    }
+  }
+
+  const coreTerms = dedupeTrimmedStrings(coreList);
+  const coreSet = new Set(coreTerms.map((t) => t.toLowerCase()));
+  const aliasTerms = dedupeTrimmedStrings(aliasList).filter((t) => !coreSet.has(t.toLowerCase()));
+  return { coreTerms, aliasTerms };
+}
+
+function matchesCoreTerm(coreTerm: string, candidateText: string): boolean {
+  const normCore = collapseTrim(coreTerm).toLowerCase();
+  const normCandidate = collapseTrim(candidateText).toLowerCase();
+  if (!normCore || !normCandidate) return false;
+  if (normCore === normCandidate) return true;
+
+  if ([...coreTerm].length >= 2 && wholeWordPattern(coreTerm).test(candidateText)) {
+    return true;
+  }
+
+  if ([...candidateText].length >= 2 && wholeWordPattern(candidateText).test(coreTerm)) {
+    if (isPureLatinBrandToken(candidateText)) {
+      return candidateText.length >= 3;
+    }
+    return normCore.startsWith(normCandidate);
+  }
+
+  return false;
+}
+
+function matchesAliasTerm(aliasTerm: string, candidateText: string): boolean {
+  const normAlias = collapseTrim(aliasTerm).toLowerCase();
+  const normCandidate = collapseTrim(candidateText).toLowerCase();
+  if (!normAlias || !normCandidate) return false;
+  if (normAlias === normCandidate) return true;
+  if ([...aliasTerm].length < 2) return false;
+
+  if (ALNUM_WORD_CHAR.test(aliasTerm[0] ?? '')) {
+    return normCandidate.startsWith(normAlias) && wholeWordPattern(aliasTerm).test(candidateText);
+  }
+  return normCandidate.startsWith(normAlias);
+}
+
+function matchesAnyCompetitor(
+  candidateTexts: readonly string[],
+  competitors: VisibilityProfileKeywordTarget['competitors'],
+): boolean {
+  if (!competitors || competitors.length === 0) return false;
+  for (const comp of competitors) {
+    const { coreTerms, aliasTerms } = extractProfileBrandTerms({
+      brandName: comp.name,
+      brandAliases: comp.aliases,
+      ownedDomains: comp.domains,
+    });
+    for (const text of candidateTexts) {
+      if (
+        coreTerms.some((t) => matchesCoreTerm(t, text)) ||
+        aliasTerms.some((t) => matchesAliasTerm(t, text))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * 判断某条训练主词（Keyword）是否归属于指定品牌监测档案（VisibilityProfile）。
+ * - 若主词已显式填写 `brands`（公司/品牌），严格按品牌词与档案主品牌/别名/自有域名词根匹配，绝不用 `main` 泛品类词跨牌误绑；
+ * - 若主词未填写 `brands`，仅当 `main` 明确命中该档案品牌标识且未落入竞品或其他档案主品牌时才归属该档案。
+ */
+export function matchesVisibilityProfileKeyword(
+  keyword: Pick<VisibilityKeywordCandidate, 'main' | 'brands'>,
+  profile: VisibilityProfileKeywordTarget,
+  allProfiles?: readonly VisibilityProfileKeywordTarget[],
+): boolean {
+  const { coreTerms, aliasTerms } = extractProfileBrandTerms(profile);
+  if (coreTerms.length === 0 && aliasTerms.length === 0) return false;
+
+  const kwBrands = dedupeTrimmedStrings(keyword.brands ?? []);
+  if (kwBrands.length > 0) {
+    const matchedCore = kwBrands.some((brand) =>
+      coreTerms.some((core) => matchesCoreTerm(core, brand)),
+    );
+    const matchedAlias =
+      !matchedCore &&
+      kwBrands.some((brand) => aliasTerms.some((alias) => matchesAliasTerm(alias, brand)));
+
+    if (!matchedCore && !matchedAlias) {
+      return false;
+    }
+
+    if (!matchedCore) {
+      if (matchesAnyCompetitor(kwBrands, profile.competitors)) {
+        return false;
+      }
+      if (allProfiles && allProfiles.length > 1) {
+        const claimedByOtherCore = allProfiles.some((other) => {
+          if (other === profile || (profile.id && other.id === profile.id)) return false;
+          const otherTerms = extractProfileBrandTerms(other).coreTerms;
+          return kwBrands.some((brand) => otherTerms.some((core) => matchesCoreTerm(core, brand)));
+        });
+        if (claimedByOtherCore) return false;
+      }
+    }
+    return true;
+  }
+
+  const kwMain = collapseTrim(keyword.main);
+  if (!kwMain) return false;
+
+  const mainMatchedCore = coreTerms.some((core) => matchesCoreTerm(core, kwMain));
+  const mainMatchedAlias =
+    !mainMatchedCore && aliasTerms.some((alias) => matchesAliasTerm(alias, kwMain));
+
+  if (!mainMatchedCore && !mainMatchedAlias) {
+    return false;
+  }
+  if (!mainMatchedCore && matchesAnyCompetitor([kwMain], profile.competitors)) {
+    return false;
+  }
+  if (!mainMatchedCore && allProfiles && allProfiles.length > 1) {
+    const claimedByOther = allProfiles.some((other) => {
+      if (other === profile || (profile.id && other.id === profile.id)) return false;
+      const otherExtracted = extractProfileBrandTerms(other);
+      return (
+        otherExtracted.coreTerms.some((core) => matchesCoreTerm(core, kwMain)) ||
+        otherExtracted.aliasTerms.some((alias) => matchesAliasTerm(alias, kwMain))
+      );
+    });
+    if (claimedByOther) return false;
+  }
+
+  return true;
+}
+
+/**
+ * 过滤出归属于当前选中品牌档案的训练主词列表；未选中有效档案时返回空数组（禁止跨牌回退全租户主词）。
+ */
+export function filterKeywordsForVisibilityProfile<K extends VisibilityKeywordCandidate>(
+  keywords: readonly K[],
+  profile: VisibilityProfileKeywordTarget | null | undefined,
+  allProfiles?: readonly VisibilityProfileKeywordTarget[],
+): K[] {
+  if (!profile) return [];
+  return keywords.filter((kw) => matchesVisibilityProfileKeyword(kw, profile, allProfiles));
+}
+
+/**
+ * 计算指定品牌档案下默认预填的关联训练主词 ID；若该档案无匹配主词则返回空串 `""`（不关联主词）。
+ */
+export function resolveDefaultKeywordIdForProfile(
+  keywords: readonly VisibilityKeywordCandidate[],
+  profile: VisibilityProfileKeywordTarget | null | undefined,
+  allProfiles?: readonly VisibilityProfileKeywordTarget[],
+): string {
+  return filterKeywordsForVisibilityProfile(keywords, profile, allProfiles)[0]?.id ?? '';
+}
+
+export function hasMultipleDistinctProfileBrands(
+  profiles: readonly Pick<VisibilityProfileKeywordTarget, 'brandName'>[],
+): boolean {
+  const brands = new Set<string>();
+  for (const prof of profiles) {
+    const normalized = collapseTrim(prof.brandName).toLowerCase();
+    if (normalized) brands.add(normalized);
+    if (brands.size > 1) return true;
+  }
+  return false;
+}
+
+/**
+ * 解析 AI 数据看板「优化机会 & 搜索拆解词」的目标主词候选范围与默认选中值：
+ * - 档案列表未加载完成时返回空列表与空默认值，防止异步竞态闪现他牌主词；
+ * - 单档案视图严格隔离为该档案归属主词，无匹配时返回空列表与 `""`；
+ * - 全部监测档案视图展示租户主词，多品牌租户默认置空 `""` 要求人工显式选择，单品牌租户自动预选首项。
+ */
+export function resolveScopedOverviewKeywords<K extends VisibilityKeywordCandidate>(input: {
+  keywords: readonly K[];
+  profiles: readonly VisibilityProfileKeywordTarget[];
+  profilesLoaded: boolean;
+  profileId?: string | null;
+}): {
+  scopedKeywords: K[];
+  defaultKeywordId: string;
+} {
+  if (!input.profilesLoaded) {
+    return { scopedKeywords: [], defaultKeywordId: '' };
+  }
+
+  const activeProfileId = input.profileId?.trim() ?? '';
+  if (activeProfileId) {
+    const targetProfile = input.profiles.find((p) => p.id === activeProfileId);
+    const scopedKeywords = filterKeywordsForVisibilityProfile(
+      input.keywords,
+      targetProfile,
+      input.profiles,
+    );
+    return {
+      scopedKeywords,
+      defaultKeywordId: scopedKeywords[0]?.id ?? '',
+    };
+  }
+
+  const scopedKeywords = [...input.keywords];
+  const defaultKeywordId = hasMultipleDistinctProfileBrands(input.profiles)
+    ? ''
+    : (scopedKeywords[0]?.id ?? '');
+  return { scopedKeywords, defaultKeywordId };
+}
+
 // ===================== Zod Schemas & DTO Types =====================
 
 function dedupeTrimmedStrings(items: readonly string[]): string[] {
@@ -1663,6 +2017,7 @@ export type VisibilityOpportunitiesResponse = {
 };
 
 export const importQuestionsInputSchema = z.object({
+  profileId: optionalVisibilityIdSchema,
   keywordId: z
     .string({ required_error: '请选择目标主关键词' })
     .trim()
