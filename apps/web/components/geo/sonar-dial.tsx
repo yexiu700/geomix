@@ -189,35 +189,39 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
         })}
         {!isEmpty ? (
           <>
-            <g className="gm-sonar-sweep" aria-hidden="true">
-              <path d={sectorPath(R, -90, -60)} fill={`url(#${gradId})`} />
-              <line
-                x1={CX}
-                y1={CY}
-                x2={sweepLead.x}
-                y2={sweepLead.y}
-                stroke="rgba(197,240,74,0.6)"
-                strokeWidth={1}
-              />
-            </g>
-            <polygon
-              points={polyPoints}
-              fill="rgba(61,224,200,0.12)"
-              stroke={GM.sig.cited}
-              strokeWidth={1.5}
-              strokeLinejoin="round"
-              className="gm-sonar-poly"
-              style={{ transform: mounted ? 'scale(1)' : 'scale(0)' }}
-            />
-            {nodes.map(({ eng, hasData, point }) => (
+            {nodes.some((n) => n.mentioned > 0) ? (
+              <>
+                <g className="gm-sonar-sweep" aria-hidden="true">
+                  <path d={sectorPath(R, -90, -60)} fill={`url(#${gradId})`} />
+                  <line
+                    x1={CX}
+                    y1={CY}
+                    x2={sweepLead.x}
+                    y2={sweepLead.y}
+                    stroke="rgba(197,240,74,0.6)"
+                    strokeWidth={1}
+                  />
+                </g>
+                <polygon
+                  points={polyPoints}
+                  fill="rgba(61,224,200,0.12)"
+                  stroke={GM.sig.cited}
+                  strokeWidth={1.5}
+                  strokeLinejoin="round"
+                  className="gm-sonar-poly"
+                  style={{ transform: mounted ? 'scale(1)' : 'scale(0)' }}
+                />
+              </>
+            ) : null}
+            {nodes.map(({ eng, hasData, mentioned, point }) => (
               <circle
                 key={eng.key}
                 cx={point.x}
                 cy={point.y}
                 r={3}
-                fill={hasData ? GM.sig.cited : 'none'}
-                stroke={hasData ? undefined : GM.sig.absent}
-                strokeDasharray={hasData ? undefined : '2 2'}
+                fill={hasData && mentioned > 0 ? GM.sig.cited : 'none'}
+                stroke={hasData && mentioned > 0 ? undefined : GM.sig.absent}
+                strokeDasharray={hasData && mentioned > 0 ? undefined : '2 2'}
               />
             ))}
           </>

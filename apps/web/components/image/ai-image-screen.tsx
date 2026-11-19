@@ -9,7 +9,6 @@ import {
   type CrudExportFormat,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Dropdown, Space, Table, Typography } from 'antd';
-import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
@@ -25,19 +24,13 @@ import { DEFAULT_TASK_POLL_INTERVAL_MS, useTaskPolling } from '../../lib/use-tas
 import { triggerBlobDownload } from '../../lib/ux-foundation';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { ALL_COLUMN_KEYS, isJobInProgress, type ColumnKey } from './ai-image-helpers';
+import { AiImageCreateModal } from './ai-image-create-modal';
 import { AiImageDeleteModal, AiImageSearchBar, buildAiImageColumns } from './ai-image-list-parts';
-import type { AiImagePreviewTarget } from './ai-image-preview-modal';
-import type { AiImageSaveGalleryResult } from './ai-image-save-gallery-modal';
-
-const AiImageCreateModal = dynamic(() =>
-  import('./ai-image-create-modal').then((m) => m.AiImageCreateModal),
-);
-const AiImagePreviewModal = dynamic(() =>
-  import('./ai-image-preview-modal').then((m) => m.AiImagePreviewModal),
-);
-const AiImageSaveGalleryModal = dynamic(() =>
-  import('./ai-image-save-gallery-modal').then((m) => m.AiImageSaveGalleryModal),
-);
+import { AiImagePreviewModal, type AiImagePreviewTarget } from './ai-image-preview-modal';
+import {
+  AiImageSaveGalleryModal,
+  type AiImageSaveGalleryResult,
+} from './ai-image-save-gallery-modal';
 
 function defaultDownloadHandler(file: AiImageDownloadFile): boolean {
   return triggerBlobDownload(file);
@@ -107,6 +100,8 @@ export function AiImageScreen({
   const [unitPoints, setUnitPoints] = useState<number>(AI_IMAGE_DEFAULT_UNIT_POINTS);
   const [serverFeatureEnabled, setServerFeatureEnabled] = useState<boolean>(featureEnabled);
   const [providerReady, setProviderReady] = useState<boolean>(true);
+  const [providerReason, setProviderReason] = useState<string | null>(null);
+  const [billingMode, setBillingMode] = useState<'SHADOW' | 'STRICT'>('SHADOW');
   const [loading, setLoading] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [bannerInfo, setBannerInfo] = useState<string | null>(null);
@@ -132,6 +127,8 @@ export function AiImageScreen({
         setUnitPoints(res.unitPoints);
         setServerFeatureEnabled(res.featureEnabled);
         setProviderReady(res.providerReady ?? true);
+        setProviderReason(res.providerReason ?? null);
+        if (res.billingMode) setBillingMode(res.billingMode);
         if (!silent) setPageError(null);
       } catch (err) {
         if (!silent) {
@@ -313,7 +310,10 @@ export function AiImageScreen({
           style={{ marginBottom: 12 }}
           type="warning"
           showIcon
-          message="当前未配置真实 AI 生图服务，暂不可新建生图任务；已有历史记录仍可正常查看。"
+          message={
+            providerReason ??
+            '当前未配置真实 AI 生图服务，暂不可新建生图任务；已有历史记录仍可正常查看。'
+          }
         />
       )}
 
@@ -439,6 +439,7 @@ export function AiImageScreen({
         <AiImageCreateModal
           readOnly={readOnly}
           unitPoints={unitPoints}
+          billingMode={billingMode}
           formOptions={formOptions}
           gateway={api}
           onRefreshOptions={() => void ensureFormOptions()}

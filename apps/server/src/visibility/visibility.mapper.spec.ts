@@ -659,6 +659,30 @@ describe('visibility.mapper', () => {
       expect(multiResult.metrics.completedChecks).toBe(4);
       expect(multiResult.metrics.mentionedChecks).toBe(3);
 
+      const offTopicMulti = computeOverviewMetricsAndGroups(
+        [
+          {
+            ...obsA,
+            brandMentioned: true,
+            brandPosition: 1,
+            brandSentiment: 'POSITIVE',
+            answerText: `${FAKE_MARK}阿卓帕 跑题占位回答`,
+          },
+          {
+            ...obsB1,
+            brandMentioned: true,
+            brandPosition: 1,
+            brandSentiment: 'POSITIVE',
+            answerText: `${FAKE_MARK}安克创新 跑题占位回答`,
+          },
+        ],
+        multiBrandCtx,
+      );
+      expect(offTopicMulti.metrics.mentionedChecks).toBe(0);
+      expect(offTopicMulti.metrics.visibilityPct).toBe(0);
+      expect(offTopicMulti.metrics.avgPosition).toBeNull();
+      expect(offTopicMulti.metrics.sentimentSummary.total).toBe(0);
+
       const arzopaDomain = multiResult.metrics.topDomains.find((d) => d.domain === 'arzopa.com');
       expect(arzopaDomain).toEqual({
         domain: 'arzopa.com',

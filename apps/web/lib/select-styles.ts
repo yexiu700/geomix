@@ -13,6 +13,7 @@ export const NATIVE_SELECT_STYLE: CSSProperties = {
   fontSize: 13,
   color: 'var(--gm-fg-1)',
   outline: 'none',
+  whiteSpace: 'nowrap',
 };
 
 export const COMPACT_SELECT_STYLE: CSSProperties = {
@@ -25,4 +26,5 @@ export const COMPACT_SELECT_STYLE: CSSProperties = {
   color: 'var(--gm-fg-1)',
   outline: 'none',
   maxWidth: '100%',
+  whiteSpace: 'nowrap',
 };

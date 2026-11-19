@@ -259,6 +259,8 @@ export type AiImageJobListResponse = {
   unitPoints: number;
   featureEnabled: boolean;
   providerReady?: boolean;
+  providerReason?: string | null;
+  billingMode?: 'SHADOW' | 'STRICT';
   items: AiImageJobItem[];
 };
 

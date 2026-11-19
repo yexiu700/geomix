@@ -654,7 +654,13 @@ export function computeOverviewMetricsAndGroups(
   const positions: Array<number | null> = [];
   const sentiments: Array<VisibilitySentiment | null> = [];
   for (const obs of observations) {
-    if (!obs.brandMentioned) continue;
+    const profCtx = ctx.profilesById.get(obs.profileId) ?? ctx.fallbackProfileForMetrics;
+    const relevant = isEffectiveBrandMention(obs, {
+      brandName: profCtx.brandName,
+      brandAliases: profCtx.brandAliases,
+      competitorNames: (profCtx.competitors ?? []).map((c) => c.name),
+    });
+    if (!relevant) continue;
     positions.push(obs.brandPosition);
     sentiments.push(
       isVisibilitySentiment(obs.brandSentiment ?? '')

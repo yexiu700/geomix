@@ -61,6 +61,7 @@ function choiceStyle(selected: boolean, extra: CSSProperties): CSSProperties {
 export type AiImageCreateModalProps = {
   readOnly: boolean;
   unitPoints: number;
+  billingMode?: 'SHADOW' | 'STRICT';
   formOptions: AiImageFormOptions | null;
   gateway: Pick<AiImageGateway, 'create' | 'optimizePrompt' | 'listGalleryAssets'>;
   /** 从最小化恢复时刷新表单选项（图库 / 主词 / 知识库） */
@@ -76,6 +77,7 @@ export type AiImageCreateModalProps = {
 export function AiImageCreateModal({
   readOnly,
   unitPoints,
+  billingMode = 'SHADOW',
   formOptions,
   gateway,
   onRefreshOptions,
@@ -258,7 +260,9 @@ export function AiImageCreateModal({
               合计预冻结 {draftQuote.totalPoints} 点数
             </div>
             <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 2 }}>
-              提交后先按标价冻结对应点数，按实际生成成功张数结算；生成失败或存储空间不足时自动退还点数（免费体验期仅记录点数明细，不扣减可用点数）。
+              {billingMode === 'STRICT'
+                ? '提交后先按标价冻结对应点数，按实际生成成功张数结算扣点；生成失败或存储空间不足时自动退还预冻点数。'
+                : '提交后先按标价冻结对应点数，按实际生成成功张数结算；生成失败或存储空间不足时自动退还点数（免费体验期仅记录点数明细，不扣减可用点数）。'}
             </div>
           </div>
           <Tag color="blue" style={{ fontSize: 13, padding: '3px 10px' }}>
