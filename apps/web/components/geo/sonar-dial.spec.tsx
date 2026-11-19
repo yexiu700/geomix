@@ -193,4 +193,26 @@ describe('SonarDial', () => {
     const ring25Y = Number(ring25.getAttribute('y'));
     expect(ring25Y).toBeLessThanOrEqual(centerTopEdge - 8);
   });
+
+  it('hides sonar sweep wedge and coverage polygon when completedChecks > 0 but effective mentions are 0 (#303)', () => {
+    render(
+      <SonarDial
+        byEngine={[
+          {
+            engine: 'tongyi',
+            completedChecks: 22,
+            mentionedChecks: 0,
+            visibilityPct: 0,
+            avgPosition: null,
+          },
+        ]}
+        overallPct={0}
+        onSelectEngine={vi.fn()}
+      />,
+    );
+
+    expect(document.querySelector('.gm-sonar-sweep')).toBeNull();
+    expect(document.querySelector('polygon')).toBeNull();
+    expect(screen.getAllByText('0.0%').length).toBeGreaterThan(0);
+  });
 });

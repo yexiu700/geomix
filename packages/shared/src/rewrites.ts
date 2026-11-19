@@ -693,7 +693,12 @@ export function normalizePastedSource(input: {
     .split(/\n+/)
     .map((l) => l.trim())
     .filter(Boolean);
-  const explicitTitle = input.pastedTitle?.trim() ? cleanExtractedTitle(input.pastedTitle) : '';
+  const explicitTitle = input.pastedTitle?.trim()
+    ? decodeHtmlEntities(input.pastedTitle.replace(/<[^>]+>/g, ' '))
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120)
+    : '';
   const derivedTitle =
     explicitTitle || (lines[0] && lines[0].length <= 60 ? lines[0] : '粘贴原文素材');
   const truncatedResult = truncateSourceText(plain, REWRITE_MAX_SOURCE_CHARS);

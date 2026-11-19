@@ -184,6 +184,7 @@ export class RewritesService {
         { newTitle: { contains: escaped, mode: 'insensitive' } },
         { sourceTitle: { contains: escaped, mode: 'insensitive' } },
         { url: { contains: escaped, mode: 'insensitive' } },
+        { category: { name: { contains: escaped, mode: 'insensitive' } } },
       ];
     }
     return where;

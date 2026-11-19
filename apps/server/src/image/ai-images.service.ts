@@ -48,13 +48,14 @@ import { currentTenantId } from '../tenant/tenant-context';
 import {
   IMAGE_JOB_ENQUEUER,
   buildSignedMediaAssetUrl,
-  isProductionPlaceholderImageBlocked,
+  resolveImageProviderReadiness,
   type ImageJobEnqueuer,
 } from './image-job.runner';
 import {
   buildFallbackVisualPrompt,
   buildImagePromptMessages,
   extractAndValidateOptimizedPrompt,
+  sanitizeDisplayImagePrompt,
   trimPromptToMaxLength,
 } from './prompt-optimizer';
 import type { aiImageCreateSchema, aiImageOptimizePromptSchema } from '@geomix/shared';
@@ -271,7 +272,7 @@ export class AiImagesService {
       return {
         id: row.id,
         orderNo: formatAiImageOrderNo(row.createdAt, row.id),
-        prompt: row.prompt,
+        prompt: sanitizeDisplayImagePrompt(row.prompt),
         style: row.style,
         ratio,
         count: row.count,
@@ -296,7 +297,7 @@ export class AiImagesService {
   async list(query: AiImageJobListQuery): Promise<AiImageJobListResponse> {
     const tenantId = this.requireTenant();
     const where = this.buildWhere(query);
-    const [total, rows, unitPoints] = await Promise.all([
+    const [total, rows, unitPoints, wallet] = await Promise.all([
       this.prisma.scoped.aiImageJob.count({ where }),
       this.prisma.scoped.aiImageJob.findMany({
         where,
@@ -311,16 +312,23 @@ export class AiImagesService {
         },
       }),
       this.resolveUnitPoints(false),
+      typeof this.billing.wallet === 'function'
+        ? this.billing.wallet(tenantId).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     const items = await this.presentJobs(tenantId, rows as JobRow[], unitPoints);
+    const readiness = resolveImageProviderReadiness();
+    const envParsed = parseEnv(process.env);
     return {
       page: query.page,
       pageSize: query.pageSize,
       total,
       unitPoints,
-      featureEnabled: parseEnv(process.env).FEATURE_AI_IMAGE,
-      providerReady: !isProductionPlaceholderImageBlocked(),
+      featureEnabled: envParsed.FEATURE_AI_IMAGE,
+      providerReady: readiness.ready,
+      providerReason: readiness.reason,
+      billingMode: wallet?.billingMode ?? envParsed.BILLING_MODE,
       items,
     };
   }
@@ -583,11 +591,13 @@ export class AiImagesService {
   ): Promise<AiImageJobItem> {
     const tenantId = this.requireTenant();
 
-    if (isProductionPlaceholderImageBlocked()) {
+    const readiness = resolveImageProviderReadiness();
+    if (!readiness.ready) {
       throw new ApiError(
         503,
         API_ERROR.UPSTREAM_UNAVAILABLE,
-        '当前未配置真实 AI 生图服务，暂不可提交生图任务，请联系管理员配置真实生图模型',
+        readiness.reason ??
+          '当前未配置真实 AI 生图服务，暂不可提交生图任务，请联系管理员配置后再试',
       );
     }
 

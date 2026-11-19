@@ -31,6 +31,42 @@ export function isProductionPlaceholderImageBlocked(
   return env.NODE_ENV === 'production' && resolveImageSettings(env).provider === 'fake';
 }
 
+export function resolveImageProviderReadiness(
+  env: Record<string, string | undefined> = process.env,
+): { ready: boolean; reason: string | null } {
+  let settings: ReturnType<typeof resolveImageSettings>;
+  try {
+    settings = resolveImageSettings(env);
+  } catch {
+    return {
+      ready: false,
+      reason: '当前环境尚未配置 AI 生图服务端点，暂不可发起生图任务。请联系管理员配置后再试。',
+    };
+  }
+  if (settings.provider === 'fake') {
+    if (env.NODE_ENV === 'production') {
+      return {
+        ready: false,
+        reason: '当前环境尚未配置真实 AI 生图服务，已禁用演示占位图生成。请联系管理员配置后再试。',
+      };
+    }
+    return { ready: true, reason: null };
+  }
+  if (!settings.baseUrl?.trim()) {
+    return {
+      ready: false,
+      reason: '当前环境尚未配置 AI 生图服务端点，暂不可发起生图任务。请联系管理员配置后再试。',
+    };
+  }
+  if (!env[settings.apiKeyEnv]?.trim()) {
+    return {
+      ready: false,
+      reason: '当前环境尚未配置 AI 生图服务密钥，暂不可发起生图任务。请联系管理员配置后再试。',
+    };
+  }
+  return { ready: true, reason: null };
+}
+
 export const IMAGE_JOB_HANDLER = Symbol('IMAGE_JOB_HANDLER');
 export const IMAGE_JOB_ENQUEUER = Symbol('IMAGE_JOB_ENQUEUER');
 

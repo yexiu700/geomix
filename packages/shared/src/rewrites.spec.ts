@@ -239,9 +239,10 @@ describe('rewrites shared helpers', () => {
     expect(validPaste.success).toBe(true);
 
     const normalized = normalizePastedSource({
-      pastedTitle: '手工补充长文标题',
+      pastedTitle: 'QA测试单篇复刻源标题_1119',
       pastedContent: '<p>正文内容<img src="https://evil.example/orig.png" /></p>'.repeat(25),
     });
+    expect(normalized.title).toBe('QA测试单篇复刻源标题_1119');
     expect(normalized.contentText).not.toContain('evil.example');
 
     const msgs = assembleRewriteMessages({

@@ -50,7 +50,13 @@ export function useOverviewCitations({
   appliedFilter: OverviewFilterState;
   featureEnabled: boolean;
 }) {
-  const [sourceKind, setSourceKindState] = useState<CitationSourceKind | 'ALL'>('ALL');
+  const [sourceKindState, setSourceKindState] = useState<{
+    filter: OverviewFilterState;
+    kind: CitationSourceKind | 'ALL';
+  }>({
+    filter: appliedFilter,
+    kind: 'ALL',
+  });
   const [pageState, setPageState] = useState<{ filter: OverviewFilterState; page: number }>({
     filter: appliedFilter,
     page: 1,
@@ -61,6 +67,7 @@ export function useOverviewCitations({
   const [retryTick, setRetryTick] = useState<number>(0);
   const [data, setData] = useState<VisibilityCitationListResponse>(EMPTY_CITATIONS);
 
+  const sourceKind = sourceKindState.filter === appliedFilter ? sourceKindState.kind : 'ALL';
   const page = pageState.filter === appliedFilter ? pageState.page : 1;
 
   const setPage = useCallback(
@@ -70,10 +77,10 @@ export function useOverviewCitations({
 
   const setSourceKind = useCallback(
     (kind: CitationSourceKind | 'ALL') => {
-      setSourceKindState(kind);
+      setSourceKindState({ filter: appliedFilter, kind });
       setPage(1);
     },
-    [setPage],
+    [appliedFilter, setPage],
   );
 
   const changePagination = useCallback(
@@ -134,7 +141,7 @@ export function useOverviewCitations({
     pageSize,
     breakdown,
     allCitationTotal,
-    tabCount: data.totalCitations ?? allCitationTotal,
+    tabCount: allCitationTotal,
     setSourceKind,
     changePagination,
     retry,

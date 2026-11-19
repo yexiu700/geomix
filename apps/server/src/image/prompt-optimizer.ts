@@ -220,6 +220,17 @@ export function extractAndValidateOptimizedPrompt(raw: string): string | null {
   return bounded.length >= AI_IMAGE_PROMPT_MIN ? bounded : null;
 }
 
+export const LEAKED_PROMPT_FALLBACK_DISPLAY = '（历史异常提示词已隐藏，建议重新扩写后生成）';
+
+export function sanitizeDisplayImagePrompt(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (!trimmed) return trimmed;
+  if (!containsPromptLeakage(trimmed)) return trimmed;
+  const extracted = extractAndValidateOptimizedPrompt(trimmed);
+  if (extracted) return extracted;
+  return LEAKED_PROMPT_FALLBACK_DISPLAY;
+}
+
 export function buildFallbackVisualPrompt(input: {
   prompt: string;
   styleLabel: string;
