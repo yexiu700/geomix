@@ -1,6 +1,8 @@
 # GeoMix CD 部署指南（GHCR + Self-Hosted Runner）
 
-合入 `main` 后，[cd.yml](../.github/workflows/cd.yml) 会先在 GitHub 云端构建 `geomix-web` 与 `geomix-server` 镜像并推送到 `ghcr.io`，随后由服务器上的 **Self-Hosted Runner** 主动拉取镜像并重启服务（**无需开放公网 SSH 22 端口**）。
+合入 `main` 后（包括非草稿 PR 通过 CI 后由 [auto-merge.yml](../.github/workflows/auto-merge.yml) 自动合入），[cd.yml](../.github/workflows/cd.yml) 会先在 GitHub 云端构建 `geomix-web` 与 `geomix-server` 镜像并推送到 `ghcr.io`，随后由服务器上的 **Self-Hosted Runner** 主动拉取镜像并重启服务（**无需开放公网 SSH 22 端口**）。
+
+> 完整的单机预发/生产拓扑、Nginx + HTTPS 证书配置、PostgreSQL/MinIO 备份恢复脚本与 LLM 成本日报口径，请配合查阅 [运维与部署手册](./运维与部署手册.md)。
 
 ---
 
