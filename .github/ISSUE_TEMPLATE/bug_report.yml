@@ -1,0 +1,58 @@
+name: Bug Report
+description: Report a reproducible defect in GeoMix (web, server, worker, db, or infra)
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please do **not** report security vulnerabilities here—use [SECURITY.md](https://github.com/yexiu700/geomix/blob/main/SECURITY.md) instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      options:
+        - Web Console (apps/web)
+        - API Server (apps/server)
+        - Worker / Queue (BullMQ)
+        - Database / Migrations (packages/db)
+        - Shared / Prompts (packages/shared, packages/prompts)
+        - E2E / CI / Deployment
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What Happened?
+      description: Concisely describe the unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Route, payload, or command needed to reproduce the issue.
+      placeholder: |
+        1. Navigate to '/...'
+        2. Click '...'
+        3. Observe error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Output
+      description: Relevant API response, stack trace, or console output (strip any secrets/tokens).
+      render: text
