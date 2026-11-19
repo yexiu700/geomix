@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   buildArticleExportZip,
   readZipStoreEntries,
@@ -708,5 +708,384 @@ describe('ArticleManageScreen (Issue #18)', () => {
     // Verify inner docx itself is a valid OOXML zip archive containing word/document.xml
     const docxInner = readZipStoreEntries(entries[0]!.data);
     expect(docxInner.map((e) => e.path)).toContain('word/document.xml');
+  });
+});
+
+describe('ArticleManageScreen black-box regression lock (#288)', () => {
+  it('filter → URL: applying filters dispatches navigate href with category/task and retitles the tab', async () => {
+    const dispatched: ShellAction[] = [];
+    const gw = makeGateway();
+
+    render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId="tab_filter_to_url"
+        href="/writing/articles"
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText('分类筛选') as HTMLSelectElement).querySelectorAll('option').length,
+      ).toBeGreaterThan(1);
+    });
+
+    fireEvent.change(screen.getByLabelText('分类筛选'), {
+      target: { value: 'cat_laser_000000000001' },
+    });
+    fireEvent.change(screen.getByLabelText('AI 任务筛选'), {
+      target: { value: 'task_run_001' },
+    });
+    fireEvent.change(screen.getByLabelText('标题筛选'), { target: { value: '  选型  ' } });
+    fireEvent.click(findButton('查询'));
+
+    expect(dispatched).toContainEqual({
+      type: 'navigate',
+      id: 'tab_filter_to_url',
+      href: '/writing/articles?categoryId=cat_laser_000000000001&taskId=task_run_001',
+    });
+
+    await waitFor(() => {
+      expect(gw.list).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 1,
+          categoryId: 'cat_laser_000000000001',
+          taskId: 'task_run_001',
+          keyword: '选型',
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3 }).textContent).toBe(
+        '文章列表 · 激光选型指南 · 十篇激光选型计划',
+      );
+    });
+
+    // This instance never remounts, so the pending handoff for the navigated href is never
+    // consumed; 重置筛选 clears it so later tests mounting that href start clean.
+    fireEvent.click(findButton('重置筛选'));
+  });
+
+  it('filter validation: rejects non-integer 发送次数 without dispatching navigate', async () => {
+    const dispatched: ShellAction[] = [];
+    const gw = makeGateway();
+
+    render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId="tab_filter_invalid"
+        href="/writing/articles"
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+    });
+    const listCalls = vi.mocked(gw.list).mock.calls.length;
+
+    fireEvent.change(screen.getByLabelText('发送次数筛选'), { target: { value: '-1' } });
+    fireEvent.click(findButton('查询'));
+
+    expect(screen.getByText('发送次数筛选需填写非负整数')).toBeTruthy();
+    expect(dispatched.filter((a) => a.type === 'navigate')).toEqual([]);
+    expect(vi.mocked(gw.list).mock.calls.length).toBe(listCalls);
+  });
+
+  it('URL → filter: href with categoryId/taskId queries the list with those conditions on first render and retitles', async () => {
+    const dispatched: ShellAction[] = [];
+    const gw = makeGateway();
+    const href = '/writing/articles?categoryId=cat_laser_000000000001&taskId=task_run_001';
+
+    render(
+      <ArticleManageScreen
+        title="文章列表 · 按分类筛选 · 按任务筛选"
+        tabId={href}
+        href={href}
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(gw.list).toHaveBeenCalled();
+    });
+    expect(vi.mocked(gw.list).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        page: 1,
+        pageSize: 10,
+        categoryId: 'cat_laser_000000000001',
+        taskId: 'task_run_001',
+        keyword: '',
+        sort: 'createdAt',
+        order: 'desc',
+      }),
+    );
+    expect((screen.getByLabelText('分类筛选') as HTMLSelectElement).value).toBe(
+      'cat_laser_000000000001',
+    );
+
+    await waitFor(() => {
+      expect(dispatched).toContainEqual({
+        type: 'retitle',
+        id: href,
+        title: '文章列表 · 激光选型指南 · 十篇激光选型计划',
+      });
+    });
+  });
+
+  it('handoff: a new instance opened via the navigated href consumes the filter handoff exactly once', async () => {
+    const dispatched: ShellAction[] = [];
+    const gwA = makeGateway();
+
+    const first = render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId="tab_handoff_src"
+        href="/writing/articles"
+        gateway={gwA}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText('AI 任务筛选') as HTMLSelectElement).querySelectorAll('option')
+          .length,
+      ).toBeGreaterThan(1);
+    });
+
+    fireEvent.change(screen.getByLabelText('AI 任务筛选'), {
+      target: { value: 'task_run_001' },
+    });
+    fireEvent.change(screen.getByLabelText('标题筛选'), { target: { value: '交接关键词' } });
+    fireEvent.change(screen.getByLabelText('状态筛选'), { target: { value: 'PENDING' } });
+    fireEvent.change(screen.getByLabelText('发送次数筛选'), { target: { value: '3' } });
+    fireEvent.click(findButton('查询'));
+
+    const handoffHref = '/writing/articles?taskId=task_run_001';
+    expect(dispatched).toContainEqual({
+      type: 'navigate',
+      id: 'tab_handoff_src',
+      href: handoffHref,
+    });
+    first.unmount();
+
+    // New instance (as ShellFrame would mount for the navigated tab) consumes the handoff.
+    const gwB = makeGateway();
+    const second = render(
+      <ArticleManageScreen title="文章列表" tabId={handoffHref} href={handoffHref} gateway={gwB} />,
+    );
+    await waitFor(() => {
+      expect(gwB.list).toHaveBeenCalled();
+    });
+    expect(vi.mocked(gwB.list).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        taskId: 'task_run_001',
+        keyword: '交接关键词',
+        status: 'PENDING',
+        sendCount: 3,
+      }),
+    );
+    expect((screen.getByLabelText('标题筛选') as HTMLInputElement).value).toBe('交接关键词');
+    second.unmount();
+
+    // A later instance with the same href must not reuse the already consumed handoff.
+    const gwC = makeGateway();
+    render(
+      <ArticleManageScreen title="文章列表" tabId={handoffHref} href={handoffHref} gateway={gwC} />,
+    );
+    await waitFor(() => {
+      expect(gwC.list).toHaveBeenCalled();
+    });
+    const thirdQuery = vi.mocked(gwC.list).mock.calls[0]?.[0];
+    expect(thirdQuery).toEqual(
+      expect.objectContaining({ taskId: 'task_run_001', keyword: '', status: undefined }),
+    );
+    expect(thirdQuery?.sendCount).toBeUndefined();
+    expect((screen.getByLabelText('标题筛选') as HTMLInputElement).value).toBe('');
+  });
+
+  it('handoff: 重置筛选 clears pending handoffs so a later instance starts clean', async () => {
+    const dispatched: ShellAction[] = [];
+    const gw = makeGateway();
+
+    const view = render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId="tab_handoff_reset"
+        href="/writing/articles"
+        gateway={gw}
+        onDispatch={(act) => dispatched.push(act)}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(
+        (screen.getByLabelText('分类筛选') as HTMLSelectElement).querySelectorAll('option').length,
+      ).toBeGreaterThan(1);
+    });
+
+    fireEvent.change(screen.getByLabelText('分类筛选'), {
+      target: { value: 'cat_laser_000000000001' },
+    });
+    fireEvent.change(screen.getByLabelText('标题筛选'), { target: { value: '待清理关键词' } });
+    fireEvent.click(findButton('查询'));
+    const pendingHref = '/writing/articles?categoryId=cat_laser_000000000001';
+    expect(dispatched).toContainEqual({
+      type: 'navigate',
+      id: 'tab_handoff_reset',
+      href: pendingHref,
+    });
+
+    fireEvent.click(findButton('重置筛选'));
+    view.unmount();
+
+    const gwNext = makeGateway();
+    render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId={pendingHref}
+        href={pendingHref}
+        gateway={gwNext}
+      />,
+    );
+    await waitFor(() => {
+      expect(gwNext.list).toHaveBeenCalled();
+    });
+    expect(vi.mocked(gwNext.list).mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ categoryId: 'cat_laser_000000000001', keyword: '' }),
+    );
+  });
+
+  it('bulk actions: 批量设为正常 / 删除 are disabled until rows are selected; delete + zip export use selected ids', async () => {
+    const gw = makeGateway();
+    const downloads: ArticleDownloadFile[] = [];
+
+    render(
+      <ArticleManageScreen
+        title="文章列表"
+        tabId="tab_bulk"
+        href="/writing/articles?categoryId=cat_laser_000000000001"
+        gateway={gw}
+        onDownload={(f) => downloads.push(f)}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('激光切割机日常保养清单')).toBeTruthy();
+    });
+
+    expect(findButton('批量设为正常').disabled).toBe(true);
+    expect(findButton('删除').disabled).toBe(true);
+
+    const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]');
+    fireEvent.click(checkboxes[1]!);
+
+    await waitFor(() => {
+      expect(findButton('批量设为正常').disabled).toBe(false);
+      expect(findButton('删除').disabled).toBe(false);
+    });
+
+    // ZIP export with selection → uses selected ids and drops list filters
+    fireEvent.change(screen.getByLabelText('压缩包格式'), { target: { value: 'html' } });
+    fireEvent.click(findButton('打包导出'));
+    await waitFor(() => {
+      expect(gw.exportZip).toHaveBeenCalledWith({
+        format: 'html',
+        ids: ['art_normal_002'],
+        categoryId: null,
+        taskId: null,
+        status: undefined,
+        keyword: undefined,
+      });
+      expect(downloads.length).toBe(1);
+    });
+    expect(
+      screen.getByText(/已导出 HTML \(\.html\) 压缩包：geomix-articles-html\.zip/),
+    ).toBeTruthy();
+
+    // Bulk delete → confirm modal → bulkDelete with selected ids
+    fireEvent.click(findButton('删除'));
+    const confirm = await screen.findByRole('dialog', { name: '确认删除文章' });
+    expect(confirm.textContent).toContain('确定要删除选中的 1');
+    fireEvent.click(findButton('确认删除'));
+    await waitFor(() => {
+      expect(gw.bulkDelete).toHaveBeenCalledWith(['art_normal_002']);
+      expect(screen.getByText('已删除 1 篇文章')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(findButton('批量设为正常').disabled).toBe(true);
+    });
+  });
+
+  it('bulk actions: readOnly keeps 添加 / 批量设为正常 / 删除 disabled even with selection', async () => {
+    const gw = makeGateway();
+
+    render(<ArticleManageScreen title="文章列表" tabId="tab_ro" readOnly gateway={gw} />);
+    await waitFor(() => {
+      expect(screen.getByText('激光切割机日常保养清单')).toBeTruthy();
+    });
+
+    const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]');
+    fireEvent.click(checkboxes[0]!);
+
+    expect(findButton('添加').disabled).toBe(true);
+    expect(findButton('批量设为正常').disabled).toBe(true);
+    expect(findButton('删除').disabled).toBe(true);
+    expect(gw.bulkStatus).not.toHaveBeenCalled();
+  });
+
+  it('copy plain text: the 已复制 timer is safe after unmount (no React act / state warnings)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText },
+      });
+      const gw = makeGateway();
+
+      const view = render(<ArticleManageScreen title="文章列表" tabId="tab_copy" gateway={gw} />);
+      await waitFor(() => {
+        expect(screen.getByText('光纤激光切割机选型全攻略')).toBeTruthy();
+      });
+
+      fireEvent.click(findButton('编辑'));
+      await screen.findByRole('dialog', { name: '编辑文章' });
+
+      fireEvent.click(findButton('复制纯文本'));
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledTimes(1);
+        expect(findButton('复制纯文本').textContent).toContain('已复制纯文本');
+      });
+
+      errorSpy.mockClear();
+      view.unmount();
+      await act(async () => {
+        vi.advanceTimersByTime(2_500);
+      });
+
+      const reactWarnings = errorSpy.mock.calls.filter((args) =>
+        args.some(
+          (arg) =>
+            typeof arg === 'string' &&
+            (arg.includes('act(') || arg.includes('unmounted component')),
+        ),
+      );
+      expect(reactWarnings).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
