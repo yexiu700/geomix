@@ -40,7 +40,7 @@ describe('Gallery asset usedCount lifecycle & orphan deletion (#94)', () => {
     };
 
     const mockPrisma = {
-      base: {
+      scoped: {
         article: {
           findMany: vi.fn().mockResolvedValue([
             {
@@ -55,6 +55,8 @@ describe('Gallery asset usedCount lifecycle & orphan deletion (#94)', () => {
             },
           ]),
         },
+      },
+      base: {
         $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<number>) => fn(mockTx)),
       },
     } as unknown as PrismaService;
@@ -85,14 +87,14 @@ describe('Gallery asset usedCount lifecycle & orphan deletion (#94)', () => {
             },
           ]),
         },
-      },
-      base: {
         article: {
           count: vi.fn(async () => liveArticleCount),
         },
         aiImageJob: {
           count: vi.fn().mockResolvedValue(0),
         },
+      },
+      base: {
         $transaction: vi.fn(
           async (
             fn: (tx: {
