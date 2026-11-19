@@ -41,6 +41,7 @@ import {
   buildEngineBreakdown,
   computeOverviewMetricsAndGroups,
   higherPrioritySourceKind,
+  isEffectiveBrandMention,
   parseProfileCompetitors,
   parseStoredCompetitorHits,
   shanghaiWindowFromQuery,
@@ -278,9 +279,10 @@ export class VisibilityAnalyticsService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    if (query.profileId) {
-      await this.profileService.resolveProfileContext(tenantId, query.profileId);
-    }
+    const overviewCtx = await this.profileService.loadOverviewProfileContexts(
+      tenantId,
+      query.profileId,
+    );
 
     const window = shanghaiWindowFromQuery({
       days: query.days,
@@ -302,8 +304,10 @@ export class VisibilityAnalyticsService {
       orderBy: [{ checkedAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
+        profileId: true,
         questionId: true,
         promptText: true,
+        answerText: true,
         engine: true,
         brandMentioned: true,
         competitorHits: true,
@@ -340,8 +344,15 @@ export class VisibilityAnalyticsService {
       const cleanedPrompt = obs.promptText.replace(/\s+/g, ' ').trim();
       const engineKey = isVisibilityEngine(obs.engine) ? obs.engine : null;
       const obsTimeMs = (obs.checkedAt ?? obs.createdAt).getTime();
+      const profCtx =
+        overviewCtx.profilesById.get(obs.profileId) ?? overviewCtx.fallbackProfileForMetrics;
+      const effectiveBrandMentioned = isEffectiveBrandMention(obs, {
+        brandName: profCtx.brandName,
+        brandAliases: profCtx.brandAliases,
+        competitorNames: (profCtx.competitors ?? []).map((c) => c.name),
+      });
 
-      if (!obs.brandMentioned && cleanedPrompt) {
+      if (!effectiveBrandMentioned && cleanedPrompt) {
         const hits = parseStoredCompetitorHits(obs.competitorHits);
         const mentionedComps = hits.filter((h) => h.mentioned).map((h) => h.name);
         if (mentionedComps.length > 0) {
@@ -395,7 +406,7 @@ export class VisibilityAnalyticsService {
           fanOutMap.set(qKey, bucket);
         }
         bucket.frequency += 1;
-        if (obs.brandMentioned) {
+        if (effectiveBrandMentioned) {
           bucket.mentionedCount += 1;
         }
         if (cleanedPrompt && bucket.sourcePrompts.size < 3) {

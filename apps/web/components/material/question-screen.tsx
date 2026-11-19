@@ -35,6 +35,17 @@ type EditDraft = {
   text: string;
 };
 
+const COMPLETE_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function isCompleteDateInput(val: string): boolean {
+  const match = COMPLETE_DATE_RE.exec(val);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return year >= 1900 && year <= 9999 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
 function readInitialKeywordId(href?: string): string | undefined {
   if (!href) return undefined;
   const qIndex = href.indexOf('?');
@@ -82,6 +93,8 @@ export function QuestionScreen({
     sort: 'createdAt',
     order: 'desc',
   }));
+  const [dateFromInput, setDateFromInput] = useState('');
+  const [dateToInput, setDateToInput] = useState('');
   const [rows, setRows] = useState<QuestionRecord[]>([]);
   const [keywords, setKeywords] = useState<KeywordRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -287,6 +300,34 @@ export function QuestionScreen({
 
   useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
+  const hasActiveFilters = Boolean(
+    query.keyword ||
+    query.keywordId ||
+    query.included !== undefined ||
+    query.createdAtFrom ||
+    query.createdAtTo ||
+    dateFromInput ||
+    dateToInput,
+  );
+
+  function resetFilters(): void {
+    setSelectedIds([]);
+    setDateFromInput('');
+    setDateToInput('');
+    setQuery((curr) => ({
+      ...curr,
+      page: 1,
+      keyword: '',
+      keywordId: undefined,
+      included: undefined,
+      createdAtFrom: undefined,
+      createdAtTo: undefined,
+    }));
+    if (href && href.includes('?')) {
+      onDispatch?.({ type: 'navigate', id: tabId, href: '/material/questions' });
+    }
+  }
+
   return (
     <section>
       <Typography.Title level={3} style={{ marginTop: 0 }}>
@@ -365,14 +406,29 @@ export function QuestionScreen({
             type="date"
             aria-label="开始日期"
             style={{ width: 138 }}
-            value={query.createdAtFrom ? formatShanghaiDate(query.createdAtFrom, '') : ''}
+            value={dateFromInput}
             onChange={(e) => {
               const val = e.target.value;
-              setQuery((curr) => ({
-                ...curr,
-                page: 1,
-                createdAtFrom: val ? `${val}T00:00:00+08:00` : undefined,
-              }));
+              setDateFromInput(val);
+              if (!val) {
+                setQuery((curr) =>
+                  curr.createdAtFrom === undefined
+                    ? curr
+                    : { ...curr, page: 1, createdAtFrom: undefined },
+                );
+              } else if (isCompleteDateInput(val)) {
+                const next = `${val}T00:00:00+08:00`;
+                setQuery((curr) =>
+                  curr.createdAtFrom === next ? curr : { ...curr, page: 1, createdAtFrom: next },
+                );
+              }
+            }}
+            onBlur={() => {
+              if (dateFromInput && !isCompleteDateInput(dateFromInput)) {
+                setDateFromInput(
+                  query.createdAtFrom ? formatShanghaiDate(query.createdAtFrom, '') : '',
+                );
+              }
             }}
           />
           <span>至</span>
@@ -380,17 +436,35 @@ export function QuestionScreen({
             type="date"
             aria-label="结束日期"
             style={{ width: 138 }}
-            value={query.createdAtTo ? formatShanghaiDate(query.createdAtTo, '') : ''}
+            value={dateToInput}
             onChange={(e) => {
               const val = e.target.value;
-              setQuery((curr) => ({
-                ...curr,
-                page: 1,
-                createdAtTo: val ? `${val}T23:59:59.999+08:00` : undefined,
-              }));
+              setDateToInput(val);
+              if (!val) {
+                setQuery((curr) =>
+                  curr.createdAtTo === undefined
+                    ? curr
+                    : { ...curr, page: 1, createdAtTo: undefined },
+                );
+              } else if (isCompleteDateInput(val)) {
+                const next = `${val}T23:59:59.999+08:00`;
+                setQuery((curr) =>
+                  curr.createdAtTo === next ? curr : { ...curr, page: 1, createdAtTo: next },
+                );
+              }
+            }}
+            onBlur={() => {
+              if (dateToInput && !isCompleteDateInput(dateToInput)) {
+                setDateToInput(query.createdAtTo ? formatShanghaiDate(query.createdAtTo, '') : '');
+              }
             }}
           />
         </div>
+        {hasActiveFilters ? (
+          <Button aria-label="重置筛选" onClick={resetFilters}>
+            重置筛选
+          </Button>
+        ) : null}
       </Space>
 
       <CrudTable
@@ -425,6 +499,7 @@ export function QuestionScreen({
             order: search.order,
           }));
         }}
+        onClear={resetFilters}
         onPageChange={(page, pageSize) => {
           setSelectedIds([]);
           setQuery((curr) => ({ ...curr, page, pageSize }));
