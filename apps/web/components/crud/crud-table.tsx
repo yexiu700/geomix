@@ -53,6 +53,7 @@ export function CrudTable<T extends { id: string }>({
   scroll,
   onSearchOpenChange,
   onSearch,
+  onClear,
   onPageChange,
   onSelectionChange,
   onExport,
@@ -86,6 +87,7 @@ export function CrudTable<T extends { id: string }>({
   scroll?: { x?: number | string | true; y?: number | string };
   onSearchOpenChange: (open: boolean) => void;
   onSearch: (search: CrudSearch) => void;
+  onClear?: () => void;
   onPageChange: (page: number, pageSize: CrudPageSize) => void;
   onSelectionChange: (ids: string[]) => void;
   onExport: (format: 'csv' | 'xlsx') => void | Promise<void>;
@@ -298,7 +300,11 @@ export function CrudTable<T extends { id: string }>({
             onClick={() => {
               const cleared = { ...search, keyword: '', enabled: undefined };
               setDraft(cleared);
-              onSearch(cleared);
+              if (onClear) {
+                onClear();
+              } else {
+                onSearch(cleared);
+              }
             }}
           >
             清空

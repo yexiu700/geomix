@@ -399,4 +399,61 @@ describe('QuestionScreen', () => {
     });
     expect(document.querySelector('.ant-select-dropdown')?.textContent).not.toContain('不选择');
   });
+
+  it('ignores incomplete year typing in date inputs and clears date filters via 清空 and 重置筛选 (#278)', async () => {
+    const gateway = createGatewayMock();
+    render(
+      <QuestionScreen
+        title="写作标题"
+        tabId="/material/questions"
+        href="/material/questions"
+        gateway={gateway}
+        onDispatch={vi.fn()}
+      />,
+    );
+
+    await screen.findByText('工业机器人哪家服务好？');
+    const initialCalls = gateway.queries.length;
+
+    const startInput = screen.getByLabelText('开始日期') as HTMLInputElement;
+    const endInput = screen.getByLabelText('结束日期') as HTMLInputElement;
+
+    // Simulate typing year digits 2 -> 0 -> 2 before completing 2026
+    fireEvent.change(endInput, { target: { value: '0002-11-19' } });
+    fireEvent.change(endInput, { target: { value: '0020-11-19' } });
+    fireEvent.change(endInput, { target: { value: '0202-11-19' } });
+
+    // Input preserves intermediate typing without triggering premature 0002 queries
+    expect(endInput.value).toBe('0202-11-19');
+    expect(gateway.queries.length).toBe(initialCalls);
+
+    // Completing 4-digit year triggers query with UTC+8 boundary
+    fireEvent.change(endInput, { target: { value: '2026-11-19' } });
+    await waitFor(() => {
+      const last = gateway.queries.at(-1);
+      expect(last?.createdAtTo).toBe('2026-11-19T23:59:59.999+08:00');
+    });
+    expect(endInput.value).toBe('2026-11-19');
+
+    // Open search bar and click 清空 -> clears createdAtTo and input value
+    await clickBtn('搜索');
+    await clickBtn('清空');
+    await waitFor(() => {
+      const last = gateway.queries.at(-1);
+      expect(last?.createdAtFrom).toBeUndefined();
+      expect(last?.createdAtTo).toBeUndefined();
+    });
+    expect(endInput.value).toBe('');
+
+    // Set start date and click 重置筛选 -> clears createdAtFrom and input value
+    fireEvent.change(startInput, { target: { value: '2026-11-18' } });
+    await waitFor(() => {
+      expect(gateway.queries.at(-1)?.createdAtFrom).toBe('2026-11-18T00:00:00+08:00');
+    });
+    await clickBtn('重置筛选');
+    await waitFor(() => {
+      expect(gateway.queries.at(-1)?.createdAtFrom).toBeUndefined();
+    });
+    expect(startInput.value).toBe('');
+  });
 });

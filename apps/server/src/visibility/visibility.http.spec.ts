@@ -2845,4 +2845,133 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     expect(allOffDetailRes.status).toBe(200);
     expect(allOffDetailRes.data.visibilityPct).toBe(0);
   });
+
+  it('excludes off-topic demoted observations from fanOutQueries brandMentionedPct in /opportunities (#279)', async () => {
+    const tenantId = 'tenant_offtopic_fanout_279';
+    const token = store.seedTenant({
+      tenantId,
+      userId: 'user_offtopic_fanout_279',
+      username: 'offtopic_fanout_user',
+      points: 100,
+      billingMode: 'SHADOW',
+    });
+
+    const profRes = await httpJson<VisibilityProfileRecord>(
+      base,
+      'POST',
+      '/api/v1/visibility/profiles',
+      {
+        token,
+        body: {
+          name: '安克创新（Anker）全品类监测档案',
+          brandName: 'Anker',
+          brandAliases: ['安克创新', '安克'],
+          ownedDomains: ['anker.com'],
+          competitors: [{ name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] }],
+        },
+      },
+    );
+    expect(profRes.status).toBe(200);
+    const profId = profRes.data.id;
+
+    const runId = store.nextId('vrun');
+    const now = new Date();
+    store.runs.set(runId, {
+      id: runId,
+      tenantId,
+      profileId: profId,
+      keywordId: null,
+      name: 'Anker 跑题降权一致性回归',
+      engines: ['deepseek', 'doubao'],
+      questionIds: [],
+      totalChecks: 2,
+      doneCount: 2,
+      failCount: 0,
+      unitPrice: 2,
+      reservationId: null,
+      status: 'COMPLETED',
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+      finishedAt: now,
+    });
+
+    // Two off-topic boilerplate answers with persisted brandMentioned=true and fanOutQueries
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_279_off_1',
+      tenantId,
+      runId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Anker氮化镓充电器支持MacBook和iPhone快充吗',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText:
+        '在评估「Anker氮化镓充电器支持MacBook和iPhone快充吗」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'Anker 提供多维度看板与行业基准对比',
+      competitorHits: [{ name: '绿联', mentioned: true, position: 2, sentiment: 'neutral' }],
+      fanOutQueries: ['DeepSeek 品牌提及率优化实操方法', '氮化镓充电器快充协议对比'],
+      judgeModel: 'fake-cheap',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    store.observations.set(store.nextId('vobs'), {
+      id: 'vobs_279_off_2',
+      tenantId,
+      runId,
+      profileId: profId,
+      questionId: null,
+      promptText: 'Anker氮化镓充电器发热严重吗',
+      engine: 'doubao',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText:
+        '在评估「Anker氮化镓充电器发热严重吗」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: 'Anker 提供多维度看板',
+      competitorHits: [],
+      fanOutQueries: ['豆包 品牌提及率优化实操方法', '氮化镓充电器快充协议对比'],
+      judgeModel: 'fake-cheap',
+      tokensIn: 10,
+      tokensOut: 20,
+      error: null,
+      checkedAt: now,
+      createdAt: now,
+    });
+
+    const overviewRes = await httpJson<VisibilityOverviewResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/overview?profileId=${profId}&days=14`,
+      { token },
+    );
+    expect(overviewRes.status).toBe(200);
+    expect(overviewRes.data.metrics.completedChecks).toBe(2);
+    expect(overviewRes.data.metrics.mentionedChecks).toBe(0);
+    expect(overviewRes.data.metrics.visibilityPct).toBe(0);
+
+    const oppRes = await httpJson<VisibilityOpportunitiesResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/opportunities?profileId=${profId}&days=14`,
+      { token },
+    );
+    expect(oppRes.status).toBe(200);
+    expect(oppRes.data.fanOutQueries.length).toBeGreaterThanOrEqual(2);
+    for (const item of oppRes.data.fanOutQueries) {
+      expect(item.brandMentionedPct).toBe(0);
+    }
+    expect(oppRes.data.gaps).toHaveLength(1);
+    expect(oppRes.data.gaps[0]?.competitors).toEqual(['绿联']);
+  });
 });
