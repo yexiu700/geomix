@@ -189,7 +189,11 @@ export function PricingAdmin({
           <Button
             type="primary"
             loading={savingBatch}
-            disabled={!hasUnsaved || savingAction !== null}
+            disabled={
+              !hasUnsaved ||
+              dirtyRows.some((r) => parseDraftPoints(r) === null) ||
+              savingAction !== null
+            }
             onClick={() => void handleBatchSave()}
           >
             {hasUnsaved ? `批量保存 (${dirtyRows.length})` : '批量保存'}
@@ -243,25 +247,37 @@ export function PricingAdmin({
               const meta = getPricingActionMeta(row.action);
               const label = row.label ?? meta.label;
               const unit = row.unit ?? meta.unit;
+              const invalid = parseDraftPoints(row) === null;
               return (
-                <Input
-                  aria-label={`${label} 点数`}
-                  style={{ width: 150 }}
-                  suffix={unit}
-                  value={drafts[row.action]?.unitPoints ?? ''}
-                  onChange={(event) => {
-                    setError(null);
-                    setNotice(null);
-                    const value = event.target.value;
-                    setDrafts((current) => ({
-                      ...current,
-                      [row.action]: {
-                        unitPoints: value,
-                        enabled: current[row.action]?.enabled ?? row.enabled,
-                      },
-                    }));
-                  }}
-                />
+                <div>
+                  <Input
+                    aria-label={`${label} 点数`}
+                    style={{ width: 150 }}
+                    status={invalid ? 'error' : undefined}
+                    suffix={unit}
+                    value={drafts[row.action]?.unitPoints ?? ''}
+                    onChange={(event) => {
+                      setError(null);
+                      setNotice(null);
+                      const value = event.target.value;
+                      setDrafts((current) => ({
+                        ...current,
+                        [row.action]: {
+                          unitPoints: value,
+                          enabled: current[row.action]?.enabled ?? row.enabled,
+                        },
+                      }));
+                    }}
+                  />
+                  {invalid ? (
+                    <Typography.Text
+                      type="danger"
+                      style={{ display: 'block', fontSize: 12, marginTop: 2 }}
+                    >
+                      价格不正确（请填写 1~1000000 的正整数）
+                    </Typography.Text>
+                  ) : null}
+                </div>
               );
             },
           },
@@ -295,11 +311,12 @@ export function PricingAdmin({
             render: (_value, row) => {
               const meta = getPricingActionMeta(row.action);
               const label = row.label ?? meta.label;
+              const invalid = parseDraftPoints(row) === null;
               return (
                 <Button
                   aria-label={`保存 ${label}`}
                   loading={savingAction === row.action}
-                  disabled={!isRowDirty(row) || savingBatch}
+                  disabled={!isRowDirty(row) || invalid || savingBatch}
                   onClick={() => void handleSingleSave(row)}
                 >
                   保存
@@ -623,7 +640,8 @@ type TemplateFormValues = {
 export function TemplateAdmin({
   client,
 }: {
-  client: Pick<AdminClient, 'listTemplates' | 'createTemplate' | 'updateTemplate'>;
+  client: Pick<AdminClient, 'listTemplates' | 'createTemplate' | 'updateTemplate'> &
+    Partial<Pick<AdminClient, 'deleteTemplate'>>;
 }) {
   const [createForm] = Form.useForm<TemplateFormValues>();
   const [editForm] = Form.useForm<TemplateFormValues>();
@@ -631,6 +649,8 @@ export function TemplateAdmin({
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<TemplateRow | null>(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [deletingTarget, setDeletingTarget] = useState<TemplateRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -776,25 +796,64 @@ export function TemplateAdmin({
           {
             title: '操作',
             render: (_value, row) => (
-              <Button
-                aria-label={`编辑模板 ${row.name}`}
-                onClick={() => {
-                  setModalError(null);
-                  setEditing(row);
-                  editForm.setFieldsValue({
-                    kind: row.kind,
-                    name: row.name,
-                    content: row.content,
-                    randomPool: row.randomPool,
-                  });
-                }}
-              >
-                编辑
-              </Button>
+              <Space size={8}>
+                <Button
+                  aria-label={`编辑模板 ${row.name}`}
+                  onClick={() => {
+                    setModalError(null);
+                    setEditing(row);
+                    editForm.setFieldsValue({
+                      kind: row.kind,
+                      name: row.name,
+                      content: row.content,
+                      randomPool: row.randomPool,
+                    });
+                  }}
+                >
+                  编辑
+                </Button>
+                {client.deleteTemplate ? (
+                  <Button
+                    danger
+                    aria-label={`删除模板 ${row.name}`}
+                    onClick={() => setDeletingTarget(row)}
+                  >
+                    删除
+                  </Button>
+                ) : null}
+              </Space>
             ),
           },
         ]}
       />
+      <Modal
+        open={deletingTarget !== null}
+        title="确认删除系统模板"
+        okText="确认删除"
+        okButtonProps={{ danger: true, loading: deleting }}
+        cancelText="取消"
+        onCancel={() => {
+          if (!deleting) setDeletingTarget(null);
+        }}
+        onOk={async () => {
+          if (!deletingTarget || !client.deleteTemplate) return;
+          setDeleting(true);
+          setError(null);
+          setNotice(null);
+          try {
+            await client.deleteTemplate(deletingTarget.id);
+            setRows((prev) => prev.filter((item) => item.id !== deletingTarget.id));
+            setNotice(`已删除系统模板「${deletingTarget.name}」`);
+            setDeletingTarget(null);
+          } catch (reason: unknown) {
+            setError(messageOf(reason));
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      >
+        <p>确定要删除系统模板「{deletingTarget?.name}」吗？删除后将无法恢复。</p>
+      </Modal>
       <CrudModal
         open={editing !== null}
         title="编辑模板"

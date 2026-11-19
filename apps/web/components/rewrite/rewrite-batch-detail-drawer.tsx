@@ -143,7 +143,6 @@ export function RewriteBatchDetailDrawer({
         title: '操作',
         key: 'go',
         width: 90,
-        fixed: 'right',
         render: (_v, rec) =>
           rec.articleId ? (
             <Button

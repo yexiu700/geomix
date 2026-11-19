@@ -179,6 +179,13 @@ export class AdminOfficeController {
     );
   }
 
+  @Delete('templates/:id')
+  async deleteTemplate(@Req() request: unknown, @Param('id') id: string) {
+    return ok(
+      await this.office.deleteTemplate(requireActor(request), readId(id), optionalKey(request)),
+    );
+  }
+
   @Get('llm-costs')
   async llmCosts(@Req() request: unknown, @Query() query: Record<string, unknown>) {
     return ok(await this.office.llmCostReport(requireActor(request), query));

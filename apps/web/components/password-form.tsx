@@ -26,6 +26,11 @@ export function PasswordForm({
       form={form}
       layout="vertical"
       scrollToFirstError
+      onFinishFailed={({ errorFields }) => {
+        const firstMsg = errorFields[0]?.errors?.[0];
+        setNotice('');
+        setError(firstMsg || '请完整填写密码信息');
+      }}
       onFinish={(values) => {
         setBusy(true);
         setError('');
