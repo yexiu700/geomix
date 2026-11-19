@@ -78,6 +78,7 @@ function makeTaskRow(overrides: Partial<AiTaskRecord> = {}): AiTaskRecord {
 
 function makeFormOptions(): AiTaskFormOptions {
   return {
+    generationMode: { bodySimulated: false, titleSimulated: false },
     categories: [
       {
         id: 'cat_laser_000000000001',
@@ -307,7 +308,10 @@ describe('AiTaskScreen', () => {
       cancel: vi.fn(),
       bulkDelete: vi.fn(),
       download: vi.fn(),
-      loadFormOptions: vi.fn(async () => makeFormOptions()),
+      loadFormOptions: vi.fn(async () => ({
+        ...makeFormOptions(),
+        generationMode: { bodySimulated: true, titleSimulated: true },
+      })),
     };
 
     render(
@@ -330,6 +334,8 @@ describe('AiTaskScreen', () => {
     expect(nameInput.placeholder).not.toContain('春季激光选型科普计划');
 
     // 1. Check default button label (10 点/篇), target=1, unselected keyword/gallery (#74), and default pre-freeze summary (预计预冻 10 点数)
+    expect(screen.getByText('演示模式')).toBeTruthy();
+    expect(screen.getByText('本次任务会生成示例正文，供预览写作流程。')).toBeTruthy();
     expect(findButton('开始写作（10 点/篇）')).toBeTruthy();
     expect((screen.getByLabelText('AI 创作数量') as HTMLInputElement).value).toBe('1');
     const kwSelect = screen.getByLabelText('主关键词') as HTMLSelectElement;
@@ -407,6 +413,29 @@ describe('AiTaskScreen', () => {
       resultStatus: 'PENDING',
       target: 8,
     });
+  });
+
+  it('shows the demo notice for a simulated title only after choosing a title prompt', async () => {
+    const gateway: AiTaskGateway = {
+      list: vi.fn(async () => ({ page: 1, pageSize: 10, total: 0, items: [] })),
+      detail: vi.fn(),
+      create: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
+      cancel: vi.fn(),
+      bulkDelete: vi.fn(),
+      download: vi.fn(),
+      loadFormOptions: vi.fn(async () => ({
+        ...makeFormOptions(),
+        generationMode: { bodySimulated: false, titleSimulated: true },
+      })),
+    };
+    render(<AiTaskScreen title="AI写作任务" tabId="tab_tasks" gateway={gateway} />);
+    fireEvent.click(findButton('添加'));
+    const titleSelect = await screen.findByLabelText('标题创作指令');
+    expect(screen.queryByText('演示模式')).toBeNull();
+    fireEvent.change(titleSelect, { target: { value: 'usr_ttl_1' } });
+    expect(screen.getByText('选用标题创作指令后，本次任务会生成示例标题。')).toBeTruthy();
   });
 
   it('allows pure-text submit with imageCount=0 and no gallery (#148), minimizes on 去新建图库, and refreshes dropdowns on restore', async () => {

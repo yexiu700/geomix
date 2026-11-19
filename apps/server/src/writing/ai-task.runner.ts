@@ -703,11 +703,7 @@ export class AiTaskRunner implements AiTaskHandler {
       lastModel = completion.model;
 
       let rawMarkdown = completion.text;
-      if (
-        completion.fake &&
-        rawMarkdown.startsWith(FAKE_MARK) &&
-        Array.from(rawMarkdown).length < input.minChars
-      ) {
+      if (completion.fake && rawMarkdown.startsWith(FAKE_MARK)) {
         rawMarkdown = buildFakeArticleMarkdown({
           question: input.question,
           mainKeyword: input.mainKeyword,

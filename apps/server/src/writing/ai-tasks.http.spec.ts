@@ -8,6 +8,8 @@ import {
   AUTH_ERROR,
   type AiTaskDetailRecord,
   type AiTaskListResponse,
+  type ArticleDetailRecord,
+  type ArticleManageListResponse,
 } from '@geomix/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BillingService } from '../billing/billing.service';
@@ -36,6 +38,9 @@ describe('ai-tasks routes without a database', () => {
     const listRes = await httpCall(base, 'GET', '/api/v1/ai-tasks');
     expect(listRes.status).toBe(401);
     expect(listRes.code).toBe(AUTH_ERROR.UNAUTHORIZED);
+
+    const modeRes = await httpCall(base, 'GET', '/api/v1/ai-tasks/generation-mode');
+    expect(modeRes.status).toBe(401);
 
     const detailRes = await httpCall(base, 'GET', '/api/v1/ai-tasks/task_123');
     expect(detailRes.status).toBe(401);
@@ -218,6 +223,12 @@ describe.skipIf(
       });
       const seeded = await seedMaterials(tenant.tenantId, tenant.userId);
 
+      const modeRes = await httpCall(ctx.base, 'GET', '/api/v1/ai-tasks/generation-mode', {
+        token: tenant.token,
+      });
+      expect(modeRes.status).toBe(200);
+      expect(modeRes.data).toEqual({ bodySimulated: true, titleSimulated: true });
+
       // 1. Precondition checks: empty questions, empty gallery, INDEXING KB, insufficient STRICT points
       const noQRes = await httpCall(ctx.base, 'POST', '/api/v1/ai-tasks', {
         token: tenant.token,
@@ -381,6 +392,73 @@ describe.skipIf(
       expect(csvRes.status).toBe(200);
       const csvText = await csvRes.text();
       expect(csvText).toContain('十篇激光选型任务');
+    }, 60_000);
+
+    it('exposes the complete generated title and clean demo article in the list and editor APIs (#156, #249)', async () => {
+      const { tenantId, token, userId } = await ctx.createTenantUser({ prefix: 'airetest' });
+      const { kb } = await seedMaterials(tenantId, userId);
+      const brand = '星帆科技';
+      const companyName = `星帆技术（${brand}）`;
+      const productService = '提供桌面充电器与多设备供电配件。';
+      await ctx.prisma.base.knowledgeBase.update({
+        where: { id: kb.id },
+        data: { companyName, brandShort: brand, fields: { productService } },
+      });
+      const main = `${brand}氮化镓桌面充电器`;
+      const question = `${main}支持MacBook和iPhone快充吗？`;
+      const title = `${main}支持MacBook和iPhone快充实用选型指南`;
+      const keyword = await ctx.prisma.base.keyword.create({
+        data: {
+          tenantId,
+          main,
+          brands: [brand],
+          questions: { create: { tenantId, text: question } },
+        },
+      });
+      const prompt = await ctx.prisma.base.promptTemplate.create({
+        data: { tenantId, kind: 'TITLE', name: '选型标题', content: '围绕{问题}拟一个完整标题。' },
+      });
+
+      const created = await httpCall<AiTaskDetailRecord>(ctx.base, 'POST', '/api/v1/ai-tasks', {
+        token,
+        body: {
+          name: '桌面充电器选型',
+          keywordId: keyword.id,
+          kbId: kb.id,
+          titleTplId: prompt.id,
+          imageCount: 0,
+          target: 1,
+        },
+      });
+      expect(created.status).toBe(200);
+      const completed = await waitForTaskStatus(token, created.data.id, ['COMPLETED']);
+      expect(Array.from(title).length).toBeGreaterThan(35);
+      const [item] = completed.items;
+      expect(item?.title).toBe(title);
+      expect(item?.articleId).toBeTruthy();
+
+      const list = await httpCall<ArticleManageListResponse>(
+        ctx.base,
+        'GET',
+        `/api/v1/articles?taskId=${completed.id}`,
+        { token },
+      );
+      expect(list.status).toBe(200);
+      expect(list.data.items).toEqual([expect.objectContaining({ id: item?.articleId, title })]);
+      const detail = await httpCall<ArticleDetailRecord>(
+        ctx.base,
+        'GET',
+        `/api/v1/articles/${item?.articleId}`,
+        { token },
+      );
+      expect(detail.status).toBe(200);
+      expect(detail.data.title).toBe(title);
+      expect(detail.data.contentText).toContain(companyName);
+      expect(detail.data.contentText).toContain(productService);
+      expect(detail.data.contentText).not.toContain(`（${brand}）（${brand}）`);
+      expect(detail.data.contentText).not.toMatch(
+        /【FAKE】|开发占位|只能使用以下事实|企业主体：|示例方案[甲乙]/,
+      );
     }, 60_000);
 
     it('handles single-item failure into PARTIAL refund, 3-consecutive-failures auto-PAUSE + resume, and mid-task CANCEL cleanly', async () => {

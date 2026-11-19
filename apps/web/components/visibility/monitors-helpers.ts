@@ -24,7 +24,7 @@ import {
   type VisibilityRunRecord,
 } from '@geomix/shared';
 import type { CSSProperties, RefObject } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PriceItem } from '../../lib/samples';
 import type { SessionStorageLike } from '../../lib/session';
 import { sanitizeEntityTitleSegment, triggerBlobDownload } from '../../lib/ux-foundation';
@@ -194,12 +194,7 @@ export function useDefaultProfileId(
   defaultProfileId: string;
   effectiveDefaultProfileId: string;
   persistDefaultProfile: (id: string) => void;
-  syncDefaultAfterProfileSave: (params: {
-    mode: 'create' | 'edit';
-    savedId: string;
-    isDefault: boolean;
-    previousProfiles: VisibilityProfileRecord[];
-  }) => void;
+  syncDefaultAfterProfileSave: (savedId: string, isDefault: boolean) => void;
   clearDefaultIfRemoved: (removedId: string) => void;
 } {
   const storageRef = useRef(storage);
@@ -213,12 +208,9 @@ export function useDefaultProfileId(
     }
   });
 
-  const effectiveDefaultProfileId = useMemo(() => {
-    if (defaultProfileId && profiles.some((p) => p.id === defaultProfileId)) {
-      return defaultProfileId;
-    }
-    return profiles[0]?.id ?? '';
-  }, [defaultProfileId, profiles]);
+  const effectiveDefaultProfileId = profiles.some((profile) => profile.id === defaultProfileId)
+    ? defaultProfileId
+    : '';
 
   const persistDefaultProfile = useCallback((id: string) => {
     setDefaultProfileId(id);
@@ -233,37 +225,9 @@ export function useDefaultProfileId(
   }, []);
 
   const syncDefaultAfterProfileSave = useCallback(
-    ({
-      mode,
-      savedId,
-      isDefault,
-      previousProfiles,
-    }: {
-      mode: 'create' | 'edit';
-      savedId: string;
-      isDefault: boolean;
-      previousProfiles: VisibilityProfileRecord[];
-    }) => {
-      const previousDefaultId =
-        defaultProfileId && previousProfiles.some((p) => p.id === defaultProfileId)
-          ? defaultProfileId
-          : (previousProfiles[0]?.id ?? '');
-
-      if (mode === 'edit') {
-        if (isDefault) {
-          persistDefaultProfile(savedId);
-        } else if (defaultProfileId === savedId && previousProfiles.length > 1) {
-          const fallback = previousProfiles.find((item) => item.id !== savedId);
-          if (fallback) persistDefaultProfile(fallback.id);
-        }
-        return;
-      }
-
-      if (isDefault || previousProfiles.length === 0) {
-        persistDefaultProfile(savedId);
-      } else if (previousDefaultId && previousDefaultId !== defaultProfileId) {
-        // Lock the existing fallback default profile in storage so prepending the new profile never steals default status (#192)
-        persistDefaultProfile(previousDefaultId);
+    (savedId: string, isDefault: boolean) => {
+      if (isDefault || defaultProfileId === savedId) {
+        persistDefaultProfile(isDefault ? savedId : '');
       }
     },
     [defaultProfileId, persistDefaultProfile],

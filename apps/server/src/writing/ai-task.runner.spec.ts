@@ -245,6 +245,7 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
   const prevCover = process.env.COVER_WHEN_NO_IMAGE;
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     if (prevTimeout === undefined) delete process.env.AI_TASK_LLM_TIMEOUT_MS;
     else process.env.AI_TASK_LLM_TIMEOUT_MS = prevTimeout;
     if (prevCover === undefined) delete process.env.COVER_WHEN_NO_IMAGE;
@@ -496,52 +497,57 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
     expect(art.contentHtml).not.toContain('氮化镓（<br>');
   });
 
-  it('prevents duplicated company shortName and fact-card prompt leakage in DETAIL mode via AiTaskRunner (#156)', async () => {
-    process.env.COVER_WHEN_NO_IMAGE = 'false';
-    const { state, prisma, billing, quota, kbIndexer } = buildInMemoryHarness();
-    state.task.keyword = {
-      id: 'kw_arzopa',
-      main: '便携屏',
-      brands: ['ARZOPA'],
-    };
-    state.task.kbId = 'kb_detail_156';
-    state.task.kb = {
-      id: 'kb_detail_156',
-      mode: 'DETAIL',
-      companyName: '阿卓帕科技（ARZOPA）',
-      brandShort: 'ARZOPA',
-      directions: ['产品说明', '选购建议'],
-      copyTypes: ['指南', '说明文'],
-      fields: {
-        productService: '主打 15.6 英寸便携显示器与双屏扩展办公方案。',
-        productFeature: '支持全功能 Type-C 一线直连，兼顾低蓝光护眼与轻薄机身设计。',
-      },
-      summaryText: null,
-    };
+  it.each(['50', '500'])(
+    'writes structured demo content without leaking provider placeholders or fact-card prompts (minimum %s, #156)',
+    async (minChars) => {
+      vi.stubEnv('AI_TASK_MIN_CHARS', minChars);
+      process.env.COVER_WHEN_NO_IMAGE = 'false';
+      const { state, prisma, billing, quota, kbIndexer } = buildInMemoryHarness();
+      state.task.keyword = {
+        id: 'kw_arzopa',
+        main: '便携屏',
+        brands: ['ARZOPA'],
+      };
+      state.task.kbId = 'kb_detail_156';
+      state.task.kb = {
+        id: 'kb_detail_156',
+        mode: 'DETAIL',
+        companyName: '阿卓帕科技（ARZOPA）',
+        brandShort: 'ARZOPA',
+        directions: ['产品说明', '选购建议'],
+        copyTypes: ['指南', '说明文'],
+        fields: {
+          productService: '主打 15.6 英寸便携显示器与双屏扩展办公方案。',
+          productFeature: '支持全功能 Type-C 一线直连，兼顾低蓝光护眼与轻薄机身设计。',
+        },
+        summaryText: null,
+      };
 
-    const runner = new AiTaskRunner(
-      prisma,
-      billing,
-      quota,
-      LlmService.fromEnv({}),
-      new ComplianceService(),
-      kbIndexer,
-    );
-    await runner.process({ tenantId: 'tenant_79', taskId: 'task_79' });
+      const runner = new AiTaskRunner(
+        prisma,
+        billing,
+        quota,
+        LlmService.fromEnv({}),
+        new ComplianceService(),
+        kbIndexer,
+      );
+      await runner.process({ tenantId: 'tenant_79', taskId: 'task_79' });
 
-    expect(state.task.status).toBe('COMPLETED');
-    expect(state.articles).toHaveLength(1);
-    const art = state.articles[0]!;
-    expect(art.contentText).toContain('阿卓帕科技（ARZOPA）');
-    expect(art.contentText).toContain('15.6 英寸便携显示器');
-    expect(art.contentText).not.toContain('（ARZOPA）（ARZOPA）');
-    expect(art.contentText).not.toContain('只能使用以下事实');
-    expect(art.contentText).not.toContain('企业主体：');
-    expect(art.contentText).not.toContain('【FAKE】');
-    expect(art.contentText).not.toContain('开发占位正文');
-    expect(art.contentText).not.toContain('示例方案甲');
-    expect(art.contentText).not.toContain('示例方案乙');
-  });
+      expect(state.task.status).toBe('COMPLETED');
+      expect(state.articles).toHaveLength(1);
+      const art = state.articles[0]!;
+      expect(art.contentText).toContain('阿卓帕科技（ARZOPA）');
+      expect(art.contentText).toContain('15.6 英寸便携显示器');
+      expect(art.contentText).not.toContain('（ARZOPA）（ARZOPA）');
+      expect(art.contentText).not.toContain('只能使用以下事实');
+      expect(art.contentText).not.toContain('企业主体：');
+      expect(art.contentText).not.toContain('【FAKE】');
+      expect(art.contentText).not.toContain('开发占位正文');
+      expect(art.contentText).not.toContain('开发占位输出');
+      expect(art.contentText).not.toContain('示例方案甲');
+      expect(art.contentText).not.toContain('示例方案乙');
+    },
+  );
 
   it('completes pure-text task with imageCount=0 and mediaCategoryId=null without querying MediaAsset (#148)', async () => {
     process.env.COVER_WHEN_NO_IMAGE = 'true';

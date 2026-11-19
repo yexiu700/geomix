@@ -231,6 +231,11 @@ export function AiTaskCreateModal({
   const userArticlePrompts = formOptions?.articlePrompts.user ?? [];
   const userTitlePrompts = formOptions?.titlePrompts.user ?? [];
   const systemTitlePrompts = formOptions?.titlePrompts.system ?? [];
+  const demoNotice = formOptions?.generationMode.bodySimulated
+    ? '本次任务会生成示例正文，供预览写作流程。'
+    : formOptions?.generationMode.titleSimulated && editor?.draft.titleTplId
+      ? '选用标题创作指令后，本次任务会生成示例标题。'
+      : null;
 
   return (
     <CrudModal
@@ -270,6 +275,9 @@ export function AiTaskCreateModal({
     >
       {editor ? (
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {demoNotice ? (
+            <Alert type="info" showIcon message="演示模式" description={demoNotice} />
+          ) : null}
           <div style={FORM_GRID_STYLE}>
             {/* 1. 任务名称 */}
             <div>
