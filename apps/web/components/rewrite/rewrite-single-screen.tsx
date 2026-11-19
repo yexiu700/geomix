@@ -4,137 +4,41 @@ import {
   ARTICLE_STATUS_LABEL,
   CRUD_EMPTY_TEXT,
   CRUD_PAGE_SIZES,
-  ITEM_STATUS_LABELS,
   REWRITE_DEFAULT_UNIT_POINTS,
-  REWRITE_IMAGE_DEFAULT,
-  REWRITE_IMAGE_MAX,
-  REWRITE_IMAGE_MIN,
-  REWRITE_MIN_SOURCE_CHARS,
-  REWRITE_RESULT_STATUS_LABELS,
-  countSourceNonWhitespaceChars,
   type ArticleStatusName,
   type CrudExportFormat,
   type ItemStatusName,
   type RewriteRecordItem,
   type RewriteRecordListQuery,
-  type RewriteResultStatusName,
+  type RewriteSingleCreateResponse,
 } from '@geomix/shared';
-import { Alert, Button, Input, Slider, Space, Switch, Table, Tag, Typography } from 'antd';
-import type { CSSProperties } from 'react';
+import { Alert, Button, Input, Table, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CrudModal } from '../crud/crud-modal';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
-import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
 import {
   httpRewriteSingleGateway,
   type RewriteFormOptions,
   type RewriteSingleGateway,
 } from '../../lib/rewrites';
+import { COMPACT_SELECT_STYLE } from '../../lib/select-styles';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
-import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
+import { UX_TERMS, triggerBlobDownload } from '../../lib/ux-foundation';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
+import { useTaskPolling } from '../../lib/use-task-polling';
+import { buildRewriteSingleColumns } from './rewrite-single-columns';
+import { RewriteSingleCreateModal } from './rewrite-single-create-modal';
+import {
+  buildInitialDraft,
+  buildRetrySeed,
+  formatCreatedBanner,
+  getArticlesHref,
+  type CreateDraft,
+} from './rewrite-single-helpers';
 
-const NO_IMAGE_GALLERY_VALUE = '__NONE__';
-
-const NATIVE_SELECT_STYLE: CSSProperties = {
-  width: '100%',
-  height: 32,
-  padding: '0 10px',
-  borderRadius: 6,
-  border: '1px solid var(--gm-line-2)',
-  backgroundColor: 'var(--gm-bg-elevated)',
-  fontSize: 14,
-  color: 'var(--gm-fg-1)',
-  outline: 'none',
-};
-
-const COMPACT_SELECT_STYLE: CSSProperties = {
-  height: 32,
-  padding: '0 10px',
-  borderRadius: 6,
-  border: '1px solid var(--gm-line-2)',
-  backgroundColor: 'var(--gm-bg-elevated)',
-  fontSize: 13,
-  color: 'var(--gm-fg-1)',
-  outline: 'none',
-};
-
-type CreateDraft = {
-  pastedText: boolean;
-  url: string;
-  pastedTitle: string;
-  pastedContent: string;
-  mediaCategoryId: string;
-  imageCount: number;
-  templateId: string;
-  categoryId: string;
-  autoCategoryName: string;
-  resultStatus: RewriteResultStatusName;
-  brand: string;
-};
-
-type ModalState = {
-  initial: CreateDraft;
-  draft: CreateDraft;
-  minimized: boolean;
-  maximized: boolean;
-};
-
-function buildInitialDraft(
-  options: RewriteFormOptions | null,
-  seed?: Partial<CreateDraft>,
-): CreateDraft {
-  const hasUsableGallery = (options?.mediaCategories ?? []).some((c) => c.assetCount > 0);
-  return {
-    pastedText: seed?.pastedText ?? false,
-    url: seed?.url ?? '',
-    pastedTitle: seed?.pastedTitle ?? '',
-    pastedContent: seed?.pastedContent ?? '',
-    mediaCategoryId: seed?.mediaCategoryId ?? '',
-    imageCount: seed?.imageCount ?? (hasUsableGallery ? REWRITE_IMAGE_DEFAULT : 0),
-    templateId: seed?.templateId ?? '',
-    categoryId: seed?.categoryId ?? '',
-    autoCategoryName: seed?.autoCategoryName ?? '爆文复刻',
-    resultStatus: seed?.resultStatus ?? 'PENDING',
-    brand: seed?.brand ?? '',
-  };
-}
-
-function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return formatShanghaiDateTime(iso);
-}
-
-function itemStatusTagColor(status: ItemStatusName): string {
-  switch (status) {
-    case 'SUCCESS':
-      return 'success';
-    case 'RUNNING':
-      return 'processing';
-    case 'FAILED':
-      return 'error';
-    case 'SKIPPED':
-      return 'default';
-    case 'PENDING':
-    default:
-      return 'blue';
-  }
-}
-
-function articleStatusTagColor(status: ArticleStatusName): string {
-  switch (status) {
-    case 'NORMAL':
-      return 'green';
-    case 'PENDING':
-      return 'gold';
-    case 'DISABLED':
-    default:
-      return 'default';
-  }
-}
+type CreateSession = { id: number; initial: CreateDraft };
 
 export function RewriteSingleScreen({
   title,
@@ -184,10 +88,7 @@ export function RewriteSingleScreen({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [formOptions, setFormOptions] = useState<RewriteFormOptions | null>(null);
-  const [modalState, setModalState] = useState<ModalState | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [modalError, setModalError] = useState<string | null>(null);
-  const [urlWarning, setUrlWarning] = useState<string | null>(null);
+  const [createSession, setCreateSession] = useState<CreateSession | null>(null);
 
   const loadList = useCallback(
     async (nextQuery: RewriteRecordListQuery) => {
@@ -245,127 +146,31 @@ export function RewriteSingleScreen({
     },
   });
 
-  // Poll every 5s if any single record is RUNNING/PENDING
-  useEffect(() => {
-    const hasActive = items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING');
-    if (!hasActive) return undefined;
-    const timer = setInterval(() => {
-      void loadList(query);
-    }, 5_000);
-    return () => clearInterval(timer);
-  }, [items, loadList, query]);
+  // 存在 RUNNING/PENDING 记录时每 5s 轮询；后台标签页暂停，上一轮未返回时跳过重叠周期
+  useTaskPolling({
+    enabled: items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING'),
+    active,
+    onPoll: () => loadList(query),
+  });
 
   const openCreateModal = useCallback(
     async (seed?: Partial<CreateDraft>) => {
       const opts = (await loadOptions()) ?? formOptions;
       const initial = buildInitialDraft(opts, seed);
-      setModalError(null);
-      setUrlWarning(null);
-      setModalState({
-        initial,
-        draft: initial,
-        minimized: false,
-        maximized: false,
-      });
+      setCreateSession((prev) => ({ id: (prev?.id ?? 0) + 1, initial }));
     },
     [formOptions, loadOptions],
   );
 
-  const handleCheckUrlOnBlur = useCallback(
-    async (rawUrl: string) => {
-      const trimmed = rawUrl.trim();
-      if (!trimmed || !/^https?:\/\//i.test(trimmed)) {
-        setUrlWarning(null);
-        return;
-      }
-      try {
-        const res = await gateway.checkUrl(trimmed);
-        setUrlWarning(res.duplicateRecent ? res.warning : null);
-      } catch {
-        setUrlWarning(null);
-      }
-    },
-    [gateway],
-  );
-
-  const updateDraft = useCallback((patch: Partial<CreateDraft>) => {
-    setModalState((prev) => (prev ? { ...prev, draft: { ...prev.draft, ...patch } } : null));
-  }, []);
-
-  const handleSubmitRewrite = useCallback(async () => {
-    if (!modalState) return;
-    const d = modalState.draft;
-    setModalError(null);
-
-    if (!d.pastedText) {
-      if (!d.url.trim()) {
-        setModalError('请输入公开文章链接（http/https）');
-        return;
-      }
-      if (!/^https?:\/\//i.test(d.url.trim())) {
-        setModalError('仅支持 http:// 或 https:// 开头的公开文章链接');
-        return;
-      }
-    } else {
-      const chars = countSourceNonWhitespaceChars(d.pastedContent);
-      if (chars < REWRITE_MIN_SOURCE_CHARS) {
-        setModalError(
-          `粘贴原文有效正文不足 ${REWRITE_MIN_SOURCE_CHARS} 字（当前 ${chars} 字），请补充完整正文`,
-        );
-        return;
-      }
-    }
-
-    if (d.imageCount > 0 && !d.mediaCategoryId) {
-      setModalError(`请选择文章配图的${UX_TERMS.gallery}分类`);
-      return;
-    }
-    if (!d.templateId) {
-      setModalError('请选择爆文改写指令');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const result = await gateway.createSingle({
-        pastedText: d.pastedText,
-        url: d.url.trim(),
-        pastedTitle: d.pastedTitle.trim(),
-        pastedContent: d.pastedContent,
-        mediaCategoryId: d.imageCount > 0 ? d.mediaCategoryId || null : null,
-        imageCount: d.imageCount,
-        templateId: d.templateId,
-        categoryId: d.categoryId || null,
-        autoCategoryName: d.categoryId ? '' : d.autoCategoryName.trim(),
-        resultStatus: d.resultStatus,
-        brand: d.brand.trim(),
-      });
-
-      setModalState(null);
-      setBanner({
-        type: result.duplicateRecentWarning || result.record.highSimilarity ? 'warning' : 'success',
-        text: [
-          `复刻完成：《${result.record.newTitle ?? '未命名'}》已生成至分类「${result.record.categoryName ?? '默认分类'}」（消耗 ${result.settledPoints} 点数，不占用 AI 写作数量配额）。`,
-          result.record.highSimilarity
-            ? '注意：5-gram 片段相似度偏高，已标记黄牌提醒，建议在文章列表中人工审校后再发布。'
-            : '',
-          result.duplicateRecentWarning ?? '',
-        ]
-          .filter(Boolean)
-          .join(' '),
-      });
-
+  const handleCreated = useCallback(
+    async (result: RewriteSingleCreateResponse) => {
+      setCreateSession(null);
+      setBanner(formatCreatedBanner(result));
       invalidateFreshness('articles', 'categories', 'points');
       await Promise.all([loadList({ ...query, page: 1 }), loadOptions()]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '复刻失败，请稍后重试';
-      setModalError(msg);
-      // Reload list in background because failed attempt may also be recorded with 0 charge
-      void loadList(query);
-    } finally {
-      setSubmitting(false);
-    }
-  }, [gateway, loadList, loadOptions, modalState, query]);
+    },
+    [loadList, loadOptions, query],
+  );
 
   const handleBulkStatus = useCallback(
     async (status: 'NORMAL' | 'DISABLED') => {
@@ -433,8 +238,7 @@ export function RewriteSingleScreen({
   const navigateTo = useCallback(
     (href: string) => {
       if (!onDispatch) return;
-      setModalState(null);
-      setModalError(null);
+      setCreateSession(null);
       onDispatch({
         type: 'open',
         href,
@@ -446,22 +250,9 @@ export function RewriteSingleScreen({
 
   const openArticlesForCategory = useCallback(
     (categoryId: string | null) => {
-      const href = categoryId
-        ? `/writing/articles?categoryId=${encodeURIComponent(categoryId)}`
-        : '/writing/articles';
-      navigateTo(href);
+      navigateTo(getArticlesHref(categoryId));
     },
     [navigateTo],
-  );
-
-  const pastedCharCount = useMemo(
-    () => (modalState ? countSourceNonWhitespaceChars(modalState.draft.pastedContent) : 0),
-    [modalState],
-  );
-
-  const mediaCategoriesWithImages = useMemo(
-    () => (formOptions?.mediaCategories ?? []).filter((c) => c.assetCount > 0),
-    [formOptions],
   );
 
   return (
@@ -652,616 +443,32 @@ export function RewriteSingleScreen({
           onChange: (nextPage, nextSize) =>
             setQuery((prev) => ({ ...prev, page: nextPage, pageSize: nextSize })),
         }}
-        columns={[
-          {
-            title: '序号',
-            key: 'seq',
-            width: 60,
-            render: (_val: unknown, _row: RewriteRecordItem, idx: number) =>
-              (query.page - 1) * query.pageSize + idx + 1,
-          },
-          {
-            title: '文章分类',
-            dataIndex: 'categoryName',
-            width: 145,
-            ellipsis: { showTitle: false },
-            render: (_val: unknown, row) =>
-              row.categoryName ? (
-                <Button
-                  type="link"
-                  size="small"
-                  title={row.categoryName}
-                  style={{
-                    padding: 0,
-                    maxWidth: 125,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    display: 'inline-block',
-                  }}
-                  onClick={() => openArticlesForCategory(row.categoryId)}
-                >
-                  {row.categoryName}
-                </Button>
-              ) : (
-                <Typography.Text type="secondary">未归类</Typography.Text>
-              ),
-          },
-          {
-            title: '源链接 / 来源',
-            dataIndex: 'url',
-            width: 215,
-            minWidth: 190,
-            ellipsis: { showTitle: false },
-            render: (_val: unknown, row) => (
-              <div style={{ display: 'grid', gap: 2, minWidth: 175, whiteSpace: 'normal' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <Tag
-                    color={row.pastedText ? 'purple' : 'geekblue'}
-                    style={{ margin: 0, whiteSpace: 'nowrap' }}
-                  >
-                    {row.pastedText ? '粘贴原文' : '链接抓取'}
-                  </Tag>
-                  {row.url.startsWith('paste://') ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      手工粘贴正文
-                    </Typography.Text>
-                  ) : (
-                    <Typography.Link
-                      href={row.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      ellipsis
-                      style={{ maxWidth: 130, fontSize: 12 }}
-                    >
-                      {row.url}
-                    </Typography.Link>
-                  )}
-                </div>
-                {row.sourceTitle ? (
-                  <TableClampText
-                    text={`源标题：${row.sourceTitle}`}
-                    lines={1}
-                    tooltipThreshold={20}
-                    style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
-                  />
-                ) : null}
-              </div>
-            ),
-          },
-          {
-            title: '复刻新标题',
-            dataIndex: 'newTitle',
-            minWidth: 240,
-            width: 260,
-            ellipsis: { showTitle: false },
-            render: (_val: unknown, row) => (
-              <div style={{ display: 'grid', gap: 4, minWidth: 220, whiteSpace: 'normal' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <TableClampText text={row.newTitle} lines={2} strong tooltipThreshold={20} />
-                  {row.highSimilarity ? (
-                    <Tag color="warning" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-                      重合度偏高{' '}
-                      {row.similarity !== null ? `${(row.similarity * 100).toFixed(0)}%` : ''}
-                    </Tag>
-                  ) : null}
-                </div>
-                {row.error ? (
-                  <TableClampText
-                    text={`原因：${row.error}`}
-                    lines={2}
-                    tooltipThreshold={32}
-                    style={{ fontSize: 12, color: 'var(--gm-danger)' }}
-                  />
-                ) : null}
-              </div>
-            ),
-          },
-          {
-            title: '状态',
-            dataIndex: 'status',
-            width: 145,
-            render: (_val: unknown, row) => (
-              <Space size={4} wrap>
-                <Tag
-                  color={itemStatusTagColor(row.status)}
-                  style={{ margin: 0, whiteSpace: 'nowrap' }}
-                >
-                  {ITEM_STATUS_LABELS[row.status] ?? row.status}
-                </Tag>
-                {row.articleStatus ? (
-                  <Tag
-                    color={articleStatusTagColor(row.articleStatus)}
-                    style={{ margin: 0, whiteSpace: 'nowrap' }}
-                  >
-                    文章·{ARTICLE_STATUS_LABEL[row.articleStatus]}
-                  </Tag>
-                ) : null}
-              </Space>
-            ),
-          },
-          {
-            title: '改写时间',
-            dataIndex: 'rewrittenAt',
-            width: 135,
-            render: (_val: unknown, row) => formatTime(row.rewrittenAt ?? row.createdAt),
-          },
-          {
-            title: '操作',
-            key: 'actions',
-            width: 145,
-            fixed: 'right',
-            render: (_val: unknown, row) => (
-              <Space size={8} wrap>
-                {row.articleId ? (
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0 }}
-                    onClick={() => openArticlesForCategory(row.categoryId)}
-                  >
-                    查看文章
-                  </Button>
-                ) : null}
-                {!readOnly && row.status === 'FAILED' ? (
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ padding: 0 }}
-                    onClick={() =>
-                      void openCreateModal({
-                        pastedText: true,
-                        url: row.url.startsWith('paste://') ? '' : row.url,
-                        pastedTitle: row.sourceTitle ?? '',
-                        mediaCategoryId: row.mediaCategoryId ?? '',
-                        ...(row.mediaCategoryId ? {} : { imageCount: 0 }),
-                        templateId: row.templateId,
-                        categoryId: row.categoryId ?? '',
-                      })
-                    }
-                  >
-                    粘贴原文重试
-                  </Button>
-                ) : null}
-                {!readOnly ? (
-                  <Button
-                    type="link"
-                    size="small"
-                    danger
-                    style={{ padding: 0 }}
-                    onClick={() => handleDeleteIds([row.id])}
-                  >
-                    删除
-                  </Button>
-                ) : null}
-              </Space>
-            ),
-          },
-        ]}
+        columns={buildRewriteSingleColumns({
+          page: query.page,
+          pageSize: query.pageSize,
+          readOnly,
+          onOpenArticles: openArticlesForCategory,
+          onRetryWithPaste: (row) => void openCreateModal(buildRetrySeed(row)),
+          onDelete: (id) => handleDeleteIds([id]),
+        })}
       />
 
       {/* Create Single Rewrite Modal */}
-      <CrudModal
-        open={Boolean(modalState)}
-        title="单篇爆文复刻"
-        minimized={modalState?.minimized ?? false}
-        maximized={modalState?.maximized ?? false}
-        confirmLoading={submitting}
-        error={modalError}
-        onMinimize={() => setModalState((prev) => (prev ? { ...prev, minimized: true } : null))}
-        onRestore={() => {
-          setModalState((prev) => (prev ? { ...prev, minimized: false } : null));
-          void loadOptions();
-        }}
-        onMaximize={() =>
-          setModalState((prev) => (prev ? { ...prev, maximized: !prev.maximized } : null))
-        }
-        onClose={() => {
-          if (!submitting) setModalState(null);
-        }}
-        onReset={() => setModalState((prev) => (prev ? { ...prev, draft: prev.initial } : null))}
-        ok={
-          <Button
-            type="primary"
-            loading={submitting}
-            aria-label={`复刻文章（${unitPoints}点数/篇）`}
-            onClick={() => void handleSubmitRewrite()}
-          >
-            {`复刻文章（${unitPoints}点数/篇）`}
-          </Button>
-        }
-      >
-        {modalState ? (
-          <div style={{ display: 'grid', gap: 14 }}>
-            {/* Source URL vs Pasted Text Switch */}
-            <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 6,
-                }}
-              >
-                <span style={{ fontWeight: 500 }}>
-                  {modalState.draft.pastedText ? '粘贴源文内容（兜底模式） *' : '公开文章链接 *'}
-                </span>
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 13,
-                  }}
-                >
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    粘贴原文（源站反爬时开启）
-                  </Typography.Text>
-                  <Switch
-                    size="small"
-                    aria-label="粘贴原文开关"
-                    checked={modalState.draft.pastedText}
-                    onChange={(checked) => {
-                      const hadError = Boolean(modalError);
-                      setModalError(null);
-                      updateDraft(
-                        checked && hadError
-                          ? { pastedText: checked, url: '' }
-                          : { pastedText: checked },
-                      );
-                    }}
-                  />
-                </span>
-              </div>
-
-              {!modalState.draft.pastedText ? (
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <Input
-                    aria-label="文章链接"
-                    placeholder="请输入微信公众号、知乎专栏或公开资讯文章链接（https://...）"
-                    value={modalState.draft.url}
-                    onChange={(e) => updateDraft({ url: e.target.value })}
-                    onBlur={(e) => void handleCheckUrlOnBlur(e.target.value)}
-                  />
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    仅支持公开可访问的网页长文（有效正文不少于 {REWRITE_MIN_SOURCE_CHARS}{' '}
-                    字）；内网/私有地址自动拦截。
-                  </Typography.Text>
-                  {urlWarning ? <Alert type="warning" showIcon message={urlWarning} /> : null}
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <Input
-                      aria-label="粘贴源文标题"
-                      placeholder="源文章标题（选填，留空自动提取首行）"
-                      value={modalState.draft.pastedTitle}
-                      onChange={(e) => updateDraft({ pastedTitle: e.target.value })}
-                    />
-                    <Input
-                      aria-label="参考源链接"
-                      placeholder="参考源链接 https://...（选填，便于溯源查重）"
-                      value={modalState.draft.url}
-                      onChange={(e) => updateDraft({ url: e.target.value })}
-                    />
-                  </div>
-                  <Input.TextArea
-                    aria-label="粘贴原文正文"
-                    rows={5}
-                    placeholder={`请粘贴需要参考重写的完整源文正文（至少 ${REWRITE_MIN_SOURCE_CHARS} 字，系统将自动剥离残留标签与外链配图）`}
-                    value={modalState.draft.pastedContent}
-                    onChange={(e) => updateDraft({ pastedContent: e.target.value })}
-                  />
-                  <Typography.Text
-                    type={pastedCharCount >= REWRITE_MIN_SOURCE_CHARS ? 'secondary' : 'danger'}
-                    style={{ fontSize: 12 }}
-                  >
-                    当前有效字数：{pastedCharCount} 字（最低要求 {REWRITE_MIN_SOURCE_CHARS} 字，超过
-                    8000 字自动截断保留核心前段）
-                  </Typography.Text>
-                </div>
-              )}
-
-              {modalError && !modalState.draft.pastedText ? (
-                <div style={{ marginTop: 6 }}>
-                  <Button
-                    size="small"
-                    type="dashed"
-                    onClick={() => {
-                      setModalError(null);
-                      updateDraft({ pastedText: true });
-                    }}
-                  >
-                    切换为「粘贴原文」手工补充正文
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-
-            {/* Gallery Category + 0..3 Image Slider */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>
-                    文章配图（{UX_TERMS.gallery}）
-                    {modalState.draft.imageCount > 0 ? (
-                      <span style={{ color: 'var(--gm-danger)' }}> *</span>
-                    ) : null}
-                  </span>
-                  {onDispatch ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      htmlType="button"
-                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateTo('/material/gallery');
-                      }}
-                    >
-                      管理图库
-                    </Button>
-                  ) : null}
-                </div>
-                {mediaCategoriesWithImages.length > 0 ? (
-                  <select
-                    aria-label="文章配图图库"
-                    style={NATIVE_SELECT_STYLE}
-                    value={
-                      modalState.draft.imageCount === 0 && !modalState.draft.mediaCategoryId
-                        ? NO_IMAGE_GALLERY_VALUE
-                        : modalState.draft.mediaCategoryId
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === NO_IMAGE_GALLERY_VALUE) {
-                        updateDraft({ mediaCategoryId: '', imageCount: 0 });
-                        return;
-                      }
-                      updateDraft({
-                        mediaCategoryId: val,
-                        imageCount:
-                          val && modalState.draft.imageCount === 0
-                            ? REWRITE_IMAGE_DEFAULT
-                            : modalState.draft.imageCount,
-                      });
-                    }}
-                  >
-                    <option value="">不选择</option>
-                    <option value={NO_IMAGE_GALLERY_VALUE}>不配图（0 张，不使用来源站原图）</option>
-                    {mediaCategoriesWithImages.map((mc) => (
-                      <option key={mc.id} value={mc.id}>
-                        {mc.name}（{mc.assetCount} 张可用）
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message={
-                      <span>
-                        当前暂无含图片的{UX_TERMS.gallery}分类，可直接以「不配图（0 张）」提交，或
-                        {onDispatch ? (
-                          <Button
-                            type="link"
-                            size="small"
-                            htmlType="button"
-                            style={{ padding: '0 4px', height: 'auto' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigateTo('/material/gallery');
-                            }}
-                          >
-                            前往上传配图
-                          </Button>
-                        ) : null}
-                      </span>
-                    }
-                  />
-                )}
-              </div>
-
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    fontWeight: 500,
-                    marginBottom: 4,
-                  }}
-                >
-                  <span>正文中混排配图张数</span>
-                  <Typography.Text strong>{modalState.draft.imageCount} 张</Typography.Text>
-                </div>
-                <Slider
-                  min={REWRITE_IMAGE_MIN}
-                  max={REWRITE_IMAGE_MAX}
-                  step={1}
-                  marks={{ 0: '0张', 1: '1张', 2: '2张', 3: '3张' }}
-                  value={modalState.draft.imageCount}
-                  onChange={(val) =>
-                    updateDraft({
-                      imageCount: val,
-                      ...(val === 0 ? { mediaCategoryId: '' } : undefined),
-                    })
-                  }
-                />
-              </div>
-            </div>
-
-            {/* Prompt Template (REWRITE only) + Optional Brand */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>
-                    爆文改写指令（仅流量复刻类型）{' '}
-                    <span style={{ color: 'var(--gm-danger)' }}>*</span>
-                  </span>
-                  {onDispatch ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      htmlType="button"
-                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateTo('/writing/prompts');
-                      }}
-                    >
-                      管理指令
-                    </Button>
-                  ) : null}
-                </div>
-                <select
-                  aria-label="爆文改写指令"
-                  style={NATIVE_SELECT_STYLE}
-                  value={modalState.draft.templateId}
-                  onChange={(e) => updateDraft({ templateId: e.target.value })}
-                >
-                  <option value="">不选择</option>
-                  {(formOptions?.rewriteTemplates ?? []).map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>
-                      {tpl.isSystem ? `[系统] ${tpl.name}` : tpl.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>自然融入品牌词（选填）</div>
-                <Input
-                  aria-label="融入品牌词"
-                  placeholder="选填：重组时自然提及，不替换原文推荐品牌"
-                  maxLength={40}
-                  value={modalState.draft.brand}
-                  onChange={(e) => updateDraft({ brand: e.target.value })}
-                />
-              </div>
-            </div>
-
-            {/* Category Selection / Editable Timestamped Auto Category + Result Status */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14 }}>
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 8,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>归属文章分类</span>
-                  {onDispatch ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      htmlType="button"
-                      style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateTo('/writing/categories');
-                      }}
-                    >
-                      管理分类
-                    </Button>
-                  ) : null}
-                </div>
-                <select
-                  aria-label="归属文章分类"
-                  style={NATIVE_SELECT_STYLE}
-                  value={modalState.draft.categoryId}
-                  onChange={(e) => updateDraft({ categoryId: e.target.value })}
-                >
-                  <option value="">自动新建带时间戳分类（可改名）</option>
-                  {(formOptions?.categories ?? []).map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-                {!modalState.draft.categoryId ? (
-                  <div style={{ marginTop: 6 }}>
-                    <Input
-                      aria-label="新建分类名称"
-                      placeholder="自动新建的分类名称（可自由修改）"
-                      maxLength={40}
-                      value={modalState.draft.autoCategoryName}
-                      onChange={(e) => updateDraft({ autoCategoryName: e.target.value })}
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              <div>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>
-                  {UX_TERMS.postGenerateArticleStatus}
-                </div>
-                <div
-                  role="radiogroup"
-                  aria-label={UX_TERMS.postGenerateArticleStatus}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 16,
-                    minHeight: 32,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  {(['PENDING', 'NORMAL'] as const).map((statusKey) => (
-                    <label
-                      key={statusKey}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        cursor: 'pointer',
-                        fontWeight: 400,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      <input
-                        type="radio"
-                        name="rewriteResultStatus"
-                        value={statusKey}
-                        checked={modalState.draft.resultStatus === statusKey}
-                        onChange={() => updateDraft({ resultStatus: statusKey })}
-                      />
-                      <span>{REWRITE_RESULT_STATUS_LABELS[statusKey]}</span>
-                    </label>
-                  ))}
-                </div>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  建议默认设为「待审核」，确认标题与措辞后再批量设为「正常」。
-                </Typography.Text>
-              </div>
-            </div>
-
-            <Alert
-              type="info"
-              showIcon
-              message="合规与扣点保障：系统自动剥离源文全部原图、二维码与导流信息，参考事实重新组织结构；抓取拦截或源文不足 200 字将全额退回冻结点数，且复刻文章不占用「AI写作数量」配额。"
-            />
-          </div>
-        ) : null}
-      </CrudModal>
+      {createSession ? (
+        <RewriteSingleCreateModal
+          key={createSession.id}
+          open
+          initial={createSession.initial}
+          formOptions={formOptions}
+          unitPoints={unitPoints}
+          gateway={gateway}
+          onClose={() => setCreateSession(null)}
+          onCreated={handleCreated}
+          onFailed={() => void loadList(query)}
+          onRefreshOptions={loadOptions}
+          onNavigate={onDispatch ? navigateTo : undefined}
+        />
+      ) : null}
     </section>
   );
 }
