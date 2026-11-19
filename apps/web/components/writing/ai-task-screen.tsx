@@ -1,187 +1,58 @@
 'use client';
 
 import {
-  AI_TASK_IMAGE_MAX,
-  AI_TASK_IMAGE_MIN,
-  AI_TASK_NAME_MAX,
-  AI_TASK_TARGET_MAX,
-  AI_TASK_TARGET_MIN,
-  ITEM_STATUS_LABELS,
-  PRICING_DEFAULTS,
   TASK_STATUSES,
   TASK_STATUS_LABELS,
   UX_TERMS,
-  formatAiTaskFreezeSummary,
-  formatAiTaskSubmitLabel,
   isTaskStatus,
   type AiTaskDetailRecord,
-  type AiTaskItemRecord,
   type AiTaskListQuery,
   type AiTaskRecord,
-  type AiTaskResultStatus,
-  type ItemStatusName,
-  type PromptTemplateRecord,
-  type TaskStatusName,
 } from '@geomix/shared';
-import {
-  Alert,
-  Button,
-  Descriptions,
-  Drawer,
-  Input,
-  InputNumber,
-  Modal,
-  Radio,
-  Slider,
-  Space,
-  Table,
-  Tag,
-  Tooltip,
-  Typography,
-} from 'antd';
+import { Alert, Button, Space, Tag, Tooltip, Typography } from 'antd';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CrudModal } from '../crud/crud-modal';
 import { CrudTable, type CrudColumn } from '../crud/crud-table';
 import { TableClampText } from '../crud/table-clamp-text';
-import {
-  AiTaskApiError,
-  httpAiTaskGateway,
-  type AiTaskFormOptions,
-  type AiTaskGateway,
-} from '../../lib/ai-tasks';
+import { httpAiTaskGateway, type AiTaskGateway } from '../../lib/ai-tasks';
+import { NATIVE_SELECT_STYLE } from '../../lib/select-styles';
 import type { SessionStorageLike } from '../../lib/session';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 import type { ShellAction } from '../../lib/tab-stack';
+import { DEFAULT_TASK_POLL_INTERVAL_MS, useTaskPolling } from '../../lib/use-task-polling';
+import { triggerBlobDownload, useSyncTabTitle } from '../../lib/ux-foundation';
+import { AiTaskCreateModal, useAiTaskCreateModal } from './ai-task-create-modal';
 import {
-  formatShanghaiDateTime,
-  triggerBlobDownload,
-  useSyncTabTitle,
-} from '../../lib/ux-foundation';
-import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
+  AiTaskActionButtons,
+  AiTaskConfirmModals,
+  AiTaskDetailDrawer,
+  useAiTaskDetailDrawer,
+  type TaskBannerMessage,
+} from './ai-task-detail-drawer';
+import {
+  AI_TASK_SORT_OPTIONS,
+  INITIAL_AI_TASK_QUERY,
+  buildCreatedArticlesHref,
+  formatFailSkipSummary,
+  formatTaskTime,
+  isActiveTaskStatus,
+  isUnauthorizedError,
+  readInitialKeywordId,
+  resolveAiTaskScreenTitle,
+  resolveTaskErrorMessage,
+  statusTagColor,
+  useDocumentVisible,
+} from './ai-task-helpers';
 
-const DEFAULT_POLL_INTERVAL_MS = 5_000;
-
-const NATIVE_SELECT_STYLE: CSSProperties = {
-  width: '100%',
-  height: 32,
-  padding: '0 11px',
-  borderRadius: 6,
-  border: '1px solid var(--gm-line-2)',
-  backgroundColor: 'var(--gm-bg-elevated)',
-  fontSize: 14,
-  color: 'var(--gm-fg-1)',
-  outline: 'none',
+const NOWRAP_STYLE: CSSProperties = { whiteSpace: 'nowrap' };
+const SUB_NOWRAP_STYLE: CSSProperties = { fontSize: 12, whiteSpace: 'nowrap' };
+const KB_TAG_STYLE: CSSProperties = {
+  maxWidth: 132,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  verticalAlign: 'middle',
 };
-
-type CreateDraft = {
-  name: string;
-  categoryId: string;
-  keywordId: string;
-  mediaCategoryId: string;
-  imageCount: number;
-  kbId: string;
-  contentTplId: string;
-  titleTplId: string;
-  resultStatus: AiTaskResultStatus;
-  target: number;
-};
-
-type EditorState = {
-  initial: CreateDraft;
-  draft: CreateDraft;
-  minimized: boolean;
-  maximized: boolean;
-};
-
-function readInitialKeywordId(href?: string): string | undefined {
-  if (!href) return undefined;
-  const qIndex = href.indexOf('?');
-  if (qIndex < 0) return undefined;
-  const params = new URLSearchParams(href.slice(qIndex + 1));
-  const val = params.get('keywordId')?.trim();
-  return val || undefined;
-}
-
-function defaultCreateDraft(
-  options: AiTaskFormOptions | null,
-  preferredKeywordId?: string,
-): CreateDraft {
-  const matchedKw =
-    preferredKeywordId && options?.keywords.some((kw) => kw.id === preferredKeywordId)
-      ? preferredKeywordId
-      : '';
-  return {
-    name: '',
-    categoryId: '',
-    keywordId: matchedKw,
-    mediaCategoryId: '',
-    imageCount: 1,
-    kbId: '',
-    contentTplId: '',
-    titleTplId: '',
-    resultStatus: 'PENDING',
-    target: 1,
-  };
-}
-
-function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return formatShanghaiDateTime(iso);
-}
-
-function statusTagColor(status: TaskStatusName): string {
-  switch (status) {
-    case 'RUNNING':
-      return 'processing';
-    case 'COMPLETED':
-      return 'success';
-    case 'PAUSED':
-      return 'warning';
-    case 'PARTIAL':
-      return 'gold';
-    case 'FAILED':
-      return 'error';
-    case 'CANCELLED':
-      return 'default';
-    case 'QUEUED':
-    default:
-      return 'blue';
-  }
-}
-
-function itemStatusTagColor(status: ItemStatusName): string {
-  switch (status) {
-    case 'RUNNING':
-      return 'processing';
-    case 'SUCCESS':
-      return 'success';
-    case 'FAILED':
-      return 'error';
-    case 'SKIPPED':
-      return 'default';
-    case 'PENDING':
-    default:
-      return 'blue';
-  }
-}
-
-function isActiveTaskStatus(status: TaskStatusName): boolean {
-  return status === 'QUEUED' || status === 'RUNNING';
-}
-
-function isControllableStatus(status: TaskStatusName): boolean {
-  return status === 'QUEUED' || status === 'RUNNING' || status === 'PAUSED';
-}
-
-function isUnauthorizedError(err: unknown): boolean {
-  if (err instanceof AiTaskApiError) {
-    return err.status === 401;
-  }
-  if (err && typeof err === 'object' && 'status' in err) {
-    return (err as { status?: unknown }).status === 401;
-  }
-  return false;
-}
 
 export function AiTaskScreen({
   title,
@@ -189,7 +60,7 @@ export function AiTaskScreen({
   href,
   active = true,
   readOnly = false,
-  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  pollIntervalMs = DEFAULT_TASK_POLL_INTERVAL_MS,
   gateway,
   storage,
   onDispatch,
@@ -205,20 +76,13 @@ export function AiTaskScreen({
   onDispatch?: (action: ShellAction) => void;
 }) {
   const initialKeywordId = useMemo(() => readInitialKeywordId(href), [href]);
-  const [prefilledHref, setPrefilledHref] = useState<string | null>(null);
+  const prefilledHrefRef = useRef<string | null>(null);
   const client = useMemo(
     () => gateway ?? httpAiTaskGateway(storage ?? window.sessionStorage),
     [gateway, storage],
   );
 
-  const [query, setQuery] = useState<AiTaskListQuery>({
-    page: 1,
-    pageSize: 10,
-    keyword: '',
-    status: undefined,
-    sort: 'createdAt',
-    order: 'desc',
-  });
+  const [query, setQuery] = useState<AiTaskListQuery>(INITIAL_AI_TASK_QUERY);
   const [rows, setRows] = useState<AiTaskRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -226,39 +90,36 @@ export function AiTaskScreen({
   const [searchOpen, setSearchOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
   const [authExpired, setAuthExpired] = useState(false);
-  const [pageVisible, setPageVisible] = useState(() =>
-    typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
+  const [banner, setBanner] = useState<TaskBannerMessage | null>(null);
+  const pageVisible = useDocumentVisible();
+
+  const createModal = useAiTaskCreateModal({
+    client,
+    active,
+    initialKeywordId,
+    onLoadError: (text) => setBanner({ type: 'error', text }),
+  });
+
+  const detailDrawer = useAiTaskDetailDrawer({
+    client,
+    onBanner: setBanner,
+    onReloadList: () => setReloadTick((n) => n + 1),
+    onClearSelection: () => setSelectedIds([]),
+    onUnauthorized: () => setAuthExpired(true),
+  });
+
+  const resolvedTitle = useMemo(
+    () => resolveAiTaskScreenTitle(title, initialKeywordId, createModal.formOptions),
+    [createModal.formOptions, initialKeywordId, title],
   );
-
-  const [banner, setBanner] = useState<{
-    type: 'success' | 'warning' | 'error';
-    text: string;
-  } | null>(null);
-
-  // Create modal state
-  const [formOptions, setFormOptions] = useState<AiTaskFormOptions | null>(null);
-  const [optionsLoading, setOptionsLoading] = useState(false);
-  const [editor, setEditor] = useState<EditorState | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const resolvedTitle = useMemo(() => {
-    if (!initialKeywordId) return title;
-    const matched = formOptions?.keywords.find((kw) => kw.id === initialKeywordId)?.main;
-    return matched ? `AI写作任务 · ${matched}` : title;
-  }, [formOptions, initialKeywordId, title]);
   useSyncTabTitle(tabId, title, resolvedTitle, onDispatch);
 
-  // Detail drawer state
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [activeDetail, setActiveDetail] = useState<AiTaskDetailRecord | null>(null);
-
-  // Confirmations
-  const [cancelTarget, setCancelTarget] = useState<AiTaskRecord | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-  const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const { openCreateModal } = createModal;
+  useEffect(() => {
+    if (!initialKeywordId || readOnly || !href || prefilledHrefRef.current === href) return;
+    prefilledHrefRef.current = href;
+    void openCreateModal(initialKeywordId);
+  }, [initialKeywordId, readOnly, href, openCreateModal]);
 
   const loadList = useCallback(
     async (silent = false) => {
@@ -269,14 +130,9 @@ export function AiTaskScreen({
         setRows(res.items);
         setTotal(res.total);
       } catch (err: unknown) {
-        if (isUnauthorizedError(err)) {
-          setAuthExpired(true);
-        }
+        if (isUnauthorizedError(err)) setAuthExpired(true);
         if (!silent) {
-          setBanner({
-            type: 'error',
-            text: err instanceof Error ? err.message : '读取写作任务列表失败',
-          });
+          setBanner({ type: 'error', text: resolveTaskErrorMessage(err, '读取写作任务列表失败') });
         }
       } finally {
         if (!silent) setLoading(false);
@@ -289,15 +145,6 @@ export function AiTaskScreen({
     void loadList(false);
   }, [loadList, reloadTick]);
 
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const handleVisibilityChange = () => {
-      setPageVisible(document.visibilityState !== 'hidden');
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
-
   const prevActiveRef = useRef(active);
   useEffect(() => {
     const wasActive = prevActiveRef.current;
@@ -309,513 +156,219 @@ export function AiTaskScreen({
   }, [active, loadList]);
 
   const hasActiveTasks = useMemo(
-    () =>
-      rows.some((r) => isActiveTaskStatus(r.status)) ||
-      Boolean(drawerOpen && activeDetail && isActiveTaskStatus(activeDetail.status)),
-    [rows, drawerOpen, activeDetail],
+    () => rows.some((r) => isActiveTaskStatus(r.status)) || detailDrawer.hasActiveDetail,
+    [rows, detailDrawer.hasActiveDetail],
   );
 
-  // 5-second automatic progress polling only when tab is active, page visible, authenticated, and active tasks exist
-  useEffect(() => {
-    if (pollIntervalMs <= 0 || !active || !pageVisible || authExpired || !hasActiveTasks) return;
-    const timer = setInterval(() => {
-      void loadList(true);
-      if (drawerOpen && activeDetail && isActiveTaskStatus(activeDetail.status)) {
-        void client
-          .detail(activeDetail.id)
-          .then((fresh) => setActiveDetail(fresh))
-          .catch((err: unknown) => {
-            if (isUnauthorizedError(err)) {
-              setAuthExpired(true);
-            }
-          });
-      }
-    }, pollIntervalMs);
-    return () => clearInterval(timer);
-  }, [
-    pollIntervalMs,
-    active,
-    pageVisible,
-    authExpired,
-    hasActiveTasks,
-    loadList,
-    drawerOpen,
-    activeDetail,
-    client,
-  ]);
-
-  const baseAiWritePoints = useMemo(() => {
-    const found = formOptions?.prices.find((p) => p.action === 'ai_write');
-    if (found && found.enabled) return found.unitPoints;
-    return PRICING_DEFAULTS.find((p) => p.action === 'ai_write')?.unitPoints ?? 10;
-  }, [formOptions]);
-
-  const kbAddonPoints = useMemo(() => {
-    const found = formOptions?.prices.find((p) => p.action === 'kb_addon');
-    if (found && found.enabled) return found.unitPoints;
-    return PRICING_DEFAULTS.find((p) => p.action === 'kb_addon')?.unitPoints ?? 5;
-  }, [formOptions]);
-
-  const usableSystemArticlePrompts = useMemo<PromptTemplateRecord[]>(() => {
-    if (!formOptions) return [];
-    return formOptions.articlePrompts.system.filter((tpl) => !tpl.hasManualSlot);
-  }, [formOptions]);
-
-  const allArticleTemplates = useMemo<PromptTemplateRecord[]>(() => {
-    if (!formOptions) return [];
-    return [...formOptions.articlePrompts.user, ...formOptions.articlePrompts.system];
-  }, [formOptions]);
-
-  const selectedArticleTemplate = useMemo(() => {
-    if (!editor?.draft.contentTplId) return null;
-    return allArticleTemplates.find((tpl) => tpl.id === editor.draft.contentTplId) ?? null;
-  }, [allArticleTemplates, editor?.draft.contentTplId]);
-
-  const manualSlotBlocked = Boolean(selectedArticleTemplate?.hasManualSlot);
-
-  const selectedKb = useMemo(() => {
-    if (!editor?.draft.kbId || !formOptions) return null;
-    return formOptions.knowledgeBases.find((kb) => kb.id === editor.draft.kbId) ?? null;
-  }, [editor?.draft.kbId, formOptions]);
-
-  const freezeQuote = useMemo(() => {
-    return formatAiTaskFreezeSummary({
-      target: editor?.draft.target ?? 10,
-      basePoints: baseAiWritePoints,
-      kbAddonPoints,
-      withKnowledgeBase: Boolean(editor?.draft.kbId),
-    });
-  }, [editor?.draft.target, editor?.draft.kbId, baseAiWritePoints, kbAddonPoints]);
-
-  const refreshFormOptions = useCallback(async (): Promise<AiTaskFormOptions | null> => {
-    try {
-      const opts = await client.loadFormOptions();
-      setFormOptions(opts);
-      return opts;
-    } catch {
-      return null;
-    }
-  }, [client]);
-
-  useTabFreshness({
-    active,
-    domains: ['keywords', 'questions', 'gallery', 'knowledge', 'prompts', 'categories', 'points'],
-    onRefresh: () => {
-      void refreshFormOptions();
+  useTaskPolling({
+    enabled: hasActiveTasks && !authExpired,
+    active: active && pageVisible,
+    intervalMs: pollIntervalMs,
+    onPoll: async () => {
+      await Promise.all([loadList(true), detailDrawer.pollActiveDetail()]);
     },
   });
 
-  const openCreateModal = useCallback(
-    async (preferredKeywordId?: string) => {
-      setFormError(null);
-      setOptionsLoading(true);
-      try {
-        const opts = await client.loadFormOptions();
-        setFormOptions(opts);
-        const init = defaultCreateDraft(opts, preferredKeywordId ?? initialKeywordId);
-        setEditor({
-          initial: init,
-          draft: init,
-          minimized: false,
-          maximized: false,
-        });
-      } catch (err: unknown) {
-        setBanner({
-          type: 'error',
-          text: err instanceof Error ? err.message : '加载表单选项失败',
-        });
-      } finally {
-        setOptionsLoading(false);
-      }
+  const handleCreated = useCallback((created: AiTaskDetailRecord) => {
+    setReloadTick((n) => n + 1);
+    invalidateFreshness('categories', 'tasks', 'articles', 'points');
+    setBanner({
+      type: 'success',
+      text: `写作任务「${created.name}」已进入队列（预冻 ${created.frozenPoints} 点数，共 ${created.target} 篇）`,
+    });
+  }, []);
+
+  const {
+    closeDetailDrawer,
+    openDetailDrawer,
+    handlePause,
+    handleResume,
+    setCancelTarget,
+    setDeleteIds,
+  } = detailDrawer;
+
+  const openCreatedArticles = useCallback(
+    (row: { id: string; categoryId: string; name: string }) => {
+      closeDetailDrawer();
+      onDispatch?.({ type: 'open', href: buildCreatedArticlesHref(row), sourceId: tabId });
     },
-    [client, initialKeywordId],
+    [closeDetailDrawer, onDispatch, tabId],
   );
 
-  useEffect(() => {
-    if (!initialKeywordId || readOnly || !href || prefilledHref === href) return;
-    setPrefilledHref(href);
-    void openCreateModal(initialKeywordId);
-  }, [initialKeywordId, readOnly, href, prefilledHref, openCreateModal]);
-
-  async function handleSubmitCreate() {
-    if (!editor) return;
-    const d = editor.draft;
-    const trimmedName = d.name.trim();
-    const errors: string[] = [];
-    if (!trimmedName) {
-      errors.push('请填写任务名称');
-    }
-    if (!d.keywordId) {
-      errors.push(`请选择${UX_TERMS.mainKeyword}`);
-    } else {
-      const pickedKw = formOptions?.keywords.find((k) => k.id === d.keywordId);
-      if (pickedKw && pickedKw.questionCount < 1) {
-        errors.push(`所选${UX_TERMS.mainKeyword}下暂无写作问题，请先前往「写作标题」添加问题`);
+  const handleExport = useCallback(
+    async (format: 'csv' | 'xlsx') => {
+      try {
+        const file = await client.download(query, format);
+        triggerBlobDownload(file);
+      } catch (err: unknown) {
+        setBanner({ type: 'error', text: resolveTaskErrorMessage(err, '导出失败') });
       }
-    }
-    if (d.imageCount > 0) {
-      if (!d.mediaCategoryId) {
-        errors.push('请选择画像图库');
-      } else {
-        const pickedGal = formOptions?.mediaCategories.find((g) => g.id === d.mediaCategoryId);
-        if (pickedGal && pickedGal.assetCount < 1) {
-          errors.push('所选画像图库暂无图片，请先上传图片或将文章配图调为 0 张');
-        }
-      }
-    }
-    if (selectedKb && selectedKb.indexStatus === 'INDEXING') {
-      errors.push('所选企业知识库正在建立智能检索，请变为「可用」后再提交任务');
-    }
-    if (manualSlotBlocked) {
-      errors.push(
-        '所选内容创作指令仍含【品牌1】等手工槽位，请先前往「写作指令」填写具体对比品牌后再选用',
-      );
-    }
-    if (
-      !Number.isInteger(d.target) ||
-      d.target < AI_TASK_TARGET_MIN ||
-      d.target > AI_TASK_TARGET_MAX
-    ) {
-      errors.push(`AI 创作数量需在 ${AI_TASK_TARGET_MIN}–${AI_TASK_TARGET_MAX} 篇之间`);
-    }
-    if (errors.length > 0) {
-      setFormError(errors.join('；'));
-      return;
-    }
-
-    setSubmitting(true);
-    setFormError(null);
-    try {
-      const created = await client.create({
-        name: trimmedName,
-        categoryId: d.categoryId || null,
-        keywordId: d.keywordId,
-        mediaCategoryId: d.imageCount === 0 ? null : d.mediaCategoryId,
-        imageCount: d.imageCount,
-        kbId: d.kbId || null,
-        contentTplId: d.contentTplId || null,
-        titleTplId: d.titleTplId || null,
-        resultStatus: d.resultStatus,
-        target: d.target,
-      });
-      setEditor(null);
-      setReloadTick((n) => n + 1);
-      invalidateFreshness('categories', 'tasks', 'articles', 'points');
-      setBanner({
-        type: 'success',
-        text: `写作任务「${created.name}」已进入队列（预冻 ${created.frozenPoints} 点数，共 ${created.target} 篇）`,
-      });
-    } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : '创建写作任务失败');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function openDetailDrawer(taskId: string) {
-    setDrawerOpen(true);
-    setDetailLoading(true);
-    try {
-      const detail = await client.detail(taskId);
-      setActiveDetail(detail);
-    } catch (err: unknown) {
-      setBanner({
-        type: 'error',
-        text: err instanceof Error ? err.message : '读取任务详情失败',
-      });
-      setDrawerOpen(false);
-    } finally {
-      setDetailLoading(false);
-    }
-  }
-
-  async function handlePause(row: AiTaskRecord) {
-    try {
-      const updated = await client.pause(row.id);
-      if (activeDetail?.id === row.id) setActiveDetail(updated);
-      setReloadTick((n) => n + 1);
-      setBanner({ type: 'success', text: `已暂停任务「${row.name}」` });
-    } catch (err: unknown) {
-      setBanner({ type: 'error', text: err instanceof Error ? err.message : '暂停任务失败' });
-    }
-  }
-
-  async function handleResume(row: AiTaskRecord) {
-    try {
-      const updated = await client.resume(row.id);
-      if (activeDetail?.id === row.id) setActiveDetail(updated);
-      setReloadTick((n) => n + 1);
-      setBanner({ type: 'success', text: `已恢复任务「${row.name}」继续写作` });
-    } catch (err: unknown) {
-      setBanner({ type: 'error', text: err instanceof Error ? err.message : '恢复任务失败' });
-    }
-  }
-
-  async function handleConfirmCancel() {
-    if (!cancelTarget) return;
-    setCancelling(true);
-    try {
-      const updated = await client.cancel(cancelTarget.id);
-      if (activeDetail?.id === cancelTarget.id) setActiveDetail(updated);
-      setCancelTarget(null);
-      setReloadTick((n) => n + 1);
-      setBanner({
-        type: 'success',
-        text: `已终止任务「${updated.name}」，剩余未执行篇数的预冻点数已退回`,
-      });
-    } catch (err: unknown) {
-      setBanner({ type: 'error', text: err instanceof Error ? err.message : '终止任务失败' });
-      setCancelTarget(null);
-    } finally {
-      setCancelling(false);
-    }
-  }
-
-  async function handleConfirmDelete() {
-    if (!deleteIds || deleteIds.length === 0) return;
-    setDeleting(true);
-    try {
-      const res = await client.bulkDelete(deleteIds);
-      if (activeDetail && deleteIds.includes(activeDetail.id)) {
-        setDrawerOpen(false);
-        setActiveDetail(null);
-      }
-      setDeleteIds(null);
-      setSelectedIds([]);
-      setReloadTick((n) => n + 1);
-      setBanner({ type: 'success', text: `已删除 ${res.deleted} 条任务记录` });
-    } catch (err: unknown) {
-      setBanner({ type: 'error', text: err instanceof Error ? err.message : '删除任务失败' });
-      setDeleteIds(null);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  function openCreatedArticles(row: { id: string; categoryId: string; name: string }) {
-    setDrawerOpen(false);
-    setActiveDetail(null);
-    onDispatch?.({
-      type: 'open',
-      href: `/writing/articles?categoryId=${encodeURIComponent(row.categoryId)}&taskId=${encodeURIComponent(row.id)}`,
-      sourceId: tabId,
-    });
-  }
-
-  async function handleExport(format: 'csv' | 'xlsx') {
-    try {
-      const file = await client.download(query, format);
-      triggerBlobDownload(file);
-    } catch (err: unknown) {
-      setBanner({ type: 'error', text: err instanceof Error ? err.message : '导出失败' });
-    }
-  }
-
-  // Strictly aligned with Issue #17 11 columns:
-  // 任务名、主关键词、创作上限、已创作、知识库、详情、错误消息、状态、最新写作、创建时间、操作
-  const columns: CrudColumn<AiTaskRecord>[] = [
-    {
-      key: 'name',
-      title: '任务名',
-      width: 200,
-      hideable: false,
-      render: (row) => (
-        <div style={{ minWidth: 160 }}>
-          <TableClampText text={row.name} lines={2} strong maxWidth={190} tooltipThreshold={18} />
-          <TableClampText
-            text={`分类：${row.categoryName}`}
-            lines={1}
-            maxWidth={190}
-            tooltipThreshold={18}
-            style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
-          />
-        </div>
-      ),
     },
-    {
-      key: 'keywordMain',
-      title: UX_TERMS.mainKeyword,
-      width: 120,
-      render: (row) => <Tag color="geekblue">{row.keywordMain}</Tag>,
-    },
-    {
-      key: 'target',
-      title: '创作上限',
-      width: 88,
-      render: (row) => (
-        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-          {row.target} 篇
-        </span>
-      ),
-    },
-    {
-      key: 'doneCount',
-      title: '已创作',
-      width: 104,
-      render: (row) => (
-        <Space direction="vertical" size={0}>
-          <Typography.Text strong>
-            <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-              {row.doneCount} / {row.target}
-            </span>
-          </Typography.Text>
-          {row.failCount > 0 || row.skipCount > 0 ? (
-            <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-              {row.failCount > 0 ? `失败 ${row.failCount}` : ''}
-              {row.failCount > 0 && row.skipCount > 0 ? ' · ' : ''}
-              {row.skipCount > 0 ? `跳过 ${row.skipCount}` : ''}
-            </Typography.Text>
-          ) : null}
-        </Space>
-      ),
-    },
-    {
-      key: 'kbName',
-      title: '知识库',
-      width: 148,
-      render: (row) =>
-        row.kbName ? (
-          <Tooltip title={row.kbName.length > 10 ? row.kbName : undefined}>
-            <Tag
-              color="purple"
-              style={{
-                maxWidth: 132,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                verticalAlign: 'middle',
-              }}
-            >
-              {row.kbName}
-            </Tag>
-          </Tooltip>
-        ) : (
-          <Typography.Text type="secondary">未使用</Typography.Text>
+    [client, query],
+  );
+
+  const columns = useMemo<CrudColumn<AiTaskRecord>[]>(
+    () => [
+      {
+        key: 'name',
+        title: '任务名',
+        width: 200,
+        hideable: false,
+        render: (row) => (
+          <div style={{ minWidth: 160 }}>
+            <TableClampText text={row.name} lines={2} strong maxWidth={190} tooltipThreshold={18} />
+            <TableClampText
+              text={`分类：${row.categoryName}`}
+              lines={1}
+              maxWidth={190}
+              tooltipThreshold={18}
+              style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
+            />
+          </div>
         ),
-    },
-    {
-      key: 'detail',
-      title: '详情',
-      width: 88,
-      render: (row) => (
-        <Button
-          type="link"
-          size="small"
-          aria-label={`查看详情-${row.name}`}
-          onClick={() => void openDetailDrawer(row.id)}
-        >
-          查看详情
-        </Button>
-      ),
-    },
-    {
-      key: 'lastError',
-      title: '错误消息',
-      width: 160,
-      render: (row) =>
-        row.lastError ? (
-          <TableClampText
-            text={row.lastError}
-            lines={2}
-            maxWidth={150}
-            tooltipThreshold={16}
-            style={{ fontSize: 12, color: 'var(--gm-danger)' }}
-          />
-        ) : (
-          <Typography.Text type="secondary">—</Typography.Text>
+      },
+      {
+        key: 'keywordMain',
+        title: UX_TERMS.mainKeyword,
+        width: 120,
+        render: (row) => <Tag color="geekblue">{row.keywordMain}</Tag>,
+      },
+      {
+        key: 'target',
+        title: '创作上限',
+        width: 88,
+        render: (row) => (
+          <span className="gm-num" style={NOWRAP_STYLE}>
+            {row.target} 篇
+          </span>
         ),
-    },
-    {
-      key: 'status',
-      title: '状态',
-      width: 96,
-      render: (row) => (
-        <Tag color={statusTagColor(row.status)}>{TASK_STATUS_LABELS[row.status]}</Tag>
-      ),
-    },
-    {
-      key: 'lastWrittenAt',
-      title: '最新写作',
-      width: 156,
-      render: (row) => (
-        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-          {formatTime(row.lastWrittenAt)}
-        </span>
-      ),
-    },
-    {
-      key: 'createdAt',
-      title: '创建时间',
-      width: 156,
-      render: (row) => (
-        <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-          {formatTime(row.createdAt)}
-        </span>
-      ),
-    },
-    {
-      key: 'actions',
-      title: '操作',
-      width: 170,
-      hideable: false,
-      render: (row) => (
-        <Space size={4} wrap>
+      },
+      {
+        key: 'doneCount',
+        title: '已创作',
+        width: 104,
+        render: (row) => {
+          const summary = formatFailSkipSummary(row.failCount, row.skipCount);
+          return (
+            <Space direction="vertical" size={0}>
+              <Typography.Text strong>
+                <span className="gm-num" style={NOWRAP_STYLE}>
+                  {row.doneCount} / {row.target}
+                </span>
+              </Typography.Text>
+              {summary ? (
+                <Typography.Text type="secondary" style={SUB_NOWRAP_STYLE}>
+                  {summary}
+                </Typography.Text>
+              ) : null}
+            </Space>
+          );
+        },
+      },
+      {
+        key: 'kbName',
+        title: '知识库',
+        width: 148,
+        render: (row) =>
+          row.kbName ? (
+            <Tooltip title={row.kbName.length > 10 ? row.kbName : undefined}>
+              <Tag color="purple" style={KB_TAG_STYLE}>
+                {row.kbName}
+              </Tag>
+            </Tooltip>
+          ) : (
+            <Typography.Text type="secondary">未使用</Typography.Text>
+          ),
+      },
+      {
+        key: 'detail',
+        title: '详情',
+        width: 88,
+        render: (row) => (
           <Button
             type="link"
             size="small"
-            aria-label={`查看创作内容-${row.name}`}
-            onClick={() => openCreatedArticles(row)}
+            aria-label={`查看详情-${row.name}`}
+            onClick={() => void openDetailDrawer(row.id)}
           >
-            查看创作内容
+            查看详情
           </Button>
-          {(row.status === 'QUEUED' || row.status === 'RUNNING') && !readOnly ? (
-            <Button
-              type="link"
-              size="small"
-              aria-label={`暂停-${row.name}`}
-              onClick={() => void handlePause(row)}
-            >
-              暂停
-            </Button>
-          ) : null}
-          {row.status === 'PAUSED' && !readOnly ? (
-            <Button
-              type="link"
-              size="small"
-              aria-label={`继续-${row.name}`}
-              onClick={() => void handleResume(row)}
-            >
-              继续
-            </Button>
-          ) : null}
-          {isControllableStatus(row.status) && !readOnly ? (
-            <Button
-              type="link"
-              size="small"
-              danger
-              aria-label={`终止-${row.name}`}
-              onClick={() => setCancelTarget(row)}
-            >
-              终止
-            </Button>
-          ) : null}
-          {!isControllableStatus(row.status) && !readOnly ? (
-            <Button
-              type="link"
-              size="small"
-              danger
-              aria-label={`删除-${row.name}`}
-              onClick={() => setDeleteIds([row.id])}
-            >
-              删除
-            </Button>
-          ) : null}
-        </Space>
-      ),
-    },
-  ];
-
-  const submitButtonLabel = formatAiTaskSubmitLabel(freezeQuote.unitPrice);
+        ),
+      },
+      {
+        key: 'lastError',
+        title: '错误消息',
+        width: 160,
+        render: (row) =>
+          row.lastError ? (
+            <TableClampText
+              text={row.lastError}
+              lines={2}
+              maxWidth={150}
+              tooltipThreshold={16}
+              style={{ fontSize: 12, color: 'var(--gm-danger)' }}
+            />
+          ) : (
+            <Typography.Text type="secondary">—</Typography.Text>
+          ),
+      },
+      {
+        key: 'status',
+        title: '状态',
+        width: 96,
+        render: (row) => (
+          <Tag color={statusTagColor(row.status)}>{TASK_STATUS_LABELS[row.status]}</Tag>
+        ),
+      },
+      {
+        key: 'lastWrittenAt',
+        title: '最新写作',
+        width: 156,
+        render: (row) => (
+          <span className="gm-num" style={NOWRAP_STYLE}>
+            {formatTaskTime(row.lastWrittenAt)}
+          </span>
+        ),
+      },
+      {
+        key: 'createdAt',
+        title: '创建时间',
+        width: 156,
+        render: (row) => (
+          <span className="gm-num" style={NOWRAP_STYLE}>
+            {formatTaskTime(row.createdAt)}
+          </span>
+        ),
+      },
+      {
+        key: 'actions',
+        title: '操作',
+        width: 170,
+        hideable: false,
+        render: (row) => (
+          <AiTaskActionButtons
+            task={row}
+            mode="table"
+            readOnly={readOnly}
+            onOpenArticles={openCreatedArticles}
+            onPause={(target) => void handlePause(target)}
+            onResume={(target) => void handleResume(target)}
+            onRequestCancel={setCancelTarget}
+            onRequestDelete={(target) => setDeleteIds([target.id])}
+          />
+        ),
+      },
+    ],
+    [
+      handlePause,
+      handleResume,
+      openCreatedArticles,
+      openDetailDrawer,
+      readOnly,
+      setCancelTarget,
+      setDeleteIds,
+    ],
+  );
 
   return (
     <section>
@@ -864,7 +417,7 @@ export function AiTaskScreen({
             </option>
           ))}
         </select>
-        {optionsLoading ? (
+        {createModal.optionsLoading ? (
           <Typography.Text type="secondary">正在读取表单选项…</Typography.Text>
         ) : null}
       </Space>
@@ -886,11 +439,7 @@ export function AiTaskScreen({
           sort: query.sort,
           order: query.order,
         }}
-        sortOptions={[
-          { value: 'createdAt', label: '创建时间' },
-          { value: 'lastWrittenAt', label: '最新写作' },
-          { value: 'name', label: '任务名称' },
-        ]}
+        sortOptions={AI_TASK_SORT_OPTIONS}
         onSearchOpenChange={setSearchOpen}
         onSearch={(search) => {
           setSelectedIds([]);
@@ -915,610 +464,40 @@ export function AiTaskScreen({
         columns={columns}
       />
 
-      {/* 10 字段创建任务弹层 */}
-      <CrudModal
-        open={editor !== null}
-        title="新建 AI 写作任务"
-        minimized={editor?.minimized ?? false}
-        maximized={editor?.maximized ?? false}
-        confirmLoading={submitting}
-        error={formError}
-        onMinimize={() => setEditor((curr) => (curr ? { ...curr, minimized: true } : curr))}
-        onRestore={() => {
-          setEditor((curr) => (curr ? { ...curr, minimized: false } : curr));
-          void refreshFormOptions();
-        }}
-        onMaximize={() =>
-          setEditor((curr) => (curr ? { ...curr, maximized: !curr.maximized } : curr))
-        }
-        onClose={() => setEditor(null)}
-        onReset={() => {
-          setFormError(null);
-          setEditor((curr) => (curr ? { ...curr, draft: curr.initial } : curr));
-        }}
-        ok={
-          <Button
-            type="primary"
-            aria-label={submitButtonLabel}
-            loading={submitting}
-            disabled={readOnly || manualSlotBlocked}
-            onClick={() => void handleSubmitCreate()}
-          >
-            {submitButtonLabel}
-          </Button>
-        }
-      >
-        {editor ? (
-          <Space direction="vertical" style={{ width: '100%' }} size={12}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gap: '10px 16px',
-                alignItems: 'start',
-              }}
-            >
-              {/* 1. 任务名称 */}
-              <div>
-                <label htmlFor="gm-aitask-name" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--gm-danger)' }}>*</span> 任务名称
-                </label>
-                <Input
-                  id="gm-aitask-name"
-                  aria-label="任务名称"
-                  maxLength={AI_TASK_NAME_MAX}
-                  placeholder="请输入任务名称，例如：产品选购科普专题"
-                  value={editor.draft.name}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr ? { ...curr, draft: { ...curr.draft, name: e.target.value } } : curr,
-                    )
-                  }
-                />
-              </div>
+      <AiTaskCreateModal
+        editor={createModal.editor}
+        formOptions={createModal.formOptions}
+        readOnly={readOnly}
+        tabId={tabId}
+        onEditorChange={createModal.setEditor}
+        onRefreshOptions={createModal.refreshFormOptions}
+        onSubmitCreate={(payload) => client.create(payload)}
+        onCreated={handleCreated}
+        onDispatch={onDispatch}
+      />
 
-              {/* 2. 文章分类 */}
-              <div>
-                <label htmlFor="gm-aitask-category" style={{ display: 'block', marginBottom: 4 }}>
-                  文章分类
-                </label>
-                <select
-                  id="gm-aitask-category"
-                  aria-label="文章分类"
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.categoryId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? { ...curr, draft: { ...curr.draft, categoryId: e.target.value } }
-                        : curr,
-                    )
-                  }
-                >
-                  <option value="">不选择（按任务名称自动创建同名分类）</option>
-                  {(formOptions?.categories ?? []).map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}（现有 {cat.total} 篇）
-                    </option>
-                  ))}
-                </select>
-              </div>
+      <AiTaskDetailDrawer
+        open={detailDrawer.drawerOpen}
+        loading={detailDrawer.detailLoading}
+        detail={detailDrawer.activeDetail}
+        readOnly={readOnly}
+        onClose={closeDetailDrawer}
+        onOpenArticles={openCreatedArticles}
+        onPause={(row) => void handlePause(row)}
+        onResume={(row) => void handleResume(row)}
+        onRequestCancel={setCancelTarget}
+      />
 
-              {/* 3. 主关键词 */}
-              <div>
-                <label htmlFor="gm-aitask-keyword" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--gm-danger)' }}>*</span> {UX_TERMS.mainKeyword}
-                </label>
-                <select
-                  id="gm-aitask-keyword"
-                  aria-label={UX_TERMS.mainKeyword}
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.keywordId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? { ...curr, draft: { ...curr.draft, keywordId: e.target.value } }
-                        : curr,
-                    )
-                  }
-                >
-                  <option value="">不选择</option>
-                  {(formOptions?.keywords ?? []).map((kw) => (
-                    <option key={kw.id} value={kw.id}>
-                      {kw.main}（{kw.questionCount} 条问题）
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 4. 画像图库 */}
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    marginBottom: 4,
-                  }}
-                >
-                  <label htmlFor="gm-aitask-gallery" style={{ margin: 0 }}>
-                    {editor.draft.imageCount > 0 ? (
-                      <>
-                        <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库
-                      </>
-                    ) : (
-                      '画像图库（0 张配图时无需选择）'
-                    )}
-                  </label>
-                  <Button
-                    type="link"
-                    size="small"
-                    aria-label="去新建图库"
-                    style={{ padding: 0, height: 'auto' }}
-                    onClick={() => {
-                      setEditor((curr) => (curr ? { ...curr, minimized: true } : curr));
-                      onDispatch?.({
-                        type: 'open',
-                        href: '/material/gallery',
-                        sourceId: tabId,
-                      });
-                    }}
-                  >
-                    去新建图库
-                  </Button>
-                </div>
-                <select
-                  id="gm-aitask-gallery"
-                  aria-label="画像图库"
-                  disabled={editor.draft.imageCount === 0}
-                  style={{
-                    ...NATIVE_SELECT_STYLE,
-                    ...(editor.draft.imageCount === 0
-                      ? { opacity: 0.55, cursor: 'not-allowed' }
-                      : undefined),
-                  }}
-                  value={editor.draft.imageCount === 0 ? '' : editor.draft.mediaCategoryId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? { ...curr, draft: { ...curr.draft, mediaCategoryId: e.target.value } }
-                        : curr,
-                    )
-                  }
-                >
-                  <option value="">
-                    {editor.draft.imageCount === 0 ? '0 张配图无需选择图库' : '不选择'}
-                  </option>
-                  {(formOptions?.mediaCategories ?? []).map((gal) => (
-                    <option key={gal.id} value={gal.id}>
-                      {gal.name}（{gal.assetCount} 张图片）
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 5. 文章配图 */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                  <span>文章配图（每篇插图数）</span>
-                  <Typography.Text strong>{editor.draft.imageCount} 张/篇</Typography.Text>
-                </div>
-                <Slider
-                  min={AI_TASK_IMAGE_MIN}
-                  max={AI_TASK_IMAGE_MAX}
-                  step={1}
-                  marks={{ 0: '0张', 1: '1张', 2: '2张', 3: '3张', 4: '4张', 5: '5张' }}
-                  value={editor.draft.imageCount}
-                  onChange={(val) => {
-                    if (
-                      val === 0 &&
-                      (formError === '请选择画像图库' ||
-                        formError === '所选画像图库暂无图片，请先上传图片或将文章配图调为 0 张')
-                    ) {
-                      setFormError(null);
-                    }
-                    setEditor((curr) =>
-                      curr ? { ...curr, draft: { ...curr.draft, imageCount: val } } : curr,
-                    );
-                  }}
-                />
-              </div>
-
-              {/* 6. 企业知识库（勾选时实时联动单价 +5 点/篇） */}
-              <div>
-                <label htmlFor="gm-aitask-kb" style={{ display: 'block', marginBottom: 4 }}>
-                  企业知识库（选用附加 +{kbAddonPoints} 点/篇）
-                </label>
-                <select
-                  id="gm-aitask-kb"
-                  aria-label="企业知识库"
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.kbId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr ? { ...curr, draft: { ...curr.draft, kbId: e.target.value } } : curr,
-                    )
-                  }
-                >
-                  <option value="">不使用知识库（基础 {baseAiWritePoints} 点/篇）</option>
-                  {(formOptions?.knowledgeBases ?? []).map((kb) => {
-                    const indexing = kb.indexStatus === 'INDEXING';
-                    const failed = kb.indexStatus === 'FAILED';
-                    const statusSuffix = indexing
-                      ? ' - 索引中暂不可用'
-                      : failed
-                        ? ' - 索引异常'
-                        : '';
-                    return (
-                      <option key={kb.id} value={kb.id} disabled={indexing || failed}>
-                        {kb.name}（+{kbAddonPoints} 点/篇{statusSuffix}）
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
-              {/* 7. 内容创作指令（严格仅 ARTICLE） */}
-              <div>
-                <label
-                  htmlFor="gm-aitask-content-tpl"
-                  style={{ display: 'block', marginBottom: 4 }}
-                >
-                  内容创作指令
-                </label>
-                <select
-                  id="gm-aitask-content-tpl"
-                  aria-label="内容创作指令"
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.contentTplId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? { ...curr, draft: { ...curr.draft, contentTplId: e.target.value } }
-                        : curr,
-                    )
-                  }
-                >
-                  <option value="">随机生成文章（按随机池均衡轮转）</option>
-                  {(formOptions?.articlePrompts.user.length ?? 0) > 0 ? (
-                    <optgroup label="我的文章指令">
-                      {formOptions!.articlePrompts.user.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>
-                          {tpl.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {usableSystemArticlePrompts.length > 0 ? (
-                    <optgroup label="系统默认文章指令">
-                      {usableSystemArticlePrompts.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>
-                          {tpl.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                </select>
-              </div>
-
-              {/* 8. 标题创作指令（严格仅 TITLE） */}
-              <div>
-                <label htmlFor="gm-aitask-title-tpl" style={{ display: 'block', marginBottom: 4 }}>
-                  标题创作指令
-                </label>
-                <select
-                  id="gm-aitask-title-tpl"
-                  aria-label="标题创作指令"
-                  style={NATIVE_SELECT_STYLE}
-                  value={editor.draft.titleTplId}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? { ...curr, draft: { ...curr.draft, titleTplId: e.target.value } }
-                        : curr,
-                    )
-                  }
-                >
-                  <option value="">不重写标题（直接使用所抽取的问题作为标题）</option>
-                  {(formOptions?.titlePrompts.user.length ?? 0) > 0 ? (
-                    <optgroup label="我的标题指令">
-                      {formOptions!.titlePrompts.user.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>
-                          {tpl.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                  {(formOptions?.titlePrompts.system.length ?? 0) > 0 ? (
-                    <optgroup label="系统默认标题指令">
-                      {formOptions!.titlePrompts.system.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>
-                          {tpl.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ) : null}
-                </select>
-              </div>
-
-              {/* 9. 文章结果状态 */}
-              <div>
-                <span style={{ display: 'block', marginBottom: 6 }}>文章结果状态</span>
-                <Radio.Group
-                  value={editor.draft.resultStatus}
-                  onChange={(e) =>
-                    setEditor((curr) =>
-                      curr
-                        ? {
-                            ...curr,
-                            draft: {
-                              ...curr.draft,
-                              resultStatus: e.target.value as AiTaskResultStatus,
-                            },
-                          }
-                        : curr,
-                    )
-                  }
-                >
-                  <Radio value="PENDING">待人工审核</Radio>
-                  <Radio value="NORMAL">正常（计入剩余量）</Radio>
-                </Radio.Group>
-              </div>
-
-              {/* 10. AI 创作数量 */}
-              <div>
-                <label htmlFor="gm-aitask-target" style={{ display: 'block', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--gm-danger)' }}>*</span> AI 创作数量（1–100 篇）
-                </label>
-                <InputNumber
-                  id="gm-aitask-target"
-                  aria-label="AI 创作数量"
-                  min={AI_TASK_TARGET_MIN}
-                  max={AI_TASK_TARGET_MAX}
-                  precision={0}
-                  style={{ width: '100%' }}
-                  value={editor.draft.target}
-                  onChange={(val) =>
-                    setEditor((curr) =>
-                      curr
-                        ? {
-                            ...curr,
-                            draft: {
-                              ...curr.draft,
-                              target: typeof val === 'number' ? val : 1,
-                            },
-                          }
-                        : curr,
-                    )
-                  }
-                />
-              </div>
-            </div>
-
-            {manualSlotBlocked ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="所选内容创作指令仍含【品牌1】等手工槽位，请先前往「写作指令」填写具体对比品牌后再选用。"
-              />
-            ) : null}
-
-            {/* 实时计费与预冻提示 */}
-            <Alert
-              type={editor.draft.kbId ? 'warning' : 'info'}
-              showIcon
-              data-testid="ai-task-freeze-banner"
-              message={freezeQuote.text}
-            />
-          </Space>
-        ) : null}
-      </CrudModal>
-
-      {/* 任务详情抽屉（AiTaskItem 执行明细 + 控制按钮） */}
-      <Drawer
-        open={drawerOpen}
-        width={860}
-        title={activeDetail ? `任务详情：${activeDetail.name}` : '任务详情'}
-        onClose={() => {
-          setDrawerOpen(false);
-          setActiveDetail(null);
-        }}
-        extra={
-          activeDetail ? (
-            <Space size={8}>
-              <Button size="small" onClick={() => openCreatedArticles(activeDetail)}>
-                查看创作内容
-              </Button>
-              {(activeDetail.status === 'QUEUED' || activeDetail.status === 'RUNNING') &&
-              !readOnly ? (
-                <Button size="small" onClick={() => void handlePause(activeDetail)}>
-                  暂停
-                </Button>
-              ) : null}
-              {activeDetail.status === 'PAUSED' && !readOnly ? (
-                <Button size="small" type="primary" onClick={() => void handleResume(activeDetail)}>
-                  继续
-                </Button>
-              ) : null}
-              {isControllableStatus(activeDetail.status) && !readOnly ? (
-                <Button size="small" danger onClick={() => setCancelTarget(activeDetail)}>
-                  终止
-                </Button>
-              ) : null}
-            </Space>
-          ) : null
-        }
-      >
-        {activeDetail ? (
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
-            {activeDetail.lastError ? (
-              <Alert type="error" showIcon message={activeDetail.lastError} />
-            ) : null}
-
-            <Descriptions bordered size="small" column={2}>
-              <Descriptions.Item label="任务状态">
-                <Tag color={statusTagColor(activeDetail.status)}>
-                  {TASK_STATUS_LABELS[activeDetail.status]}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="创作进度">
-                已完成 {activeDetail.doneCount} / {activeDetail.target} 篇（失败{' '}
-                {activeDetail.failCount}，跳过 {activeDetail.skipCount}）
-              </Descriptions.Item>
-              <Descriptions.Item label="文章分类">{activeDetail.categoryName}</Descriptions.Item>
-              <Descriptions.Item label={UX_TERMS.mainKeyword}>
-                {activeDetail.keywordMain}
-              </Descriptions.Item>
-              <Descriptions.Item label="画像图库">
-                {activeDetail.mediaCategoryName
-                  ? `${activeDetail.mediaCategoryName}（每篇 ${activeDetail.imageCount} 张）`
-                  : `未使用（纯文，每篇 ${activeDetail.imageCount} 张）`}
-              </Descriptions.Item>
-              <Descriptions.Item label="企业知识库">
-                {activeDetail.kbName ?? '未使用'}
-              </Descriptions.Item>
-              <Descriptions.Item label="内容创作指令">
-                {activeDetail.contentTplName ?? '随机生成文章'}
-              </Descriptions.Item>
-              <Descriptions.Item label="标题创作指令">
-                {activeDetail.titleTplName ?? '不重写标题'}
-              </Descriptions.Item>
-              <Descriptions.Item label="单价与预冻核算" span={2}>
-                单价 {activeDetail.unitPrice} 点/篇 ｜ 预冻 {activeDetail.frozenPoints} 点 ｜ 已结算{' '}
-                {activeDetail.settledPoints} 点 ｜ 已退还 {activeDetail.releasedPoints} 点
-              </Descriptions.Item>
-            </Descriptions>
-
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              单篇执行明细（共 {activeDetail.items.length} 篇）
-            </Typography.Title>
-            <Table<AiTaskItemRecord>
-              rowKey="id"
-              size="small"
-              loading={detailLoading}
-              pagination={{ pageSize: 10 }}
-              dataSource={activeDetail.items}
-              columns={[
-                { title: '篇序', dataIndex: 'seq', width: 64 },
-                {
-                  title: '抽取问题 / 生成标题',
-                  key: 'title',
-                  render: (_, item) => (
-                    <Space direction="vertical" size={0}>
-                      <TableClampText
-                        text={item.title ?? item.questionText ?? '待抽取'}
-                        lines={2}
-                        strong
-                        tooltipThreshold={30}
-                      />
-                      {item.questionText && item.title && item.title !== item.questionText ? (
-                        <TableClampText
-                          text={`原问题：${item.questionText}`}
-                          lines={1}
-                          tooltipThreshold={30}
-                          style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
-                        />
-                      ) : null}
-                    </Space>
-                  ),
-                },
-                {
-                  title: '品牌 / 角度',
-                  key: 'brand',
-                  width: 160,
-                  render: (_, item) => (
-                    <Space direction="vertical" size={0}>
-                      <Typography.Text>{item.brand ?? '—'}</Typography.Text>
-                      {item.direction ? (
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {item.direction}
-                          {item.copyType ? ` · ${item.copyType}` : ''}
-                        </Typography.Text>
-                      ) : null}
-                    </Space>
-                  ),
-                },
-                {
-                  title: '状态',
-                  dataIndex: 'status',
-                  width: 96,
-                  render: (st: ItemStatusName) => (
-                    <Tag color={itemStatusTagColor(st)}>{ITEM_STATUS_LABELS[st]}</Tag>
-                  ),
-                },
-                {
-                  title: '重试',
-                  dataIndex: 'attempts',
-                  width: 64,
-                },
-                {
-                  title: '说明 / 异常',
-                  key: 'error',
-                  render: (_, item) =>
-                    item.error ? (
-                      <TableClampText
-                        text={item.error}
-                        lines={2}
-                        maxWidth={220}
-                        tooltipThreshold={20}
-                        style={{ fontSize: 12, color: 'var(--gm-danger)' }}
-                      />
-                    ) : item.articleId ? (
-                      <Button
-                        type="link"
-                        size="small"
-                        onClick={() => openCreatedArticles(activeDetail)}
-                      >
-                        查看文章
-                      </Button>
-                    ) : (
-                      <Typography.Text type="secondary">—</Typography.Text>
-                    ),
-                },
-              ]}
-            />
-          </Space>
-        ) : null}
-      </Drawer>
-
-      {/* 终止任务确认弹层 */}
-      <Modal
-        open={cancelTarget !== null}
-        title="确认终止写作任务"
-        centered
-        transitionName=""
-        maskTransitionName=""
-        okText="确认终止并退还未用点数"
-        cancelText="返回"
-        okButtonProps={{ danger: true, loading: cancelling }}
-        onCancel={() => setCancelTarget(null)}
-        onOk={() => void handleConfirmCancel()}
-      >
-        <p>
-          确定终止任务「{cancelTarget?.name}
-          」吗？尚未执行的子任务将标记为已跳过，剩余未使用的预冻点数将立即退回账户可用点数，已生成的文章仍会保留。
-        </p>
-      </Modal>
-
-      {/* 删除任务确认弹层 */}
-      <Modal
-        open={deleteIds !== null}
-        title="确认删除任务记录"
-        centered
-        transitionName=""
-        maskTransitionName=""
-        okText="确认删除"
-        cancelText="取消"
-        okButtonProps={{ danger: true, loading: deleting }}
-        onCancel={() => setDeleteIds(null)}
-        onOk={() => void handleConfirmDelete()}
-      >
-        <p>
-          确定删除选中的 {deleteIds?.length ?? 0}{' '}
-          条已完成/已终止任务记录吗？删除任务记录不会删除已生成的文章。
-        </p>
-      </Modal>
+      <AiTaskConfirmModals
+        client={client}
+        cancelTarget={detailDrawer.cancelTarget}
+        deleteIds={detailDrawer.deleteIds}
+        onCloseCancel={() => setCancelTarget(null)}
+        onCancelled={detailDrawer.handleCancelled}
+        onCloseDelete={() => setDeleteIds(null)}
+        onDeleted={detailDrawer.handleDeleted}
+        onActionError={(text) => setBanner({ type: 'error', text })}
+      />
     </section>
   );
 }
