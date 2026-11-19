@@ -2,17 +2,19 @@
 
 import { SITE_NAME } from '@geomix/shared';
 import { Alert, Button, Dropdown, Layout, Modal, Tooltip } from 'antd';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { PasswordForm } from '../password-form';
 import { SHELL_ANNOUNCEMENT, displayName, formatExpiry } from '../../lib/shell-copy';
 import type { AccountProfile } from '../../lib/api';
 import type { ShellAction, ShellSnapshot } from '../../lib/tab-stack';
-import { CommandPalette } from './command-palette';
-import { LayoutPanel } from './layout-panel';
 import { ModuleScreen } from './module-screen';
 import { SideMenu } from './side-menu';
 import { TabBar } from './tab-bar';
+
+const PasswordForm = dynamic(() => import('../password-form').then((m) => m.PasswordForm));
+const CommandPalette = dynamic(() => import('./command-palette').then((m) => m.CommandPalette));
+const LayoutPanel = dynamic(() => import('./layout-panel').then((m) => m.LayoutPanel));
 
 const { Header, Sider, Content } = Layout;
 const MOBILE_BREAKPOINT = 768;
@@ -448,12 +450,14 @@ export function ShellFrame({
           })}
         </Content>
       </Layout>
-      <LayoutPanel
-        open={panelOpen}
-        prefs={state.prefs}
-        onClose={() => setPanelOpen(false)}
-        onDispatch={handleDispatch}
-      />
+      {panelOpen ? (
+        <LayoutPanel
+          open={panelOpen}
+          prefs={state.prefs}
+          onClose={() => setPanelOpen(false)}
+          onDispatch={handleDispatch}
+        />
+      ) : null}
       <Modal
         open={announcementOpen}
         title="系统公告"
@@ -472,20 +476,22 @@ export function ShellFrame({
           {announcement}
         </p>
       </Modal>
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        role={account.role}
-        tabs={state.tabs}
-        activeId={state.activeId}
-        aiImageEnabled={aiImageEnabled}
-        visibilityEnabled={visibilityEnabled}
-        onDispatch={onDispatch}
-        onOpenLayout={() => setPanelOpen(true)}
-        onToggleMenu={toggleMenu}
-        onChangePassword={() => setPasswordOpen(true)}
-        onLogout={onLogout}
-      />
+      {paletteOpen ? (
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          role={account.role}
+          tabs={state.tabs}
+          activeId={state.activeId}
+          aiImageEnabled={aiImageEnabled}
+          visibilityEnabled={visibilityEnabled}
+          onDispatch={onDispatch}
+          onOpenLayout={() => setPanelOpen(true)}
+          onToggleMenu={toggleMenu}
+          onChangePassword={() => setPasswordOpen(true)}
+          onLogout={onLogout}
+        />
+      ) : null}
       <Modal
         open={passwordOpen}
         title="修改密码"
@@ -495,7 +501,9 @@ export function ShellFrame({
         destroyOnHidden
         footer={null}
       >
-        <PasswordForm onSubmit={onChangePassword} onCancel={() => setPasswordOpen(false)} />
+        {passwordOpen ? (
+          <PasswordForm onSubmit={onChangePassword} onCancel={() => setPasswordOpen(false)} />
+        ) : null}
       </Modal>
     </Layout>
   );

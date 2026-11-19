@@ -13,6 +13,7 @@ import {
   type RewriteSingleCreateResponse,
 } from '@geomix/shared';
 import { Alert, Button, Input, Table, Typography } from 'antd';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
@@ -29,7 +30,10 @@ import { UX_TERMS, triggerBlobDownload } from '../../lib/ux-foundation';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import { buildRewriteSingleColumns } from './rewrite-single-columns';
-import { RewriteSingleCreateModal } from './rewrite-single-create-modal';
+
+const RewriteSingleCreateModal = dynamic(() =>
+  import('./rewrite-single-create-modal').then((m) => m.RewriteSingleCreateModal),
+);
 import {
   buildInitialDraft,
   buildRetrySeed,

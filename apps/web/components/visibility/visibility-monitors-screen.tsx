@@ -13,6 +13,7 @@ import {
   type VisibilityRunRecord,
 } from '@geomix/shared';
 import { Alert, Button, Drawer, Input, Modal, Space, Tabs, Typography } from 'antd';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PriceItem } from '../../lib/samples';
 import { COMPACT_SELECT_STYLE } from '../../lib/select-styles';
@@ -24,7 +25,8 @@ import { useSyncTabTitle } from '../../lib/ux-foundation';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
 import { CrudTable } from '../crud/crud-table';
 import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
-import { RunWorkspace } from '../geo/run-workspace';
+
+const RunWorkspace = dynamic(() => import('../geo/run-workspace').then((m) => m.RunWorkspace));
 import {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_VISIBILITY_PRICES_FALLBACK,
@@ -850,21 +852,23 @@ export function VisibilityMonitorsScreen({
           ) : null
         }
       >
-        <RunWorkspace
-          run={detailRun}
-          loading={drawerState.loading}
-          profile={meta.profiles.find((p) => p.id === detailRun?.profileId)}
-          obsEngineFilter={obsFilters.engine}
-          onObsEngineFilterChange={(engine) => setObsFilters((curr) => ({ ...curr, engine }))}
-          obsMentionFilter={obsFilters.mention}
-          onObsMentionFilterChange={(mention) => setObsFilters((curr) => ({ ...curr, mention }))}
-          obsSentimentFilter={obsFilters.sentiment}
-          onObsSentimentFilterChange={(sentiment) =>
-            setObsFilters((curr) => ({ ...curr, sentiment }))
-          }
-          filteredObservations={filteredObservations}
-          onResetFilters={() => setObsFilters({ engine: '', mention: 'all', sentiment: '' })}
-        />
+        {drawerState.open ? (
+          <RunWorkspace
+            run={detailRun}
+            loading={drawerState.loading}
+            profile={meta.profiles.find((p) => p.id === detailRun?.profileId)}
+            obsEngineFilter={obsFilters.engine}
+            onObsEngineFilterChange={(engine) => setObsFilters((curr) => ({ ...curr, engine }))}
+            obsMentionFilter={obsFilters.mention}
+            onObsMentionFilterChange={(mention) => setObsFilters((curr) => ({ ...curr, mention }))}
+            obsSentimentFilter={obsFilters.sentiment}
+            onObsSentimentFilterChange={(sentiment) =>
+              setObsFilters((curr) => ({ ...curr, sentiment }))
+            }
+            filteredObservations={filteredObservations}
+            onResetFilters={() => setObsFilters({ engine: '', mention: 'all', sentiment: '' })}
+          />
+        ) : null}
       </Drawer>
 
       <Modal

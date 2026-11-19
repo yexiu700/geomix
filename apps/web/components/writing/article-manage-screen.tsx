@@ -12,6 +12,7 @@ import {
   type CrudPageSize,
 } from '@geomix/shared';
 import { Alert, Button, Modal, Space, Table, Tag, Typography } from 'antd';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
@@ -32,8 +33,11 @@ import {
   useSyncTabTitle,
 } from '../../lib/ux-foundation';
 import { useArticleEditorController } from './article-editor-controller';
-import { ArticleEditorModal } from './article-editor-modal';
 import { ArticleFilterPanel } from './article-filter-panel';
+
+const ArticleEditorModal = dynamic(() =>
+  import('./article-editor-modal').then((m) => m.ArticleEditorModal),
+);
 import {
   ARCHIVE_FORMAT_LABELS,
   ARTICLES_ROUTE,
@@ -562,14 +566,16 @@ export function ArticleManageScreen({
       />
 
       {/* 手动添加 / 编辑文章弹窗 */}
-      <ArticleEditorModal
-        controller={editorController}
-        client={client}
-        formOptions={formOptions}
-        refreshFormOptions={refreshFormOptions}
-        onApprove={(id) => void handleApproveOne(id)}
-        onSaved={handleArticleSaved}
-      />
+      {editorController.editor || editorController.editorLoading ? (
+        <ArticleEditorModal
+          controller={editorController}
+          client={client}
+          formOptions={formOptions}
+          refreshFormOptions={refreshFormOptions}
+          onApprove={(id) => void handleApproveOne(id)}
+          onSaved={handleArticleSaved}
+        />
+      ) : null}
 
       {/* 删除确认弹窗 */}
       <Modal

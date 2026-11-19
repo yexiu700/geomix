@@ -9,6 +9,7 @@ import {
   type CrudExportFormat,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Dropdown, Space, Table, Typography } from 'antd';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
@@ -23,14 +24,20 @@ import type { ShellAction } from '../../lib/tab-stack';
 import { DEFAULT_TASK_POLL_INTERVAL_MS, useTaskPolling } from '../../lib/use-task-polling';
 import { triggerBlobDownload } from '../../lib/ux-foundation';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
-import { AiImageCreateModal } from './ai-image-create-modal';
 import { ALL_COLUMN_KEYS, isJobInProgress, type ColumnKey } from './ai-image-helpers';
 import { AiImageDeleteModal, AiImageSearchBar, buildAiImageColumns } from './ai-image-list-parts';
-import { AiImagePreviewModal, type AiImagePreviewTarget } from './ai-image-preview-modal';
-import {
-  AiImageSaveGalleryModal,
-  type AiImageSaveGalleryResult,
-} from './ai-image-save-gallery-modal';
+import type { AiImagePreviewTarget } from './ai-image-preview-modal';
+import type { AiImageSaveGalleryResult } from './ai-image-save-gallery-modal';
+
+const AiImageCreateModal = dynamic(() =>
+  import('./ai-image-create-modal').then((m) => m.AiImageCreateModal),
+);
+const AiImagePreviewModal = dynamic(() =>
+  import('./ai-image-preview-modal').then((m) => m.AiImagePreviewModal),
+);
+const AiImageSaveGalleryModal = dynamic(() =>
+  import('./ai-image-save-gallery-modal').then((m) => m.AiImageSaveGalleryModal),
+);
 
 function defaultDownloadHandler(file: AiImageDownloadFile): boolean {
   return triggerBlobDownload(file);
@@ -429,16 +436,20 @@ export function AiImageScreen({
         />
       )}
 
-      <AiImageSaveGalleryModal
-        job={saveTarget?.job ?? null}
-        defaultCategoryId={saveTarget?.defaultCategoryId ?? ''}
-        mediaCategories={formOptions?.mediaCategories ?? []}
-        saveToGallery={(id, input) => api.saveToGallery(id, input)}
-        onClose={() => setSaveTarget(null)}
-        onSaved={handleSavedToGallery}
-      />
+      {saveTarget ? (
+        <AiImageSaveGalleryModal
+          job={saveTarget.job}
+          defaultCategoryId={saveTarget.defaultCategoryId}
+          mediaCategories={formOptions?.mediaCategories ?? []}
+          saveToGallery={(id, input) => api.saveToGallery(id, input)}
+          onClose={() => setSaveTarget(null)}
+          onSaved={handleSavedToGallery}
+        />
+      ) : null}
 
-      <AiImagePreviewModal target={previewTarget} onClose={() => setPreviewTarget(null)} />
+      {previewTarget ? (
+        <AiImagePreviewModal target={previewTarget} onClose={() => setPreviewTarget(null)} />
+      ) : null}
 
       <AiImageDeleteModal
         targetIds={deleteTargetIds}
