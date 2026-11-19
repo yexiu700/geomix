@@ -8,10 +8,13 @@ import {
   readVisibilityConfig,
   type VisibilityConfig,
 } from './visibility.config';
+import { VisibilityAnalyticsService } from './visibility-analytics.service';
 import { VisibilityCollectorService } from './visibility-collector.service';
 import { VisibilityController } from './visibility.controller';
 import { VisibilityJudgeService } from './visibility-judge.service';
+import { VisibilityProfileService } from './visibility-profile.service';
 import { VISIBILITY_RUN_HANDLER, VisibilityRunRunner } from './visibility-run.runner';
+import { VisibilityRunLifecycleService } from './visibility-run-lifecycle.service';
 import { VisibilityService } from './visibility.service';
 
 @Module({
@@ -24,6 +27,9 @@ import { VisibilityService } from './visibility.service';
     },
     VisibilityCollectorService,
     VisibilityJudgeService,
+    VisibilityProfileService,
+    VisibilityRunLifecycleService,
+    VisibilityAnalyticsService,
     VisibilityService,
     VisibilityRunRunner,
     {
