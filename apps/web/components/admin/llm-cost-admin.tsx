@@ -164,7 +164,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
           message={
             report.rateConfigured
               ? `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：已启用自定义模型单价核算，本报表仅用于运维成本统计，不触发租户点数扣减。`
-              : `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：当前按系统参考费率估算，与租户点数账本相互独立；可在系统费率配置中设置各模型千 Token 单价。`
+              : `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：当前按系统默认参考费率估算，与租户点数账本相互独立（如需调整各模型千 Token 单价，请联系运维更新部署配置）。`
           }
         />
       ) : null}
@@ -344,18 +344,30 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                   {
                     title: '服务商',
                     dataIndex: 'provider',
-                    render: (val: string, row) => formatLlmProviderDisplayLabel(val, row.fake),
+                    render: (val: string, row) =>
+                      row.model.startsWith('deterministic-') || val === 'local-rule'
+                        ? '本地规则'
+                        : formatLlmProviderDisplayLabel(val, row.fake),
                   },
                   {
                     title: '模型',
                     dataIndex: 'model',
-                    render: (val: string, row) => formatLlmModelDisplayLabel(val, row.fake),
+                    render: (val: string, row) =>
+                      val.startsWith('deterministic-')
+                        ? '规则判定（免模型调用）'
+                        : formatLlmModelDisplayLabel(val, row.fake),
                   },
                   {
                     title: '类型',
                     dataIndex: 'fake',
-                    render: (fake: boolean) =>
-                      fake ? <Tag>内置模拟</Tag> : <Tag color="blue">真实模型</Tag>,
+                    render: (fake: boolean, row) =>
+                      row.model.startsWith('deterministic-') ? (
+                        <Tag>规则跳过</Tag>
+                      ) : fake ? (
+                        <Tag>内置模拟</Tag>
+                      ) : (
+                        <Tag color="blue">真实模型</Tag>
+                      ),
                   },
                   {
                     title: '调用次数',

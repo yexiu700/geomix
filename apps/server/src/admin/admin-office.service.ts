@@ -577,6 +577,29 @@ export class AdminOfficeService {
     return presentTemplate(row);
   }
 
+  async deleteTemplate(actor: Actor, id: string, idempotencyKey?: string) {
+    assertAdmin(actor);
+    if (idempotencyKey) {
+      const prior = await this.findReplay('template_delete', idempotencyKey);
+      if (prior) {
+        this.assertSame(prior, id);
+        return { deleted: true, id };
+      }
+    }
+    const existing = await this.prisma.base.promptTemplate.findFirst({
+      where: { id, tenantId: null },
+      select: { id: true, name: true },
+    });
+    if (!existing) throw notFound('系统模板不存在');
+    await this.prisma.base.promptTemplate.delete({ where: { id } });
+    await this.audit(actor, null, 'template_delete', {
+      idempotencyKey: idempotencyKey ?? null,
+      tenantId: id,
+      name: existing.name,
+    });
+    return { deleted: true, id };
+  }
+
   async llmCostReport(
     actor: Actor,
     rawQuery: Record<string, unknown>,
@@ -694,11 +717,13 @@ export class AdminOfficeService {
       if (coveredItemPrefixes.has(`obs:${obs.id}`) || !obs.checkedAt) continue;
       tenantIds.add(obs.tenantId);
       const model = obs.judgeModel ?? 'fake-cheap';
-      const fake = model.startsWith('fake');
+      const isDeterministicSkip =
+        model === 'deterministic-skip' || model.startsWith('deterministic-');
+      const fake = model.startsWith('fake') || isDeterministicSkip;
       rawEvents.push({
         tenantId: obs.tenantId,
         scene: 'visibility_judge',
-        provider: fake ? 'fake' : 'openai',
+        provider: isDeterministicSkip ? 'local-rule' : fake ? 'fake' : 'openai',
         model,
         fake,
         tokensIn: obs.tokensIn ?? 0,

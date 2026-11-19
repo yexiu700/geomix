@@ -718,20 +718,23 @@ export function KnowledgeScreen({
           </div>
 
           <div>
-            <Typography.Text strong style={{ marginRight: 12 }}>
-              录入模式
-            </Typography.Text>
-            <Radio.Group
-              value={draft.mode}
-              onChange={(e) => {
-                setFieldErrors({});
-                setFormError(null);
-                setDraft((prev) => ({ ...prev, mode: e.target.value as KbModeName }));
-              }}
-            >
-              <Radio value="DETAIL">细分模式</Radio>
-              <Radio value="SUMMARY">汇总模式</Radio>
-            </Radio.Group>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <Typography.Text strong style={{ whiteSpace: 'nowrap' }}>
+                录入模式
+              </Typography.Text>
+              <Radio.Group
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}
+                value={draft.mode}
+                onChange={(e) => {
+                  setFieldErrors({});
+                  setFormError(null);
+                  setDraft((prev) => ({ ...prev, mode: e.target.value as KbModeName }));
+                }}
+              >
+                <Radio value="DETAIL">细分模式</Radio>
+                <Radio value="SUMMARY">汇总模式</Radio>
+              </Radio.Group>
+            </div>
             <Typography.Paragraph
               type="secondary"
               style={{ marginTop: 4, marginBottom: 0, fontSize: 12 }}

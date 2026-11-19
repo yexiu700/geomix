@@ -215,7 +215,7 @@ describe('LlmCostAdmin (#24)', () => {
     expect(screen.getAllByText('¥2,450.0000').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('预估总成本（元）')).toBeTruthy();
     expect(screen.getByText(/北京时间 UTC\+8/)).toBeTruthy();
-    expect(screen.getByText(/系统费率配置/)).toBeTruthy();
+    expect(screen.getByText(/系统默认参考费率/)).toBeTruthy();
 
     // No backend ops/env jargon in DOM
     const allText = container.textContent ?? '';

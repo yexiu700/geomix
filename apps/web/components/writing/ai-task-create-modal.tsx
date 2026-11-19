@@ -362,7 +362,7 @@ export function AiTaskCreateModal({
                   type="link"
                   size="small"
                   aria-label="去新建图库"
-                  style={{ padding: 0, height: 'auto' }}
+                  style={{ padding: 0, height: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
                   onClick={() => {
                     onEditorChange((curr) => (curr ? { ...curr, minimized: true } : curr));
                     onDispatch?.({
@@ -518,6 +518,7 @@ export function AiTaskCreateModal({
             <div>
               <span style={{ display: 'block', marginBottom: 6 }}>文章结果状态</span>
               <Radio.Group
+                style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}
                 value={editor.draft.resultStatus}
                 onChange={(e) =>
                   updateDraft({ resultStatus: e.target.value as AiTaskResultStatus })

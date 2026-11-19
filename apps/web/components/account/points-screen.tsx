@@ -130,8 +130,8 @@ export function PointsScreen({
 
   function applyFilter(): void {
     const delta = draft.delta.trim();
-    if (delta !== '' && !/^-?\d+$/.test(delta)) {
-      setError('点数变动不正确');
+    if (delta !== '' && !/^[+-]?\d+$/.test(delta)) {
+      setError('点数变动需为整数（支持 + / - 前缀，如 +100 或 -5）');
       return;
     }
     const parsedFrom = parseDatetimeInput(draft.from);

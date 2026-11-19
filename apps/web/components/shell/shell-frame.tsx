@@ -276,7 +276,7 @@ export function ShellFrame({
           }}
         />
       </Sider>
-      <Layout>
+      <Layout style={{ minWidth: 0, overflow: 'hidden' }}>
         <Header
           className="gm-header"
           style={{
@@ -389,6 +389,8 @@ export function ShellFrame({
             {menuToggleLabel}
           </Button>
           <Dropdown
+            trigger={['click', 'hover']}
+            placement="bottomRight"
             menu={{
               items: [
                 { key: 'password', label: '修改密码' },
@@ -400,7 +402,7 @@ export function ShellFrame({
               },
             }}
           >
-            <Button type="text" aria-label="账号菜单">
+            <Button type="text" aria-label="账号菜单" style={{ flexShrink: 0 }}>
               <span className="gm-avatar" aria-hidden="true">
                 {name.slice(0, 1)}
               </span>

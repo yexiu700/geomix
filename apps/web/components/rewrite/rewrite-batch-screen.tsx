@@ -420,7 +420,6 @@ export function RewriteBatchScreen({
         title: '操作',
         key: 'actions',
         width: 155,
-        fixed: 'right',
         render: (_val, row) =>
           readOnly ? (
             <Typography.Text type="secondary">只读</Typography.Text>

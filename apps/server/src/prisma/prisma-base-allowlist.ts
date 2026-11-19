@@ -38,7 +38,7 @@ export type PrismaBaseAllowance = {
 
 /** 路径相对 `apps/server/src`，按路径字母序排列。 */
 export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>> = {
-  'admin/admin-office.service.ts': { category: 'admin', direct: 32, txOrRaw: 5 },
+  'admin/admin-office.service.ts': { category: 'admin', direct: 34, txOrRaw: 5 },
   'auth/prisma-auth.store.ts': { category: 'auth', direct: 6, txOrRaw: 0 },
   'billing/billing.service.ts': { category: 'billing', direct: 23, txOrRaw: 2 },
   'billing/quota.service.ts': { category: 'billing', direct: 2, txOrRaw: 2 },

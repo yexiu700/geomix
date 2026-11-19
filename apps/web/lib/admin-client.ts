@@ -131,6 +131,14 @@ export function httpAdmin(storage: SessionStorageLike) {
       readJson<TemplateRow>(storage, 'POST', '/admin/templates', input, freshKey()),
     updateTemplate: (id: string, input: TemplateWriteInput) =>
       readJson<TemplateRow>(storage, 'PATCH', `/admin/templates/${id}`, input, freshKey()),
+    deleteTemplate: (id: string) =>
+      readJson<{ deleted: boolean; id: string }>(
+        storage,
+        'DELETE',
+        `/admin/templates/${id}`,
+        undefined,
+        freshKey(),
+      ),
     llmCosts: (query?: { days?: number; includeFake?: boolean; tenantId?: string }) => {
       const params = new URLSearchParams();
       if (query?.days !== undefined) params.set('days', String(query.days));
