@@ -20,7 +20,7 @@ import type { SessionStorageLike } from '../../lib/session';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import type { ShellAction } from '../../lib/tab-stack';
 import { useTaskPolling } from '../../lib/use-task-polling';
-import { useSyncTabTitle } from '../../lib/ux-foundation';
+import { hasOpenFloatingOverlay, useSyncTabTitle } from '../../lib/ux-foundation';
 import { httpVisibilityGateway, type VisibilityGateway } from '../../lib/visibility';
 import { CrudTable } from '../crud/crud-table';
 import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
@@ -101,6 +101,7 @@ export function VisibilityMonitorsScreen({
   const initialUrlParams = useMemo(() => parseHrefParams(href), [href]);
 
   const sectionRef = useRef<HTMLElement | null>(null);
+  const confirmBodyRef = useRef<HTMLParagraphElement>(null);
   const profileFilterSelectRef = useRef<HTMLSelectElement | null>(null);
   const modalSessionRef = useRef(0);
   const detailRequestIdRef = useRef(0);
@@ -133,6 +134,21 @@ export function VisibilityMonitorsScreen({
   const [runCreateTarget, setRunCreateTarget] = useState<RunCreateTarget>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [controlLoading, setControlLoading] = useState(false);
+
+  useEffect(() => {
+    if (!active || !confirmDialog || controlLoading) return undefined;
+
+    // The trigger can still have focus while Ant Design animates the dialog in.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const modalWrap = confirmBodyRef.current?.closest('.ant-modal-wrap');
+      if (!modalWrap || hasOpenFloatingOverlay(modalWrap)) return;
+      event.preventDefault();
+      setConfirmDialog(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [active, confirmDialog, controlLoading]);
 
   const [drawerState, setDrawerState] = useState<{
     open: boolean;
@@ -313,13 +329,14 @@ export function VisibilityMonitorsScreen({
       });
       return;
     }
-    const targetProfileId = presetProfileId || query.profileId || effectiveDefaultProfileId;
+    const soleProfile = meta.profiles.length === 1 ? meta.profiles[0] : undefined;
+    const targetProfileId =
+      presetProfileId || query.profileId || effectiveDefaultProfileId || soleProfile?.id || '';
     setRunCreateTarget({ session: ++modalSessionRef.current, initialProfileId: targetProfileId });
     void loadMeta();
   }
 
   function handleProfileSaved(saved: VisibilityProfileRecord, savedMeta: ProfileSavedMeta) {
-    const previousProfiles = meta.profiles;
     setMeta((curr) => ({
       ...curr,
       profiles:
@@ -334,12 +351,7 @@ export function VisibilityMonitorsScreen({
           ? `已更新监测档案「${saved.name}」`
           : `已创建监测档案「${saved.name}」`,
     });
-    syncDefaultAfterProfileSave({
-      mode: savedMeta.mode,
-      savedId: saved.id,
-      isDefault: savedMeta.isDefault,
-      previousProfiles,
-    });
+    syncDefaultAfterProfileSave(saved.id, savedMeta.isDefault);
     invalidateFreshness('visibility-profiles');
   }
 
@@ -779,11 +791,9 @@ export function VisibilityMonitorsScreen({
         mode={profileEditorTarget?.mode ?? 'create'}
         editingProfile={profileEditorTarget?.mode === 'edit' ? profileEditorTarget.profile : null}
         initialIsDefault={
-          profileEditorTarget?.mode === 'edit'
-            ? profileEditorTarget.profile.id === effectiveDefaultProfileId
-            : meta.profiles.length === 0
+          profileEditorTarget?.mode === 'edit' &&
+          profileEditorTarget.profile.id === effectiveDefaultProfileId
         }
-        isFirstProfile={meta.profiles.length === 0}
         prefillSources={meta.prefillSources}
         client={client}
         readOnly={readOnly}
@@ -913,7 +923,7 @@ export function VisibilityMonitorsScreen({
             : undefined
         }
       >
-        {confirmSpec ? <p>{confirmSpec.body}</p> : null}
+        {confirmSpec ? <p ref={confirmBodyRef}>{confirmSpec.body}</p> : null}
       </Modal>
     </section>
   );

@@ -310,6 +310,11 @@ export class LlmRouter {
     private readonly options: { maxRetries: number; timeoutMs: number; retryDelayMs: number },
   ) {}
 
+  usesFakePrimary(scene: LlmScene): boolean {
+    const { primary } = this.route.route[scene];
+    return this.route.providers[primary]?.kind === 'fake';
+  }
+
   async complete(
     input: Omit<LlmCompleteInput, 'tenantId' | 'idempotencyKey'>,
   ): Promise<LlmCompletion> {
@@ -476,6 +481,10 @@ export class LlmService {
     private readonly costSink?: LlmCostSink,
     private readonly rates: LlmCostRateMap = {},
   ) {}
+
+  usesFakePrimary(scene: LlmScene): boolean {
+    return this.router.usesFakePrimary(scene);
+  }
 
   static fromEnv(
     env: Record<string, string | undefined>,

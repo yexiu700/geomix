@@ -89,7 +89,7 @@ const FLOATING_POPUP_SELECTOR = [
  * 当用户在弹窗内打开 `<Select>` 下拉菜单或子确认弹窗并按 `Escape` 时，
  * 只关闭上层下拉/子弹窗，避免误关底层表单弹窗。
  */
-export function hasOpenFloatingOverlay(): boolean {
+export function hasOpenFloatingOverlay(excludedModalWrap?: Element): boolean {
   if (typeof document === 'undefined') return false;
   const popups = document.querySelectorAll<HTMLElement>(FLOATING_POPUP_SELECTOR);
   for (const el of popups) {
@@ -98,7 +98,9 @@ export function hasOpenFloatingOverlay(): boolean {
   }
   const modalWraps = document.querySelectorAll<HTMLElement>('.ant-modal-wrap');
   for (const wrap of modalWraps) {
-    if (wrap.style.display === 'none' || wrap.closest('[hidden]')) continue;
+    if (wrap === excludedModalWrap || wrap.style.display === 'none' || wrap.closest('[hidden]')) {
+      continue;
+    }
     return true;
   }
   return false;

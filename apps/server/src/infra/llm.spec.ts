@@ -86,6 +86,29 @@ describe('fake llm and cost ledger', () => {
 });
 
 describe('llm routing', () => {
+  it('reports simulated primaries per scene without treating a fake backup as a preselected demo', () => {
+    const service = LlmService.fromEnv({
+      LLM_PROVIDERS: JSON.stringify({
+        providers: {
+          deepseek: {
+            kind: 'openai',
+            baseUrl: 'https://models.example/v1',
+            apiKeyEnv: 'TEST_MODEL_KEY',
+            cheapModel: 'cheap-test',
+            qualityModel: 'quality-test',
+          },
+          fake: { kind: 'fake' },
+        },
+        route: {
+          body: { primary: 'deepseek', backup: ['fake'] },
+          title: { primary: 'fake', backup: [] },
+        },
+      }),
+    });
+    expect(service.usesFakePrimary('body')).toBe(false);
+    expect(service.usesFakePrimary('title')).toBe(true);
+  });
+
   it('retries a timeout and then fails over to the backup', async () => {
     let primaryCalls = 0;
     const primary: LlmProvider = {

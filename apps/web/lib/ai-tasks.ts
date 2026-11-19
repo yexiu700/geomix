@@ -30,6 +30,7 @@ export type AiTaskFormOptions = {
   articlePrompts: PromptOptionsResponse;
   titlePrompts: PromptOptionsResponse;
   prices: PriceItem[];
+  generationMode: { bodySimulated: boolean; titleSimulated: boolean };
 };
 
 export type AiTaskGateway = {
@@ -128,22 +129,26 @@ export function httpAiTaskGateway(storage: SessionStorageLike): AiTaskGateway {
       };
     },
     async loadFormOptions() {
-      const [cats, kws, gals, kbs, articlePrompts, titlePrompts, prices] = await Promise.all([
-        categoryGw.list({
-          page: 1,
-          pageSize: 50,
-          keyword: '',
-          sort: 'createdAt',
-          order: 'desc',
-          export: undefined,
-        }),
-        keywordGw.list({ page: 1, pageSize: 50, keyword: '', sort: 'createdAt', order: 'desc' }),
-        galleryGw.listCategories({ page: 1, pageSize: 100, q: '' }),
-        knowledgeGw.list({ page: 1, pageSize: 100 }),
-        promptGw.options('ARTICLE'),
-        promptGw.options('TITLE'),
-        sampleGw.prices(),
-      ]);
+      const [cats, kws, gals, kbs, articlePrompts, titlePrompts, prices, generationMode] =
+        await Promise.all([
+          categoryGw.list({
+            page: 1,
+            pageSize: 50,
+            keyword: '',
+            sort: 'createdAt',
+            order: 'desc',
+            export: undefined,
+          }),
+          keywordGw.list({ page: 1, pageSize: 50, keyword: '', sort: 'createdAt', order: 'desc' }),
+          galleryGw.listCategories({ page: 1, pageSize: 100, q: '' }),
+          knowledgeGw.list({ page: 1, pageSize: 100 }),
+          promptGw.options('ARTICLE'),
+          promptGw.options('TITLE'),
+          sampleGw.prices(),
+          authorizedRequest(storage, 'GET', '/ai-tasks/generation-mode').then(
+            unwrap<AiTaskFormOptions['generationMode']>,
+          ),
+        ]);
       return {
         categories: cats.items,
         keywords: kws.items,
@@ -152,6 +157,7 @@ export function httpAiTaskGateway(storage: SessionStorageLike): AiTaskGateway {
         articlePrompts,
         titlePrompts,
         prices,
+        generationMode,
       };
     },
   };

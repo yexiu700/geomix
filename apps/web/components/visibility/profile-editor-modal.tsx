@@ -80,7 +80,6 @@ export type ProfileEditorModalProps = {
   mode: 'create' | 'edit';
   editingProfile: VisibilityProfileRecord | null;
   initialIsDefault: boolean;
-  isFirstProfile: boolean;
   prefillSources: VisibilityPrefillSources;
   client: VisibilityGateway;
   readOnly?: boolean;
@@ -95,7 +94,6 @@ export function ProfileEditorModal({
   mode,
   editingProfile,
   initialIsDefault,
-  isFirstProfile,
   prefillSources,
   client,
   readOnly = false,
@@ -567,11 +565,7 @@ export function ProfileEditorModal({
                 setModalState((curr) => ({ ...curr, draft: { ...curr.draft, isDefault: checked } }))
               }
             />
-            <span>
-              {draft.mode === 'create' && isFirstProfile
-                ? '设为默认监测档案（当前为首个档案，创建后将自动设为默认）'
-                : '设为默认监测档案（进入数据看板与新建监测时默认选中）'}
-            </span>
+            <span>设为默认监测档案（在此浏览器打开数据看板或新建监测时默认选中）</span>
           </div>
         </div>
       ) : null}

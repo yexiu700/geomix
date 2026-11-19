@@ -492,7 +492,7 @@ describe('VisibilityMonitorsScreen deep-link & state guard boundaries (#269)', (
     });
   });
 
-  it('preserves stored default profile prof-1 when creating non-default prof-2, and falls back cleanly when stored default profile ID no longer exists (#192)', async () => {
+  it('preserves the stored default on non-default creation and ignores a stale stored profile ID (#192)', async () => {
     // Scenario A: Pre-populated localStorage ('prof-1', second in list) stays 'prof-1' when creating non-default 'prof-2'
     window.localStorage.setItem('geomix:visibility:default-profile-id', 'prof-1');
 
@@ -553,9 +553,9 @@ describe('VisibilityMonitorsScreen deep-link & state guard boundaries (#269)', (
     viewA.unmount();
     cleanup();
 
-    // Scenario B: Stale deleted ID in localStorage falls back to profiles[0] and locks profiles[0] on non-default creation
+    // Scenario B: A deleted profile ID neither highlights nor persists the first profile.
     window.localStorage.setItem('geomix:visibility:default-profile-id', 'prof-deleted-ghost');
-    const profA = makeProfile({ id: 'prof-a', name: '回退首位档案', brandName: '品牌A' });
+    const profA = makeProfile({ id: 'prof-a', name: '首位档案', brandName: '品牌A' });
     const profB = makeProfile({ id: 'prof-b', name: '次位档案', brandName: '品牌B' });
     const storeB: VisibilityProfileRecord[] = [profA, profB];
     const gatewayB = createMonitorsTestGateway({
@@ -588,7 +588,7 @@ describe('VisibilityMonitorsScreen deep-link & state guard boundaries (#269)', (
 
     fireEvent.click(await screen.findByRole('tab', { name: /品牌与竞品档案/ }));
     const cardProfA = await screen.findByTestId('profile-card-prof-a');
-    expect(within(cardProfA).getByText('默认档案')).toBeTruthy();
+    expect(within(cardProfA).queryByText('默认档案')).toBeNull();
 
     fireEvent.click(screen.getByLabelText('新增品牌与竞品档案'));
     expect(screen.getByRole('switch', { name: '设为默认档案' }).getAttribute('aria-checked')).toBe(
@@ -600,8 +600,47 @@ describe('VisibilityMonitorsScreen deep-link & state guard boundaries (#269)', (
 
     const cardProfC = await screen.findByTestId('profile-card-prof-c');
     expect(within(cardProfC).queryByText('默认档案')).toBeNull();
-    expect(within(screen.getByTestId('profile-card-prof-a')).getByText('默认档案')).toBeTruthy();
-    expect(window.localStorage.getItem('geomix:visibility:default-profile-id')).toBe('prof-a');
+    expect(screen.queryByText('默认档案')).toBeNull();
+    expect(window.localStorage.getItem('geomix:visibility:default-profile-id')).toBe(
+      'prof-deleted-ghost',
+    );
+  });
+
+  it('leaves the first profile without a default when the switch is off (#192)', async () => {
+    const profiles: VisibilityProfileRecord[] = [];
+    const gateway = createMonitorsTestGateway({
+      listProfiles: vi.fn(async () => ({
+        items: [...profiles],
+        prefillSources: { keywords: [], knowledgeBases: [] },
+      })),
+      createProfile: vi.fn(async (input) => {
+        const profile = makeProfile({ id: 'first-profile', name: input.name });
+        profiles.push(profile);
+        return profile;
+      }),
+    });
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: /品牌与竞品档案/ }));
+    fireEvent.click(screen.getByLabelText('新增品牌与竞品档案'));
+    const toggle = screen.getByRole('switch', { name: '设为默认档案' });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText('档案名称'), { target: { value: '首个档案' } });
+    fireEvent.change(screen.getByLabelText('主品牌名称'), { target: { value: '测试品牌' } });
+    fireEvent.click(screen.getByLabelText('保存品牌档案'));
+
+    const card = await screen.findByTestId('profile-card-first-profile');
+    expect(within(card).queryByText('默认档案')).toBeNull();
+    expect(window.localStorage.getItem(DEFAULT_PROFILE_STORAGE_KEY)).toBeNull();
   });
 
   it('protects both RUNNING and QUEUED runs from bulk delete across single and mixed selections while allowing COMPLETED bulk delete', async () => {
@@ -782,7 +821,7 @@ describe('monitors-helpers pure functions & useDefaultProfileId hook (#269)', ()
     });
   });
 
-  it('manages default profile storage, stale fallback, #192 save synchronization, removal, and storage errors via useDefaultProfileId', () => {
+  it('honors explicit defaults, clears them without picking a substitute, and tolerates storage errors (#192)', () => {
     const map = new Map<string, string>();
     const memStorage: DefaultProfileStorageLike = {
       getItem: vi.fn((k: string) => map.get(k) ?? null),
@@ -797,52 +836,42 @@ describe('monitors-helpers pure functions & useDefaultProfileId hook (#269)', ()
     const p1 = makeProfile({ id: 'p-1', name: '档案1' });
     const p2 = makeProfile({ id: 'p-2', name: '档案2' });
 
-    // 1. Empty storage falls back to profiles[0].id; creating non-default locks p-1 into storage (#192)
+    // 1. Empty storage never picks a default by list order.
     const { result, rerender } = renderHook(
       ({ profiles }) => useDefaultProfileId(profiles, memStorage),
       { initialProps: { profiles: [p1, p2] } },
     );
     expect(result.current.defaultProfileId).toBe('');
+    expect(result.current.effectiveDefaultProfileId).toBe('');
+
+    act(() => result.current.syncDefaultAfterProfileSave('p-1', true));
     expect(result.current.effectiveDefaultProfileId).toBe('p-1');
 
     const p3 = makeProfile({ id: 'p-3', name: '档案3' });
-    act(() => {
-      result.current.syncDefaultAfterProfileSave({
-        mode: 'create',
-        savedId: 'p-3',
-        isDefault: false,
-        previousProfiles: [p1, p2],
-      });
-    });
+    act(() => result.current.syncDefaultAfterProfileSave('p-3', false));
     rerender({ profiles: [p3, p1, p2] });
     expect(result.current.effectiveDefaultProfileId).toBe('p-1');
     expect(map.get(DEFAULT_PROFILE_STORAGE_KEY)).toBe('p-1');
 
-    // 2. Edit p-1 unchecking default falls back to first remaining profile
-    act(() => {
-      result.current.syncDefaultAfterProfileSave({
-        mode: 'edit',
-        savedId: 'p-1',
-        isDefault: false,
-        previousProfiles: [p3, p1, p2],
-      });
-    });
-    expect(result.current.effectiveDefaultProfileId).toBe('p-3');
-    expect(map.get(DEFAULT_PROFILE_STORAGE_KEY)).toBe('p-3');
+    // 2. Turning default off on the current profile clears it.
+    act(() => result.current.syncDefaultAfterProfileSave('p-1', false));
+    expect(result.current.effectiveDefaultProfileId).toBe('');
+    expect(map.has(DEFAULT_PROFILE_STORAGE_KEY)).toBe(false);
 
-    // 3. Clearing removed default calls removeItem and falls back to remaining first profile
+    // 3. Removing the selected default preserves the unset state.
+    act(() => result.current.persistDefaultProfile('p-3'));
     act(() => {
       result.current.clearDefaultIfRemoved('p-3');
     });
     expect(memStorage.removeItem).toHaveBeenCalledWith(DEFAULT_PROFILE_STORAGE_KEY);
     expect(map.has(DEFAULT_PROFILE_STORAGE_KEY)).toBe(false);
     rerender({ profiles: [p1, p2] });
-    expect(result.current.effectiveDefaultProfileId).toBe('p-1');
+    expect(result.current.effectiveDefaultProfileId).toBe('');
 
-    // 4. Stale deleted ID in storage falls back cleanly, and throwing/null storage never crashes
+    // 4. Stale records, unavailable storage and throwing storage never infer a default.
     map.set(DEFAULT_PROFILE_STORAGE_KEY, 'ghost-id');
     const staleHook = renderHook(() => useDefaultProfileId([p2, p1], memStorage));
-    expect(staleHook.result.current.effectiveDefaultProfileId).toBe('p-2');
+    expect(staleHook.result.current.effectiveDefaultProfileId).toBe('');
 
     const throwingStorage: DefaultProfileStorageLike = {
       getItem: () => {
@@ -856,14 +885,14 @@ describe('monitors-helpers pure functions & useDefaultProfileId hook (#269)', ()
       },
     };
     const resilientHook = renderHook(() => useDefaultProfileId([p1], throwingStorage));
-    expect(resilientHook.result.current.effectiveDefaultProfileId).toBe('p-1');
+    expect(resilientHook.result.current.effectiveDefaultProfileId).toBe('');
     act(() => {
       resilientHook.result.current.persistDefaultProfile('p-1');
     });
     expect(resilientHook.result.current.defaultProfileId).toBe('p-1');
 
     const nullStorageHook = renderHook(() => useDefaultProfileId([p2], null));
-    expect(nullStorageHook.result.current.effectiveDefaultProfileId).toBe('p-2');
+    expect(nullStorageHook.result.current.effectiveDefaultProfileId).toBe('');
   });
 
   it('prefills keyword and knowledge-base brand terms idempotently without overwriting user edits or duplicating aliases', () => {

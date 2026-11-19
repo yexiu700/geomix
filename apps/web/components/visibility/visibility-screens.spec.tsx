@@ -970,6 +970,7 @@ describe('VisibilityMonitorsScreen', () => {
 
   it('keeps existing default profile when creating new profile with default switch OFF, blocks deleting active runs, closes modals on Escape, and clears success banner on tab switch (#192)', async () => {
     const { gateway } = buildMockGateway();
+    window.localStorage.setItem('geomix:visibility:default-profile-id', 'vprof_starview');
 
     render(
       <div className="gm-page" data-tab-id="/visibility/monitors">
@@ -992,19 +993,24 @@ describe('VisibilityMonitorsScreen', () => {
     );
     expect(rowCheckboxes.length).toBeGreaterThanOrEqual(1);
     fireEvent.click(rowCheckboxes[0]!);
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    const deleteButton = screen.getByRole('button', { name: '删除' });
+    fireEvent.click(deleteButton);
 
     expect(await screen.findByText('无法删除进行中的监测任务')).toBeTruthy();
     expect(screen.queryByText(/已结束监测任务记录/)).toBeNull();
     expect(screen.getByText(/禁止直接删除/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '立即终止该任务' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    fireEvent.keyDown(deleteButton, {
+      key: 'Escape',
+      code: 'Escape',
+      keyCode: 27,
+    });
     await waitFor(() => {
       expect(screen.queryByText('无法删除进行中的监测任务')).toBeNull();
     });
 
-    // 2. Switch to 品牌与竞品档案; existing profile vprof_starview is default even when localStorage starts empty
+    // 2. Switch to 品牌与竞品档案 and check the explicitly saved default profile.
     fireEvent.click(screen.getByRole('tab', { name: /品牌与竞品档案/ }));
     const existingCard = await screen.findByTestId('profile-card-vprof_starview');
     expect(within(existingCard).getByText('默认档案')).toBeTruthy();

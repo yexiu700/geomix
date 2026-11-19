@@ -31,6 +31,7 @@ import { asHttpRequest } from '../auth/http-request';
 import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
+import { LlmService } from '../infra/llm';
 import { AiTasksService } from './ai-tasks.service';
 
 type DownloadResponse = {
@@ -59,7 +60,10 @@ function requireUserId(req: unknown): string {
 @Controller('ai-tasks')
 @UseGuards(AuthGuard, TenantActiveGuard)
 export class AiTasksController {
-  constructor(@Inject(AiTasksService) private readonly tasks: AiTasksService) {}
+  constructor(
+    @Inject(AiTasksService) private readonly tasks: AiTasksService,
+    @Inject(LlmService) private readonly llm: LlmService,
+  ) {}
 
   @Get()
   async list(
@@ -94,6 +98,14 @@ export class AiTasksController {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('x-content-type-options', 'nosniff');
     response.send(body);
+  }
+
+  @Get('generation-mode')
+  generationMode() {
+    return ok({
+      bodySimulated: this.llm.usesFakePrimary('body'),
+      titleSimulated: this.llm.usesFakePrimary('title'),
+    });
   }
 
   @Get(':id')

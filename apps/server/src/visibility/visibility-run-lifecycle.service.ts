@@ -548,7 +548,7 @@ export class VisibilityRunLifecycleService {
       throw new ApiError(
         400,
         API_ERROR.BAD_REQUEST,
-        '所选任务中包含正在运行或已暂停的任务，请先终止后再删除',
+        '所选任务中包含排队中、运行中或已暂停的任务，请先终止后再删除',
       );
     }
 

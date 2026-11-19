@@ -50,6 +50,7 @@ function makePrompt(
 
 function makeOptions(): AiTaskFormOptions {
   return {
+    generationMode: { bodySimulated: false, titleSimulated: false },
     categories: [
       {
         id: 'cat_1',
