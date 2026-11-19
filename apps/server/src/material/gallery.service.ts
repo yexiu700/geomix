@@ -665,7 +665,7 @@ export class GalleryService {
 
     for (const asset of assets) {
       const [articleRefCount, imageJobRefCount] = await Promise.all([
-        this.prisma.base.article.count({
+        this.prisma.scoped.article.count({
           where: {
             tenantId,
             OR: [
@@ -674,7 +674,7 @@ export class GalleryService {
             ],
           },
         }),
-        this.prisma.base.aiImageJob.count({
+        this.prisma.scoped.aiImageJob.count({
           where: { tenantId, refAssetId: asset.id },
         }),
       ]);
@@ -716,7 +716,7 @@ export class GalleryService {
     assetId: string,
     variant: 'file' | 'thumb',
   ): Promise<{ body: Buffer; contentType: string }> {
-    const asset = await this.prisma.base.mediaAsset.findFirst({
+    const asset = await this.prisma.scoped.mediaAsset.findFirst({
       where: { id: assetId, tenantId },
       select: { id: true, objectKey: true, width: true, height: true },
     });

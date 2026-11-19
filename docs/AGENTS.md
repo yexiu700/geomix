@@ -88,6 +88,8 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
    - 普通商户接口：`@UseGuards(AuthGuard, TenantActiveGuard)`；到期/停用租户读接口放行、写接口返回 `403` / `40301`。
    - 管理员接口：额外挂载 `AdminGuard`——对非管理员返回 **`404`**（非 `403`），防止接口探测。
    - **数据库客户端选择**：日常商户业务一律使用 `this.prisma.scoped`；仅登录认证、种子/对账、管理员跨租户操作、Worker 后台消费以及原始 SQL 可用 `this.prisma.base`（且所有面向租户的原始 SQL 必须显式带 `WHERE "tenantId" = $...`）。
+   - **`prisma.base` 棘轮守卫**（`apps/server/src/prisma/prisma-base-usage.spec.ts`）：AST 扫描 `apps/server/src` 全部非测试文件，只有登记在 `src/prisma/prisma-base-allowlist.ts` 的文件可以用 `prisma.base`，且 `direct`（直连模型）/ `txOrRaw`（`$transaction` / `$queryRaw` / `$executeRaw`）次数必须与登记值**完全相等**。新增使用直接导致 CI 失败；迁到 `scoped` 后次数下降，也要同步下调基线（棘轮只降不升）。`*.controller.ts` 永远不得登记，也禁止用 `prisma['base']`、`const { base } = prisma` 绕过守卫。`merchant-debt` 类为历史技术债，迁移目标是只保留 `txOrRaw`。
+   - **事务暂留 base**：租户扩展对 `findUnique` / `update` / `delete` / `upsert` 的归属探测走的是扩展外层 client，不经过事务句柄，所以 `prisma.scoped.$transaction` 内先创建再按主键更新的行会被误判为 `P2025`。在扩展改造之前，事务一律走 `prisma.base.$transaction`，事务内查询必须显式带 `tenantId`。
 4. **计费与配额口径**：
    - 全局默认 `BILLING_MODE=SHADOW`；`Tenant.billingMode` 为 `null` 时继承全局值。
    - 计费流程固定为 `reserve`（整单冻结）→ `settle`（按产出单元结算，按 `unitKey + action` 幂等）→ `releaseUnit` / `close`（失败或取消退回未结算冻结）。无产出不得实扣。

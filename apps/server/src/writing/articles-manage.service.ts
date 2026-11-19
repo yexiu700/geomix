@@ -144,8 +144,8 @@ export class ArticlesManageService {
     const orderBy = this.buildOrderBy(query);
 
     const [total, rows, categorySummary] = await Promise.all([
-      this.prisma.base.article.count({ where }),
-      this.prisma.base.article.findMany({
+      this.prisma.scoped.article.count({ where }),
+      this.prisma.scoped.article.findMany({
         where,
         orderBy,
         skip: (query.page - 1) * query.pageSize,
@@ -181,7 +181,7 @@ export class ArticlesManageService {
   async collectForTableExport(query: ArticleManageQuery): Promise<ArticleManageItem[]> {
     const tenantId = requireTenantId();
     const where = this.buildWhere(tenantId, query);
-    const rows = await this.prisma.base.article.findMany({
+    const rows = await this.prisma.scoped.article.findMany({
       where,
       orderBy: this.buildOrderBy(query),
       take: CRUD_EXPORT_LIMIT + 1,
@@ -200,7 +200,7 @@ export class ArticlesManageService {
 
   async detail(id: string): Promise<ArticleDetailRecord> {
     const tenantId = requireTenantId();
-    const row = await this.prisma.base.article.findFirst({
+    const row = await this.prisma.scoped.article.findFirst({
       where: { id, tenantId },
       include: {
         category: { select: { id: true, name: true } },
@@ -221,7 +221,7 @@ export class ArticlesManageService {
    */
   async createManual(input: ArticleCreateInput): Promise<ArticleDetailRecord> {
     const tenantId = requireTenantId();
-    const category = await this.prisma.base.articleCategory.findFirst({
+    const category = await this.prisma.scoped.articleCategory.findFirst({
       where: { id: input.categoryId, tenantId },
       select: { id: true },
     });
@@ -231,14 +231,14 @@ export class ArticlesManageService {
 
     let resolvedCoverUrl: string | null = canonicalizeMediaUrl(input.coverUrl ?? null);
     if (!resolvedCoverUrl && input.mediaCategoryId) {
-      const mediaCat = await this.prisma.base.mediaCategory.findFirst({
+      const mediaCat = await this.prisma.scoped.mediaCategory.findFirst({
         where: { id: input.mediaCategoryId, tenantId },
         select: { id: true },
       });
       if (!mediaCat) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选画像图库分类不存在');
       }
-      const autoAsset = await this.prisma.base.mediaAsset.findFirst({
+      const autoAsset = await this.prisma.scoped.mediaAsset.findFirst({
         where: { tenantId, categoryId: input.mediaCategoryId },
         orderBy: [{ usedCount: 'asc' }, { createdAt: 'desc' }],
         select: { id: true, url: true },
@@ -253,7 +253,7 @@ export class ArticlesManageService {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '文章正文不能为空');
     }
 
-    const created = await this.prisma.base.article.create({
+    const created = await this.prisma.scoped.article.create({
       data: {
         tenantId,
         categoryId: input.categoryId,
@@ -279,7 +279,7 @@ export class ArticlesManageService {
    */
   async update(id: string, input: ArticleUpdateInput): Promise<ArticleDetailRecord> {
     const tenantId = requireTenantId();
-    const existing = await this.prisma.base.article.findFirst({
+    const existing = await this.prisma.scoped.article.findFirst({
       where: { id, tenantId },
       select: { id: true },
     });
@@ -288,7 +288,7 @@ export class ArticlesManageService {
     }
 
     if (input.categoryId !== undefined) {
-      const cat = await this.prisma.base.articleCategory.findFirst({
+      const cat = await this.prisma.scoped.articleCategory.findFirst({
         where: { id: input.categoryId, tenantId },
         select: { id: true },
       });
@@ -311,7 +311,7 @@ export class ArticlesManageService {
       data.contentText = sanitized.contentText;
     }
 
-    const updated = await this.prisma.base.article.update({
+    const updated = await this.prisma.scoped.article.update({
       where: { id },
       data,
       include: {
@@ -328,14 +328,14 @@ export class ArticlesManageService {
    */
   async approveOne(id: string): Promise<ArticleDetailRecord> {
     const tenantId = requireTenantId();
-    const existing = await this.prisma.base.article.findFirst({
+    const existing = await this.prisma.scoped.article.findFirst({
       where: { id, tenantId },
       select: { id: true },
     });
     if (!existing) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在');
     }
-    const updated = await this.prisma.base.article.update({
+    const updated = await this.prisma.scoped.article.update({
       where: { id },
       data: { status: 'NORMAL' },
       include: {
@@ -352,13 +352,13 @@ export class ArticlesManageService {
   async bulkStatus(input: ArticleBulkStatusInput): Promise<{ updated: number }> {
     const tenantId = requireTenantId();
     const uniqueIds = Array.from(new Set(input.ids));
-    const found = await this.prisma.base.article.count({
+    const found = await this.prisma.scoped.article.count({
       where: { tenantId, id: { in: uniqueIds } },
     });
     if (found !== uniqueIds.length) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分文章不存在或无权操作');
     }
-    const res = await this.prisma.base.article.updateMany({
+    const res = await this.prisma.scoped.article.updateMany({
       where: { tenantId, id: { in: uniqueIds } },
       data: { status: input.status },
     });
@@ -368,7 +368,7 @@ export class ArticlesManageService {
   async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
     const tenantId = requireTenantId();
     const uniqueIds = Array.from(new Set(ids));
-    const rows = await this.prisma.base.article.findMany({
+    const rows = await this.prisma.scoped.article.findMany({
       where: { tenantId, id: { in: uniqueIds } },
       select: { id: true, coverUrl: true, contentHtml: true },
     });
@@ -432,7 +432,7 @@ export class ArticlesManageService {
       }
     }
 
-    const rows = await this.prisma.base.article.findMany({
+    const rows = await this.prisma.scoped.article.findMany({
       where,
       orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       take: ARTICLE_ZIP_EXPORT_LIMIT + 1,
