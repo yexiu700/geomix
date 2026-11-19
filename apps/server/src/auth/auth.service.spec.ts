@@ -133,6 +133,20 @@ describe('AuthService', () => {
     const session = await auth.login(captchaBody('expired', 'initial-password'));
     expect(session.user.readOnly).toBe(true);
     expect(session.user.tenantId).toBe('tenant_expired');
+    expect(session.account).toMatchObject({
+      id: 'user_expired',
+      username: 'expired',
+      role: 'MERCHANT',
+      uiPrefs: null,
+      tenant: {
+        id: 'tenant_expired',
+        name: '租户甲',
+        isActive: true,
+        readOnly: true,
+      },
+    });
+    expect(typeof session.account.features.aiImage).toBe('boolean');
+    expect(typeof session.account.features.visibility).toBe('boolean');
   });
 
   it('refreshes, then logout and password change invalidate older tokens', async () => {

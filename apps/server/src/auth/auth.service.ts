@@ -3,11 +3,14 @@ import {
   API_ERROR,
   AUTH_ERROR,
   RATE_LIMIT_MESSAGE,
+  parseEnv,
   type ChangePasswordBody,
   type LoginBody,
 } from '@geomix/shared';
 import { hashPassword, verifyPasswordAsync } from '@geomix/db';
+import { sanitizeUiPrefs } from '../account/account.service';
 import { ApiError } from '../common/api-error';
+import { readVisibilityConfig } from '../visibility/visibility.config';
 import { isReadOnly } from './access-policy';
 import { AuthRateLimiter } from './rate-limiter';
 import type {
@@ -163,6 +166,19 @@ export class AuthService {
     const access = this.claims(user, 'access', fp, lms, this.config.accessTtlSeconds);
     const refresh = this.claims(user, 'refresh', fp, lms, this.config.refreshTtlSeconds);
     const now = this.now();
+    const readOnly = isReadOnly(user, now);
+    const expiresAtIso = user.expiresAt.toISOString();
+    const env = parseEnv(process.env);
+    const visibilityEnabled =
+      process.env.FEATURE_VISIBILITY?.trim().toLowerCase() === 'false'
+        ? false
+        : (() => {
+            try {
+              return readVisibilityConfig(process.env).featureEnabled;
+            } catch {
+              return true;
+            }
+          })();
     return {
       accessToken: signToken(access, this.config.accessSecret),
       refreshToken: signToken(refresh, this.config.refreshSecret),
@@ -175,8 +191,26 @@ export class AuthService {
         role: user.role,
         tenantId: user.tenantId,
         tenantName: user.tenantName,
-        expiresAt: user.expiresAt.toISOString(),
-        readOnly: isReadOnly(user, now),
+        expiresAt: expiresAtIso,
+        readOnly,
+      },
+      account: {
+        id: user.id,
+        username: user.username,
+        nickname: user.nickname,
+        role: user.role,
+        uiPrefs: sanitizeUiPrefs(user.uiPrefs),
+        features: {
+          aiImage: env.FEATURE_AI_IMAGE,
+          visibility: visibilityEnabled,
+        },
+        tenant: {
+          id: user.tenantId,
+          name: user.tenantName,
+          expiresAt: expiresAtIso,
+          isActive: user.isActive,
+          readOnly,
+        },
       },
     };
   }

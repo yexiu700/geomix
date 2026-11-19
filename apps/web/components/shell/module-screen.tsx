@@ -1,29 +1,94 @@
 'use client';
 
 import { Button, Input, Typography } from 'antd';
-import { MoneyScreen } from '../account/money-screen';
-import { PointsScreen } from '../account/points-screen';
-import { RightsScreen } from '../account/rights-screen';
-import { VerifyScreen } from '../account/verify-screen';
-import { SampleScreen } from '../crud/sample-screen';
+import dynamic from 'next/dynamic';
 import { DashboardScreen } from '../dashboard/dashboard-screen';
-import { AiImageScreen } from '../image/ai-image-screen';
-import { GalleryAssetScreen, GalleryCategoryScreen } from '../material/gallery-screen';
-import { KeywordScreen } from '../material/keyword-screen';
-import { KnowledgeScreen } from '../material/knowledge-screen';
-import { QuestionScreen } from '../material/question-screen';
-import { RewriteBatchScreen } from '../rewrite/rewrite-batch-screen';
-import { RewriteSingleScreen } from '../rewrite/rewrite-single-screen';
-import { ArticleManageScreen } from '../writing/article-manage-screen';
-import { AiTaskScreen } from '../writing/ai-task-screen';
-import { CategoryScreen } from '../writing/category-screen';
-import { PromptScreen } from '../writing/prompt-screen';
-import { VisibilityMonitorsScreen } from '../visibility/visibility-monitors-screen';
-import { VisibilityOverviewScreen } from '../visibility/visibility-overview-screen';
+import { SignalSkeleton } from '../geo/primitives';
 import { MODULE_PLACEHOLDER } from '../../lib/shell-copy';
 import { matchRoute } from '../../lib/routes';
 import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction, ShellTab } from '../../lib/tab-stack';
+
+function ModuleLoading() {
+  return (
+    <div style={{ padding: '16px 0' }} role="status" aria-label="正在加载模块">
+      <SignalSkeleton variant="block" height={240} />
+    </div>
+  );
+}
+
+const MoneyScreen = dynamic(() => import('../account/money-screen').then((m) => m.MoneyScreen), {
+  loading: ModuleLoading,
+});
+const PointsScreen = dynamic(() => import('../account/points-screen').then((m) => m.PointsScreen), {
+  loading: ModuleLoading,
+});
+const RightsScreen = dynamic(() => import('../account/rights-screen').then((m) => m.RightsScreen), {
+  loading: ModuleLoading,
+});
+const VerifyScreen = dynamic(() => import('../account/verify-screen').then((m) => m.VerifyScreen), {
+  loading: ModuleLoading,
+});
+const SampleScreen = dynamic(() => import('../crud/sample-screen').then((m) => m.SampleScreen), {
+  loading: ModuleLoading,
+});
+const AiImageScreen = dynamic(
+  () => import('../image/ai-image-screen').then((m) => m.AiImageScreen),
+  { loading: ModuleLoading },
+);
+const GalleryAssetScreen = dynamic(
+  () => import('../material/gallery-screen').then((m) => m.GalleryAssetScreen),
+  { loading: ModuleLoading },
+);
+const GalleryCategoryScreen = dynamic(
+  () => import('../material/gallery-screen').then((m) => m.GalleryCategoryScreen),
+  { loading: ModuleLoading },
+);
+const KeywordScreen = dynamic(
+  () => import('../material/keyword-screen').then((m) => m.KeywordScreen),
+  { loading: ModuleLoading },
+);
+const KnowledgeScreen = dynamic(
+  () => import('../material/knowledge-screen').then((m) => m.KnowledgeScreen),
+  { loading: ModuleLoading },
+);
+const QuestionScreen = dynamic(
+  () => import('../material/question-screen').then((m) => m.QuestionScreen),
+  { loading: ModuleLoading },
+);
+const RewriteBatchScreen = dynamic(
+  () => import('../rewrite/rewrite-batch-screen').then((m) => m.RewriteBatchScreen),
+  { loading: ModuleLoading },
+);
+const RewriteSingleScreen = dynamic(
+  () => import('../rewrite/rewrite-single-screen').then((m) => m.RewriteSingleScreen),
+  { loading: ModuleLoading },
+);
+const ArticleManageScreen = dynamic(
+  () => import('../writing/article-manage-screen').then((m) => m.ArticleManageScreen),
+  { loading: ModuleLoading },
+);
+const AiTaskScreen = dynamic(
+  () => import('../writing/ai-task-screen').then((m) => m.AiTaskScreen),
+  {
+    loading: ModuleLoading,
+  },
+);
+const CategoryScreen = dynamic(
+  () => import('../writing/category-screen').then((m) => m.CategoryScreen),
+  { loading: ModuleLoading },
+);
+const PromptScreen = dynamic(() => import('../writing/prompt-screen').then((m) => m.PromptScreen), {
+  loading: ModuleLoading,
+});
+const VisibilityMonitorsScreen = dynamic(
+  () => import('../visibility/visibility-monitors-screen').then((m) => m.VisibilityMonitorsScreen),
+  { loading: ModuleLoading },
+);
+const VisibilityOverviewScreen = dynamic(
+  () => import('../visibility/visibility-overview-screen').then((m) => m.VisibilityOverviewScreen),
+  { loading: ModuleLoading },
+);
 
 export function ModuleScreen({
   tab,
