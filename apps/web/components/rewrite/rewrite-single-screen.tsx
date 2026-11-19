@@ -36,6 +36,7 @@ import type { SessionStorageLike } from '../../lib/session';
 import type { ShellAction } from '../../lib/tab-stack';
 import { UX_TERMS, formatShanghaiDateTime, triggerBlobDownload } from '../../lib/ux-foundation';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
+import { useTaskPolling } from '../../lib/use-task-polling';
 
 const NO_IMAGE_GALLERY_VALUE = '__NONE__';
 
@@ -245,15 +246,12 @@ export function RewriteSingleScreen({
     },
   });
 
-  // Poll every 5s if any single record is RUNNING/PENDING
-  useEffect(() => {
-    const hasActive = items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING');
-    if (!hasActive) return undefined;
-    const timer = setInterval(() => {
-      void loadList(query);
-    }, 5_000);
-    return () => clearInterval(timer);
-  }, [items, loadList, query]);
+  // 存在 RUNNING/PENDING 记录时每 5s 轮询；后台标签页暂停，上一轮未返回时跳过重叠周期
+  useTaskPolling({
+    enabled: items.some((r) => r.status === 'RUNNING' || r.status === 'PENDING'),
+    active,
+    onPoll: () => loadList(query),
+  });
 
   const openCreateModal = useCallback(
     async (seed?: Partial<CreateDraft>) => {

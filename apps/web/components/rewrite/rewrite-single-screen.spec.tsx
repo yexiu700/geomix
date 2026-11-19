@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { RewriteRecordItem, RewriteSingleCreateInput } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RewriteFormOptions, RewriteSingleGateway } from '../../lib/rewrites';
@@ -449,5 +449,87 @@ describe('RewriteSingleScreen', () => {
       document.querySelectorAll('.gm-crud-toolbar > .ant-space:first-child button'),
     ).map((btn) => (btn.textContent ?? '').replace(/\s+/g, ''));
     expect(toolbarBtns.slice(0, 3)).toEqual(['新建单篇复刻', '刷新', '删除']);
+  });
+});
+
+describe('RewriteSingleScreen polling (#286)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  async function flush(ms = 0) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  it('does not poll gateway.list while tab is inactive and resumes after switching back', async () => {
+    vi.useFakeTimers();
+    const { gateway } = makeGateway([makeRecord({ status: 'RUNNING', articleId: null })]);
+    const listMock = vi.mocked(gateway.list);
+
+    const view = render(
+      <RewriteSingleScreen
+        title="全网爆文复刻"
+        tabId="/rewrite/single"
+        active={false}
+        gateway={gateway}
+      />,
+    );
+    await flush();
+    const initialCalls = listMock.mock.calls.length;
+    expect(initialCalls).toBeGreaterThanOrEqual(1);
+
+    await flush(10_000);
+    expect(listMock.mock.calls.length).toBe(initialCalls);
+
+    view.rerender(
+      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
+    );
+    await flush(5_100);
+    expect(listMock.mock.calls.length).toBe(initialCalls + 1);
+  });
+
+  it('skips overlapping polls while a previous list request is still in flight', async () => {
+    vi.useFakeTimers();
+    const record = makeRecord({ status: 'RUNNING', articleId: null });
+    const { gateway } = makeGateway([record]);
+    const listResponse = {
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      unitPoints: 5,
+      items: [record],
+    } as const;
+    let releasePending: (() => void) | null = null;
+    let callCount = 0;
+    gateway.list = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) return { ...listResponse, items: [...listResponse.items] };
+      await new Promise<void>((resolve) => {
+        releasePending = resolve;
+      });
+      return { ...listResponse, items: [...listResponse.items] };
+    });
+
+    render(
+      <RewriteSingleScreen title="全网爆文复刻" tabId="/rewrite/single" active gateway={gateway} />,
+    );
+    await flush();
+    expect(callCount).toBe(1);
+
+    await flush(5_100);
+    expect(callCount).toBe(2);
+
+    await flush(15_000);
+    expect(callCount).toBe(2);
+
+    await act(async () => {
+      releasePending?.();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await flush(5_100);
+    expect(callCount).toBe(3);
   });
 });
