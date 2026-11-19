@@ -1,5 +1,13 @@
 export type UserRoleName = 'MERCHANT' | 'ADMIN';
 
+export type AuthUiPrefs = {
+  multiTab?: boolean;
+  menuCollapsed?: boolean;
+  submenusAlwaysVisible?: boolean;
+  autoExpand?: boolean;
+  multiLevel?: boolean;
+};
+
 export type AuthUser = {
   id: string;
   tenantId: string;
@@ -7,6 +15,7 @@ export type AuthUser = {
   passwordHash: string;
   nickname: string | null;
   role: UserRoleName;
+  uiPrefs?: unknown;
   tenantName: string;
   expiresAt: Date;
   isActive: boolean;
@@ -61,5 +70,23 @@ export type IssuedSession = {
     tenantName: string;
     expiresAt: string;
     readOnly: boolean;
+  };
+  account: {
+    id: string;
+    username: string;
+    nickname: string | null;
+    role: UserRoleName;
+    uiPrefs: AuthUiPrefs | null;
+    features: {
+      aiImage: boolean;
+      visibility: boolean;
+    };
+    tenant: {
+      id: string;
+      name: string;
+      expiresAt: string;
+      isActive: boolean;
+      readOnly: boolean;
+    };
   };
 };

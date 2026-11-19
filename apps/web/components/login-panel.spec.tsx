@@ -3,13 +3,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { clearCachedAccount, readCachedAccount } from '../lib/account-cache';
 import { CAPTCHA_LOAD_TIMEOUT_MS, LoginPanel } from './login-panel';
 
 const replaceMock = vi.fn();
+const prefetchMock = vi.fn();
 const postJsonMock = vi.fn();
 const loadAccountMock = vi.fn();
 
-const routerMock = { replace: replaceMock };
+const routerMock = { replace: replaceMock, prefetch: prefetchMock };
 let searchParamsMock = new URLSearchParams();
 
 const TINY_PNG =
@@ -47,7 +49,9 @@ afterEach(() => {
   searchParamsMock = new URLSearchParams();
   window.sessionStorage.clear();
   window.localStorage.clear();
+  clearCachedAccount();
   replaceMock.mockReset();
+  prefetchMock.mockReset();
   postJsonMock.mockReset();
   loadAccountMock.mockReset();
 });
@@ -537,5 +541,94 @@ describe('LoginPanel accessibility & contrast (#248)', () => {
     expect(container.querySelector('.gm-login-helper')?.textContent).toContain('账号由管理员开通');
     expect(container.querySelector('.gm-login-support-note')?.textContent).toContain('管理员');
     expect(container.querySelector('.gm-login-support-note')?.textContent).toContain('忘记密码');
+  });
+});
+
+describe('LoginPanel redirect performance optimizations (P0)', () => {
+  it('prefetches target route once login form is ready and seeds account cache on login', async () => {
+    const accountPayload = {
+      id: 'u-demo',
+      username: 'demo',
+      nickname: '演示账号',
+      role: 'MERCHANT',
+      uiPrefs: { menuCollapsed: false },
+      features: { aiImage: true, visibility: true },
+      tenant: {
+        id: 't-demo',
+        name: '演示租户',
+        expiresAt: '2099-12-31T00:00:00.000Z',
+        isActive: true,
+        readOnly: false,
+      },
+    };
+    postJsonMock.mockImplementation((path: string) => {
+      if (path === '/auth/captcha') {
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: { captchaId: 'cap_p0', image: TINY_PNG },
+        });
+      }
+      if (path === '/auth/login') {
+        return Promise.resolve({
+          code: 0,
+          msg: 'ok',
+          data: {
+            accessToken: 'at_p0',
+            refreshToken: 'rt_p0',
+            account: accountPayload,
+          },
+        });
+      }
+      return Promise.reject(new Error(`Unexpected path: ${path}`));
+    });
+
+    render(<LoginPanel />);
+
+    await waitFor(() => {
+      expect(prefetchMock).toHaveBeenCalledWith('/dashboard');
+      expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'demo' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'geomix-demo-dev' } });
+    fireEvent.change(screen.getByLabelText('验证码', { selector: 'input' }), {
+      target: { value: '0000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/dashboard');
+    });
+    expect(readCachedAccount(window.sessionStorage)).toEqual(accountPayload);
+  });
+
+  it('seeds account cache when already-authenticated session auto-redirects from /login', async () => {
+    searchParamsMock = new URLSearchParams({ next: '/admin/tenants' });
+    window.sessionStorage.setItem('geomix.accessToken', 'at_auto');
+    window.sessionStorage.setItem('geomix.refreshToken', 'rt_auto');
+    const adminAccount = {
+      id: 'u-admin',
+      username: 'admin',
+      nickname: '管理员',
+      role: 'ADMIN',
+      tenant: {
+        id: 't-platform',
+        name: 'GeoMix 平台',
+        expiresAt: '2099-12-31T00:00:00.000Z',
+        isActive: true,
+        readOnly: false,
+      },
+    };
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: adminAccount });
+
+    render(<LoginPanel />);
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/admin/tenants');
+    });
+    expect(readCachedAccount(window.sessionStorage)).toEqual(adminAccount);
   });
 });

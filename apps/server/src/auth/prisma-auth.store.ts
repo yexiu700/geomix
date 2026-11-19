@@ -67,6 +67,7 @@ function toAuthUser(user: {
   passwordHash: string;
   nickname: string | null;
   role: UserRoleName;
+  uiPrefs?: unknown;
   tenant: { name: string; expiresAt: Date; isActive: boolean };
 }): AuthUser {
   return {
@@ -76,6 +77,7 @@ function toAuthUser(user: {
     passwordHash: user.passwordHash,
     nickname: user.nickname,
     role: user.role,
+    uiPrefs: user.uiPrefs,
     tenantName: user.tenant.name,
     expiresAt: user.tenant.expiresAt,
     isActive: user.tenant.isActive,

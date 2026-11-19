@@ -3,7 +3,8 @@
 import { Alert, Button, Card, Form, Input, Tooltip, Typography } from 'antd';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
-import { loadAccount, postJson } from '../lib/api';
+import { writeCachedAccount } from '../lib/account-cache';
+import { loadAccount, postJson, type AccountProfile } from '../lib/api';
 import { safePostLoginHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
 
@@ -260,6 +261,13 @@ export function LoginPanel() {
     return task;
   }, []);
 
+  const targetHref = nextHref ?? '/dashboard';
+
+  useEffect(() => {
+    if (checking) return;
+    router.prefetch?.(targetHref);
+  }, [checking, router, targetHref]);
+
   useEffect(() => {
     const token = readAccessToken(window.sessionStorage);
     if (!token) {
@@ -271,7 +279,8 @@ export function LoginPanel() {
     void loadAccount(window.sessionStorage).then((result) => {
       if (!live) return;
       if (result.status === 'ok') {
-        router.replace(nextHref ?? '/dashboard');
+        writeCachedAccount(window.sessionStorage, result.account);
+        router.replace(targetHref);
         return;
       }
       if (result.status === 'disabled' || result.status === 'anonymous') {
@@ -285,7 +294,7 @@ export function LoginPanel() {
     return () => {
       live = false;
     };
-  }, [loadCaptcha, nextHref, router]);
+  }, [loadCaptcha, router, targetHref]);
 
   const captchaReady = Boolean(captchaId) && !captchaLoading;
 
@@ -297,7 +306,21 @@ export function LoginPanel() {
     setBusy(true);
     setError('');
     try {
-      const result = await postJson<{ accessToken: string; refreshToken: string }>('/auth/login', {
+      const result = await postJson<{
+        accessToken: string;
+        refreshToken: string;
+        account?: AccountProfile;
+        user?: {
+          id: string;
+          username: string;
+          nickname: string | null;
+          role: string;
+          tenantId: string;
+          tenantName: string;
+          expiresAt: string;
+          readOnly: boolean;
+        };
+      }>('/auth/login', {
         ...values,
         captchaId,
       });
@@ -307,7 +330,27 @@ export function LoginPanel() {
         return;
       }
       saveSession(window.sessionStorage, result.data.accessToken, result.data.refreshToken);
-      router.replace(nextHref ?? '/dashboard');
+      const seededAccount: AccountProfile | null =
+        result.data.account ??
+        (result.data.user
+          ? {
+              id: result.data.user.id,
+              username: result.data.user.username,
+              nickname: result.data.user.nickname,
+              role: result.data.user.role,
+              tenant: {
+                id: result.data.user.tenantId,
+                name: result.data.user.tenantName,
+                expiresAt: result.data.user.expiresAt,
+                isActive: true,
+                readOnly: result.data.user.readOnly,
+              },
+            }
+          : null);
+      if (seededAccount) {
+        writeCachedAccount(window.sessionStorage, seededAccount);
+      }
+      router.replace(targetHref);
     } catch {
       setError('无法连接接口');
     } finally {
