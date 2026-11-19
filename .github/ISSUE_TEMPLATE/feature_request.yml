@@ -1,0 +1,46 @@
+name: Feature / Refactor Request
+description: Propose a new capability, UX enhancement, or architectural refactor
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Target Area
+      options:
+        - Material Studio (Keywords / Questions / Gallery / Knowledge)
+        - AI Writing (Prompts / Categories / Tasks / Articles)
+        - Traffic Replication (Single / Batch Rewrite)
+        - AI Image Generation
+        - AI Visibility & Analytics
+        - Auth / Billing / Admin / Shell
+        - Architecture / Refactor / Tooling
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What user workflow or engineering pain point does this address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Outline the expected UX, API/DB changes, or module design.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Measurable conditions that verify the work is complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] Unit tests / E2E coverage added
+    validations:
+      required: false
