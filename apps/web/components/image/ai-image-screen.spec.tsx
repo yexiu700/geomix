@@ -553,4 +553,47 @@ describe('AiImageScreen', () => {
     );
     expect(within(sider).queryByText('AI生图')).toBeNull();
   });
+
+  describe('active job polling via useTaskPolling (#287)', () => {
+    const runningJob = (): AiImageJobItem => ({
+      ...createSampleJob(),
+      status: 'RUNNING',
+      assets: [],
+      successCount: 0,
+    });
+
+    async function renderAndCountPolls(props: { active: boolean; pollIntervalMs: number }) {
+      const { gateway } = buildMockGateway([runningJob()]);
+      const listSpy = vi.spyOn(gateway, 'list');
+      render(
+        <AiImageScreen
+          title="AI生图"
+          gateway={gateway}
+          active={props.active}
+          pollIntervalMs={props.pollIntervalMs}
+        />,
+      );
+      await screen.findByText('IMG20261117-001ABC');
+      return listSpy;
+    }
+
+    it('silently re-polls the list while QUEUED/RUNNING jobs exist and the tab is active', async () => {
+      const listSpy = await renderAndCountPolls({ active: true, pollIntervalMs: 20 });
+      await waitFor(() => {
+        expect(listSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+      });
+    });
+
+    it('does not poll when the tab is inactive (active=false)', async () => {
+      const listSpy = await renderAndCountPolls({ active: false, pollIntervalMs: 20 });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(listSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not poll when pollIntervalMs <= 0', async () => {
+      const listSpy = await renderAndCountPolls({ active: true, pollIntervalMs: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(listSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
