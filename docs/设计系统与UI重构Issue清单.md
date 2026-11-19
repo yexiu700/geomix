@@ -1,5 +1,7 @@
 # GeoMix 全站体验重构：设计系统 + 原子化 Issue 清单
 
+> **文档状态**：本文档规划的 `ISSUE-01`–`ISSUE-10` 均已合并落地。Part 0 执行铁律与 Part 1 设计令牌仍为现行视觉规范，运行时唯一真值请以 [`apps/web/lib/design-tokens.ts`](../apps/web/lib/design-tokens.ts) 与 [`apps/web/app/globals.css`](../apps/web/app/globals.css) 为准；前端静态守卫与复用底座见 [开发约定与迭代手册](./AGENTS.md)。
+>
 > 代号 **Sonar Ink（声呐墨）**：近黑偏绿的墨色底，加上磷光示波器那种荧光黄绿信号色。整体意象是「AI 语义雷达 / 精密信号捕获」。
 > 适用仓库：`yexiu700/geomix`，`apps/web`（Next.js 15 + **Ant Design 5**，**仓库内没有 Tailwind**）。
 

@@ -21,3 +21,13 @@
 | URL | 英文语义路径，同时提供原路径跳转。 |
 | 部署 | 先部署到测试服务器做单机预发；国内生产环境需提前准备 ICP 备案和域名。 |
 | 实测数据 | 默认保留，删除需另行批准。 |
+
+## 后续演进补充
+
+以下条目在后续迭代中落地或演进，覆盖/补充上表初期基线（现行实现详情见 [架构与模块索引](./架构与模块索引.md)）：
+
+- **AI 可见度提前落地**：原定二期的「AI 数据看板」与「AI 可见度诊断」已在一期后提前实现（受 `FEATURE_VISIBILITY` 控制），新增队列 `visibility-check` 与计费项 `visibility_check`（默认 `2` 点/次）。
+- **视觉体系与前端组件选型收敛**：全站采用 **Sonar Ink（声呐墨）暗色主题**（运行时真值在 `apps/web/lib/design-tokens.ts` 与 `apps/web/app/globals.css`）；保持零多余重依赖，以 Ant Design 5 + 原生 CSS + 手写 SVG + 自研轻量富文本编辑器（`article-rich-editor.tsx`）替代早先路线图中的 ProComponents、ECharts、wangEditor 与 Tailwind。
+- **用户界面偏好与历史路由**：多标签布局开关已通过 `PATCH /api/v1/account/ui-prefs` 持久化至 `User.uiPrefs`；已登记 16 条历史 `/user/*` 入口重定向（`apps/web/lib/route-map.ts` + `middleware.ts`）。
+- **自动化门禁与发布**：GitHub Actions 已接入 Playwright 全栈 E2E（`e2e.yml`）、非草稿 PR 自动合入（`auto-merge.yml`）与 GHCR + Self-Hosted Runner CD（`cd.yml`）。
+
