@@ -106,6 +106,7 @@ export function AiImageScreen({
   });
   const [unitPoints, setUnitPoints] = useState<number>(AI_IMAGE_DEFAULT_UNIT_POINTS);
   const [serverFeatureEnabled, setServerFeatureEnabled] = useState<boolean>(featureEnabled);
+  const [providerReady, setProviderReady] = useState<boolean>(true);
   const [loading, setLoading] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [bannerInfo, setBannerInfo] = useState<string | null>(null);
@@ -130,6 +131,7 @@ export function AiImageScreen({
         setList({ items: res.items, total: res.total });
         setUnitPoints(res.unitPoints);
         setServerFeatureEnabled(res.featureEnabled);
+        setProviderReady(res.providerReady ?? true);
         if (!silent) setPageError(null);
       } catch (err) {
         if (!silent) {
@@ -306,6 +308,15 @@ export function AiImageScreen({
         </Space>
       </div>
 
+      {!providerReady && (
+        <Alert
+          style={{ marginBottom: 12 }}
+          type="warning"
+          showIcon
+          message="当前未配置真实 AI 生图服务，暂不可新建生图任务；已有历史记录仍可正常查看。"
+        />
+      )}
+
       {pageError && (
         <Alert
           style={{ marginBottom: 12 }}
@@ -338,7 +349,7 @@ export function AiImageScreen({
 
       {/* Toolbar */}
       <CrudToolbar
-        createDisabled={readOnly}
+        createDisabled={readOnly || !providerReady}
         onCreate={() => void openCreateModal()}
         refreshLoading={loading}
         onRefresh={() => void loadList(false)}

@@ -12,6 +12,7 @@ import {
   formatTime,
   isJobInProgress,
   isJobSavedToGallery,
+  isPlaceholderJob,
   statusTagColor,
   triggerAssetDownload,
   type ColumnKey,
@@ -150,11 +151,14 @@ export function buildAiImageColumns({
       title: '状态',
       key: 'status',
       width: 105,
-      render: (_: unknown, row: AiImageJobItem) => (
-        <Tag color={statusTagColor(row.status)}>
-          {AI_IMAGE_STATUS_LABELS[row.status] ?? row.status}
-        </Tag>
-      ),
+      render: (_: unknown, row: AiImageJobItem) =>
+        isPlaceholderJob(row) ? (
+          <Tag color="warning">演示占位图</Tag>
+        ) : (
+          <Tag color={statusTagColor(row.status)}>
+            {AI_IMAGE_STATUS_LABELS[row.status] ?? row.status}
+          </Tag>
+        ),
     },
     points: {
       title: '消耗点数',
@@ -191,13 +195,15 @@ export function buildAiImageColumns({
       width: 215,
       render: (_: unknown, row: AiImageJobItem) => {
         const hasAssets = row.assets.length > 0;
+        const placeholder = isPlaceholderJob(row);
         const savedToGallery = isJobSavedToGallery(row);
         return (
           <Space size={4} wrap>
             <Button
               size="small"
               type="link"
-              disabled={!hasAssets}
+              disabled={!hasAssets || placeholder}
+              title={placeholder ? '演示占位图不可下载为商业原图' : undefined}
               onClick={() => {
                 row.assets.forEach((asset, idx) => triggerAssetDownload(asset, row.orderNo, idx));
               }}
@@ -207,16 +213,22 @@ export function buildAiImageColumns({
             <Button
               size="small"
               type="link"
-              disabled={readOnly || !hasAssets}
+              disabled={readOnly || !hasAssets || placeholder}
               data-saved={savedToGallery ? 'true' : 'false'}
               title={
-                savedToGallery
-                  ? row.saveCategoryName
-                    ? `已存入「${row.saveCategoryName}」，点击可更换图库分组`
-                    : '已存入图库，点击可更换图库分组'
-                  : '存入企业画像图库'
+                placeholder
+                  ? '演示占位图不可存入企业图库'
+                  : savedToGallery
+                    ? row.saveCategoryName
+                      ? `已存入「${row.saveCategoryName}」，点击可更换图库分组`
+                      : '已存入图库，点击可更换图库分组'
+                    : '存入企业画像图库'
               }
-              style={savedToGallery ? { color: 'var(--gm-sig-cited)', fontWeight: 500 } : undefined}
+              style={
+                !placeholder && savedToGallery
+                  ? { color: 'var(--gm-sig-cited)', fontWeight: 500 }
+                  : undefined
+              }
               onClick={() => onSaveGallery(row)}
             >
               {savedToGallery ? '已存入（更换）' : '存入图库'}

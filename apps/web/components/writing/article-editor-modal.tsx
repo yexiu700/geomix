@@ -298,7 +298,9 @@ export function ArticleEditorModal({
                 value={editor.draft.categoryId}
                 onChange={(e) => patchDraft({ categoryId: e.target.value })}
               >
-                <option value="">不选择</option>
+                <option value="" disabled>
+                  请选择归属分类
+                </option>
                 {(formOptions?.categories ?? []).map((cat) => (
                   <option key={cat.id} value={cat.id}>
                     {cat.name}（共 {cat.total} 篇 / 剩余 {cat.remaining} 篇）

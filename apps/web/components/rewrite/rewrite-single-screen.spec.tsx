@@ -196,13 +196,15 @@ describe('RewriteSingleScreen', () => {
       expect(screen.getByLabelText('文章链接')).toBeTruthy();
     });
 
-    // Both gallery and rewrite prompt dropdowns default to empty ("不选择") (#95)
+    // Both gallery and rewrite prompt required dropdowns default to empty placeholder without 不选择 (#95, #280)
     const gallerySelect = screen.getByLabelText('文章配图图库') as HTMLSelectElement;
     const templateSelect = screen.getByLabelText('爆文改写指令') as HTMLSelectElement;
     expect(gallerySelect.value).toBe('');
-    expect(gallerySelect.options[0]?.textContent).toBe('不选择');
+    expect(gallerySelect.options[0]?.textContent).toBe('请选择文章配图（或选不配图）');
+    expect(gallerySelect.options[0]?.disabled).toBe(true);
     expect(templateSelect.value).toBe('');
-    expect(templateSelect.options[0]?.textContent).toBe('不选择');
+    expect(templateSelect.options[0]?.textContent).toBe('请选择爆文改写指令');
+    expect(templateSelect.options[0]?.disabled).toBe(true);
 
     // Editable auto-category input defaults to "爆文复刻" and is editable
     const autoCatInput = screen.getByLabelText('新建分类名称') as HTMLInputElement;
@@ -228,7 +230,9 @@ describe('RewriteSingleScreen', () => {
 
     fireEvent.click(findButton('复刻文章（5点数/篇）'));
     await waitFor(() => {
-      expect(screen.getByText('请选择爆文改写指令')).toBeTruthy();
+      expect(
+        screen.getAllByRole('alert').some((el) => el.textContent?.includes('请选择爆文改写指令')),
+      ).toBe(true);
     });
     fireEvent.change(templateSelect, { target: { value: 'sys_rewrite_01' } });
 
