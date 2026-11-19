@@ -185,7 +185,7 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('opens on Ctrl+K in ShellFrame and ignores IME composing Ctrl+K', () => {
+  it('opens on Ctrl+K in ShellFrame and ignores IME composing Ctrl+K', async () => {
     render(
       <ShellFrame
         account={merchantAccount}
@@ -202,6 +202,6 @@ describe('CommandPalette', () => {
     expect(screen.queryByRole('textbox', { name: '搜索页面或操作' })).toBeNull();
 
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true, isComposing: false });
-    expect(screen.getByRole('textbox', { name: '搜索页面或操作' })).toBeTruthy();
+    expect(await screen.findByRole('textbox', { name: '搜索页面或操作' })).toBeTruthy();
   });
 });

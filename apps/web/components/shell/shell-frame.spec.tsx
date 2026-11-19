@@ -132,12 +132,12 @@ describe('admin shell', { timeout: 60_000 }, () => {
     ).toBe('');
   });
 
-  it('hides the tab stack and keeps only the current page when multi-tab is off', () => {
+  it('hides the tab stack and keeps only the current page when multi-tab is off', async () => {
     let state = openAll();
     state = reduceShell(state, { type: 'draft', id: '/writing/prompts', value: '留下' });
     render(<Harness initial={state} />);
     fireEvent.click(screen.getByRole('button', { name: '布局' }));
-    fireEvent.click(screen.getByRole('switch', { name: '多标签' }));
+    fireEvent.click(await screen.findByRole('switch', { name: '多标签' }));
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(document.querySelectorAll('[data-tab-id]')).toHaveLength(1);
     expect(
@@ -229,7 +229,7 @@ describe('admin shell', { timeout: 60_000 }, () => {
     }
   });
 
-  it('expands sidebar by default on 1440px desktop and syncs top toggle with layout drawer switch (#133)', () => {
+  it('expands sidebar by default on 1440px desktop and syncs top toggle with layout drawer switch (#133)', async () => {
     const prevWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -251,9 +251,9 @@ describe('admin shell', { timeout: 60_000 }, () => {
       expect(document.querySelector('.gm-sider .ant-menu')).toBeNull();
 
       fireEvent.click(labeled('布局'));
+      const collapseSwitch = await screen.findByRole('switch', { name: '折叠菜单' });
       const dialog = document.querySelector<HTMLElement>('.ant-drawer-content[role="dialog"]');
       expect(dialog).not.toBeNull();
-      const collapseSwitch = within(dialog!).getByRole('switch', { name: '折叠菜单' });
       expect(collapseSwitch.getAttribute('aria-checked')).toBe('true');
 
       // Top toggle expands sidebar again and syncs LayoutPanel switch back to false
@@ -320,7 +320,7 @@ describe('admin shell', { timeout: 60_000 }, () => {
     fireEvent.click(await screen.findByText('修改密码'));
 
     const dialog = await screen.findByRole('dialog', { name: '修改密码' });
-    expect(within(dialog).getByLabelText('当前密码')).toBeTruthy();
+    expect(await within(dialog).findByLabelText('当前密码')).toBeTruthy();
     expect(within(dialog).getByLabelText('新密码')).toBeTruthy();
     expect(within(dialog).getByLabelText('确认新密码')).toBeTruthy();
 

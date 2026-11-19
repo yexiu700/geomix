@@ -12,6 +12,7 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Input, Modal, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CrudToolbar } from '../crud/crud-toolbar';
 import { ExportAction } from '../crud/export-action';
@@ -21,9 +22,14 @@ import { COMPACT_SELECT_STYLE } from '../../lib/select-styles';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { DEFAULT_TASK_POLL_INTERVAL_MS, useTaskPolling } from '../../lib/use-task-polling';
 import { UX_TERMS, triggerBlobDownload } from '../../lib/ux-foundation';
-import { RewriteBatchCreateModal } from './rewrite-batch-create-modal';
-import { RewriteBatchDetailDrawer } from './rewrite-batch-detail-drawer';
 import * as H from './rewrite-batch-helpers';
+
+const RewriteBatchCreateModal = dynamic(() =>
+  import('./rewrite-batch-create-modal').then((m) => m.RewriteBatchCreateModal),
+);
+const RewriteBatchDetailDrawer = dynamic(() =>
+  import('./rewrite-batch-detail-drawer').then((m) => m.RewriteBatchDetailDrawer),
+);
 
 const S = H.BATCH_STYLES;
 
@@ -561,17 +567,19 @@ export function RewriteBatchScreen({
         />
       </div>
 
-      <RewriteBatchDetailDrawer
-        open={drawer.open}
-        loading={drawer.loading}
-        busy={busy}
-        readOnly={readOnly}
-        detail={drawer.detail}
-        onClose={closeDrawer}
-        onRefresh={(batchId) => void openTaskDrawer(batchId)}
-        onControl={(batch, action) => void handleControl(batch, action)}
-        onNavigate={navigateTo}
-      />
+      {drawer.open ? (
+        <RewriteBatchDetailDrawer
+          open={drawer.open}
+          loading={drawer.loading}
+          busy={busy}
+          readOnly={readOnly}
+          detail={drawer.detail}
+          onClose={closeDrawer}
+          onRefresh={(batchId) => void openTaskDrawer(batchId)}
+          onControl={(batch, action) => void handleControl(batch, action)}
+          onNavigate={navigateTo}
+        />
+      ) : null}
 
       <Modal
         open={bulkDeleteConfirmOpen}
