@@ -20,6 +20,7 @@ import {
   escapeLikeLiteral,
   formatShanghaiDate,
   isAiImageRatio,
+  isPlaceholderImageModel,
   parseEnv,
   quoteAiImagePoints,
   type AiImageGeneratedAsset,
@@ -47,6 +48,7 @@ import { currentTenantId } from '../tenant/tenant-context';
 import {
   IMAGE_JOB_ENQUEUER,
   buildSignedMediaAssetUrl,
+  isProductionPlaceholderImageBlocked,
   type ImageJobEnqueuer,
 } from './image-job.runner';
 import {
@@ -280,6 +282,7 @@ export class AiImagesService {
         status: row.status,
         error: row.error,
         model: row.model,
+        placeholderOutput: isPlaceholderImageModel(row.model),
         unitPoints,
         reservedPoints,
         settledPoints,
@@ -317,6 +320,7 @@ export class AiImagesService {
       total,
       unitPoints,
       featureEnabled: parseEnv(process.env).FEATURE_AI_IMAGE,
+      providerReady: !isProductionPlaceholderImageBlocked(),
       items,
     };
   }
@@ -579,6 +583,14 @@ export class AiImagesService {
   ): Promise<AiImageJobItem> {
     const tenantId = this.requireTenant();
 
+    if (isProductionPlaceholderImageBlocked()) {
+      throw new ApiError(
+        503,
+        API_ERROR.UPSTREAM_UNAVAILABLE,
+        '当前未配置真实 AI 生图服务，暂不可提交生图任务，请联系管理员配置真实生图模型',
+      );
+    }
+
     await this.compliance.assertAllowed({
       text: input.prompt,
       action: 'image_prompt',
@@ -686,7 +698,7 @@ export class AiImagesService {
     const [job, category] = await Promise.all([
       this.prisma.scoped.aiImageJob.findFirst({
         where: { id },
-        select: { id: true },
+        select: { id: true, model: true },
       }),
       this.prisma.scoped.mediaCategory.findFirst({
         where: { id: input.categoryId, type: GALLERY_CATEGORY_TYPE_IMAGE },
@@ -696,6 +708,13 @@ export class AiImagesService {
 
     if (!job) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '生图任务记录不存在');
+    }
+    if (process.env.NODE_ENV === 'production' && isPlaceholderImageModel(job.model)) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '演示占位图不可存入企业图库，请使用真实生成的图片',
+      );
     }
     if (!category) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '目标图库分组不存在');

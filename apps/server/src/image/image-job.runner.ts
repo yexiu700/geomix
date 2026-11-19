@@ -10,6 +10,7 @@ import {
   buildImageLedgerTitle,
   isAiImageRatio,
   parseEnv,
+  resolveImageSettings,
   type AiImageCount,
   type AiImageRatio,
 } from '@geomix/shared';
@@ -20,9 +21,15 @@ import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { compressImage } from '../infra/compress';
 import { ImageService } from '../infra/image';
-import { ProviderError } from '../infra/provider-error';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
+
+export function isProductionPlaceholderImageBlocked(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.NODE_ENV === 'production' && resolveImageSettings(env).provider === 'fake';
+}
 
 export const IMAGE_JOB_HANDLER = Symbol('IMAGE_JOB_HANDLER');
 export const IMAGE_JOB_ENQUEUER = Symbol('IMAGE_JOB_ENQUEUER');
@@ -153,6 +160,13 @@ export class ImageJobRunner implements ImageJobHandler {
 
     let rawResult;
     try {
+      if (isProductionPlaceholderImageBlocked()) {
+        throw new ProviderError(
+          PROVIDER_KIND.UPSTREAM,
+          '当前未配置真实 AI 生图服务，已拒绝生成演示占位图并退还预冻点数',
+          'placeholder_blocked',
+        );
+      }
       rawResult = await this.imageService.generateRaw({
         tenantId,
         prompt: job.prompt,
@@ -160,6 +174,13 @@ export class ImageJobRunner implements ImageJobHandler {
         ratio,
         count: safeCount,
       });
+      if (process.env.NODE_ENV === 'production' && rawResult.fake) {
+        throw new ProviderError(
+          PROVIDER_KIND.UPSTREAM,
+          '当前未配置真实 AI 生图服务，已拒绝生成演示占位图并退还预冻点数',
+          'placeholder_blocked',
+        );
+      }
     } catch (error) {
       const reason = readableImageError(error);
       if (reservationId) {

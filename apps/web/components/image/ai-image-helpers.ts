@@ -3,6 +3,7 @@ import {
   AI_IMAGE_PROMPT_MAX,
   AI_IMAGE_PROMPT_MIN,
   AI_IMAGE_STYLES,
+  isPlaceholderImageModel,
   safeMediaDisplayName,
   type AiImageCount,
   type AiImageCreateInput,
@@ -106,6 +107,12 @@ export function isJobSavedToGallery(job: AiImageJobItem): boolean {
     job.saveCategoryName ||
     job.assets.some((asset) => Boolean(asset.categoryId || asset.categoryName)),
   );
+}
+
+export function isPlaceholderJob(
+  job: Pick<AiImageJobItem, 'model' | 'placeholderOutput'>,
+): boolean {
+  return Boolean(job.placeholderOutput || isPlaceholderImageModel(job.model));
 }
 
 export function statusTagColor(status: TaskStatusName): string {

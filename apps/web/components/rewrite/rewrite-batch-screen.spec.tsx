@@ -263,12 +263,16 @@ describe('RewriteBatchScreen', () => {
       expect(findButton('开始批量复刻（5点数/篇，预冻5点）')).toBeTruthy();
     });
 
-    // Baseline defaults (#76): maxCount = 1, gallery & rewrite prompt unselected ('不选择')
+    // Baseline defaults (#76, #280): maxCount = 1, required selects use disabled placeholders without 不选择
     expect((screen.getByLabelText('最大改写量') as HTMLInputElement).value).toBe('1');
     const gallerySelect = screen.getByLabelText('文章配图图库分类') as HTMLSelectElement;
     const promptSelect = screen.getByLabelText('爆文改写指令') as HTMLSelectElement;
     expect(gallerySelect.value).toBe('');
+    expect(gallerySelect.options[0]?.textContent).toBe('请选择文章配图（或选不配图）');
+    expect(gallerySelect.options[0]?.disabled).toBe(true);
     expect(promptSelect.value).toBe('');
+    expect(promptSelect.options[0]?.textContent).toBe('请选择爆文改写指令');
+    expect(promptSelect.options[0]?.disabled).toBe(true);
 
     // Switch to keyword search mode and enter a URL -> immediately warns that it's a link, not a keyword!
     const remoteRadio = screen.getByDisplayValue('remote') as HTMLInputElement;

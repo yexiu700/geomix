@@ -46,7 +46,7 @@ function createSampleJob(): AiImageJobItem {
     saveCategoryName: null,
     status: 'COMPLETED',
     error: null,
-    model: 'fake-image',
+    model: 'gpt-image-1',
     unitPoints: 5,
     reservedPoints: 10,
     settledPoints: 10,
@@ -595,5 +595,47 @@ describe('AiImageScreen', () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
       expect(listSpy).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('shows warning & disables create when providerReady is false, and marks historical placeholder outputs as 演示占位图 with download/save disabled (#284)', async () => {
+    const placeholderJob: AiImageJobItem = {
+      ...createSampleJob(),
+      id: 'img_fake_hist',
+      orderNo: 'IMG20261119-FAKE01',
+      model: 'fake-image',
+      placeholderOutput: true,
+    };
+    const { gateway } = buildMockGateway([placeholderJob]);
+    const origList = gateway.list.bind(gateway);
+    gateway.list = async (q) => ({
+      ...(await origList(q)),
+      providerReady: false,
+    });
+
+    render(<AiImageScreen title="AI生图" gateway={gateway} pollIntervalMs={0} />);
+
+    await screen.findByText('IMG20261119-FAKE01');
+    expect(screen.getByText(/当前未配置真实 AI 生图服务/)).toBeTruthy();
+
+    const addBtn = screen.getByRole('button', { name: '添加' }) as HTMLButtonElement;
+    expect(addBtn.disabled).toBe(true);
+
+    // Status tag shows 演示占位图 instead of ordinary 已完成
+    expect(screen.getByText('演示占位图')).toBeTruthy();
+
+    // Row actions disable 下载 and 存入图库 for placeholder output
+    const downloadBtn = screen.getByRole('button', { name: '下载' }) as HTMLButtonElement;
+    const saveBtn = screen.getByRole('button', { name: '存入图库' }) as HTMLButtonElement;
+    expect(downloadBtn.disabled).toBe(true);
+    expect(saveBtn.disabled).toBe(true);
+
+    // Preview modal displays placeholder warning and disables 下载原图
+    fireEvent.click(screen.getByRole('button', { name: '预览图片 IMG20261119-FAKE01-1' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('演示占位图');
+    const origDownloadBtn = within(dialog).getByRole('button', {
+      name: '下载原图',
+    }) as HTMLButtonElement;
+    expect(origDownloadBtn.disabled).toBe(true);
   });
 });

@@ -1,10 +1,10 @@
 'use client';
 
 import type { AiImageJobItem } from '@geomix/shared';
-import { Button, Modal, Space, Spin } from 'antd';
+import { Alert, Button, Modal, Space, Spin } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { resolveMediaUrl } from '../../lib/gallery';
-import { triggerAssetDownload } from './ai-image-helpers';
+import { isPlaceholderJob, triggerAssetDownload } from './ai-image-helpers';
 
 export type AiImagePreviewTarget = {
   job: AiImageJobItem;
@@ -26,6 +26,7 @@ export function AiImagePreviewModal({ target, onClose }: AiImagePreviewModalProp
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   const asset = target?.job.assets[target.assetIndex] ?? null;
+  const isPlaceholder = target ? isPlaceholderJob(target.job) : false;
 
   useEffect(() => {
     if (!target || !asset) return;
@@ -51,6 +52,8 @@ export function AiImagePreviewModal({ target, onClose }: AiImagePreviewModalProp
         target && asset ? (
           <Space>
             <Button
+              disabled={isPlaceholder}
+              title={isPlaceholder ? '演示占位图不可下载为商业原图' : undefined}
               onClick={() => triggerAssetDownload(asset, target.job.orderNo, target.assetIndex)}
             >
               下载原图
@@ -66,6 +69,14 @@ export function AiImagePreviewModal({ target, onClose }: AiImagePreviewModalProp
     >
       {target && asset && (
         <div>
+          {isPlaceholder && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="该记录为演示占位图，非真实 AI 生成内容，不可下载为商业原图或存入企业图库。"
+            />
+          )}
           <div
             style={{
               background: 'var(--gm-bg-base)',

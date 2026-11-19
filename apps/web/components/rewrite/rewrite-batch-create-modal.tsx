@@ -359,7 +359,9 @@ export function RewriteBatchCreateModal({
                 setDraft((prev) => ({ ...prev, mediaCategoryId: val, noImage: false }));
               }}
             >
-              <option value="">不选择</option>
+              <option value="" disabled>
+                请选择文章配图（或选不配图）
+              </option>
               <option value={NO_IMAGE_GALLERY_VALUE}>不配图（0 张，不使用来源站原图）</option>
               {(activeOptions?.mediaCategories ?? []).map((cat) => (
                 <option key={cat.id} value={cat.id}>
@@ -433,7 +435,9 @@ export function RewriteBatchCreateModal({
               value={draft.templateId}
               onChange={(e) => setDraft((prev) => ({ ...prev, templateId: e.target.value }))}
             >
-              <option value="">不选择</option>
+              <option value="" disabled>
+                请选择爆文改写指令
+              </option>
               {(activeOptions?.rewriteTemplates ?? []).map((tpl) => (
                 <option key={tpl.id} value={tpl.id}>
                   {tpl.isSystem ? `[系统] ${tpl.name}` : tpl.name}

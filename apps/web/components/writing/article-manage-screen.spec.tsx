@@ -376,6 +376,8 @@ describe('ArticleManageScreen (Issue #18)', () => {
     const catSelect = screen.getByLabelText('归属分类') as HTMLSelectElement;
     const mediaCatSelect = screen.getByLabelText('画像封面分组') as HTMLSelectElement;
     expect(catSelect.value).toBe('');
+    expect(catSelect.options[0]?.textContent).toBe('请选择归属分类');
+    expect(catSelect.options[0]?.disabled).toBe(true);
     expect(mediaCatSelect.value).toBe('');
     expect(dialog.textContent).toContain('未设置封面');
 

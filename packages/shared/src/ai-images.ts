@@ -217,6 +217,11 @@ export type AiImageGeneratedAsset = {
   createdAt: string;
 };
 
+export function isPlaceholderImageModel(model: string | null | undefined): boolean {
+  const normalized = (model ?? '').trim().toLowerCase();
+  return normalized === 'fake-image' || normalized.startsWith('fake-');
+}
+
 export type AiImageJobItem = {
   id: string;
   orderNo: string;
@@ -231,6 +236,7 @@ export type AiImageJobItem = {
   status: TaskStatusName;
   error: string | null;
   model: string | null;
+  placeholderOutput?: boolean;
   unitPoints: number;
   reservedPoints: number;
   settledPoints: number;
@@ -252,6 +258,7 @@ export type AiImageJobListResponse = {
   total: number;
   unitPoints: number;
   featureEnabled: boolean;
+  providerReady?: boolean;
   items: AiImageJobItem[];
 };
 

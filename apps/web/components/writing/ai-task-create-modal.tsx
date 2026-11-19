@@ -327,7 +327,9 @@ export function AiTaskCreateModal({
                 value={editor.draft.keywordId}
                 onChange={(e) => updateDraft({ keywordId: e.target.value })}
               >
-                <option value="">不选择</option>
+                <option value="" disabled>
+                  请选择{UX_TERMS.mainKeyword}
+                </option>
                 {(formOptions?.keywords ?? []).map((kw) => (
                   <option key={kw.id} value={kw.id}>
                     {kw.main}（{kw.questionCount} 条问题）
@@ -386,8 +388,8 @@ export function AiTaskCreateModal({
                 value={editor.draft.imageCount === 0 ? '' : editor.draft.mediaCategoryId}
                 onChange={(e) => updateDraft({ mediaCategoryId: e.target.value })}
               >
-                <option value="">
-                  {editor.draft.imageCount === 0 ? '0 张配图无需选择图库' : '不选择'}
+                <option value="" disabled={editor.draft.imageCount > 0}>
+                  {editor.draft.imageCount === 0 ? '0 张配图无需选择图库' : '请选择画像图库'}
                 </option>
                 {(formOptions?.mediaCategories ?? []).map((gal) => (
                   <option key={gal.id} value={gal.id}>

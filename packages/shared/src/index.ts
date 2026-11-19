@@ -641,6 +641,7 @@ export {
   aiImageSaveToGallerySchema,
   formatAiImageSubmitLabel,
   isAiImageRatio,
+  isPlaceholderImageModel,
   parseAiImageJobListQuery,
   quoteAiImagePoints,
   resolveAiImageRatioDimensions,
