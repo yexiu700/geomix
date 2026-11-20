@@ -894,9 +894,15 @@ function trimTopicAtCleanBoundary(raw: string, maxChars = 18): string {
   return chars
     .slice(0, end)
     .join('')
-    .replace(/[的与和及在从对为、，,\s-]+$/u, '')
+    .replace(
+      /(?:怎么|如何|为什么|为何|哪些|哪个|什么|是否|怎样|吗|呢|的|与|和|及|在|从|对|为|把|被|将|[、，,？?！!。；;\s-])+$/u,
+      '',
+    )
     .trim();
 }
+
+const QUESTION_TAIL_RE =
+  /(?:怎么选|如何选|怎么挑|如何挑选|怎么买|如何买|值得买吗|好用吗|怎么样|推荐哪几款|哪个品牌好|选哪款|怎么避坑)[？?！!。]*$/u;
 
 /**
  * 从源标题（或改写后标题）中提取语义完整的核心主题词，避免按固定字符数硬截断词组或叠加「围绕」。
@@ -920,7 +926,7 @@ export function extractRewriteTopic(sourceTitle: string, fallbackTitle?: string)
   if (!candidate) return '行业实践方案';
 
   const segments = candidate
-    .split(/[:：|｜]|——|—|\s+-\s+/)
+    .split(/[:：|｜]|——|—|\s+-\s+|[？?！!。]/)
     .map((s) => s.trim())
     .filter(Boolean);
   if (segments.length > 1) {
@@ -937,10 +943,11 @@ export function extractRewriteTopic(sourceTitle: string, fallbackTitle?: string)
   }
 
   const strippedSuffix = candidate
+    .replace(QUESTION_TAIL_RE, '')
     .replace(TOPIC_SUFFIX_RE, '')
-    .replace(/[的与和及]+$/u, '')
+    .replace(/(?:怎么|如何|的|与|和|及)+$/u, '')
     .trim();
-  if (Array.from(strippedSuffix).length >= 5) {
+  if (Array.from(strippedSuffix).length >= 4) {
     candidate = strippedSuffix;
   }
 

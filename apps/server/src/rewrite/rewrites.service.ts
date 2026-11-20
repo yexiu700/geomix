@@ -497,10 +497,18 @@ export class RewritesService {
           idempotencyKey: `${unitKey}:p${passIdx}`,
           temperature: retryHighSimilarity ? 0.85 : 0.75,
           maxTokens: 2400,
-          timeoutMs: retryHighSimilarity ? 14_000 : 22_000,
+          timeoutMs: retryHighSimilarity ? 25_000 : 45_000,
           maxRetries: 0,
           preferFastModel: true,
+          disableThinking: true,
         });
+        if (completion.fake && !this.llm.usesFakePrimary('rewrite')) {
+          throw new ApiError(
+            503,
+            API_ERROR.UPSTREAM_UNAVAILABLE,
+            '大模型复刻服务响应超时或暂时不可用，未扣除点数，请稍后重试',
+          );
+        }
         const rawMd =
           completion.fake && completion.text.startsWith(FAKE_MARK)
             ? buildFakeRewriteMarkdown({

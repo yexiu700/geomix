@@ -50,6 +50,7 @@ export function CrudTable<T extends { id: string }>({
   showDensityToggle = true,
   showSearch = true,
   showExport = true,
+  defaultCompact = false,
   scroll,
   onSearchOpenChange,
   onSearch,
@@ -84,6 +85,7 @@ export function CrudTable<T extends { id: string }>({
   showDensityToggle?: boolean;
   showSearch?: boolean;
   showExport?: boolean;
+  defaultCompact?: boolean;
   scroll?: { x?: number | string | true; y?: number | string };
   onSearchOpenChange: (open: boolean) => void;
   onSearch: (search: CrudSearch) => void;
@@ -105,14 +107,14 @@ export function CrudTable<T extends { id: string }>({
       : 'geomix.crud.table:default');
 
   const [compact, setCompact] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
+    if (typeof window === 'undefined') return defaultCompact;
     try {
       const raw = window.localStorage.getItem(resolvedKey);
-      if (!raw) return false;
+      if (!raw) return defaultCompact;
       const parsed = JSON.parse(raw) as { compact?: unknown };
-      return parsed.compact === true;
+      return typeof parsed.compact === 'boolean' ? parsed.compact : defaultCompact;
     } catch {
-      return false;
+      return defaultCompact;
     }
   });
   const [hidden, setHidden] = useState<string[]>(() => {
@@ -331,6 +333,7 @@ export function CrudTable<T extends { id: string }>({
           },
         }}
         rowSelection={{
+          columnWidth: compact ? 36 : undefined,
           selectedRowKeys: selectedIds,
           onChange: (keys) => onSelectionChange(keys.map(String)),
         }}
