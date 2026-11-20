@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { UrlPolicyError, assertPublicUrl, ipBlockReason, parseIPv4Literal } from './ssrf';
+import {
+  UrlPolicyError,
+  assertPublicUrl,
+  ipBlockReason,
+  parseIPv4Literal,
+  parseSsrfAllowlist,
+} from './ssrf';
 
 describe('ip literals', () => {
   it('folds obfuscated IPv4 forms back to the real address', () => {
@@ -83,5 +89,55 @@ describe('url policy', () => {
     expect(assertPublicUrl('https://public.example/a').protocol).toBe('https:');
     expect(assertPublicUrl('https://public.example:443/a').hostname).toBe('public.example');
     expect(assertPublicUrl('https://public.example/a#frag').hash).toBe('');
+  });
+});
+
+describe('ssrf allowlist', () => {
+  it('allows internal sonargate by default including custom ports', () => {
+    expect(assertPublicUrl('http://sonargate/v1/collect').hostname).toBe('sonargate');
+    expect(assertPublicUrl('http://sonargate:8080/v1/collect').port).toBe('8080');
+    expect(assertPublicUrl('https://SONARGATE:8443/health').hostname).toBe('sonargate');
+  });
+
+  it('supports hostnames, host:port, wildcards, IPs, CIDRs, and URLs in allowlist', () => {
+    const allowlist = parseSsrfAllowlist(
+      'geo-obs.internal:9000, *.svc.local, 10.20.0.0/16, 192.168.1.50:8080, http://gateway.local:3000/api, [fc00::1]:8443',
+      { includeDefaults: false },
+    );
+
+    expect(assertPublicUrl('http://geo-obs.internal:9000/collect', { allowlist }).port).toBe(
+      '9000',
+    );
+    expect(() => assertPublicUrl('http://geo-obs.internal:9001/collect', { allowlist })).toThrow(
+      UrlPolicyError,
+    );
+
+    expect(assertPublicUrl('http://sonargate.svc.local:8080/collect', { allowlist }).hostname).toBe(
+      'sonargate.svc.local',
+    );
+    expect(assertPublicUrl('http://10.20.1.5:8080/v1', { allowlist }).hostname).toBe('10.20.1.5');
+    expect(() => assertPublicUrl('http://10.21.1.5:8080/v1', { allowlist })).toThrow(
+      UrlPolicyError,
+    );
+
+    expect(assertPublicUrl('http://192.168.1.50:8080/v1', { allowlist }).port).toBe('8080');
+    expect(() => assertPublicUrl('http://192.168.1.50:9090/v1', { allowlist })).toThrow(
+      UrlPolicyError,
+    );
+
+    expect(assertPublicUrl('http://gateway.local:3000/collect', { allowlist }).hostname).toBe(
+      'gateway.local',
+    );
+    expect(assertPublicUrl('https://[fc00::1]:8443/collect', { allowlist }).port).toBe('8443');
+  });
+
+  it('does not allow metadata.google.internal via wildcard suffix', () => {
+    const allowlist = parseSsrfAllowlist('*.internal', { includeDefaults: false });
+    expect(assertPublicUrl('http://sonargate.internal:8080/v1', { allowlist }).hostname).toBe(
+      'sonargate.internal',
+    );
+    expect(() => assertPublicUrl('http://metadata.google.internal/', { allowlist })).toThrow(
+      UrlPolicyError,
+    );
   });
 });

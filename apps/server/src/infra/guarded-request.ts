@@ -1,12 +1,17 @@
-import { Resolver } from 'node:dns/promises';
+import { lookup, Resolver } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { FETCH_USER_AGENT } from '@geomix/shared';
 import { ProviderError, PROVIDER_KIND } from './provider-error';
 import {
   assertPublicUrl,
   classifyHostname,
   ipBlockReason,
+  isHostAllowlisted,
+  isIpAllowlisted,
+  resolveSsrfAllowlist,
   UrlPolicyError,
   type ResolvedAddress,
+  type SsrfAllowlist,
 } from './ssrf';
 
 export type DnsResolver = {
@@ -57,6 +62,14 @@ export function createDnsResolver(): DnsResolver {
         ...v4.map((address) => ({ address, family: 4 as const })),
         ...v6.map((address) => ({ address, family: 6 as const })),
       ];
+      if (addresses.length === 0) {
+        const systemRows = await lookup(hostname, { all: true }).catch(() => []);
+        for (const row of systemRows) {
+          if (row.family === 4 || row.family === 6) {
+            addresses.push({ address: row.address, family: row.family });
+          }
+        }
+      }
       if (addresses.length === 0)
         throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'dns_empty');
       return addresses;
@@ -74,17 +87,18 @@ export async function requestOnce(input: {
   signal?: AbortSignal;
   resolver: DnsResolver;
   transport: HttpTransport;
+  allowlist?: SsrfAllowlist | string;
 }): Promise<GuardedResponse> {
   let url: URL;
   try {
-    url = assertPublicUrl(input.url);
+    url = assertPublicUrl(input.url, { allowlist: input.allowlist });
   } catch (error) {
     if (error instanceof UrlPolicyError) {
       throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', error.reason);
     }
     throw error;
   }
-  const pinned = await resolvePinned(url, input.resolver);
+  const pinned = await resolvePinned(url, input.resolver, { allowlist: input.allowlist });
   if (input.signal?.aborted) {
     throw isTimeoutReason(input.signal.reason)
       ? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout')
@@ -119,8 +133,15 @@ export async function requestOnce(input: {
   };
 }
 
-export async function resolvePinned(url: URL, resolver: DnsResolver): Promise<ResolvedAddress[]> {
-  const classified = classifyHostname(url.hostname);
+export async function resolvePinned(
+  url: URL,
+  resolver: DnsResolver,
+  options?: { allowlist?: SsrfAllowlist | string },
+): Promise<ResolvedAddress[]> {
+  const allowlist = resolveSsrfAllowlist(options?.allowlist);
+  const effectivePort = url.port || (url.protocol === 'https:' ? '443' : '80');
+  const hostAllowlisted = isHostAllowlisted(url.hostname, effectivePort, allowlist);
+  const classified = classifyHostname(url.hostname, { allowlisted: hostAllowlisted });
   if (classified.kind === 'blocked') {
     throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', classified.reason);
   }
@@ -130,17 +151,19 @@ export async function resolvePinned(url: URL, resolver: DnsResolver): Promise<Re
     throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'dns_empty');
   }
   for (const address of addresses) {
-    const reason = ipBlockReason(address.address);
-    if (reason) throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', reason);
-    if (isIPFamily(address) === false) {
+    if (!isValidAddressRecord(address)) {
       throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'invalid_ip');
+    }
+    if (!hostAllowlisted && !isIpAllowlisted(address.address, effectivePort, allowlist)) {
+      const reason = ipBlockReason(address.address);
+      if (reason) throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', reason);
     }
   }
   return addresses;
 }
 
-function isIPFamily(address: ResolvedAddress): boolean {
-  return (address.family === 4 || address.family === 6) && ipBlockReason(address.address) === null;
+function isValidAddressRecord(address: ResolvedAddress): boolean {
+  return (address.family === 4 || address.family === 6) && isIP(address.address) === address.family;
 }
 
 function publicHeaders(headers: Record<string, string> | undefined): Record<string, string> {
