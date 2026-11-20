@@ -53,7 +53,7 @@ export function buildAiImageColumns({
     thumb: {
       title: '缩略图',
       key: 'thumb',
-      width: 185,
+      width: 120,
       render: (_: unknown, row: AiImageJobItem) => {
         if (row.assets.length === 0) {
           return (
@@ -96,10 +96,10 @@ export function buildAiImageColumns({
     prompt: {
       title: '提示词',
       key: 'prompt',
-      width: 340,
+      width: 210,
       render: (_: unknown, row: AiImageJobItem) => (
-        <div style={{ maxWidth: 340 }}>
-          <TableClampText text={row.prompt} lines={3} maxWidth={340} />
+        <div style={{ maxWidth: 210 }}>
+          <TableClampText text={row.prompt} lines={3} maxWidth={210} />
           {row.error ? (
             <div
               style={{
@@ -118,7 +118,7 @@ export function buildAiImageColumns({
     styleRatio: {
       title: '风格/比例',
       key: 'styleRatio',
-      width: 150,
+      width: 112,
       render: (_: unknown, row: AiImageJobItem) => (
         <Space size={4} wrap>
           <Tag>{row.style ?? '默认风格'}</Tag>
@@ -129,7 +129,7 @@ export function buildAiImageColumns({
     count: {
       title: '张数',
       key: 'count',
-      width: 95,
+      width: 72,
       render: (_: unknown, row: AiImageJobItem) => (
         <Tag color="cyan">
           {row.successCount}/{row.count} 张
@@ -139,7 +139,7 @@ export function buildAiImageColumns({
     category: {
       title: '归属分类',
       key: 'category',
-      width: 145,
+      width: 100,
       render: (_: unknown, row: AiImageJobItem) =>
         row.saveCategoryName ? (
           <span style={{ fontSize: 12, color: 'var(--gm-sig-cited)' }}>{row.saveCategoryName}</span>
@@ -150,7 +150,7 @@ export function buildAiImageColumns({
     status: {
       title: '状态',
       key: 'status',
-      width: 105,
+      width: 84,
       render: (_: unknown, row: AiImageJobItem) =>
         isPlaceholderJob(row) ? (
           <Tag color="warning">演示占位图</Tag>
@@ -163,7 +163,7 @@ export function buildAiImageColumns({
     points: {
       title: '消耗点数',
       key: 'points',
-      width: 145,
+      width: 118,
       render: (_: unknown, row: AiImageJobItem) => (
         <div className="gm-num" style={{ fontSize: 12, lineHeight: 1.6 }}>
           <div style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
@@ -182,7 +182,7 @@ export function buildAiImageColumns({
       title: '创建时间',
       dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 150,
+      width: 120,
       render: (val: string) => (
         <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
           {formatTime(val)}
@@ -192,7 +192,7 @@ export function buildAiImageColumns({
     actions: {
       title: '操作',
       key: 'actions',
-      width: 215,
+      width: 148,
       render: (_: unknown, row: AiImageJobItem) => {
         const hasAssets = row.assets.length > 0;
         const placeholder = isPlaceholderJob(row);
@@ -252,7 +252,7 @@ export function buildAiImageColumns({
     {
       title: '序号',
       key: 'seq',
-      width: 64,
+      width: 52,
       render: (_: unknown, __: AiImageJobItem, idx: number) => (page - 1) * pageSize + idx + 1,
     },
     // 按 visibleCols 过滤但保持固定列序

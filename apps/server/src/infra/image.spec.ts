@@ -47,4 +47,52 @@ describe('image provider', () => {
     ).rejects.toMatchObject({ code: 40302 });
     expect(await storage.get('tenant_demo', 'image-forbidden.jpg')).toBeNull();
   });
+
+  it('sends aspect_ratio alongside size in upstream openai-compatible request (#312)', async () => {
+    const sharp = (await import('sharp')).default;
+    const samplePng = await sharp({
+      create: { width: 1280, height: 720, channels: 3, background: { r: 30, g: 40, b: 50 } },
+    })
+      .png()
+      .toBuffer();
+
+    let capturedBody: Record<string, unknown> | null = null;
+    const service = ImageService.fromEnv(
+      {
+        IMAGE_PROVIDER: 'openai',
+        IMAGE_BASE_URL: 'https://api.example.com/v1',
+        IMAGE_API_KEY: 'sk-test',
+        IMAGE_MODEL: 'grok-imagine-image-2.0',
+      },
+      {
+        storage: StorageService.fromEnv({ STORAGE_DRIVER: 'memory' }),
+        compliance: new ComplianceService(),
+        resolver: { resolve: async () => [{ address: '93.184.216.34', family: 4 }] },
+        transport: async (req) => {
+          capturedBody = JSON.parse(req.body ?? '{}') as Record<string, unknown>;
+          return {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            body: Buffer.from(
+              JSON.stringify({ data: [{ b64_json: samplePng.toString('base64') }] }),
+            ),
+          };
+        },
+      },
+    );
+
+    const raw = await service.generateRaw({
+      tenantId: 'tenant_demo',
+      prompt: '简约现代商业办公桌面实拍图',
+      ratio: '16:9',
+      count: 1,
+    });
+
+    expect(raw.items).toHaveLength(1);
+    expect(capturedBody).toMatchObject({
+      model: 'grok-imagine-image-2.0',
+      size: '1280x720',
+      aspect_ratio: '16:9',
+    });
+  });
 });

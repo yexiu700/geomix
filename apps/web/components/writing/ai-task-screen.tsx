@@ -212,15 +212,15 @@ export function AiTaskScreen({
       {
         key: 'name',
         title: '任务名',
-        width: 200,
+        width: 160,
         hideable: false,
         render: (row) => (
-          <div style={{ minWidth: 160 }}>
-            <TableClampText text={row.name} lines={2} strong maxWidth={190} tooltipThreshold={18} />
+          <div style={{ minWidth: 130 }}>
+            <TableClampText text={row.name} lines={2} strong maxWidth={150} tooltipThreshold={18} />
             <TableClampText
               text={`分类：${row.categoryName}`}
               lines={1}
-              maxWidth={190}
+              maxWidth={150}
               tooltipThreshold={18}
               style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}
             />
@@ -230,13 +230,13 @@ export function AiTaskScreen({
       {
         key: 'keywordMain',
         title: UX_TERMS.mainKeyword,
-        width: 120,
+        width: 96,
         render: (row) => <Tag color="geekblue">{row.keywordMain}</Tag>,
       },
       {
         key: 'target',
         title: '创作上限',
-        width: 88,
+        width: 74,
         render: (row) => (
           <span className="gm-num" style={NOWRAP_STYLE}>
             {row.target} 篇
@@ -246,7 +246,7 @@ export function AiTaskScreen({
       {
         key: 'doneCount',
         title: '已创作',
-        width: 104,
+        width: 82,
         render: (row) => {
           const summary = formatFailSkipSummary(row.failCount, row.skipCount);
           return (
@@ -268,7 +268,7 @@ export function AiTaskScreen({
       {
         key: 'kbName',
         title: '知识库',
-        width: 148,
+        width: 102,
         render: (row) =>
           row.kbName ? (
             <Tooltip title={row.kbName.length > 10 ? row.kbName : undefined}>
@@ -283,7 +283,7 @@ export function AiTaskScreen({
       {
         key: 'detail',
         title: '详情',
-        width: 88,
+        width: 72,
         render: (row) => (
           <Button
             type="link"
@@ -298,13 +298,13 @@ export function AiTaskScreen({
       {
         key: 'lastError',
         title: '错误消息',
-        width: 160,
+        width: 112,
         render: (row) =>
           row.lastError ? (
             <TableClampText
               text={row.lastError}
               lines={2}
-              maxWidth={150}
+              maxWidth={104}
               tooltipThreshold={16}
               style={{ fontSize: 12, color: 'var(--gm-danger)' }}
             />
@@ -315,7 +315,7 @@ export function AiTaskScreen({
       {
         key: 'status',
         title: '状态',
-        width: 96,
+        width: 76,
         render: (row) => (
           <Tag color={statusTagColor(row.status)}>{TASK_STATUS_LABELS[row.status]}</Tag>
         ),
@@ -323,7 +323,7 @@ export function AiTaskScreen({
       {
         key: 'lastWrittenAt',
         title: '最新写作',
-        width: 156,
+        width: 112,
         render: (row) => (
           <span className="gm-num" style={NOWRAP_STYLE}>
             {formatTaskTime(row.lastWrittenAt)}
@@ -333,7 +333,7 @@ export function AiTaskScreen({
       {
         key: 'createdAt',
         title: '创建时间',
-        width: 156,
+        width: 112,
         render: (row) => (
           <span className="gm-num" style={NOWRAP_STYLE}>
             {formatTaskTime(row.createdAt)}
@@ -343,7 +343,7 @@ export function AiTaskScreen({
       {
         key: 'actions',
         title: '操作',
-        width: 170,
+        width: 130,
         hideable: false,
         render: (row) => (
           <AiTaskActionButtons

@@ -207,6 +207,7 @@ export class ImageService {
         prompt,
         n: input.count,
         size: `${dims.width}x${dims.height}`,
+        aspect_ratio: input.ratio ?? '1:1',
       }),
       timeoutMs: this.settings.timeoutMs,
       maxBytes: 8_000_000,

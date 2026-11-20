@@ -104,7 +104,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'name',
       title: '任务名称',
-      width: 220,
+      width: 155,
       hideable: false,
       render: (row) => (
         <button type="button" className="gm-monitors-name-btn" onClick={() => onOpenDetail(row.id)}>
@@ -115,7 +115,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'profile',
       title: '监测档案 / 主品牌',
-      width: 200,
+      width: 170,
       render: (row) => (
         <div
           data-testid={`run-profile-cell-${row.id}`}
@@ -133,7 +133,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'keywordMain',
       title: '关联主词',
-      width: 140,
+      width: 116,
       render: (row) => (
         <span
           data-testid={`run-keyword-cell-${row.id}`}
@@ -151,17 +151,17 @@ export function buildMonitorsRunColumns({
     {
       key: 'engines',
       title: '监测引擎',
-      width: 210,
+      width: 145,
       render: (row) => <EngineChipList engines={row.engines} max={3} />,
     },
     {
       key: 'progress',
       title: '检测进度',
-      width: 140,
+      width: 105,
       render: (row) => {
         const { donePct, failPct, skipPct } = computeRunProgressPercents(row);
         return (
-          <div style={{ width: 140 }}>
+          <div style={{ width: 96 }}>
             <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
               {row.doneCount}/{row.totalChecks}
             </span>
@@ -192,7 +192,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'visibilityPct',
       title: '品牌提及率',
-      width: 130,
+      width: 105,
       render: (row) => {
         const pct = row.visibilityPct;
         const barWidth = clampVisibilityPct(pct);
@@ -225,12 +225,12 @@ export function buildMonitorsRunColumns({
     {
       key: 'points',
       title: '预冻 / 结算点数',
-      width: 140,
+      width: 110,
       render: (row) => (
         <Tooltip title={`已退回 ${row.releasedPoints ?? 0} 点`}>
           <div
             className="gm-num"
-            style={{ textAlign: 'right', fontSize: 13, whiteSpace: 'nowrap', minWidth: 112 }}
+            style={{ textAlign: 'right', fontSize: 13, whiteSpace: 'nowrap', minWidth: 92 }}
           >
             <div style={{ color: 'var(--gm-fg-1)' }}>预冻 {row.frozenPoints ?? 0} 点</div>
             <div style={{ color: 'var(--gm-fg-3)', fontSize: 12 }}>
@@ -243,7 +243,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'status',
       title: '状态',
-      width: 116,
+      width: 96,
       render: (row) => (
         <span
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}

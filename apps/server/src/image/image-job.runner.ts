@@ -10,6 +10,7 @@ import {
   buildImageLedgerTitle,
   isAiImageRatio,
   parseEnv,
+  resolveAiImageRatioDimensions,
   resolveImageSettings,
   type AiImageCount,
   type AiImageRatio,
@@ -273,7 +274,29 @@ export class ImageJobRunner implements ImageJobHandler {
       }
 
       try {
-        const compressed = await compressImage(rawItem.body);
+        let compressed = await compressImage(rawItem.body);
+        const targetDims = resolveAiImageRatioDimensions(ratio);
+        const targetAspect = targetDims.width / targetDims.height;
+        const actualAspect = compressed.width / Math.max(1, compressed.height);
+        if (Math.abs(actualAspect - targetAspect) / targetAspect > 0.12) {
+          const croppedWidth =
+            actualAspect > targetAspect
+              ? Math.max(1, Math.round(compressed.height * targetAspect))
+              : compressed.width;
+          const croppedHeight =
+            actualAspect > targetAspect
+              ? compressed.height
+              : Math.max(1, Math.round(compressed.width / targetAspect));
+          const croppedBuf = await sharp(rawItem.body)
+            .resize({
+              width: croppedWidth,
+              height: croppedHeight,
+              fit: 'cover',
+              position: 'centre',
+            })
+            .toBuffer();
+          compressed = await compressImage(croppedBuf);
+        }
         const thumbBuffer = await sharp(compressed.body)
           .resize({
             width: GALLERY_THUMB_MAX_EDGE,
