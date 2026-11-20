@@ -298,10 +298,19 @@ export function RewriteSingleCreateModal({
                     updateDraft({ mediaCategoryId: '', imageCount: 0 });
                     return;
                   }
+                  const pickedCat = mediaCategoriesWithImages.find((mc) => mc.id === val);
+                  const nextCount =
+                    val && draft.imageCount === 0
+                      ? Math.min(
+                          REWRITE_IMAGE_DEFAULT,
+                          pickedCat?.assetCount ?? REWRITE_IMAGE_DEFAULT,
+                        )
+                      : pickedCat && draft.imageCount > pickedCat.assetCount
+                        ? Math.max(1, pickedCat.assetCount)
+                        : draft.imageCount;
                   updateDraft({
                     mediaCategoryId: val,
-                    imageCount:
-                      val && draft.imageCount === 0 ? REWRITE_IMAGE_DEFAULT : draft.imageCount,
+                    imageCount: nextCount,
                   });
                 }}
               >
@@ -415,6 +424,12 @@ export function RewriteSingleCreateModal({
                 </option>
               ))}
             </select>
+            <Typography.Text
+              type="secondary"
+              style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+            >
+              此处仅展示「流量复刻」类型指令；如需新建自定义改写指令，请点击右侧「管理指令」。
+            </Typography.Text>
           </div>
 
           <div>

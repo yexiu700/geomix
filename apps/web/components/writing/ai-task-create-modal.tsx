@@ -349,7 +349,7 @@ export function AiTaskCreateModal({
                   marginBottom: 4,
                 }}
               >
-                <label htmlFor="gm-aitask-gallery" style={{ margin: 0 }}>
+                <label htmlFor="gm-aitask-gallery" style={{ margin: 0, whiteSpace: 'nowrap' }}>
                   {editor.draft.imageCount > 0 ? (
                     <>
                       <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库

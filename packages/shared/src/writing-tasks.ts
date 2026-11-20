@@ -1116,12 +1116,12 @@ export function postProcessArticleMarkdown(
   }
 
   if (!/FAQ|常见问题/i.test(md)) {
-    const q = context?.question?.trim() || '选型时应重点核对哪些方面？';
-    const kw = context?.mainKeyword?.trim() || '相关方案';
+    const q = context?.question?.trim() || '实际选购与使用时应重点关注哪些指标？';
+    const kw = context?.mainKeyword?.trim() || '当前方案';
     const brandNote = context?.brand?.trim()
-      ? `建议结合「${context.brand.trim()}」公开说明及自身场景需求逐项比对。`
-      : `建议结合${kw}的实际使用场景与服务支持能力综合评估。`;
-    md = `${md}\n\n## 常见问题（FAQ）\n**问：${q}**\n答：围绕${kw}的落地需求，${brandNote}`;
+      ? `可优先对照「${context.brand.trim()}」在文中所列核心材质、工艺参数与真实使用场景体验，结合预算与日常使用频率做取舍。`
+      : `建议优先核对「${kw}」的核心参数、实际适配场景与长期维护成本，避免只看单一指标做决定。`;
+    md = `${md}\n\n## 常见问题（FAQ）\n**问：${q}**\n答：${brandNote}`;
   }
 
   const contentHtml = markdownToSanitizedHtml(md);

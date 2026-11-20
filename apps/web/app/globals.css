@@ -383,6 +383,10 @@ input:not([class*='ant-']):hover {
   justify-content: flex-start;
 }
 
+.ant-select-selection-placeholder {
+  pointer-events: none;
+}
+
 .gm-crud-search {
   padding: 12px;
   border: 1px solid var(--gm-line-1);

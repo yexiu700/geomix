@@ -314,6 +314,21 @@ export function VisibilityOverviewScreen({
     };
   }, [client, effectiveStorage, featureEnabled]);
 
+  const refreshReferenceOptions = useCallback(async () => {
+    if (!featureEnabled) return;
+    try {
+      const [profileRes, kwList] = await Promise.all([
+        client.listProfiles(),
+        client.listKeywords().catch(() => null),
+      ]);
+      setProfiles(profileRes.items);
+      setProfilesLoaded(true);
+      if (kwList) applyKeywordRefresh(kwList);
+    } catch {
+      // keep existing dropdown options on transient error
+    }
+  }, [applyKeywordRefresh, client, featureEnabled]);
+
   // 主链二「总览拉取」：appliedFilter 变化即请求；清理时作废旧请求，避免晚返回覆盖新结果
   useEffect(() => {
     if (!featureEnabled) {
@@ -332,6 +347,20 @@ export function VisibilityOverviewScreen({
       })
       .catch((err) => {
         if (cancelled) return;
+        const isNotFound =
+          (err &&
+            typeof err === 'object' &&
+            'status' in err &&
+            (err as { status?: number }).status === 404) ||
+          (err instanceof Error && err.message.includes('不存在'));
+        if (isNotFound && appliedFilter.profileId) {
+          setFilterDraft((curr) => ({ ...curr, profileId: '' }));
+          setAppliedFilter((curr) => ({ ...curr, profileId: '' }));
+          syncProfileRoute('');
+          void refreshReferenceOptions();
+          setBannerError('所选监测档案已不存在，已自动切换至「全部监测档案」');
+          return;
+        }
         setBannerError(err instanceof Error ? err.message : '加载 AI 数据看板概览失败');
       })
       .finally(() => {
@@ -341,22 +370,7 @@ export function VisibilityOverviewScreen({
     return () => {
       cancelled = true;
     };
-  }, [appliedFilter, client, featureEnabled]);
-
-  const refreshReferenceOptions = useCallback(async () => {
-    if (!featureEnabled) return;
-    try {
-      const [profileRes, kwList] = await Promise.all([
-        client.listProfiles(),
-        client.listKeywords().catch(() => null),
-      ]);
-      setProfiles(profileRes.items);
-      setProfilesLoaded(true);
-      if (kwList) applyKeywordRefresh(kwList);
-    } catch {
-      // keep existing dropdown options on transient error
-    }
-  }, [applyKeywordRefresh, client, featureEnabled]);
+  }, [appliedFilter, client, featureEnabled, refreshReferenceOptions, syncProfileRoute]);
 
   useTabFreshness({
     active,

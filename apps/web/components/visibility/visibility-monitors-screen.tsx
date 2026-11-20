@@ -764,7 +764,9 @@ export function VisibilityMonitorsScreen({
           },
           {
             key: 'profiles',
-            label: `品牌与竞品档案（${meta.profiles.length}）`,
+            label: meta.profilesLoaded
+              ? `品牌与竞品档案（${meta.profiles.length}）`
+              : '品牌与竞品档案',
             children: (
               <VisibilityProfilesTab
                 profiles={meta.profiles}
