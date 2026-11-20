@@ -11,6 +11,7 @@ import {
 import { VisibilityAnalyticsService } from './visibility-analytics.service';
 import { VisibilityCollectorService } from './visibility-collector.service';
 import { VisibilityController } from './visibility.controller';
+import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityJudgeService } from './visibility-judge.service';
 import { VisibilityProfileService } from './visibility-profile.service';
 import { VISIBILITY_RUN_HANDLER, VisibilityRunRunner } from './visibility-run.runner';
@@ -26,6 +27,7 @@ import { VisibilityService } from './visibility.service';
       useFactory: () => readVisibilityConfig(process.env),
     },
     VisibilityCollectorService,
+    VisibilityEngineHealthService,
     VisibilityJudgeService,
     VisibilityProfileService,
     VisibilityRunLifecycleService,
@@ -40,6 +42,7 @@ import { VisibilityService } from './visibility.service';
   exports: [
     VISIBILITY_CONFIG,
     VisibilityCollectorService,
+    VisibilityEngineHealthService,
     VisibilityJudgeService,
     VisibilityService,
     VisibilityRunRunner,
@@ -49,13 +52,29 @@ import { VisibilityService } from './visibility.service';
 export class VisibilityModule implements OnModuleInit {
   private readonly logger = new Logger(VisibilityModule.name);
 
-  constructor(@Inject(VISIBILITY_CONFIG) private readonly config: VisibilityConfig) {}
+  constructor(
+    @Inject(VISIBILITY_CONFIG) private readonly config: VisibilityConfig,
+    @Inject(VisibilityEngineHealthService)
+    private readonly engineHealth: VisibilityEngineHealthService,
+  ) {}
 
   onModuleInit(): void {
     if (this.config.collector === 'fake') {
       this.logger.warn(
         'VISIBILITY_COLLECTOR=fake 当前处于模拟演示采集模式；真实线上/预发请配置 VISIBILITY_COLLECTOR=llm_api 或 remote_scraper',
       );
+      return;
+    }
+    if (
+      this.config.collector === 'remote_scraper' &&
+      this.config.remoteUrl &&
+      process.env.NODE_ENV !== 'test'
+    ) {
+      void this.engineHealth.refreshHealth().catch((err: unknown) => {
+        this.logger.warn(
+          `initial visibility engine health check failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        );
+      });
     }
   }
 }

@@ -12,6 +12,10 @@ import { IMAGE_JOB_HANDLER, type ImageJobHandler } from '../image/image-job.runn
 import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
 import { REWRITE_BATCH_HANDLER, type RewriteBatchHandler } from '../rewrite/rewrite-batch.runner';
 import {
+  readVisibilityConfig,
+  resolveVisibilityHealthRefreshMs,
+} from '../visibility/visibility.config';
+import {
   VISIBILITY_RUN_ENQUEUER,
   VISIBILITY_RUN_HANDLER,
   type VisibilityRunHandler,
@@ -144,6 +148,11 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
         `initial recover sweep skipped: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     });
+    void this.maintenance.run('visibility-engine-health').catch((err: unknown) => {
+      this.logger.warn(
+        `initial visibility engine health refresh skipped: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    });
   }
 
   async stop(): Promise<void> {
@@ -155,6 +164,7 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
   private async registerSchedules(): Promise<void> {
     const timing = readReconcileConfig(process.env);
     const recoverMs = Math.min(timing.intervalMs, readRecoverMs());
+    const visibilityHealthMs = readVisibilityHealthRefreshMs();
     const queue = await this.producer.open('maintenance');
     await queue.add(
       'reconcile',
@@ -167,6 +177,11 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       { repeat: { every: recoverMs }, jobId: 'recover' },
     );
     await queue.add(
+      'visibility-engine-health',
+      { kind: 'visibility-engine-health' },
+      { repeat: { every: visibilityHealthMs }, jobId: 'visibility-engine-health' },
+    );
+    await queue.add(
       'retention',
       { kind: 'retention' },
       { repeat: { pattern: '0 3 * * *' }, jobId: 'retention' },
@@ -176,6 +191,14 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       { kind: 'orphan-files' },
       { repeat: { pattern: '30 3 * * *' }, jobId: 'orphan-files' },
     );
+  }
+}
+
+function readVisibilityHealthRefreshMs(): number {
+  try {
+    return resolveVisibilityHealthRefreshMs(readVisibilityConfig(process.env));
+  } catch {
+    return 5 * 60_000;
   }
 }
 

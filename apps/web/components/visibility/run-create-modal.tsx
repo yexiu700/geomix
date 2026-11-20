@@ -5,10 +5,13 @@ import {
   VISIBILITY_ENGINES,
   VISIBILITY_RUN_NAME_MAX,
   filterKeywordsForVisibilityProfile,
+  formatVisibilityEngineDisplayLabel,
   quoteVisibilityRunPoints,
   resolveDefaultKeywordIdForProfile,
   type KeywordRecord,
   type QuestionRecord,
+  type VisibilityEngineAvailabilityItem,
+  type VisibilityEngineKey,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
   type VisibilityRunRecord,
@@ -330,6 +333,7 @@ export type RunCreateModalProps = {
   profiles: VisibilityProfileRecord[];
   keywords: KeywordRecord[];
   unitPoints: number;
+  engineAvailability?: VisibilityEngineAvailabilityItem[] | null;
   client: VisibilityGateway;
   readOnly?: boolean;
   onRefreshMeta: () => void;
@@ -344,6 +348,7 @@ export function RunCreateModal({
   profiles,
   keywords,
   unitPoints,
+  engineAvailability,
   client,
   readOnly = false,
   onRefreshMeta,
@@ -352,10 +357,43 @@ export function RunCreateModal({
 }: RunCreateModalProps) {
   const sessionKey = open ? `${session}:${initialProfileId}` : null;
 
+  const engineAvailabilityMap = useMemo(() => {
+    const map = new Map<VisibilityEngineKey, boolean>();
+    if (!engineAvailability || engineAvailability.length === 0) {
+      for (const eng of VISIBILITY_ENGINES) map.set(eng.key, true);
+      return map;
+    }
+    for (const item of engineAvailability) {
+      map.set(item.key, item.available);
+    }
+    return map;
+  }, [engineAvailability]);
+
+  const isEngineAvailable = (key: VisibilityEngineKey): boolean =>
+    engineAvailabilityMap.get(key) !== false;
+
+  const onlineDomesticEngines = useMemo(
+    () => DOMESTIC_VISIBILITY_ENGINE_KEYS.filter((key) => engineAvailabilityMap.get(key) !== false),
+    [engineAvailabilityMap],
+  );
+  const onlineAllEngines = useMemo(
+    () =>
+      VISIBILITY_ENGINES.map((item) => item.key).filter(
+        (key) => engineAvailabilityMap.get(key) !== false,
+      ),
+    [engineAvailabilityMap],
+  );
+  const offlineEngineCount = VISIBILITY_ENGINES.length - onlineAllEngines.length;
+
   const computeInitialDraft = () => {
     const targetProfile = profiles.find((p) => p.id === initialProfileId);
     const defaultKeywordId = resolveDefaultKeywordIdForProfile(keywords, targetProfile, profiles);
-    return buildDefaultRunDraft(initialProfileId, defaultKeywordId);
+    const base = buildDefaultRunDraft(initialProfileId, defaultKeywordId);
+    const filteredEngines = base.engines.filter((key) => engineAvailabilityMap.get(key) !== false);
+    return {
+      ...base,
+      engines: filteredEngines.length > 0 ? filteredEngines : onlineAllEngines.slice(0, 3),
+    };
   };
 
   const [activeSessionKey, setActiveSessionKey] = useState<string | null>(sessionKey);
@@ -394,6 +432,21 @@ export function RunCreateModal({
   }
 
   const { draft, idempotencyKey } = modalState;
+
+  useEffect(() => {
+    if (!open || !engineAvailability || engineAvailability.length === 0) return;
+    setModalState((curr) => {
+      const nextEngines = curr.draft.engines.filter(
+        (key) => engineAvailabilityMap.get(key) !== false,
+      );
+      if (nextEngines.length === curr.draft.engines.length) return curr;
+      return {
+        ...curr,
+        draft: { ...curr.draft, engines: nextEngines },
+        idempotencyKey: createVisibilityIdempotencyKey('vrun'),
+      };
+    });
+  }, [engineAvailability, engineAvailabilityMap, open]);
 
   const activeModalProfile = useMemo(
     () => (draft.profileId ? profiles.find((p) => p.id === draft.profileId) : undefined),
@@ -722,10 +775,11 @@ export function RunCreateModal({
                 <Button
                   size="small"
                   aria-label="全选国内8大引擎"
+                  disabled={onlineDomesticEngines.length === 0}
                   onClick={() =>
                     patchRunDraft((prev) => ({
                       ...prev,
-                      engines: [...DOMESTIC_VISIBILITY_ENGINE_KEYS],
+                      engines: [...onlineDomesticEngines],
                     }))
                   }
                 >
@@ -734,10 +788,11 @@ export function RunCreateModal({
                 <Button
                   size="small"
                   aria-label="全选全部引擎"
+                  disabled={onlineAllEngines.length === 0}
                   onClick={() =>
                     patchRunDraft((prev) => ({
                       ...prev,
-                      engines: VISIBILITY_ENGINES.map((item) => item.key),
+                      engines: [...onlineAllEngines],
                     }))
                   }
                 >
@@ -753,24 +808,42 @@ export function RunCreateModal({
               </Space>
             </div>
 
+            {offlineEngineCount > 0 ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--gm-fg-3)',
+                  marginBottom: 8,
+                }}
+              >
+                {onlineAllEngines.length === 0
+                  ? '当前远端采集服务暂不可用，全部引擎显示为（未上线），请稍后重试。'
+                  : `当前有 ${offlineEngineCount} 个引擎暂未上线，已自动置灰不可选；快捷全选仅勾选已上线引擎。`}
+              </div>
+            ) : null}
+
             <div style={ENGINES_BOX_STYLE}>
               {ENGINE_GROUPS.map((group) => (
                 <div key={group.groupLabel}>
                   <div style={GROUP_LABEL_STYLE}>{group.groupLabel}</div>
                   <div className="gm-engine-grid">
                     {group.items.map((eng) => {
-                      const checked = draft.engines.includes(eng.key);
+                      const available = isEngineAvailable(eng.key);
+                      const checked = available && draft.engines.includes(eng.key);
                       return (
                         <div
                           key={eng.key}
                           className={
                             checked ? 'gm-engine-card gm-engine-card-checked' : 'gm-engine-card'
                           }
+                          style={available ? undefined : { opacity: 0.55, cursor: 'not-allowed' }}
                         >
                           <Checkbox
                             aria-label={`选择引擎-${eng.label}`}
                             checked={checked}
+                            disabled={!available}
                             onChange={(e) => {
+                              if (!available) return;
                               const nextChecked = e.target.checked;
                               patchRunDraft((prev) => ({
                                 ...prev,
@@ -780,7 +853,7 @@ export function RunCreateModal({
                               }));
                             }}
                           >
-                            <span>{eng.label}</span>
+                            <span>{formatVisibilityEngineDisplayLabel(eng.label, available)}</span>
                           </Checkbox>
                         </div>
                       );

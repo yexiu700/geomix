@@ -2,7 +2,9 @@
 
 import {
   VISIBILITY_ENGINES,
+  formatVisibilityEngineDisplayLabel,
   isVisibilityEngine,
+  type VisibilityEngineAvailabilityItem,
   type VisibilityEngineKey,
   type VisibilityOverviewResponse,
   type VisibilityProfileRecord,
@@ -196,6 +198,17 @@ export function VisibilityOverviewScreen({
   // ---- 画像 / 筛选闭环 ----
   const [profiles, setProfiles] = useState<VisibilityProfileRecord[]>([]);
   const [profilesLoaded, setProfilesLoaded] = useState(false);
+  const [engineAvailability, setEngineAvailability] = useState<
+    VisibilityEngineAvailabilityItem[] | null
+  >(null);
+  const engineAvailabilityMap = useMemo(() => {
+    const map = new Map<VisibilityEngineKey, boolean>();
+    if (!engineAvailability) return map;
+    for (const item of engineAvailability) {
+      map.set(item.key, item.available);
+    }
+    return map;
+  }, [engineAvailability]);
   const [filterDraft, setFilterDraft] = useState<OverviewFilterState>(() =>
     createDefaultFilter(urlProfileId),
   );
@@ -309,6 +322,14 @@ export function VisibilityOverviewScreen({
       .catch(() => {
         if (!cancelled) setProfilesLoaded(true);
       });
+    if (client.listEngines) {
+      void client
+        .listEngines()
+        .then((res) => {
+          if (!cancelled) setEngineAvailability(res.engines);
+        })
+        .catch(() => undefined);
+    }
     return () => {
       cancelled = true;
     };
@@ -543,11 +564,14 @@ export function VisibilityOverviewScreen({
           onChange={(e) => setFilterDraft((curr) => ({ ...curr, engine: e.target.value }))}
         >
           <option value="">全部 AI 引擎</option>
-          {VISIBILITY_ENGINES.map((eng) => (
-            <option key={eng.key} value={eng.key}>
-              {eng.label}
-            </option>
-          ))}
+          {VISIBILITY_ENGINES.map((eng) => {
+            const available = engineAvailabilityMap.get(eng.key) !== false;
+            return (
+              <option key={eng.key} value={eng.key}>
+                {formatVisibilityEngineDisplayLabel(eng.label, available)}
+              </option>
+            );
+          })}
         </select>
 
         {/* Quick Days Pills */}

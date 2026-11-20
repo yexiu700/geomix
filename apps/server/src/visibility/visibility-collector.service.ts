@@ -436,7 +436,11 @@ export class VisibilityCollectorService {
       throw new ProviderError(PROVIDER_KIND.RATE_LIMIT, '远端采集服务繁忙', 'rate_limit');
     }
     if (response.status >= 500) {
-      throw new ProviderError(PROVIDER_KIND.UPSTREAM, '远端采集服务暂时不可用', 'upstream_5xx');
+      throw new ProviderError(
+        PROVIDER_KIND.UPSTREAM,
+        '该引擎采集通道暂未上线或维护中',
+        'upstream_5xx',
+      );
     }
     if (response.status < 200 || response.status >= 300) {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '远端采集服务返回了异常状态码', 'status');

@@ -11,6 +11,7 @@ import {
 } from '../rewrite/rewrite-batch.runner';
 import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
+import { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
 import { VisibilityJudgeService } from '../visibility/visibility-judge.service';
 import {
   VISIBILITY_RUN_ENQUEUER,
@@ -88,6 +89,7 @@ export class QueueModule {
           useFactory: () => readVisibilityConfig(process.env),
         },
         VisibilityCollectorService,
+        VisibilityEngineHealthService,
         VisibilityJudgeService,
         VisibilityRunRunner,
         { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
