@@ -84,11 +84,11 @@ export function RewriteBatchDetailDrawer({
       {
         title: '复刻新标题',
         key: 'newTitle',
-        width: 215,
-        minWidth: 185,
+        width: 195,
+        minWidth: 165,
         ellipsis: { showTitle: false },
         render: (_v, rec) => (
-          <div style={{ display: 'grid', gap: 4, minWidth: 170, whiteSpace: 'normal' }}>
+          <div style={{ display: 'grid', gap: 4, minWidth: 150, whiteSpace: 'normal' }}>
             <TableClampText text={rec.newTitle} lines={2} tooltipThreshold={20} />
             {rec.articleStatus && (
               <div>
@@ -103,7 +103,7 @@ export function RewriteBatchDetailDrawer({
       {
         title: '5-gram 相似度',
         key: 'similarity',
-        width: 115,
+        width: 105,
         render: (_v, rec) => {
           if (rec.similarity === null || rec.similarity === undefined) return '—';
           const pct = `${(rec.similarity * 100).toFixed(1)}%`;
@@ -118,11 +118,11 @@ export function RewriteBatchDetailDrawer({
       {
         title: '状态 / 说明',
         key: 'status',
-        width: 205,
-        minWidth: 175,
+        width: 185,
+        minWidth: 155,
         ellipsis: { showTitle: false },
         render: (_v, rec) => (
-          <div style={{ display: 'grid', gap: 3, minWidth: 160, whiteSpace: 'normal' }}>
+          <div style={{ display: 'grid', gap: 3, minWidth: 140, whiteSpace: 'normal' }}>
             <div>
               <Tag color={itemStatusTagColor(rec.status)}>
                 {ITEM_STATUS_LABELS[rec.status] ?? rec.status}
@@ -142,7 +142,7 @@ export function RewriteBatchDetailDrawer({
       {
         title: '操作',
         key: 'go',
-        width: 90,
+        width: 82,
         render: (_v, rec) =>
           rec.articleId ? (
             <Button
@@ -164,7 +164,7 @@ export function RewriteBatchDetailDrawer({
   return (
     <Drawer
       open={open}
-      width={880}
+      width={940}
       title={detail ? `查看任务明细 · ${detail.batch.name}` : '查看批量爆文复刻明细'}
       onClose={onClose}
       extra={
@@ -257,7 +257,7 @@ export function RewriteBatchDetailDrawer({
             size="small"
             loading={loading}
             dataSource={detail.records}
-            scroll={{ x: 830 }}
+            scroll={{ x: 'max-content' }}
             pagination={{ pageSize: 10, showSizeChanger: false }}
             locale={{ emptyText: '暂无候选处理记录' }}
             columns={columns}
