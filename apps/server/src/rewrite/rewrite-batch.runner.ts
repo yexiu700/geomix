@@ -501,10 +501,19 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
             idempotencyKey: `${unitKey}:p${passIdx}`,
             temperature: retryHighSimilarity ? 0.85 : 0.75,
             maxTokens: 2800,
-            timeoutMs: retryHighSimilarity ? 25_000 : 40_000,
+            timeoutMs: retryHighSimilarity ? 25_000 : 45_000,
             maxRetries: 0,
+            preferFastModel: true,
+            disableThinking: true,
             signal: controller.signal,
           });
+          if (completion.fake && !this.llm.usesFakePrimary('rewrite')) {
+            throw new ProviderError(
+              PROVIDER_KIND.UPSTREAM,
+              '大模型复刻服务响应超时或暂时不可用',
+              'fake_fallback_rejected',
+            );
+          }
           const rawMd =
             completion.fake && completion.text.startsWith(FAKE_MARK)
               ? buildFakeRewriteMarkdown({

@@ -107,7 +107,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'name',
       title: '任务名称',
-      width: 118,
+      width: 108,
       hideable: false,
       render: (row) => (
         <button type="button" className="gm-monitors-name-btn" onClick={() => onOpenDetail(row.id)}>
@@ -154,7 +154,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'engines',
       title: '监测引擎',
-      width: 98,
+      width: 92,
       render: (row) => <EngineChipList engines={row.engines} max={2} />,
     },
     {
@@ -228,12 +228,12 @@ export function buildMonitorsRunColumns({
     {
       key: 'points',
       title: '预冻 / 结算点数',
-      width: 96,
+      width: 86,
       render: (row) => (
         <Tooltip title={`已退回 ${row.releasedPoints ?? 0} 点`}>
           <div
             className="gm-num"
-            style={{ textAlign: 'right', fontSize: 12, whiteSpace: 'nowrap', minWidth: 80 }}
+            style={{ textAlign: 'right', fontSize: 12, whiteSpace: 'nowrap', minWidth: 74 }}
           >
             <div style={{ color: 'var(--gm-fg-1)' }}>预冻 {row.frozenPoints ?? 0} 点</div>
             <div style={{ color: 'var(--gm-fg-3)', fontSize: 11 }}>
@@ -265,7 +265,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 92,
+      width: 86,
       render: (row) => (
         <span
           className="gm-num"
@@ -284,10 +284,10 @@ export function buildMonitorsRunColumns({
     {
       key: 'actions',
       title: '操作',
-      width: 136,
+      width: 118,
       hideable: false,
       render: (row) => (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 120 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, minWidth: 104 }}>
           <RowActBtn
             label={`查看详情-${row.name}`}
             text="查看详情"

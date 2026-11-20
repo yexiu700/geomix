@@ -726,6 +726,7 @@ export function VisibilityMonitorsScreen({
                     showCreate={false}
                     showDensityToggle={false}
                     showSearch={false}
+                    defaultCompact
                     scroll={{ x: 'max-content' }}
                     emptyText={emptyStateNode as unknown as string}
                     search={{

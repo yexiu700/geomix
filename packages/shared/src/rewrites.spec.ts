@@ -277,6 +277,10 @@ describe('rewrites shared helpers', () => {
     expect(longMixed).toContain('Anker');
     expect(longMixed).toContain('100W');
 
+    const questionTopic = extractRewriteTopic('职场女性每天走一万步的通勤平底鞋怎么选？');
+    expect(questionTopic).toBe('职场女性每天走一万步的通勤平底鞋');
+    expect(questionTopic).not.toMatch(/怎么|如何$/);
+
     const fakeMd = buildFakeRewriteMarkdown({
       sourceTitle,
       sourceText,
