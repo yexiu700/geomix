@@ -89,6 +89,13 @@ function flattenQuery(
 export class VisibilityController {
   constructor(@Inject(VisibilityService) private readonly visibility: VisibilityService) {}
 
+  // ===================== Engines =====================
+
+  @Get('engines')
+  async listEngines() {
+    return ok(await this.visibility.listEngines());
+  }
+
   // ===================== Profiles =====================
 
   @Get('profiles')

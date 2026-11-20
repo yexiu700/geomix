@@ -2089,4 +2089,114 @@ describe('VisibilityOverviewScreen', () => {
       expect(kbSelect.textContent).toContain('Anker企业知识库');
     });
   });
+
+  it('marks unreachable remote engines as （未上线）, disables them, and skips them in quick-select buttons', async () => {
+    const base = buildMockGateway();
+    const gateway: VisibilityGateway = {
+      ...base.gateway,
+      async listEngines() {
+        return {
+          collector: 'remote_scraper',
+          checkedAt: '2026-11-20T04:00:00.000Z',
+          refreshIntervalMs: 300_000,
+          engines: [
+            {
+              key: 'deepseek',
+              label: 'DeepSeek',
+              domestic: true,
+              available: true,
+              status: 'online',
+            },
+            { key: 'doubao', label: '豆包', domestic: true, available: false, status: 'offline' },
+            {
+              key: 'yuanbao',
+              label: '腾讯元宝',
+              domestic: true,
+              available: false,
+              status: 'offline',
+            },
+            { key: 'tongyi', label: '通义千问', domestic: true, available: true, status: 'online' },
+            {
+              key: 'wenxin',
+              label: '文心一言',
+              domestic: true,
+              available: false,
+              status: 'offline',
+            },
+            { key: 'nami', label: '纳米', domestic: true, available: false, status: 'offline' },
+            { key: 'kimi', label: 'Kimi', domestic: true, available: false, status: 'offline' },
+            { key: 'zhipu', label: '智谱', domestic: true, available: false, status: 'offline' },
+            {
+              key: 'chatgpt',
+              label: 'ChatGPT',
+              domestic: false,
+              available: false,
+              status: 'offline',
+            },
+            {
+              key: 'perplexity',
+              label: 'Perplexity',
+              domestic: false,
+              available: false,
+              status: 'offline',
+            },
+            {
+              key: 'claude',
+              label: 'Claude',
+              domestic: false,
+              available: false,
+              status: 'offline',
+            },
+            {
+              key: 'gemini',
+              label: 'Gemini',
+              domestic: false,
+              available: false,
+              status: 'offline',
+            },
+            {
+              key: 'google_aio',
+              label: 'Google AI Overviews',
+              domestic: false,
+              available: false,
+              status: 'offline',
+            },
+          ],
+        };
+      },
+    };
+
+    render(
+      <VisibilityMonitorsScreen
+        title="AI可见度诊断"
+        tabId="/visibility/monitors"
+        active={true}
+        gateway={gateway}
+        pollIntervalMs={0}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('新建监测任务')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByLabelText('新建监测任务'));
+
+    await waitFor(() => {
+      expect(screen.getByText('豆包（未上线）')).toBeTruthy();
+    });
+
+    const deepseekCb = screen.getByLabelText('选择引擎-DeepSeek') as HTMLInputElement;
+    const doubaoCb = screen.getByLabelText('选择引擎-豆包') as HTMLInputElement;
+    const tongyiCb = screen.getByLabelText('选择引擎-通义千问') as HTMLInputElement;
+    expect(deepseekCb.disabled).toBe(false);
+    expect(doubaoCb.disabled).toBe(true);
+    expect(doubaoCb.checked).toBe(false);
+
+    // Quick-select domestic engines should only select online ones (deepseek + tongyi)
+    fireEvent.click(screen.getByLabelText('全选国内8大引擎'));
+    expect(deepseekCb.checked).toBe(true);
+    expect(tongyiCb.checked).toBe(true);
+    expect(doubaoCb.checked).toBe(false);
+  });
 });

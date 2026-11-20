@@ -6,6 +6,7 @@ import {
   isTaskStatus,
   type CrudExportFormat,
   type KeywordRecord,
+  type VisibilityEngineAvailabilityItem,
   type VisibilityPrefillSources,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
@@ -60,6 +61,7 @@ type MetaState = {
   prefillSources: VisibilityPrefillSources;
   keywords: KeywordRecord[];
   prices: PriceItem[] | null;
+  engineAvailability: VisibilityEngineAvailabilityItem[] | null;
   profilesLoaded: boolean;
 };
 
@@ -114,6 +116,7 @@ export function VisibilityMonitorsScreen({
     prefillSources: { keywords: [], knowledgeBases: [] },
     keywords: [],
     prices: null,
+    engineAvailability: null,
     profilesLoaded: false,
   });
   const [query, setQuery] = useState<VisibilityRunListQuery>(() => ({
@@ -176,16 +179,18 @@ export function VisibilityMonitorsScreen({
   const loadMeta = useCallback(async () => {
     if (!featureEnabled) return;
     try {
-      const [profileRes, kwList, priceList] = await Promise.all([
+      const [profileRes, kwList, priceList, engineRes] = await Promise.all([
         client.listProfiles(),
         client.listKeywords().catch(() => []),
         client.listPrices().catch(() => DEFAULT_VISIBILITY_PRICES_FALLBACK),
+        client.listEngines ? client.listEngines().catch(() => null) : Promise.resolve(null),
       ]);
       setMeta((curr) => ({
         profiles: profileRes.items,
         prefillSources: profileRes.prefillSources ?? curr.prefillSources,
         keywords: kwList,
         prices: priceList,
+        engineAvailability: engineRes ? engineRes.engines : curr.engineAvailability,
         profilesLoaded: true,
       }));
     } catch (err) {
@@ -813,6 +818,7 @@ export function VisibilityMonitorsScreen({
         profiles={meta.profiles}
         keywords={meta.keywords}
         unitPoints={unitPoints}
+        engineAvailability={meta.engineAvailability}
         client={client}
         readOnly={readOnly}
         onRefreshMeta={() => void loadMeta()}

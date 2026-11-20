@@ -2467,3 +2467,25 @@ export type ImportQuestionsResult = {
   skippedCount: number;
   keywordId?: string;
 };
+
+export const VISIBILITY_ENGINE_HEALTH_STATUSES = ['online', 'offline'] as const;
+export type VisibilityEngineHealthStatus = (typeof VISIBILITY_ENGINE_HEALTH_STATUSES)[number];
+
+export type VisibilityEngineAvailabilityItem = {
+  key: VisibilityEngineKey;
+  label: string;
+  domestic: boolean;
+  available: boolean;
+  status: VisibilityEngineHealthStatus;
+};
+
+export type VisibilityEngineAvailabilityResponse = {
+  collector: VisibilityCollectorKind;
+  checkedAt: string | null;
+  refreshIntervalMs: number;
+  engines: VisibilityEngineAvailabilityItem[];
+};
+
+export function formatVisibilityEngineDisplayLabel(label: string, available: boolean): string {
+  return available ? label : `${label}（未上线）`;
+}

@@ -5,6 +5,7 @@ import type {
   QuestionRecord,
   VisibilityCitationListResponse,
   VisibilityCitationQuery,
+  VisibilityEngineAvailabilityResponse,
   VisibilityOpportunitiesQuery,
   VisibilityOpportunitiesResponse,
   VisibilityOverviewQuery,
@@ -53,6 +54,7 @@ export type VisibilityGateway = {
   // Reserved extension hooks for Issue #60 (Query Fan-out & Citation Gap loop)
   listOpportunities?(query: VisibilityOpportunitiesQuery): Promise<VisibilityOpportunitiesResponse>;
   importOpportunityQuestions?(input: ImportQuestionsInput): Promise<ImportQuestionsResult>;
+  listEngines?(): Promise<VisibilityEngineAvailabilityResponse>;
 };
 
 export function createVisibilityIdempotencyKey(prefix = 'vrun'): string {
@@ -249,6 +251,11 @@ export function httpVisibilityGateway(storage: SessionStorageLike): VisibilityGa
         input,
       );
       return unwrap<ImportQuestionsResult>(res);
+    },
+
+    async listEngines() {
+      const res = await authorizedRequest(storage, 'GET', '/visibility/engines');
+      return unwrap<VisibilityEngineAvailabilityResponse>(res);
     },
   };
 }

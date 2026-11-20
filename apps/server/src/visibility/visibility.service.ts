@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type {
   ImportQuestionsInput,
   ImportQuestionsResult,
   VisibilityCitationListResponse,
   VisibilityCitationQuery,
+  VisibilityEngineAvailabilityResponse,
   VisibilityOpportunitiesQuery,
   VisibilityOpportunitiesResponse,
   VisibilityOverviewQuery,
@@ -18,6 +19,7 @@ import type {
   VisibilityRunListResponse,
 } from '@geomix/shared';
 import { VisibilityAnalyticsService } from './visibility-analytics.service';
+import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityProfileService } from './visibility-profile.service';
 import { VisibilityRunLifecycleService } from './visibility-run-lifecycle.service';
 
@@ -30,7 +32,19 @@ export class VisibilityService {
     @Inject(VisibilityRunLifecycleService)
     private readonly runLifecycle: VisibilityRunLifecycleService,
     @Inject(VisibilityAnalyticsService) private readonly analytics: VisibilityAnalyticsService,
+    @Optional()
+    @Inject(VisibilityEngineHealthService)
+    private readonly engineHealth?: VisibilityEngineHealthService,
   ) {}
+
+  // ===================== Engines Availability =====================
+
+  async listEngines(): Promise<VisibilityEngineAvailabilityResponse> {
+    if (!this.engineHealth) {
+      return new VisibilityEngineHealthService().getAvailability();
+    }
+    return this.engineHealth.getAvailability();
+  }
 
   // ===================== Profiles CRUD =====================
 

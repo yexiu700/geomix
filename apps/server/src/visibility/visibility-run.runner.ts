@@ -15,6 +15,7 @@ import { ApiError } from '../common/api-error';
 import { ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { VisibilityCollectorService } from './visibility-collector.service';
+import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityJudgeService } from './visibility-judge.service';
 
 export const VISIBILITY_RUN_HANDLER = Symbol('VISIBILITY_RUN_HANDLER');
@@ -96,6 +97,9 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     @Inject(VisibilityCollectorService) private readonly collector: VisibilityCollectorService,
     @Inject(VisibilityJudgeService) private readonly judge: VisibilityJudgeService,
     @Optional() @Inject(VISIBILITY_RUN_ENQUEUER) private readonly enqueuer?: VisibilityRunEnqueuer,
+    @Optional()
+    @Inject(VisibilityEngineHealthService)
+    private readonly engineHealth?: VisibilityEngineHealthService,
   ) {}
 
   async process(payload: VisibilityCheckJobData): Promise<void> {
@@ -261,6 +265,9 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         competitors,
         idempotencyKey: `vis-col:${obs.id}`,
       });
+      if (this.engineHealth) {
+        await this.engineHealth.recordObservationSuccess(obs.engine);
+      }
 
       const fanOutQueries = normalizeFanOutQueries(collected.fanOutQueries, obs.promptText);
 
@@ -350,6 +357,9 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         });
       }
     } catch (error) {
+      if (this.engineHealth) {
+        await this.engineHealth.recordObservationFailure(obs.engine, error);
+      }
       await this.handleObservationFailure({
         tenantId,
         runId: run.id,

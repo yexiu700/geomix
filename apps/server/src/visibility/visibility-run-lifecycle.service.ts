@@ -4,6 +4,7 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
+  VISIBILITY_ENGINE_LABELS,
   escapeLikeLiteral,
   matchesVisibilityProfileKeyword,
   recomputeRunMetrics,
@@ -33,6 +34,7 @@ import {
   presentObservationRecord,
   presentRunRecord,
 } from './visibility.mapper';
+import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VISIBILITY_RUN_ENQUEUER, type VisibilityRunEnqueuer } from './visibility-run.runner';
 
 function requireTenant(): string {
@@ -65,6 +67,9 @@ export class VisibilityRunLifecycleService {
     @Inject(ComplianceService) private readonly compliance: ComplianceService,
     @Inject(VISIBILITY_RUN_ENQUEUER) private readonly enqueuer: VisibilityRunEnqueuer,
     @Optional() @Inject(VISIBILITY_CONFIG) config?: VisibilityConfig,
+    @Optional()
+    @Inject(VisibilityEngineHealthService)
+    private readonly engineHealth?: VisibilityEngineHealthService,
   ) {
     this.config = config ?? readVisibilityConfig(process.env);
   }
@@ -246,6 +251,18 @@ export class VisibilityRunLifecycleService {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
       }
       return this.detailForTenant(tenantId, existing.id);
+    }
+
+    if (this.engineHealth) {
+      const offlineEngines = await this.engineHealth.getUnavailableEngines(engines);
+      if (offlineEngines.length > 0) {
+        const labels = offlineEngines.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key);
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          `以下 AI 引擎暂未上线：${labels.join('、')}，请取消勾选后重试`,
+        );
+      }
     }
 
     const profile = await this.prisma.base.visibilityProfile.findFirst({
