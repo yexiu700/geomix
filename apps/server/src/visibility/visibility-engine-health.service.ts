@@ -284,7 +284,11 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
     if (!isConnectivityFailure(error)) return;
 
     const current = (await this.readPersistedOrMemory()) ?? createEmptyState();
-    const nextCount = (current.failureCounts[key] ?? 0) + 1;
+    const isExplicitlyUnsupported =
+      error instanceof ProviderError && error.reason === 'engine_not_available';
+    const nextCount = isExplicitlyUnsupported
+      ? Math.max(PASSIVE_FAILURE_THRESHOLD, (current.failureCounts[key] ?? 0) + 1)
+      : (current.failureCounts[key] ?? 0) + 1;
     const tripped =
       nextCount >= PASSIVE_FAILURE_THRESHOLD
         ? { ...current.trippedOffline, [key]: this.now() }
@@ -298,9 +302,11 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
       trippedOffline: tripped,
     };
 
-    if (nextCount === PASSIVE_FAILURE_THRESHOLD) {
+    if (nextCount === PASSIVE_FAILURE_THRESHOLD && !current.trippedOffline[key]) {
       this.logger.warn(
-        `visibility engine "${key}" tripped offline after ${PASSIVE_FAILURE_THRESHOLD} consecutive upstream failures`,
+        isExplicitlyUnsupported
+          ? `visibility engine "${key}" marked offline immediately (remote reported engine_not_available)`
+          : `visibility engine "${key}" tripped offline after ${PASSIVE_FAILURE_THRESHOLD} consecutive upstream failures`,
       );
     }
     await this.saveState(next);

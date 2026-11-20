@@ -214,4 +214,28 @@ describe('VisibilityEngineHealthService', () => {
     await svc.recordObservationSuccess('doubao');
     expect(await svc.getUnavailableEngines(['doubao'])).toEqual([]);
   });
+
+  it('marks an engine offline immediately on a single engine_not_available failure (#324)', async () => {
+    const transport: HttpTransport = async () => makeJsonResponse(200, { status: 'ok' });
+    const svc = VisibilityEngineHealthService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'https://scraper.example.com/v1/collect',
+      },
+      { resolver: publicResolver, transport },
+    );
+
+    await svc.refreshHealth();
+    expect(await svc.getUnavailableEngines(['yuanbao'])).toEqual([]);
+
+    await svc.recordObservationFailure(
+      'yuanbao',
+      new ProviderError(
+        PROVIDER_KIND.UPSTREAM,
+        '该引擎采集通道暂未上线或维护中',
+        'engine_not_available',
+      ),
+    );
+    expect(await svc.getUnavailableEngines(['yuanbao'])).toEqual(['yuanbao']);
+  });
 });
