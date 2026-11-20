@@ -909,18 +909,30 @@ export class BillingService {
     const now = this.options.now();
     if (pending > 0) {
       const balanceAfter = await this.applyReleaseWallet(tx, reservation, pending);
+      const freezeLog = await tx.pointLog.findFirst({
+        where: { tenantId, reservationId: reservation.id, status: 'RESERVED' },
+        orderBy: { createdAt: 'asc' },
+        select: { title: true },
+      });
+      const rawFreezeTitle = (freezeLog?.title ?? '').replace(/^\[免费体验\]\s*/, '').trim();
+      const baseTitle = rawFreezeTitle ? `释放未完成预扣：${rawFreezeTitle}` : '释放未完成预扣';
       await tx.pointLog.create({
         data: {
           tenantId,
           reservationId: reservation.id,
           action: 'refund',
-          title: ledgerTitle('释放未完成预扣', reservation.shadow),
+          title: ledgerTitle(baseTitle, reservation.shadow),
           unitKey: `close:${reservation.id}`,
           delta: 0,
           listPrice: pending,
           balanceAfter,
           status: 'RELEASED',
-          detail: { released: pending, reason: 'close' },
+          detail: {
+            released: pending,
+            reason: 'close',
+            refType: reservation.refType,
+            refId: reservation.refId,
+          },
         },
       });
     }
