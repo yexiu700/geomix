@@ -39,7 +39,7 @@ import { TX_OPTIONS, isUniqueViolation } from '../billing/billing.sql';
 import { ApiError } from '../common/api-error';
 import { PublicFetchService } from '../infra/adapters.module';
 import { ComplianceService } from '../infra/compliance';
-import { LlmService } from '../infra/llm';
+import { LlmService, assertCompletionAllowed } from '../infra/llm';
 import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -135,6 +135,9 @@ function mapExecutionError(err: unknown): ApiError {
         API_ERROR.BAD_REQUEST,
         '目标链接返回的不是公开 HTML 文章页面（本次未扣点数）',
       );
+    }
+    if (err.reason === 'fake_fallback_rejected') {
+      return new ApiError(503, API_ERROR.UPSTREAM_UNAVAILABLE, err.message);
     }
     return new ApiError(
       422,
@@ -435,6 +438,7 @@ export class RewritesService {
 
     const unitKey = `rewrite_single:${record.id}`;
     let reservationId: string;
+    let reservationShadow: boolean;
     try {
       const reservation = await this.billing.reserveSync({
         tenantId,
@@ -443,6 +447,7 @@ export class RewritesService {
         amount: unitPoints,
       });
       reservationId = reservation.id;
+      reservationShadow = reservation.shadow;
     } catch (reserveErr) {
       await this.prisma.base.rewriteRecord
         .delete({ where: { id: record.id } })
@@ -502,13 +507,12 @@ export class RewritesService {
           preferFastModel: true,
           disableThinking: true,
         });
-        if (completion.fake && !this.llm.usesFakePrimary('rewrite')) {
-          throw new ApiError(
-            503,
-            API_ERROR.UPSTREAM_UNAVAILABLE,
-            '大模型复刻服务响应超时或暂时不可用，未扣除点数，请稍后重试',
-          );
-        }
+        assertCompletionAllowed({
+          completion,
+          llm: this.llm,
+          scene: 'rewrite',
+          reservationShadow,
+        });
         const rawMd =
           completion.fake && completion.text.startsWith(FAKE_MARK)
             ? buildFakeRewriteMarkdown({
@@ -556,7 +560,7 @@ export class RewritesService {
 
       let best = await runPass(false, 0);
       let retriedSimilarity = false;
-      if (best.similarity > simMax && Date.now() - syncStartedAt < 12_000) {
+      if (best.similarity > simMax && Date.now() - syncStartedAt < 25_000) {
         retriedSimilarity = true;
         try {
           const second = await runPass(true, 1);

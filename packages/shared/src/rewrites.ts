@@ -800,10 +800,11 @@ export function assembleRewriteMessages(input: {
     renderedInstruction,
     brandConstraint,
     '输出格式硬性要求：',
-    '1. 第一行只输出一个全新的中文标题（15～35 字，不要与源标题相同，不要加引号或 # 号）。',
+    '1. 第一行只输出一个全新的中文标题（15～35 字，不要与源标题相同，不要加引号或 # 号，严禁截取半截残句或以“怎么/如何”等不完整疑问词结尾）。',
     '2. 空一行后输出 Markdown 正文，包含 3 个左右的二级小标题（## 小标题），并在文末附带「## 常见问题（FAQ）」小节（2～3 组严格围绕原文具体细节、材质/参数或选购痛点作答的实用问答，严禁套用“结合公开说明逐项比对”等空话），全文 800～1400 字。',
-    '3. 全文措辞必须严格贴合源文所属行业与受众语境，严禁混入与源文无关的 B2B/SaaS/企业软件术语（如“数据留存”“权限隔离”“交付周期”等）。',
-    '4. 完全剔除原文中的图片提示、二维码、关注引导、微信号、电话号码及外部网址。',
+    '3. 完整保留原文中的核心事实、具体卖点、材质工艺、规格数值与场景数据（用全新句式和结构重组表达，严禁丢弃原文具体参数而泛化为空洞的通用选购套话）。',
+    '4. 全文措辞必须严格贴合源文所属行业与受众语境，严禁混入与源文无关的 B2B/SaaS/企业软件术语（如“数据留存”“权限隔离”“交付周期”等）。',
+    '5. 完全剔除原文中的图片提示、二维码、关注引导、微信号、电话号码及外部网址。',
     retryDirective,
   ]
     .filter(Boolean)
@@ -832,10 +833,13 @@ const SHORT_PREFIX_TAG_RE =
 const TEMPLATE_TITLE_TAIL_RE =
   /(?:[:：]?\s*(?:的)?(?:落地评估维度与执行核对指南|实操拆解[:：].*|核心要点梳理与实操建议|有哪些(?:核心选型与使用)?注意事项[？?]?))+$/u;
 
+const DANGLING_INTERROGATIVE_TAIL_RE =
+  /(?:怎么[选挑买用做办样看]?|如何[选挑买用做看]?|为什么|为何|哪些|什么|是否|好不好|值不值得|靠谱吗|有用吗|吗|呢|[的与和及在从对为、，,\s-])+$/u;
+
 function trimTopicAtCleanBoundary(raw: string, maxChars = 18): string {
   const chars = Array.from(raw.trim());
   if (chars.length <= maxChars) {
-    return chars.join('').trim();
+    return chars.join('').replace(DANGLING_INTERROGATIVE_TAIL_RE, '').trim();
   }
 
   const minChars = Math.max(4, Math.floor(maxChars * 0.55));
@@ -891,14 +895,7 @@ function trimTopicAtCleanBoundary(raw: string, maxChars = 18): string {
     end = openIdx[0]!;
   }
 
-  return chars
-    .slice(0, end)
-    .join('')
-    .replace(
-      /(?:怎么|如何|为什么|为何|哪些|哪个|什么|是否|怎样|吗|呢|的|与|和|及|在|从|对|为|把|被|将|[、，,？?！!。；;\s-])+$/u,
-      '',
-    )
-    .trim();
+  return chars.slice(0, end).join('').replace(DANGLING_INTERROGATIVE_TAIL_RE, '').trim();
 }
 
 const QUESTION_TAIL_RE =
@@ -925,6 +922,15 @@ export function extractRewriteTopic(sourceTitle: string, fallbackTitle?: string)
   }
   if (!candidate) return '行业实践方案';
 
+  // Split at sentence-ending punctuation first so a multi-sentence pasted opening never bleeds across sentences
+  const sentenceHead = candidate
+    .split(/[？?！!。；;]+/)
+    .map((s) => s.trim())
+    .find((s) => Array.from(s).length >= 4);
+  if (sentenceHead) {
+    candidate = sentenceHead;
+  }
+
   const segments = candidate
     .split(/[:：|｜]|——|—|\s+-\s+|[？?！!。]/)
     .map((s) => s.trim())
@@ -945,7 +951,7 @@ export function extractRewriteTopic(sourceTitle: string, fallbackTitle?: string)
   const strippedSuffix = candidate
     .replace(QUESTION_TAIL_RE, '')
     .replace(TOPIC_SUFFIX_RE, '')
-    .replace(/(?:怎么|如何|的|与|和|及)+$/u, '')
+    .replace(DANGLING_INTERROGATIVE_TAIL_RE, '')
     .trim();
   if (Array.from(strippedSuffix).length >= 4) {
     candidate = strippedSuffix;

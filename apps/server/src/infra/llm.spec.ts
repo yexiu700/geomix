@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { FAKE_MARK, LLM_SCENES, type LlmRouteConfig, type LlmScene } from '@geomix/shared';
 import type { HttpTransport } from './guarded-request';
-import { FakeLlm, LlmRouter, LlmService, OpenAiLlm, type LlmProvider } from './llm';
+import {
+  FakeLlm,
+  LlmRouter,
+  LlmService,
+  OpenAiLlm,
+  assertCompletionAllowed,
+  isFakeOutputAllowed,
+  type LlmProvider,
+} from './llm';
 import { ProviderError } from './provider-error';
 
 const input = {
@@ -581,6 +589,173 @@ describe('llm routing', () => {
     expect(retryPayloads[1]).not.toHaveProperty('enable_thinking');
     expect(retryPayloads[1]).not.toHaveProperty('thinking');
     expect(fallbackOn400.text).toBe('{"prompt":"干净商业实拍画面"}');
+  });
+
+  it('ignores LLM_FALLBACK_FAKE=true when BILLING_MODE=STRICT (#321)', async () => {
+    const failingTransport: HttpTransport = async () => ({
+      status: 503,
+      headers: {},
+      body: Buffer.from('upstream down'),
+    });
+    const service = LlmService.fromEnv(
+      {
+        BILLING_MODE: 'STRICT',
+        LLM_FALLBACK_FAKE: 'true',
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: Object.fromEntries(
+            LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: [] }]),
+          ),
+        }),
+      },
+      {
+        transport: failingTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        retryDelayMs: 0,
+      },
+    );
+
+    expect(service.hasFakeFallback()).toBe(false);
+    await expect(
+      service.complete({
+        ...input,
+        idempotencyKey: 'idem-strict-no-fake-01',
+        maxRetries: 0,
+      }),
+    ).rejects.toMatchObject({ kind: 'upstream' });
+  });
+
+  it('preserves timeout budget for real backup provider when primary real provider times out (#321)', async () => {
+    const called: string[] = [];
+    const primary: LlmProvider = {
+      name: 'deepseek',
+      async complete(call) {
+        called.push('deepseek');
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 2_000);
+          call.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('aborted'));
+          });
+        });
+        throw new Error('unreachable');
+      },
+    };
+    const backup: LlmProvider = {
+      name: 'tongyi',
+      async complete() {
+        called.push('tongyi');
+        return {
+          provider: 'tongyi',
+          model: 'qwen-plus',
+          fake: false,
+          text: '备用真实模型成功响应',
+          tokensIn: 12,
+          tokensOut: 18,
+        };
+      },
+    };
+    const routeConfig: LlmRouteConfig = {
+      providers: {
+        deepseek: {
+          kind: 'openai',
+          baseUrl: 'https://192.0.2.10/v1',
+          apiKeyEnv: 'DEEPSEEK_API_KEY',
+          cheapModel: 'deepseek-chat',
+          qualityModel: 'deepseek-chat',
+        },
+        tongyi: {
+          kind: 'openai',
+          baseUrl: 'https://192.0.2.11/v1',
+          apiKeyEnv: 'TONGYI_API_KEY',
+          cheapModel: 'qwen-plus',
+          qualityModel: 'qwen-plus',
+        },
+      },
+      route: Object.fromEntries(
+        LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: ['tongyi'] }]),
+      ) as LlmRouteConfig['route'],
+    };
+
+    const service = new LlmService(
+      new LlmRouter(
+        routeConfig,
+        { deepseek: primary, tongyi: backup },
+        { maxRetries: 0, timeoutMs: 5_000, retryDelayMs: 0 },
+      ),
+    );
+
+    const res = await service.complete({
+      ...input,
+      idempotencyKey: 'idem-real-backup-budget-01',
+      timeoutMs: 180,
+      maxRetries: 0,
+    });
+
+    expect(called).toEqual(['deepseek', 'tongyi']);
+    expect(res.provider).toBe('tongyi');
+    expect(res.fake).toBe(false);
+    expect(res.text).toBe('备用真实模型成功响应');
+  });
+
+  it('enforces fake-output policy across STRICT and SHADOW modes (#321)', () => {
+    const fakePrimaryLlm = { usesFakePrimary: () => true, hasFakeFallback: () => false };
+    const realPrimaryWithFallback = { usesFakePrimary: () => false, hasFakeFallback: () => true };
+    const realPrimaryNoFallback = { usesFakePrimary: () => false, hasFakeFallback: () => false };
+
+    // Global STRICT always blocks fake output
+    expect(
+      isFakeOutputAllowed({
+        llm: fakePrimaryLlm,
+        scene: 'rewrite',
+        reservationShadow: true,
+        env: { BILLING_MODE: 'STRICT' },
+      }),
+    ).toBe(false);
+
+    // Real primary + STRICT reservation blocks fake fallback even when global mode is SHADOW
+    expect(
+      isFakeOutputAllowed({
+        llm: realPrimaryWithFallback,
+        scene: 'rewrite',
+        reservationShadow: false,
+        env: { BILLING_MODE: 'SHADOW' },
+      }),
+    ).toBe(false);
+
+    // Explicit fake primary in SHADOW (dev / E2E / integration tests) is allowed
+    expect(
+      isFakeOutputAllowed({
+        llm: fakePrimaryLlm,
+        scene: 'rewrite',
+        reservationShadow: false,
+        env: { BILLING_MODE: 'SHADOW' },
+      }),
+    ).toBe(true);
+
+    // Real primary without fallback in SHADOW blocks unexpected fake
+    expect(() =>
+      assertCompletionAllowed({
+        completion: { fake: true, provider: 'fake', model: 'fake-quality' },
+        llm: realPrimaryNoFallback,
+        scene: 'rewrite',
+        reservationShadow: true,
+        env: { BILLING_MODE: 'SHADOW' },
+      }),
+    ).toThrow(/真实大模型调用失败或超时/);
   });
 });
 

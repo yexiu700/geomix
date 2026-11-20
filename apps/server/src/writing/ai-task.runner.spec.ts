@@ -253,9 +253,9 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
   });
 
   it('parses AI_TASK_LLM_TIMEOUT_MS and AI_TASK_STALE_RUNNING_MS with safe defaults', () => {
-    expect(readTaskLlmTimeoutMs({})).toBe(20_000);
+    expect(readTaskLlmTimeoutMs({})).toBe(45_000);
     expect(readTaskLlmTimeoutMs({ AI_TASK_LLM_TIMEOUT_MS: '15000' })).toBe(15_000);
-    expect(readTaskLlmTimeoutMs({ AI_TASK_LLM_TIMEOUT_MS: '999999' })).toBe(20_000);
+    expect(readTaskLlmTimeoutMs({ AI_TASK_LLM_TIMEOUT_MS: '999999' })).toBe(45_000);
 
     expect(readStaleRunningMs({})).toBe(60_000);
     expect(readStaleRunningMs({ AI_TASK_STALE_RUNNING_MS: '30000' })).toBe(30_000);
@@ -329,6 +329,73 @@ describe('AiTaskRunner timeout bounding & orphan recovery (#79)', () => {
     expect(state.task.doneCount).toBe(1);
     expect(state.articles).toHaveLength(1);
     expect(billing.settleAiWriteUnit).toHaveBeenCalledTimes(1);
+    expect(state.reservation.status).toBe('CLOSED');
+  });
+
+  it('rejects fake fallback and refunds frozen points when reservation is STRICT (shadow=false) (#321)', async () => {
+    process.env.AI_TASK_LLM_TIMEOUT_MS = '120';
+    process.env.COVER_WHEN_NO_IMAGE = 'false';
+
+    const hungTransport: HttpTransport = async (req) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 2_000);
+        req.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('aborted'));
+        });
+      });
+      throw new Error('unreachable');
+    };
+
+    const llm = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_FALLBACK_FAKE: 'true',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: Object.fromEntries(
+            LLM_SCENES.map((s) => [s, { primary: 'deepseek', backup: [] }]),
+          ),
+        }),
+      },
+      {
+        transport: hungTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        timeoutMs: 90_000,
+        retryDelayMs: 0,
+      },
+    );
+
+    const { state, prisma, billing, quota, kbIndexer } = buildInMemoryHarness();
+    (state.reservation as { shadow?: boolean }).shadow = false;
+    const runner = new AiTaskRunner(
+      prisma,
+      billing,
+      quota,
+      llm,
+      new ComplianceService(),
+      kbIndexer,
+    );
+
+    await runner.process({ tenantId: 'tenant_79', taskId: 'task_79' });
+
+    expect(state.task.status).toBe('FAILED');
+    expect(state.task.doneCount).toBe(0);
+    expect(state.articles).toHaveLength(0);
+    expect(billing.settleAiWriteUnit).not.toHaveBeenCalled();
+    expect(billing.releaseUnit).toHaveBeenCalledTimes(1);
     expect(state.reservation.status).toBe('CLOSED');
   });
 

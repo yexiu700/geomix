@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import {
   FAKE_MARK,
   LLM_MAX_RETRIES,
@@ -304,6 +305,8 @@ export class OpenAiLlm implements LlmProvider {
 }
 
 export class LlmRouter {
+  private readonly logger = new Logger(LlmRouter.name);
+
   constructor(
     private readonly route: LlmRouteConfig,
     private readonly providers: Record<string, LlmProvider>,
@@ -338,12 +341,33 @@ export class LlmRouter {
       preferred && preferredConfig && preferredConfig.kind !== 'fake'
         ? [preferred, ...baseChain.filter((name) => name !== preferred)]
         : baseChain;
+    const realChainCount = chain.filter((n) => this.route.providers[n]?.kind !== 'fake').length;
+    let realAttempted = 0;
     let last: ProviderError | null = null;
     for (const name of chain) {
       const provider = this.providers[name];
       const config = this.route.providers[name];
       if (!provider || !config) {
         throw new ProviderError(PROVIDER_KIND.CONTRACT, '模型路由未配置', 'route');
+      }
+      if (config.kind === 'fake' && last !== null) {
+        this.logger.warn(
+          `LLM scene="${input.scene}" degraded to fake fallback "${name}" after real provider failure (${last.kind}/${last.reason})`,
+        );
+      }
+      let providerBudgetMs = effectiveTimeoutMs;
+      if (deadline !== undefined && config.kind !== 'fake') {
+        const remainingReal = Math.max(1, realChainCount - realAttempted);
+        realAttempted += 1;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          last = last ?? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+          continue;
+        }
+        providerBudgetMs =
+          remainingReal > 1
+            ? Math.max(1, Math.floor(remainingMs * (remainingReal === 2 ? 0.6 : 0.5)))
+            : remainingMs;
       }
       const primaryModel =
         config.kind === 'fake'
@@ -376,10 +400,11 @@ export class LlmRouter {
               last = last ?? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
               continue;
             }
+            const boundedBudget = Math.min(providerBudgetMs, remainingMs);
             callTimeoutMs =
               models.length > 1 && mIdx === 0
-                ? Math.max(1, Math.floor(remainingMs * 0.55))
-                : remainingMs;
+                ? Math.max(1, Math.floor(boundedBudget * 0.55))
+                : Math.max(1, boundedBudget);
           }
         }
         try {
@@ -405,6 +430,11 @@ export class LlmRouter {
           if (!(error instanceof ProviderError)) throw error;
           if (error.kind === PROVIDER_KIND.CANCELLED) throw error;
           last = error;
+          if (config.kind !== 'fake') {
+            this.logger.warn(
+              `LLM scene="${input.scene}" provider="${name}" model="${model}" failed (${error.kind}/${error.reason})`,
+            );
+          }
           if (error.kind === PROVIDER_KIND.AUTH || error.kind === PROVIDER_KIND.SSRF) {
             break;
           }
@@ -468,6 +498,7 @@ export class MemoryCostLedger {
  * 幂等记录只活在当前进程；持久化表留给后续队列，不新增迁移。
  */
 export class LlmService {
+  private static readonly logger = new Logger(LlmService.name);
   private readonly done = new Map<string, { fingerprint: string; result: LlmCallResult }>();
   private readonly inflight = new Map<
     string,
@@ -480,10 +511,15 @@ export class LlmService {
     private readonly now: () => number = Date.now,
     private readonly costSink?: LlmCostSink,
     private readonly rates: LlmCostRateMap = {},
+    private readonly fakeFallbackEnabled = false,
   ) {}
 
   usesFakePrimary(scene: LlmScene): boolean {
     return this.router.usesFakePrimary(scene);
+  }
+
+  hasFakeFallback(): boolean {
+    return this.fakeFallbackEnabled;
   }
 
   static fromEnv(
@@ -514,17 +550,26 @@ export class LlmService {
         timeoutMs,
       );
     }
+    const globalStrict = env.BILLING_MODE?.trim().toUpperCase() === 'STRICT';
+    let fakeFallbackEnabled = false;
     if (env.LLM_FALLBACK_FAKE?.trim() === 'true') {
-      const fallbackName = '__fake_fallback__';
-      route.providers[fallbackName] = { kind: 'fake' };
-      providers[fallbackName] = new FakeLlm('fake');
-      for (const entry of Object.values(route.route)) {
-        const hasFake = [entry.primary, ...entry.backup].some(
-          (name) => route.providers[name]?.kind === 'fake',
+      if (globalStrict) {
+        LlmService.logger.warn(
+          'LLM_FALLBACK_FAKE=true is ignored when BILLING_MODE=STRICT; fake fallback is disabled in strict billing environments.',
         );
-        if (!hasFake) {
-          entry.backup = [...entry.backup, fallbackName];
+      } else {
+        const fallbackName = '__fake_fallback__';
+        route.providers[fallbackName] = { kind: 'fake' };
+        providers[fallbackName] = new FakeLlm('fake');
+        for (const entry of Object.values(route.route)) {
+          const hasFake = [entry.primary, ...entry.backup].some(
+            (name) => route.providers[name]?.kind === 'fake',
+          );
+          if (!hasFake) {
+            entry.backup = [...entry.backup, fallbackName];
+          }
         }
+        fakeFallbackEnabled = true;
       }
     }
     return new LlmService(
@@ -537,6 +582,7 @@ export class LlmService {
       Date.now,
       overrides?.costSink,
       rates,
+      fakeFallbackEnabled,
     );
   }
 
@@ -631,6 +677,56 @@ export class LlmService {
     }
     return { ...completion, cost: record };
   }
+}
+
+export type FakeOutputPolicyLlm = {
+  usesFakePrimary?: (scene: LlmScene) => boolean;
+  hasFakeFallback?: () => boolean;
+};
+
+/**
+ * 判断当前业务调用是否允许接受 FakeLlm / buildFake* 占位输出作为交付结果：
+ * 1. 全局 BILLING_MODE=STRICT（正式计费生产环境）下，绝对禁止交付假输出。
+ * 2. 主路由配置了真实模型（!usesFakePrimary）且当前预扣单为正式计费（reservationShadow === false）时，
+ *    严禁将降级产生的假输出作为成功结果交付与扣费。
+ * 3. 主路由配置了真实模型且未显式开启 SHADOW 降级（hasFakeFallback === false）时，亦禁止交付假输出。
+ * 4. 仅开发/单测/E2E（非全局 STRICT 且主路由显式为 fake），或非 STRICT 影子模式下显式开启 LLM_FALLBACK_FAKE=true 时允许。
+ */
+export function isFakeOutputAllowed(input: {
+  llm: FakeOutputPolicyLlm;
+  scene: LlmScene;
+  reservationShadow?: boolean;
+  env?: Record<string, string | undefined>;
+}): boolean {
+  const env = input.env ?? process.env;
+  if (env.BILLING_MODE?.trim().toUpperCase() === 'STRICT') {
+    return false;
+  }
+  const usesFakePrimary =
+    typeof input.llm.usesFakePrimary === 'function' ? input.llm.usesFakePrimary(input.scene) : true;
+  if (usesFakePrimary) {
+    return true;
+  }
+  if (input.reservationShadow === false) {
+    return false;
+  }
+  return typeof input.llm.hasFakeFallback === 'function' ? input.llm.hasFakeFallback() : false;
+}
+
+export function assertCompletionAllowed(input: {
+  completion: Pick<LlmCompletion, 'fake' | 'provider' | 'model'>;
+  llm: FakeOutputPolicyLlm;
+  scene: LlmScene;
+  reservationShadow?: boolean;
+  env?: Record<string, string | undefined>;
+}): void {
+  if (!input.completion.fake) return;
+  if (isFakeOutputAllowed(input)) return;
+  throw new ProviderError(
+    PROVIDER_KIND.UPSTREAM,
+    '真实大模型调用失败或超时，已禁止使用占位模板交付并退还预扣点数，请稍后重试',
+    'fake_fallback_rejected',
+  );
 }
 
 function liveTransport(): HttpTransport {

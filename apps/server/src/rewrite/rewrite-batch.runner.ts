@@ -28,7 +28,7 @@ import {
 import { BillingService } from '../billing/billing.service';
 import { PublicFetchService } from '../infra/adapters.module';
 import { ComplianceService } from '../infra/compliance';
-import { LlmService } from '../infra/llm';
+import { LlmService, assertCompletionAllowed } from '../infra/llm';
 import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { SearchService } from '../infra/search';
 import { PrismaService } from '../prisma/prisma.service';
@@ -111,13 +111,16 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
     return item.unitPoints;
   }
 
-  private async findReservationId(tenantId: string, batchId: string): Promise<string | null> {
+  private async findReservation(
+    tenantId: string,
+    batchId: string,
+  ): Promise<{ id: string; shadow: boolean } | null> {
     const row = await this.prisma.base.pointReservation.findUnique({
       where: { refType_refId: { refType: 'rewrite_batch', refId: batchId } },
-      select: { id: true, tenantId: true },
+      select: { id: true, tenantId: true, shadow: true },
     });
     if (!row || row.tenantId !== tenantId) return null;
-    return row.id;
+    return { id: row.id, shadow: row.shadow };
   }
 
   async process(payload: { tenantId: string; batchId: string }): Promise<void> {
@@ -141,7 +144,9 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
       return;
     }
 
-    const reservationId = await this.findReservationId(tenantId, batchId);
+    const reservation = await this.findReservation(tenantId, batchId);
+    const reservationId = reservation?.id ?? null;
+    const reservationShadow = reservation?.shadow;
     const { batchTimeoutMs, itemTimeoutMs } = resolveRewriteBatchTimeouts(process.env);
     const deadlineMs = Date.now() + batchTimeoutMs;
 
@@ -275,6 +280,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
           url: step.url,
           sourceTitleHint: step.sourceTitle,
           reservationId,
+          reservationShadow,
           unitPoints,
           simMax,
           timeoutMs: perItemBudgetMs,
@@ -459,6 +465,7 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
     url: string;
     sourceTitleHint: string | null;
     reservationId: string | null;
+    reservationShadow?: boolean;
     unitPoints: number;
     simMax: number;
     timeoutMs: number;
@@ -501,19 +508,18 @@ export class RewriteBatchRunner implements RewriteBatchHandler {
             idempotencyKey: `${unitKey}:p${passIdx}`,
             temperature: retryHighSimilarity ? 0.85 : 0.75,
             maxTokens: 2800,
-            timeoutMs: retryHighSimilarity ? 25_000 : 45_000,
+            timeoutMs: retryHighSimilarity ? 25_000 : 50_000,
             maxRetries: 0,
             preferFastModel: true,
             disableThinking: true,
             signal: controller.signal,
           });
-          if (completion.fake && !this.llm.usesFakePrimary('rewrite')) {
-            throw new ProviderError(
-              PROVIDER_KIND.UPSTREAM,
-              '大模型复刻服务响应超时或暂时不可用',
-              'fake_fallback_rejected',
-            );
-          }
+          assertCompletionAllowed({
+            completion,
+            llm: this.llm,
+            scene: 'rewrite',
+            reservationShadow: input.reservationShadow,
+          });
           const rawMd =
             completion.fake && completion.text.startsWith(FAKE_MARK)
               ? buildFakeRewriteMarkdown({

@@ -28,7 +28,12 @@ import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ComplianceService } from '../infra/compliance';
-import { LlmService, type LlmCallResult, type LlmMessage } from '../infra/llm';
+import {
+  LlmService,
+  assertCompletionAllowed,
+  type LlmCallResult,
+  type LlmMessage,
+} from '../infra/llm';
 import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { KnowledgeIndexRunner } from '../material/knowledge-index.runner';
 import { PrismaService } from '../prisma/prisma.service';
@@ -92,9 +97,9 @@ function readRetryDelayMs(env: Record<string, string | undefined>): number {
 
 export function readTaskLlmTimeoutMs(env: Record<string, string | undefined>): number {
   const raw = env.AI_TASK_LLM_TIMEOUT_MS?.trim();
-  if (!raw || !/^[0-9]+$/.test(raw)) return 20_000;
+  if (!raw || !/^[0-9]+$/.test(raw)) return 45_000;
   const val = Number(raw);
-  return Number.isSafeInteger(val) && val >= 100 && val <= 120_000 ? val : 20_000;
+  return Number.isSafeInteger(val) && val >= 100 && val <= 120_000 ? val : 45_000;
 }
 
 export function readStaleRunningMs(env: Record<string, string | undefined>): number {
@@ -404,6 +409,7 @@ export class AiTaskRunner implements AiTaskHandler {
         copyType: dirPair.copyType,
         kbSection,
         minChars,
+        reservationShadow: reservation?.shadow,
       });
 
       // 7. Title generation (question verbatim when titleTplId is null; else LLM title scene)
@@ -417,6 +423,7 @@ export class AiTaskRunner implements AiTaskHandler {
         companyName: kb?.companyName,
         question: question.text,
         bodyText: bodyOutcome.contentText,
+        reservationShadow: reservation?.shadow,
       });
 
       // 8. Gallery image selection (least-used) & HTML block injection + cover
@@ -611,7 +618,7 @@ export class AiTaskRunner implements AiTaskHandler {
     const baseDelay = readRetryDelayMs(process.env);
     const configuredTimeoutMs = readTaskLlmTimeoutMs(process.env);
     const sceneTimeoutMs =
-      input.scene === 'title' ? Math.min(10_000, configuredTimeoutMs) : configuredTimeoutMs;
+      input.scene === 'title' ? Math.min(20_000, configuredTimeoutMs) : configuredTimeoutMs;
     const startedAt = Date.now();
     let lastErr: unknown;
     for (let attempt = 0; attempt <= 1; attempt += 1) {
@@ -663,6 +670,7 @@ export class AiTaskRunner implements AiTaskHandler {
     copyType: string | null;
     kbSection: string | null;
     minChars: number;
+    reservationShadow?: boolean;
   }): Promise<{
     contentHtml: string;
     contentText: string;
@@ -696,6 +704,13 @@ export class AiTaskRunner implements AiTaskHandler {
         idempotencyKey: `ai_body:${input.itemId}:a${input.attempts}:p${lengthPass}`,
         temperature: 0.8,
         maxTokens: 2000,
+      });
+
+      assertCompletionAllowed({
+        completion,
+        llm: this.llm,
+        scene: 'body',
+        reservationShadow: input.reservationShadow,
       });
 
       totalTokensIn += completion.tokensIn;
@@ -765,6 +780,7 @@ export class AiTaskRunner implements AiTaskHandler {
     companyName?: string | null;
     question: string;
     bodyText: string;
+    reservationShadow?: boolean;
   }): Promise<string> {
     if (!input.titleTplId) {
       const scan = this.compliance.scan(input.question);
@@ -800,6 +816,13 @@ export class AiTaskRunner implements AiTaskHandler {
       idempotencyKey: `ai_title:${input.itemId}:a${input.attempts}`,
       temperature: 0.5,
       maxTokens: 200,
+    });
+
+    assertCompletionAllowed({
+      completion,
+      llm: this.llm,
+      scene: 'title',
+      reservationShadow: input.reservationShadow,
     });
 
     const candidate =

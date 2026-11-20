@@ -5,7 +5,10 @@ import { type LlmRouteConfig } from '@geomix/shared';
 import type { DnsResolver, HttpTransport, TransportRequest } from '../infra/guarded-request';
 import { LlmRouter, LlmService, type LlmProvider } from '../infra/llm';
 import { PROVIDER_KIND } from '../infra/provider-error';
-import { VisibilityCollectorService } from './visibility-collector.service';
+import {
+  VisibilityCollectorService,
+  detectOfflineKnowledgeCutoff,
+} from './visibility-collector.service';
 import { readVisibilityConfig } from './visibility.config';
 
 function createScriptedLlm(text: string): LlmService {
@@ -592,5 +595,63 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
     });
     expect(allowlistRes.collectorKind).toBe('remote_scraper');
     expect(allowlistRes.answerText).toBe('sonargate GEO 观测返回正常。');
+  });
+
+  it('rejects offline knowledge-cutoff answers with zero citations and marks empty-citation samples (#321)', async () => {
+    expect(
+      detectOfflineKnowledgeCutoff(
+        '抱歉，我无法访问互联网，且我的知识截止于 2024 年，无法获取最新信息。',
+        [],
+      ),
+    ).toBe(true);
+    expect(
+      detectOfflineKnowledgeCutoff('抱歉，我的知识截止于 2024 年，但以下链接可供参考。', [
+        { url: 'https://example.com/a' },
+      ]),
+    ).toBe(false);
+
+    const offlineLlm = createScriptedLlm(
+      JSON.stringify({
+        answerText: '抱歉，我目前不具备实时联网搜索能力，无法查询该品牌最新口碑。',
+        citations: [],
+        fanOutQueries: [],
+      }),
+    );
+    const llmCollector = VisibilityCollectorService.fromEnv(
+      { VISIBILITY_COLLECTOR: 'llm_api' },
+      { llm: offlineLlm },
+    );
+
+    await expect(
+      llmCollector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: '美迈通勤平底鞋怎么样',
+        brandName: '美迈',
+      }),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'offline_no_search',
+    });
+
+    const noCiteLlm = createScriptedLlm(
+      JSON.stringify({
+        answerText: '美迈通勤平底鞋主打轻量化与缓震鞋垫，适合日常通勤步行。',
+        citations: [],
+        fanOutQueries: ['美迈通勤平底鞋口碑'],
+      }),
+    );
+    const noCiteCollector = VisibilityCollectorService.fromEnv(
+      { VISIBILITY_COLLECTOR: 'llm_api' },
+      { llm: noCiteLlm },
+    );
+    const res = await noCiteCollector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '美迈通勤平底鞋怎么样',
+      brandName: '美迈',
+    });
+    expect(res.citations).toEqual([]);
+    expect(res.rawMeta?.noCitations).toBe(true);
   });
 });
