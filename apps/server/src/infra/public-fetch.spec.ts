@@ -305,6 +305,56 @@ describe('robots and lookup pin', () => {
     });
     expect(all).toEqual([null, [{ address: '2001:db8::10', family: 6 }]]);
   });
+
+  it('allows internal sonargate and SSRF allowlist targets while keeping non-allowlisted hosts blocked', async () => {
+    const deps = mockDeps(
+      {
+        sonargate: [{ address: '172.18.0.5', family: 4 }],
+        'rebind.example': [{ address: '172.18.0.5', family: 4 }],
+        'geo-obs.internal': [{ address: '10.10.0.8', family: 4 }],
+      },
+      () => undefined,
+      {
+        'http://sonargate:8080/geo': { status: 200, body: 'ok' },
+        'http://geo-obs.internal:9000/geo': { status: 200, body: 'ok-allowlist' },
+      },
+    );
+
+    const sonarRes = await requestOnce({
+      url: 'http://sonargate:8080/geo',
+      method: 'GET',
+      timeoutMs: 1000,
+      maxBytes: 1024,
+      resolver: deps.resolver,
+      transport: deps.transport,
+    });
+    expect(sonarRes.status).toBe(200);
+    expect(sonarRes.pinned).toEqual([{ address: '172.18.0.5', family: 4 }]);
+
+    const customRes = await requestOnce({
+      url: 'http://geo-obs.internal:9000/geo',
+      method: 'GET',
+      timeoutMs: 1000,
+      maxBytes: 1024,
+      resolver: deps.resolver,
+      transport: deps.transport,
+      allowlist: 'geo-obs.internal:9000',
+    });
+    expect(customRes.status).toBe(200);
+    expect(customRes.pinned).toEqual([{ address: '10.10.0.8', family: 4 }]);
+
+    await expect(
+      requestOnce({
+        url: 'http://rebind.example/geo',
+        method: 'GET',
+        timeoutMs: 1000,
+        maxBytes: 1024,
+        resolver: deps.resolver,
+        transport: deps.transport,
+        allowlist: 'geo-obs.internal:9000',
+      }),
+    ).rejects.toMatchObject({ kind: 'ssrf' });
+  });
 });
 
 function mockDeps(

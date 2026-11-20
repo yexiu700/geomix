@@ -32,12 +32,212 @@ const BLOCKED_HOSTS = new Set([
 
 const BLOCKED_SUFFIXES = ['.localhost', '.local', '.localdomain', '.internal', '.arpa'];
 
+export const DEFAULT_SSRF_ALLOWLIST = ['sonargate'] as const;
+
 export type IpFamily = 4 | 6;
 
 export type ResolvedAddress = {
   address: string;
   family: IpFamily;
 };
+
+export type SsrfAllowlist = {
+  exactHosts: Set<string>;
+  wildcardSuffixes: string[];
+  hostPorts: Map<string, Set<string>>;
+  wildcardHostPorts: Array<{ suffix: string; port: string }>;
+  ipList: BlockList;
+  ipPorts: Map<string, Set<string>>;
+};
+
+export type SsrfPolicyOptions = {
+  allowlist?: SsrfAllowlist | string;
+};
+
+export function parseSsrfAllowlist(
+  raw: string | undefined = process.env.SSRF_ALLOWLIST,
+  options?: { includeDefaults?: boolean },
+): SsrfAllowlist {
+  const allowlist: SsrfAllowlist = {
+    exactHosts: new Set<string>(),
+    wildcardSuffixes: [],
+    hostPorts: new Map<string, Set<string>>(),
+    wildcardHostPorts: [],
+    ipList: new BlockList(),
+    ipPorts: new Map<string, Set<string>>(),
+  };
+
+  const tokens: string[] = [];
+  if (options?.includeDefaults !== false) {
+    tokens.push(...DEFAULT_SSRF_ALLOWLIST);
+  }
+  if (raw) {
+    for (const part of raw.split(/[\s,]+/)) {
+      const trimmed = part.trim();
+      if (trimmed) tokens.push(trimmed);
+    }
+  }
+
+  for (const token of tokens) {
+    addAllowlistToken(allowlist, token);
+  }
+
+  return allowlist;
+}
+
+export function resolveSsrfAllowlist(allowlist?: SsrfAllowlist | string): SsrfAllowlist {
+  if (allowlist === undefined) return parseSsrfAllowlist();
+  if (typeof allowlist === 'string') return parseSsrfAllowlist(allowlist);
+  return allowlist;
+}
+
+export function isHostAllowlisted(
+  hostname: string,
+  port: string,
+  allowlist: SsrfAllowlist,
+): boolean {
+  const host = normalizeHost(hostname);
+  if (!host || host.includes('%')) return false;
+
+  if (allowlist.exactHosts.has(host)) return true;
+  if (port && allowlist.hostPorts.get(host)?.has(port)) return true;
+
+  if (!BLOCKED_HOSTS.has(host)) {
+    if (allowlist.wildcardSuffixes.some((suffix) => host.endsWith(suffix))) return true;
+    if (
+      port &&
+      allowlist.wildcardHostPorts.some(
+        (entry) => host.endsWith(entry.suffix) && entry.port === port,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  const v4 = parseIPv4Literal(host);
+  if (v4) {
+    if (allowlist.ipList.check(v4, 'ipv4')) return true;
+    if (port && allowlist.ipPorts.get(v4)?.has(port)) return true;
+  }
+
+  if (isIP(host) === 6) {
+    if (allowlist.ipList.check(host, 'ipv6')) return true;
+    if (port && allowlist.ipPorts.get(host)?.has(port)) return true;
+  }
+
+  return false;
+}
+
+export function isIpAllowlisted(address: string, port: string, allowlist: SsrfAllowlist): boolean {
+  const family = isIP(address);
+  if (family !== 4 && family !== 6) return false;
+  const normalized = address.toLowerCase();
+  if (allowlist.ipList.check(normalized, family === 4 ? 'ipv4' : 'ipv6')) return true;
+  if (port && allowlist.ipPorts.get(normalized)?.has(port)) return true;
+  if (family === 6) {
+    const embedded = embeddedIpv4(normalized);
+    if (embedded && allowlist.ipList.check(embedded, 'ipv4')) return true;
+    if (embedded && port && allowlist.ipPorts.get(embedded)?.has(port)) return true;
+  }
+  return false;
+}
+
+function addAllowlistToken(allowlist: SsrfAllowlist, token: string): void {
+  let hostPart = token.trim();
+  let portPart = '';
+
+  if (/^https?:\/\//i.test(hostPart)) {
+    try {
+      const parsed = new URL(hostPart);
+      hostPart = parsed.hostname;
+      portPart = parsed.port;
+    } catch {
+      return;
+    }
+  } else {
+    const bracketed = hostPart.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (bracketed?.[1]) {
+      hostPart = bracketed[1];
+      portPart = bracketed[2] ?? '';
+    } else if (!hostPart.includes('/')) {
+      const hostPort = hostPart.match(/^([^:]+):(\d+)$/);
+      if (hostPort?.[1] && hostPort[2]) {
+        hostPart = hostPort[1];
+        portPart = hostPort[2];
+      }
+    }
+  }
+
+  const host = normalizeHost(hostPart);
+  if (!host) return;
+
+  if (!portPart && host.includes('/')) {
+    const cidr = host.match(/^(.+)\/(\d+)$/);
+    if (cidr?.[1] && cidr[2]) {
+      const prefix = Number(cidr[2]);
+      const netFamily = isIP(cidr[1]);
+      if (netFamily === 4 && Number.isInteger(prefix) && prefix >= 0 && prefix <= 32) {
+        allowlist.ipList.addSubnet(cidr[1], prefix, 'ipv4');
+        return;
+      }
+      if (netFamily === 6 && Number.isInteger(prefix) && prefix >= 0 && prefix <= 128) {
+        allowlist.ipList.addSubnet(cidr[1], prefix, 'ipv6');
+        return;
+      }
+    }
+  }
+
+  const v4 = parseIPv4Literal(host);
+  if (v4) {
+    if (portPart) {
+      addPortEntry(allowlist.ipPorts, v4, portPart);
+    } else {
+      allowlist.ipList.addAddress(v4, 'ipv4');
+    }
+    return;
+  }
+
+  if (isIP(host) === 6) {
+    if (portPart) {
+      addPortEntry(allowlist.ipPorts, host, portPart);
+    } else {
+      allowlist.ipList.addAddress(host, 'ipv6');
+    }
+    return;
+  }
+
+  if (host.startsWith('*.') && host.length > 2) {
+    const suffix = host.slice(1);
+    if (portPart) {
+      allowlist.wildcardHostPorts.push({ suffix, port: portPart });
+    } else {
+      allowlist.wildcardSuffixes.push(suffix);
+    }
+    return;
+  }
+
+  if (portPart) {
+    addPortEntry(allowlist.hostPorts, host, portPart);
+  } else {
+    allowlist.exactHosts.add(host);
+  }
+}
+
+function addPortEntry(map: Map<string, Set<string>>, key: string, port: string): void {
+  const existing = map.get(key);
+  if (existing) {
+    existing.add(port);
+    return;
+  }
+  map.set(key, new Set([port]));
+}
+
+function normalizeHost(hostname: string): string {
+  let host = hostname.trim().toLowerCase();
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  return host;
+}
 
 export function ipBlockReason(address: string): string | null {
   const family = isIP(address);
@@ -77,6 +277,7 @@ export function parseIPv4Literal(hostname: string): string | null {
 
 export function classifyHostname(
   hostname: string,
+  options?: { allowlisted?: boolean },
 ):
   | { kind: 'name' }
   | { kind: 'ip'; address: ResolvedAddress }
@@ -84,33 +285,45 @@ export function classifyHostname(
   let host = hostname.trim().toLowerCase();
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   if (!host || host.includes('%')) return { kind: 'blocked', reason: 'invalid_host' };
-  if (BLOCKED_HOSTS.has(host) || BLOCKED_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
+  if (
+    !options?.allowlisted &&
+    (BLOCKED_HOSTS.has(host) || BLOCKED_SUFFIXES.some((suffix) => host.endsWith(suffix)))
+  ) {
     return { kind: 'blocked', reason: 'reserved_name' };
   }
   const v4 = parseIPv4Literal(host);
   if (v4) {
-    const reason = ipBlockReason(v4);
-    if (reason) return { kind: 'blocked', reason };
+    if (!options?.allowlisted) {
+      const reason = ipBlockReason(v4);
+      if (reason) return { kind: 'blocked', reason };
+    }
     return { kind: 'ip', address: { address: v4, family: 4 } };
   }
   if (looksNumericHost(host)) return { kind: 'blocked', reason: 'invalid_ip_literal' };
   if (isIP(host) === 6) {
-    const reason = ipBlockReason(host);
-    if (reason) return { kind: 'blocked', reason };
+    if (!options?.allowlisted) {
+      const reason = ipBlockReason(host);
+      if (reason) return { kind: 'blocked', reason };
+    }
     return { kind: 'ip', address: { address: host, family: 6 } };
   }
   if (host.includes(':')) return { kind: 'blocked', reason: 'invalid_ip_literal' };
   return { kind: 'name' };
 }
 
-export function assertPublicUrl(raw: string | URL): URL {
+export function assertPublicUrl(raw: string | URL, options?: SsrfPolicyOptions): URL {
   const url = typeof raw === 'string' ? parseUrl(raw) : raw;
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw urlError('unsupported_scheme');
   }
   if (url.username || url.password) throw urlError('userinfo');
-  if (url.port !== '' && url.port !== '80' && url.port !== '443') throw urlError('port');
-  const classified = classifyHostname(url.hostname);
+  const allowlist = resolveSsrfAllowlist(options?.allowlist);
+  const effectivePort = url.port || (url.protocol === 'https:' ? '443' : '80');
+  const allowlisted = isHostAllowlisted(url.hostname, effectivePort, allowlist);
+  if (!allowlisted && url.port !== '' && url.port !== '80' && url.port !== '443') {
+    throw urlError('port');
+  }
+  const classified = classifyHostname(url.hostname, { allowlisted });
   if (classified.kind === 'blocked') throw urlError(classified.reason);
   url.hash = '';
   return url;

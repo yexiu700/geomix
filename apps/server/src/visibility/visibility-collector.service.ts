@@ -420,6 +420,7 @@ export class VisibilityCollectorService {
       signal: input.signal,
       resolver: this.resolver,
       transport: this.transport,
+      allowlist: this.config.ssrfAllowlist,
     });
 
     if (response.status >= 300 && response.status < 400) {

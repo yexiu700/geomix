@@ -11,6 +11,7 @@ export type VisibilityConfig = {
   remoteApiKey: string | null;
   timeoutMs: number;
   featureEnabled: boolean;
+  ssrfAllowlist?: string;
 };
 
 export function readVisibilityConfig(
@@ -25,6 +26,7 @@ export function readVisibilityConfig(
 
   const remoteUrlRaw = (env.VISIBILITY_REMOTE_URL ?? '').trim();
   const remoteApiKeyRaw = (env.VISIBILITY_REMOTE_API_KEY ?? '').trim();
+  const ssrfAllowlistRaw = (env.SSRF_ALLOWLIST ?? '').trim();
   const timeoutMs = parsePositiveTimeout(
     env.VISIBILITY_TIMEOUT_MS,
     DEFAULT_VISIBILITY_TIMEOUT_MS,
@@ -42,6 +44,7 @@ export function readVisibilityConfig(
     remoteApiKey: remoteApiKeyRaw.length > 0 ? remoteApiKeyRaw : null,
     timeoutMs,
     featureEnabled: rawFeature === 'true',
+    ...(ssrfAllowlistRaw.length > 0 ? { ssrfAllowlist: ssrfAllowlistRaw } : {}),
   };
 }
 

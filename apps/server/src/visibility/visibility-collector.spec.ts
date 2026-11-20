@@ -538,4 +538,59 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
       rawMeta: { latencyMs: 412 },
     });
   });
+
+  it('allows internal sonargate and SSRF_ALLOWLIST hosts for remote_scraper GEO observation', async () => {
+    const privateDnsResolver: DnsResolver = {
+      async resolve() {
+        return [{ address: '172.18.0.5', family: 4 }];
+      },
+    };
+    const okTransport: HttpTransport = async () => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from(
+        JSON.stringify({
+          answerText: 'sonargate GEO 观测返回正常。',
+          citations: [{ url: 'https://www.geomix.cn/geo', title: 'GEO' }],
+          fanOutQueries: [],
+        }),
+        'utf8',
+      ),
+    });
+
+    const sonarCollector = VisibilityCollectorService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'http://sonargate:8080/v1/collect',
+      },
+      { resolver: privateDnsResolver, transport: okTransport },
+    );
+
+    const sonarRes = await sonarCollector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '测试 sonargate 观测',
+      brandName: 'GeoMix',
+    });
+    expect(sonarRes.collectorKind).toBe('remote_scraper');
+    expect(sonarRes.answerText).toBe('sonargate GEO 观测返回正常。');
+
+    const allowlistCollector = VisibilityCollectorService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'http://geo-obs.internal:9000/v1/collect',
+        SSRF_ALLOWLIST: 'geo-obs.internal:9000',
+      },
+      { resolver: privateDnsResolver, transport: okTransport },
+    );
+
+    const allowlistRes = await allowlistCollector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '测试白名单观测',
+      brandName: 'GeoMix',
+    });
+    expect(allowlistRes.collectorKind).toBe('remote_scraper');
+    expect(allowlistRes.answerText).toBe('sonargate GEO 观测返回正常。');
+  });
 });
