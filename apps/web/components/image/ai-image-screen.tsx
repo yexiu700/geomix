@@ -402,12 +402,14 @@ export function AiImageScreen({
       {/* Table */}
       <Table<AiImageJobItem>
         rowKey="id"
+        size="small"
         loading={loading}
         columns={columns}
         dataSource={items}
         scroll={{ x: 'max-content' }}
         locale={{ emptyText: CRUD_EMPTY_TEXT }}
         rowSelection={{
+          columnWidth: 36,
           selectedRowKeys: selectedIds,
           onChange: (keys) => setSelectedIds(keys.map(String)),
           getCheckboxProps: (record) => ({

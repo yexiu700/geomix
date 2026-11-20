@@ -465,9 +465,21 @@ export class KeywordsService {
     region: string;
     unitKey: string;
   }): Promise<string[]> {
+    const mainNorm = normalizeQuestionKey(input.main);
+    const excludedBrands = input.brands.filter((brand) => {
+      const bn = normalizeQuestionKey(brand);
+      return bn.length > 0 && !mainNorm.includes(bn);
+    });
+    const hasEmbeddedBrand = input.brands.length > excludedBrands.length;
+    const brandRule = hasEmbeddedBrand
+      ? `每条必须完整包含主关键词「${input.main}」（主词自带的品牌名需保留完整，不要额外引入其他无关品牌名）`
+      : '每条必须包含主关键词，不出现任何品牌名称';
+
     const baseUserLines = [
       `主关键词：${input.main}`,
-      input.brands.length > 0 ? `业务背景品牌（切勿出现在问题里）：${input.brands.join('、')}` : '',
+      excludedBrands.length > 0
+        ? `业务背景品牌（切勿出现在问题里）：${excludedBrands.join('、')}`
+        : '',
       input.region ? `目标地域参考：${input.region}` : '',
     ].filter(Boolean);
 
@@ -481,8 +493,7 @@ export class KeywordsService {
         messages: [
           {
             role: 'system',
-            content:
-              '你是中文AI搜索用户行为分析师。请先判断主关键词所属消费/业务场景（如 C 端零售消费品、本地生活服务或 B2B 工业/企业采购），再围绕主关键词生成30条真实潜在用户会向AI提出的咨询类问题。C 端消费品重点覆盖选购指南、使用体验、场景适配、款式/规格对比、性价比与口碑避坑；仅当主关键词本身明确属于工业品、加工制造或企业采购时才覆盖厂家、定制或服务商问题，严禁对日常消费品硬套「代工厂/批发服务商」模板词。要求：每条必须包含主关键词，长度8到30字，不使用极限词，不出现任何品牌名称。请只输出标准JSON字符串数组（例如 ["问题1","问题2"]），不要输出任何解释、思考过程或Markdown前后缀。',
+            content: `你是中文AI搜索用户行为分析师。请先判断主关键词所属消费/业务场景（如 C 端零售消费品、本地生活服务或 B2B 工业/企业采购），再围绕主关键词生成30条真实潜在用户会向AI提出的咨询类问题。C 端消费品重点覆盖选购指南、使用体验、场景适配、款式/规格对比、性价比与口碑避坑；仅当主关键词本身明确属于工业品、加工制造或企业采购时才覆盖厂家、定制或服务商问题，严禁对日常消费品硬套「代工厂/批发服务商」模板词。要求：${brandRule}，长度8到30字，不使用极限词。请只输出标准JSON字符串数组（例如 ["问题1","问题2"]），不要输出任何解释、思考过程或Markdown前后缀。`,
           },
           {
             role: 'user',
@@ -509,8 +520,7 @@ export class KeywordsService {
       messages: [
         {
           role: 'system',
-          content:
-            '你是严格的JSON生成器。围绕给定主关键词贴合其真实受众场景（C端消费侧重选购体验与对比，B2B采购侧重方案与服务）生成20到30条中文咨询问题，每条必须完整包含主关键词，8到30字，不含极限词与品牌词。响应内容只能是一个合法的JSON字符串数组，必须以 [ 开头、以 ] 结尾，禁止任何额外文字。',
+          content: `你是严格的JSON生成器。围绕给定主关键词贴合其真实受众场景（C端消费侧重选购体验与对比，B2B采购侧重方案与服务）生成20到30条中文咨询问题，${brandRule}，8到30字，不含极限词。响应内容只能是一个合法的JSON字符串数组，必须以 [ 开头、以 ] 结尾，禁止任何额外文字。`,
         },
         {
           role: 'user',

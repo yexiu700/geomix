@@ -55,17 +55,17 @@ export function RewriteBatchDetailDrawer({
       {
         title: '#',
         key: 'idx',
-        width: 48,
+        width: 36,
         render: (_v, _r, idx) => idx + 1,
       },
       {
         title: '候选源链接 / 原标题',
         key: 'source',
-        width: 235,
-        minWidth: 200,
+        width: 200,
+        minWidth: 150,
         ellipsis: { showTitle: false },
         render: (_v, rec) => (
-          <div style={{ display: 'grid', gap: 2, minWidth: 185, whiteSpace: 'normal' }}>
+          <div style={{ display: 'grid', gap: 2, minWidth: 140, whiteSpace: 'normal' }}>
             <TableClampText
               text={rec.sourceTitle || '待抓取标题'}
               lines={2}
@@ -84,11 +84,11 @@ export function RewriteBatchDetailDrawer({
       {
         title: '复刻新标题',
         key: 'newTitle',
-        width: 195,
-        minWidth: 165,
+        width: 180,
+        minWidth: 140,
         ellipsis: { showTitle: false },
         render: (_v, rec) => (
-          <div style={{ display: 'grid', gap: 4, minWidth: 150, whiteSpace: 'normal' }}>
+          <div style={{ display: 'grid', gap: 4, minWidth: 130, whiteSpace: 'normal' }}>
             <TableClampText text={rec.newTitle} lines={2} tooltipThreshold={20} />
             {rec.articleStatus && (
               <div>
@@ -103,7 +103,7 @@ export function RewriteBatchDetailDrawer({
       {
         title: '5-gram 相似度',
         key: 'similarity',
-        width: 105,
+        width: 92,
         render: (_v, rec) => {
           if (rec.similarity === null || rec.similarity === undefined) return '—';
           const pct = `${(rec.similarity * 100).toFixed(1)}%`;
@@ -118,11 +118,11 @@ export function RewriteBatchDetailDrawer({
       {
         title: '状态 / 说明',
         key: 'status',
-        width: 185,
-        minWidth: 155,
+        width: 170,
+        minWidth: 130,
         ellipsis: { showTitle: false },
         render: (_v, rec) => (
-          <div style={{ display: 'grid', gap: 3, minWidth: 140, whiteSpace: 'normal' }}>
+          <div style={{ display: 'grid', gap: 3, minWidth: 120, whiteSpace: 'normal' }}>
             <div>
               <Tag color={itemStatusTagColor(rec.status)}>
                 {ITEM_STATUS_LABELS[rec.status] ?? rec.status}
@@ -142,7 +142,7 @@ export function RewriteBatchDetailDrawer({
       {
         title: '操作',
         key: 'go',
-        width: 82,
+        width: 76,
         render: (_v, rec) =>
           rec.articleId ? (
             <Button
