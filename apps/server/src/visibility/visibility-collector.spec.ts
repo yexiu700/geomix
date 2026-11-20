@@ -654,4 +654,86 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
     expect(res.citations).toEqual([]);
     expect(res.rawMeta?.noCitations).toBe(true);
   });
+
+  it('maps 400 UNSUPPORTED_ENGINE and 501 ENGINE_NOT_CONFIGURED to offline message while keeping 500/502/503/504 as upstream unavailable (#324)', async () => {
+    const publicDns: DnsResolver = {
+      async resolve() {
+        return [{ address: '93.184.216.34', family: 4 }];
+      },
+    };
+    const runCase = async (status: number, body: string) => {
+      const collector = VisibilityCollectorService.fromEnv(
+        {
+          VISIBILITY_COLLECTOR: 'remote_scraper',
+          VISIBILITY_REMOTE_URL: 'https://scraper.example.com/v1/collect',
+        },
+        {
+          resolver: publicDns,
+          transport: async () => ({
+            status,
+            headers: { 'content-type': 'application/json' },
+            body: Buffer.from(body, 'utf8'),
+          }),
+        },
+      );
+      return collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'yuanbao',
+        promptText: '测试引擎未上线文案映射',
+        brandName: 'GeoMix',
+      });
+    };
+
+    // 400 + UNSUPPORTED_ENGINE -> offline/maintenance message
+    await expect(
+      runCase(400, JSON.stringify({ code: 'UNSUPPORTED_ENGINE', message: 'not supported' })),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'engine_not_available',
+      message: '该引擎采集通道暂未上线或维护中',
+    });
+
+    // 400 + nested error.code ENGINE_NOT_IMPLEMENTED -> offline/maintenance message
+    await expect(
+      runCase(400, JSON.stringify({ error: { code: 'ENGINE_NOT_IMPLEMENTED' } })),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'engine_not_available',
+      message: '该引擎采集通道暂未上线或维护中',
+    });
+
+    // 501 + ENGINE_NOT_CONFIGURED -> offline/maintenance message
+    await expect(
+      runCase(501, JSON.stringify({ code: 'ENGINE_NOT_CONFIGURED' })),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'engine_not_available',
+      message: '该引擎采集通道暂未上线或维护中',
+    });
+
+    // 501 with non-JSON body -> still offline/maintenance message
+    await expect(runCase(501, 'Not Implemented')).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'engine_not_available',
+      message: '该引擎采集通道暂未上线或维护中',
+    });
+
+    // Real 5xx (500 / 502 / 503 / 504) -> upstream unavailable (not "未上线")
+    for (const status of [500, 502, 503, 504]) {
+      await expect(
+        runCase(status, JSON.stringify({ code: 'INTERNAL_ERROR' })),
+      ).rejects.toMatchObject({
+        kind: PROVIDER_KIND.UPSTREAM,
+        reason: 'upstream_5xx',
+        message: '远端采集服务暂时不可用',
+      });
+    }
+
+    // Other 400 without unsupported-engine code -> contract status error
+    await expect(runCase(400, JSON.stringify({ code: 'INVALID_PROMPT' }))).rejects.toMatchObject({
+      kind: PROVIDER_KIND.CONTRACT,
+      reason: 'status',
+      message: '远端采集服务返回了异常状态码',
+    });
+  });
 });

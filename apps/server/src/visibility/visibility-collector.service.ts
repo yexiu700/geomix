@@ -99,6 +99,31 @@ const remoteScraperResponseSchema = z.object({
   rawMeta: z.record(z.unknown()).optional(),
 });
 
+const REMOTE_ENGINE_UNAVAILABLE_CODES = new Set([
+  'ENGINE_NOT_CONFIGURED',
+  'UNSUPPORTED_ENGINE',
+  'ENGINE_NOT_IMPLEMENTED',
+]);
+
+function parseRemoteErrorCode(body: Buffer): string | null {
+  try {
+    const raw = JSON.parse(body.toString('utf8')) as unknown;
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as Record<string, unknown>;
+    const topCode = typeof obj.code === 'string' ? obj.code.trim() : '';
+    if (topCode) return topCode.toUpperCase();
+    if (obj.error && typeof obj.error === 'object') {
+      const nestedCode = (obj.error as Record<string, unknown>).code;
+      if (typeof nestedCode === 'string' && nestedCode.trim()) {
+        return nestedCode.trim().toUpperCase();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 @Injectable()
 export class VisibilityCollectorService {
   private readonly config: VisibilityConfig;
@@ -442,14 +467,21 @@ export class VisibilityCollectorService {
     if (response.status === 429) {
       throw new ProviderError(PROVIDER_KIND.RATE_LIMIT, '远端采集服务繁忙', 'rate_limit');
     }
-    if (response.status >= 500) {
-      throw new ProviderError(
-        PROVIDER_KIND.UPSTREAM,
-        '该引擎采集通道暂未上线或维护中',
-        'upstream_5xx',
-      );
-    }
     if (response.status < 200 || response.status >= 300) {
+      const errorCode = parseRemoteErrorCode(response.body);
+      if (
+        response.status === 501 ||
+        (errorCode !== null && REMOTE_ENGINE_UNAVAILABLE_CODES.has(errorCode))
+      ) {
+        throw new ProviderError(
+          PROVIDER_KIND.UPSTREAM,
+          '该引擎采集通道暂未上线或维护中',
+          'engine_not_available',
+        );
+      }
+      if (response.status >= 500) {
+        throw new ProviderError(PROVIDER_KIND.UPSTREAM, '远端采集服务暂时不可用', 'upstream_5xx');
+      }
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '远端采集服务返回了异常状态码', 'status');
     }
 
