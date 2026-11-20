@@ -356,10 +356,13 @@ export class VisibilityCollectorService {
     const parsed = extracted ? llmCollectorJsonSchema.safeParse(extracted) : null;
 
     if (parsed?.success) {
+      const answerText = parsed.data.answerText.trim();
+      const citations = normalizeCollectedCitations(parsed.data.citations);
+      assertLiveSearchIntegrity(answerText, citations);
       return {
         collectorKind: 'llm_api',
-        answerText: parsed.data.answerText.trim(),
-        citations: normalizeCollectedCitations(parsed.data.citations),
+        answerText,
+        citations,
         fanOutQueries: normalizeFanOutQueries(parsed.data.fanOutQueries, input.promptText),
         rawMeta: {
           provider: completion.provider,
@@ -367,6 +370,7 @@ export class VisibilityCollectorService {
           fake: completion.fake,
           tokensIn: completion.tokensIn,
           tokensOut: completion.tokensOut,
+          ...(citations.length === 0 ? { noCitations: true } : {}),
         },
       };
     }
@@ -375,11 +379,13 @@ export class VisibilityCollectorService {
       ? completion.text
       : completion.text.trim();
     const inlineCitations = extractPlainTextUrls(cleanedPlain).map((url) => ({ url }));
+    const citations = normalizeCollectedCitations(inlineCitations);
+    assertLiveSearchIntegrity(cleanedPlain, citations);
 
     return {
       collectorKind: 'llm_api',
       answerText: cleanedPlain,
-      citations: normalizeCollectedCitations(inlineCitations),
+      citations,
       fanOutQueries: [],
       rawMeta: {
         provider: completion.provider,
@@ -388,6 +394,7 @@ export class VisibilityCollectorService {
         tokensIn: completion.tokensIn,
         tokensOut: completion.tokensOut,
         fallbackPlainText: true,
+        ...(citations.length === 0 ? { noCitations: true } : {}),
       },
     };
   }
@@ -458,13 +465,44 @@ export class VisibilityCollectorService {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '远端采集服务响应结构不符合契约', 'schema');
     }
 
+    const answerText = parsed.data.answerText.trim();
+    const citations = normalizeCollectedCitations(parsed.data.citations);
+    assertLiveSearchIntegrity(answerText, citations);
+
     return {
       collectorKind: 'remote_scraper',
-      answerText: parsed.data.answerText.trim(),
-      citations: normalizeCollectedCitations(parsed.data.citations),
+      answerText,
+      citations,
       fanOutQueries: normalizeFanOutQueries(parsed.data.fanOutQueries, input.promptText),
-      rawMeta: parsed.data.rawMeta,
+      rawMeta: {
+        ...(parsed.data.rawMeta ?? {}),
+        ...(citations.length === 0 ? { noCitations: true } : {}),
+      },
     };
+  }
+}
+
+const OFFLINE_KNOWLEDGE_CUTOFF_RE =
+  /无法(?:访问|连接|接入|使用)(?:互联网|实时网络|外部网络|网页)|不具备(?:实时)?联网(?:搜索|查询)?能力|没有(?:实时)?联网(?:搜索|查询)?能力|无法(?:实时)?(?:联网|检索最新|获取最新(?:信息|资讯|数据))|(?:我的)?知识(?:库)?截止(?:于|到|时间)|cannot browse the (?:internet|web)|no (?:real-?time )?internet access|knowledge cutoff/iu;
+
+export function detectOfflineKnowledgeCutoff(
+  answerText: string,
+  citations: ReadonlyArray<{ url: string }>,
+): boolean {
+  if (citations.length > 0) return false;
+  return OFFLINE_KNOWLEDGE_CUTOFF_RE.test(answerText);
+}
+
+function assertLiveSearchIntegrity(
+  answerText: string,
+  citations: ReadonlyArray<{ url: string }>,
+): void {
+  if (detectOfflineKnowledgeCutoff(answerText, citations)) {
+    throw new ProviderError(
+      PROVIDER_KIND.UPSTREAM,
+      '采集通道未执行实时联网搜索（返回了离线知识截止说明且无引用来源），已跳过入库并退还点数',
+      'offline_no_search',
+    );
   }
 }
 

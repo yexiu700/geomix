@@ -505,4 +505,90 @@ describe('VisibilityJudgeService', () => {
     expect(llmRes.brandPosition).toBeNull();
     expect(llmRes.brandPassage).toBeNull();
   });
+
+  it('rejects unexpected fake fallback when real LLM route is configured (#321)', async () => {
+    const fakeFallbackLlm = {
+      usesFakePrimary: () => false,
+      complete: async () => ({
+        provider: 'fake',
+        model: 'fake-cheap',
+        fake: true,
+        text: '【FAKE】占位',
+        tokensIn: 10,
+        tokensOut: 10,
+        cost: {
+          recordId: 'r-fake',
+          tenantId: 'tenant_demo',
+          idempotencyKey: 'vis-jdg-fake',
+          scene: 'distill' as const,
+          provider: 'fake',
+          model: 'fake-cheap',
+          fake: true,
+          tokensIn: 10,
+          tokensOut: 10,
+          costMicro: 0,
+          costBasis: 'placeholder' as const,
+          latencyMs: 1,
+          fingerprint: 'fp',
+        },
+      }),
+    } as unknown as LlmService;
+
+    const judge = new VisibilityJudgeService(fakeFallbackLlm);
+    await expect(
+      judge.evaluate({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: '美迈通勤平底鞋怎么样',
+        answerText: '美迈通勤平底鞋采用3D记忆棉缓震鞋垫，日常通勤舒适度表现不错。',
+        profile: {
+          brandName: '美迈',
+          brandAliases: [],
+          ownedDomains: [],
+          competitors: [],
+        },
+      }),
+    ).rejects.toMatchObject({
+      reason: 'fake_fallback_rejected',
+    });
+  });
+
+  it('retries malformed judge JSON once before falling back to deterministic-fallback (#321)', async () => {
+    let calls = 0;
+    const { llm } = createMockLlm(() => {
+      calls += 1;
+      if (calls === 1) {
+        return '不好意思，以下是我对美迈品牌的分析说明（非JSON）';
+      }
+      return JSON.stringify({
+        topicRelevant: true,
+        verdicts: [
+          {
+            subjectKey: 'brand',
+            portrayal: 'positive',
+            evidence: '美迈通勤平底鞋脚感舒适且透气。',
+          },
+        ],
+      });
+    });
+
+    const judge = new VisibilityJudgeService(llm);
+    const res = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '美迈通勤平底鞋怎么样',
+      answerText: '美迈通勤平底鞋脚感舒适且透气，适合每天走一万步的上班族。',
+      profile: {
+        brandName: '美迈',
+        brandAliases: [],
+        ownedDomains: [],
+        competitors: [],
+      },
+    });
+
+    expect(calls).toBe(2);
+    expect(res.brandMentioned).toBe(true);
+    expect(res.brandSentiment).toBe('positive');
+    expect(res.judgeModel).not.toContain('deterministic-fallback');
+  });
 });

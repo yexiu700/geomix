@@ -1,7 +1,7 @@
 // Portions adapted from elmohq/elmo (https://github.com/elmohq/elmo), Copyright (c) 2026 Blue Whale Software, LLC, MIT License.
 
 import { createHash } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   assessAnswerTopicRelevance,
   extractEvidencePassages,
@@ -15,6 +15,7 @@ import {
 } from '@geomix/shared';
 import { z } from 'zod';
 import { LlmService } from '../infra/llm';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 
 export const JUDGE_PORTRAYAL_VALUES = [
   'positive',
@@ -166,6 +167,8 @@ type CandidateScan = {
 
 @Injectable()
 export class VisibilityJudgeService {
+  private readonly logger = new Logger(VisibilityJudgeService.name);
+
   constructor(@Inject(LlmService) private readonly llm: LlmService) {}
 
   static fromEnv(
@@ -301,6 +304,18 @@ export class VisibilityJudgeService {
     });
 
     if (llmResult.fake) {
+      const usesFakePrimary =
+        typeof this.llm.usesFakePrimary === 'function' ? this.llm.usesFakePrimary('distill') : true;
+      if (!usesFakePrimary) {
+        this.logger.warn(
+          `VisibilityJudge rejected unexpected fake fallback on real route (tenant=${input.tenantId}, engine=${input.engine})`,
+        );
+        throw new ProviderError(
+          PROVIDER_KIND.UPSTREAM,
+          '裁判模型调用失败，已禁止使用占位结果进行品牌判别',
+          'fake_fallback_rejected',
+        );
+      }
       return finalizeVerdicts({
         brandCandidate,
         competitorCandidates,
@@ -315,10 +330,50 @@ export class VisibilityJudgeService {
       });
     }
 
-    const parsedJson = extractJsonObject(llmResult.text);
-    const parsedVerdicts = parsedJson ? llmJudgeVerdictSchema.safeParse(parsedJson) : null;
+    let finalLlmResult = llmResult;
+    let totalTokensIn = llmResult.tokensIn;
+    let totalTokensOut = llmResult.tokensOut;
+    let parsedJson = extractJsonObject(finalLlmResult.text);
+    let parsedVerdicts = parsedJson ? llmJudgeVerdictSchema.safeParse(parsedJson) : null;
 
     if (!parsedVerdicts?.success) {
+      try {
+        const retryResult = await this.llm.complete({
+          tenantId: input.tenantId,
+          scene: 'distill',
+          idempotencyKey: `${idempotencyKey.slice(0, 114)}:json-retry1`,
+          signal: input.signal,
+          temperature: 0,
+          maxTokens: 1024,
+          disableThinking: true,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是严格的 JSON 裁判器。请仅返回一个合法的 JSON 对象（以 { 开头、以 } 结尾，禁止 Markdown 代码块或任何解释文字），格式：{"topicRelevant":true,"verdicts":[{"subjectKey":"brand","portrayal":"positive|neutral|mixed|negative|other_meaning|other_company|no_info","evidence":"原文关键句"}]}',
+            },
+            {
+              role: 'user',
+              content: buildJudgeUserPrompt(input.promptText, textMatchedCandidates),
+            },
+          ],
+        });
+        if (!retryResult.fake) {
+          finalLlmResult = retryResult;
+          totalTokensIn += retryResult.tokensIn;
+          totalTokensOut += retryResult.tokensOut;
+          parsedJson = extractJsonObject(retryResult.text);
+          parsedVerdicts = parsedJson ? llmJudgeVerdictSchema.safeParse(parsedJson) : null;
+        }
+      } catch {
+        // Ignore retry transport/contract error and fall through to deterministic fallback
+      }
+    }
+
+    if (!parsedVerdicts?.success) {
+      this.logger.warn(
+        `VisibilityJudge fell back to deterministic-fallback after malformed JSON (tenant=${input.tenantId}, engine=${input.engine}, model=${finalLlmResult.model})`,
+      );
       return finalizeVerdicts({
         brandCandidate,
         competitorCandidates,
@@ -326,9 +381,9 @@ export class VisibilityJudgeService {
         useDeterministicFallback: true,
         topicRelevant: relevance.relevant,
         relevanceReason: relevance.reason,
-        judgeModel: `${llmResult.model}:deterministic-fallback`,
-        tokensIn: llmResult.tokensIn,
-        tokensOut: llmResult.tokensOut,
+        judgeModel: `${finalLlmResult.model}:deterministic-fallback`,
+        tokensIn: totalTokensIn,
+        tokensOut: totalTokensOut,
         skippedLlm: false,
       });
     }
@@ -354,9 +409,9 @@ export class VisibilityJudgeService {
       useDeterministicFallback: false,
       topicRelevant: finalTopicRelevant,
       relevanceReason: finalRelevanceReason,
-      judgeModel: llmResult.model,
-      tokensIn: llmResult.tokensIn,
-      tokensOut: llmResult.tokensOut,
+      judgeModel: finalLlmResult.model,
+      tokensIn: totalTokensIn,
+      tokensOut: totalTokensOut,
       skippedLlm: false,
     });
   }

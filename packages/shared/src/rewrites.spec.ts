@@ -315,4 +315,31 @@ describe('rewrites shared helpers', () => {
     expect(parsedLlm.contentText).toContain('常见问题（FAQ）');
     expect(parsedLlm.contentText).not.toContain('围绕围绕');
   });
+
+  it('never slices a dangling interrogative prefix and enforces source fact retention (#313, #321)', () => {
+    const pastedOpening =
+      '职场女性每天走一万步的通勤平底鞋怎么选？我们实测了3D记忆棉缓震鞋垫、2.5厘米微跟与头层羊皮微宽楦型。';
+    const topic = extractRewriteTopic(pastedOpening);
+    expect(topic).not.toMatch(/怎么$|如何$|为什么$/);
+    expect(topic).toBe('职场女性每天走一万步的通勤平底鞋');
+
+    const fakeMd = buildFakeRewriteMarkdown({
+      sourceTitle: pastedOpening,
+      sourceText: pastedOpening.repeat(5),
+      brand: '美迈',
+    });
+    expect(fakeMd).not.toContain('通勤平底鞋怎么：');
+    expect(fakeMd).not.toContain('通勤平底鞋怎么的');
+    expect(fakeMd).not.toContain('通勤平底鞋怎么时');
+
+    const msgs = assembleRewriteMessages({
+      templateContent: '请改写为结构化评测文章。',
+      sourceTitle: pastedOpening,
+      sourceText:
+        '美迈通勤平底鞋采用3D记忆棉缓震鞋垫、2.5厘米微跟、头层羊皮与微宽楦型设计，适合每日通勤一万步。',
+      brand: '美迈',
+    });
+    expect(msgs[0]?.content).toContain('完整保留原文中的核心事实');
+    expect(msgs[0]?.content).toContain('严禁截取半截残句');
+  });
 });

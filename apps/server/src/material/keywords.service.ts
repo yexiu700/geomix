@@ -24,7 +24,7 @@ import { TX_OPTIONS } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService, scanCompliance } from '../infra/compliance';
-import { LlmService } from '../infra/llm';
+import { LlmService, assertCompletionAllowed } from '../infra/llm';
 import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -168,6 +168,7 @@ export class KeywordsService {
         brands,
         region,
         unitKey,
+        reservationShadow: reservation.shadow,
       });
     } catch (error) {
       await this.refundDistill(tenantId, reservation.id, unitKey, unitPoints, 'AI蒸馏调用失败退还');
@@ -464,6 +465,7 @@ export class KeywordsService {
     brands: string[];
     region: string;
     unitKey: string;
+    reservationShadow?: boolean;
   }): Promise<string[]> {
     const mainNorm = normalizeQuestionKey(input.main);
     const excludedBrands = input.brands.filter((brand) => {
@@ -489,6 +491,7 @@ export class KeywordsService {
         scene: 'distill',
         temperature: 0.7,
         maxTokens: 4096,
+        timeoutMs: 45_000,
         idempotencyKey: input.unitKey,
         messages: [
           {
@@ -500,6 +503,12 @@ export class KeywordsService {
             content: [...baseUserLines, '请直接输出 JSON 字符串数组。'].join('\n'),
           },
         ],
+      });
+      assertCompletionAllowed({
+        completion: first,
+        llm: this.llm,
+        scene: 'distill',
+        reservationShadow: input.reservationShadow,
       });
       if (first.fake) return buildFakeDistillCandidates(input.main);
       const parsed = extractDistillCandidates(first.text);
@@ -516,6 +525,7 @@ export class KeywordsService {
       scene: 'distill',
       temperature: 0.3,
       maxTokens: 4096,
+      timeoutMs: 45_000,
       idempotencyKey: retryKey,
       messages: [
         {
@@ -531,6 +541,12 @@ export class KeywordsService {
           ].join('\n'),
         },
       ],
+    });
+    assertCompletionAllowed({
+      completion: second,
+      llm: this.llm,
+      scene: 'distill',
+      reservationShadow: input.reservationShadow,
     });
     return second.fake
       ? buildFakeDistillCandidates(input.main)

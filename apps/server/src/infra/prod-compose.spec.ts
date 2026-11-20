@@ -78,7 +78,7 @@ describe('production deployment & auto-merge CD configuration (#63)', () => {
     ]);
   });
 
-  it('bounds production LLM_TIMEOUT_MS to 25s and sets fast QUEUE_RECOVER_MS on worker (#79)', () => {
+  it('bounds production LLM_TIMEOUT_MS to 45s, disables LLM_FALLBACK_FAKE by default, and sets fast QUEUE_RECOVER_MS on worker (#79, #321)', () => {
     const compose = readFileSync(resolve(repoRoot, 'docker-compose.prod.yml'), 'utf8');
     const apiSection = compose.slice(compose.indexOf('\n  api:'), compose.indexOf('\n  worker:'));
     const workerSection = compose.slice(
@@ -86,8 +86,10 @@ describe('production deployment & auto-merge CD configuration (#63)', () => {
       compose.indexOf('\n  web:'),
     );
 
-    expect(apiSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-25000}');
-    expect(workerSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-25000}');
+    expect(apiSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-45000}');
+    expect(apiSection).toContain('LLM_FALLBACK_FAKE: ${LLM_FALLBACK_FAKE:-false}');
+    expect(workerSection).toContain('LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS_PROD:-45000}');
+    expect(workerSection).toContain('LLM_FALLBACK_FAKE: ${LLM_FALLBACK_FAKE:-false}');
     expect(workerSection).toContain('QUEUE_RECOVER_MS: ${QUEUE_RECOVER_MS:-15000}');
     expect(compose).not.toContain('90000');
   });
