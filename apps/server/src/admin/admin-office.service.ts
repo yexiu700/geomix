@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma, PromptKind, QuotaKey } from '@prisma/client';
+import { Prisma, QuotaKey } from '@prisma/client';
 import { hashPassword } from '@geomix/db';
 import {
   API_ERROR,
@@ -26,7 +26,6 @@ import {
   type PricingBatchUpdateInput,
   type PricingUpdateInput,
   type QuotaUpdateInput,
-  type TemplateWriteInput,
   type UpdateTenantInput,
 } from '@geomix/shared';
 import { ApiError } from '../common/api-error';
@@ -46,7 +45,7 @@ type TenantRow = {
 };
 
 /**
- * 管理员开户、配额、价格、公告和系统模板。
+ * 管理员开户、配额、价格与公告。
  * 加点不在这里另做账，创建时的初始点数走 BillingService.adminAdjust。
  */
 @Injectable()
@@ -511,95 +510,6 @@ export class AdminOfficeService {
     return { deleted: true, id };
   }
 
-  async listTemplates() {
-    const rows = await this.prisma.base.promptTemplate.findMany({
-      where: { tenantId: null },
-      orderBy: [{ kind: 'asc' }, { sort: 'asc' }, { id: 'asc' }],
-    });
-    return { items: rows.map(presentTemplate) };
-  }
-
-  async createTemplate(actor: Actor, input: TemplateWriteInput, idempotencyKey?: string) {
-    assertAdmin(actor);
-    if (idempotencyKey) {
-      const prior = await this.findReplay('template_save', idempotencyKey);
-      if (prior) return this.oneTemplate(prior);
-    }
-    const row = await this.prisma.base.promptTemplate.create({
-      data: {
-        tenantId: null,
-        kind: input.kind as PromptKind,
-        name: input.name,
-        content: input.content,
-        randomPool: input.randomPool,
-        sort: input.sort,
-      },
-    });
-    await this.audit(actor, null, 'template_save', {
-      idempotencyKey: idempotencyKey ?? null,
-      tenantId: row.id,
-    });
-    return presentTemplate(row);
-  }
-
-  async updateTemplate(
-    actor: Actor,
-    id: string,
-    input: TemplateWriteInput,
-    idempotencyKey?: string,
-  ) {
-    assertAdmin(actor);
-    if (idempotencyKey) {
-      const prior = await this.findReplay('template_update', idempotencyKey);
-      if (prior) {
-        this.assertSame(prior, id);
-        return this.oneTemplate(id);
-      }
-    }
-    const existing = await this.prisma.base.promptTemplate.findFirst({
-      where: { id, tenantId: null },
-    });
-    if (!existing) throw notFound('系统模板不存在');
-    const row = await this.prisma.base.promptTemplate.update({
-      where: { id },
-      data: {
-        kind: input.kind as PromptKind,
-        name: input.name,
-        content: input.content,
-        randomPool: input.randomPool,
-        sort: input.sort,
-      },
-    });
-    await this.audit(actor, null, 'template_update', {
-      idempotencyKey: idempotencyKey ?? null,
-      tenantId: id,
-    });
-    return presentTemplate(row);
-  }
-
-  async deleteTemplate(actor: Actor, id: string, idempotencyKey?: string) {
-    assertAdmin(actor);
-    if (idempotencyKey) {
-      const prior = await this.findReplay('template_delete', idempotencyKey);
-      if (prior) {
-        this.assertSame(prior, id);
-        return { deleted: true, id };
-      }
-    }
-    const existing = await this.prisma.base.promptTemplate.findFirst({
-      where: { id, tenantId: null },
-      select: { id: true, name: true },
-    });
-    if (!existing) throw notFound('系统模板不存在');
-    await this.prisma.base.promptTemplate.delete({ where: { id } });
-    await this.audit(actor, null, 'template_delete', {
-      idempotencyKey: idempotencyKey ?? null,
-      tenantId: id,
-      name: existing.name,
-    });
-    return { deleted: true, id };
-  }
-
   async llmCostReport(
     actor: Actor,
     rawQuery: Record<string, unknown>,
@@ -614,7 +524,7 @@ export class AdminOfficeService {
     }
 
     const { startUtc, endUtc } = shanghaiDayWindowUtc(query.days, now);
-    const [auditRows, taskItems, visObs] = await Promise.all([
+    const [auditRows, geoArticles, visObs] = await Promise.all([
       this.prisma.base.auditLog.findMany({
         where: {
           action: LLM_COST_AUDIT_ACTION,
@@ -624,20 +534,19 @@ export class AdminOfficeService {
         orderBy: { createdAt: 'desc' },
         take: 50_000,
       }),
-      this.prisma.base.aiTaskItem.findMany({
+      this.prisma.base.geoArticle.findMany({
         where: {
-          status: 'SUCCESS',
-          finishedAt: { gte: startUtc, lte: endUtc },
+          createdAt: { gte: startUtc, lte: endUtc },
           tokensIn: { not: null },
-          ...(query.tenantId ? { task: { tenantId: query.tenantId } } : {}),
+          ...(query.tenantId ? { tenantId: query.tenantId } : {}),
         },
         select: {
           id: true,
+          tenantId: true,
           model: true,
           tokensIn: true,
           tokensOut: true,
-          finishedAt: true,
-          task: { select: { tenantId: true } },
+          createdAt: true,
         },
         take: 20_000,
       }),
@@ -670,9 +579,9 @@ export class AdminOfficeService {
           ? (row.payload as Record<string, unknown>)
           : {};
       const idem = typeof p.idempotencyKey === 'string' ? p.idempotencyKey : '';
-      if (idem.startsWith('ai_body:')) {
+      if (idem.startsWith('ai_body:') || idem.startsWith('geo_article:')) {
         const parts = idem.split(':');
-        if (parts[1]) coveredItemPrefixes.add(`item:${parts[1]}`);
+        if (parts[1]) coveredItemPrefixes.add(`article:${parts[1]}`);
       } else if (idem.includes('vis') && idem.includes(':')) {
         const parts = idem.split(':');
         if (parts[1]) coveredItemPrefixes.add(`obs:${parts[1]}`);
@@ -696,20 +605,20 @@ export class AdminOfficeService {
       });
     }
 
-    for (const item of taskItems) {
-      if (coveredItemPrefixes.has(`item:${item.id}`) || !item.finishedAt) continue;
-      tenantIds.add(item.task.tenantId);
-      const model = item.model ?? 'fake-quality';
+    for (const article of geoArticles) {
+      if (coveredItemPrefixes.has(`article:${article.id}`)) continue;
+      tenantIds.add(article.tenantId);
+      const model = article.model ?? 'fake-quality';
       const fake = model.startsWith('fake');
       rawEvents.push({
-        tenantId: item.task.tenantId,
-        scene: 'body',
+        tenantId: article.tenantId,
+        scene: 'geo_write',
         provider: fake ? 'fake' : 'openai',
         model,
         fake,
-        tokensIn: item.tokensIn ?? 0,
-        tokensOut: item.tokensOut ?? 0,
-        createdAt: item.finishedAt,
+        tokensIn: article.tokensIn ?? 0,
+        tokensOut: article.tokensOut ?? 0,
+        createdAt: article.createdAt,
       });
     }
 
@@ -768,12 +677,6 @@ export class AdminOfficeService {
     const row = await this.prisma.base.announcement.findUnique({ where: { id } });
     if (!row) throw notFound('公告不存在');
     return presentAnnouncement(row);
-  }
-
-  private async oneTemplate(id: string) {
-    const row = await this.prisma.base.promptTemplate.findFirst({ where: { id, tenantId: null } });
-    if (!row) throw notFound('系统模板不存在');
-    return presentTemplate(row);
   }
 
   private async findReplay(action: string, key: string): Promise<string | null> {
@@ -857,26 +760,6 @@ function presentAnnouncement(row: {
     operatorName: row.operatorName ?? null,
     createdAt: row.createdAt ? row.createdAt.toISOString() : null,
     updatedAt: row.updatedAt ? row.updatedAt.toISOString() : null,
-  };
-}
-
-function presentTemplate(row: {
-  id: string;
-  kind: PromptKind;
-  name: string;
-  content: string;
-  randomPool: boolean;
-  sort: number;
-  updatedAt: Date;
-}) {
-  return {
-    id: row.id,
-    kind: row.kind,
-    name: row.name,
-    content: row.content,
-    randomPool: row.randomPool,
-    sort: row.sort,
-    updatedAt: row.updatedAt.toISOString(),
   };
 }
 

@@ -100,4 +100,48 @@ describe('Pricing defaults backfill (#99)', () => {
     });
     expect(createMany).toHaveBeenCalledTimes(1);
   });
+
+  it('BillingService.quoteGeoWrite falls back to PRICING_DEFAULTS when geo_write row is absent and rejects explicit enabled=false', async () => {
+    const findUnique = vi.fn().mockResolvedValue(null);
+    const prisma = {
+      base: {
+        pricingItem: {
+          findUnique,
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new BillingService(prisma, {
+      globalMode: () => 'SHADOW',
+      orphanAfterMs: 60_000,
+      now: () => new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    const fallbackQuote = await service.quoteGeoWrite({ count: 3, taskName: '缺省回退测试' });
+    expect(fallbackQuote).toEqual({
+      count: 3,
+      unitPrice: 10,
+      total: 30,
+      lines: [{ action: 'geo_write', listPrice: 10, title: 'GEO写作-缺省回退测试' }],
+    });
+
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_write',
+      unitPoints: 15,
+      enabled: true,
+    });
+    const customQuote = await service.quoteGeoWrite({ count: 2 });
+    expect(customQuote.unitPrice).toBe(15);
+    expect(customQuote.total).toBe(30);
+
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_write',
+      unitPoints: 10,
+      enabled: false,
+    });
+    await expect(service.quoteGeoWrite({ count: 1 })).rejects.toMatchObject({
+      status: 400,
+      message: 'GEO写作价格未启用',
+    });
+  });
 });

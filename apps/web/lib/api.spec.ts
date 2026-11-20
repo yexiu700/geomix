@@ -1,6 +1,13 @@
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { authorizedRequest, loadAccount, postJson, refreshAccessToken } from './api';
+import {
+  authorizedRequest,
+  authorizedV2Request,
+  loadAccount,
+  postJson,
+  refreshAccessToken,
+} from './api';
+import { GatewayApiError } from './envelope';
 import { REFRESH_TOKEN_KEY, saveSession, type SessionStorageLike } from './session';
 
 function memoryStorage(): SessionStorageLike {
@@ -245,5 +252,68 @@ describe('account session', () => {
     const res = await authorizedRequest(storage, 'GET', '/ai-tasks?page=1');
     expect(res.status).toBe(200);
     expect(calls).toEqual(['/auth/refresh', '/ai-tasks?page=1']);
+  });
+
+  it('calls /api/v2, retries once on 401 refresh, forwards AbortSignal, and unwraps envelopes in authorizedV2Request', async () => {
+    const storage = memoryStorage();
+    saveSession(storage, 'stale-v2-at', 'rt-v2');
+    const controller = new AbortController();
+    const urls: string[] = [];
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        urls.push(String(url));
+        if (String(url).endsWith('/api/v1/auth/refresh')) {
+          return jsonResponse({
+            code: 0,
+            msg: 'ok',
+            data: { accessToken: 'fresh-v2-at', refreshToken: 'rt-v2-next' },
+          });
+        }
+        expect(init?.signal).toBe(controller.signal);
+        const auth = new Headers(init?.headers).get('authorization');
+        if (auth === 'Bearer stale-v2-at') {
+          return jsonResponse({ code: AUTH_ERROR.UNAUTHORIZED, msg: '未登录', data: null }, 401);
+        }
+        expect(auth).toBe('Bearer fresh-v2-at');
+        return jsonResponse({ code: 0, msg: 'ok', data: { items: [{ id: 'brand-1' }] } });
+      }),
+    );
+
+    const data = await authorizedV2Request<{ items: Array<{ id: string }> }>('/brands', {
+      storage,
+      signal: controller.signal,
+    });
+    expect(data).toEqual({ items: [{ id: 'brand-1' }] });
+    expect(urls).toEqual([
+      'http://localhost:3001/api/v2/brands',
+      'http://localhost:3001/api/v1/auth/refresh',
+      'http://localhost:3001/api/v2/brands',
+    ]);
+  });
+
+  it('throws GatewayApiError on non-zero envelope or HTTP error in authorizedV2Request', async () => {
+    const storage = memoryStorage();
+    saveSession(storage, 'valid-at', 'valid-rt');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({ code: API_ERROR.TENANT_EXPIRED, msg: '账号已到期', data: null }, 403),
+      ),
+    );
+
+    await expect(
+      authorizedV2Request('/brands', {
+        method: 'POST',
+        body: { name: 'Demo', category: 'NAS', markets: ['CN'] },
+        storage,
+      }),
+    ).rejects.toMatchObject({
+      name: GatewayApiError.name,
+      status: 403,
+      code: API_ERROR.TENANT_EXPIRED,
+      message: '账号已到期',
+    });
   });
 });

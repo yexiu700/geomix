@@ -15,7 +15,7 @@ export function buildNextConfig(
           output: 'standalone',
         }),
     reactStrictMode: true,
-    transpilePackages: ['@geomix/shared', '@geomix/prompts'],
+    transpilePackages: ['@geomix/shared'],
     experimental: {
       optimizePackageImports: ['antd'],
     },

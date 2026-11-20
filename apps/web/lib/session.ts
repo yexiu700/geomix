@@ -10,7 +10,28 @@ export type SessionStorageLike = {
 export function apiBase(): string {
   const configured = process.env.NEXT_PUBLIC_API_BASE;
   if (!configured || configured.trim() === '') return 'http://localhost:3001/api/v1';
-  return configured.trim().replace(/\/$/, '');
+  return configured.trim().replace(/\/+$/, '');
+}
+
+export function apiV2Base(): string {
+  const configuredV2 = process.env.NEXT_PUBLIC_API_V2_BASE;
+  if (configuredV2 && configuredV2.trim() !== '') {
+    return configuredV2.trim().replace(/\/+$/, '');
+  }
+  const base = apiBase().replace(/\/+$/, '');
+  if (/\/api\/v2$/i.test(base)) {
+    return base;
+  }
+  if (/\/api\/v1$/i.test(base)) {
+    return base.replace(/\/api\/v1$/i, '/api/v2');
+  }
+  if (/\/v1$/i.test(base)) {
+    return base.replace(/\/v1$/i, '/v2');
+  }
+  if (/\/api$/i.test(base)) {
+    return `${base}/v2`;
+  }
+  return `${base}/api/v2`;
 }
 
 function sharedMirror(storage: SessionStorageLike): SessionStorageLike | null {

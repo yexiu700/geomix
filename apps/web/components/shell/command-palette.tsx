@@ -1,27 +1,31 @@
 'use client';
 
+import type { BrandRecord, GeoMarket } from '@geomix/shared';
 import { Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountProfile } from '../../lib/api';
 import { STATIC_ROUTES, isCommandPaletteRoute, matchRoute } from '../../lib/routes';
-import type { ShellAction, ShellSnapshot } from '../../lib/tab-stack';
 
 export type CommandPaletteProps = {
   open: boolean;
   onClose: () => void;
   role: AccountProfile['role'];
-  tabs: ShellSnapshot['tabs'];
-  activeId: string;
-  aiImageEnabled?: boolean;
+  readOnly?: boolean;
   visibilityEnabled?: boolean;
-  onDispatch: (action: ShellAction) => void;
-  onOpenLayout: () => void;
+  brands?: readonly BrandRecord[];
+  activeBrandId?: string | null;
+  activeMarket?: GeoMarket;
+  onNavigate: (href: string) => void;
+  onSelectBrand?: (brandId: string) => void;
+  onSelectMarket?: (market: GeoMarket) => void;
+  onOpenCreateBrand?: () => void;
+  onOpenEnableMarket?: (market: GeoMarket) => void;
   onToggleMenu: () => void;
   onChangePassword: () => void;
   onLogout: () => void;
 };
 
-type CommandGroup = '页面' | '已打开标签' | '操作';
+type CommandGroup = '工作区' | '品牌与市场' | '操作';
 
 type CommandItem = {
   id: string;
@@ -31,18 +35,22 @@ type CommandItem = {
   execute: () => void;
 };
 
-const GROUP_ORDER: readonly CommandGroup[] = ['页面', '已打开标签', '操作'];
+const GROUP_ORDER: readonly CommandGroup[] = ['工作区', '品牌与市场', '操作'];
 
 export function CommandPalette({
   open,
   onClose,
   role,
-  tabs,
-  activeId: _activeId,
-  aiImageEnabled = true,
+  readOnly = false,
   visibilityEnabled = true,
-  onDispatch,
-  onOpenLayout,
+  brands = [],
+  activeBrandId = null,
+  activeMarket = 'CN',
+  onNavigate,
+  onSelectBrand,
+  onSelectMarket,
+  onOpenCreateBrand,
+  onOpenEnableMarket,
   onToggleMenu,
   onChangePassword,
   onLogout,
@@ -56,47 +64,93 @@ export function CommandPalette({
     const seenIds = new Set<string>();
     const seenHrefs = new Set<string>();
 
-    const pages: CommandItem[] = [];
+    const workspaces: CommandItem[] = [];
     for (const [href, route] of Object.entries(STATIC_ROUTES)) {
-      if (!isCommandPaletteRoute(href, role, { aiImageEnabled, visibilityEnabled })) continue;
+      if (!isCommandPaletteRoute(href, role, { visibilityEnabled })) continue;
       const canonicalHref = matchRoute(href)?.href ?? href;
-      const id = `page:${canonicalHref}`;
+      const id = `workspace:${canonicalHref}`;
       if (seenIds.has(id) || seenHrefs.has(canonicalHref)) continue;
       seenIds.add(id);
       seenHrefs.add(canonicalHref);
-      pages.push({
+      workspaces.push({
         id,
-        group: '页面',
+        group: '工作区',
         title: route.title,
         href: canonicalHref,
-        execute: () => onDispatch({ type: 'open', href: canonicalHref }),
+        execute: () => onNavigate(canonicalHref),
       });
     }
 
-    const openTabs: CommandItem[] = [];
-    for (const tab of tabs) {
-      if (!isCommandPaletteRoute(tab.href, role, { aiImageEnabled, visibilityEnabled })) continue;
-      const canonicalHref = matchRoute(tab.href)?.href ?? tab.href;
-      const id = `tab:${tab.id}`;
-      if (seenIds.has(id) || seenHrefs.has(canonicalHref)) continue;
-      seenIds.add(id);
-      seenHrefs.add(canonicalHref);
-      openTabs.push({
-        id,
-        group: '已打开标签',
-        title: tab.title,
-        href: canonicalHref,
-        execute: () => onDispatch({ type: 'activate', id: tab.id }),
+    if (role === 'ADMIN') {
+      workspaces.push({
+        id: 'workspace:/admin/tenants',
+        group: '工作区',
+        title: '运营后台',
+        href: '/admin/tenants',
+        execute: () => onNavigate('/admin/tenants'),
       });
     }
 
-    const rawActions: CommandItem[] = [
-      {
-        id: 'action:layout',
-        group: '操作',
-        title: '布局设置',
-        execute: onOpenLayout,
-      },
+    const brandItems: CommandItem[] = [];
+    const activeBrand = brands.find((item) => item.id === activeBrandId) ?? null;
+
+    if (onSelectBrand) {
+      for (const brand of brands) {
+        brandItems.push({
+          id: `brand:${brand.id}`,
+          group: '品牌与市场',
+          title:
+            brand.id === activeBrandId ? `当前品牌 · ${brand.name}` : `切换品牌 · ${brand.name}`,
+          execute: () => onSelectBrand(brand.id),
+        });
+      }
+    }
+
+    if (activeBrand && onSelectMarket) {
+      const enabledMarkets = new Set(activeBrand.markets.map((item) => item.market));
+      if (enabledMarkets.has('CN')) {
+        brandItems.push({
+          id: 'market:CN',
+          group: '品牌与市场',
+          title: activeMarket === 'CN' ? '当前市场 · 🇨🇳 国内 (CN)' : '切换市场 · 🇨🇳 国内 (CN)',
+          execute: () => onSelectMarket('CN'),
+        });
+      }
+      if (enabledMarkets.has('GLOBAL')) {
+        brandItems.push({
+          id: 'market:GLOBAL',
+          group: '品牌与市场',
+          title:
+            activeMarket === 'GLOBAL'
+              ? '当前市场 · 🌐 海外 (GLOBAL)'
+              : '切换市场 · 🌐 海外 (GLOBAL)',
+          execute: () => onSelectMarket('GLOBAL'),
+        });
+      }
+      if (!readOnly && onOpenEnableMarket && enabledMarkets.size === 1) {
+        const missingMarket: GeoMarket = enabledMarkets.has('CN') ? 'GLOBAL' : 'CN';
+        brandItems.push({
+          id: `market:enable:${missingMarket}`,
+          group: '品牌与市场',
+          title:
+            missingMarket === 'GLOBAL'
+              ? '+ 开启另一市场 · 🌐 海外 (GLOBAL)'
+              : '+ 开启另一市场 · 🇨🇳 国内 (CN)',
+          execute: () => onOpenEnableMarket(missingMarket),
+        });
+      }
+    }
+
+    if (!readOnly && onOpenCreateBrand) {
+      brandItems.push({
+        id: 'brand:create',
+        group: '品牌与市场',
+        title: '+ 60 秒新建品牌',
+        execute: onOpenCreateBrand,
+      });
+    }
+
+    const actions: CommandItem[] = [
       {
         id: 'action:toggle-menu',
         group: '操作',
@@ -116,22 +170,22 @@ export function CommandPalette({
         execute: onLogout,
       },
     ];
-    const actions = rawActions.filter((action) => {
-      if (seenIds.has(action.id)) return false;
-      seenIds.add(action.id);
-      return true;
-    });
 
-    return [...pages, ...openTabs, ...actions];
+    return [...workspaces, ...brandItems, ...actions];
   }, [
-    aiImageEnabled,
+    activeBrandId,
+    activeMarket,
+    brands,
     onChangePassword,
-    onDispatch,
     onLogout,
-    onOpenLayout,
+    onNavigate,
+    onOpenCreateBrand,
+    onOpenEnableMarket,
+    onSelectBrand,
+    onSelectMarket,
     onToggleMenu,
+    readOnly,
     role,
-    tabs,
     visibilityEnabled,
   ]);
 
@@ -228,7 +282,7 @@ export function CommandPalette({
           type="text"
           value={query}
           aria-label="搜索页面或操作"
-          placeholder="搜索页面或操作…"
+          placeholder="搜索工作区、品牌或操作…"
           onChange={(event) => setQuery(event.target.value)}
           style={{
             width: '100%',

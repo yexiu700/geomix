@@ -5,7 +5,6 @@ import type {
   PricingBatchUpdateInput,
   PricingUpdateInput,
   QuotaUpdateInput,
-  TemplateWriteInput,
   UpdateTenantInput,
 } from '@geomix/shared';
 import { authorizedRequest, type Envelope } from './api';
@@ -44,16 +43,6 @@ export type AnnouncementRow = {
   operatorName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
-};
-
-export type TemplateRow = {
-  id: string;
-  kind: 'ARTICLE' | 'TITLE' | 'REWRITE';
-  name: string;
-  content: string;
-  randomPool: boolean;
-  sort: number;
-  updatedAt: string;
 };
 
 export class AdminApiError extends Error {
@@ -120,22 +109,6 @@ export function httpAdmin(storage: SessionStorageLike) {
         storage,
         'DELETE',
         `/admin/announcements/${id}`,
-        undefined,
-        freshKey(),
-      ),
-    listTemplates: async () => {
-      const data = await readJson<{ items: TemplateRow[] }>(storage, 'GET', '/admin/templates');
-      return data.items;
-    },
-    createTemplate: (input: TemplateWriteInput) =>
-      readJson<TemplateRow>(storage, 'POST', '/admin/templates', input, freshKey()),
-    updateTemplate: (id: string, input: TemplateWriteInput) =>
-      readJson<TemplateRow>(storage, 'PATCH', `/admin/templates/${id}`, input, freshKey()),
-    deleteTemplate: (id: string) =>
-      readJson<{ deleted: boolean; id: string }>(
-        storage,
-        'DELETE',
-        `/admin/templates/${id}`,
         undefined,
         freshKey(),
       ),

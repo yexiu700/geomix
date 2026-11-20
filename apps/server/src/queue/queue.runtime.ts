@@ -8,9 +8,6 @@ import {
 } from '@nestjs/common';
 import { readReconcileConfig } from '@geomix/shared';
 import { Worker } from 'bullmq';
-import { IMAGE_JOB_HANDLER, type ImageJobHandler } from '../image/image-job.runner';
-import { KB_INDEX_HANDLER, type KbIndexHandler } from '../material/knowledge-index.runner';
-import { REWRITE_BATCH_HANDLER, type RewriteBatchHandler } from '../rewrite/rewrite-batch.runner';
 import {
   readVisibilityConfig,
   resolveVisibilityHealthRefreshMs,
@@ -20,11 +17,10 @@ import {
   VISIBILITY_RUN_HANDLER,
   type VisibilityRunHandler,
 } from '../visibility/visibility-run.runner';
-import { AI_TASK_HANDLER, type AiTaskHandler } from '../writing/ai-task.runner';
+import { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
-import { WorkerRuntimeService } from '../worker/worker-runtime.service';
 
 export { VISIBILITY_RUN_ENQUEUER, VISIBILITY_RUN_HANDLER };
 
@@ -45,14 +41,6 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Inject(WorkDriver) private readonly driver: WorkDriver,
     @Inject(MaintenanceRunner) private readonly maintenance: MaintenanceRunner,
     @Inject(WorkerRuntimeService) private readonly runtime: WorkerRuntimeService,
-    @Optional() @Inject(KB_INDEX_HANDLER) private readonly kbIndexer?: KbIndexHandler,
-    @Optional() @Inject(AI_TASK_HANDLER) private readonly aiTaskRunner?: AiTaskHandler,
-    @Optional()
-    @Inject(REWRITE_BATCH_HANDLER)
-    private readonly rewriteBatchRunner?: RewriteBatchHandler,
-    @Optional()
-    @Inject(IMAGE_JOB_HANDLER)
-    private readonly imageJobRunner?: ImageJobHandler,
     @Optional()
     @Inject(VISIBILITY_RUN_HANDLER)
     private readonly visibilityRunner?: VisibilityRunHandler,
@@ -74,34 +62,6 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       const worker = new Worker(
         name,
         async (job) => {
-          if (name === 'kb-index' && job.name === 'kb-index') {
-            const kbData = readKbPayload(job.data);
-            if (kbData && this.kbIndexer) {
-              await this.kbIndexer.process(kbData);
-            }
-            return;
-          }
-          if (name === 'write-article' && job.name === 'ai-task') {
-            const taskData = readAiTaskPayload(job.data);
-            if (taskData && this.aiTaskRunner) {
-              await this.aiTaskRunner.process(taskData);
-            }
-            return;
-          }
-          if (name === 'rewrite-batch' && job.name === 'rewrite-batch') {
-            const batchData = readRewriteBatchPayload(job.data);
-            if (batchData && this.rewriteBatchRunner) {
-              await this.rewriteBatchRunner.process(batchData);
-            }
-            return;
-          }
-          if (name === 'image-gen' && job.name === 'image-gen') {
-            const imgData = readImageJobPayload(job.data);
-            if (imgData && this.imageJobRunner) {
-              await this.imageJobRunner.process(imgData);
-            }
-            return;
-          }
           if (name === 'visibility-check' && job.name === 'visibility-check') {
             const visData = readPayload(job.data);
             if (visData && this.visibilityRunner) {
@@ -217,46 +177,6 @@ function readPayload(data: unknown): { tenantId: string; runId: string } | null 
   if (!ID.test(tenantId) || !ID.test(runId)) return null;
   if (tenantId === 'system' || runId === 'system') return null;
   return { tenantId, runId };
-}
-
-function readKbPayload(data: unknown): { tenantId: string; kbId: string } | null {
-  if (!data || typeof data !== 'object') return null;
-  const tenantId = (data as { tenantId?: unknown }).tenantId;
-  const kbId = (data as { kbId?: unknown }).kbId;
-  if (typeof tenantId !== 'string' || typeof kbId !== 'string') return null;
-  if (!ID.test(tenantId) || !ID.test(kbId)) return null;
-  if (tenantId === 'system' || kbId === 'system') return null;
-  return { tenantId, kbId };
-}
-
-function readAiTaskPayload(data: unknown): { tenantId: string; taskId: string } | null {
-  if (!data || typeof data !== 'object') return null;
-  const tenantId = (data as { tenantId?: unknown }).tenantId;
-  const taskId = (data as { taskId?: unknown }).taskId;
-  if (typeof tenantId !== 'string' || typeof taskId !== 'string') return null;
-  if (!ID.test(tenantId) || !ID.test(taskId)) return null;
-  if (tenantId === 'system' || taskId === 'system') return null;
-  return { tenantId, taskId };
-}
-
-function readRewriteBatchPayload(data: unknown): { tenantId: string; batchId: string } | null {
-  if (!data || typeof data !== 'object') return null;
-  const tenantId = (data as { tenantId?: unknown }).tenantId;
-  const batchId = (data as { batchId?: unknown }).batchId;
-  if (typeof tenantId !== 'string' || typeof batchId !== 'string') return null;
-  if (!ID.test(tenantId) || !ID.test(batchId)) return null;
-  if (tenantId === 'system' || batchId === 'system') return null;
-  return { tenantId, batchId };
-}
-
-function readImageJobPayload(data: unknown): { tenantId: string; jobId: string } | null {
-  if (!data || typeof data !== 'object') return null;
-  const tenantId = (data as { tenantId?: unknown }).tenantId;
-  const jobId = (data as { jobId?: unknown }).jobId;
-  if (typeof tenantId !== 'string' || typeof jobId !== 'string') return null;
-  if (!ID.test(tenantId) || !ID.test(jobId)) return null;
-  if (tenantId === 'system' || jobId === 'system') return null;
-  return { tenantId, jobId };
 }
 
 function readKind(name: string, data: unknown): string {

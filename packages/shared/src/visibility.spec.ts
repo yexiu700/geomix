@@ -5,9 +5,12 @@ import { MODEL_INCLUSION_CARDS } from './account';
 import {
   CITATION_SOURCE_KINDS,
   DOMESTIC_VISIBILITY_ENGINE_KEYS,
+  GLOBAL_VISIBILITY_ENGINE_KEYS,
   VISIBILITY_COLLECTOR_KINDS,
   VISIBILITY_ENGINES,
   VISIBILITY_SENTIMENTS,
+  enginesForMarket,
+  isEngineAllowedForMarket,
   assessAnswerTopicRelevance,
   classifyCitationSource,
   computeAvgPosition,
@@ -63,14 +66,45 @@ describe('visibility engines and constants', () => {
     expect(isVisibilityEngine('google_aio')).toBe(true);
     expect(isVisibilityEngine('unknown_engine')).toBe(false);
     expect(VISIBILITY_SENTIMENTS).toEqual(['positive', 'neutral', 'mixed', 'negative']);
-    expect(CITATION_SOURCE_KINDS).toEqual(['OWNED', 'COMPETITOR', 'SOCIAL', 'AUTHORITY', 'OTHER']);
+    expect(CITATION_SOURCE_KINDS).toEqual([
+      'OWNED',
+      'COMPETITOR',
+      'SOCIAL',
+      'AUTHORITY',
+      'ECOMMERCE',
+      'OTHER',
+    ]);
+    expect(GLOBAL_VISIBILITY_ENGINE_KEYS).toEqual([
+      'chatgpt',
+      'perplexity',
+      'claude',
+      'gemini',
+      'google_aio',
+    ]);
+    expect(enginesForMarket('CN')).toHaveLength(8);
+    expect(enginesForMarket('GLOBAL')).toHaveLength(5);
+    expect(isEngineAllowedForMarket('deepseek', 'CN')).toBe(true);
+    expect(isEngineAllowedForMarket('deepseek', 'GLOBAL')).toBe(false);
+    expect(isEngineAllowedForMarket('perplexity', 'GLOBAL')).toBe(true);
+    expect(isEngineAllowedForMarket('perplexity', 'CN')).toBe(false);
     expect(VISIBILITY_COLLECTOR_KINDS).toEqual(['fake', 'llm_api', 'remote_scraper']);
     expect(isVisibilitySentiment('positive')).toBe(true);
     expect(isVisibilitySentiment('neutral_bad')).toBe(false);
     expect(isCitationSourceKind('OWNED')).toBe(true);
+    expect(isCitationSourceKind('ECOMMERCE')).toBe(true);
     expect(isCitationSourceKind('UNKNOWN')).toBe(false);
     expect(isVisibilityCollectorKind('fake')).toBe(true);
     expect(isVisibilityCollectorKind('invalid_driver')).toBe(false);
+    expect(classifyCitationSource('https://item.jd.com/1001.html')).toBe('ECOMMERCE');
+    expect(classifyCitationSource('https://www.amazon.com/dp/B001')).toBe('ECOMMERCE');
+    expect(classifyCitationSource('https://m.weibo.cn/status/123')).toBe('SOCIAL');
+    expect(classifyCitationSource('https://post.smzdm.com/p/123')).toBe('SOCIAL');
+    expect(
+      normalizeFanOutQueries(
+        ['NAS 推荐; 家庭私有云对比；四盘位 NAS 静音\nNAS 推荐'],
+        '家用 NAS 怎么选',
+      ),
+    ).toEqual(['NAS 推荐', '家庭私有云对比', '四盘位 NAS 静音']);
   });
 });
 
@@ -396,7 +430,7 @@ describe('visibility metrics, fan-out normalization, and audit recomputation', (
     });
   });
 
-  it('normalizes fan-out queries by collapsing whitespace, removing prompt duplicates, and deduping', () => {
+  it('normalizes fan-out queries by collapsing whitespace, stripping bullets/numbers, removing prompt duplicates, and deduping', () => {
     const normalized = normalizeFanOutQueries(
       [
         '  GEO优化工具哪家好  ',
@@ -411,6 +445,22 @@ describe('visibility metrics, fan-out normalization, and audit recomputation', (
     );
 
     expect(normalized).toEqual(['2026 企业级 GEO 监测平台对比', 'DeepSeek 品牌提及率提升方法']);
+
+    const bulleted = normalizeFanOutQueries(
+      [
+        'NAS 噪音实测; - NAS 噪音实测；• NAS 散热测试\n1. NAS 售后保修\r\n2、NAS 功耗对比\n- 家用 NAS 怎么选\n2.5G 网口 NAS',
+        '* nas 噪音实测',
+        '3) NAS 售后保修',
+      ],
+      '家用 NAS 怎么选',
+    );
+    expect(bulleted).toEqual([
+      'NAS 噪音实测',
+      'NAS 散热测试',
+      'NAS 售后保修',
+      'NAS 功耗对比',
+      '2.5G 网口 NAS',
+    ]);
   });
 
   it('recomputes run metrics deterministically from raw observations and citations', () => {

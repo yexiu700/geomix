@@ -89,8 +89,10 @@ describe.skipIf(
 
     servicePrisma = new PrismaService();
     for (const item of PRICING_DEFAULTS) {
-      await servicePrisma.base.pricingItem.create({
-        data: { action: item.action, unitPoints: item.unitPoints, enabled: true },
+      await servicePrisma.base.pricingItem.upsert({
+        where: { action: item.action },
+        update: { unitPoints: item.unitPoints, enabled: true },
+        create: { action: item.action, unitPoints: item.unitPoints, enabled: true },
       });
     }
 
@@ -160,8 +162,7 @@ describe.skipIf(
       orderBy: { action: 'asc' },
     });
     expect(logs.map((log) => [log.action, log.delta, log.listPrice])).toEqual([
-      ['ai_write', 0, 10],
-      ['kb_addon', 0, 5],
+      ['geo_write', 0, 10],
     ]);
     expect(logs.every((log) => log.title.endsWith('（免费期）'))).toBe(true);
     await expectQuota(tenantId, 1);
@@ -542,7 +543,7 @@ describe.skipIf(
     expect(wallet.points).toBe(opening - settled);
     expect(wallet.pointsReserved).toBe(0);
     const logs = await servicePrisma.base.pointLog.findMany({
-      where: { tenantId, action: 'ai_write', status: 'SETTLED' },
+      where: { tenantId, action: 'geo_write', status: 'SETTLED' },
     });
     expect(logs).toHaveLength(quotaUsed);
     expect(logs.reduce((sum, log) => sum + log.listPrice, 0)).toBe(settled);

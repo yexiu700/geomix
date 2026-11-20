@@ -126,8 +126,8 @@ export class MeService {
     if (!wallet) throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '钱包不存在');
     const [quotas, included, models, liveUsage] = await Promise.all([
       this.prisma.base.quota.findMany({ where: { tenantId } }),
-      this.prisma.base.question.count({
-        where: { tenantId, included: true },
+      this.prisma.base.visibilityObservation.count({
+        where: { tenantId, status: 'SUCCESS', brandMentioned: true },
       }),
       this.computeModelInclusions(tenantId),
       this.computeLiveQuotaUsage(tenantId),
@@ -174,12 +174,10 @@ export class MeService {
     tenantId: string,
   ): Promise<Partial<Record<QuotaKeyName, bigint>>> {
     const base = this.prisma.base as unknown as {
-      keyword?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
-      question?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
-      article?: {
-        count?: (args: { where: { tenantId: string; source: 'AI_TASK' } }) => Promise<number>;
-      };
-      mediaAsset?: {
+      brand?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
+      geoBrief?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
+      geoArticle?: { count?: (args: { where: { tenantId: string } }) => Promise<number> };
+      brandMediaAsset?: {
         aggregate?: (args: {
           where: { tenantId: string };
           _sum: { bytes: true };
@@ -187,27 +185,27 @@ export class MeService {
       };
     };
 
-    const [keywordCount, questionCount, aiWriteCount, storageAgg] = await Promise.all([
-      typeof base.keyword?.count === 'function'
-        ? base.keyword.count({ where: { tenantId } })
+    const [brandCount, briefCount, articleCount, storageAgg] = await Promise.all([
+      typeof base.brand?.count === 'function'
+        ? base.brand.count({ where: { tenantId } })
         : Promise.resolve(0),
-      typeof base.question?.count === 'function'
-        ? base.question.count({ where: { tenantId } })
+      typeof base.geoBrief?.count === 'function'
+        ? base.geoBrief.count({ where: { tenantId } })
         : Promise.resolve(0),
-      typeof base.article?.count === 'function'
-        ? base.article.count({ where: { tenantId, source: 'AI_TASK' } })
+      typeof base.geoArticle?.count === 'function'
+        ? base.geoArticle.count({ where: { tenantId } })
         : Promise.resolve(0),
-      typeof base.mediaAsset?.aggregate === 'function'
-        ? base.mediaAsset.aggregate({ where: { tenantId }, _sum: { bytes: true } })
+      typeof base.brandMediaAsset?.aggregate === 'function'
+        ? base.brandMediaAsset.aggregate({ where: { tenantId }, _sum: { bytes: true } })
         : Promise.resolve({ _sum: { bytes: 0 } }),
     ]);
 
     const rawBytes = storageAgg?._sum?.bytes ?? 0;
     const storageBytes = typeof rawBytes === 'bigint' ? rawBytes : BigInt(Math.max(0, rawBytes));
     return {
-      MAIN_KEYWORD: BigInt(Math.max(0, keywordCount)),
-      QUESTION: BigInt(Math.max(0, questionCount)),
-      AI_WRITE: BigInt(Math.max(0, aiWriteCount)),
+      MAIN_KEYWORD: BigInt(Math.max(0, brandCount)),
+      QUESTION: BigInt(Math.max(0, briefCount)),
+      AI_WRITE: BigInt(Math.max(0, articleCount)),
       STORAGE_BYTES: storageBytes,
     };
   }
@@ -225,8 +223,8 @@ export class MeService {
               brandMentioned: true;
               engine: { in: string[] };
             };
-            select: { engine: true; questionId: true; promptText: true };
-          }) => Promise<Array<{ engine: string; questionId: string | null; promptText: string }>>;
+            select: { engine: true; promptText: true };
+          }) => Promise<Array<{ engine: string; promptText: string }>>;
         };
       }
     ).visibilityObservation;
@@ -245,7 +243,6 @@ export class MeService {
       },
       select: {
         engine: true,
-        questionId: true,
         promptText: true,
       },
     });
@@ -253,15 +250,13 @@ export class MeService {
     const dedupedByEngine = new Map<string, Set<string>>();
     for (const row of rows) {
       const engineKey = row.engine.trim().toLowerCase();
-      const questionKey = row.questionId
-        ? `q:${row.questionId}`
-        : `p:${row.promptText.replace(/\s+/g, ' ').trim().toLowerCase()}`;
+      const promptKey = row.promptText.replace(/\s+/g, ' ').trim().toLowerCase();
       let set = dedupedByEngine.get(engineKey);
       if (!set) {
         set = new Set<string>();
         dedupedByEngine.set(engineKey, set);
       }
-      set.add(questionKey);
+      set.add(promptKey);
     }
 
     return MODEL_INCLUSION_CARDS.map((card) => ({

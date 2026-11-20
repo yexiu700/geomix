@@ -1,16 +1,30 @@
 'use client';
 
-import { SITE_NAME, replaceUxJargon } from '@geomix/shared';
+import {
+  SITE_NAME,
+  replaceUxJargon,
+  type CreateBrandInput,
+  type GeoMarket,
+  type UpsertBrandMarketInput,
+} from '@geomix/shared';
 import { Button } from 'antd';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   clearCachedAccount,
   patchCachedAccountUiPrefs,
   readCachedAccount,
   writeCachedAccount,
 } from '../../lib/account-cache';
-import { httpAnnouncements } from '../../lib/account-client';
+import { httpAnnouncements, httpWallet, type WalletSummary } from '../../lib/account-client';
 import {
   changePassword,
   loadAccount,
@@ -18,95 +32,79 @@ import {
   saveAccountUiPrefs,
   type AccountProfile,
 } from '../../lib/api';
-import { SHELL_ANNOUNCEMENT } from '../../lib/shell-copy';
+import { createBrand, enableBrandMarket } from '../../lib/brands';
 import { safeConsoleHref } from '../../lib/route-map';
-import { isConsoleRouteAccessible } from '../../lib/routes';
-import { useShellStore } from '../../lib/shell-store';
-import { clearSession, readAccessToken } from '../../lib/session';
 import {
-  SHELL_STORAGE_KEY,
-  initialSnapshot,
-  loadShell,
-  serializeShell,
-  tabFromHref,
-  type ShellAction,
-} from '../../lib/tab-stack';
+  HOME_ROUTE,
+  buildWorkspaceHref,
+  isConsoleRouteAccessible,
+  matchRoute,
+} from '../../lib/routes';
+import { clearSession, readAccessToken } from '../../lib/session';
+import { useTabFreshness } from '../../lib/tab-freshness';
+import { WORKSPACE_USER_KEY, parseGeoMarket, useWorkspaceStore } from '../../lib/workspace-store';
+import { ConsoleProvider } from './console-context';
 import { ShellFrame } from './shell-frame';
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
-const SHELL_USER_KEY = 'geomix.shell.user';
-
-const NAVIGATING = new Set([
-  'open',
-  'activate',
-  'close',
-  'close-others',
-  'close-right',
-  'close-all',
-  'navigate',
-  'back',
-]);
-
-export function ConsoleShell() {
+export function ConsoleShell({ children }: { children?: ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() || HOME_ROUTE;
   const searchParams = useSearchParams();
   const search = searchParams.toString();
   const href = search ? `${pathname}?${search}` : pathname;
   const hrefRef = useRef(href);
   hrefRef.current = href;
-  const state = useShellStore();
+
+  const workspace = useWorkspaceStore();
   const [account, setAccount] = useState<AccountProfile | null>(null);
   const accountRef = useRef<AccountProfile | null>(null);
   accountRef.current = account;
-  const [announcement, setAnnouncement] = useState(SHELL_ANNOUNCEMENT);
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [booting, setBooting] = useState(true);
-  const persistEnabled = useRef(true);
+  const [createBrandModalOpen, setCreateBrandModalOpen] = useState(false);
+  const [enableMarketModalTarget, setEnableMarketModalTarget] = useState<GeoMarket | null>(null);
+
   const localPrefsDirtyRef = useRef(false);
+  const walletSeqRef = useRef(0);
 
-  function applyLoadedAccount(nextAccount: AccountProfile, options?: { fromCache?: boolean }) {
-    const prevUserId = window.localStorage.getItem(SHELL_USER_KEY);
-    if (prevUserId && prevUserId !== nextAccount.id) {
-      window.localStorage.removeItem(SHELL_STORAGE_KEY);
-      useShellStore.setState({ ...initialSnapshot(), hydrated: true });
-    }
-    window.localStorage.setItem(SHELL_USER_KEY, nextAccount.id);
-
-    if (nextAccount.role !== 'ADMIN') {
-      const store = useShellStore.getState();
-      if (store.tabs.some((tab) => !isConsoleRouteAccessible(tab.href, nextAccount.role))) {
-        store.dispatch({ type: 'close', id: '/workbench/samples' });
+  const applyLoadedAccount = useCallback(
+    (nextAccount: AccountProfile, options?: { fromCache?: boolean }) => {
+      const prevUserId = window.localStorage.getItem(WORKSPACE_USER_KEY);
+      if (prevUserId && prevUserId !== nextAccount.id) {
+        useWorkspaceStore.getState().reset(window.localStorage);
+        useWorkspaceStore.getState().hydrate(window.location.search, window.localStorage);
       }
-    }
-    if (!options?.fromCache && !localPrefsDirtyRef.current && nextAccount.uiPrefs) {
-      useShellStore.getState().dispatch({ type: 'prefs', patch: nextAccount.uiPrefs });
-    }
-    accountRef.current = nextAccount;
-    setAccount(nextAccount);
-    setOffline(false);
-    setBooting(false);
-  }
+      window.localStorage.setItem(WORKSPACE_USER_KEY, nextAccount.id);
+
+      if (
+        !options?.fromCache &&
+        !localPrefsDirtyRef.current &&
+        typeof nextAccount.uiPrefs?.menuCollapsed === 'boolean'
+      ) {
+        useWorkspaceStore
+          .getState()
+          .setMenuCollapsed(nextAccount.uiPrefs.menuCollapsed, window.localStorage);
+      }
+      accountRef.current = nextAccount;
+      setAccount(nextAccount);
+      setOffline(false);
+      setBooting(false);
+    },
+    [],
+  );
 
   useIsomorphicLayoutEffect(() => {
-    const storage = window.localStorage;
-    const loaded = loadShell(storage);
-    useShellStore.getState().markHydrated(loaded);
+    useWorkspaceStore.getState().hydrate(window.location.search, window.localStorage);
     const cached = readCachedAccount(window.sessionStorage);
     if (cached) {
       applyLoadedAccount(cached, { fromCache: true });
     }
-    let last = serializeShell(useShellStore.getState());
-    const unsub = useShellStore.subscribe((next) => {
-      if (!persistEnabled.current || !next.hydrated) return;
-      const serialized = serializeShell(next);
-      if (serialized === last) return;
-      last = serialized;
-      storage.setItem(SHELL_STORAGE_KEY, serialized);
-    });
-    return unsub;
-  }, []);
+  }, [applyLoadedAccount]);
 
   useEffect(() => {
     let live = true;
@@ -127,7 +125,7 @@ export function ConsoleShell() {
       clearCachedAccount();
       const hadToken = readAccessToken(window.sessionStorage) !== null;
       if (hadToken || result.status === 'disabled') clearSession(window.sessionStorage);
-      const next = safeConsoleHref(hrefRef.current) ?? '/dashboard';
+      const next = safeConsoleHref(hrefRef.current) ?? HOME_ROUTE;
       const notice = result.status === 'disabled' ? 'disabled' : hadToken ? 'session' : '';
       const query = new URLSearchParams({ next });
       if (notice) query.set('notice', notice);
@@ -136,52 +134,84 @@ export function ConsoleShell() {
     return () => {
       live = false;
     };
-  }, [router]);
+  }, [applyLoadedAccount, router]);
+
+  const refreshWallet = useCallback(async () => {
+    const seq = ++walletSeqRef.current;
+    try {
+      const next = await httpWallet(window.sessionStorage);
+      if (seq !== walletSeqRef.current) return;
+      setWallet(next);
+    } catch {
+      // Keep previous wallet or null on transient error without flashing fake 0
+    } finally {
+      if (seq === walletSeqRef.current) {
+        setWalletLoading(false);
+      }
+    }
+  }, []);
 
   const accountId = account?.id ?? null;
+
   useEffect(() => {
     if (!accountId) return;
+    const params = new URLSearchParams(window.location.search);
+    const urlBrandId = params.get('brandId')?.trim() || undefined;
+    const urlMarket = parseGeoMarket(params.get('market')) ?? undefined;
+
+    void useWorkspaceStore.getState().loadBrands({
+      storage: window.sessionStorage,
+      persistStorage: window.localStorage,
+      preferredBrandId: urlBrandId,
+      preferredMarket: urlMarket,
+    });
+
+    setWalletLoading(true);
+    void refreshWallet();
+
     let live = true;
     void httpAnnouncements(window.sessionStorage).then(
       (items) => {
-        if (!live || items.length === 0) return;
-        setAnnouncement(items.map(replaceUxJargon).join('    '));
+        if (!live) return;
+        if (items.length === 0) {
+          setAnnouncement(null);
+          return;
+        }
+        setAnnouncement(items.map(replaceUxJargon).join('  ·  '));
       },
       () => undefined,
     );
+
     return () => {
       live = false;
     };
-  }, [accountId]);
+  }, [accountId, refreshWallet]);
 
-  const accountReady = account !== null;
+  useTabFreshness({
+    active: Boolean(accountId),
+    domains: ['points'],
+    refreshOnActivate: false,
+    onRefresh: () => {
+      void refreshWallet();
+    },
+  });
+
   useEffect(() => {
-    const activeAccount = accountRef.current;
-    if (!state.hydrated || !accountReady || !activeAccount) return;
-    const match = tabFromHref(href);
-    if (!match || !isConsoleRouteAccessible(match.href, activeAccount.role)) return;
-    if (match.href !== href) router.replace(match.href);
-    if (useShellStore.getState().activeId === match.href) return;
-    useShellStore.getState().dispatch({ type: 'open', href: match.href });
-  }, [accountReady, href, router, state.hydrated]);
+    if (!workspace.hydrated) return;
+    useWorkspaceStore.getState().syncFromUrl(search, window.localStorage);
+  }, [search, workspace.hydrated]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onPopState = () => {
-      const activeAccount = accountRef.current;
-      if (!useShellStore.getState().hydrated || !activeAccount) return;
-      const browserHref = `${window.location.pathname}${window.location.search}`;
-      const match = tabFromHref(browserHref);
-      if (!match || !isConsoleRouteAccessible(match.href, activeAccount.role)) return;
-      if (useShellStore.getState().activeId === match.href) return;
-      useShellStore.getState().dispatch({ type: 'open', href: match.href });
+      useWorkspaceStore.getState().syncFromUrl(window.location.search, window.localStorage);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const activeTab = state.tabs.find((tab) => tab.id === state.activeId);
-  const expectedTitle = activeTab ? `${activeTab.title} · ${SITE_NAME}` : null;
+  const routeMatch = matchRoute(href);
+  const expectedTitle = routeMatch ? `${routeMatch.title} · ${SITE_NAME}` : null;
 
   useEffect(() => {
     if (!expectedTitle || typeof document === 'undefined') return undefined;
@@ -199,50 +229,77 @@ export function ConsoleShell() {
     return () => observer.disconnect();
   }, [expectedTitle, href]);
 
-  function onDispatch(action: ShellAction) {
-    useShellStore.getState().dispatch(action);
-    if (action.type === 'prefs') {
-      localPrefsDirtyRef.current = true;
-      const nextPrefs = useShellStore.getState().prefs;
-      patchCachedAccountUiPrefs(window.sessionStorage, nextPrefs);
-      void saveAccountUiPrefs(window.sessionStorage, nextPrefs);
-    }
-    if (!NAVIGATING.has(action.type)) return;
-    const next = useShellStore.getState();
-    const active = next.tabs.find((tab) => tab.id === next.activeId);
-    if (!active) return;
-    if (typeof window !== 'undefined') {
-      const currentHref = `${window.location.pathname}${window.location.search}`;
-      if (active.href !== currentHref) {
-        if (action.type === 'navigate') {
-          window.history.replaceState(null, '', active.href);
-        } else {
-          window.history.pushState(null, '', active.href);
-        }
+  const navigateWorkspace = useCallback(
+    (targetHref: string) => {
+      if (targetHref.startsWith('/admin')) {
+        router.push(targetHref);
+        return;
       }
-      return;
-    }
-    if (active.href !== hrefRef.current) router.push(active.href);
-  }
+      const { activeBrandId, activeMarket } = useWorkspaceStore.getState();
+      const nextHref = buildWorkspaceHref(targetHref, activeBrandId, activeMarket);
+      router.push(nextHref);
+    },
+    [router],
+  );
 
-  function onToggleMenu() {
-    const nextCollapsed = !useShellStore.getState().prefs.menuCollapsed;
-    onDispatch({
-      type: 'prefs',
-      patch: { menuCollapsed: nextCollapsed },
+  const handleToggleMenu = useCallback(() => {
+    const nextCollapsed = !useWorkspaceStore.getState().menuCollapsed;
+    localPrefsDirtyRef.current = true;
+    useWorkspaceStore.getState().setMenuCollapsed(nextCollapsed, window.localStorage);
+    patchCachedAccountUiPrefs(window.sessionStorage, { menuCollapsed: nextCollapsed });
+    void saveAccountUiPrefs(window.sessionStorage, { menuCollapsed: nextCollapsed });
+  }, []);
+
+  const handleCreateBrand = useCallback(async (input: CreateBrandInput) => {
+    const created = await createBrand(input, { storage: window.sessionStorage });
+    useWorkspaceStore.getState().upsertBrand(created, {
+      activate: true,
+      persistStorage: window.localStorage,
     });
-  }
+    return created;
+  }, []);
 
-  async function onLogout() {
-    persistEnabled.current = false;
+  const handleEnableMarket = useCallback(
+    async (brandId: string, market: GeoMarket, input: UpsertBrandMarketInput) => {
+      const updated = await enableBrandMarket(brandId, market, input, {
+        storage: window.sessionStorage,
+      });
+      useWorkspaceStore.getState().upsertBrand(updated, {
+        activate: true,
+        market,
+        persistStorage: window.localStorage,
+      });
+      return updated;
+    },
+    [],
+  );
+
+  const handleLogout = useCallback(async () => {
     clearCachedAccount();
-    window.localStorage.removeItem(SHELL_STORAGE_KEY);
-    window.localStorage.removeItem('geomix.shell.v1');
-    window.localStorage.removeItem(SHELL_USER_KEY);
-    useShellStore.setState({ ...initialSnapshot(), hydrated: true });
+    walletSeqRef.current += 1;
+    setWallet(null);
+    setWalletLoading(true);
+    useWorkspaceStore.getState().reset(window.localStorage);
     await logoutSession(window.sessionStorage);
     router.replace('/login');
-  }
+  }, [router]);
+
+  const contextValue = useMemo(
+    () =>
+      account
+        ? {
+            account,
+            readOnly: account.tenant.readOnly,
+            wallet,
+            walletLoading,
+            openCreateBrandModal: () => setCreateBrandModalOpen(true),
+            openEnableMarketModal: (market: GeoMarket) => setEnableMarketModalTarget(market),
+            refreshWallet,
+            navigateWorkspace,
+          }
+        : null,
+    [account, navigateWorkspace, refreshWallet, wallet, walletLoading],
+  );
 
   if (offline) {
     return (
@@ -272,15 +329,15 @@ export function ConsoleShell() {
     );
   }
 
-  if (booting || !account || !state.hydrated) {
+  if (booting || !account || !workspace.hydrated || !contextValue) {
     return <main className="gm-boot">正在确认登录</main>;
   }
 
-  if (!tabFromHref(href) || !isConsoleRouteAccessible(href, account.role)) {
+  if (!isConsoleRouteAccessible(href)) {
     return (
       <main className="gm-boot">
         <p>没有这个页面</p>
-        <Button type="primary" onClick={() => router.push('/dashboard')}>
+        <Button type="primary" onClick={() => router.push(HOME_ROUTE)}>
           回首页
         </Button>
       </main>
@@ -288,17 +345,44 @@ export function ConsoleShell() {
   }
 
   return (
-    <ShellFrame
-      account={account}
-      state={state}
-      announcement={announcement}
-      onDispatch={onDispatch}
-      onToggleMenu={onToggleMenu}
-      onLogout={() => void onLogout()}
-      onChangePassword={async (values) => {
-        const result = await changePassword(window.sessionStorage, values);
-        return result.ok ? null : result.message;
-      }}
-    />
+    <ConsoleProvider value={contextValue}>
+      <ShellFrame
+        account={account}
+        activePath={pathname}
+        brands={workspace.brands}
+        brandsLoading={workspace.brandsLoading}
+        brandsLoaded={workspace.brandsLoaded}
+        brandsError={workspace.brandsError}
+        activeBrandId={workspace.activeBrandId}
+        activeMarket={workspace.activeMarket}
+        menuCollapsed={workspace.menuCollapsed}
+        wallet={wallet}
+        walletLoading={walletLoading}
+        announcement={announcement}
+        createBrandModalOpen={createBrandModalOpen}
+        enableMarketModalTarget={enableMarketModalTarget}
+        onOpenCreateBrandModal={() => setCreateBrandModalOpen(true)}
+        onCloseCreateBrandModal={() => setCreateBrandModalOpen(false)}
+        onOpenEnableMarketModal={(market) => setEnableMarketModalTarget(market)}
+        onCloseEnableMarketModal={() => setEnableMarketModalTarget(null)}
+        onNavigate={navigateWorkspace}
+        onSelectBrand={(brandId) =>
+          useWorkspaceStore.getState().setActiveBrand(brandId, undefined, window.localStorage)
+        }
+        onSelectMarket={(market) =>
+          useWorkspaceStore.getState().setActiveMarket(market, window.localStorage)
+        }
+        onCreateBrand={handleCreateBrand}
+        onEnableMarket={handleEnableMarket}
+        onToggleMenu={handleToggleMenu}
+        onLogout={() => void handleLogout()}
+        onChangePassword={async (values) => {
+          const result = await changePassword(window.sessionStorage, values);
+          return result.ok ? null : result.message;
+        }}
+      >
+        {children}
+      </ShellFrame>
+    </ConsoleProvider>
   );
 }

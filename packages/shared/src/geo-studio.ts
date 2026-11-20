@@ -1,0 +1,660 @@
+import { z } from 'zod';
+import { FAKE_MARK } from './adapters';
+import { GEO_MARKETS, type GeoMarket } from './brands';
+import type { TaskStatusName } from './task-status';
+
+/**
+ * GeoMix 2.0 GEO 靶向写作台契约（Issue #326 / #331）。
+ * 定义 4 大 GEO 配方、双市场目标阵地形态、SSE 流式写作协议、行内改写、2–20 篇批量队列、
+ * 高级偏好，以及从 writing-tasks.ts 抽取复用的 Markdown→HTML 与正文后处理纯函数。
+ */
+
+export const GEO_RECIPES = [
+  'AUTHORITY_GUIDE',
+  'COMPARISON_MATRIX',
+  'OBJECTION_FAQ',
+  'CITATION_COUNTER',
+] as const;
+export type GeoRecipe = (typeof GEO_RECIPES)[number];
+
+export const GEO_RECIPE_LABELS: Record<GeoRecipe, string> = {
+  AUTHORITY_GUIDE: '权威选购指南',
+  COMPARISON_MATRIX: '竞品公平对照评测',
+  OBJECTION_FAQ: '痛点澄清与实测答疑',
+  CITATION_COUNTER: '高引用信源超越稿',
+};
+
+export const GEO_TARGET_FORMATS = [
+  'CN_DEEP_REVIEW',
+  'CN_COMMUNITY_QA',
+  'GLOBAL_AUTHORITY_GUIDE',
+  'GLOBAL_COMMUNITY_DISCUSSION',
+] as const;
+export type GeoTargetFormat = (typeof GEO_TARGET_FORMATS)[number];
+
+export const GEO_TARGET_FORMAT_LABELS: Record<GeoTargetFormat, string> = {
+  CN_DEEP_REVIEW: '深度评测长文（头条/公众号/值得买）',
+  CN_COMMUNITY_QA: '社区问答实测版（知乎/小红书）',
+  GLOBAL_AUTHORITY_GUIDE: '独立站权威长文（含 Schema）',
+  GLOBAL_COMMUNITY_DISCUSSION: '社区客观讨论版（Reddit/Quora 反硬广口吻）',
+};
+
+export function targetFormatsForMarket(market: GeoMarket): readonly GeoTargetFormat[] {
+  return market === 'GLOBAL'
+    ? (['GLOBAL_AUTHORITY_GUIDE', 'GLOBAL_COMMUNITY_DISCUSSION'] as const)
+    : (['CN_DEEP_REVIEW', 'CN_COMMUNITY_QA'] as const);
+}
+
+export function defaultTargetFormatForMarket(market: GeoMarket): GeoTargetFormat {
+  return market === 'GLOBAL' ? 'GLOBAL_AUTHORITY_GUIDE' : 'CN_DEEP_REVIEW';
+}
+
+export const GEO_ARTICLE_STATUSES = ['DRAFT', 'READY', 'PUBLISHED'] as const;
+export type GeoArticleStatus = (typeof GEO_ARTICLE_STATUSES)[number];
+
+export const GEO_ARTICLE_STATUS_LABELS: Record<GeoArticleStatus, string> = {
+  DRAFT: '草稿',
+  READY: '可发布',
+  PUBLISHED: '已发布',
+};
+
+export const GEO_REWRITE_ACTIONS = ['DE_AD', 'TO_TABLE', 'ADD_EVIDENCE', 'CONCISE_ANSWER'] as const;
+export type GeoRewriteAction = (typeof GEO_REWRITE_ACTIONS)[number];
+
+export const GEO_REWRITE_ACTION_LABELS: Record<GeoRewriteAction, string> = {
+  DE_AD: '更客观去广告味',
+  TO_TABLE: '转为对比表格',
+  ADD_EVIDENCE: '补充数据论据',
+  CONCISE_ANSWER: '精简直答',
+};
+
+export const GEO_BATCH_MIN = 2 as const;
+export const GEO_BATCH_MAX = 20 as const;
+export const GEO_WRITE_DEFAULT_UNIT_POINTS = 10 as const;
+export const GEO_TITLE_MIN = 10 as const;
+export const GEO_TITLE_MAX = 60 as const;
+
+export type PromptAssemblyMessage = {
+  role: 'system' | 'user';
+  content: string;
+};
+
+// ==================== 标题清洗与 Markdown→HTML 后处理（从 writing-tasks.ts 抽取） ====================
+
+const KB_PROMPT_WRAPPER_LINE_PATTERNS = [
+  /^【企业背景资料】\s*$/,
+  /^【资料片段\s*\d+】\s*$/,
+  /^只能使用以下事实，不得编造参数、资质或案例[:：]?\s*$/,
+  /^——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*$/,
+  /^——\s*本篇写作参数\s*——\s*$/,
+  /^——\s*输出要求\s*——\s*$/,
+  /^企业主体[:：]\s*.*$/,
+];
+
+const KB_OPEN_TO_CLOSE: Record<string, string> = {
+  '(': ')',
+  '（': '）',
+  '【': '】',
+  '「': '」',
+  '《': '》',
+};
+const KB_CLOSE_SET = new Set(Object.values(KB_OPEN_TO_CLOSE));
+
+const TITLE_COMPOUND_WORDS = new Set([
+  '指南',
+  '攻略',
+  '解析',
+  '解读',
+  '评测',
+  '测评',
+  '对比',
+  '建议',
+  '方案',
+  '要点',
+  '清单',
+  '步骤',
+  '方法',
+  '技巧',
+  '标准',
+  '边界',
+  '事项',
+  '实操',
+  '避坑',
+  '选型',
+  '选购',
+  '科普',
+  '介绍',
+  '说明',
+  '推荐',
+  '总结',
+  '手册',
+  '教程',
+  '分析',
+  '策略',
+  '维度',
+  '区别',
+  '优势',
+  '原理',
+  '参数',
+  '配置',
+  '表现',
+  '体验',
+  '场景',
+  '品牌',
+  '产品',
+  '服务',
+  '支持',
+  '快充',
+  '充电',
+  '实用',
+  '问题',
+  '注意',
+  '常见',
+  '核心',
+  '评估',
+  '参考',
+  '方式',
+  '选择',
+  '使用',
+  '落地',
+  '执行',
+  '核对',
+  '梳理',
+]);
+
+function isAsciiWordChar(ch: string | undefined): boolean {
+  return Boolean(ch && /[A-Za-z0-9]/.test(ch));
+}
+
+function isPartOfAsciiToken(chars: readonly string[], index: number): boolean {
+  const ch = chars[index];
+  if (!ch) return false;
+  if (isAsciiWordChar(ch)) return true;
+  if (ch === '.' || ch === '_' || ch === '-') {
+    return isAsciiWordChar(chars[index - 1]) && isAsciiWordChar(chars[index + 1]);
+  }
+  return false;
+}
+
+export function trimTitleAtCleanBoundary(
+  raw: string,
+  maxLen: number = GEO_TITLE_MAX,
+  minLen: number = GEO_TITLE_MIN,
+): string {
+  const trimmed = raw.trim();
+  const chars = Array.from(trimmed);
+  if (chars.length <= maxLen) {
+    return trimmed;
+  }
+
+  const minBreak = Math.max(4, Math.min(minLen, Math.floor(maxLen * 0.55)));
+  let end = maxLen;
+
+  if (isPartOfAsciiToken(chars, end - 1) && isPartOfAsciiToken(chars, end)) {
+    let backed = end;
+    while (backed > minBreak && isPartOfAsciiToken(chars, backed - 1)) {
+      backed -= 1;
+    }
+    if (backed >= minBreak && (backed === 0 || !isPartOfAsciiToken(chars, backed - 1))) {
+      end = backed;
+    }
+  }
+
+  const punctMinBreak = Math.max(minBreak, Math.floor(maxLen * 0.55));
+  for (let i = Math.min(end, chars.length); i >= punctMinBreak; i -= 1) {
+    const ch = chars[i - 1];
+    if (!ch) continue;
+    if (/[。！？]/.test(ch)) {
+      end = i;
+      break;
+    }
+    if (/[；;：:，,、|｜—]/.test(ch) && !isPartOfAsciiToken(chars, i - 1)) {
+      end = i - 1;
+      break;
+    }
+  }
+
+  while (end > minBreak && end < chars.length) {
+    const prev = chars[end - 1] ?? '';
+    const next = chars[end] ?? '';
+    if (TITLE_COMPOUND_WORDS.has(`${prev}${next}`)) {
+      end -= 1;
+      continue;
+    }
+    const fourCharWindow = chars
+      .slice(Math.max(0, end - 3), Math.min(chars.length, end + 3))
+      .join('');
+    if (
+      (prev === '注' && next === '意') ||
+      (fourCharWindow.includes('注意事项') &&
+        ((chars[end - 2] === '注' && prev === '意' && next === '事') ||
+          (prev === '事' && next === '项')))
+    ) {
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+
+  const openIdx: number[] = [];
+  for (let i = 0; i < end; i += 1) {
+    const ch = chars[i]!;
+    if (KB_OPEN_TO_CLOSE[ch]) {
+      openIdx.push(i);
+    } else if (KB_CLOSE_SET.has(ch) && openIdx.length > 0) {
+      openIdx.pop();
+    }
+  }
+  if (openIdx.length > 0 && openIdx[0]! >= 4) {
+    end = openIdx[0]!;
+  }
+
+  const candidate = chars
+    .slice(0, end)
+    .join('')
+    .replace(/[，,、：:；;—\-\s的与和及并或]+$/u, '')
+    .trim();
+
+  if (candidate.length > 0) {
+    return candidate;
+  }
+  return chars.slice(0, maxLen).join('').trim();
+}
+
+/** 清理模型产出的单行标题：去引号/书名号/换行，在完整词组或标点边界处收敛至 minLen..maxLen。 */
+export function cleanTitleText(
+  raw: string,
+  fallbackQuestion: string,
+  minLen: number = GEO_TITLE_MIN,
+  maxLen: number = GEO_TITLE_MAX,
+): string {
+  const firstLine =
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? '';
+  let cleaned = firstLine
+    .replace(/^#+\s*/, '')
+    .replace(/^(标题\s*[:：]\s*)/i, '')
+    .replace(/["'“”‘’《》〈〉【】「」『』`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (Array.from(cleaned).length > maxLen) {
+    cleaned = trimTitleAtCleanBoundary(cleaned, maxLen, minLen);
+  }
+  if (Array.from(cleaned).length === 0) {
+    const fb = fallbackQuestion.replace(/["'“”‘’《》【】]/g, '').trim();
+    return trimTitleAtCleanBoundary(fb, maxLen, minLen);
+  }
+  if (Array.from(cleaned).length < Math.min(6, minLen)) {
+    const fb = fallbackQuestion.replace(/["'“”‘’《》【】]/g, '').trim();
+    if (fb.length > cleaned.length) {
+      return trimTitleAtCleanBoundary(fb, maxLen, minLen);
+    }
+  }
+  return cleaned;
+}
+
+const PLEASANTRY_LINE =
+  /^(好的|当然|没问题|收到|以下为您|以下是|下面为您|为您整理|这是一篇|根据您的要求)[^\n]*\n+/u;
+const LEADING_H1 = /^#\s+[^\n]+\n+/u;
+const MOBILE_PATTERN = /(?<!\d)1[3-9]\d{9}(?!\d)/g;
+const LANDLINE_PATTERN = /(?<!\d)0\d{2,3}-\d{7,8}(?!\d)/g;
+const WECHAT_PATTERN = /(?:微信号?|WeChat|wechat|VX|vx)\s*[:：]?\s*[A-Za-z][A-Za-z0-9_-]{4,23}/g;
+const URL_PATTERN = /https?:\/\/[^\s)>"'】）]+/gi;
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderInlineMarkdown(line: string): string {
+  const escaped = escapeHtml(line);
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+}
+
+/**
+ * 将清洗后的 Markdown 转为严格白名单 HTML（仅输出 h2 / h3 / p / ul / ol / li / blockquote / strong / em）。
+ */
+export function markdownToSanitizedHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const blocks: string[] = [];
+  let paragraphBuf: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraphBuf.length === 0) return;
+    blocks.push(`<p>${paragraphBuf.map(renderInlineMarkdown).join('<br>')}</p>`);
+    paragraphBuf = [];
+  };
+
+  const flushList = () => {
+    if (!listType || listItems.length === 0) {
+      listType = null;
+      listItems = [];
+      return;
+    }
+    blocks.push(
+      `<${listType}>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${listType}>`,
+    );
+    listType = null;
+    listItems = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const h3 = /^###+\s+(.+)$/.exec(line);
+    if (h3) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<h3>${renderInlineMarkdown(h3[1]!.trim())}</h3>`);
+      continue;
+    }
+    const h2 = /^##\s+(.+)$/.exec(line);
+    if (h2) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<h2>${renderInlineMarkdown(h2[1]!.trim())}</h2>`);
+      continue;
+    }
+    const h1 = /^#\s+(.+)$/.exec(line);
+    if (h1) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<h2>${renderInlineMarkdown(h1[1]!.trim())}</h2>`);
+      continue;
+    }
+    const ul = /^[-*•]\s+(.+)$/.exec(line);
+    if (ul) {
+      flushParagraph();
+      if (listType && listType !== 'ul') flushList();
+      listType = 'ul';
+      listItems.push(ul[1]!.trim());
+      continue;
+    }
+    const ol = /^\d+[.、)]\s+(.+)$/.exec(line);
+    if (ol) {
+      flushParagraph();
+      if (listType && listType !== 'ol') flushList();
+      listType = 'ol';
+      listItems.push(ol[1]!.trim());
+      continue;
+    }
+    const quote = /^>\s*(.+)$/.exec(line);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<blockquote><p>${renderInlineMarkdown(quote[1]!.trim())}</p></blockquote>`);
+      continue;
+    }
+    flushList();
+    paragraphBuf.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+  return blocks.join('\n');
+}
+
+export function stripHtmlToText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|h2|h3|li|blockquote|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * 正文后处理：去开头客套话与重复一级标题、去手机号/固话/微信号/外部网址、补齐二级标题与 FAQ、转白名单 HTML。
+ */
+export function postProcessArticleMarkdown(
+  rawMarkdown: string,
+  context?: { question?: string; mainKeyword?: string; brand?: string },
+): {
+  cleanedMarkdown: string;
+  contentHtml: string;
+  contentText: string;
+  charCount: number;
+} {
+  let md = rawMarkdown.replace(/\r\n/g, '\n').trim();
+  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i.exec(md);
+  if (fenced) {
+    md = fenced[1]!.trim();
+  }
+  for (let i = 0; i < 3; i += 1) {
+    const next = md.replace(PLEASANTRY_LINE, '').replace(LEADING_H1, '').trim();
+    if (next === md) break;
+    md = next;
+  }
+
+  md = md
+    .split('\n')
+    .filter((line) => !KB_PROMPT_WRAPPER_LINE_PATTERNS.some((re) => re.test(line.trim())))
+    .join('\n')
+    .replaceAll(FAKE_MARK, '')
+    .replace(/只能使用以下事实，不得编造参数、资质或案例[:：]?\s*/g, '')
+    .replace(/——\s*企业事实（只能使用以下内容，不得超范围编造）\s*——\s*/g, '')
+    .replace(/([（(][^（）()\n]{1,40}[）)])(?:\s*\1)+/g, '$1')
+    .replace(URL_PATTERN, '')
+    .replace(WECHAT_PATTERN, '')
+    .replace(MOBILE_PATTERN, '')
+    .replace(LANDLINE_PATTERN, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (!/^##\s+/m.test(md)) {
+    const heading = context?.mainKeyword
+      ? `## ${context.mainKeyword}核心要点解析`
+      : '## 核心要点解析';
+    md = `${heading}\n\n${md}`;
+  }
+
+  if (!/FAQ|常见问题/i.test(md)) {
+    const q = context?.question?.trim() || '实际选购与使用时应重点关注哪些指标？';
+    const kw = context?.mainKeyword?.trim() || '当前方案';
+    const brandNote = context?.brand?.trim()
+      ? `可优先对照「${context.brand.trim()}」在文中所列核心材质、工艺参数与真实使用场景体验，结合预算与日常使用频率做取舍。`
+      : `建议优先核对「${kw}」的核心参数、实际适配场景与长期维护成本，避免只看单一指标做决定。`;
+    md = `${md}\n\n## 常见问题（FAQ）\n**问：${q}**\n答：${brandNote}`;
+  }
+
+  const contentHtml = markdownToSanitizedHtml(md);
+  const contentText = stripHtmlToText(contentHtml);
+  return {
+    cleanedMarkdown: md,
+    contentHtml,
+    contentText,
+    charCount: Array.from(contentText.replace(/\s+/g, '')).length,
+  };
+}
+
+// ==================== Zod Schemas & DTOs ====================
+
+export const geoOutlineHeadingSchema = z.object({
+  heading: z.string().trim().min(1, '请填写小节标题').max(160),
+  intent: z.string().trim().max(300).default(''),
+  fanOutRef: z.string().trim().max(200).optional(),
+});
+
+export type GeoOutlineHeading = z.infer<typeof geoOutlineHeadingSchema>;
+
+export const geoArticleStreamSchema = z
+  .object({
+    market: z.enum(GEO_MARKETS),
+    briefId: z.string().trim().min(1).max(64).optional(),
+    recipe: z.enum(GEO_RECIPES),
+    targetFormat: z.enum(GEO_TARGET_FORMATS).optional(),
+    targetPrompt: z.string().trim().min(2, '目标问题至少 2 字').max(300),
+    title: z.string().trim().min(1).max(120).optional(),
+    outlineH2: z.array(geoOutlineHeadingSchema).max(15).optional(),
+    targetFanOuts: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+    sourceCitationUrl: z.string().trim().url().max(2048).optional(),
+    pastedReferenceText: z.string().trim().max(50_000).optional(),
+    wordCountTarget: z.number().int().min(600).max(4000).optional(),
+    customToneNote: z.string().trim().max(500).optional(),
+  })
+  .refine(
+    (val) => !val.targetFormat || targetFormatsForMarket(val.market).includes(val.targetFormat),
+    {
+      message: '目标阵地形态与所选市场不匹配',
+      path: ['targetFormat'],
+    },
+  );
+
+export type GeoArticleStreamInput = z.input<typeof geoArticleStreamSchema>;
+
+export const geoArticleUpdateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    contentMarkdown: z.string().max(100_000).optional(),
+    contentHtml: z.string().max(150_000).optional(),
+    tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+    status: z.enum(GEO_ARTICLE_STATUSES).optional(),
+  })
+  .refine((val) => Object.keys(val).length > 0, '至少修改一项文章内容');
+
+export type GeoArticleUpdateInput = z.infer<typeof geoArticleUpdateSchema>;
+
+export const geoRewriteSectionSchema = z.object({
+  selectedText: z.string().trim().min(1, '请先选中需要改写的段落').max(4000),
+  action: z.enum(GEO_REWRITE_ACTIONS),
+  instruction: z.string().trim().max(300).optional(),
+  surroundingContext: z.string().trim().max(2000).optional(),
+});
+
+export type GeoRewriteSectionInput = z.infer<typeof geoRewriteSectionSchema>;
+
+export const geoBatchCreateSchema = z
+  .object({
+    market: z.enum(GEO_MARKETS),
+    briefIds: z
+      .array(z.string().trim().min(1).max(64))
+      .min(GEO_BATCH_MIN, `批量生成至少勾选 ${GEO_BATCH_MIN} 条意见卡`)
+      .max(GEO_BATCH_MAX, `单次批量生成最多 ${GEO_BATCH_MAX} 篇`)
+      .refine((ids) => new Set(ids).size === ids.length, '批量生成的意见卡不能重复'),
+    recipe: z.enum(GEO_RECIPES).optional(),
+    targetFormat: z.enum(GEO_TARGET_FORMATS).optional(),
+  })
+  .refine(
+    (val) => !val.targetFormat || targetFormatsForMarket(val.market).includes(val.targetFormat),
+    {
+      message: '目标阵地形态与所选市场不匹配',
+      path: ['targetFormat'],
+    },
+  );
+
+export type GeoBatchCreateInput = z.infer<typeof geoBatchCreateSchema>;
+
+export const promptPreferenceSchema = z.object({
+  customToneNote: z.string().trim().max(1000).nullable().optional(),
+  customForbiddenWords: z.array(z.string().trim().min(1).max(60)).max(100).optional(),
+  recipeOverrides: z.record(z.string(), z.string().max(2000)).nullable().optional(),
+});
+
+export type PromptPreferenceInput = z.infer<typeof promptPreferenceSchema>;
+
+export type GeoArticleRecord = {
+  id: string;
+  brandId: string;
+  brandMarketId: string;
+  market: GeoMarket;
+  briefId: string | null;
+  batchJobId: string | null;
+  recipe: GeoRecipe;
+  targetFormat: GeoTargetFormat;
+  title: string;
+  targetPrompt: string;
+  outlineJson: GeoOutlineHeading[];
+  contentMarkdown: string;
+  contentHtml: string;
+  schemaJsonLd: Record<string, unknown>;
+  llmsTxtSnippet: string | null;
+  geoScore: number;
+  geoScoreDetail: Record<string, unknown>;
+  tags: string[];
+  status: GeoArticleStatus;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  complianceFlags: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type GeoArticleListResponse = {
+  items: GeoArticleRecord[];
+  total: number;
+};
+
+export type GeoBatchJobRecord = {
+  id: string;
+  brandId: string;
+  brandMarketId: string;
+  market: GeoMarket;
+  briefIds: string[];
+  total: number;
+  doneCount: number;
+  failCount: number;
+  unitPrice: number;
+  reservationId: string | null;
+  status: TaskStatusName;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
+
+export type PromptPreferenceRecord = {
+  customToneNote: string | null;
+  customForbiddenWords: string[];
+  recipeOverrides: Record<string, string> | null;
+  updatedAt: string | null;
+};
+
+export type GeoStreamMetaEvent = {
+  reservationId: string;
+  unitPrice: number;
+  billingMode: 'SHADOW' | 'STRICT';
+  market: GeoMarket;
+  recipe: GeoRecipe;
+  targetFormat: GeoTargetFormat;
+  matchedFactIds: string[];
+};
+
+export type GeoStreamDeltaEvent = {
+  text: string;
+};
+
+export type GeoStreamCompleteEvent = {
+  article: GeoArticleRecord;
+  geoScore: number;
+  geoScoreDetail: Record<string, unknown>;
+  schemaJsonLd: Record<string, unknown>;
+  llmsTxtSnippet: string | null;
+};
+
+export type GeoStreamErrorEvent = {
+  code: number;
+  msg: string;
+  refunded: boolean;
+};

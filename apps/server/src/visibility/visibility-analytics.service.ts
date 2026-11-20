@@ -2,13 +2,10 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   API_ERROR,
   AUTH_ERROR,
-  QUESTION_TEXT_MAX,
   classifyCitationSource,
   computeVisibilityPct,
   isCitationSourceKind,
   isVisibilityEngine,
-  matchesVisibilityProfileKeyword,
-  normalizeQuestionKey,
   normalizeVisibilityDomain,
   type CitationSourceKind,
   type ImportQuestionsInput,
@@ -25,7 +22,6 @@ import {
   type VisibilityOverviewQuery,
   type VisibilityOverviewResponse,
 } from '@geomix/shared';
-import { TX_OPTIONS } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
@@ -42,7 +38,6 @@ import {
   computeOverviewMetricsAndGroups,
   higherPrioritySourceKind,
   isEffectiveBrandMention,
-  parseProfileCompetitors,
   parseStoredCompetitorHits,
   shanghaiWindowFromQuery,
 } from './visibility.mapper';
@@ -56,14 +51,18 @@ function requireTenant(): string {
   return tenantId;
 }
 
+function normalizePromptKey(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 @Injectable()
 export class VisibilityAnalyticsService {
   private readonly config: VisibilityConfig;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(QuotaService) private readonly quota: QuotaService,
-    @Inject(ComplianceService) private readonly compliance: ComplianceService,
+    @Inject(QuotaService) private readonly _quota: QuotaService,
+    @Inject(ComplianceService) private readonly _compliance: ComplianceService,
     @Inject(VisibilityProfileService) private readonly profileService: VisibilityProfileService,
     @Optional() @Inject(VISIBILITY_CONFIG) config?: VisibilityConfig,
   ) {
@@ -94,7 +93,7 @@ export class VisibilityAnalyticsService {
       where: {
         tenantId,
         status: 'SUCCESS',
-        ...(query.profileId ? { profileId: query.profileId } : {}),
+        ...(query.profileId ? { brandMarketId: query.profileId } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -115,6 +114,7 @@ export class VisibilityAnalyticsService {
 
     return {
       profileId: overviewCtx.resolvedProfileId,
+      brandMarketId: overviewCtx.resolvedProfileId,
       metrics,
       trend,
       byEngine,
@@ -147,7 +147,7 @@ export class VisibilityAnalyticsService {
         observation: {
           tenantId,
           status: 'SUCCESS',
-          ...(query.profileId ? { profileId: query.profileId } : {}),
+          ...(query.profileId ? { brandMarketId: query.profileId } : {}),
           ...(query.engine ? { engine: query.engine } : {}),
           OR: [
             { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -159,7 +159,6 @@ export class VisibilityAnalyticsService {
         observation: {
           select: {
             id: true,
-            questionId: true,
             promptText: true,
           },
         },
@@ -171,6 +170,7 @@ export class VisibilityAnalyticsService {
       COMPETITOR: 0,
       AUTHORITY: 0,
       SOCIAL: 0,
+      ECOMMERCE: 0,
       OTHER: 0,
     };
 
@@ -201,9 +201,7 @@ export class VisibilityAnalyticsService {
       }
 
       filteredCitationsCount += 1;
-      const questionKey = row.observation.questionId
-        ? `q:${row.observation.questionId}`
-        : `p:${row.observation.promptText.replace(/\s+/g, ' ').trim().toLowerCase()}`;
+      const promptKey = `p:${normalizePromptKey(row.observation.promptText)}`;
 
       let bucket = domainAgg.get(domain);
       if (!bucket) {
@@ -219,7 +217,7 @@ export class VisibilityAnalyticsService {
       }
 
       bucket.citationCount += 1;
-      bucket.questionKeys.add(questionKey);
+      bucket.questionKeys.add(promptKey);
 
       const urlEntry = bucket.urls.get(row.url);
       if (urlEntry) {
@@ -294,7 +292,7 @@ export class VisibilityAnalyticsService {
       where: {
         tenantId,
         status: 'SUCCESS',
-        ...(query.profileId ? { profileId: query.profileId } : {}),
+        ...(query.profileId ? { brandMarketId: query.profileId } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -304,8 +302,7 @@ export class VisibilityAnalyticsService {
       orderBy: [{ checkedAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
-        profileId: true,
-        questionId: true,
+        brandMarketId: true,
         promptText: true,
         answerText: true,
         engine: true,
@@ -321,7 +318,6 @@ export class VisibilityAnalyticsService {
       string,
       {
         promptText: string;
-        questionId: string | null;
         competitors: Set<string>;
         engines: Set<VisibilityEngineKey>;
         observationCount: number;
@@ -345,7 +341,7 @@ export class VisibilityAnalyticsService {
       const engineKey = isVisibilityEngine(obs.engine) ? obs.engine : null;
       const obsTimeMs = (obs.checkedAt ?? obs.createdAt).getTime();
       const profCtx =
-        overviewCtx.profilesById.get(obs.profileId) ?? overviewCtx.fallbackProfileForMetrics;
+        overviewCtx.profilesById.get(obs.brandMarketId) ?? overviewCtx.fallbackProfileForMetrics;
       const effectiveBrandMentioned = isEffectiveBrandMention(obs, {
         brandName: profCtx.brandName,
         brandAliases: profCtx.brandAliases,
@@ -356,26 +352,20 @@ export class VisibilityAnalyticsService {
         const hits = parseStoredCompetitorHits(obs.competitorHits);
         const mentionedComps = hits.filter((h) => h.mentioned).map((h) => h.name);
         if (mentionedComps.length > 0) {
-          const promptKey = normalizeQuestionKey(cleanedPrompt);
+          const promptKey = normalizePromptKey(cleanedPrompt);
           if (promptKey) {
             let bucket = gapMap.get(promptKey);
             if (!bucket) {
               bucket = {
                 promptText: cleanedPrompt,
-                questionId: obs.questionId ?? null,
                 competitors: new Set<string>(),
                 engines: new Set<VisibilityEngineKey>(),
                 observationCount: 0,
                 latestCheckedAtMs: obsTimeMs,
               };
               gapMap.set(promptKey, bucket);
-            } else {
-              if (!bucket.questionId && obs.questionId) {
-                bucket.questionId = obs.questionId;
-              }
-              if (obsTimeMs > bucket.latestCheckedAtMs) {
-                bucket.latestCheckedAtMs = obsTimeMs;
-              }
+            } else if (obsTimeMs > bucket.latestCheckedAtMs) {
+              bucket.latestCheckedAtMs = obsTimeMs;
             }
             for (const comp of mentionedComps) {
               bucket.competitors.add(comp);
@@ -421,7 +411,7 @@ export class VisibilityAnalyticsService {
     const gaps: VisibilityOpportunityGapItem[] = [...gapMap.values()]
       .map((bucket) => ({
         promptText: bucket.promptText,
-        questionId: bucket.questionId,
+        questionId: null,
         competitors: [...bucket.competitors],
         engines: [...bucket.engines],
         observationCount: bucket.observationCount,
@@ -458,148 +448,11 @@ export class VisibilityAnalyticsService {
   }
 
   async importOpportunityQuestions(
-    input: ImportQuestionsInput,
-    userId: string,
+    _input: ImportQuestionsInput,
+    _userId: string,
   ): Promise<ImportQuestionsResult> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
-
-    const keywordRow = await this.prisma.base.keyword.findFirst({
-      where: { id: input.keywordId, tenantId },
-      select: { id: true, main: true, brands: true },
-    });
-    if (!keywordRow) {
-      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '训练主词不存在');
-    }
-
-    if (input.profileId) {
-      const profile = await this.prisma.base.visibilityProfile.findFirst({
-        where: { id: input.profileId, tenantId },
-        select: {
-          id: true,
-          name: true,
-          brandName: true,
-          brandAliases: true,
-          ownedDomains: true,
-          competitors: true,
-        },
-      });
-      if (!profile) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
-      }
-      if (
-        keywordRow.brands.some((b) => b.trim().length > 0) &&
-        !matchesVisibilityProfileKeyword(keywordRow, {
-          id: profile.id,
-          name: profile.name,
-          brandName: profile.brandName,
-          brandAliases: profile.brandAliases,
-          ownedDomains: profile.ownedDomains,
-          competitors: parseProfileCompetitors(profile.competitors),
-        })
-      ) {
-        throw new ApiError(
-          400,
-          API_ERROR.BAD_REQUEST,
-          '所选目标主词不属于当前监测档案品牌，请先切换档案或选择同品牌主词',
-        );
-      }
-    }
-
-    const seenInput = new Set<string>();
-    const uniqueTitles: string[] = [];
-    let duplicateInInputCount = 0;
-
-    for (const rawTitle of input.titles) {
-      const cleaned = rawTitle.replace(/\s+/g, ' ').trim();
-      if (!cleaned) continue;
-      if (cleaned.length > QUESTION_TEXT_MAX) {
-        throw new ApiError(
-          400,
-          API_ERROR.BAD_REQUEST,
-          `导入标题长度超过 ${QUESTION_TEXT_MAX} 个字符`,
-        );
-      }
-      const key = normalizeQuestionKey(cleaned);
-      if (!key) continue;
-      if (seenInput.has(key)) {
-        duplicateInInputCount += 1;
-        continue;
-      }
-      seenInput.add(key);
-      uniqueTitles.push(cleaned);
-    }
-
-    if (uniqueTitles.length === 0) {
-      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少选择一条有效的待导入标题');
-    }
-
-    await this.compliance.assertAllowed({
-      text: uniqueTitles.join('\n'),
-      action: 'visibility_gap_import',
-      tenantId,
-      userId,
-    });
-
-    return this.prisma.base.$transaction(async (tx) => {
-      const existing = await tx.question.findMany({
-        where: { tenantId, keywordId: keywordRow.id },
-        select: { text: true },
-      });
-      const existingKeys = new Set(existing.map((q) => normalizeQuestionKey(q.text)));
-
-      const toInsert: string[] = [];
-      let existingDupCount = 0;
-      for (const title of uniqueTitles) {
-        const key = normalizeQuestionKey(title);
-        if (existingKeys.has(key)) {
-          existingDupCount += 1;
-          continue;
-        }
-        existingKeys.add(key);
-        toInsert.push(title);
-      }
-
-      const skippedCount = duplicateInInputCount + existingDupCount;
-      if (toInsert.length === 0) {
-        return {
-          insertedCount: 0,
-          skippedCount,
-          keywordId: keywordRow.id,
-        };
-      }
-
-      const quotaRow = await tx.quota.findUnique({
-        where: { tenantId_key: { tenantId, key: 'QUESTION' } },
-      });
-      if (quotaRow && quotaRow.used + BigInt(toInsert.length) > quotaRow.limit) {
-        const remaining = Math.max(0, Number(quotaRow.limit - quotaRow.used));
-        throw new ApiError(
-          409,
-          API_ERROR.QUOTA_EXCEEDED,
-          `问题额度不足，当前还可添加 ${remaining} 条`,
-        );
-      }
-
-      await this.quota.consume(tenantId, 'QUESTION', toInsert.length, tx);
-
-      for (const text of toInsert) {
-        await tx.question.create({
-          data: {
-            tenantId,
-            keywordId: keywordRow.id,
-            text,
-            source: 'AI',
-            included: false,
-          },
-        });
-      }
-
-      return {
-        insertedCount: toInsert.length,
-        skippedCount,
-        keywordId: keywordRow.id,
-      };
-    }, TX_OPTIONS);
+    requireTenant();
+    throw new ApiError(410, API_ERROR.BAD_REQUEST, '旧版问题库已下线，请直接使用 GEO 写作意见卡');
   }
 }

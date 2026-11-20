@@ -124,24 +124,22 @@ export class WorkDriver {
 
   async create(tenantId: string, body: CreateRunBody): Promise<RunView> {
     const taskName = (body.name ?? '队列演练').trim() || '队列演练';
-    const withKnowledgeBase = body.knowledgeBase === true;
     const prices = await this.billing.listPrices();
-    const aiWrite = prices.find((item) => item.action === 'ai_write');
-    const kbAddon = prices.find((item) => item.action === 'kb_addon');
-    if (!aiWrite?.enabled) throw badRequest('AI写作价格未启用');
-    if (withKnowledgeBase && !kbAddon?.enabled) throw badRequest('知识库加价未启用');
-    const unitAiWrite = aiWrite.unitPoints;
-    const unitKbAddon = withKnowledgeBase ? (kbAddon?.unitPoints ?? 0) : 0;
-    const amount = body.units.length * (unitAiWrite + unitKbAddon);
+    const geoWrite = prices.find((item) => item.action === 'geo_write');
+    if (!geoWrite?.enabled) throw badRequest('GEO写作价格未启用');
+    const unitAiWrite = geoWrite.unitPoints;
+    const unitKbAddon = 0;
+    const withKnowledgeBase = false;
+    const amount = body.units.length * unitAiWrite;
     if (!Number.isSafeInteger(amount) || amount < 1) throw badRequest('点数不正确');
     await this.quota.assertAvailable(tenantId, 'AI_WRITE', body.units.length);
-    const queue: QueueName = 'write-article';
+    const queue: QueueName = 'geo-batch';
     const run = await this.prisma.base.workRun.create({
       data: {
         tenantId,
         queue,
         kind: 'fake',
-        refType: 'ai_task',
+        refType: 'geo_batch',
         status: 'QUEUED',
         taskName,
         totalUnits: body.units.length,
@@ -162,13 +160,13 @@ export class WorkDriver {
     try {
       await this.billing.reserve({
         tenantId,
-        refType: 'ai_task',
+        refType: 'geo_batch',
         refId: run.id,
         amount,
       });
       await this.prisma.base.activeWork.create({
         data: {
-          refType: 'ai_task',
+          refType: 'geo_batch',
           refId: run.id,
           tenantId,
           runId: run.id,
@@ -407,14 +405,12 @@ export class WorkDriver {
       }
     }
     const reservation = await this.reservationOf(run);
-    await this.billing.settleAiWriteUnit({
+    await this.billing.settleGeoWriteUnit({
       tenantId: run.tenantId,
       reservationId: reservation.id,
       unitKey: unitKey(latest.id),
-      taskName: run.taskName,
-      aiWritePoints: run.unitAiWrite,
-      kbAddonPoints: run.unitKbAddon,
-      withKnowledgeBase: run.withKnowledgeBase,
+      subject: run.taskName,
+      geoWritePoints: run.unitAiWrite,
     });
     await this.prisma.base.workUnit.updateMany({
       where: { id: latest.id, tenantId: run.tenantId, settled: false },
@@ -462,7 +458,7 @@ export class WorkDriver {
         tenantId: run.tenantId,
         reservationId: reservation.id,
         unitKey: unitKey(current.id),
-        amount: run.unitAiWrite + run.unitKbAddon,
+        amount: run.unitAiWrite,
         title: '退还未完成单元',
       });
     }
@@ -717,7 +713,7 @@ export class WorkDriver {
 
   private async rollbackCreate(tenantId: string, runId: string): Promise<void> {
     const reservation = await this.prisma.base.pointReservation.findFirst({
-      where: { tenantId, refType: 'ai_task', refId: runId },
+      where: { tenantId, refType: 'geo_batch', refId: runId },
     });
     if (reservation?.status === 'OPEN') {
       await this.billing.close({ tenantId, reservationId: reservation.id });

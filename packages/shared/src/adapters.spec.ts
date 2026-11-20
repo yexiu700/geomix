@@ -7,6 +7,8 @@ import {
   FAKE_MARK,
   FAKE_TOKEN_COST_MICRO,
   IMAGE_MAX_OUTPUT_BYTES,
+  LLM_SCENES,
+  QUALITY_LLM_SCENES,
   readLlmDocument,
   resolveEmbeddingSettings,
   resolveImageSettings,
@@ -40,6 +42,14 @@ describe('adapter config', () => {
     expect(route.route.body).toEqual({ primary: 'fake', backup: [] });
     expect(route.route.rewrite.primary).toBe('fake');
     expect(route.route.distill.primary).toBe('fake');
+    expect(route.route.fact_extract.primary).toBe('fake');
+    expect(route.route.geo_brief.primary).toBe('fake');
+    expect(route.route.geo_write.primary).toBe('fake');
+    expect(route.route.geo_rewrite.primary).toBe('fake');
+    expect(LLM_SCENES).toEqual(
+      expect.arrayContaining(['fact_extract', 'geo_brief', 'geo_write', 'geo_rewrite']),
+    );
+    expect(QUALITY_LLM_SCENES).toEqual(expect.arrayContaining(['geo_write', 'geo_rewrite']));
     expect(readLlmDocument({})).toEqual(route);
   });
 

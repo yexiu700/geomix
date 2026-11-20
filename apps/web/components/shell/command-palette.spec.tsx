@@ -1,207 +1,113 @@
 // @vitest-environment jsdom
 
+import type { BrandRecord } from '@geomix/shared';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AccountProfile } from '../../lib/api';
-import { initialSnapshot, reduceShell } from '../../lib/tab-stack';
 import { CommandPalette } from './command-palette';
-import { ShellFrame } from './shell-frame';
 
-const merchantAccount: AccountProfile = {
-  id: 'u-1',
-  username: 'demo',
-  nickname: '演示',
-  role: 'MERCHANT',
-  tenant: {
-    id: 't-1',
-    name: '演示租户',
-    expiresAt: '2027-11-12T00:00:00.000Z',
-    isActive: true,
-    readOnly: false,
+const sampleBrands: BrandRecord[] = [
+  {
+    id: 'b-1',
+    name: '绿联',
+    category: '家用 NAS',
+    truthAgreementSignedAt: null,
+    createdAt: '2026-11-20T00:00:00.000Z',
+    updatedAt: '2026-11-20T00:00:00.000Z',
+    markets: [
+      {
+        id: 'm-1',
+        brandId: 'b-1',
+        market: 'CN',
+        locale: 'zh-CN',
+        region: 'CN',
+        localBrandName: '绿联',
+        aliases: [],
+        ownedDomains: ['ugreen.com'],
+        competitors: [],
+        seedPrompts: [],
+        createdAt: '2026-11-20T00:00:00.000Z',
+        updatedAt: '2026-11-20T00:00:00.000Z',
+      },
+    ],
   },
-};
+];
 
 afterEach(() => {
   cleanup();
 });
 
-function setupPalette(overrides?: Partial<React.ComponentProps<typeof CommandPalette>>) {
-  const onClose = vi.fn();
-  const onDispatch = vi.fn();
-  const onOpenLayout = vi.fn();
-  const onToggleMenu = vi.fn();
-  const onChangePassword = vi.fn();
-  const onLogout = vi.fn();
-  const snap = reduceShell(initialSnapshot(), { type: 'open', href: '/material/keywords' });
+describe('CommandPalette (GeoMix 2.0)', () => {
+  it('lists the 5 workspaces, brands/markets, and actions without legacy tabs or layout panel', () => {
+    const onNavigate = vi.fn();
+    const onClose = vi.fn();
+    const onOpenEnableMarket = vi.fn();
 
-  const utils = render(
-    <CommandPalette
-      open
-      onClose={onClose}
-      role="MERCHANT"
-      tabs={snap.tabs}
-      activeId={snap.activeId}
-      onDispatch={onDispatch}
-      onOpenLayout={onOpenLayout}
-      onToggleMenu={onToggleMenu}
-      onChangePassword={onChangePassword}
-      onLogout={onLogout}
-      {...overrides}
-    />,
-  );
-
-  return {
-    ...utils,
-    onClose,
-    onDispatch,
-    onOpenLayout,
-    onToggleMenu,
-    onChangePassword,
-    onLogout,
-  };
-}
-
-describe('CommandPalette', () => {
-  it('filters routes by query and dispatches open on Enter', () => {
-    const { onDispatch, onClose } = setupPalette();
-    const input = screen.getByRole('textbox', { name: '搜索页面或操作' });
-
-    fireEvent.change(input, { target: { value: '看板' } });
-    const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(1);
-    expect(options[0]?.textContent).toContain('AI数据看板');
-
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onDispatch).toHaveBeenCalledWith({ type: 'open', href: '/visibility/overview' });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('never exposes /workbench/samples in command palette for MERCHANT or ADMIN (#134)', () => {
-    setupPalette({ role: 'MERCHANT' });
-    expect(screen.queryByText('/workbench/samples')).toBeNull();
-    expect(screen.queryByText('列表示例')).toBeNull();
-    cleanup();
-
-    setupPalette({ role: 'ADMIN' });
-    expect(screen.queryByText('/workbench/samples')).toBeNull();
-    expect(screen.queryByText('列表示例')).toBeNull();
-  });
-
-  it('wraps keyboard selection cyclically with ArrowUp and ArrowDown and closes on Escape', () => {
-    const { onClose } = setupPalette();
-    const input = screen.getByRole('textbox', { name: '搜索页面或操作' });
-    const options = screen.getAllByRole('option');
-    expect(options.length).toBeGreaterThan(2);
-    expect(options[0]?.getAttribute('aria-selected')).toBe('true');
-
-    fireEvent.keyDown(input, { key: 'ArrowUp' });
-    expect(options[options.length - 1]?.getAttribute('aria-selected')).toBe('true');
-
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    expect(options[0]?.getAttribute('aria-selected')).toBe('true');
-
-    fireEvent.keyDown(input, { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows empty state when no command matches query', () => {
-    setupPalette();
-    const input = screen.getByRole('textbox', { name: '搜索页面或操作' });
-    fireEvent.change(input, { target: { value: '不存在的页面xyz' } });
-
-    expect(screen.queryAllByRole('option')).toHaveLength(0);
-    expect(screen.getByText('没有匹配「不存在的页面xyz」的页面或操作')).toBeTruthy();
-  });
-
-  it('updates active item on mouse move and executes open-tab and action items', () => {
-    const { onOpenLayout, onClose } = setupPalette();
-    const options = screen.getAllByRole('option');
-    const layoutOption = options.find((el) => el.textContent?.includes('布局设置'));
-    if (!layoutOption) throw new Error('missing 布局设置 option');
-
-    fireEvent.mouseMove(layoutOption);
-    expect(layoutOption.getAttribute('aria-selected')).toBe('true');
-
-    fireEvent.click(layoutOption);
-    expect(onOpenLayout).toHaveBeenCalledTimes(1);
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('deduplicates 首页 /dashboard and static routes while keeping parameterized open tabs (#261)', () => {
-    const initial = initialSnapshot();
-    const { unmount } = setupPalette({
-      tabs: initial.tabs,
-      activeId: initial.activeId,
-    });
-
-    const initialOptions = screen.getAllByRole('option');
-    const dashboardMatches = initialOptions.filter((el) => el.textContent?.includes('/dashboard'));
-    expect(dashboardMatches).toHaveLength(1);
-    expect(initialOptions[0]?.textContent).toContain('首页');
-    expect(initialOptions[0]?.textContent).toContain('/dashboard');
-    expect(screen.queryByText('已打开标签')).toBeNull();
-    unmount();
-
-    let withSubTab = reduceShell(initialSnapshot(), { type: 'open', href: '/material/keywords' });
-    withSubTab = reduceShell(withSubTab, { type: 'open', href: '/material/gallery/cat-ikea' });
-    withSubTab = reduceShell(withSubTab, {
-      type: 'retitle',
-      id: '/material/gallery/cat-ikea',
-      title: '企业画像图库 · 家居场景实拍',
-    });
-
-    const { onDispatch, onClose } = setupPalette({
-      tabs: [
-        ...withSubTab.tabs,
-        {
-          id: '/workbench/samples',
-          href: '/workbench/samples',
-          title: '列表示例',
-          pinned: false,
-        },
-      ],
-      activeId: '/material/gallery/cat-ikea',
-    });
-
-    const allOptions = screen.getAllByRole('option');
-    expect(allOptions.filter((el) => el.textContent?.includes('/dashboard'))).toHaveLength(1);
-    expect(allOptions.filter((el) => el.textContent?.includes('/material/keywords'))).toHaveLength(
-      1,
-    );
-    expect(screen.queryByText('/workbench/samples')).toBeNull();
-
-    const subTabOptions = allOptions.filter((el) =>
-      el.textContent?.includes('/material/gallery/cat-ikea'),
-    );
-    expect(subTabOptions).toHaveLength(1);
-    expect(subTabOptions[0]?.textContent).toContain('企业画像图库 · 家居场景实拍');
-    expect(screen.getByText('已打开标签')).toBeTruthy();
-
-    fireEvent.click(subTabOptions[0]!);
-    expect(onDispatch).toHaveBeenCalledWith({
-      type: 'activate',
-      id: '/material/gallery/cat-ikea',
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens on Ctrl+K in ShellFrame and ignores IME composing Ctrl+K', async () => {
     render(
-      <ShellFrame
-        account={merchantAccount}
-        state={initialSnapshot()}
-        onDispatch={() => undefined}
-        onLogout={() => undefined}
-        onChangePassword={async () => null}
+      <CommandPalette
+        open={true}
+        onClose={onClose}
+        role="MERCHANT"
+        brands={sampleBrands}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        onNavigate={onNavigate}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onOpenCreateBrand={vi.fn()}
+        onOpenEnableMarket={onOpenEnableMarket}
+        onToggleMenu={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
       />,
     );
 
-    expect(screen.queryByRole('textbox', { name: '搜索页面或操作' })).toBeNull();
+    expect(screen.getByRole('textbox', { name: '搜索页面或操作' })).toBeTruthy();
+    expect(screen.getByRole('listbox', { name: '指令列表' })).toBeTruthy();
+    expect(screen.queryByText('已打开标签')).toBeNull();
+    expect(screen.queryByText('布局设置')).toBeNull();
+    expect(screen.queryByText('/dashboard')).toBeNull();
+    expect(screen.queryByText('/me/money')).toBeNull();
 
-    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, isComposing: true });
-    expect(screen.queryByRole('textbox', { name: '搜索页面或操作' })).toBeNull();
+    expect(screen.getByRole('option', { name: /行动首页.*\/home/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /品牌资产.*\/brands/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /可见度诊断.*\/visibility/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /GEO 写作台.*\/studio/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /点数与权益.*\/account/ })).toBeTruthy();
 
-    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, isComposing: false });
-    expect(await screen.findByRole('textbox', { name: '搜索页面或操作' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: /\+ 开启另一市场/ }));
+    expect(onOpenEnableMarket).toHaveBeenCalledWith('GLOBAL');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports filtering, ArrowDown/ArrowUp cyclic navigation, Enter, IME composing guard, and Escape', () => {
+    const onNavigate = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <CommandPalette
+        open={true}
+        onClose={onClose}
+        role="ADMIN"
+        brands={sampleBrands}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        onNavigate={onNavigate}
+        onToggleMenu={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByRole('textbox', { name: '搜索页面或操作' });
+    fireEvent.change(input, { target: { value: '/studio' } });
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(1);
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onNavigate).toHaveBeenCalledWith('/studio');
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 });

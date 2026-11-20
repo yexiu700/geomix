@@ -1,9 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { deflateSync } from 'node:zlib';
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export type MintedSession = {
   username: string;
@@ -13,21 +11,26 @@ export type MintedSession = {
   refreshToken: string;
 };
 
+export type WorkspaceNavItem = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台';
+
+export const REQUIRED_VIEWPORTS = [
+  { width: 1440, height: 900 },
+  { width: 1280, height: 800 },
+] as const;
+
 const repoRoot = resolve(__dirname, '../..');
 const screenshotDir = resolve(repoRoot, 'test-results/e2e-screenshots');
 const mintScriptPath = resolve(__dirname, 'mint-e2e-session.cjs');
 const sessionCache = new Map<string, MintedSession>();
-const localRequire = createRequire(__filename);
-const { runNonBlockingRowPollStep } = localRequire('./poll-row.cjs') as {
-  runNonBlockingRowPollStep: (input: {
-    row: Locator;
-    refreshBtn: Locator;
-    drawerCloseBtn?: Locator;
-    expectedText: string;
-    readTimeoutMs?: number;
-    clickTimeoutMs?: number;
-  }) => Promise<string>;
-};
+
+export function apiV1Base(): string {
+  return (process.env.E2E_API_BASE?.trim() || 'http://127.0.0.1:3001/api/v1').replace(/\/$/, '');
+}
+
+export function apiV2Base(): string {
+  const v1 = apiV1Base();
+  return v1.endsWith('/api/v1') ? `${v1.slice(0, -'/api/v1'.length)}/api/v2` : `${v1}/v2`;
+}
 
 export function mintSessionTokens(username = 'demo'): MintedSession {
   const cached = sessionCache.get(username);
@@ -65,69 +68,64 @@ export async function injectSessionBeforeLoad(
   );
 }
 
-export function activePane(page: Page): Locator {
-  return page.locator('.gm-page:not([hidden])');
-}
-
-export async function pollTableRowUntilContains(
+/**
+ * Clicks one of the flat 4-item left sidebar workspace links (no nested submenus).
+ */
+export async function openWorkspaceNav(
   page: Page,
   options: {
-    row: Locator;
-    refreshBtn: Locator;
-    expectedText: string;
-    dismissOpenDrawer?: boolean;
-    timeoutMs?: number;
-  },
-): Promise<void> {
-  const drawerCloseBtn = options.dismissOpenDrawer
-    ? page.locator('.ant-drawer-open .ant-drawer-close').first()
-    : undefined;
-  await expect
-    .poll(
-      () =>
-        runNonBlockingRowPollStep({
-          row: options.row,
-          refreshBtn: options.refreshBtn,
-          drawerCloseBtn,
-          expectedText: options.expectedText,
-        }),
-      {
-        timeout: options.timeoutMs ?? 45_000,
-        intervals: [250, 500, 1_000],
-      },
-    )
-    .toContain(options.expectedText);
-}
-
-export async function openMenuLink(
-  page: Page,
-  options: {
-    submenu?: string;
-    itemTitle: string;
+    itemTitle: WorkspaceNavItem | string;
     expectedUrl: RegExp | string;
   },
 ): Promise<void> {
   const sider = page.locator('aside.ant-layout-sider');
-  const menuItem = sider.getByRole('menuitem', { name: options.itemTitle, exact: true });
-  if (options.submenu) {
-    const submenuRoot = sider
-      .locator('.ant-menu-submenu')
-      .filter({ has: page.locator('.ant-menu-submenu-title', { hasText: options.submenu }) })
-      .first();
-    const isOpen = await submenuRoot
-      .evaluate((el) => el.classList.contains('ant-menu-submenu-open'))
-      .catch(() => false);
-    if (!isOpen || !(await menuItem.isVisible().catch(() => false))) {
-      await submenuRoot.locator('.ant-menu-submenu-title').first().click();
-    }
-    await expect(
-      submenuRoot
-        .locator('.ant-menu-sub:not(.ant-menu-hidden)')
-        .getByRole('menuitem', { name: options.itemTitle, exact: true }),
-    ).toBeVisible();
-  }
+  const menuItem = sider
+    .getByRole('menuitem', { name: options.itemTitle, exact: true })
+    .or(sider.getByRole('link', { name: options.itemTitle, exact: true }))
+    .first();
+  await expect(menuItem).toBeVisible();
   await menuItem.click();
   await expect(page).toHaveURL(options.expectedUrl);
+}
+
+/**
+ * Navigates to `/account` via the bottom-left avatar entry (`data-testid="sider-account-entry"`).
+ */
+export async function openAccountFromSider(page: Page): Promise<void> {
+  const entry = page.getByTestId('sider-account-entry');
+  await expect(entry).toBeVisible();
+  await entry.click();
+  await expect(page).toHaveURL(/\/account(?:[?#]|$)/);
+}
+
+/**
+ * Verifies zero horizontal overflow at both 1440x900 and 1280x800 (PRD §5 Redline #3).
+ * Restores the previous viewport afterwards.
+ */
+export async function assertZeroHorizontalOverflow(
+  page: Page,
+  viewports: ReadonlyArray<{ width: number; height: number }> = REQUIRED_VIEWPORTS,
+): Promise<void> {
+  const original = page.viewportSize();
+  try {
+    for (const viewport of viewports) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(80);
+      const metrics = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+      }));
+      expect(
+        metrics.scrollWidth,
+        `Horizontal overflow at ${viewport.width}x${viewport.height}: scrollWidth=${metrics.scrollWidth} > innerWidth=${metrics.innerWidth} (body=${metrics.bodyScrollWidth})`,
+      ).toBeLessThanOrEqual(metrics.innerWidth);
+    }
+  } finally {
+    if (original) {
+      await page.setViewportSize(original);
+    }
+  }
 }
 
 export async function saveGeoMixScreenshot(page: Page, filename: string): Promise<string> {
@@ -136,123 +134,4 @@ export async function saveGeoMixScreenshot(page: Page, filename: string): Promis
   await page.screenshot({ path: target, fullPage: true });
   await page.evaluate(() => window.scrollTo(0, 0)).catch(() => undefined);
   return target;
-}
-
-export async function selectOptionByText(
-  selectLocator: Locator,
-  matcher: RegExp | string,
-): Promise<string> {
-  await expect(selectLocator).toBeVisible();
-  let matchedValue: string | null = null;
-  await expect
-    .poll(
-      async () => {
-        matchedValue = await selectLocator.evaluate(
-          (el, raw) => {
-            const select = el as HTMLSelectElement;
-            const hit = Array.from(select.options).find((opt) =>
-              raw.isRegex
-                ? new RegExp(raw.source, raw.flags).test(opt.text)
-                : opt.text.includes(raw.text),
-            );
-            return hit ? hit.value : null;
-          },
-          typeof matcher === 'string'
-            ? { isRegex: false, text: matcher, source: '', flags: '' }
-            : { isRegex: true, text: '', source: matcher.source, flags: matcher.flags },
-        );
-        return matchedValue;
-      },
-      { timeout: 10_000 },
-    )
-    .not.toBeNull();
-  await selectLocator.selectOption(matchedValue!);
-  return matchedValue!;
-}
-
-export async function selectAntdMultipleOption(
-  page: Page,
-  container: Locator,
-  ariaLabel: string,
-  optionTitle: string,
-): Promise<void> {
-  const selectorBox = container
-    .locator(
-      `.ant-select[aria-label="${ariaLabel}"] .ant-select-selector, .ant-select:has([aria-label="${ariaLabel}"]) .ant-select-selector`,
-    )
-    .first();
-  await expect(selectorBox).toBeVisible();
-  await selectorBox.click();
-  const option = page.locator(
-    `.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option[title="${optionTitle}"]`,
-  );
-  await expect(option).toBeVisible();
-  await option.click();
-  await page.keyboard.press('Escape');
-}
-
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) {
-      c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(buf: Buffer): number {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i += 1) {
-    const byte = buf[i] ?? 0;
-    c = (CRC_TABLE[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8);
-  }
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function pngChunk(type: string, data: Buffer): Buffer {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(data.length, 0);
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([lenBuf, typeBuf, data, crcBuf]);
-}
-
-export function buildTestPngBuffer(
-  width = 600,
-  height = 400,
-  rgb: readonly [number, number, number] = [22, 119, 255],
-): Buffer {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  const rowBytes = 1 + width * 3;
-  const raw = Buffer.alloc(rowBytes * height);
-  const singleRow = Buffer.alloc(rowBytes);
-  singleRow[0] = 0;
-  for (let x = 0; x < width; x += 1) {
-    const offset = 1 + x * 3;
-    singleRow[offset] = rgb[0];
-    singleRow[offset + 1] = rgb[1];
-    singleRow[offset + 2] = rgb[2];
-  }
-  for (let y = 0; y < height; y += 1) {
-    singleRow.copy(raw, y * rowBytes);
-  }
-  return Buffer.concat([
-    signature,
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', deflateSync(raw, { level: 6 })),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
 }

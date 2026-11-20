@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { parseEnv } from '@geomix/shared';
 import { ApiModule } from '../api.module';
@@ -10,7 +10,12 @@ export async function createApiApp(): Promise<INestApplication> {
   loadRootEnv();
   const env = parseEnv();
   const app = await NestFactory.create(ApiModule, { logger: false });
-  app.setGlobalPrefix('api/v1');
+  app.setGlobalPrefix('api');
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+    prefix: 'v',
+  });
   app.enableCors({
     origin: env.WEB_ORIGIN.split(',')
       .map((origin) => origin.trim())

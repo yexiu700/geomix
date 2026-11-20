@@ -16,7 +16,6 @@ const LINKS = [
   { href: '/admin/tenants', title: '租户' },
   { href: '/admin/pricing', title: '价格' },
   { href: '/admin/announcements', title: '公告' },
-  { href: '/admin/templates', title: '系统模板' },
   { href: '/admin/llm-costs', title: 'LLM成本日报' },
 ];
 
@@ -111,7 +110,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
     return (
       <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>
         <p style={{ color: 'var(--gm-fg-1)' }}>没有这个页面</p>
-        <Button type="primary" onClick={() => router.push('/dashboard')}>
+        <Button type="primary" onClick={() => router.push('/home')}>
           回首页
         </Button>
       </main>
@@ -136,7 +135,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <Link href="/dashboard" style={{ color: 'var(--gm-info)' }}>
+        <Link href="/home" style={{ color: 'var(--gm-info)' }}>
           返回后台
         </Link>
         <Button

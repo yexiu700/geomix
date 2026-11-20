@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const PHASE1_MODELS = [
+const SCHEMA_MODELS = [
   'Tenant',
   'User',
   'Wallet',
@@ -16,35 +16,28 @@ const PHASE1_MODELS = [
   'PointLog',
   'MoneyLog',
   'Verification',
-  'AgreementSignature',
   'Announcement',
   'AuditLog',
-  'Keyword',
-  'Question',
-  'MediaCategory',
-  'MediaAsset',
-  'KnowledgeBase',
-  'KnowledgeChunk',
-  'PromptTemplate',
-  'ArticleCategory',
-  'AiTask',
-  'AiTaskItem',
-  'Article',
-  'RewriteBatch',
-  'RewriteRecord',
-  'AiImageJob',
   'WorkRun',
   'WorkUnit',
   'ActiveWork',
-  'CrudSample',
-  'VisibilityProfile',
+  'Brand',
+  'BrandMarket',
+  'BrandFact',
+  'BrandFactChunk',
+  'BrandMediaAsset',
   'VisibilityRun',
   'VisibilityObservation',
   'VisibilityCitation',
+  'GeoBrief',
+  'GeoArticle',
+  'GeoPublishRecord',
+  'GeoBatchJob',
+  'PromptPreference',
 ];
 
-describe('phase-1 migration', () => {
-  it('keeps the extension, checks, and HNSW index idempotent', () => {
+describe('schema migrations contract', () => {
+  it('keeps legacy migrations immutable and adds the v2 domain migration with HNSW index', () => {
     const migrationsDir = resolve(packageRoot, 'prisma/migrations');
     const dirs = readdirSync(migrationsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -60,6 +53,7 @@ describe('phase-1 migration', () => {
       '20261118120000_ai_task_nullable_media_category',
       '20261118130000_rewrite_optional_gallery',
       '20261118150000_rewrite_batch_brand',
+      '20261120100000_geomix_v2_domain_schema',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -145,9 +139,28 @@ describe('phase-1 migration', () => {
     expect(rewriteBatchBrandSql).toContain('ADD COLUMN IF NOT EXISTS "resultStatus"');
     expect(rewriteBatchBrandSql.toLowerCase()).not.toContain('drop table');
     expect(rewriteBatchBrandSql.toLowerCase()).not.toContain('create extension');
+    const v2Sql = readFileSync(
+      resolve(migrationsDir, '20261120100000_geomix_v2_domain_schema', 'migration.sql'),
+      'utf8',
+    );
+    expect(v2Sql.toLowerCase()).not.toContain('create extension');
+    expect(v2Sql).toContain('DROP TABLE IF EXISTS "Keyword" CASCADE;');
+    expect(v2Sql).toContain('DROP TABLE IF EXISTS "VisibilityProfile" CASCADE;');
+    expect(v2Sql).toContain('CREATE TABLE "Brand"');
+    expect(v2Sql).toContain('CREATE TABLE "BrandMarket"');
+    expect(v2Sql).toContain('CREATE TABLE "BrandFactChunk"');
+    expect(v2Sql).toContain('CREATE TABLE "GeoBrief"');
+    expect(v2Sql).toContain('CREATE TABLE "GeoArticle"');
+    expect(v2Sql).toContain('CREATE TABLE "GeoPublishRecord"');
+    expect(v2Sql).toContain('CREATE TABLE "GeoBatchJob"');
+    expect(v2Sql).toContain('CREATE TABLE "PromptPreference"');
+    expect(v2Sql).toContain('idx_brand_fact_chunk_embedding');
+    expect(v2Sql.toLowerCase()).toContain('using hnsw');
+    expect(v2Sql.toLowerCase()).toContain('vector_cosine_ops');
+    expect(v2Sql.toLowerCase()).toContain('vector(1024)');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
-    expect(models).toEqual(PHASE1_MODELS);
+    expect(models).toEqual(SCHEMA_MODELS);
 
     const extensionStatements = sql
       .split(';')

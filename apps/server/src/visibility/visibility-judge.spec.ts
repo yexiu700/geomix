@@ -42,6 +42,10 @@ function createMockLlm(onCall: (prompt: string) => string): {
       body: { primary: 'judge-mock', backup: [] },
       rewrite: { primary: 'judge-mock', backup: [] },
       image_prompt: { primary: 'judge-mock', backup: [] },
+      fact_extract: { primary: 'judge-mock', backup: [] },
+      geo_brief: { primary: 'judge-mock', backup: [] },
+      geo_write: { primary: 'judge-mock', backup: [] },
+      geo_rewrite: { primary: 'judge-mock', backup: [] },
     },
   };
   const llm = new LlmService(

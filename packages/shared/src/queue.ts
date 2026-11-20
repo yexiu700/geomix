@@ -6,15 +6,7 @@ import { z } from 'zod';
  * 计费仍走已有的冻结单；这里只约定队列名、并发和状态怎么变。
  */
 
-export const QUEUE_NAMES = [
-  'write-article',
-  'rewrite-single',
-  'rewrite-batch',
-  'kb-index',
-  'image-gen',
-  'visibility-check',
-  'maintenance',
-] as const;
+export const QUEUE_NAMES = ['fact-index', 'geo-batch', 'visibility-check', 'maintenance'] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
@@ -24,13 +16,10 @@ export function isQueueName(value: string): value is QueueName {
   return QUEUE_SET.has(value);
 }
 
-/** 路线图里的每租户并发。没单列租户上限的队列，用全局并发封顶。 */
+/** 每租户并发上限。没单列租户上限的队列，用全局并发封顶。 */
 export const QUEUE_TENANT_LIMIT: Record<QueueName, number> = {
-  'write-article': 2,
-  'rewrite-single': 5,
-  'rewrite-batch': 1,
-  'kb-index': 2,
-  'image-gen': 2,
+  'fact-index': 2,
+  'geo-batch': 2,
   'visibility-check': 2,
   maintenance: 1,
 };
@@ -183,17 +172,20 @@ export function readQueueConfig(
     backoffMs: integerEnv(env.QUEUE_BACKOFF_MS, 1_000, 'QUEUE_BACKOFF_MS', 0, 60_000),
     recoverMs: integerEnv(env.QUEUE_RECOVER_MS, 60_000, 'QUEUE_RECOVER_MS', 1_000, 3_600_000),
     concurrency: {
-      'write-article': integerEnv(env.QUEUE_WRITE_CONCURRENCY, 4, 'QUEUE_WRITE_CONCURRENCY', 1, 32),
-      'rewrite-single': integerEnv(
-        env.QUEUE_REWRITE_CONCURRENCY,
-        5,
-        'QUEUE_REWRITE_CONCURRENCY',
+      'fact-index': integerEnv(
+        env.QUEUE_FACT_INDEX_CONCURRENCY ?? env.QUEUE_KB_CONCURRENCY,
+        2,
+        'QUEUE_FACT_INDEX_CONCURRENCY',
         1,
         32,
       ),
-      'rewrite-batch': integerEnv(env.QUEUE_BATCH_CONCURRENCY, 2, 'QUEUE_BATCH_CONCURRENCY', 1, 32),
-      'kb-index': integerEnv(env.QUEUE_KB_CONCURRENCY, 2, 'QUEUE_KB_CONCURRENCY', 1, 32),
-      'image-gen': integerEnv(env.QUEUE_IMAGE_CONCURRENCY, 2, 'QUEUE_IMAGE_CONCURRENCY', 1, 32),
+      'geo-batch': integerEnv(
+        env.QUEUE_GEO_BATCH_CONCURRENCY ?? env.QUEUE_WRITE_CONCURRENCY,
+        2,
+        'QUEUE_GEO_BATCH_CONCURRENCY',
+        1,
+        32,
+      ),
       'visibility-check': integerEnv(
         env.QUEUE_VISIBILITY_CONCURRENCY,
         2,

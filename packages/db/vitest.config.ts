@@ -11,7 +11,6 @@ export default defineConfig({
     alias: {
       '@geomix/shared/catalog': fileURLToPath(new URL('../shared/src/catalog.ts', import.meta.url)),
       '@geomix/shared/infra': fileURLToPath(new URL('../shared/src/infra.ts', import.meta.url)),
-      '@geomix/prompts': fileURLToPath(new URL('../prompts/src/index.ts', import.meta.url)),
     },
   },
 });

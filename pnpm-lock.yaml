@@ -178,9 +178,6 @@ importers:
 
   packages/db:
     dependencies:
-      '@geomix/prompts':
-        specifier: workspace:*
-        version: link:../prompts
       '@geomix/shared':
         specifier: workspace:*
         version: link:../shared

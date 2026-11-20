@@ -13,6 +13,3 @@ export function formatExpiry(iso: string, readOnly: boolean): string {
   if (readOnly) return `已到期 · 只读 · ${date}`;
   return `有效期：${date}`;
 }
-
-export const MODULE_PLACEHOLDER =
-  '这一页的业务数据还在后续模块。下面的草稿会留在当前标签里；刷新这个标签会清空草稿。';

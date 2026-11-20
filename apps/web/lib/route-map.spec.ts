@@ -1,68 +1,97 @@
+import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
+import { middleware } from '../middleware';
 import {
   LEGACY_REDIRECTS,
+  legacyAccountTab,
   legacyPathname,
   safeAdminHref,
   safeConsoleHref,
   safePostLoginHref,
 } from './route-map';
 
-describe('legacy redirects (#7 / #72)', () => {
-  it('maps all 15 documented legacy /user/* routes (including trailing slashes and common subpaths)', () => {
-    const expected: Record<string, string> = {
-      '/user/dashboard': '/dashboard',
-      '/user/company_keyword': '/material/keywords',
-      '/user/company_question': '/material/questions',
-      '/user/images_type/index/type/1': '/material/gallery',
-      '/user/user_huaxiang': '/material/knowledge',
-      '/user/article_type': '/writing/categories',
-      '/user/zhiling': '/writing/prompts',
-      '/user/ai_task': '/writing/tasks',
-      '/user/article': '/writing/articles',
-      '/user/weixin_baowen': '/rewrite/single',
-      '/user/piliang_baowen': '/rewrite/batch',
-      '/user/ai_image': '/image',
-      '/user/user_score_log': '/me/points',
-      '/user/user_money_log': '/me/money',
-      '/user/quanyi': '/me/rights',
-      '/user/account_rights': '/me/rights',
-    };
+describe('GeoMix 2.0 route-map & legacy redirects', () => {
+  it('redirects v1 console routes and historical /user/* paths to v2 workspaces', () => {
+    expect(legacyPathname('/dashboard')).toBe('/home');
+    expect(legacyPathname('/dashboard/')).toBe('/home');
+    expect(legacyPathname('/visibility/overview')).toBe('/visibility');
+    expect(legacyPathname('/visibility/monitors')).toBe('/visibility');
+    expect(legacyPathname('/me/points')).toBe('/account');
+    expect(legacyPathname('/me/rights')).toBe('/account');
+    expect(legacyPathname('/me/verify')).toBe('/account');
+    expect(legacyPathname('/me/money')).toBe('/account');
 
-    expect(LEGACY_REDIRECTS).toEqual(expected);
+    expect(legacyPathname('/user/dashboard')).toBe('/home');
+    expect(legacyPathname('/user/company_keyword/index')).toBe('/brands');
+    expect(legacyPathname('/user/images_type/index/type/1')).toBe('/brands');
+    expect(legacyPathname('/user/zhiling')).toBe('/studio');
+    expect(legacyPathname('/user/ai_task')).toBe('/studio');
+    expect(legacyPathname('/user/weixin_baowen')).toBe('/studio');
+    expect(legacyPathname('/user/piliang_baowen')).toBe('/studio');
+    expect(legacyPathname('/user/ai_image')).toBe('/studio');
+    expect(legacyPathname('/user/user_score_log')).toBe('/account');
+    expect(legacyPathname('/user/user_money_log')).toBe('/account');
+    expect(legacyPathname('/user/quanyi')).toBe('/account');
+    expect(legacyPathname('/user/account_rights')).toBe('/account');
 
-    for (const [legacy, target] of Object.entries(expected)) {
-      expect(legacyPathname(legacy)).toBe(target);
-      expect(legacyPathname(`${legacy}/`)).toBe(target);
-      expect(legacyPathname(`${legacy}/index`)).toBe(target);
-    }
+    expect(Object.keys(LEGACY_REDIRECTS).length).toBeGreaterThanOrEqual(20);
+    expect(legacyPathname('/home')).toBeNull();
+    expect(legacyPathname('/unknown')).toBeNull();
   });
 
-  it('does not collide between /user/article_type and /user/article or invent targets for unknown paths', () => {
-    expect(legacyPathname('/user/article_type')).toBe('/writing/categories');
-    expect(legacyPathname('/user/article')).toBe('/writing/articles');
-    expect(legacyPathname('/user/articles')).toBeNull();
-    expect(legacyPathname('/user/other')).toBeNull();
-    expect(legacyPathname('/writing/prompts')).toBeNull();
-    expect(legacyPathname('/dashboard')).toBeNull();
+  it('maps legacy personal-center paths to the matching /account tab', () => {
+    expect(legacyAccountTab('/me/points')).toBe('points');
+    expect(legacyAccountTab('/me/money')).toBe('points');
+    expect(legacyAccountTab('/me/rights')).toBe('rights');
+    expect(legacyAccountTab('/me/verify')).toBe('verify');
+    expect(legacyAccountTab('/user/quanyi')).toBe('rights');
+    expect(legacyAccountTab('/dashboard')).toBeNull();
   });
 
-  it('only accepts an in-app console or admin href after login (#194)', () => {
-    expect(safeConsoleHref('/writing/prompts')).toBe('/writing/prompts');
-    expect(safeConsoleHref('/material/questions?keywordId=demo')).toBe(
-      '/material/questions?keywordId=demo',
+  it('validates safeConsoleHref, safeAdminHref (rejecting /admin/templates), and safePostLoginHref', () => {
+    expect(safeConsoleHref('/home')).toBe('/home');
+    expect(safeConsoleHref('/studio?brandId=b1&market=GLOBAL')).toBe(
+      '/studio?brandId=b1&market=GLOBAL',
     );
-    expect(safeConsoleHref('https://example.com/writing/prompts')).toBeNull();
-    expect(safeConsoleHref('//example.com')).toBeNull();
-    expect(safeConsoleHref('/user/zhiling')).toBeNull();
+    expect(safeConsoleHref('/account?tab=rights')).toBe('/account?tab=rights');
+    expect(safeConsoleHref('/dashboard')).toBeNull();
+    expect(safeConsoleHref('/me/money')).toBeNull();
+    expect(safeConsoleHref('https://evil.example/home')).toBeNull();
 
     expect(safeAdminHref('/admin')).toBe('/admin/tenants');
     expect(safeAdminHref('/admin/tenants')).toBe('/admin/tenants');
-    expect(safeAdminHref('/admin/llm-costs/')).toBe('/admin/llm-costs');
-    expect(safeAdminHref('/admin/unknown')).toBeNull();
+    expect(safeAdminHref('/admin/pricing')).toBe('/admin/pricing');
+    expect(safeAdminHref('/admin/announcements')).toBe('/admin/announcements');
+    expect(safeAdminHref('/admin/llm-costs')).toBe('/admin/llm-costs');
+    expect(safeAdminHref('/admin/templates')).toBeNull();
     expect(safeAdminHref('//evil.example/admin/tenants')).toBeNull();
 
-    expect(safePostLoginHref('/admin/tenants')).toBe('/admin/tenants');
-    expect(safePostLoginHref('/me/rights')).toBe('/me/rights');
-    expect(safePostLoginHref('https://example.com/admin/tenants')).toBeNull();
+    expect(safePostLoginHref('/brands?market=CN')).toBe('/brands?market=CN');
+    expect(safePostLoginHref('/admin/pricing')).toBe('/admin/pricing');
+    expect(safePostLoginHref('/admin/templates')).toBeNull();
+    expect(safePostLoginHref('/dashboard')).toBeNull();
+  });
+
+  it('redirects trailing-slash legacy paths to clean canonical paths while preserving query parameters', () => {
+    const cases: Array<[string, string]> = [
+      ['http://localhost:3000/dashboard/', 'http://localhost:3000/home'],
+      ['http://localhost:3000/me/points/', 'http://localhost:3000/account?tab=points'],
+      ['http://localhost:3000/visibility/overview/', 'http://localhost:3000/visibility'],
+      [
+        'http://localhost:3000/me/points?brandId=b1&market=GLOBAL',
+        'http://localhost:3000/account?brandId=b1&market=GLOBAL&tab=points',
+      ],
+      ['http://localhost:3000/me/points?tab=verify', 'http://localhost:3000/account?tab=verify'],
+    ];
+
+    for (const [input, expectedLocation] of cases) {
+      const response = middleware(new NextRequest(input));
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe(expectedLocation);
+    }
+
+    const passthrough = middleware(new NextRequest('http://localhost:3000/home?brandId=b1'));
+    expect(passthrough.status).toBe(200);
+    expect(passthrough.headers.get('location')).toBeNull();
   });
 });

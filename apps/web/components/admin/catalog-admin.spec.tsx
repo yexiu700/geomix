@@ -2,13 +2,8 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  AdminApiError,
-  type AnnouncementRow,
-  type PriceRow,
-  type TemplateRow,
-} from '../../lib/admin-client';
-import { AnnouncementAdmin, PricingAdmin, TemplateAdmin } from './catalog-admin';
+import { AdminApiError, type AnnouncementRow, type PriceRow } from '../../lib/admin-client';
+import { AnnouncementAdmin, PricingAdmin } from './catalog-admin';
 
 afterEach(() => {
   cleanup();
@@ -16,25 +11,16 @@ afterEach(() => {
 
 function samplePrices(): PriceRow[] {
   return [
-    { action: 'ai_write', unitPoints: 10, enabled: true, updatedAt: '2026-11-18T00:00:00.000Z' },
-    { action: 'distill', unitPoints: 10, enabled: true, updatedAt: '2026-11-18T00:00:00.000Z' },
-    { action: 'image_gen', unitPoints: 5, enabled: true, updatedAt: '2026-11-18T00:00:00.000Z' },
-    { action: 'kb_addon', unitPoints: 5, enabled: true, updatedAt: '2026-11-18T00:00:00.000Z' },
-    {
-      action: 'rewrite_batch',
-      unitPoints: 5,
-      enabled: true,
-      updatedAt: '2026-11-18T00:00:00.000Z',
-    },
-    {
-      action: 'rewrite_single',
-      unitPoints: 5,
-      enabled: true,
-      updatedAt: '2026-11-18T00:00:00.000Z',
-    },
+    { action: 'geo_write', unitPoints: 10, enabled: true, updatedAt: '2026-11-18T00:00:00.000Z' },
     {
       action: 'visibility_check',
       unitPoints: 2,
+      enabled: true,
+      updatedAt: '2026-11-18T00:00:00.000Z',
+    },
+    {
+      action: 'inline_image_gen',
+      unitPoints: 5,
       enabled: true,
       updatedAt: '2026-11-18T00:00:00.000Z',
     },
@@ -66,8 +52,8 @@ function sampleAnnouncements(): AnnouncementRow[] {
   ];
 }
 
-describe('PricingAdmin (#196)', () => {
-  it('displays Chinese business names, billing units, and descriptions instead of raw snake_case keys', async () => {
+describe('PricingAdmin (GeoMix 2.0 3-action pricing)', () => {
+  it('displays Chinese business names, billing units, and descriptions for the 3 v2 actions instead of raw keys', async () => {
     const client = {
       listPrices: vi.fn(async () => samplePrices()),
       updatePrice: vi.fn(),
@@ -76,32 +62,27 @@ describe('PricingAdmin (#196)', () => {
 
     render(<PricingAdmin client={client} />);
 
-    expect(await screen.findByText(/AI 文章写作/)).toBeTruthy();
-    expect(screen.getByText(/知识库增强附加费/)).toBeTruthy();
-    expect(screen.getByText(/AI 蒸馏拓展/)).toBeTruthy();
-    expect(screen.getByText(/单篇流量复刻/)).toBeTruthy();
-    expect(screen.getByText(/批量流量复刻/)).toBeTruthy();
-    expect(screen.getByText(/AI 生图/)).toBeTruthy();
+    expect(await screen.findByText(/GEO 靶向写作/)).toBeTruthy();
     expect(screen.getByText(/AI 可见性监测/)).toBeTruthy();
+    expect(screen.getByText(/行内 AI 配图/)).toBeTruthy();
 
-    expect(screen.getAllByText(/点\/篇/).length).toBeGreaterThanOrEqual(4);
-    expect(screen.getAllByText(/点\/次/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/点\/篇/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/点\/次/).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText(/点\/张/).length).toBeGreaterThanOrEqual(1);
 
     for (const rawKey of [
+      'geo_write',
+      'visibility_check',
+      'inline_image_gen',
+      'kb_addon',
       'ai_write',
       'distill',
-      'image_gen',
-      'kb_addon',
-      'rewrite_batch',
-      'rewrite_single',
-      'visibility_check',
     ]) {
       expect(screen.queryByText(rawKey)).toBeNull();
     }
   });
 
-  it('supports editing multiple rows and saving them together in a single batch call', async () => {
+  it('supports editing multiple v2 rows and saving them together in a single batch call', async () => {
     const rows = samplePrices();
     const updatePrices = vi.fn(async ({ items }) => {
       const next = rows.map((row) => {
@@ -117,15 +98,15 @@ describe('PricingAdmin (#196)', () => {
     };
 
     render(<PricingAdmin client={client} />);
-    expect(await screen.findByText(/AI 文章写作/)).toBeTruthy();
+    expect(await screen.findByText(/GEO 靶向写作/)).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('AI 文章写作 点数'), {
+    fireEvent.change(screen.getByLabelText('GEO 靶向写作 点数'), {
       target: { value: '12' },
     });
-    fireEvent.change(screen.getByLabelText('知识库增强附加费 点数'), {
-      target: { value: '8' },
+    fireEvent.change(screen.getByLabelText('AI 可见性监测 点数'), {
+      target: { value: '3' },
     });
-    fireEvent.click(screen.getByLabelText('AI 生图 启用'));
+    fireEvent.click(screen.getByLabelText('行内 AI 配图 启用'));
 
     const batchSaveBtn = screen.getByRole('button', { name: /批量保存/ });
     expect((batchSaveBtn as HTMLButtonElement).disabled).toBe(false);
@@ -136,9 +117,9 @@ describe('PricingAdmin (#196)', () => {
     });
     expect(updatePrices).toHaveBeenCalledWith({
       items: expect.arrayContaining([
-        { action: 'ai_write', unitPoints: 12, enabled: true },
-        { action: 'kb_addon', unitPoints: 8, enabled: true },
-        { action: 'image_gen', unitPoints: 5, enabled: false },
+        { action: 'geo_write', unitPoints: 12, enabled: true },
+        { action: 'visibility_check', unitPoints: 3, enabled: true },
+        { action: 'inline_image_gen', unitPoints: 5, enabled: false },
       ]),
     });
     expect(client.updatePrice).not.toHaveBeenCalled();
@@ -153,9 +134,9 @@ describe('PricingAdmin (#196)', () => {
     };
 
     render(<PricingAdmin client={client} />);
-    expect(await screen.findByText(/AI 文章写作/)).toBeTruthy();
+    expect(await screen.findByText(/GEO 靶向写作/)).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('AI 文章写作 点数'), {
+    fireEvent.change(screen.getByLabelText('GEO 靶向写作 点数'), {
       target: { value: '0' },
     });
     fireEvent.click(screen.getByRole('button', { name: /批量保存/ }));
@@ -296,109 +277,5 @@ describe('AnnouncementAdmin (#199)', () => {
     fireEvent.click(screen.getByRole('button', { name: /发\s*布/ }));
     expect(await screen.findByText('请填写公告内容', {}, { timeout: 5000 })).toBeTruthy();
     expect(createAnnouncement).not.toHaveBeenCalled();
-  });
-});
-
-function sampleTemplates(): TemplateRow[] {
-  return [
-    {
-      id: 'tpl-1',
-      kind: 'ARTICLE',
-      name: '标准文章模板',
-      content: '请围绕 {{主关键词}} 生成结构化内容。',
-      randomPool: true,
-      sort: 1,
-      updatedAt: '2026-11-18T00:00:00.000Z',
-    },
-  ];
-}
-
-describe('TemplateAdmin (#197, #198)', () => {
-  it('validates required template fields with asterisks and placeholders before calling createTemplate (#197)', async () => {
-    const createTemplate = vi.fn(async (input) => ({
-      id: 'tpl-2',
-      ...input,
-      updatedAt: '2026-11-18T01:00:00.000Z',
-    }));
-    const client = {
-      listTemplates: vi.fn(async () => sampleTemplates()),
-      createTemplate,
-      updateTemplate: vi.fn(),
-    };
-
-    render(<TemplateAdmin client={client} />);
-    expect(await screen.findByText('标准文章模板')).toBeTruthy();
-
-    expect(document.querySelectorAll('.ant-form-item-required').length).toBeGreaterThanOrEqual(3);
-    expect(screen.getByLabelText('模板名称').getAttribute('placeholder')).toBeTruthy();
-    expect(screen.getByLabelText('模板正文').getAttribute('placeholder')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: '新增模板' }));
-    expect(await screen.findByText('请填写模板名称', {}, { timeout: 5000 })).toBeTruthy();
-    expect(await screen.findByText('请填写模板正文', {}, { timeout: 5000 })).toBeTruthy();
-    expect(createTemplate).not.toHaveBeenCalled();
-
-    fireEvent.change(screen.getByLabelText('模板名称'), { target: { value: '新增问答模板' } });
-    fireEvent.change(screen.getByLabelText('模板正文'), {
-      target: { value: '围绕问题输出要点。' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '新增模板' }));
-
-    await waitFor(() => {
-      expect(createTemplate).toHaveBeenCalledWith({
-        kind: 'ARTICLE',
-        name: '新增问答模板',
-        content: '围绕问题输出要点。',
-        randomPool: true,
-        sort: 2,
-      });
-    });
-  });
-
-  it('supports 取消, Escape close, backdrop mask click, and required validation in edit modal (#198)', async () => {
-    const updateTemplate = vi.fn(async (id, input) => ({
-      id,
-      ...input,
-      updatedAt: '2026-11-18T02:00:00.000Z',
-    }));
-    const client = {
-      listTemplates: vi.fn(async () => sampleTemplates()),
-      createTemplate: vi.fn(),
-      updateTemplate,
-    };
-
-    render(<TemplateAdmin client={client} />);
-    expect(await screen.findByText('标准文章模板')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑模板' });
-
-    // No dead minimize/maximize buttons
-    expect(within(dialog).queryByRole('button', { name: '最小化' })).toBeNull();
-    expect(within(dialog).queryByRole('button', { name: '最大化' })).toBeNull();
-    expect(within(dialog).getByRole('button', { name: /取\s*消/ })).toBeTruthy();
-
-    // Empty name blocked before calling updateTemplate
-    fireEvent.change(within(dialog).getByLabelText('编辑模板名称'), { target: { value: '' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存模板' }));
-    expect(await within(dialog).findByText('请填写模板名称', {}, { timeout: 5000 })).toBeTruthy();
-    expect(updateTemplate).not.toHaveBeenCalled();
-
-    // Cancel closes modal
-    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
-    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
-
-    // Re-open and Escape closes modal
-    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
-    expect(await screen.findByRole('dialog', { name: '编辑模板' })).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
-
-    // Re-open and clicking backdrop mask closes modal
-    fireEvent.click(screen.getByRole('button', { name: '编辑模板 标准文章模板' }));
-    expect(await screen.findByRole('dialog', { name: '编辑模板' })).toBeTruthy();
-    const mask = document.querySelector('.gm-crud-mask') as HTMLElement;
-    fireEvent.click(mask);
-    expect(screen.queryByRole('dialog', { name: '编辑模板' })).toBeNull();
   });
 });

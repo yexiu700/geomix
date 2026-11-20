@@ -28,7 +28,7 @@ export function NotFoundPanel() {
         <div className="gm-not-found-actions">
           {hasSession ? (
             <>
-              <Link href="/dashboard" className="gm-not-found-btn gm-not-found-btn-primary">
+              <Link href="/home" className="gm-not-found-btn gm-not-found-btn-primary">
                 返回工作台
               </Link>
               <button
@@ -39,7 +39,7 @@ export function NotFoundPanel() {
                     router.back();
                     return;
                   }
-                  router.push('/dashboard');
+                  router.push('/home');
                 }}
               >
                 返回上一页

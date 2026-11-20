@@ -11,7 +11,14 @@ import { ProviderError, PROVIDER_KIND } from './provider-error';
 const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const OBJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MEMORY_MAX_OBJECTS = 200;
+const DEFAULT_MEMORY_MAX_OBJECTS = 200;
+
+function resolveMemoryMaxObjects(env: Record<string, string | undefined>): number {
+  const raw = env.E2E_MEMORY_MAX_OBJECTS?.trim();
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return DEFAULT_MEMORY_MAX_OBJECTS;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MEMORY_MAX_OBJECTS;
+}
 
 export type StoredObject = {
   key: string;
@@ -42,12 +49,19 @@ export class StorageService {
     private readonly settings: StorageSettings,
     private readonly client: ObjectClient,
     private readonly memory: boolean,
+    private readonly memoryMaxObjects: number = DEFAULT_MEMORY_MAX_OBJECTS,
   ) {}
 
   static fromEnv(env: Record<string, string | undefined>): StorageService {
     const settings = resolveStorageSettings(env);
-    if (settings.driver === 'memory')
-      return new StorageService(settings, new MemoryObjectClient(), true);
+    if (settings.driver === 'memory') {
+      return new StorageService(
+        settings,
+        new MemoryObjectClient(),
+        true,
+        resolveMemoryMaxObjects(env),
+      );
+    }
     return new StorageService(settings, createS3ObjectClient(env), false);
   }
 
@@ -88,7 +102,7 @@ export class StorageService {
     if (existingHash && existingHash !== sha256) {
       throw new ProviderError(PROVIDER_KIND.CONFLICT, '同名对象内容不一致', 'object');
     }
-    if (this.memory && !existingHash && this.objects.size >= MEMORY_MAX_OBJECTS) {
+    if (this.memory && !existingHash && this.objects.size >= this.memoryMaxObjects) {
       throw new ProviderError(PROVIDER_KIND.TOO_LARGE, '内存存储已满', 'count');
     }
     if (!existingHash) {

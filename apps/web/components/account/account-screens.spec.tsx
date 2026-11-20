@@ -2,12 +2,26 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { message } from 'antd';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LedgerPage, MoneyItem, PointItem, RightsView } from '../../lib/account-client';
-import { MoneyScreen } from './money-screen';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LedgerPage, PointItem, RightsView } from '../../lib/account-client';
+import { AccountScreen, resolveAccountTab } from './account-screen';
 import { PointsScreen } from './points-screen';
 import { RightsScreen } from './rights-screen';
 import { VerifyScreen } from './verify-screen';
+
+const replaceMock = vi.fn();
+let mockSearchParams = new URLSearchParams();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ replace: replaceMock }),
+  usePathname: () => '/account',
+  useSearchParams: () => mockSearchParams,
+}));
+
+beforeEach(() => {
+  mockSearchParams = new URLSearchParams();
+  replaceMock.mockReset();
+});
 
 afterEach(() => {
   cleanup();
@@ -18,16 +32,11 @@ function pointPage(items: PointItem[]): LedgerPage<PointItem> {
   return { items, total: items.length, page: 1, pageSize: 10 };
 }
 
-function moneyPage(items: MoneyItem[]): LedgerPage<MoneyItem> {
-  return { items, total: items.length, page: 1, pageSize: 10 };
-}
-
 function summaryStub(overrides?: Partial<RightsView>): RightsView {
   return {
     points: 1500,
     pointsReserved: 100,
     available: 1400,
-    money: '128.50',
     billingMode: 'SHADOW',
     cards: [],
     models: [],
@@ -35,7 +44,108 @@ function summaryStub(overrides?: Partial<RightsView>): RightsView {
   };
 }
 
-describe('personal center screens', () => {
+function rightsViewStub(): RightsView {
+  return {
+    points: 1500,
+    billingMode: 'SHADOW',
+    cards: [
+      { key: 'MAIN_KEYWORD', label: '品牌数量', text: '1 / 100', used: '1', limit: '100' },
+      { key: 'QUESTION', label: '写作意见', text: '3 / 10000', used: '3', limit: '10000' },
+      { key: 'INCLUDED', label: '已收录', text: '1', used: '1' },
+      { key: 'AI_WRITE', label: 'GEO写作数量', text: '2 / 10000', used: '2', limit: '10000' },
+      { key: 'PUBLISH', label: '文章发布', text: '0 / 10000', used: '0', limit: '10000' },
+      { key: 'SOCIAL_AUTH', label: '自媒体授权', text: '0 / 100', used: '0', limit: '100' },
+      { key: 'EXPIRES', label: '有效期', text: '2027-11-16' },
+      {
+        key: 'STORAGE_BYTES',
+        label: '图片存储空间',
+        text: '2 KB / 100 MB',
+        used: '2048',
+        limit: '104857600',
+      },
+      { key: 'POINTS', label: '点数', text: '1500' },
+    ],
+    models: [
+      { key: 'deepseek', label: 'DeepSeek', count: 0 },
+      { key: 'doubao', label: '豆包', count: 0 },
+      { key: 'yuanbao', label: '腾讯元宝', count: 0 },
+      { key: 'tongyi', label: '通义千问', count: 0 },
+      { key: 'wenxin', label: '文心一言', count: 0 },
+      { key: 'nami', label: '纳米', count: 0 },
+      { key: 'kimi', label: 'Kimi', count: 0 },
+      { key: 'zhipu', label: '智谱', count: 0 },
+    ],
+  };
+}
+
+describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
+  it('resolves tab keys safely and syncs ?tab= while preserving brandId and market', async () => {
+    expect(resolveAccountTab('points')).toBe('points');
+    expect(resolveAccountTab('rights')).toBe('rights');
+    expect(resolveAccountTab('verify')).toBe('verify');
+    expect(resolveAccountTab('money')).toBe('points');
+    expect(resolveAccountTab(null)).toBe('points');
+
+    mockSearchParams = new URLSearchParams('brandId=b1&market=GLOBAL&tab=rights');
+    render(
+      <AccountScreen
+        loadPoints={async () => pointPage([])}
+        loadSummary={async () => summaryStub()}
+        loadRights={async () => rightsViewStub()}
+        loadVerification={async () => null}
+      />,
+    );
+
+    expect(screen.getByRole('tab', { name: '点数明细' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '账号权益' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '实名认证' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: '余额明细' })).toBeNull();
+    expect(screen.queryByText(/¥0\.00/)).toBeNull();
+
+    // Initially opens rights tab from ?tab=rights
+    expect(await screen.findByText('2 KB / 100 MB')).toBeTruthy();
+
+    // Switch to verify tab -> preserves brandId & market
+    fireEvent.click(screen.getByRole('tab', { name: '实名认证' }));
+    expect(replaceMock).toHaveBeenCalledWith('/account?brandId=b1&market=GLOBAL&tab=verify', {
+      scroll: false,
+    });
+    expect(await screen.findByText(/尚未开通核验/)).toBeTruthy();
+  });
+
+  it('shows cold-load skeletons with zero 0 点 / 0 条 / 免费体验期 / STRICT caption flash while pending', () => {
+    const pendingPoints = new Promise<LedgerPage<PointItem>>(() => undefined);
+    const pendingSummary = new Promise<RightsView>(() => undefined);
+
+    const { unmount: unmountPoints } = render(
+      <PointsScreen
+        title="点数明细"
+        load={() => pendingPoints}
+        loadSummary={() => pendingSummary}
+      />,
+    );
+
+    expect(screen.getAllByTestId('points-kpi-skeleton')).toHaveLength(3);
+    expect(screen.getByTestId('points-table-skeleton')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\b0\s*点\b/);
+    expect(document.body.textContent).not.toContain('0 条');
+    expect(document.body.textContent).not.toContain('免费体验期');
+    expect(document.body.textContent).not.toContain('按实际成功产出结算扣减可用点数');
+    expect(document.body.textContent).not.toContain('¥0.00');
+    unmountPoints();
+
+    const { unmount: unmountRights } = render(
+      <RightsScreen title="账号权益" load={() => new Promise<RightsView>(() => undefined)} />,
+    );
+    expect(screen.getByTestId('rights-loading')).toBeTruthy();
+    expect(document.querySelectorAll('[aria-busy="true"]').length).toBeGreaterThan(0);
+    unmountRights();
+
+    render(<VerifyScreen title="实名认证" load={() => new Promise(() => undefined)} />);
+    expect(screen.getByTestId('verify-loading')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '提交资料' })).toBeNull();
+  });
+
   it('shows points summary, filters without checkboxes, and avoids duplicate phrase concatenation (#201)', async () => {
     const load = vi.fn(async () =>
       pointPage([
@@ -51,10 +161,10 @@ describe('personal center screens', () => {
         },
         {
           id: 'p2',
-          title: 'AI写作-ARZOPA便携屏选型实测（免费期）',
+          title: 'GEO写作-便携屏选型实测（免费期）',
           delta: 0,
           listPrice: 10,
-          phrase: '0 AI写作-ARZOPA便携屏选型实测（免费期）',
+          phrase: '0 GEO写作-便携屏选型实测（免费期）',
           pointsText: '0（原价 10）',
           createdAt: '2026-11-16T03:30:00.000Z',
           status: 'SETTLED',
@@ -69,27 +179,19 @@ describe('personal center screens', () => {
     expect(screen.getByText('免费体验期')).toBeTruthy();
     expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
 
-    // No duplicate phrase concatenation in 点数 column and no useless checkbox column
     expect(screen.queryByText('+500 管理员充值')).toBeNull();
-    expect(screen.queryByText('0 AI写作-ARZOPA便携屏选型实测（免费期）')).toBeNull();
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     expect(document.querySelector('.ant-table-selection')).toBeNull();
 
-    // AntD Table with scroll={{ x: 'max-content' }} inserts a hidden tr.ant-table-measure-row
-    // before data rows; verify real data rows carry .ant-table-row and are not aria-hidden
     const dataRows = document.querySelectorAll('tbody tr.ant-table-row');
     expect(dataRows).toHaveLength(2);
     expect(dataRows[0]?.getAttribute('aria-hidden')).toBeNull();
-    expect(dataRows[0]?.textContent).toContain('管理员充值');
-    const measureRow = document.querySelector('tbody tr.ant-table-measure-row');
-    if (measureRow) {
-      expect(measureRow.getAttribute('aria-hidden')).toBe('true');
-    }
 
     expect(screen.getByRole('columnheader', { name: '序号' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '项目' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '点数' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '消耗时间' })).toBeTruthy();
+
     fireEvent.change(screen.getByRole('textbox', { name: '项目名称' }), {
       target: { value: '管理员充值' },
     });
@@ -106,7 +208,7 @@ describe('personal center screens', () => {
     const warnSpy = vi
       .spyOn(message, 'warning')
       .mockImplementation(() => (() => undefined) as never);
-    const longValidTitle = 'AI写作-面向华东工业制造企业的激光切割机选型对比与维护指南长标题示例';
+    const longValidTitle = 'GEO写作-面向华东工业制造企业的激光切割机选型对比与维护指南长标题示例';
     const load = vi
       .fn<() => Promise<LedgerPage<PointItem>>>()
       .mockResolvedValueOnce(
@@ -115,9 +217,9 @@ describe('personal center screens', () => {
             id: 'p-cot',
             title: 'AI生图-用户需要把简短描述扩写成配图提示词，80-220（免费期）',
             delta: 0,
-            listPrice: 10,
+            listPrice: 5,
             phrase: '0 AI生图-用户需要把简短描述扩写成配图提示词，80-220（免费期）',
-            pointsText: '0（原价 10）',
+            pointsText: '0（原价 5）',
             createdAt: '2026-11-16T04:00:00.000Z',
             status: 'SETTLED',
           },
@@ -141,7 +243,6 @@ describe('personal center screens', () => {
     expect(screen.queryByText(/用户需要把简短描述扩写成配图提示词/)).toBeNull();
     expect(document.querySelector('.gm-clamp-1')).toBeTruthy();
 
-    // Filter to empty result and verify export warns instead of silently triggering download
     fireEvent.change(screen.getByRole('textbox', { name: '项目名称' }), {
       target: { value: '不存在' },
     });
@@ -154,105 +255,23 @@ describe('personal center screens', () => {
     expect(exportFile).not.toHaveBeenCalled();
   });
 
-  it('renders money rows without a checkbox or sequence column and shows balance summary', async () => {
-    const load = vi.fn(async () =>
-      moneyPage([
-        {
-          id: 'm1',
-          title: '余额示例',
-          amount: '12.50',
-          remark: '说明示例',
-          createdAt: '2026-11-16T02:00:00.000Z',
-        },
-      ]),
-    );
-    const exportFile = vi.fn(async () => ({
-      filename: 'geomix-money.csv',
-      mime: 'text/csv',
-      body: new Uint8Array([1, 2]),
-    }));
-    render(
-      <MoneyScreen
-        title="余额明细"
-        load={load}
-        loadSummary={async () => summaryStub({ money: '1234.50', available: 1400 })}
-        exportFile={exportFile}
-      />,
-    );
-    expect(await screen.findByText('余额示例')).toBeTruthy();
-    expect(screen.getByText('¥1,234.50')).toBeTruthy();
-    expect(screen.getByText('1,400 点')).toBeTruthy();
-    expect(screen.getByText('12.50')).toBeTruthy();
-    expect(screen.getByText('说明示例')).toBeTruthy();
-    expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
-    for (const name of ['项目', '金额', '说明', '消耗时间']) {
-      expect(screen.getByRole('columnheader', { name })).toBeTruthy();
-    }
-    expect(
-      Array.from(document.querySelectorAll('thead th')).map((th) => th.textContent?.trim()),
-    ).toEqual(['项目', '金额', '说明', '消耗时间']);
-    expect(document.querySelectorAll('tbody tr.ant-table-row')).toHaveLength(1);
-    expect(screen.queryByRole('columnheader', { name: '序号' })).toBeNull();
-    expect(document.querySelector('input[type="checkbox"]')).toBeNull();
-    expect(document.querySelector('.ant-table-selection')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
-    await waitFor(() => {
-      expect(exportFile).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }), 'csv');
-    });
-  });
-
-  it('shows quota ratios, storage used and limit, and eight model cards', async () => {
-    const view: RightsView = {
-      points: 1500,
-      money: '0.00',
-      billingMode: 'SHADOW',
-      cards: [
-        { key: 'MAIN_KEYWORD', label: '主关键词', text: '0 / 100', used: '0', limit: '100' },
-        { key: 'QUESTION', label: '写作问题', text: '0 / 10000', used: '0', limit: '10000' },
-        { key: 'INCLUDED', label: '已收录', text: '1', used: '1' },
-        { key: 'AI_WRITE', label: 'AI写作数量', text: '0 / 10000', used: '0', limit: '10000' },
-        { key: 'PUBLISH', label: '文章发布', text: '0 / 10000', used: '0', limit: '10000' },
-        { key: 'SOCIAL_AUTH', label: '自媒体授权', text: '0 / 100', used: '0', limit: '100' },
-        { key: 'EXPIRES', label: '有效期', text: '2027-11-16' },
-        {
-          key: 'STORAGE_BYTES',
-          label: '图片存储空间',
-          text: '2 KB / 100 MB',
-          used: '2048',
-          limit: '104857600',
-        },
-        { key: 'POINTS', label: '点数', text: '1500' },
-        { key: 'MONEY', label: '余额', text: '0.00' },
-      ],
-      models: [
-        { key: 'deepseek', label: 'DeepSeek', count: 0 },
-        { key: 'doubao', label: '豆包', count: 0 },
-        { key: 'yuanbao', label: '腾讯元宝', count: 0 },
-        { key: 'tongyi', label: '通义千问', count: 0 },
-        { key: 'wenxin', label: '文心一言', count: 0 },
-        { key: 'nami', label: '纳米', count: 0 },
-        { key: 'kimi', label: 'Kimi', count: 0 },
-        { key: 'zhipu', label: '智谱', count: 0 },
-      ],
-    };
-    render(<RightsScreen title="账号权益" load={async () => view} />);
+  it('shows 9 v2 quota/rights cards (no MONEY card) and eight model cards', async () => {
+    render(<RightsScreen title="账号权益" load={async () => rightsViewStub()} />);
     expect(await screen.findByText('2 KB / 100 MB')).toBeTruthy();
     expect(screen.getByText('1500')).toBeTruthy();
     expect(screen.getAllByText('0')).toHaveLength(8);
-    expect(screen.getByRole('article', { name: '主关键词' }).textContent).toContain('0 / 100');
-    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(18);
-    expect(screen.queryByText(/额度来自配额表|模型收录计数留到后续模块/)).toBeNull();
+    expect(screen.getByRole('article', { name: '品牌数量' }).textContent).toContain('1 / 100');
+    expect(screen.queryByRole('article', { name: '余额' })).toBeNull();
+    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(17);
   });
 
-  it('refreshes /me/rights usage when returning to the keep-alive tab (#195)', async () => {
+  it('refreshes /me/rights usage when returning to the active tab (#195)', async () => {
     const initial: RightsView = {
       points: 1000,
-      money: '0.00',
       billingMode: 'SHADOW',
       cards: [
-        { key: 'MAIN_KEYWORD', label: '主关键词', text: '2 / 100', used: '2', limit: '100' },
-        { key: 'AI_WRITE', label: 'AI写作数量', text: '0 / 10000', used: '0', limit: '10000' },
+        { key: 'MAIN_KEYWORD', label: '品牌数量', text: '2 / 100', used: '2', limit: '100' },
+        { key: 'AI_WRITE', label: 'GEO写作数量', text: '0 / 10000', used: '0', limit: '10000' },
         {
           key: 'STORAGE_BYTES',
           label: '图片存储空间',
@@ -266,8 +285,8 @@ describe('personal center screens', () => {
     const updated: RightsView = {
       ...initial,
       cards: [
-        { key: 'MAIN_KEYWORD', label: '主关键词', text: '2 / 100', used: '2', limit: '100' },
-        { key: 'AI_WRITE', label: 'AI写作数量', text: '1 / 10000', used: '1', limit: '10000' },
+        { key: 'MAIN_KEYWORD', label: '品牌数量', text: '2 / 100', used: '2', limit: '100' },
+        { key: 'AI_WRITE', label: 'GEO写作数量', text: '1 / 10000', used: '1', limit: '10000' },
         {
           key: 'STORAGE_BYTES',
           label: '图片存储空间',
@@ -301,8 +320,9 @@ describe('personal center screens', () => {
       placeholder: true,
       updatedAt: '2026-11-16T00:00:00.000Z',
     }));
-    const view = render(<VerifyScreen title="实名认证" load={async () => null} submit={submit} />);
-    expect(await screen.findByText(/尚未开通核验/)).toBeTruthy();
+    const load = vi.fn(async () => null);
+    const view = render(<VerifyScreen title="实名认证" load={load} submit={submit} />);
+    expect(await screen.findByRole('button', { name: '提交资料' })).toBeTruthy();
     expect(screen.queryByText(/https?:\/\//)).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: '主体名称' }), {
       target: { value: '示例主体' },
@@ -319,16 +339,14 @@ describe('personal center screens', () => {
         phone: '',
       });
     });
-    view.rerender(
-      <VerifyScreen title="实名认证" readOnly load={async () => null} submit={submit} />,
-    );
+    view.rerender(<VerifyScreen title="实名认证" readOnly load={load} submit={submit} />);
     expect(screen.getByRole('button', { name: '提交资料' })).toHaveProperty('disabled', true);
   });
 
   it('blocks empty verify submission with inline required validation and asterisks (#197)', async () => {
     const submit = vi.fn();
     render(<VerifyScreen title="实名认证" load={async () => null} submit={submit} />);
-    await screen.findByText(/尚未开通核验/);
+    await screen.findByRole('button', { name: '提交资料' });
 
     expect(document.querySelectorAll('.ant-form-item-required')).toHaveLength(2);
     expect(
@@ -343,38 +361,5 @@ describe('personal center screens', () => {
     expect(await screen.findByText('请填写统一社会信用代码', {}, { timeout: 5000 })).toBeTruthy();
     expect(submit).not.toHaveBeenCalled();
     expect(document.querySelector('.ant-form-item-has-error')).not.toBeNull();
-  });
-
-  it('validates amount format, resets filters, and notifies on empty money export (#201)', async () => {
-    const warnSpy = vi
-      .spyOn(message, 'warning')
-      .mockImplementation(() => (() => undefined) as never);
-    const load = vi.fn(async () => moneyPage([]));
-    const exportFile = vi.fn(async () => ({
-      filename: 'geomix-money.csv',
-      mime: 'text/csv',
-      body: new Uint8Array([1, 2]),
-    }));
-    render(<MoneyScreen title="余额明细" load={load} exportFile={exportFile} />);
-    expect(await screen.findByText('没有找到匹配的记录')).toBeTruthy();
-
-    fireEvent.change(screen.getByRole('textbox', { name: '金额' }), {
-      target: { value: 'abc' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '查询' }));
-    expect(await screen.findByText('金额格式不正确')).toBeTruthy();
-    expect(load).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole('button', { name: '重置' }));
-    expect(screen.queryByText('金额格式不正确')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
-    expect(await screen.findByText('当前列表暂无可导出数据')).toBeTruthy();
-    expect(warnSpy).toHaveBeenCalledWith('当前列表暂无可导出数据');
-    expect(exportFile).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: '导出 XLSX' }));
-    expect(warnSpy).toHaveBeenCalledTimes(2);
-    expect(exportFile).not.toHaveBeenCalled();
   });
 });

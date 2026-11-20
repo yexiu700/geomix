@@ -88,8 +88,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         ]);
 
         for (const item of PRICING_DEFAULTS) {
-          await prisma.base.pricingItem.create({
-            data: { action: item.action, unitPoints: item.unitPoints, enabled: true },
+          await prisma.base.pricingItem.upsert({
+            where: { action: item.action },
+            update: { unitPoints: item.unitPoints, enabled: true },
+            create: { action: item.action, unitPoints: item.unitPoints, enabled: true },
           });
         }
         const options: BillingOptions = {

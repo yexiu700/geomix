@@ -24,12 +24,10 @@ export class BillingController {
   @Get('billing/quote')
   async quote(@Query() query: Record<string, unknown>) {
     const count = readCount(query.count);
-    const knowledgeBase = readFlag(query.knowledgeBase);
     const taskName = readOptionalText(query.taskName, 80);
     return ok(
-      await this.billing.quoteAiWrite({
+      await this.billing.quoteGeoWrite({
         count,
-        withKnowledgeBase: knowledgeBase,
         taskName,
       }),
     );
@@ -81,13 +79,6 @@ function readCount(value: unknown): number {
   const raw = one(value);
   if (!raw || !/^[0-9]+$/.test(raw)) throw badRequest('报价参数不正确');
   return Number(raw);
-}
-
-function readFlag(value: unknown): boolean {
-  const raw = one(value);
-  if (raw === undefined || raw === '' || raw === '0' || raw === 'false') return false;
-  if (raw === '1' || raw === 'true') return true;
-  throw badRequest('报价参数不正确');
 }
 
 function readOptionalText(value: unknown, max: number): string | undefined {

@@ -125,6 +125,9 @@ async function startFixtureServer() {
 
 async function bootstrap() {
   loadRootEnv();
+  if (!process.env.E2E_MEMORY_MAX_OBJECTS) {
+    process.env.E2E_MEMORY_MAX_OBJECTS = '2000';
+  }
   resetRobotsCache();
   const env = parseEnv();
   const fixtureHost = (process.env.E2E_PUBLIC_FIXTURE_HOST || 'public.e2e.example')

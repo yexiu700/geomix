@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  QUEUE_NAMES,
+  QUEUE_TENANT_LIMIT,
   createRunBodySchema,
   finishStatus,
   isTerminalRun,
   nextStatus,
-  QUEUE_TENANT_LIMIT,
   readQueueConfig,
   runProgress,
   shouldReleaseUnit,
@@ -47,10 +48,12 @@ describe('queue rules', () => {
     expect(runProgress({ total: 0, done: 0, fail: 0, skip: 0 })).toBe(0);
   });
 
-  it('caps writing tasks at two units per tenant', () => {
-    expect(QUEUE_TENANT_LIMIT['write-article']).toBe(2);
-    expect(QUEUE_TENANT_LIMIT['rewrite-batch']).toBe(1);
+  it('registers the 4 v2 queues and caps per-tenant concurrency', () => {
+    expect(QUEUE_NAMES).toEqual(['fact-index', 'geo-batch', 'visibility-check', 'maintenance']);
+    expect(QUEUE_TENANT_LIMIT['fact-index']).toBe(2);
+    expect(QUEUE_TENANT_LIMIT['geo-batch']).toBe(2);
     expect(QUEUE_TENANT_LIMIT['visibility-check']).toBe(2);
+    expect(QUEUE_TENANT_LIMIT.maintenance).toBe(1);
   });
 
   it('rejects extra fields and reads local defaults', () => {
@@ -60,8 +63,13 @@ describe('queue rules', () => {
     expect(config.prefix).toBe('geomix');
     expect(config.redisUrl).toBe('redis://localhost:6379');
     expect(config.unitAttempts).toBe(3);
-    expect(config.concurrency['write-article']).toBe(4);
+    expect(config.concurrency['fact-index']).toBe(2);
+    expect(config.concurrency['geo-batch']).toBe(2);
     expect(config.concurrency['visibility-check']).toBe(2);
+    expect(readQueueConfig({ QUEUE_FACT_INDEX_CONCURRENCY: '4' }).concurrency['fact-index']).toBe(
+      4,
+    );
+    expect(readQueueConfig({ QUEUE_GEO_BATCH_CONCURRENCY: '5' }).concurrency['geo-batch']).toBe(5);
     expect(
       readQueueConfig({ QUEUE_VISIBILITY_CONCURRENCY: '6' }).concurrency['visibility-check'],
     ).toBe(6);

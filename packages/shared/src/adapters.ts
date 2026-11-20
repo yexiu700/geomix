@@ -2,17 +2,27 @@ import { z } from 'zod';
 
 /**
  * 外部适配层的稳定常量（issue #5）。
- * 向量维数必须和已落地的 KnowledgeChunk.embedding vector(1024) 一致，不能在这里改库。
+ * 向量维数必须和已落地的 BrandFactChunk.embedding vector(1024) 一致，不能在这里改库。
  * token 成本是占位微元，不是厂商报价，也不进入点数钱包。计费默认仍由 BILLING_MODE 决定。
  */
 
 export const DB_EMBEDDING_DIMENSIONS = 1024 as const;
 
-export const LLM_SCENES = ['distill', 'title', 'body', 'rewrite', 'image_prompt'] as const;
+export const LLM_SCENES = [
+  'distill',
+  'title',
+  'body',
+  'rewrite',
+  'image_prompt',
+  'fact_extract',
+  'geo_brief',
+  'geo_write',
+  'geo_rewrite',
+] as const;
 export type LlmScene = (typeof LLM_SCENES)[number];
 
-/** 正文和改写走高质量模型。蒸馏、标题、生图提示词走便宜模型。 */
-export const QUALITY_LLM_SCENES = ['body', 'rewrite'] as const;
+/** 正文、改写与 GEO 成稿/局部改写走高质量模型；事实提炼、写作意见、标题、生图提示词走轻量模型。 */
+export const QUALITY_LLM_SCENES = ['body', 'rewrite', 'geo_write', 'geo_rewrite'] as const;
 
 export const FAKE_MARK = '【FAKE】';
 
@@ -108,6 +118,10 @@ function defaultRoute(names: string[]): LlmRouteConfig['route'] {
     body: entry,
     rewrite: entry,
     image_prompt: entry,
+    fact_extract: entry,
+    geo_brief: entry,
+    geo_write: entry,
+    geo_rewrite: entry,
   };
 }
 

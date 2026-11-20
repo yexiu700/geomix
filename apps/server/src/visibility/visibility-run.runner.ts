@@ -229,14 +229,14 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     const [run, obs] = await Promise.all([
       this.prisma.base.visibilityRun.findFirst({
         where: { id: runId, tenantId },
-        include: { profile: true },
+        include: { brandMarket: true },
       }),
       this.prisma.base.visibilityObservation.findFirst({
         where: { id: observationId, runId, tenantId },
       }),
     ]);
 
-    if (!run || !run.profile || !obs) return;
+    if (!run || !run.brandMarket || !obs) return;
 
     if (run.status === 'CANCELLED') {
       await this.prisma.base.visibilityObservation.updateMany({
@@ -248,8 +248,8 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     }
 
     const reservationId = await this.resolveReservationId(tenantId, run.id, run.reservationId);
-    const competitors = parseProfileCompetitors(run.profile.competitors);
-    const ownedDomains = run.profile.ownedDomains
+    const competitors = parseProfileCompetitors(run.brandMarket.competitors);
+    const ownedDomains = run.brandMarket.ownedDomains
       .map((dom) => normalizeVisibilityDomain(dom))
       .filter(Boolean);
     const competitorDomains = competitors.flatMap((comp) => comp.domains);
@@ -259,8 +259,8 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         tenantId,
         engine: obs.engine,
         promptText: obs.promptText,
-        brandName: run.profile.brandName,
-        brandAliases: run.profile.brandAliases,
+        brandName: run.brandMarket.localBrandName,
+        brandAliases: run.brandMarket.aliases,
         ownedDomains,
         competitors,
         idempotencyKey: `vis-col:${obs.id}`,
@@ -308,8 +308,8 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
           snippet: cite.snippet,
         })),
         profile: {
-          brandName: run.profile.brandName,
-          brandAliases: run.profile.brandAliases,
+          brandName: run.brandMarket.localBrandName,
+          brandAliases: run.brandMarket.aliases,
           ownedDomains,
           competitors,
         },
@@ -320,7 +320,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         tenantId,
         runId: run.id,
         observationId: obs.id,
-        questionId: obs.questionId,
         collectorKind: collected.collectorKind,
         answerText: collected.answerText,
         brandMentioned: judged.brandMentioned,
@@ -393,7 +392,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     tenantId: string;
     runId: string;
     observationId: string;
-    questionId: string | null;
     collectorKind: string;
     answerText: string;
     brandMentioned: boolean;
@@ -474,25 +472,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
           checkedAt: now,
         },
       });
-
-      if (input.brandMentioned && input.questionId) {
-        const question = await tx.question.findFirst({
-          where: { id: input.questionId, tenantId: input.tenantId },
-          select: { id: true, keywordId: true, included: true },
-        });
-        if (question) {
-          if (!question.included) {
-            await tx.question.update({
-              where: { id: question.id },
-              data: { included: true },
-            });
-          }
-          await tx.keyword.updateMany({
-            where: { id: question.keywordId, tenantId: input.tenantId },
-            data: { optStatus: 'INCLUDED' },
-          });
-        }
-      }
 
       await tx.visibilityRun.update({
         where: { id: input.runId },
@@ -577,8 +556,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
           id: true,
           status: true,
           totalChecks: true,
-          keywordId: true,
-          questionIds: true,
           reservationId: true,
           finishedAt: true,
         },
@@ -620,16 +597,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         },
       });
 
-      if (running === 0) {
-        await this.syncKeywordOptStatuses(tx, {
-          tenantId,
-          runId,
-          runKeywordId: run.keywordId,
-          questionIds: run.questionIds,
-          completedWithChecks: nextStatus !== 'CANCELLED' && success > 0,
-        });
-      }
-
       return {
         closeReservation: running === 0,
         reservationId: run.reservationId,
@@ -647,89 +614,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     });
     if (reservation && reservation.status === 'OPEN') {
       await this.billing.close({ tenantId, reservationId: reservation.id });
-    }
-  }
-
-  private async syncKeywordOptStatuses(
-    tx: Prisma.TransactionClient,
-    input: {
-      tenantId: string;
-      runId: string;
-      runKeywordId: string | null;
-      questionIds: string[];
-      completedWithChecks: boolean;
-    },
-  ): Promise<void> {
-    const keywordIds = new Set<string>();
-    if (input.runKeywordId) {
-      keywordIds.add(input.runKeywordId);
-    }
-
-    if (input.questionIds.length > 0) {
-      const questions = await tx.question.findMany({
-        where: {
-          tenantId: input.tenantId,
-          id: { in: input.questionIds },
-        },
-        select: { id: true, keywordId: true },
-      });
-      for (const q of questions) {
-        keywordIds.add(q.keywordId);
-      }
-    }
-
-    if (keywordIds.size === 0) return;
-
-    const succeededObs = await tx.visibilityObservation.findMany({
-      where: {
-        runId: input.runId,
-        tenantId: input.tenantId,
-        status: 'SUCCESS',
-        questionId: { not: null },
-      },
-      select: { questionId: true },
-    });
-    const checkedQuestionIdSet = new Set(
-      succeededObs.map((row) => row.questionId).filter((id): id is string => Boolean(id)),
-    );
-
-    for (const keywordId of keywordIds) {
-      const kw = await tx.keyword.findFirst({
-        where: { id: keywordId, tenantId: input.tenantId },
-        select: { id: true, optStatus: true },
-      });
-      if (!kw) continue;
-
-      const includedCount = await tx.question.count({
-        where: { tenantId: input.tenantId, keywordId, included: true },
-      });
-
-      if (includedCount > 0) {
-        if (kw.optStatus !== 'INCLUDED') {
-          await tx.keyword.update({
-            where: { id: kw.id },
-            data: { optStatus: 'INCLUDED' },
-          });
-        }
-        continue;
-      }
-
-      if (!input.completedWithChecks) continue;
-
-      const keywordQuestions = await tx.question.findMany({
-        where: { tenantId: input.tenantId, keywordId },
-        select: { id: true },
-      });
-      const testedAnyForKeyword =
-        keywordId === input.runKeywordId ||
-        keywordQuestions.some((q) => checkedQuestionIdSet.has(q.id));
-
-      if (testedAnyForKeyword && kw.optStatus !== 'INCLUDED' && kw.optStatus !== 'OPTIMIZING') {
-        await tx.keyword.update({
-          where: { id: kw.id },
-          data: { optStatus: 'OPTIMIZING' },
-        });
-      }
     }
   }
 }

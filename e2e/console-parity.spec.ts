@@ -1,116 +1,160 @@
 import { expect, test } from '@playwright/test';
 import {
-  activePane,
+  assertZeroHorizontalOverflow,
   injectSessionBeforeLoad,
   mintSessionTokens,
-  openMenuLink,
+  openAccountFromSider,
+  openWorkspaceNav,
 } from './support/helpers';
 
-test.describe('GeoMix 壳层、旧入口跳转与管理后台专项核验 (#23)', () => {
-  test('历史 /user/* 入口均 307 重定向至语义化新路由 (#72)', async ({ request }) => {
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      ['/user/dashboard', '/dashboard'],
-      ['/user/company_keyword', '/material/keywords'],
-      ['/user/images_type/index/type/1', '/material/gallery'],
-      ['/user/zhiling', '/writing/prompts'],
-      ['/user/ai_task', '/writing/tasks'],
-      ['/user/weixin_baowen', '/rewrite/single'],
-      ['/user/piliang_baowen', '/rewrite/batch'],
-      ['/user/user_score_log', '/me/points'],
-      ['/user/quanyi', '/me/rights'],
+test.describe('GeoMix 2.0 Minimalist Shell Parity & Admin Baseline', () => {
+  test('legacy v1 console & /user/* routes 307 redirect to the 5 v2 workspaces', async ({
+    request,
+  }) => {
+    const cases: Array<[string, string]> = [
+      ['/dashboard', '/home'],
+      ['/visibility/overview', '/visibility'],
+      ['/visibility/monitors', '/visibility'],
+      ['/me/points', '/account'],
+      ['/me/rights', '/account'],
+      ['/me/verify', '/account'],
+      ['/me/money', '/account'],
+      ['/user/dashboard', '/home'],
+      ['/user/company_keyword', '/brands'],
+      ['/user/images_type/index/type/1', '/brands'],
+      ['/user/zhiling', '/studio'],
+      ['/user/ai_task', '/studio'],
+      ['/user/weixin_baowen', '/studio'],
+      ['/user/piliang_baowen', '/studio'],
+      ['/user/user_score_log', '/account'],
+      ['/user/quanyi', '/account'],
     ];
 
-    await Promise.all(
-      cases.map(async ([legacyPath, expectedTarget]) => {
-        const response = await request.get(legacyPath, { maxRedirects: 0 });
-        expect(response.status()).toBe(307);
-        const location = response.headers()['location'] ?? '';
-        expect(new URL(location, 'http://127.0.0.1:3000').pathname).toBe(expectedTarget);
-      }),
-    );
+    for (const [legacy, expectedPath] of cases) {
+      const response = await request.get(legacy, { maxRedirects: 0 });
+      expect(response.status(), `status for ${legacy}`).toBe(307);
+      const location = response.headers().location ?? '';
+      const resolved = new URL(location, 'http://127.0.0.1:3000');
+      expect(resolved.pathname, `redirect target for ${legacy}`).toBe(expectedPath);
+    }
   });
 
-  test('布局设置抽屉支持多标签与单页模式切换，实名认证占位页可提交回显', async ({ page }) => {
+  test('flat 4+1 sidebar navigation, zero legacy shell chrome, ⌘K palette, and zero overflow', async ({
+    page,
+  }) => {
     const demoTokens = mintSessionTokens('demo');
     await injectSessionBeforeLoad(page, demoTokens);
-    await page.goto('/dashboard');
-    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.goto('/home');
+    await expect(page).toHaveURL(/\/home(?:[?#]|$)/);
 
-    const modeBadge = page.locator('header.gm-header .gm-mode');
-    await expect(modeBadge).toHaveText('多标签');
+    const sider = page.locator('aside.ant-layout-sider');
+    await expect(sider).toBeVisible();
+    await expect(sider.locator('.ant-menu-submenu')).toHaveCount(0);
+    await expect(page.locator('.gm-tabs')).toHaveCount(0);
+    await expect(page.locator('.gm-draft-note')).toHaveCount(0);
+    await expect(page.locator('.gm-mode')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '布局', exact: true })).toHaveCount(0);
+    await expect(page.getByText('余额明细')).toHaveCount(0);
 
-    await page.getByRole('button', { name: '布局' }).click();
-    const layoutDrawer = page.getByRole('dialog', { name: '布局设置' });
-    await expect(layoutDrawer).toBeVisible();
-    await layoutDrawer.getByRole('switch', { name: '多标签' }).click();
-    await expect(modeBadge).toHaveText('单页');
-    await layoutDrawer.getByRole('switch', { name: '多标签' }).click();
-    await expect(modeBadge).toHaveText('多标签');
-    await layoutDrawer.locator('.ant-drawer-close').click();
-
-    await openMenuLink(page, {
-      submenu: '个人中心',
-      itemTitle: '实名认证',
-      expectedUrl: /\/me\/verify$/,
+    await openWorkspaceNav(page, {
+      itemTitle: '品牌资产',
+      expectedUrl: /\/brands(?:[?#]|$)/,
     });
-    const pane = activePane(page);
-    await pane.getByLabel('主体名称').fill('苏州智造激光装备有限公司');
-    await pane.getByLabel('统一社会信用代码').fill('91320500MA1234567X');
-    await pane.getByLabel('联系人').fill('张工');
-    await pane.getByLabel('电话').fill('13800138000');
-    await pane.getByRole('button', { name: '提交资料' }).click();
-    await expect(pane.getByText('当前状态：已提交')).toBeVisible();
+    await openWorkspaceNav(page, {
+      itemTitle: '可见度诊断',
+      expectedUrl: /\/visibility(?:[?#]|$)/,
+    });
+    await openWorkspaceNav(page, {
+      itemTitle: 'GEO 写作台',
+      expectedUrl: /\/studio(?:[?#]|$)/,
+    });
+    await openWorkspaceNav(page, {
+      itemTitle: '行动首页',
+      expectedUrl: /\/home(?:[?#]|$)/,
+    });
+
+    await assertZeroHorizontalOverflow(page);
+
+    await page.getByRole('button', { name: '打开指令面板' }).click();
+    await expect(page.getByRole('textbox', { name: '搜索页面或操作' })).toBeVisible();
+    const listbox = page.getByRole('listbox', { name: '指令列表' });
+    await expect(listbox).toBeVisible();
+
+    for (const routePath of ['/home', '/brands', '/visibility', '/studio', '/account']) {
+      await expect(listbox.getByRole('option', { name: new RegExp(routePath) })).toHaveCount(1);
+    }
+    for (const removedPath of [
+      '/dashboard',
+      '/image',
+      '/me/money',
+      '/material/keywords',
+      '/rewrite/single',
+    ]) {
+      await expect(listbox.getByRole('option', { name: new RegExp(removedPath) })).toHaveCount(0);
+    }
+
+    await page.keyboard.press('Escape');
+    await expect(listbox).toBeHidden();
   });
 
-  test('管理后台 /admin/llm-costs 正常展示 LLM 成本日报与导出入口 (#24)', async ({ page }) => {
+  test('bottom-left sider-account-entry opens 3-tab /account without ¥0.00 and submits verification', async ({
+    page,
+  }) => {
+    const demoTokens = mintSessionTokens('demo');
+    await injectSessionBeforeLoad(page, demoTokens);
+    await page.goto('/home');
+    await openAccountFromSider(page);
+
+    await expect(page.getByRole('tab', { name: '点数明细' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '账号权益' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '实名认证' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '余额明细' })).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('¥0.00');
+
+    await page.getByRole('tab', { name: '账号权益' }).click();
+    await expect(page.locator('.gm-right-card[aria-label="品牌数量"]')).toBeVisible();
+    await expect(page.locator('.gm-right-card[aria-label="点数"]')).toContainText('1000');
+    await expect(page.locator('.gm-right-card[aria-label="DeepSeek"]')).toBeVisible();
+    await expect(page.locator('.gm-right-card[aria-label="豆包"]')).toBeVisible();
+
+    await page.getByRole('tab', { name: '实名认证' }).click();
+    await expect(page.getByRole('textbox', { name: '主体名称' })).toBeVisible();
+    await page.getByRole('textbox', { name: '主体名称' }).fill('苏州智造激光装备有限公司');
+    await page.getByRole('textbox', { name: '统一社会信用代码' }).fill('91320500MA1234567X');
+    await page.getByRole('textbox', { name: '联系人' }).fill('张工');
+    await page.getByRole('textbox', { name: '电话' }).fill('13800138000');
+    await page.getByRole('button', { name: '提交资料' }).click();
+    await expect(page.getByText('当前状态：已提交')).toBeVisible();
+
+    await assertZeroHorizontalOverflow(page);
+  });
+
+  test('admin /admin/pricing exposes 3 v2 actions without /admin/templates or kb_addon and /admin/llm-costs works', async ({
+    page,
+  }) => {
     const adminTokens = mintSessionTokens('admin');
     await injectSessionBeforeLoad(page, adminTokens);
-    await page.goto('/admin/llm-costs');
-    await expect(page).toHaveURL(/\/admin\/llm-costs$/);
+    await page.goto('/admin/pricing');
 
     await expect(page.getByText('GeoMix 管理')).toBeVisible();
-    const costSection = page.getByRole('region', { name: 'LLM成本日报' });
-    await expect(costSection).toBeVisible();
-    await expect(costSection.getByText('总调用次数')).toBeVisible();
-    await expect(costSection.getByText('总 Token 消耗')).toBeVisible();
-    await expect(costSection.getByRole('button', { name: '导出 CSV' })).toBeEnabled();
-  });
+    const nav = page.getByRole('navigation', { name: '管理菜单' });
+    await expect(nav.getByRole('link', { name: '系统模板' })).toHaveCount(0);
 
-  test('AI生图页与 AI 数据看板正常挂载并展示新上菜单角标 (#21/#59/#96)', async ({ page }) => {
-    const demoTokens = mintSessionTokens('demo');
-    await injectSessionBeforeLoad(page, demoTokens);
-    await page.goto('/dashboard');
-    await expect(page).toHaveURL(/\/dashboard$/);
+    await expect(page.getByText('GEO 靶向写作')).toBeVisible();
+    await expect(page.getByText('AI 可见性监测')).toBeVisible();
+    await expect(page.getByText('行内 AI 配图')).toBeVisible();
+    await expect(page.locator('body')).not.toContainText('kb_addon');
+    await expect(page.locator('body')).not.toContainText('知识库加价');
+    await expect(page.locator('body')).not.toContainText('AI蒸馏拓展');
 
-    await expect(page.locator('aside.ant-layout-sider .gm-badge')).toContainText('新上');
+    await nav.getByRole('link', { name: 'LLM成本日报' }).click();
+    await expect(page).toHaveURL(/\/admin\/llm-costs$/);
+    const section = page.getByRole('region', { name: 'LLM成本日报' });
+    await expect(section).toBeVisible();
+    await expect(section.getByText('总调用次数')).toBeVisible();
+    await expect(section.getByText('总 Token 消耗')).toBeVisible();
+    await expect(section.getByRole('button', { name: '导出 CSV' })).toBeEnabled();
 
-    // #261: 指令面板内「首页 /dashboard」去重后仅出现唯一一次
-    await page.getByRole('button', { name: '打开指令面板' }).click();
-    const cmdInput = page.getByRole('textbox', { name: '搜索页面或操作' });
-    const cmdList = page.getByRole('listbox', { name: '指令列表' });
-    await expect(cmdInput).toBeVisible();
-    await expect(cmdList.getByRole('option').filter({ hasText: '/dashboard' })).toHaveCount(1);
-    await cmdInput.press('Escape');
-    await expect(cmdList).toBeHidden();
-
-    await openMenuLink(page, {
-      submenu: 'AI生图',
-      itemTitle: 'AI生图',
-      expectedUrl: /\/image$/,
-    });
-    const pane = activePane(page);
-    await expect(pane.getByRole('button', { name: '查看企业画像图库' })).toBeVisible();
-    await expect(pane.getByText(/点数\/张/)).toBeVisible();
-
-    // #260: 列表页工具栏主创建按钮「添加」固定位于「刷新」左侧
-    const leftToolbarButtons = pane.locator('.gm-crud-toolbar > .ant-space:first-child button');
-    await expect(leftToolbarButtons.nth(0)).toHaveAttribute('aria-label', '添加');
-    await expect(leftToolbarButtons.nth(1)).toHaveAttribute('aria-label', '刷新');
-
-    await openMenuLink(page, {
-      itemTitle: 'AI数据看板',
-      expectedUrl: /\/visibility\/overview$/,
-    });
-    await expect(pane.getByText('AI数据看板').first()).toBeVisible();
+    await assertZeroHorizontalOverflow(page);
   });
 });

@@ -4,7 +4,6 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
-  VISIBILITY_BRAND_NAME_MAX,
   type ProfileForMetrics,
   type VisibilityCompetitor,
   type VisibilityProfileCreateWithPrefillInput,
@@ -43,6 +42,35 @@ function requireTenant(): string {
   return tenantId;
 }
 
+type BrandMarketWithBrand = {
+  id: string;
+  brandId: string;
+  market: 'CN' | 'GLOBAL';
+  localBrandName: string;
+  aliases: string[];
+  ownedDomains: string[];
+  competitors: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  brand: { id: string; name: string };
+};
+
+function toProfileRecord(row: BrandMarketWithBrand, runCount: number): VisibilityProfileRecord {
+  return presentProfile(
+    {
+      id: row.id,
+      name: `${row.brand.name} (${row.market})`,
+      brandName: row.localBrandName,
+      brandAliases: row.aliases,
+      ownedDomains: row.ownedDomains,
+      competitors: row.competitors,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    },
+    runCount,
+  );
+}
+
 @Injectable()
 export class VisibilityProfileService {
   private readonly config: VisibilityConfig;
@@ -65,33 +93,20 @@ export class VisibilityProfileService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    const [profiles, keywords, knowledgeBases] = await Promise.all([
-      this.prisma.base.visibilityProfile.findMany({
-        where: { tenantId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        include: {
-          _count: { select: { runs: true } },
-        },
-      }),
-      this.prisma.base.keyword.findMany({
-        where: { tenantId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 100,
-        select: { id: true, main: true, brands: true },
-      }),
-      this.prisma.base.knowledgeBase.findMany({
-        where: { tenantId },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: 100,
-        select: { id: true, name: true, companyName: true, brandShort: true },
-      }),
-    ]);
+    const markets = await this.prisma.base.brandMarket.findMany({
+      where: { tenantId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      include: {
+        brand: { select: { id: true, name: true } },
+        _count: { select: { visibilityRuns: true } },
+      },
+    });
 
     return {
-      items: profiles.map((row) => presentProfile(row, row._count.runs)),
+      items: markets.map((row) => toProfileRecord(row, row._count.visibilityRuns)),
       prefillSources: {
-        keywords,
-        knowledgeBases,
+        keywords: [],
+        knowledgeBases: [],
       },
     };
   }
@@ -99,14 +114,17 @@ export class VisibilityProfileService {
   async getProfile(id: string): Promise<VisibilityProfileRecord> {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
-    const row = await this.prisma.base.visibilityProfile.findFirst({
+    const row = await this.prisma.base.brandMarket.findFirst({
       where: { id, tenantId },
-      include: { _count: { select: { runs: true } } },
+      include: {
+        brand: { select: { id: true, name: true } },
+        _count: { select: { visibilityRuns: true } },
+      },
     });
     if (!row) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
     }
-    return presentProfile(row, row._count.runs);
+    return toProfileRecord(row, row._count.visibilityRuns);
   }
 
   async createProfile(
@@ -116,45 +134,7 @@ export class VisibilityProfileService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    let resolvedBrandName = (input.brandName ?? '').trim();
-    const extraAliases: string[] = [...(input.brandAliases ?? [])];
-
-    if (input.importFromKeywordId) {
-      const kw = await this.prisma.base.keyword.findFirst({
-        where: { id: input.importFromKeywordId, tenantId },
-        select: { id: true, main: true, brands: true },
-      });
-      if (!kw) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '用于预填的训练主词不存在');
-      }
-      const cleanBrands = kw.brands.map((b) => b.trim()).filter(Boolean);
-      if (!resolvedBrandName && cleanBrands[0]) {
-        resolvedBrandName = cleanBrands[0].slice(0, VISIBILITY_BRAND_NAME_MAX);
-        extraAliases.push(...cleanBrands.slice(1));
-      } else {
-        extraAliases.push(...cleanBrands);
-      }
-    }
-
-    if (input.importFromKbId) {
-      const kb = await this.prisma.base.knowledgeBase.findFirst({
-        where: { id: input.importFromKbId, tenantId },
-        select: { id: true, name: true, companyName: true, brandShort: true },
-      });
-      if (!kb) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '用于预填的企业知识库不存在');
-      }
-      const kbTerms = [kb.brandShort, kb.companyName]
-        .filter((val): val is string => typeof val === 'string' && val.trim().length > 0)
-        .map((val) => val.trim());
-      if (!resolvedBrandName && kbTerms[0]) {
-        resolvedBrandName = kbTerms[0].slice(0, VISIBILITY_BRAND_NAME_MAX);
-        extraAliases.push(...kbTerms.slice(1));
-      } else {
-        extraAliases.push(...kbTerms);
-      }
-    }
-
+    const resolvedBrandName = (input.brandName ?? '').trim();
     if (!resolvedBrandName) {
       throw new ApiError(
         400,
@@ -164,7 +144,10 @@ export class VisibilityProfileService {
     }
 
     const name = input.name.trim();
-    const brandAliases = dedupeStringsCaseInsensitive(extraAliases, resolvedBrandName).slice(0, 20);
+    const brandAliases = dedupeStringsCaseInsensitive(
+      input.brandAliases ?? [],
+      resolvedBrandName,
+    ).slice(0, 20);
     const ownedDomains = normalizeOwnedDomainsList(input.ownedDomains ?? [], 20);
     const competitors = normalizeCompetitorsList(input.competitors ?? []);
 
@@ -180,7 +163,7 @@ export class VisibilityProfileService {
       userId,
     });
 
-    const duplicate = await this.prisma.base.visibilityProfile.findFirst({
+    const duplicate = await this.prisma.base.brand.findFirst({
       where: { tenantId, name },
       select: { id: true },
     });
@@ -189,17 +172,30 @@ export class VisibilityProfileService {
     }
 
     try {
-      const created = await this.prisma.base.visibilityProfile.create({
+      const brand = await this.prisma.base.brand.create({
         data: {
           tenantId,
           name,
-          brandName: resolvedBrandName,
-          brandAliases,
-          ownedDomains,
-          competitors: competitors as unknown as Prisma.InputJsonValue,
+          category: '通用品牌',
+          markets: {
+            create: {
+              tenantId,
+              market: 'CN',
+              locale: 'zh-CN',
+              region: 'CN',
+              localBrandName: resolvedBrandName,
+              aliases: brandAliases,
+              ownedDomains,
+              competitors: competitors as unknown as Prisma.InputJsonValue,
+            },
+          },
+        },
+        include: {
+          markets: true,
         },
       });
-      return presentProfile(created, 0);
+      const bm = brand.markets[0]!;
+      return toProfileRecord({ ...bm, brand: { id: brand.id, name: brand.name } }, 0);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '同名监测档案已存在');
@@ -216,21 +212,24 @@ export class VisibilityProfileService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    const existing = await this.prisma.base.visibilityProfile.findFirst({
+    const existing = await this.prisma.base.brandMarket.findFirst({
       where: { id, tenantId },
-      include: { _count: { select: { runs: true } } },
+      include: {
+        brand: { select: { id: true, name: true } },
+        _count: { select: { visibilityRuns: true } },
+      },
     });
     if (!existing) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
     }
 
-    const nextName = input.name !== undefined ? input.name.trim() : existing.name;
+    const nextName = input.name !== undefined ? input.name.trim() : existing.brand.name;
     const nextBrandName =
-      input.brandName !== undefined ? input.brandName.trim() : existing.brandName;
+      input.brandName !== undefined ? input.brandName.trim() : existing.localBrandName;
     const nextAliases =
       input.brandAliases !== undefined
         ? dedupeStringsCaseInsensitive(input.brandAliases, nextBrandName).slice(0, 20)
-        : dedupeStringsCaseInsensitive(existing.brandAliases, nextBrandName).slice(0, 20);
+        : dedupeStringsCaseInsensitive(existing.aliases, nextBrandName).slice(0, 20);
     const nextOwnedDomains =
       input.ownedDomains !== undefined
         ? normalizeOwnedDomainsList(input.ownedDomains, 20)
@@ -252,28 +251,26 @@ export class VisibilityProfileService {
       userId,
     });
 
-    if (nextName !== existing.name) {
-      const duplicate = await this.prisma.base.visibilityProfile.findFirst({
-        where: { tenantId, name: nextName, id: { not: id } },
-        select: { id: true },
-      });
-      if (duplicate) {
-        throw new ApiError(409, BILLING_ERROR.CONFLICT, '同名监测档案已存在');
-      }
-    }
-
     try {
-      const updated = await this.prisma.base.visibilityProfile.update({
+      if (nextName !== existing.brand.name) {
+        await this.prisma.base.brand.update({
+          where: { id: existing.brandId },
+          data: { name: nextName },
+        });
+      }
+      const updated = await this.prisma.base.brandMarket.update({
         where: { id },
         data: {
-          name: nextName,
-          brandName: nextBrandName,
-          brandAliases: nextAliases,
+          localBrandName: nextBrandName,
+          aliases: nextAliases,
           ownedDomains: nextOwnedDomains,
           competitors: nextCompetitors as unknown as Prisma.InputJsonValue,
         },
+        include: {
+          brand: { select: { id: true, name: true } },
+        },
       });
-      return presentProfile(updated, existing._count.runs);
+      return toProfileRecord(updated, existing._count.visibilityRuns);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '同名监测档案已存在');
@@ -286,7 +283,7 @@ export class VisibilityProfileService {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
 
-    const existing = await this.prisma.base.visibilityProfile.findFirst({
+    const existing = await this.prisma.base.brandMarket.findFirst({
       where: { id, tenantId },
       select: { id: true },
     });
@@ -297,7 +294,7 @@ export class VisibilityProfileService {
     const activeRuns = await this.prisma.base.visibilityRun.count({
       where: {
         tenantId,
-        profileId: id,
+        brandMarketId: id,
         status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] },
       },
     });
@@ -309,35 +306,35 @@ export class VisibilityProfileService {
       );
     }
 
-    await this.prisma.base.visibilityProfile.delete({ where: { id } });
+    await this.prisma.base.brandMarket.delete({ where: { id } });
     return { deleted: 1 };
   }
 
   async resolveProfileContext(tenantId: string, profileId?: string): Promise<ProfileContext> {
     if (profileId) {
-      const profile = await this.prisma.base.visibilityProfile.findFirst({
+      const bm = await this.prisma.base.brandMarket.findFirst({
         where: { id: profileId, tenantId },
       });
-      if (!profile) {
+      if (!bm) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
       }
       return {
-        resolvedProfileId: profile.id,
+        resolvedProfileId: bm.id,
         profileForMetrics: {
-          brandName: profile.brandName,
-          brandAliases: profile.brandAliases,
-          ownedDomains: profile.ownedDomains,
-          competitors: parseProfileCompetitors(profile.competitors),
+          brandName: bm.localBrandName,
+          brandAliases: bm.aliases,
+          ownedDomains: bm.ownedDomains,
+          competitors: parseProfileCompetitors(bm.competitors),
         },
       };
     }
 
-    const profiles = await this.prisma.base.visibilityProfile.findMany({
+    const markets = await this.prisma.base.brandMarket.findMany({
       where: { tenantId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
-    if (profiles.length === 0) {
+    if (markets.length === 0) {
       return {
         resolvedProfileId: null,
         profileForMetrics: {
@@ -349,33 +346,33 @@ export class VisibilityProfileService {
       };
     }
 
-    if (profiles.length === 1) {
-      const only = profiles[0]!;
+    if (markets.length === 1) {
+      const only = markets[0]!;
       return {
         resolvedProfileId: only.id,
         profileForMetrics: {
-          brandName: only.brandName,
-          brandAliases: only.brandAliases,
+          brandName: only.localBrandName,
+          brandAliases: only.aliases,
           ownedDomains: only.ownedDomains,
           competitors: parseProfileCompetitors(only.competitors),
         },
       };
     }
 
-    const primary = profiles[0]!;
+    const primary = markets[0]!;
     const aliases = dedupeStringsCaseInsensitive(
-      profiles.flatMap((p) => [p.brandName, ...p.brandAliases]),
-      primary.brandName,
+      markets.flatMap((m) => [m.localBrandName, ...m.aliases]),
+      primary.localBrandName,
     );
-    const ownedDomains = [...new Set(profiles.flatMap((p) => p.ownedDomains))];
+    const ownedDomains = [...new Set(markets.flatMap((m) => m.ownedDomains))];
     const competitors = normalizeCompetitorsList(
-      profiles.flatMap((p) => parseProfileCompetitors(p.competitors)),
+      markets.flatMap((m) => parseProfileCompetitors(m.competitors)),
     );
 
     return {
       resolvedProfileId: null,
       profileForMetrics: {
-        brandName: primary.brandName,
+        brandName: primary.localBrandName,
         brandAliases: aliases,
         ownedDomains,
         competitors,
@@ -394,9 +391,9 @@ export class VisibilityProfileService {
       competitors: [],
     };
 
-    const profiles = profileId
+    const markets = profileId
       ? await (async () => {
-          const single = await this.prisma.base.visibilityProfile.findFirst({
+          const single = await this.prisma.base.brandMarket.findFirst({
             where: { id: profileId, tenantId },
           });
           if (!single) {
@@ -404,12 +401,12 @@ export class VisibilityProfileService {
           }
           return [single];
         })()
-      : await this.prisma.base.visibilityProfile.findMany({
+      : await this.prisma.base.brandMarket.findMany({
           where: { tenantId },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         });
 
-    if (profiles.length === 0) {
+    if (markets.length === 0) {
       return {
         resolvedProfileId: null,
         profilesById: new Map(),
@@ -430,28 +427,28 @@ export class VisibilityProfileService {
       }
     >();
 
-    for (const prof of profiles) {
-      const comps = parseProfileCompetitors(prof.competitors);
-      profilesById.set(prof.id, {
-        brandName: prof.brandName,
-        brandAliases: prof.brandAliases,
-        ownedDomains: prof.ownedDomains,
+    for (const bm of markets) {
+      const comps = parseProfileCompetitors(bm.competitors);
+      profilesById.set(bm.id, {
+        brandName: bm.localBrandName,
+        brandAliases: bm.aliases,
+        ownedDomains: bm.ownedDomains,
         competitors: comps,
       });
 
-      const brandKey = prof.brandName.trim().toLowerCase() || prof.id;
+      const brandKey = bm.localBrandName.trim().toLowerCase() || bm.id;
       const existing = brandMap.get(brandKey);
       if (existing) {
-        existing.profileIds.push(prof.id);
-        existing.rawAliases.push(...prof.brandAliases);
-        existing.ownedDomains.push(...prof.ownedDomains);
+        existing.profileIds.push(bm.id);
+        existing.rawAliases.push(...bm.aliases);
+        existing.ownedDomains.push(...bm.ownedDomains);
         existing.rawCompetitors.push(...comps);
       } else {
         brandMap.set(brandKey, {
-          brandName: prof.brandName.trim() || '本品牌',
-          profileIds: [prof.id],
-          rawAliases: [...prof.brandAliases],
-          ownedDomains: [...prof.ownedDomains],
+          brandName: bm.localBrandName.trim() || '本品牌',
+          profileIds: [bm.id],
+          rawAliases: [...bm.aliases],
+          ownedDomains: [...bm.ownedDomains],
           rawCompetitors: [...comps],
         });
       }
@@ -469,9 +466,9 @@ export class VisibilityProfileService {
     }));
 
     const resolvedProfileId = profileId
-      ? profiles[0]!.id
-      : profiles.length === 1
-        ? profiles[0]!.id
+      ? markets[0]!.id
+      : markets.length === 1
+        ? markets[0]!.id
         : null;
 
     return {

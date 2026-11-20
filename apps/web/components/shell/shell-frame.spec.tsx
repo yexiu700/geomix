@@ -1,409 +1,242 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { useState } from 'react';
+import type { BrandRecord } from '@geomix/shared';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
-import {
-  loadShell,
-  reduceShell,
-  saveShell,
-  type KeyValueStorage,
-  type ShellSnapshot,
-} from '../../lib/tab-stack';
-import { initialSnapshot } from '../../lib/tab-stack';
 import { ShellFrame } from './shell-frame';
 
-vi.mock('../dashboard/dashboard-screen', () => ({
-  DashboardScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
-}));
-vi.mock('../material/keyword-screen', () => ({
-  KeywordScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
-}));
-vi.mock('../material/question-screen', () => ({
-  QuestionScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
-}));
-vi.mock('../material/knowledge-screen', () => ({
-  KnowledgeScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
-}));
-vi.mock('../writing/prompt-screen', () => ({
-  PromptScreen: ({ title }: { title: string }) => <h2>{title}</h2>,
-}));
-
-const account: AccountProfile = {
-  id: 'user-1',
+const merchantAccount: AccountProfile = {
+  id: 'u-1',
   username: 'demo',
-  nickname: '演示',
+  nickname: '演示用户',
   role: 'MERCHANT',
   tenant: {
-    id: 'tenant-1',
+    id: 't-1',
     name: '演示租户',
-    expiresAt: '2027-11-12T00:00:00.000Z',
+    expiresAt: '2027-12-31T00:00:00.000Z',
     isActive: true,
     readOnly: false,
   },
 };
 
-const FIVE = [
-  '/dashboard',
-  '/material/keywords',
-  '/material/questions',
-  '/material/knowledge',
-  '/writing/prompts',
-];
+const walletStub: WalletSummary = {
+  points: 1000,
+  pointsReserved: 0,
+  available: 1000,
+  money: '0.00',
+  billingMode: 'SHADOW',
+  billingModeSource: 'global',
+  tenantBillingMode: null,
+};
 
-function memoryStorage(): KeyValueStorage {
-  const values = new Map<string, string>();
+function makeBrand(id: string, name: string, markets: Array<'CN' | 'GLOBAL'>): BrandRecord {
+  const now = '2026-11-20T00:00:00.000Z';
   return {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => {
-      values.set(key, value);
-    },
-    removeItem: (key) => {
-      values.delete(key);
-    },
+    id,
+    name,
+    category: '家用 NAS',
+    truthAgreementSignedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    markets: markets.map((market) => ({
+      id: `${id}-${market}`,
+      brandId: id,
+      market,
+      locale: market === 'CN' ? 'zh-CN' : 'en-US',
+      region: market === 'CN' ? 'CN' : 'US',
+      localBrandName: name,
+      aliases: [],
+      ownedDomains: [],
+      competitors: [],
+      seedPrompts: [],
+      createdAt: now,
+      updatedAt: now,
+    })),
   };
 }
 
-function openAll(): ShellSnapshot {
-  return FIVE.reduce(
-    (state, href) => reduceShell(state, { type: 'open', href }),
-    initialSnapshot(),
-  );
-}
-
-function Harness({ initial }: { initial: ShellSnapshot }) {
-  const [state, setState] = useState(initial);
-  return (
-    <ShellFrame
-      account={account}
-      state={state}
-      onDispatch={(action) => setState((current) => reduceShell(current, action))}
-      onLogout={() => undefined}
-      onChangePassword={async () => null}
-    />
-  );
-}
-
-function labeled(name: string): HTMLElement {
-  const found = document.querySelector(`[aria-label="${name}"]`);
-  if (!(found instanceof HTMLElement)) throw new Error(`missing ${name}`);
-  return found;
-}
-
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
 });
 
-describe('admin shell', { timeout: 60_000 }, () => {
-  it('keeps drafts while switching among five tabs', () => {
-    render(<Harness initial={openAll()} />);
-    const drafts = [
-      ['首页', '甲'],
-      ['关键词', '乙'],
-      ['写作标题', '丙'],
-      ['企业知识库', '丁'],
-      ['写作指令', '戊'],
-    ] as const;
-
-    for (const [title, value] of drafts) {
-      fireEvent.click(labeled(title));
-      fireEvent.change(labeled(`${title}草稿`), { target: { value } });
-    }
-
-    expect(document.querySelectorAll('[data-tab-id]')).toHaveLength(5);
-    for (const [title, value] of drafts) {
-      fireEvent.click(labeled(title));
-      expect((labeled(`${title}草稿`) as HTMLTextAreaElement).value).toBe(value);
-    }
-  });
-
-  it('renders the tab stack restored from storage without the old drafts', () => {
-    let state = openAll();
-    state = reduceShell(state, { type: 'draft', id: '/writing/prompts', value: '未保存' });
-    const storage = memoryStorage();
-    saveShell(storage, state);
-    render(<Harness initial={loadShell(storage)} />);
-    for (const title of ['首页', '关键词', '写作标题', '企业知识库', '写作指令']) {
-      expect(screen.getByRole('tab', { name: title })).toBeTruthy();
-    }
-    expect(
-      (screen.getByRole('textbox', { name: '写作指令草稿' }) as HTMLTextAreaElement).value,
-    ).toBe('');
-  });
-
-  it('hides the tab stack and keeps only the current page when multi-tab is off', async () => {
-    let state = openAll();
-    state = reduceShell(state, { type: 'draft', id: '/writing/prompts', value: '留下' });
-    render(<Harness initial={state} />);
-    fireEvent.click(screen.getByRole('button', { name: '布局' }));
-    fireEvent.click(await screen.findByRole('switch', { name: '多标签' }));
-    expect(screen.queryByRole('tablist')).toBeNull();
-    expect(document.querySelectorAll('[data-tab-id]')).toHaveLength(1);
-    expect(
-      (screen.getByRole('textbox', { name: '写作指令草稿' }) as HTMLTextAreaElement).value,
-    ).toBe('留下');
-
-    fireEvent.click(screen.getByText('素材源力'));
-    fireEvent.click(screen.getByText('关键词'));
-    expect(document.querySelectorAll('[data-tab-id]')).toHaveLength(1);
-    expect(screen.getByRole('heading', { name: '关键词' })).toBeTruthy();
-    expect((screen.getByRole('textbox', { name: '关键词草稿' }) as HTMLTextAreaElement).value).toBe(
-      '',
-    );
-  });
-
-  it('closes the other tabs from the context menu', () => {
-    render(<Harness initial={openAll()} />);
-    fireEvent.contextMenu(screen.getByRole('tab', { name: '写作标题' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: '关闭其他' }));
-    expect(screen.getByRole('tab', { name: '首页' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: '写作标题' })).toBeTruthy();
-    expect(screen.queryByRole('tab', { name: '关键词' })).toBeNull();
-    expect(screen.queryByRole('tab', { name: '写作指令' })).toBeNull();
-  });
-
-  it('auto-collapses Sider on 375px mobile viewport and toggles overlay drawer cleanly (#67)', () => {
-    const prevWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 375 });
-    try {
-      render(<Harness initial={initialSnapshot()} />);
-      expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
-      expect(document.querySelector('.gm-sider-mask')).toBeNull();
-
-      fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
-      expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
-      expect(document.querySelector('.gm-sider-mask')).not.toBeNull();
-
-      fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
-      expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
-      expect(document.querySelector('.gm-sider-mask')).toBeNull();
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: prevWidth,
-      });
-    }
-  });
-
-  it('opens only 首页 tab initially and lets users read full header announcement via modal (#132)', () => {
-    const prevWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 1440,
-    });
-    try {
-      const longAnnouncement =
-        'GeoMix验收公告_r2_rwax6：请使用自有或已授权素材并及时关注任务状态。';
-      render(
-        <ShellFrame
-          account={account}
-          state={initialSnapshot()}
-          announcement={longAnnouncement}
-          onDispatch={() => undefined}
-          onLogout={() => undefined}
-          onChangePassword={async () => null}
-        />,
-      );
-
-      const tabs = screen.getAllByRole('tab');
-      expect(tabs).toHaveLength(1);
-      expect(tabs[0]?.textContent).toBe('首页');
-
-      const announcementBtn = screen.getByRole('button', { name: /查看公告全文|公告/ });
-      expect(announcementBtn.textContent).toContain('GeoMix验收公告_r2_rwax6');
-      expect((announcementBtn as HTMLElement).style.paddingLeft).toBe('0px');
-
-      fireEvent.click(announcementBtn);
-      const dialog = screen.getByRole('dialog', { name: '系统公告' });
-      expect(dialog.textContent).toContain(longAnnouncement);
-      fireEvent.keyDown(dialog, { key: 'Escape' });
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: prevWidth,
-      });
-    }
-  });
-
-  it('expands sidebar by default on 1440px desktop and syncs top toggle with layout drawer switch (#133)', async () => {
-    const prevWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 1440,
-    });
-    try {
-      render(<Harness initial={initialSnapshot()} />);
-
-      // Expanded by default on desktop
-      expect(labeled('收起菜单')).toBeTruthy();
-      expect(
-        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
-      ).toBeTruthy();
-
-      // Top toggle collapses sidebar and syncs LayoutPanel switch
-      fireEvent.click(labeled('收起菜单'));
-      expect(labeled('展开菜单')).toBeTruthy();
-      expect(document.querySelector('.gm-sider .ant-menu')).toBeNull();
-
-      fireEvent.click(labeled('布局'));
-      const collapseSwitch = await screen.findByRole('switch', { name: '折叠菜单' });
-      const dialog = document.querySelector<HTMLElement>('.ant-drawer-content[role="dialog"]');
-      expect(dialog).not.toBeNull();
-      expect(collapseSwitch.getAttribute('aria-checked')).toBe('true');
-
-      // Top toggle expands sidebar again and syncs LayoutPanel switch back to false
-      fireEvent.click(labeled('展开菜单'));
-      expect(labeled('收起菜单')).toBeTruthy();
-      expect(
-        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
-      ).toBeTruthy();
-      expect(
-        within(dialog!).getByRole('switch', { name: '折叠菜单' }).getAttribute('aria-checked'),
-      ).toBe('false');
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: prevWidth,
-      });
-    }
-  });
-
-  it('hides SideMenu completely when mobile Sider is collapsed and renders full menu when opened even if menuCollapsed pref was true (#131, #133)', () => {
-    const prevWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 375 });
-    try {
-      const initial = {
-        ...reduceShell(initialSnapshot(), { type: 'open', href: '/material/keywords' }),
-        prefs: { ...initialSnapshot().prefs, menuCollapsed: true },
-      };
-      render(<Harness initial={initial} />);
-
-      // When mobile Sider is collapsed, SideMenu must not mount menus/popups
-      expect(document.querySelector('.gm-sider .ant-menu')).toBeNull();
-      expect(document.querySelector('.ant-menu-submenu-popup')).toBeNull();
-
-      // Clicking 展开菜单 on mobile must render full menu items even if desktop pref was collapsed
-      fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
-      const sider = document.querySelector<HTMLElement>('.gm-sider');
-      expect(sider).not.toBeNull();
-      expect(within(sider!).getByText('素材源力')).toBeTruthy();
-      expect(within(sider!).getByText('关键词')).toBeTruthy();
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: prevWidth,
-      });
-    }
-  });
-
-  it('requires matching 确认新密码 and supports 取消 and Escape close in 修改密码 modal (#198)', async () => {
-    const onChangePassword = vi.fn(async () => null);
+describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
+  it('renders cold-load skeletons for brand switcher and points pill with zero 0 点 / 免费体验期 / ¥0.00 flash', () => {
     render(
       <ShellFrame
-        account={account}
-        state={initialSnapshot()}
-        onDispatch={() => undefined}
-        onLogout={() => undefined}
-        onChangePassword={onChangePassword}
-      />,
+        account={merchantAccount}
+        activePath="/home"
+        brands={[]}
+        brandsLoading={true}
+        brandsLoaded={false}
+        brandsError={null}
+        activeBrandId={null}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={null}
+        walletLoading={true}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>工作区内容</div>
+      </ShellFrame>,
     );
 
-    // Open 修改密码 via 账号菜单 dropdown
-    fireEvent.mouseEnter(screen.getByRole('button', { name: '账号菜单' }));
-    fireEvent.click(await screen.findByText('修改密码'));
+    expect(screen.getByTestId('global-brand-switcher-loading')).toBeTruthy();
+    expect(screen.getByTestId('header-points-loading')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\b0\s*点\b/);
+    expect(document.body.textContent).not.toContain('免费体验期');
+    expect(document.body.textContent).not.toContain('¥0.00');
+    // Zero legacy TabBar / TabDraftNote / LayoutPanel
+    expect(document.querySelector('.gm-tabs')).toBeNull();
+    expect(document.querySelector('.gm-mode')).toBeNull();
+    expect(screen.queryByRole('button', { name: '布局' })).toBeNull();
+  });
 
-    const dialog = await screen.findByRole('dialog', { name: '修改密码' });
-    expect(await within(dialog).findByLabelText('当前密码')).toBeTruthy();
-    expect(within(dialog).getByLabelText('新密码')).toBeTruthy();
-    expect(within(dialog).getByLabelText('确认新密码')).toBeTruthy();
+  it('shows 0-brand 60s onboarding banner and submits quick-create modal', async () => {
+    const createdBrand = makeBrand('b-new', '智造激光', ['CN']);
+    const onCreateBrand = vi.fn(async () => createdBrand);
 
-    // Mismatched confirmPassword blocks submission
-    fireEvent.change(within(dialog).getByLabelText('当前密码'), {
-      target: { value: 'OldPass123' },
-    });
-    fireEvent.change(within(dialog).getByLabelText('新密码'), {
-      target: { value: 'NewPass123' },
-    });
-    fireEvent.change(within(dialog).getByLabelText('确认新密码'), {
-      target: { value: 'Mismatch123' },
-    });
-    fireEvent.click(within(dialog).getByRole('button', { name: '修改密码' }));
+    render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/home"
+        brands={[]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId={null}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={onCreateBrand}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>行动首页占位</div>
+      </ShellFrame>,
+    );
 
-    expect(
-      await within(dialog).findByText('两次输入的新密码不一致', {}, { timeout: 5000 }),
-    ).toBeTruthy();
-    expect(onChangePassword).not.toHaveBeenCalled();
+    expect(screen.getByTestId('header-points-pill').textContent).toContain('1000');
+    fireEvent.click(screen.getByRole('button', { name: '60 秒创建首个品牌' }));
 
-    // Matching confirmPassword submits cleanly without leaking confirmPassword
-    fireEvent.change(within(dialog).getByLabelText('确认新密码'), {
-      target: { value: 'NewPass123' },
+    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    fireEvent.change(within(dialog).getByLabelText('品牌名称'), {
+      target: { value: '智造激光' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '修改密码' }));
+    fireEvent.change(within(dialog).getByLabelText('所属品类'), {
+      target: { value: '工业激光设备' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('官网域名'), {
+      target: { value: 'https://zhizao.example.com' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+
     await waitFor(() => {
-      expect(onChangePassword).toHaveBeenCalledWith({
-        currentPassword: 'OldPass123',
-        newPassword: 'NewPass123',
+      expect(onCreateBrand).toHaveBeenCalledWith({
+        name: '智造激光',
+        category: '工业激光设备',
+        markets: ['CN'],
+        ownedDomains: ['zhizao.example.com'],
+        competitors: [],
       });
-    });
-
-    // 取消 closes modal
-    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: '修改密码' })).toBeNull();
-    });
-
-    // Re-open and Escape closes modal
-    fireEvent.mouseEnter(screen.getByRole('button', { name: '账号菜单' }));
-    fireEvent.click(await screen.findByText('修改密码'));
-    await screen.findByRole('dialog', { name: '修改密码' });
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: '修改密码' })).toBeNull();
     });
   });
 
-  it('handles rapid consecutive desktop collapse/expand toggles without dropping state and marks collapsed Sider class (#133)', () => {
-    const prevWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      writable: true,
-      value: 1440,
+  it('renders single-market + 开启另一市场 button, opens modal, and switches CN <-> GLOBAL when dual-market', async () => {
+    const cnOnly = makeBrand('b-1', '绿联', ['CN']);
+    const dual = makeBrand('b-1', '绿联', ['CN', 'GLOBAL']);
+    const onEnableMarket = vi.fn(async () => dual);
+    const onSelectMarket = vi.fn();
+
+    const { rerender } = render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/visibility"
+        brands={[cnOnly]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={onSelectMarket}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={onEnableMarket}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>可见度诊断</div>
+      </ShellFrame>,
+    );
+
+    expect(screen.getByTestId('global-brand-switcher')).toBeTruthy();
+    expect(screen.getByTestId('global-market-switcher')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('enable-other-market-btn'));
+
+    const dialog = await screen.findByRole('dialog', { name: '开启海外市场' });
+    fireEvent.change(within(dialog).getByLabelText('当地品牌名称'), {
+      target: { value: 'UGREEN' },
     });
-    try {
-      render(<Harness initial={initialSnapshot()} />);
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认开启' }));
 
-      const sider = document.querySelector<HTMLElement>('.gm-sider');
-      expect(sider).not.toBeNull();
-      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
-
-      // Rapid collapse -> expand -> collapse -> expand sequence
-      fireEvent.click(labeled('收起菜单'));
-      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(true);
-      expect(labeled('展开菜单').style.flexShrink).toBe('0');
-
-      fireEvent.click(labeled('展开菜单'));
-      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
-      expect(labeled('收起菜单')).toBeTruthy();
-
-      fireEvent.click(labeled('收起菜单'));
-      fireEvent.click(labeled('展开菜单'));
-      expect(sider!.classList.contains('gm-sider-collapsed')).toBe(false);
-      expect(
-        within(document.querySelector<HTMLElement>('.gm-sider')!).getByText('素材源力'),
-      ).toBeTruthy();
-    } finally {
-      Object.defineProperty(window, 'innerWidth', {
-        configurable: true,
-        writable: true,
-        value: prevWidth,
+    await waitFor(() => {
+      expect(onEnableMarket).toHaveBeenCalledWith('b-1', 'GLOBAL', {
+        localBrandName: 'UGREEN',
+        ownedDomains: [],
+        competitors: [],
       });
-    }
+    });
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/visibility"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={onSelectMarket}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={onEnableMarket}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>可见度诊断</div>
+      </ShellFrame>,
+    );
+
+    expect(screen.queryByTestId('enable-other-market-btn')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /海外/ }));
+    expect(onSelectMarket).toHaveBeenCalledWith('GLOBAL');
   });
 });

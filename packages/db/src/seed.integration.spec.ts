@@ -17,7 +17,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
     await prisma.$disconnect();
   });
 
-  it('is idempotent and enforces the ledger checks', async () => {
+  it('is idempotent, cleans legacy pricing rows, and enforces ledger checks & HNSW index', async () => {
     const migrated = spawnSync('node', ['scripts/prisma-cli.mjs', 'migrate', 'deploy'], {
       cwd: packageRoot,
       encoding: 'utf8',
@@ -26,12 +26,11 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
 
     const first = await applySeed(prisma, { now: new Date('2026-11-16T00:00:00.000Z') });
     expect(first).toEqual({
-      pricing: 7,
+      pricing: 3,
       tenants: 2,
       wallets: 2,
       quotas: 12,
       users: 2,
-      templates: 18,
     });
 
     const seededWallet = await prisma.wallet.findUniqueOrThrow({
@@ -59,12 +58,11 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
       data: { passwordHash: 'replaced-hash', username: 'demo2' },
     });
     await prisma.pricingItem.update({
-      where: { action: 'distill' },
+      where: { action: 'geo_write' },
       data: { unitPoints: 99, enabled: false },
     });
-    await prisma.promptTemplate.update({
-      where: { id: 'sys_article_01' },
-      data: { content: 'changed' },
+    await prisma.pricingItem.create({
+      data: { action: 'kb_addon', unitPoints: 5, enabled: true },
     });
 
     expect(await applySeed(prisma)).toEqual(first);
@@ -87,17 +85,12 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
     expect(user.username).toBe('demo');
     expect(user.role).toBe(UserRole.MERCHANT);
 
-    const price = await prisma.pricingItem.findUniqueOrThrow({ where: { action: 'distill' } });
+    const price = await prisma.pricingItem.findUniqueOrThrow({ where: { action: 'geo_write' } });
     expect(price.unitPoints).toBe(10);
     expect(price.enabled).toBe(true);
-    const template = await prisma.promptTemplate.findUniqueOrThrow({
-      where: { id: 'sys_article_01' },
-    });
-    expect(template.content).not.toBe('changed');
-    expect(template.content).toContain('{训练词占位符}');
-    expect(template.tenantId).toBeNull();
+    expect(await prisma.pricingItem.findUnique({ where: { action: 'kb_addon' } })).toBeNull();
+    expect(await prisma.pricingItem.count()).toBe(3);
     expect(await prisma.user.count()).toBe(2);
-    expect(await prisma.promptTemplate.count({ where: { tenantId: null } })).toBe(18);
     expect(
       (await prisma.wallet.findUniqueOrThrow({ where: { tenantId: PLATFORM_TENANT_ID } })).points,
     ).toBe(0);
@@ -113,7 +106,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
       'chk_wallet_nonneg',
     ]);
     const indexes = await prisma.$queryRaw<Array<{ indexdef: string }>>`
-      SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_kb_chunk_embedding'
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_brand_fact_chunk_embedding'
     `;
     expect(indexes[0]?.indexdef.toLowerCase()).toContain('hnsw');
     expect(indexes[0]?.indexdef.toLowerCase()).toContain('vector_cosine_ops');
@@ -123,7 +116,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
       JOIN pg_class c ON c.oid = a.attrelid
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public'
-        AND c.relname = 'KnowledgeChunk'
+        AND c.relname = 'BrandFactChunk'
         AND a.attname = 'embedding'
     `;
     expect(columns[0]?.typ).toBe('vector(1024)');
@@ -145,7 +138,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
         INSERT INTO "PointReservation"
           ("id", "tenantId", "refType", "refId", "frozen", "settled", "released", "status")
         VALUES
-          ('seed_chk_resv', ${DEMO_TENANT_ID}, 'distill', 'seed-chk', 1, 1, 1, 'OPEN'::"ReservationStatus")
+          ('seed_chk_resv', ${DEMO_TENANT_ID}, 'geo_article', 'seed-chk', 1, 1, 1, 'OPEN'::"ReservationStatus")
       `,
     ).rejects.toThrow(/chk_resv/);
   });

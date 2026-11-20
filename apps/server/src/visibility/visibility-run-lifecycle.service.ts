@@ -6,7 +6,6 @@ import {
   BILLING_ERROR,
   VISIBILITY_ENGINE_LABELS,
   escapeLikeLiteral,
-  matchesVisibilityProfileKeyword,
   recomputeRunMetrics,
   toShanghaiDateKey,
   type VisibilityObservationRecord,
@@ -47,10 +46,16 @@ function requireTenant(): string {
 
 export type LoadedRunRow = Prisma.VisibilityRunGetPayload<{
   include: {
-    profile: {
-      select: { id: true; name: true; brandName: true; brandAliases: true; competitors: true };
+    brandMarket: {
+      select: {
+        id: true;
+        market: true;
+        localBrandName: true;
+        aliases: true;
+        competitors: true;
+        brand: { select: { name: true } };
+      };
     };
-    keyword: { select: { id: true; main: true } };
     observations: {
       select: { status: true; brandMentioned: true; promptText: true; answerText: true };
     };
@@ -85,27 +90,26 @@ export class VisibilityRunLifecycleService {
     const tenantId = requireTenant();
 
     if (query.profileId) {
-      const prof = await this.prisma.base.visibilityProfile.findFirst({
+      const bm = await this.prisma.base.brandMarket.findFirst({
         where: { id: query.profileId, tenantId },
         select: { id: true },
       });
-      if (!prof) {
+      if (!bm) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
       }
     }
 
     const where: Prisma.VisibilityRunWhereInput = {
       tenantId,
-      ...(query.profileId ? { profileId: query.profileId } : {}),
+      ...(query.profileId ? { brandMarketId: query.profileId } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
     if (query.keyword) {
       const pattern = escapeLikeLiteral(query.keyword);
       where.OR = [
         { name: { contains: pattern, mode: 'insensitive' } },
-        { profile: { name: { contains: pattern, mode: 'insensitive' } } },
-        { profile: { brandName: { contains: pattern, mode: 'insensitive' } } },
-        { keyword: { main: { contains: pattern, mode: 'insensitive' } } },
+        { brand: { name: { contains: pattern, mode: 'insensitive' } } },
+        { brandMarket: { localBrandName: { contains: pattern, mode: 'insensitive' } } },
       ];
     }
 
@@ -118,16 +122,16 @@ export class VisibilityRunLifecycleService {
         skip,
         take: query.pageSize,
         include: {
-          profile: {
+          brandMarket: {
             select: {
               id: true,
-              name: true,
-              brandName: true,
-              brandAliases: true,
+              market: true,
+              localBrandName: true,
+              aliases: true,
               competitors: true,
+              brand: { select: { name: true } },
             },
           },
-          keyword: { select: { id: true, main: true } },
           observations: {
             select: { status: true, brandMentioned: true, promptText: true, answerText: true },
           },
@@ -154,8 +158,11 @@ export class VisibilityRunLifecycleService {
     const row = await this.prisma.base.visibilityRun.findFirst({
       where: { id, tenantId },
       include: {
-        profile: true,
-        keyword: { select: { id: true, main: true } },
+        brandMarket: {
+          include: {
+            brand: { select: { name: true } },
+          },
+        },
         observations: {
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           include: {
@@ -170,20 +177,9 @@ export class VisibilityRunLifecycleService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
     }
 
-    const [baseRecord] = await this.presentRuns(tenantId, [
-      {
-        ...row,
-        profile: {
-          id: row.profile.id,
-          name: row.profile.name,
-          brandName: row.profile.brandName,
-          brandAliases: row.profile.brandAliases,
-          competitors: row.profile.competitors,
-        },
-      },
-    ]);
+    const [baseRecord] = await this.presentRuns(tenantId, [row]);
 
-    const competitors = parseProfileCompetitors(row.profile.competitors);
+    const competitors = parseProfileCompetitors(row.brandMarket.competitors);
     const metrics = recomputeRunMetrics(
       row.observations.map((obs) => ({
         id: obs.id,
@@ -201,16 +197,16 @@ export class VisibilityRunLifecycleService {
         })),
       })),
       {
-        brandName: row.profile.brandName,
-        brandAliases: row.profile.brandAliases,
-        ownedDomains: row.profile.ownedDomains,
+        brandName: row.brandMarket.localBrandName,
+        brandAliases: row.brandMarket.aliases,
+        ownedDomains: row.brandMarket.ownedDomains,
         competitors,
       },
     );
 
     const relevanceCtx = {
-      brandName: row.profile.brandName,
-      brandAliases: row.profile.brandAliases,
+      brandName: row.brandMarket.localBrandName,
+      brandAliases: row.brandMarket.aliases,
       competitorNames: competitors.map((comp) => comp.name),
     };
     const observations: VisibilityObservationRecord[] = row.observations.map((obs) =>
@@ -235,18 +231,17 @@ export class VisibilityRunLifecycleService {
     const runId = deriveVisibilityRunId(tenantId, idempotencyKey);
 
     const engines = [...new Set(input.engines)];
-    const requestedQuestionIds = [...new Set(input.questionIds ?? [])];
     const customPrompts = dedupeStringsCaseInsensitive(input.customPrompts ?? []);
 
     const existing = await this.prisma.base.visibilityRun.findFirst({
       where: { id: runId, tenantId },
-      select: { id: true, profileId: true, engines: true, questionIds: true },
+      select: { id: true, brandMarketId: true, engines: true, prompts: true },
     });
     if (existing) {
       if (
-        existing.profileId !== input.profileId ||
+        existing.brandMarketId !== input.profileId ||
         existing.engines.join(',') !== engines.join(',') ||
-        existing.questionIds.join(',') !== requestedQuestionIds.join(',')
+        existing.prompts.join('\n') !== customPrompts.join('\n')
       ) {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
       }
@@ -265,131 +260,50 @@ export class VisibilityRunLifecycleService {
       }
     }
 
-    const profile = await this.prisma.base.visibilityProfile.findFirst({
+    const brandMarket = await this.prisma.base.brandMarket.findFirst({
       where: { id: input.profileId, tenantId },
       select: {
         id: true,
-        name: true,
-        brandName: true,
-        brandAliases: true,
+        brandId: true,
+        localBrandName: true,
+        aliases: true,
         ownedDomains: true,
         competitors: true,
       },
     });
-    if (!profile) {
+    if (!brandMarket) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选监测档案不存在');
     }
 
-    const profileKeywordTarget = {
-      id: profile.id,
-      name: profile.name,
-      brandName: profile.brandName,
-      brandAliases: profile.brandAliases,
-      ownedDomains: profile.ownedDomains,
-      competitors: parseProfileCompetitors(profile.competitors),
-    };
-
-    if (input.keywordId) {
-      const keyword = await this.prisma.base.keyword.findFirst({
-        where: { id: input.keywordId, tenantId },
-        select: { id: true, main: true, brands: true },
-      });
-      if (!keyword) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选训练主词不存在');
-      }
-      if (
-        keyword.brands.some((b) => b.trim().length > 0) &&
-        !matchesVisibilityProfileKeyword(keyword, profileKeywordTarget)
-      ) {
-        throw new ApiError(
-          400,
-          API_ERROR.BAD_REQUEST,
-          '所选训练主词不属于当前监测档案品牌，请重新选择或改填自定义问题',
-        );
-      }
-    }
-
-    const promptEntries: Array<{ questionId: string | null; promptText: string }> = [];
+    const promptList: string[] = [];
     const seenPrompts = new Set<string>();
-
-    if (requestedQuestionIds.length > 0) {
-      const questions = await this.prisma.base.question.findMany({
-        where: { id: { in: requestedQuestionIds }, tenantId },
-        select: { id: true, text: true, keywordId: true },
-      });
-      if (questions.length !== requestedQuestionIds.length) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分所选问题不存在或无权访问');
-      }
-      if (input.keywordId && questions.some((q) => q.keywordId !== input.keywordId)) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '所选监测问题不属于当前关联训练主词');
-      }
-      if (!input.keywordId) {
-        const distinctKeywordIds = [
-          ...new Set(
-            questions.map((q) => q.keywordId).filter((kid): kid is string => Boolean(kid)),
-          ),
-        ];
-        const questionKeywords = await Promise.all(
-          distinctKeywordIds.map((kid) =>
-            this.prisma.base.keyword.findFirst({
-              where: { id: kid, tenantId },
-              select: { id: true, main: true, brands: true },
-            }),
-          ),
-        );
-        for (const qKw of questionKeywords) {
-          if (
-            qKw &&
-            qKw.brands.some((b) => b.trim().length > 0) &&
-            !matchesVisibilityProfileKeyword(qKw, profileKeywordTarget)
-          ) {
-            throw new ApiError(
-              400,
-              API_ERROR.BAD_REQUEST,
-              '所选监测问题所属主词与当前监测档案品牌不匹配',
-            );
-          }
-        }
-      }
-      const qById = new Map(questions.map((q) => [q.id, q]));
-      for (const qId of requestedQuestionIds) {
-        const q = qById.get(qId);
-        if (!q) continue;
-        const cleaned = q.text.replace(/\s+/g, ' ').trim();
-        if (!cleaned) continue;
-        const lower = cleaned.toLowerCase();
-        if (seenPrompts.has(lower)) continue;
-        seenPrompts.add(lower);
-        promptEntries.push({ questionId: q.id, promptText: cleaned });
-      }
-    }
-
     for (const custom of customPrompts) {
       const cleaned = custom.replace(/\s+/g, ' ').trim();
       if (!cleaned) continue;
       const lower = cleaned.toLowerCase();
       if (seenPrompts.has(lower)) continue;
       seenPrompts.add(lower);
-      promptEntries.push({ questionId: null, promptText: cleaned });
+      promptList.push(cleaned);
     }
 
-    if (promptEntries.length === 0) {
+    if (promptList.length === 0) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少提供一条有效的监测问题');
     }
 
     const runName = (
-      input.name?.trim() || `${profile.brandName}-可见性监测-${toShanghaiDateKey(new Date())}`
+      input.name?.trim() ||
+      `${brandMarket.localBrandName}-可见性监测-${toShanghaiDateKey(new Date())}`
     ).slice(0, 80);
 
     await this.compliance.assertAllowed({
-      text: [runName, ...customPrompts].join('\n'),
+      text: [runName, ...promptList].join('\n'),
       action: 'visibility_run_create',
       tenantId,
       userId,
     });
 
     const unitPrice = await this.billing.unitPrice('visibility_check');
-    const totalChecks = promptEntries.length * engines.length;
+    const totalChecks = promptList.length * engines.length;
     const totalPoints = totalChecks * unitPrice;
 
     const reservation = await this.billing.reserve({
@@ -405,11 +319,11 @@ export class VisibilityRunLifecycleService {
           data: {
             id: runId,
             tenantId,
-            profileId: profile.id,
-            keywordId: input.keywordId ?? null,
+            brandId: brandMarket.brandId,
+            brandMarketId: brandMarket.id,
             name: runName,
             engines,
-            questionIds: requestedQuestionIds,
+            prompts: promptList,
             totalChecks,
             doneCount: 0,
             failCount: 0,
@@ -420,13 +334,13 @@ export class VisibilityRunLifecycleService {
         });
 
         await tx.visibilityObservation.createMany({
-          data: promptEntries.flatMap((prompt) =>
+          data: promptList.flatMap((promptText) =>
             engines.map((engine) => ({
               tenantId,
               runId,
-              profileId: profile.id,
-              questionId: prompt.questionId,
-              promptText: prompt.promptText,
+              brandId: brandMarket.brandId,
+              brandMarketId: brandMarket.id,
+              promptText,
               engine,
               status: 'PENDING' as const,
               collectorKind: this.config.collector,

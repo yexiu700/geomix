@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { formatLlmTenantDisplayName } from './account-costs-ux';
 import { FAKE_TOKEN_COST_MICRO, LLM_SCENES, type LlmScene } from './adapters';
 import { toCsv } from './crud';
-import { toShanghaiDateKey } from './dashboard';
+import { toShanghaiDateKey } from './shanghai-time';
 
 /**
  * 部署与运维（Issue #24）共享常量、LLM 成本费率解析与按日聚合纯函数。
@@ -26,6 +26,10 @@ export const LLM_SCENE_LABELS: Record<string, string> = {
   rewrite: '爆文复刻',
   image_prompt: '生图提示词优化',
   visibility_judge: '可见度裁判',
+  fact_extract: '事实卡提炼',
+  geo_brief: 'GEO 写作意见',
+  geo_write: 'GEO 靶向写作',
+  geo_rewrite: 'GEO 局部改写',
 };
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;

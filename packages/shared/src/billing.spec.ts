@@ -1,22 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BillingRuleError,
+  CHARGE_ACTIONS,
+  RESERVATION_REF_TYPES,
   articleQuotaEffect,
   countsTowardAiWrite,
   evaluateLedger,
   isChargeAction,
   isReservationRefType,
   ledgerTitle,
-  quoteAiWrite,
+  quoteGeoWrite,
   quotaReleasePolicy,
   readReconcileConfig,
   resolveTenantBillingMode,
-  BillingRuleError,
 } from './billing';
 
-describe('billing rules', () => {
-  it('registers visibility_run reservation refType and visibility_check charge action', () => {
+describe('GeoMix 2.0 billing rules', () => {
+  it('registers v2 reservation refTypes and 3 paid charge actions', () => {
+    expect(RESERVATION_REF_TYPES).toEqual([
+      'geo_article',
+      'geo_batch',
+      'inline_image_gen',
+      'visibility_run',
+    ]);
+    expect(CHARGE_ACTIONS).toEqual(['geo_write', 'visibility_check', 'inline_image_gen']);
+
+    expect(isReservationRefType('geo_article')).toBe(true);
+    expect(isReservationRefType('geo_batch')).toBe(true);
+    expect(isReservationRefType('inline_image_gen')).toBe(true);
     expect(isReservationRefType('visibility_run')).toBe(true);
+    expect(isReservationRefType('ai_task')).toBe(false);
+
+    expect(isChargeAction('geo_write')).toBe(true);
     expect(isChargeAction('visibility_check')).toBe(true);
+    expect(isChargeAction('inline_image_gen')).toBe(true);
+    expect(isChargeAction('kb_addon')).toBe(false);
+    expect(isChargeAction('ai_write')).toBe(false);
+
     expect(ledgerTitle('AI可见性监测-核心词巡检', true)).toBe('AI可见性监测-核心词巡检（免费期）');
   });
 
@@ -43,69 +63,45 @@ describe('billing rules', () => {
     });
   });
 
-  it('quotes one knowledge-base article as 10 plus 5, and five articles as 75', () => {
-    const one = quoteAiWrite({
+  it('quotes unified geo_write at 10 points per article with a single line (no kb_addon)', () => {
+    const one = quoteGeoWrite({
       count: 1,
-      withKnowledgeBase: true,
-      aiWritePoints: 10,
-      kbAddonPoints: 5,
-      taskName: '春季说明',
+      geoWritePoints: 10,
+      subject: '春季说明',
     });
-    expect(one.unitTotal).toBe(15);
-    expect(one.total).toBe(15);
-    expect(one.lines.map((line) => [line.action, line.listPrice, line.title])).toEqual([
-      ['ai_write', 10, 'AI写作-春季说明'],
-      ['kb_addon', 5, '知识库加价-春季说明'],
-    ]);
-    const five = quoteAiWrite({
+    expect(one.unitPrice).toBe(10);
+    expect(one.total).toBe(10);
+    expect(one.lines).toEqual([{ action: 'geo_write', listPrice: 10, title: 'GEO写作-春季说明' }]);
+
+    const five = quoteGeoWrite({
       count: 5,
-      withKnowledgeBase: true,
-      aiWritePoints: 10,
-      kbAddonPoints: 5,
+      geoWritePoints: 10,
     });
-    expect(five.total).toBe(75);
-    expect(five.lines).toHaveLength(2);
+    expect(five.total).toBe(50);
+    expect(five.lines).toEqual([{ action: 'geo_write', listPrice: 10, title: 'GEO写作' }]);
   });
 
-  it('omits the knowledge-base line when the task does not use one', () => {
-    const quote = quoteAiWrite({
-      count: 3,
-      withKnowledgeBase: false,
-      aiWritePoints: 10,
-      kbAddonPoints: 5,
-    });
-    expect(quote.total).toBe(30);
-    expect(quote.lines.map((line) => line.action)).toEqual(['ai_write']);
-  });
-
-  it('rejects a non-positive price instead of quoting a free charge', () => {
-    expect(() =>
-      quoteAiWrite({
-        count: 1,
-        withKnowledgeBase: true,
-        aiWritePoints: 10,
-        kbAddonPoints: 0,
-      }),
-    ).toThrow(BillingRuleError);
+  it('rejects a non-positive price or invalid count instead of quoting a free charge', () => {
+    expect(() => quoteGeoWrite({ count: 1, geoWritePoints: 0 })).toThrow(BillingRuleError);
+    expect(() => quoteGeoWrite({ count: 1, geoWritePoints: -5 })).toThrow(BillingRuleError);
+    expect(() => quoteGeoWrite({ count: 0, geoWritePoints: 10 })).toThrow(BillingRuleError);
   });
 
   it('marks shadow ledger titles and leaves strict titles unchanged', () => {
-    expect(ledgerTitle('AI写作-甲', true)).toBe('AI写作-甲（免费期）');
-    expect(ledgerTitle('AI写作-甲（免费期）', true)).toBe('AI写作-甲（免费期）');
-    expect(ledgerTitle('AI写作-甲', false)).toBe('AI写作-甲');
+    expect(ledgerTitle('GEO写作-甲', true)).toBe('GEO写作-甲（免费期）');
+    expect(ledgerTitle('GEO写作-甲（免费期）', true)).toBe('GEO写作-甲（免费期）');
+    expect(ledgerTitle('GEO写作-甲', false)).toBe('GEO写作-甲');
   });
 
-  it('counts only writing tasks toward AI writing, and never toward publish', () => {
-    expect(countsTowardAiWrite('AI_TASK')).toBe(true);
-    expect(countsTowardAiWrite('REWRITE_SINGLE')).toBe(false);
-    expect(countsTowardAiWrite('REWRITE_BATCH')).toBe(false);
+  it('counts GEO_STREAM and GEO_BATCH toward AI writing quota, and never MANUAL or delete', () => {
+    expect(countsTowardAiWrite('GEO_STREAM')).toBe(true);
+    expect(countsTowardAiWrite('GEO_BATCH')).toBe(true);
     expect(countsTowardAiWrite('MANUAL')).toBe(false);
-    expect(articleQuotaEffect('AI_TASK', 'create')).toEqual({ aiWrite: 1, publish: 0 });
-    expect(articleQuotaEffect('REWRITE_BATCH', 'create')).toEqual({ aiWrite: 0, publish: 0 });
+    expect(articleQuotaEffect('GEO_STREAM', 'create')).toEqual({ aiWrite: 1, publish: 0 });
+    expect(articleQuotaEffect('GEO_BATCH', 'create')).toEqual({ aiWrite: 1, publish: 0 });
     expect(articleQuotaEffect('MANUAL', 'create')).toEqual({ aiWrite: 0, publish: 0 });
-    expect(articleQuotaEffect('AI_TASK', 'status_change')).toEqual({ aiWrite: 0, publish: 0 });
-    expect(articleQuotaEffect('AI_TASK', 'delete')).toEqual({ aiWrite: 0, publish: 0 });
-    expect(articleQuotaEffect('MANUAL', 'status_change')).toEqual({ aiWrite: 0, publish: 0 });
+    expect(articleQuotaEffect('GEO_STREAM', 'status_change')).toEqual({ aiWrite: 0, publish: 0 });
+    expect(articleQuotaEffect('GEO_BATCH', 'delete')).toEqual({ aiWrite: 0, publish: 0 });
   });
 
   it('releases stock quotas only, and leaves unconfirmed quotas alone', () => {
@@ -117,28 +113,20 @@ describe('billing rules', () => {
     expect(quotaReleasePolicy('SOCIAL_AUTH')).toBe('unconfirmed');
   });
 
-  it('holds the ledger identity for a strict partial settle and a shadow no-op', () => {
+  it('holds the ledger identity for strict partial settle, refund release, and shadow no-op', () => {
     const strict = evaluateLedger({
       openingPoints: 100,
-      points: 85,
-      pointsReserved: 15,
+      points: 90,
+      pointsReserved: 10,
       reservations: [
-        { id: 'open', shadow: false, status: 'OPEN', frozen: 30, settled: 15, released: 0 },
+        { id: 'open', shadow: false, status: 'OPEN', frozen: 20, settled: 10, released: 0 },
       ],
       entries: [
         {
           reservationId: 'open',
-          action: 'ai_write',
+          action: 'geo_write',
           delta: -10,
           listPrice: 10,
-          status: 'SETTLED',
-          shadow: false,
-        },
-        {
-          reservationId: 'open',
-          action: 'kb_addon',
-          delta: -5,
-          listPrice: 5,
           status: 'SETTLED',
           shadow: false,
         },
@@ -146,27 +134,39 @@ describe('billing rules', () => {
     });
     expect(strict).toEqual({ ok: true, issues: [] });
 
+    const refunded = evaluateLedger({
+      openingPoints: 100,
+      points: 100,
+      pointsReserved: 0,
+      reservations: [
+        { id: 'failed', shadow: false, status: 'CLOSED', frozen: 10, settled: 0, released: 10 },
+      ],
+      entries: [
+        {
+          reservationId: 'failed',
+          action: 'geo_write',
+          delta: 0,
+          listPrice: 10,
+          status: 'RELEASED',
+          shadow: false,
+        },
+      ],
+    });
+    expect(refunded).toEqual({ ok: true, issues: [] });
+
     const shadow = evaluateLedger({
       openingPoints: 1000,
       points: 1000,
       pointsReserved: 0,
       reservations: [
-        { id: 'shadow', shadow: true, status: 'CLOSED', frozen: 15, settled: 15, released: 0 },
+        { id: 'shadow', shadow: true, status: 'CLOSED', frozen: 10, settled: 10, released: 0 },
       ],
       entries: [
         {
           reservationId: 'shadow',
-          action: 'ai_write',
+          action: 'geo_write',
           delta: 0,
           listPrice: 10,
-          status: 'SETTLED',
-          shadow: true,
-        },
-        {
-          reservationId: 'shadow',
-          action: 'kb_addon',
-          delta: 0,
-          listPrice: 5,
           status: 'SETTLED',
           shadow: true,
         },
@@ -186,7 +186,7 @@ describe('billing rules', () => {
       entries: [
         {
           reservationId: 'bad',
-          action: 'ai_write',
+          action: 'geo_write',
           delta: -10,
           listPrice: 10,
           status: 'SETTLED',
@@ -205,7 +205,7 @@ describe('billing rules', () => {
       entries: [
         {
           reservationId: 's',
-          action: 'ai_write',
+          action: 'inline_image_gen',
           delta: -5,
           listPrice: 5,
           status: 'SETTLED',

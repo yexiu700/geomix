@@ -75,8 +75,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       billing = new BillingService(servicePrisma, options);
       quota = new QuotaService(servicePrisma);
       for (const item of PRICING_DEFAULTS) {
-        await servicePrisma.base.pricingItem.create({
-          data: { action: item.action, unitPoints: item.unitPoints, enabled: true },
+        await servicePrisma.base.pricingItem.upsert({
+          where: { action: item.action },
+          update: { unitPoints: item.unitPoints, enabled: true },
+          create: { action: item.action, unitPoints: item.unitPoints, enabled: true },
         });
       }
 
@@ -161,8 +163,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       globalMode = 'SHADOW';
       const shadowHold = await billing.reserve({
         tenantId: id,
-        refType: 'distill',
-        refId: `distill_shadow_${suffix}`,
+        refType: 'geo_article',
+        refId: `geo_shadow_${suffix}`,
         amount: 10,
       });
       expect(shadowHold.shadow).toBe(true);
@@ -174,10 +176,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const settled = await billing.settle({
         tenantId: id,
         reservationId: shadowHold.id,
-        unitKey: `distill_shadow_${suffix}`,
-        action: 'distill',
+        unitKey: `geo_shadow_${suffix}`,
+        action: 'geo_write',
         amount: 10,
-        title: 'AI蒸馏拓展-甲',
+        title: 'GEO写作-甲',
       });
       expect(settled.replayed).toBe(false);
       expect(settled.lines[0]?.delta).toBe(0);
@@ -188,8 +190,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
 
       const strictHold = await billing.reserve({
         tenantId: id,
-        refType: 'distill',
-        refId: `distill_strict_${suffix}`,
+        refType: 'geo_article',
+        refId: `geo_strict_${suffix}`,
         amount: 10,
       });
       expect(strictHold.shadow).toBe(false);
@@ -202,10 +204,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const stillStrict = await billing.settle({
         tenantId: id,
         reservationId: strictHold.id,
-        unitKey: `distill_strict_${suffix}`,
-        action: 'distill',
+        unitKey: `geo_strict_${suffix}`,
+        action: 'geo_write',
         amount: 10,
-        title: 'AI蒸馏拓展-乙',
+        title: 'GEO写作-乙',
       });
       expect(stillStrict.lines[0]?.delta).toBe(-10);
       expect(stillStrict.lines[0]?.title.endsWith('（免费期）')).toBe(false);
@@ -224,7 +226,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const attempts = Array.from({ length: 60 }, (_, index) =>
         billing.reserve({
           tenantId: id,
-          refType: 'image_job',
+          refType: 'inline_image_gen',
           refId: `img_${suffix}_${index}`,
           amount: 1,
         }),
@@ -233,7 +235,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         ...Array.from({ length: 20 }, (_, index) =>
           billing.reserve({
             tenantId: other,
-            refType: 'image_job',
+            refType: 'inline_image_gen',
             refId: `imgb_${suffix}_${index}`,
             amount: 1,
           }),
@@ -265,22 +267,22 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await makeTenant(id, 40, 'STRICT');
       const hold = await billing.reserve({
         tenantId: id,
-        refType: 'rewrite_single',
-        refId: `rewrite_${suffix}`,
+        refType: 'inline_image_gen',
+        refId: `img_replay_${suffix}`,
         amount: 10,
       });
       const again = await billing.reserve({
         tenantId: id,
-        refType: 'rewrite_single',
-        refId: `rewrite_${suffix}`,
+        refType: 'inline_image_gen',
+        refId: `img_replay_${suffix}`,
         amount: 10,
       });
       expect(again.id).toBe(hold.id);
       await expect(
         billing.reserve({
           tenantId: id,
-          refType: 'rewrite_single',
-          refId: `rewrite_${suffix}`,
+          refType: 'inline_image_gen',
+          refId: `img_replay_${suffix}`,
           amount: 5,
         }),
       ).rejects.toMatchObject({ code: BILLING_ERROR.CONFLICT });
@@ -288,10 +290,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const request = {
         tenantId: id,
         reservationId: hold.id,
-        unitKey: `rewrite_unit_${suffix}`,
-        action: 'rewrite_single' as const,
+        unitKey: `img_unit_${suffix}`,
+        action: 'inline_image_gen' as const,
         amount: 5,
-        title: '单篇复刻',
+        title: '行内AI配图',
       };
       const first = await billing.settle(request);
       expect(first.replayed).toBe(false);
@@ -316,101 +318,85 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await expectLedger(id, 40);
     }, 60_000);
 
-    it('splits a knowledge-base article into two lines whose prices sum to 15', async () => {
+    it('quotes and settles unified geo_write at 10 points per article (free brand facts)', async () => {
       const id = `kb_${suffix}`;
       await makeTenant(id, 200, 'STRICT');
-      const quote = await billing.quoteAiWrite({
+      const quote = await billing.quoteGeoWrite({
         count: 5,
-        withKnowledgeBase: true,
         taskName: '春季说明',
       });
-      expect(quote.unitTotal).toBe(15);
-      expect(quote.total).toBe(75);
-      expect(quote.lines.map((line) => [line.action, line.listPrice])).toEqual([
-        ['ai_write', 10],
-        ['kb_addon', 5],
-      ]);
+      expect(quote.unitPrice).toBe(10);
+      expect(quote.total).toBe(50);
+      expect(quote.lines.map((line) => [line.action, line.listPrice])).toEqual([['geo_write', 10]]);
       const hold = await billing.reserve({
         tenantId: id,
-        refType: 'ai_task',
-        refId: `task_${suffix}`,
+        refType: 'geo_batch',
+        refId: `batch_${suffix}`,
         amount: quote.total,
       });
-      expect(hold.frozen).toBe(75);
-      const settled = await billing.settleAiWriteUnit({
+      expect(hold.frozen).toBe(50);
+      const settled = await billing.settleGeoWriteUnit({
         tenantId: id,
         reservationId: hold.id,
-        unitKey: `ai_task_item_${suffix}_1`,
-        taskName: '春季说明',
-        aiWritePoints: 10,
-        kbAddonPoints: 5,
-        withKnowledgeBase: true,
+        unitKey: `geo_batch_item_${suffix}_1`,
+        subject: '春季说明',
+        geoWritePoints: 10,
       });
-      expect(settled.lines.map((line) => [line.action, line.listPrice, line.delta]).sort()).toEqual(
-        [
-          ['ai_write', 10, -10],
-          ['kb_addon', 5, -5],
-        ],
-      );
-      expect(settled.lines.reduce((sum, line) => sum + line.listPrice, 0)).toBe(15);
-      const detail = settled.lines[0]?.detail as { unitTotal?: number };
-      expect(detail.unitTotal).toBe(15);
+      expect(settled.lines.map((line) => [line.action, line.listPrice, line.delta])).toEqual([
+        ['geo_write', 10, -10],
+      ]);
 
       await servicePrisma.base.pricingItem.update({
-        where: { action: 'ai_write' },
+        where: { action: 'geo_write' },
         data: { unitPoints: 99 },
       });
-      const snapshotted = await billing.settleAiWriteUnit({
+      const snapshotted = await billing.settleGeoWriteUnit({
         tenantId: id,
         reservationId: hold.id,
-        unitKey: `ai_task_item_${suffix}_2`,
-        taskName: '春季说明',
-        aiWritePoints: 10,
-        kbAddonPoints: 5,
-        withKnowledgeBase: true,
+        unitKey: `geo_batch_item_${suffix}_2`,
+        subject: '春季说明',
+        geoWritePoints: 10,
       });
-      expect(snapshotted.lines.reduce((sum, line) => sum + line.listPrice, 0)).toBe(15);
+      expect(snapshotted.lines.reduce((sum, line) => sum + line.listPrice, 0)).toBe(10);
       await servicePrisma.base.pricingItem.update({
-        where: { action: 'ai_write' },
+        where: { action: 'geo_write' },
         data: { unitPoints: 10 },
       });
 
       const wallet = await servicePrisma.base.wallet.findUniqueOrThrow({ where: { tenantId: id } });
-      expect(wallet.points).toBe(170);
-      expect(wallet.pointsReserved).toBe(45);
+      expect(wallet.points).toBe(180);
+      expect(wallet.pointsReserved).toBe(30);
       const closed = await billing.close({ tenantId: id, reservationId: hold.id });
-      expect(closed.releasedNow).toBe(45);
+      expect(closed.releasedNow).toBe(30);
       const after = await servicePrisma.base.wallet.findUniqueOrThrow({ where: { tenantId: id } });
-      expect(after.points).toBe(170);
+      expect(after.points).toBe(180);
       expect(after.pointsReserved).toBe(0);
       await expectLedger(id, 200);
     });
 
-    it('records five shadow articles at list price 75 and does not deduct', async () => {
+    it('records five shadow articles at list price 50 and does not deduct', async () => {
       const id = `shadow5_${suffix}`;
       await makeTenant(id, 1000, 'SHADOW');
       const hold = await billing.reserve({
         tenantId: id,
-        refType: 'ai_task',
-        refId: `task_shadow_${suffix}`,
-        amount: 75,
+        refType: 'geo_batch',
+        refId: `batch_shadow_${suffix}`,
+        amount: 50,
       });
       expect(hold.shadow).toBe(true);
       for (let index = 0; index < 5; index += 1) {
-        const settled = await billing.settleAiWriteUnit({
+        const settled = await billing.settleGeoWriteUnit({
           tenantId: id,
           reservationId: hold.id,
           unitKey: `shadow_item_${suffix}_${index}`,
-          taskName: '影子批次',
-          aiWritePoints: 10,
-          kbAddonPoints: 5,
-          withKnowledgeBase: true,
+          subject: '影子批次',
+          geoWritePoints: 10,
         });
         expect(settled.lines.every((line) => line.delta === 0)).toBe(true);
         expect(settled.lines.every((line) => line.title.endsWith('（免费期）'))).toBe(true);
       }
       const logs = await servicePrisma.base.pointLog.findMany({ where: { tenantId: id } });
-      expect(logs.reduce((sum, log) => sum + log.listPrice, 0)).toBe(75);
+      expect(logs.reduce((sum, log) => sum + log.listPrice, 0)).toBe(50);
       expect(logs.every((log) => log.delta === 0)).toBe(true);
       const closed = await billing.close({ tenantId: id, reservationId: hold.id });
       expect(closed.releasedNow).toBe(0);
@@ -425,12 +411,12 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await makeTenant(id, 80, 'STRICT');
       const batch = await billing.reserve({
         tenantId: id,
-        refType: 'rewrite_batch',
-        refId: `batch_${suffix}`,
-        amount: 25,
+        refType: 'geo_batch',
+        refId: `batch_empty_${suffix}`,
+        amount: 20,
       });
       const closed = await billing.close({ tenantId: id, reservationId: batch.id });
-      expect(closed.releasedNow).toBe(25);
+      expect(closed.releasedNow).toBe(20);
       expect(closed.reservation.status).toBe('CLOSED');
       const again = await billing.close({ tenantId: id, reservationId: batch.id });
       expect(again.releasedNow).toBe(0);
@@ -438,19 +424,19 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         where: { tenantId: id, action: 'refund' },
       });
       expect(refund.delta).toBe(0);
-      expect(refund.listPrice).toBe(25);
+      expect(refund.listPrice).toBe(20);
       expect(refund.status).toBe('RELEASED');
 
       const single = await billing.reserveSync({
         tenantId: id,
-        refType: 'distill',
-        unitKey: `distill_fail_${suffix}`,
+        refType: 'geo_article',
+        unitKey: `geo_fail_${suffix}`,
         amount: 10,
       });
       const released = await billing.releaseUnit({
         tenantId: id,
         reservationId: single.id,
-        unitKey: `distill_fail_${suffix}`,
+        unitKey: `geo_fail_${suffix}`,
         amount: 10,
         title: '退还预扣',
       });
@@ -461,7 +447,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
           billing.releaseUnit({
             tenantId: id,
             reservationId: single.id,
-            unitKey: `distill_fail_${suffix}`,
+            unitKey: `geo_fail_${suffix}`,
             amount: 10,
           }),
         ),
@@ -485,8 +471,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await makeTenant(stranger, 30, 'STRICT');
       const hold = await billing.reserve({
         tenantId: owner,
-        refType: 'distill',
-        refId: `own_distill_${suffix}`,
+        refType: 'geo_article',
+        refId: `own_geo_${suffix}`,
         amount: 10,
       });
       await expect(
@@ -494,9 +480,9 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
           tenantId: stranger,
           reservationId: hold.id,
           unitKey: `stolen_${suffix}_unit`,
-          action: 'distill',
+          action: 'geo_write',
           amount: 10,
-          title: 'AI蒸馏拓展',
+          title: 'GEO写作',
         }),
       ).rejects.toMatchObject({ code: AUTH_ERROR.NOT_FOUND });
       const wallet = await servicePrisma.base.wallet.findUniqueOrThrow({
@@ -518,19 +504,19 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await makeTenant(id, 40, 'STRICT');
       const orphan = await billing.reserve({
         tenantId: id,
-        refType: 'ai_task',
+        refType: 'geo_batch',
         refId: `old_${suffix}`,
         amount: 15,
       });
       const active = await billing.reserve({
         tenantId: id,
-        refType: 'ai_task',
+        refType: 'geo_batch',
         refId: `live_${suffix}`,
         amount: 15,
       });
       const fresh = await billing.reserve({
         tenantId: id,
-        refType: 'ai_task',
+        refType: 'geo_batch',
         refId: `new_${suffix}`,
         amount: 10,
       });
@@ -596,22 +582,22 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
 
       await servicePrisma.base.$transaction(async (tx) => {
         await quota.consume(id, 'QUESTION', 1, tx);
-        await tx.question.create({
+        await tx.brand.create({
           data: {
             tenantId: id,
-            keywordId: await keywordFor(id),
-            text: `问题${suffix}`,
+            name: `品牌${suffix}`,
+            category: 'NAS',
           },
         });
       });
       await expect(
         servicePrisma.base.$transaction(async (tx) => {
           await quota.consume(id, 'QUESTION', 1, tx);
-          await tx.question.create({
+          await tx.brand.create({
             data: {
               tenantId: id,
-              keywordId: await keywordFor(id),
-              text: `问题${suffix}`,
+              name: `品牌${suffix}`,
+              category: 'NAS',
             },
           });
         }),
@@ -633,20 +619,19 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       ).toBe(0n);
 
       await quota.consume(id, 'AI_WRITE', 1);
-      await quota.applyArticleEvent(id, 'AI_TASK', 'create');
-      await quota.applyArticleEvent(id, 'REWRITE_SINGLE', 'create');
-      await quota.applyArticleEvent(id, 'REWRITE_BATCH', 'create');
+      await quota.applyArticleEvent(id, 'GEO_STREAM', 'create');
+      await quota.applyArticleEvent(id, 'GEO_BATCH', 'create');
       await quota.applyArticleEvent(id, 'MANUAL', 'create');
       await quota.applyArticleEvent(id, 'MANUAL', 'status_change');
-      await quota.applyArticleEvent(id, 'AI_TASK', 'status_change');
-      await quota.applyArticleEvent(id, 'AI_TASK', 'delete');
+      await quota.applyArticleEvent(id, 'GEO_STREAM', 'status_change');
+      await quota.applyArticleEvent(id, 'GEO_BATCH', 'delete');
       expect(
         (
           await servicePrisma.base.quota.findUniqueOrThrow({
             where: { tenantId_key: { tenantId: id, key: 'AI_WRITE' } },
           })
         ).used,
-      ).toBe(2n);
+      ).toBe(3n);
       expect(
         (
           await servicePrisma.base.quota.findUniqueOrThrow({
@@ -673,15 +658,6 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         ).used,
       ).toBe(25n);
     }, 60_000);
-
-    async function keywordFor(tenantId: string): Promise<string> {
-      const existing = await servicePrisma.base.keyword.findFirst({ where: { tenantId } });
-      if (existing) return existing.id;
-      const created = await servicePrisma.base.keyword.create({
-        data: { tenantId, main: `主词${suffix}` },
-      });
-      return created.id;
-    }
 
     it('serves tenant-scoped reads and admin adjustments over HTTP', async () => {
       if (!app || !captcha) throw new Error('api was not started');
@@ -738,8 +714,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       });
       await billing.reserve({
         tenantId: otherId,
-        refType: 'distill',
-        refId: `other_distill_${suffix}`,
+        refType: 'geo_article',
+        refId: `other_geo_${suffix}`,
         amount: 10,
       });
       await billing.settle({
@@ -750,9 +726,9 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
           })
         ).id,
         unitKey: `other_unit_${suffix}_key`,
-        action: 'distill',
+        action: 'geo_write',
         amount: 10,
-        title: '其他租户蒸馏',
+        title: '其他租户写作',
       });
 
       const merchant = await login(captcha, baseUrl, `m_${suffix}`, password);
@@ -763,19 +739,16 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const quote = await call<{
         total: number;
         lines: Array<{ action: string; listPrice: number }>;
-      }>(baseUrl, 'GET', '/api/v1/billing/quote?count=1&knowledgeBase=1&taskName=春季说明', {
+      }>(baseUrl, 'GET', '/api/v1/billing/quote?count=1&taskName=春季说明', {
         token: merchant.accessToken,
       });
       expect(quote.status).toBe(200);
-      expect(quote.data.total).toBe(15);
-      expect(quote.data.lines.map((line) => line.listPrice)).toEqual([10, 5]);
-      const five = await call<{ total: number }>(
-        baseUrl,
-        'GET',
-        '/api/v1/billing/quote?count=5&knowledgeBase=true',
-        { token: merchant.accessToken },
-      );
-      expect(five.data.total).toBe(75);
+      expect(quote.data.total).toBe(10);
+      expect(quote.data.lines.map((line) => line.listPrice)).toEqual([10]);
+      const five = await call<{ total: number }>(baseUrl, 'GET', '/api/v1/billing/quote?count=5', {
+        token: merchant.accessToken,
+      });
+      expect(five.data.total).toBe(50);
 
       process.env.BILLING_MODE = 'STRICT';
       const inherited = await call<{

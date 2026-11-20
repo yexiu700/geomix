@@ -2,8 +2,9 @@
 
 import { z } from 'zod';
 import { FAKE_MARK } from './adapters';
+import { GEO_MARKETS, type GeoMarket } from './brands';
 import { CRUD_PAGE_SIZES, type CrudPageSize } from './crud';
-import { TASK_STATUSES, type ItemStatusName, type TaskStatusName } from './writing-tasks';
+import { TASK_STATUSES, type ItemStatusName, type TaskStatusName } from './task-status';
 
 export const VISIBILITY_ENGINES = [
   { key: 'deepseek', label: 'DeepSeek', domestic: true },
@@ -41,6 +42,26 @@ export const DOMESTIC_VISIBILITY_ENGINE_KEYS = [
 ] as const;
 export type DomesticVisibilityEngineKey = (typeof DOMESTIC_VISIBILITY_ENGINE_KEYS)[number];
 
+export const GLOBAL_VISIBILITY_ENGINE_KEYS = [
+  'chatgpt',
+  'perplexity',
+  'claude',
+  'gemini',
+  'google_aio',
+] as const;
+export type GlobalVisibilityEngineKey = (typeof GLOBAL_VISIBILITY_ENGINE_KEYS)[number];
+
+export function enginesForMarket(market: GeoMarket): readonly VisibilityEngineKey[] {
+  return market === 'GLOBAL' ? GLOBAL_VISIBILITY_ENGINE_KEYS : DOMESTIC_VISIBILITY_ENGINE_KEYS;
+}
+
+export function isEngineAllowedForMarket(engine: VisibilityEngineKey, market: GeoMarket): boolean {
+  return (enginesForMarket(market) as readonly string[]).includes(engine);
+}
+
+export const VISIBILITY_TRIGGER_TYPES = ['MANUAL', 'RETEST'] as const;
+export type VisibilityTriggerType = (typeof VISIBILITY_TRIGGER_TYPES)[number];
+
 export const VISIBILITY_ENGINE_LABELS: Record<VisibilityEngineKey, string> = {
   deepseek: 'DeepSeek',
   doubao: '豆包',
@@ -72,6 +93,7 @@ export const CITATION_SOURCE_KINDS = [
   'COMPETITOR',
   'SOCIAL',
   'AUTHORITY',
+  'ECOMMERCE',
   'OTHER',
 ] as const;
 export type CitationSourceKind = (typeof CITATION_SOURCE_KINDS)[number];
@@ -81,6 +103,7 @@ export const CITATION_SOURCE_LABELS: Record<CitationSourceKind, string> = {
   COMPETITOR: '竞品官网',
   SOCIAL: '社媒社区',
   AUTHORITY: '权威信源',
+  ECOMMERCE: '电商平台',
   OTHER: '其他来源',
 };
 
@@ -99,6 +122,8 @@ export const SOCIAL_CITATION_DOMAINS = [
   'xiaohongshu.com',
   'xhslink.com',
   'weibo.com',
+  'weibo.cn',
+  'smzdm.com',
   'bilibili.com',
   'b23.tv',
   'douyin.com',
@@ -151,6 +176,31 @@ export const AUTHORITY_CITATION_DOMAINS = [
   'iso.org',
   'w3.org',
   'mozilla.org',
+  'trustpilot.com',
+  'g2.com',
+  'capterra.com',
+  'wirecutter.com',
+  'rtings.com',
+  'theverge.com',
+  'techradar.com',
+  'pcmag.com',
+  'tomsguide.com',
+] as const;
+
+export const ECOMMERCE_CITATION_DOMAINS = [
+  'jd.com',
+  'tmall.com',
+  'taobao.com',
+  'pinduoduo.com',
+  'yangkeduo.com',
+  'suning.com',
+  'amazon.com',
+  'amazon.co.uk',
+  'amazon.de',
+  'amazon.co.jp',
+  'bestbuy.com',
+  'walmart.com',
+  'ebay.com',
 ] as const;
 
 export const AUTHORITY_CITATION_TLD_SUFFIXES = [
@@ -263,7 +313,7 @@ export function matchesDomain(domain: string, candidate: string): boolean {
 }
 
 /**
- * 按 OWNED > COMPETITOR > SOCIAL > AUTHORITY > OTHER 优先级对引用来源归类。
+ * 按 OWNED > COMPETITOR > SOCIAL > AUTHORITY > ECOMMERCE > OTHER 优先级对引用来源归类。
  */
 export function classifyCitationSource(
   urlOrDomain: string,
@@ -289,6 +339,9 @@ export function classifyCitationSource(
   }
   for (const suffix of AUTHORITY_CITATION_TLD_SUFFIXES) {
     if (domain.endsWith(suffix) && domain.length > suffix.length) return 'AUTHORITY';
+  }
+  for (const ecom of ECOMMERCE_CITATION_DOMAINS) {
+    if (matchesDomain(domain, ecom)) return 'ECOMMERCE';
   }
   return 'OTHER';
 }
@@ -817,7 +870,7 @@ export function computeSentimentSummary(
 }
 
 /**
- * 清洗 Query Fan-Out 搜索拆解词：压缩空白、过滤空串及与原问题（不区分大小写）相同的词，保序去重。
+ * 清洗 Query Fan-Out 搜索拆解词：按分号/换行拆行、压缩空白、剥离行首项目符号或序号、过滤空串及与原问题（不区分大小写）相同的词，保序去重。
  */
 export function normalizeFanOutQueries(queries: readonly string[], promptText: string): string[] {
   const normalizedPrompt = promptText
@@ -831,16 +884,21 @@ export function normalizeFanOutQueries(queries: readonly string[], promptText: s
 
   for (const raw of queries) {
     if (typeof raw !== 'string') continue;
-    const collapsed = raw
-      .replace(/[\u0000-\u001f\u007f]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!collapsed) continue;
-    const key = collapsed.toLowerCase();
-    if (key === normalizedPrompt) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    cleaned.push(collapsed);
+    const segments = raw.split(/[;；\r\n]+/);
+    for (const seg of segments) {
+      const collapsed = seg
+        .replace(/[\u0000-\u001f\u007f]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^(?:(?:[-*·–—]+|\d{1,2}[.)])\s+|(?:[•▪▸]+|\d{1,2}[、）])\s*)/, '')
+        .trim();
+      if (!collapsed) continue;
+      const key = collapsed.toLowerCase();
+      if (key === normalizedPrompt) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      cleaned.push(collapsed);
+    }
   }
 
   return cleaned;
@@ -2115,6 +2173,30 @@ export const visibilityRunCreateSchema = z
 
 export type VisibilityRunCreateInput = z.input<typeof visibilityRunCreateSchema>;
 
+export const visibilityRunV2CreateSchema = z.object({
+  market: z.enum(GEO_MARKETS),
+  name: z
+    .string()
+    .trim()
+    .min(1, '任务名称不能为空')
+    .max(VISIBILITY_RUN_NAME_MAX, `任务名称不超过 ${VISIBILITY_RUN_NAME_MAX} 字`)
+    .optional(),
+  engines: z
+    .array(z.enum(VISIBILITY_ENGINE_KEYS))
+    .min(1, '请至少选择一个 AI 引擎')
+    .max(VISIBILITY_ENGINE_KEYS.length)
+    .transform((items) => [...new Set(items)]),
+  prompts: z
+    .array(z.string().trim().min(2, '监测问题至少 2 个字').max(300, '监测问题最多 300 字'))
+    .min(1, '请至少填写一条监测问题')
+    .max(100, '单次最多输入 100 个监测问题')
+    .transform((items) => dedupeTrimmedStrings(items)),
+  triggerType: z.enum(VISIBILITY_TRIGGER_TYPES).default('MANUAL'),
+  retestArticleId: optionalVisibilityIdSchema,
+});
+
+export type VisibilityRunV2CreateInput = z.input<typeof visibilityRunV2CreateSchema>;
+
 export const visibilityRunBulkDeleteSchema = z.object({
   ids: z
     .array(z.string().trim().regex(VISIBILITY_ID_PATTERN, '监测任务编号不合法'))
@@ -2137,6 +2219,9 @@ export type VisibilityObservationRecord = {
   id: string;
   runId: string;
   profileId: string;
+  brandId?: string;
+  brandMarketId?: string;
+  market?: GeoMarket;
   questionId: string | null;
   promptText: string;
   engine: VisibilityEngineKey | string;
@@ -2164,12 +2249,18 @@ export type VisibilityRunRecord = {
   id: string;
   profileId: string;
   profileName: string;
+  brandId?: string;
+  brandMarketId?: string;
+  market?: GeoMarket;
   brandName: string;
   keywordId: string | null;
   keywordMain: string | null;
   name: string;
   engines: VisibilityEngineKey[];
   questionIds: string[];
+  triggerType?: VisibilityTriggerType;
+  retestArticleId?: string | null;
+  briefsGeneratedAt?: string | null;
   totalChecks: number;
   doneCount: number;
   failCount: number;
@@ -2303,6 +2394,9 @@ export type VisibilityBrandShareOfVoiceGroup = {
 
 export type VisibilityOverviewResponse = {
   profileId: string | null;
+  brandId?: string | null;
+  brandMarketId?: string | null;
+  market?: GeoMarket | null;
   metrics: RecomputedRunMetrics;
   trend: VisibilityTrendPoint[];
   byEngine?: VisibilityEngineBreakdownItem[];

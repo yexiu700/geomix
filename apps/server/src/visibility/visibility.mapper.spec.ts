@@ -238,8 +238,8 @@ describe('visibility.mapper', () => {
       return {
         id: 'obs_1',
         runId: 'vrun_1',
-        profileId: 'prof_1',
-        questionId: 'q_1',
+        brandId: 'brand_1',
+        brandMarketId: 'prof_1',
         promptText: '人体工学椅护腰推荐哪家？',
         engine: 'deepseek',
         status: 'SUCCESS',
@@ -352,11 +352,11 @@ describe('visibility.mapper', () => {
     it('presentRunRecord excludes off-topic mentions from visibilityPct, counts SKIPPED, and falls back frozenPoints', () => {
       const runRow: RunRowForMapper = {
         id: 'vrun_abc',
-        profileId: 'prof_1',
-        keywordId: 'kw_1',
+        brandId: 'brand_1',
+        brandMarketId: 'prof_1',
         name: '椅类可见度诊断',
         engines: ['deepseek', 'unknown_engine', 'doubao'],
-        questionIds: ['q_1'],
+        prompts: ['人体工学椅护腰推荐哪家？'],
         totalChecks: 4,
         doneCount: 2,
         failCount: 1,
@@ -367,14 +367,14 @@ describe('visibility.mapper', () => {
         createdAt: baseTimestamp,
         updatedAt: baseTimestamp,
         finishedAt: baseTimestamp,
-        profile: {
+        brandMarket: {
           id: 'prof_1',
-          name: '默认档案',
-          brandName: 'GeoMix',
-          brandAliases: ['吉奥米克斯'],
+          market: 'CN',
+          localBrandName: 'GeoMix',
+          aliases: ['吉奥米克斯'],
           competitors: [{ name: '竞品椅A', aliases: [], domains: [] }],
+          brand: { name: '默认档案' },
         },
-        keyword: { id: 'kw_1', main: '人体工学椅' },
         observations: [
           {
             status: 'SUCCESS',
@@ -506,18 +506,20 @@ describe('visibility.mapper', () => {
   });
 
   describe('overview, SoV, source priority, engine breakdown, and daily trend math', () => {
-    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > SOCIAL > AUTHORITY > OTHER', () => {
+    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > SOCIAL > AUTHORITY > ECOMMERCE > OTHER', () => {
       expect(CITATION_SOURCE_KINDS).toEqual([
         'OWNED',
         'COMPETITOR',
         'SOCIAL',
         'AUTHORITY',
+        'ECOMMERCE',
         'OTHER',
       ]);
       expect(higherPrioritySourceKind('AUTHORITY', 'SOCIAL')).toBe('SOCIAL');
       expect(higherPrioritySourceKind('SOCIAL', 'AUTHORITY')).toBe('SOCIAL');
       expect(higherPrioritySourceKind('OTHER', 'OWNED')).toBe('OWNED');
       expect(higherPrioritySourceKind('COMPETITOR', 'SOCIAL')).toBe('COMPETITOR');
+      expect(higherPrioritySourceKind('ECOMMERCE', 'AUTHORITY')).toBe('AUTHORITY');
     });
 
     it('computeOverviewMetricsAndGroups supports 0-brand, 1-brand, and >=2-brand isolated SoV tracks with domain priority merge', () => {
@@ -530,7 +532,7 @@ describe('visibility.mapper', () => {
 
       const obsA: OverviewObservationRow = {
         id: 'obs_a',
-        profileId: 'prof_a',
+        brandMarketId: 'prof_a',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '便携显示器推荐哪家？',
@@ -548,7 +550,7 @@ describe('visibility.mapper', () => {
 
       const obsB1: OverviewObservationRow = {
         id: 'obs_b1',
-        profileId: 'prof_b',
+        brandMarketId: 'prof_b',
         engine: 'doubao',
         status: 'SUCCESS',
         promptText: '氮化镓充电器哪款好？',
@@ -566,7 +568,7 @@ describe('visibility.mapper', () => {
 
       const obsB2: OverviewObservationRow = {
         id: 'obs_b2',
-        profileId: 'prof_b',
+        brandMarketId: 'prof_b',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '氮化镓充电器横评推荐？',
@@ -582,7 +584,7 @@ describe('visibility.mapper', () => {
 
       const orphanObs: OverviewObservationRow = {
         id: 'obs_orphan',
-        profileId: 'prof_deleted',
+        brandMarketId: 'prof_deleted',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '便携显示器选购技巧？',

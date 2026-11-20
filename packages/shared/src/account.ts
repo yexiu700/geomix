@@ -37,7 +37,7 @@ export const ADMIN_ROUTES = {
   tenants: '/admin/tenants',
   pricing: '/admin/pricing',
   announcements: '/admin/announcements',
-  templates: '/admin/templates',
+  llmCosts: '/admin/llm-costs',
 } as const;
 
 export const MODEL_INCLUSION_CARDS = [
@@ -110,7 +110,7 @@ export type RightsInput = {
   included: number;
   expiresOn: string;
   points: number;
-  money: string;
+  money?: string;
 };
 
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9_-]{1,31}$/;
@@ -197,8 +197,8 @@ export function formatAdminDateTime(iso: string | null | undefined): string {
 }
 
 /**
- * 权益页的 10 张卡。
- * 配额项直接读 Quota 表。已收录不是配额行，按写作标题里 included 的条数展示。
+ * 权益页的 9 张卡（遵循 D11 隐藏 ¥0.00 余额卡）。
+ * 配额项直接读 Quota 表；已收录按可见度监测有效提及条数展示。
  * 图片空间同时写出已用量和上限。
  */
 export function buildRightsCards(input: RightsInput): RightsCard[] {
@@ -227,22 +227,102 @@ export function buildRightsCards(input: RightsInput): RightsCard[] {
       }
     : { key: 'STORAGE_BYTES', label: '图片存储空间', text: '未配置' };
   return [
-    ratio('MAIN_KEYWORD', '主关键词'),
-    ratio('QUESTION', '写作问题'),
+    ratio('MAIN_KEYWORD', '品牌数量'),
+    ratio('QUESTION', '写作意见'),
     {
       key: 'INCLUDED',
       label: '已收录',
       text: String(input.included),
       used: String(input.included),
     },
-    ratio('AI_WRITE', 'AI写作数量'),
+    ratio('AI_WRITE', 'GEO写作数量'),
     ratio('PUBLISH', '文章发布'),
     ratio('SOCIAL_AUTH', '自媒体授权'),
     { key: 'EXPIRES', label: '有效期', text: input.expiresOn },
     storage,
     { key: 'POINTS', label: '点数', text: String(input.points) },
-    { key: 'MONEY', label: '余额', text: formatMoney(input.money) },
   ];
+}
+
+/**
+ * 汇总当月 PointLog，保证点数消耗汇总与点数明细完全一致。
+ */
+export function summarizeMonthPoints(
+  logs: ReadonlyArray<{
+    delta: number;
+    listPrice: number;
+    status: string;
+    action: string;
+  }>,
+): {
+  actualConsumed: number;
+  listPriceConsumed: number;
+  recharged: number;
+} {
+  let actualConsumed = 0;
+  let listPriceConsumed = 0;
+  let recharged = 0;
+
+  for (const row of logs) {
+    if (row.status !== 'SETTLED') continue;
+    if (row.delta > 0) {
+      recharged += row.delta;
+      continue;
+    }
+    if (row.delta < 0) {
+      actualConsumed += -row.delta;
+    }
+    if (row.action !== 'admin_topup' && row.delta <= 0) {
+      const price = row.listPrice > 0 ? row.listPrice : -row.delta;
+      if (price > 0) {
+        listPriceConsumed += price;
+      }
+    }
+  }
+
+  return { actualConsumed, listPriceConsumed, recharged };
+}
+
+function moneyStringToCents(raw: string): bigint {
+  const formatted = formatMoney(raw);
+  const negative = formatted.startsWith('-');
+  const unsigned = negative ? formatted.slice(1) : formatted;
+  const [whole = '0', frac = '00'] = unsigned.split('.');
+  const cents = BigInt(whole) * 100n + BigInt(frac);
+  return negative ? -cents : cents;
+}
+
+function centsToMoneyString(cents: bigint): string {
+  const negative = cents < 0n;
+  const abs = negative ? -cents : cents;
+  const whole = abs / 100n;
+  const frac = String(abs % 100n).padStart(2, '0');
+  return `${negative ? '-' : ''}${whole.toString()}.${frac}`;
+}
+
+/**
+ * 汇总当月 MoneyLog，使用整数分运算避免浮点误差。
+ */
+export function summarizeMonthMoney(logs: ReadonlyArray<{ amount: string }>): {
+  consumed: string;
+  recharged: string;
+} {
+  let consumedCents = 0n;
+  let rechargedCents = 0n;
+
+  for (const row of logs) {
+    const cents = moneyStringToCents(row.amount);
+    if (cents < 0n) {
+      consumedCents += -cents;
+    } else if (cents > 0n) {
+      rechargedCents += cents;
+    }
+  }
+
+  return {
+    consumed: centsToMoneyString(consumedCents),
+    recharged: centsToMoneyString(rechargedCents),
+  };
 }
 
 export function emptyModelInclusions(): Array<{
@@ -385,54 +465,27 @@ export type PricingActionMeta = {
 };
 
 export const PRICING_ACTION_META: Record<PricingAction, PricingActionMeta> = {
-  ai_write: {
-    action: 'ai_write',
-    label: 'AI 文章写作',
+  geo_write: {
+    action: 'geo_write',
+    label: 'GEO 靶向写作',
     unit: '点/篇',
     unitSuffix: '篇',
-    description: '基于主词、写作问题与模板生成单篇 GeoMix 合规文章',
-  },
-  kb_addon: {
-    action: 'kb_addon',
-    label: '知识库增强附加费',
-    unit: '点/篇',
-    unitSuffix: '篇',
-    description: 'AI 写作开启企业知识库检索增强时的单篇附加扣点',
-  },
-  distill: {
-    action: 'distill',
-    label: 'AI 蒸馏拓展',
-    unit: '点/次',
-    unitSuffix: '次',
-    description: '围绕训练主词批量蒸馏拓展长尾写作问题（按次计费）',
-  },
-  rewrite_single: {
-    action: 'rewrite_single',
-    label: '单篇流量复刻',
-    unit: '点/篇',
-    unitSuffix: '篇',
-    description: '单篇文章参考改写与品牌自然融入创作',
-  },
-  rewrite_batch: {
-    action: 'rewrite_batch',
-    label: '批量流量复刻',
-    unit: '点/篇',
-    unitSuffix: '篇',
-    description: '批量链接列表改写任务（按成功生成篇数计费）',
-  },
-  image_gen: {
-    action: 'image_gen',
-    label: 'AI 生图',
-    unit: '点/张',
-    unitSuffix: '张',
-    description: 'AI 配图生成并存入企业图库（按生成张数计费）',
+    description:
+      '单篇流式或轻量批量生成 GEO 引用级文章（免费标配品牌事实卡、GEO 体检与 Schema 导出）',
   },
   visibility_check: {
     action: 'visibility_check',
     label: 'AI 可见性监测',
     unit: '点/次',
     unitSuffix: '次',
-    description: '在目标 AI 引擎中执行单次问答品牌可见性监测',
+    description: '在目标 AI 引擎中执行单次问答品牌可见性监测（未上线或超时自动全额退还）',
+  },
+  inline_image_gen: {
+    action: 'inline_image_gen',
+    label: '行内 AI 配图',
+    unit: '点/张',
+    unitSuffix: '张',
+    description: '在 GEO 写作台编辑器内按需生成配图并归档至品牌产品图库（按张计费）',
   },
 };
 
@@ -477,23 +530,6 @@ export const announcementSchema = z
   .strict();
 
 export type AnnouncementInput = z.infer<typeof announcementSchema>;
-
-export const templateWriteSchema = z
-  .object({
-    kind: z.enum(['ARTICLE', 'TITLE', 'REWRITE']),
-    name: nameField,
-    content: z
-      .string()
-      .trim()
-      .min(1, '请填写模板正文')
-      .max(8000, '模板最多 8000 字')
-      .refine((value) => !hasControl(value), '模板含有无法显示的字符'),
-    randomPool: z.boolean(),
-    sort: z.number().int().min(0).max(9999),
-  })
-  .strict();
-
-export type TemplateWriteInput = z.infer<typeof templateWriteSchema>;
 
 export const verificationSchema = z
   .object({

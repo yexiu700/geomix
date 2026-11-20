@@ -24,7 +24,6 @@
     "seed": "node dist/seed-cli.js"
   },
   "dependencies": {
-    "@geomix/prompts": "workspace:*",
     "@geomix/shared": "workspace:*",
     "@prisma/client": "5.22.0"
   },

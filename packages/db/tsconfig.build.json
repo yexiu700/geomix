@@ -5,7 +5,6 @@
     "rootDir": "src",
     "baseUrl": ".",
     "paths": {
-      "@geomix/prompts": ["../prompts/dist/index.d.ts"],
       "@geomix/shared/catalog": ["../shared/dist/catalog.d.ts"]
     }
   },

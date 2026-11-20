@@ -34,10 +34,12 @@ const sharedEnv: Record<string, string> = {
   FEATURE_AI_IMAGE: process.env.FEATURE_AI_IMAGE || 'true',
   FEATURE_VISIBILITY: process.env.FEATURE_VISIBILITY || 'true',
   E2E_PUBLIC_FIXTURE_HOST: process.env.E2E_PUBLIC_FIXTURE_HOST || 'public.e2e.example',
+  E2E_MEMORY_MAX_OBJECTS: process.env.E2E_MEMORY_MAX_OBJECTS || '2000',
 };
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: process.env.E2E_V2 === '1' ? [] : ['**/v2/**'],
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -64,7 +66,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
     },
   ],
   webServer: skipWebServer

@@ -16,6 +16,7 @@ import { formatShanghaiDateTime, triggerBlobDownload, UX_TERMS } from '../../lib
 import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { SignalSkeleton } from '../geo/primitives';
 
 const EMPTY: PointListQuery = {
   page: 1,
@@ -75,6 +76,7 @@ export function PointsScreen({
   const [error, setError] = useState<string | null>(null);
   const [emptyNotice, setEmptyNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(() => Boolean(readSummary));
   const [refreshNonce, setRefreshNonce] = useState(0);
   const wasActiveRef = useRef(active);
 
@@ -103,14 +105,21 @@ export function PointsScreen({
   }, [read, query, refreshNonce]);
 
   const fetchSummary = useCallback(() => {
-    if (!readSummary) return () => undefined;
+    if (!readSummary) {
+      setSummaryLoading(false);
+      return () => undefined;
+    }
     let live = true;
+    setSummaryLoading(true);
     void readSummary().then(
       (next) => {
-        if (live) setSummary(next);
+        if (!live) return;
+        setSummary(next);
+        setSummaryLoading(false);
       },
       () => {
-        // 顶部资产概览加载失败不阻塞流水主表格
+        if (!live) return;
+        setSummaryLoading(false);
       },
     );
     return () => {
@@ -181,43 +190,63 @@ export function PointsScreen({
         {title}
       </Typography.Title>
       <div className="gm-ledger-summary-grid" aria-label="点数概览">
-        <div className="gm-kpi gm-kpi-compact">
-          <div className="gm-kpi-label">当前可用点数</div>
-          <div className="gm-kpi-value gm-kpi-value-sm gm-num">
-            {availablePoints !== null ? `${formatCountNumber(availablePoints)} 点` : '—'}
+        {summaryLoading && summary === null ? (
+          <div data-testid="points-kpi-skeleton">
+            <SignalSkeleton variant="kpi" />
           </div>
-          <div className="gm-kpi-caption gm-num">
-            {summary
-              ? reservedPoints > 0
-                ? `总计 ${formatCountNumber(summary.points)} 点 · 任务占用中 ${formatCountNumber(reservedPoints)} 点`
-                : `总计 ${formatCountNumber(summary.points)} 点`
-              : '实时点数余额'}
+        ) : (
+          <div className="gm-kpi gm-kpi-compact">
+            <div className="gm-kpi-label">当前可用点数</div>
+            <div className="gm-kpi-value gm-kpi-value-sm gm-num">
+              {availablePoints !== null ? `${formatCountNumber(availablePoints)} 点` : '—'}
+            </div>
+            <div className="gm-kpi-caption gm-num">
+              {summary
+                ? reservedPoints > 0
+                  ? `总计 ${formatCountNumber(summary.points)} 点 · 任务占用中 ${formatCountNumber(reservedPoints)} 点`
+                  : `总计 ${formatCountNumber(summary.points)} 点`
+                : '实时点数余额'}
+            </div>
           </div>
-        </div>
-        <div className="gm-kpi gm-kpi-compact">
-          <div className="gm-kpi-label">当前计费模式</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {summary ? (
-              <Tag color={isShadow ? 'gold' : 'blue'}>
-                {isShadow ? UX_TERMS.billingShadow : UX_TERMS.billingStrict}
-              </Tag>
-            ) : (
-              <span className="gm-kpi-value gm-kpi-value-sm">—</span>
-            )}
+        )}
+        {summaryLoading && summary === null ? (
+          <div data-testid="points-kpi-skeleton">
+            <SignalSkeleton variant="kpi" />
           </div>
-          <div className="gm-kpi-caption">
-            {isShadow
-              ? '免费体验期内仅记录原价流水，不扣减可用点数'
-              : '按实际成功产出结算扣减可用点数'}
+        ) : (
+          <div className="gm-kpi gm-kpi-compact">
+            <div className="gm-kpi-label">当前计费模式</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {summary ? (
+                <Tag color={isShadow ? 'gold' : 'blue'}>
+                  {isShadow ? UX_TERMS.billingShadow : UX_TERMS.billingStrict}
+                </Tag>
+              ) : (
+                <span className="gm-kpi-value gm-kpi-value-sm">—</span>
+              )}
+            </div>
+            <div className="gm-kpi-caption">
+              {summary
+                ? isShadow
+                  ? '免费体验期内仅记录原价流水，不扣减可用点数'
+                  : '按实际成功产出结算扣减可用点数'
+                : '实时计费状态'}
+            </div>
           </div>
-        </div>
-        <div className="gm-kpi gm-kpi-compact">
-          <div className="gm-kpi-label">筛选记录数</div>
-          <div className="gm-kpi-value gm-kpi-value-sm gm-num">
-            {formatCountNumber(page?.total ?? 0)} 条
+        )}
+        {loading && page === null ? (
+          <div data-testid="points-kpi-skeleton">
+            <SignalSkeleton variant="kpi" />
           </div>
-          <div className="gm-kpi-caption">支持按项目、变动点数与时间区间查询导出</div>
-        </div>
+        ) : (
+          <div className="gm-kpi gm-kpi-compact">
+            <div className="gm-kpi-label">筛选记录数</div>
+            <div className="gm-kpi-value gm-kpi-value-sm gm-num">
+              {formatCountNumber(page?.total ?? 0)} 条
+            </div>
+            <div className="gm-kpi-caption">支持按项目、变动点数与时间区间查询导出</div>
+          </div>
+        )}
       </div>
 
       <div className="gm-ledger-filter">
@@ -300,63 +329,69 @@ export function PointsScreen({
         />
       ) : null}
       {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
-      <Table<PointItem>
-        rowKey="id"
-        loading={loading}
-        dataSource={page?.items ?? []}
-        scroll={{ x: 'max-content' }}
-        locale={{ emptyText: '没有找到匹配的记录' }}
-        pagination={{
-          current: page?.page ?? 1,
-          pageSize: page?.pageSize ?? 10,
-          total: page?.total ?? 0,
-          showSizeChanger: false,
-          showTotal: (total) => `共 ${total} 条记录`,
-          onChange: (next) => setQuery((current) => ({ ...current, page: next })),
-        }}
-        columns={[
-          {
-            title: '序号',
-            key: 'seq',
-            width: 72,
-            render: (_value, _row, index) => (
-              <span className="gm-num">
-                {((page?.page ?? 1) - 1) * (page?.pageSize ?? 10) + index + 1}
-              </span>
-            ),
-          },
-          {
-            title: '项目',
-            dataIndex: 'title',
-            key: 'title',
-            ellipsis: { showTitle: false },
-            render: (value: string) => (
-              <TableClampText
-                text={sanitizeLedgerTitle(value)}
-                lines={1}
-                maxWidth={360}
-                tooltipThreshold={24}
-              />
-            ),
-          },
-          {
-            title: '点数',
-            key: 'points',
-            width: 160,
-            render: (_value, row) => <span className="gm-num">{row.pointsText}</span>,
-          },
-          {
-            title: '消耗时间',
-            key: 'createdAt',
-            width: 180,
-            render: (_value, row) => (
-              <span className="gm-num">
-                {formatShanghaiDateTime(row.createdAt, { seconds: true })}
-              </span>
-            ),
-          },
-        ]}
-      />
+      {loading && page === null ? (
+        <div data-testid="points-table-skeleton">
+          <SignalSkeleton variant="row" rows={5} />
+        </div>
+      ) : (
+        <Table<PointItem>
+          rowKey="id"
+          loading={loading}
+          dataSource={page?.items ?? []}
+          scroll={{ x: 'max-content' }}
+          locale={{ emptyText: '没有找到匹配的记录' }}
+          pagination={{
+            current: page?.page ?? 1,
+            pageSize: page?.pageSize ?? 10,
+            total: page?.total ?? 0,
+            showSizeChanger: false,
+            showTotal: (total) => `共 ${total} 条记录`,
+            onChange: (next) => setQuery((current) => ({ ...current, page: next })),
+          }}
+          columns={[
+            {
+              title: '序号',
+              key: 'seq',
+              width: 72,
+              render: (_value, _row, index) => (
+                <span className="gm-num">
+                  {((page?.page ?? 1) - 1) * (page?.pageSize ?? 10) + index + 1}
+                </span>
+              ),
+            },
+            {
+              title: '项目',
+              dataIndex: 'title',
+              key: 'title',
+              ellipsis: { showTitle: false },
+              render: (value: string) => (
+                <TableClampText
+                  text={sanitizeLedgerTitle(value)}
+                  lines={1}
+                  maxWidth={360}
+                  tooltipThreshold={24}
+                />
+              ),
+            },
+            {
+              title: '点数',
+              key: 'points',
+              width: 160,
+              render: (_value, row) => <span className="gm-num">{row.pointsText}</span>,
+            },
+            {
+              title: '消耗时间',
+              key: 'createdAt',
+              width: 180,
+              render: (_value, row) => (
+                <span className="gm-num">
+                  {formatShanghaiDateTime(row.createdAt, { seconds: true })}
+                </span>
+              ),
+            },
+          ]}
+        />
+      )}
     </section>
   );
 }

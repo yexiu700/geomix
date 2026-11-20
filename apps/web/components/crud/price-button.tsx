@@ -2,7 +2,13 @@
 
 import { priceButtonText, priceUnit } from '@geomix/shared';
 import { Button } from 'antd';
-import type { PriceItem } from '../../lib/samples';
+
+export type PriceItem = {
+  action: string;
+  unitPoints: number;
+  enabled: boolean;
+  label: string;
+};
 
 export function PriceButton({
   action,

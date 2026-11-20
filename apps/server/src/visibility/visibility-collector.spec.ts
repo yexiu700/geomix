@@ -41,6 +41,10 @@ function createScriptedLlm(text: string): LlmService {
       body: { primary: 'scripted', backup: [] },
       rewrite: { primary: 'scripted', backup: [] },
       image_prompt: { primary: 'scripted', backup: [] },
+      fact_extract: { primary: 'scripted', backup: [] },
+      geo_brief: { primary: 'scripted', backup: [] },
+      geo_write: { primary: 'scripted', backup: [] },
+      geo_rewrite: { primary: 'scripted', backup: [] },
     },
   };
   return new LlmService(
@@ -271,6 +275,10 @@ describe('VisibilityCollectorService - llm_api driver', () => {
         body: { primary: 'deepseek', backup: ['tongyi'] },
         rewrite: { primary: 'deepseek', backup: ['tongyi'] },
         image_prompt: { primary: 'deepseek', backup: ['tongyi'] },
+        fact_extract: { primary: 'deepseek', backup: ['tongyi'] },
+        geo_brief: { primary: 'deepseek', backup: ['tongyi'] },
+        geo_write: { primary: 'deepseek', backup: ['tongyi'] },
+        geo_rewrite: { primary: 'deepseek', backup: ['tongyi'] },
       },
     };
     const llm = new LlmService(

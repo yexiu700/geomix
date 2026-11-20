@@ -6,17 +6,16 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
+  FAKE_MARK,
   PRICING_DEFAULTS,
   QUOTA_DEFAULTS,
   parseEnv,
-  type ImportQuestionsResult,
   type VisibilityCitationListResponse,
   type VisibilityOpportunitiesResponse,
   type VisibilityOverviewResponse,
   type VisibilityProfileListResponse,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
-  type VisibilityRunListResponse,
 } from '@geomix/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { passwordFingerprint } from '../auth/auth.service';
@@ -95,44 +94,28 @@ type PointLogRec = {
   createdAt: Date;
 };
 
-type KeywordRec = {
-  id: string;
-  tenantId: string;
-  main: string;
-  brands: string[];
-  optStatus: 'NONE' | 'OPTIMIZING' | 'INCLUDED';
-  createdAt: Date;
-};
-
-type QuestionRec = {
-  id: string;
-  tenantId: string;
-  keywordId: string;
-  text: string;
-  source: 'MANUAL' | 'DISTILL' | 'COMBO' | 'AI';
-  usedCount: number;
-  lastUsedAt: Date | null;
-  included: boolean;
-  createdAt: Date;
-};
-
-type KbRec = {
+type BrandRec = {
   id: string;
   tenantId: string;
   name: string;
-  companyName: string | null;
-  brandShort: string | null;
+  category: string;
+  truthAgreementSignedAt: Date | null;
   createdAt: Date;
+  updatedAt: Date;
 };
 
-type ProfileRec = {
+type BrandMarketRec = {
   id: string;
   tenantId: string;
-  name: string;
-  brandName: string;
-  brandAliases: string[];
+  brandId: string;
+  market: 'CN' | 'GLOBAL';
+  locale: string;
+  region: string;
+  localBrandName: string;
+  aliases: string[];
   ownedDomains: string[];
   competitors: Prisma.JsonValue;
+  seedPrompts: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -140,11 +123,14 @@ type ProfileRec = {
 type RunRec = {
   id: string;
   tenantId: string;
-  profileId: string;
-  keywordId: string | null;
+  brandId: string;
+  brandMarketId: string;
   name: string;
   engines: string[];
-  questionIds: string[];
+  prompts: string[];
+  triggerType: 'MANUAL' | 'RETEST';
+  retestArticleId: string | null;
+  briefsGeneratedAt: Date | null;
   totalChecks: number;
   doneCount: number;
   failCount: number;
@@ -161,8 +147,8 @@ type ObservationRec = {
   id: string;
   tenantId: string;
   runId: string;
-  profileId: string;
-  questionId: string | null;
+  brandId: string;
+  brandMarketId: string;
   promptText: string;
   engine: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
@@ -217,18 +203,14 @@ class InMemoryVisibilityStore {
     payload: Prisma.JsonValue | null;
     createdAt: Date;
   }> = [];
-  readonly keywords = new Map<string, KeywordRec>();
-  readonly questions = new Map<string, QuestionRec>();
-  readonly knowledgeBases = new Map<string, KbRec>();
-  readonly profiles = new Map<string, ProfileRec>();
+  readonly brands = new Map<string, BrandRec>();
+  readonly brandMarkets = new Map<string, BrandMarketRec>();
   readonly runs = new Map<string, RunRec>();
   readonly observations = new Map<string, ObservationRec>();
   readonly citations = new Map<string, CitationRec>();
 
   nextId(prefix: string): string {
-    const id = `${prefix}_${this.seq}`;
-    this.seq += 1;
-    return id;
+    return `${prefix}_${String(this.seq++).padStart(4, '0')}`;
   }
 
   seedTenant(input: {
@@ -238,15 +220,14 @@ class InMemoryVisibilityStore {
     points: number;
     billingMode: 'SHADOW' | 'STRICT' | null;
     expiresAt?: Date;
-    isActive?: boolean;
   }): string {
     const now = new Date();
-    const passwordHash = 'scrypt$16384$8$1$testsalt$testhash';
+    const passwordHash = `hash:${input.username}`;
     this.tenants.set(input.tenantId, {
       id: input.tenantId,
-      name: `租户-${input.tenantId}`,
-      expiresAt: input.expiresAt ?? new Date(now.getTime() + 30 * 86_400_000),
-      isActive: input.isActive ?? true,
+      name: `租户_${input.username}`,
+      expiresAt: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 3600 * 1000),
+      isActive: true,
       billingMode: input.billingMode,
       createdAt: now,
     });
@@ -318,7 +299,9 @@ class InMemoryVisibilityStore {
     if (typeof where.id === 'string' && obs.id !== where.id) return false;
     if (typeof where.tenantId === 'string' && obs.tenantId !== where.tenantId) return false;
     if (typeof where.runId === 'string' && obs.runId !== where.runId) return false;
-    if (typeof where.profileId === 'string' && obs.profileId !== where.profileId) return false;
+    if (typeof where.brandMarketId === 'string' && obs.brandMarketId !== where.brandMarketId) {
+      return false;
+    }
     if (typeof where.brandMentioned === 'boolean' && obs.brandMentioned !== where.brandMentioned) {
       return false;
     }
@@ -331,14 +314,6 @@ class InMemoryVisibilityStore {
     if (where.status && typeof where.status === 'object') {
       const inList = (where.status as { in?: string[] }).in;
       if (inList && !inList.includes(obs.status)) return false;
-    }
-    if (where.questionId !== undefined) {
-      if (where.questionId === null && obs.questionId !== null) return false;
-      if (typeof where.questionId === 'string' && obs.questionId !== where.questionId) return false;
-      if (typeof where.questionId === 'object' && where.questionId !== null) {
-        const notVal = (where.questionId as { not?: unknown }).not;
-        if (notVal === null && obs.questionId === null) return false;
-      }
     }
     if ('checkedAt' in where) {
       if (
@@ -377,44 +352,25 @@ class InMemoryVisibilityStore {
       if (inIds && !inIds.includes(run.id)) return false;
     }
     if (typeof where.tenantId === 'string' && run.tenantId !== where.tenantId) return false;
-    if (typeof where.profileId === 'string' && run.profileId !== where.profileId) return false;
+    if (typeof where.brandMarketId === 'string' && run.brandMarketId !== where.brandMarketId) {
+      return false;
+    }
     if (typeof where.status === 'string' && run.status !== where.status) return false;
     if (where.status && typeof where.status === 'object') {
       const inStatuses = (where.status as { in?: string[] }).in;
       if (inStatuses && !inStatuses.includes(run.status)) return false;
     }
-    if (Array.isArray(where.OR)) {
-      const prof = this.profiles.get(run.profileId);
-      const kw = run.keywordId ? this.keywords.get(run.keywordId) : undefined;
-      const matched = (where.OR as Array<Record<string, unknown>>).some((branch) => {
-        if (branch.name && typeof branch.name === 'object') {
-          const needle = String(
-            (branch.name as { contains?: string }).contains ?? '',
-          ).toLowerCase();
-          return run.name.toLowerCase().includes(needle);
-        }
-        if (branch.profile && typeof branch.profile === 'object') {
-          const pCond = branch.profile as Record<string, { contains?: string }>;
-          if (pCond.name?.contains) {
-            return (prof?.name ?? '').toLowerCase().includes(pCond.name.contains.toLowerCase());
-          }
-          if (pCond.brandName?.contains) {
-            return (prof?.brandName ?? '')
-              .toLowerCase()
-              .includes(pCond.brandName.contains.toLowerCase());
-          }
-        }
-        if (branch.keyword && typeof branch.keyword === 'object') {
-          const kCond = branch.keyword as { main?: { contains?: string } };
-          if (kCond.main?.contains) {
-            return (kw?.main ?? '').toLowerCase().includes(kCond.main.contains.toLowerCase());
-          }
-        }
-        return false;
-      });
-      if (!matched) return false;
-    }
     return true;
+  }
+
+  private attachBrandMarket(bm: BrandMarketRec) {
+    const brand = this.brands.get(bm.brandId) ?? { id: bm.brandId, name: '' };
+    const runCount = [...this.runs.values()].filter((r) => r.brandMarketId === bm.id).length;
+    return {
+      ...bm,
+      brand: { id: brand.id, name: brand.name },
+      _count: { visibilityRuns: runCount },
+    };
   }
 
   createClient(): Record<string, unknown> {
@@ -434,26 +390,10 @@ class InMemoryVisibilityStore {
           const r = this.reservations.get(reservationId);
           return r && r.tenantId === tenantId ? [{ ...r }] : [];
         }
-        if (sql.includes('FROM "Quota"')) {
-          const tenantId = String(values[0]);
-          const key = String(values[1]);
-          const q = this.quotas.find((row) => row.tenantId === tenantId && row.key === key);
-          return q ? [{ used: q.used, limit: q.limit }] : [];
-        }
         return [];
       },
       $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.join(' ');
-        if (sql.includes('UPDATE "Quota"') && sql.includes('SET used = used +')) {
-          const delta = BigInt(values[0] as number | bigint);
-          const tenantId = String(values[1]);
-          const key = String(values[2]);
-          const deltaCheck = BigInt(values[3] as number | bigint);
-          const q = this.quotas.find((row) => row.tenantId === tenantId && row.key === key);
-          if (!q || q.used + deltaCheck > q.limit) return 0;
-          q.used += delta;
-          return 1;
-        }
         if (
           sql.includes('UPDATE "Wallet"') &&
           sql.includes('"pointsReserved" = "pointsReserved" +')
@@ -543,18 +483,12 @@ class InMemoryVisibilityStore {
       },
       user: {
         findUnique: async ({ where }: { where: { id?: string; username?: string } }) => {
-          const found = where.id
-            ? (this.users.get(where.id) ?? null)
-            : ([...this.users.values()].find((u) => u.username === where.username) ?? null);
-          if (!found) return null;
-          const tenant = this.tenants.get(found.tenantId);
-          return tenant ? { ...found, tenant } : null;
-        },
-        update: async ({ where, data }: { where: { id: string }; data: Partial<UserRec> }) => {
-          const u = this.users.get(where.id);
-          if (!u) throw new Error('User not found');
-          Object.assign(u, data);
-          return u;
+          const u = where.id
+            ? this.users.get(where.id)
+            : [...this.users.values()].find((item) => item.username === where.username);
+          if (!u) return null;
+          const t = this.tenants.get(u.tenantId);
+          return t ? { ...u, tenant: { ...t } } : null;
         },
       },
       wallet: {
@@ -562,33 +496,24 @@ class InMemoryVisibilityStore {
           this.wallets.get(where.tenantId) ?? null,
         findUniqueOrThrow: async ({ where }: { where: { tenantId: string } }) => {
           const w = this.wallets.get(where.tenantId);
-          if (!w) throw new Error('Wallet missing');
+          if (!w) throw new Error(`Wallet missing for ${where.tenantId}`);
           return w;
         },
-        findMany: async () => [...this.wallets.values()],
       },
       quota: {
-        findMany: async ({ where }: { where?: { tenantId?: string } }) =>
-          this.quotas.filter((q) => !where?.tenantId || q.tenantId === where.tenantId),
-        findUnique: async ({
-          where,
-        }: {
-          where: { tenantId_key: { tenantId: string; key: string } };
-        }) =>
-          this.quotas.find(
-            (q) => q.tenantId === where.tenantId_key.tenantId && q.key === where.tenantId_key.key,
-          ) ?? null,
+        findMany: async ({ where }: { where: { tenantId: string } }) =>
+          this.quotas.filter((q) => q.tenantId === where.tenantId),
       },
       pricingItem: {
+        findMany: async () => [...this.pricingItems.values()],
         findUnique: async ({ where }: { where: { action: string } }) =>
           this.pricingItems.get(where.action) ?? null,
-        findMany: async () => [...this.pricingItems.values()],
       },
       pointReservation: {
         findUnique: async ({
           where,
         }: {
-          where: { id?: string; refType_refId?: { refType: string; refId: string } };
+          where: { refType_refId?: { refType: string; refId: string }; id?: string };
         }) => {
           if (where.id) return this.reservations.get(where.id) ?? null;
           if (where.refType_refId) {
@@ -602,7 +527,11 @@ class InMemoryVisibilityStore {
           }
           return null;
         },
-        findFirst: async ({ where }: { where: Partial<ReservationRec> }) =>
+        findFirst: async ({
+          where,
+        }: {
+          where: { id?: string; tenantId?: string; refType?: string; refId?: string };
+        }) =>
           [...this.reservations.values()].find(
             (r) =>
               (!where.id || r.id === where.id) &&
@@ -610,22 +539,11 @@ class InMemoryVisibilityStore {
               (!where.refType || r.refType === where.refType) &&
               (!where.refId || r.refId === where.refId),
           ) ?? null,
-        findMany: async ({
-          where,
-        }: {
-          where?: {
-            tenantId?: string;
-            id?: { in?: string[] };
-            status?: string;
-            createdAt?: { lt?: Date };
-          };
-        }) =>
+        findMany: async ({ where }: { where?: { tenantId?: string; id?: { in?: string[] } } }) =>
           [...this.reservations.values()].filter(
             (r) =>
               (!where?.tenantId || r.tenantId === where.tenantId) &&
-              (!where?.id?.in || where.id.in.includes(r.id)) &&
-              (!where?.status || r.status === where.status) &&
-              (!where?.createdAt?.lt || r.createdAt.getTime() < where.createdAt.lt.getTime()),
+              (!where?.id?.in || where.id.in.includes(r.id)),
           ),
         create: async ({
           data,
@@ -694,25 +612,12 @@ class InMemoryVisibilityStore {
               (!where.unitKey || l.unitKey === where.unitKey) &&
               (!where.status || l.status === where.status),
           ) ?? null,
-        findMany: async ({
-          where,
-          skip,
-          take,
-        }: {
-          where?: { tenantId?: string; unitKey?: string };
-          skip?: number;
-          take?: number;
-        }) => {
-          const list = this.pointLogs
-            .filter(
-              (l) =>
-                (!where?.tenantId || l.tenantId === where.tenantId) &&
-                (!where?.unitKey || l.unitKey === where.unitKey),
-            )
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-          const start = skip ?? 0;
-          return take !== undefined ? list.slice(start, start + take) : list.slice(start);
-        },
+        findMany: async ({ where }: { where?: { tenantId?: string; unitKey?: string } }) =>
+          this.pointLogs.filter(
+            (l) =>
+              (!where?.tenantId || l.tenantId === where.tenantId) &&
+              (!where?.unitKey || l.unitKey === where.unitKey),
+          ),
         create: async ({
           data,
         }: {
@@ -771,161 +676,118 @@ class InMemoryVisibilityStore {
               (!where?.action || a.action === where.action),
           ),
       },
-      keyword: {
-        findFirst: async ({ where }: { where: { id?: string; tenantId?: string } }) => {
-          const kw = where.id ? this.keywords.get(where.id) : undefined;
-          if (!kw || (where.tenantId && kw.tenantId !== where.tenantId)) return null;
-          return { ...kw };
-        },
-        findMany: async ({ where }: { where?: { tenantId?: string } }) =>
-          [...this.keywords.values()].filter(
-            (k) => !where?.tenantId || k.tenantId === where.tenantId,
-          ),
-        update: async ({ where, data }: { where: { id: string }; data: Partial<KeywordRec> }) => {
-          const kw = this.keywords.get(where.id);
-          if (!kw) throw new Error('Keyword missing');
-          Object.assign(kw, data);
-          return { ...kw };
-        },
-        updateMany: async ({
-          where,
-          data,
-        }: {
-          where: { id: string; tenantId: string };
-          data: Partial<KeywordRec>;
-        }) => {
-          const kw = this.keywords.get(where.id);
-          if (!kw || kw.tenantId !== where.tenantId) return { count: 0 };
-          Object.assign(kw, data);
-          return { count: 1 };
-        },
-      },
-      question: {
-        count: async ({
+      brand: {
+        count: async ({ where }: { where?: { tenantId?: string } }) =>
+          [...this.brands.values()].filter((b) => !where?.tenantId || b.tenantId === where.tenantId)
+            .length,
+        findFirst: async ({
           where,
         }: {
-          where: { tenantId?: string; keywordId?: string; included?: boolean };
+          where: { id?: string; tenantId?: string; name?: string };
         }) =>
-          [...this.questions.values()].filter(
-            (q) =>
-              (!where.tenantId || q.tenantId === where.tenantId) &&
-              (!where.keywordId || q.keywordId === where.keywordId) &&
-              (where.included === undefined || q.included === where.included),
-          ).length,
-        findFirst: async ({ where }: { where: { id: string; tenantId?: string } }) => {
-          const q = this.questions.get(where.id);
-          if (!q || (where.tenantId && q.tenantId !== where.tenantId)) return null;
-          return { ...q };
-        },
-        findMany: async ({
-          where,
-        }: {
-          where: { tenantId?: string; keywordId?: string; id?: { in?: string[] } };
-        }) =>
-          [...this.questions.values()].filter(
-            (q) =>
-              (!where.tenantId || q.tenantId === where.tenantId) &&
-              (!where.keywordId || q.keywordId === where.keywordId) &&
-              (!where.id?.in || where.id.in.includes(q.id)),
-          ),
-        update: async ({ where, data }: { where: { id: string }; data: Partial<QuestionRec> }) => {
-          const q = this.questions.get(where.id);
-          if (!q) throw new Error('Question missing');
-          Object.assign(q, data);
-          return { ...q };
-        },
+          [...this.brands.values()].find(
+            (b) =>
+              (!where.id || b.id === where.id) &&
+              (!where.tenantId || b.tenantId === where.tenantId) &&
+              (!where.name || b.name === where.name),
+          ) ?? null,
         create: async ({
           data,
         }: {
           data: {
             tenantId: string;
-            keywordId: string;
-            text: string;
-            source: QuestionRec['source'];
-            included: boolean;
+            name: string;
+            category: string;
+            markets: {
+              create: Omit<
+                BrandMarketRec,
+                'id' | 'brandId' | 'createdAt' | 'updatedAt' | 'seedPrompts'
+              >;
+            };
           };
         }) => {
-          const row: QuestionRec = {
-            id: this.nextId('q'),
-            tenantId: data.tenantId,
-            keywordId: data.keywordId,
-            text: data.text,
-            source: data.source,
-            usedCount: 0,
-            lastUsedAt: null,
-            included: data.included,
-            createdAt: new Date(),
-          };
-          this.questions.set(row.id, row);
-          return { ...row };
-        },
-      },
-      knowledgeBase: {
-        findFirst: async ({ where }: { where: { id: string; tenantId?: string } }) => {
-          const kb = this.knowledgeBases.get(where.id);
-          if (!kb || (where.tenantId && kb.tenantId !== where.tenantId)) return null;
-          return { ...kb };
-        },
-        findMany: async ({ where }: { where?: { tenantId?: string } }) =>
-          [...this.knowledgeBases.values()].filter(
-            (kb) => !where?.tenantId || kb.tenantId === where.tenantId,
-          ),
-      },
-      visibilityProfile: {
-        findFirst: async ({
-          where,
-        }: {
-          where: { id?: string | { not?: string }; tenantId?: string; name?: string };
-        }) => {
-          const found = [...this.profiles.values()].find((p) => {
-            if (where.tenantId && p.tenantId !== where.tenantId) return false;
-            if (where.name && p.name !== where.name) return false;
-            if (typeof where.id === 'string' && p.id !== where.id) return false;
-            if (where.id && typeof where.id === 'object' && where.id.not && p.id === where.id.not) {
-              return false;
-            }
-            return true;
-          });
-          if (!found) return null;
-          const runCount = [...this.runs.values()].filter((r) => r.profileId === found.id).length;
-          return { ...found, _count: { runs: runCount } };
-        },
-        findMany: async ({ where }: { where?: { tenantId?: string } }) =>
-          [...this.profiles.values()]
-            .filter((p) => !where?.tenantId || p.tenantId === where.tenantId)
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-            .map((p) => ({
-              ...p,
-              _count: {
-                runs: [...this.runs.values()].filter((r) => r.profileId === p.id).length,
-              },
-            })),
-        create: async ({ data }: { data: Omit<ProfileRec, 'id' | 'createdAt' | 'updatedAt'> }) => {
-          const dup = [...this.profiles.values()].find(
-            (p) => p.tenantId === data.tenantId && p.name === data.name,
+          const dup = [...this.brands.values()].find(
+            (b) => b.tenantId === data.tenantId && b.name === data.name,
           );
           if (dup) throw this.uniqueError();
           const now = new Date();
-          const rec: ProfileRec = {
-            id: this.nextId('vprof'),
-            ...data,
+          const brandId = this.nextId('brand');
+          const brand: BrandRec = {
+            id: brandId,
+            tenantId: data.tenantId,
+            name: data.name,
+            category: data.category,
+            truthAgreementSignedAt: null,
             createdAt: now,
             updatedAt: now,
           };
-          this.profiles.set(rec.id, rec);
-          return { ...rec };
+          this.brands.set(brandId, brand);
+          const m = data.markets.create;
+          const bm: BrandMarketRec = {
+            id: this.nextId('bm'),
+            tenantId: m.tenantId,
+            brandId,
+            market: m.market,
+            locale: m.locale,
+            region: m.region,
+            localBrandName: m.localBrandName,
+            aliases: m.aliases ?? [],
+            ownedDomains: m.ownedDomains ?? [],
+            competitors: m.competitors ?? [],
+            seedPrompts: [],
+            createdAt: now,
+            updatedAt: now,
+          };
+          this.brandMarkets.set(bm.id, bm);
+          return { ...brand, markets: [bm] };
         },
-        update: async ({ where, data }: { where: { id: string }; data: Partial<ProfileRec> }) => {
-          const existing = this.profiles.get(where.id);
-          if (!existing) throw new Error('Profile missing');
+        update: async ({ where, data }: { where: { id: string }; data: Partial<BrandRec> }) => {
+          const existing = this.brands.get(where.id);
+          if (!existing) throw new Error('Brand missing');
           Object.assign(existing, data, { updatedAt: new Date() });
           return { ...existing };
         },
+      },
+      brandMarket: {
+        findFirst: async ({ where }: { where: { id?: string; tenantId?: string } }) => {
+          const found = [...this.brandMarkets.values()].find(
+            (m) =>
+              (!where.id || m.id === where.id) &&
+              (!where.tenantId || m.tenantId === where.tenantId),
+          );
+          return found ? this.attachBrandMarket(found) : null;
+        },
+        findMany: async ({ where }: { where?: { tenantId?: string } }) =>
+          [...this.brandMarkets.values()]
+            .filter((m) => !where?.tenantId || m.tenantId === where.tenantId)
+            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+            .map((m) => this.attachBrandMarket(m)),
+        update: async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: Partial<BrandMarketRec>;
+        }) => {
+          const existing = this.brandMarkets.get(where.id);
+          if (!existing) throw new Error('BrandMarket missing');
+          Object.assign(existing, data, { updatedAt: new Date() });
+          return this.attachBrandMarket(existing);
+        },
         delete: async ({ where }: { where: { id: string } }) => {
-          const existing = this.profiles.get(where.id);
-          this.profiles.delete(where.id);
+          const existing = this.brandMarkets.get(where.id);
+          this.brandMarkets.delete(where.id);
           return existing;
         },
+      },
+      geoBrief: {
+        count: async () => 0,
+      },
+      geoArticle: {
+        count: async () => 0,
+      },
+      brandMediaAsset: {
+        aggregate: async () => ({ _sum: { bytes: 0 } }),
       },
       visibilityRun: {
         count: async ({ where }: { where?: Record<string, unknown> }) =>
@@ -933,8 +795,7 @@ class InMemoryVisibilityStore {
         findFirst: async ({ where }: { where: Record<string, unknown> }) => {
           const found = [...this.runs.values()].find((r) => this.matchRun(r, where));
           if (!found) return null;
-          const profile = this.profiles.get(found.profileId);
-          const keyword = found.keywordId ? (this.keywords.get(found.keywordId) ?? null) : null;
+          const bm = this.brandMarkets.get(found.brandMarketId);
           const observations = [...this.observations.values()]
             .filter((o) => o.runId === found.id)
             .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -946,8 +807,17 @@ class InMemoryVisibilityStore {
             }));
           return {
             ...found,
-            profile: profile ?? { id: found.profileId, name: '', brandName: '' },
-            keyword: keyword ? { id: keyword.id, main: keyword.main } : null,
+            brandMarket: bm
+              ? this.attachBrandMarket(bm)
+              : {
+                  id: found.brandMarketId,
+                  market: 'CN' as const,
+                  localBrandName: '',
+                  aliases: [],
+                  ownedDomains: [],
+                  competitors: [],
+                  brand: { id: found.brandId, name: '' },
+                },
             observations,
           };
         },
@@ -966,21 +836,21 @@ class InMemoryVisibilityStore {
           const start = skip ?? 0;
           const sliced = take !== undefined ? matched.slice(start, start + take) : matched;
           return sliced.map((r) => {
-            const profile = this.profiles.get(r.profileId);
-            const keyword = r.keywordId ? (this.keywords.get(r.keywordId) ?? null) : null;
+            const bm = this.brandMarkets.get(r.brandMarketId);
             const observations = [...this.observations.values()].filter((o) => o.runId === r.id);
             return {
               ...r,
-              profile: profile
-                ? {
-                    id: profile.id,
-                    name: profile.name,
-                    brandName: profile.brandName,
-                    brandAliases: profile.brandAliases,
-                    competitors: profile.competitors,
-                  }
-                : { id: r.profileId, name: '', brandName: '', brandAliases: [], competitors: [] },
-              keyword: keyword ? { id: keyword.id, main: keyword.main } : null,
+              brandMarket: bm
+                ? this.attachBrandMarket(bm)
+                : {
+                    id: r.brandMarketId,
+                    market: 'CN' as const,
+                    localBrandName: '',
+                    aliases: [],
+                    ownedDomains: [],
+                    competitors: [],
+                    brand: { id: r.brandId, name: '' },
+                  },
               observations,
             };
           });
@@ -988,19 +858,41 @@ class InMemoryVisibilityStore {
         create: async ({
           data,
         }: {
-          data: Omit<RunRec, 'createdAt' | 'updatedAt' | 'lastError' | 'finishedAt'> & {
-            lastError?: string | null;
-            finishedAt?: Date | null;
+          data: Partial<RunRec> & {
+            id: string;
+            tenantId: string;
+            brandId: string;
+            brandMarketId: string;
+            name: string;
+            engines: string[];
+            prompts: string[];
+            totalChecks: number;
+            unitPrice: number;
           };
         }) => {
           if (this.runs.has(data.id)) throw this.uniqueError();
           const now = new Date();
           const rec: RunRec = {
-            ...data,
+            id: data.id,
+            tenantId: data.tenantId,
+            brandId: data.brandId,
+            brandMarketId: data.brandMarketId,
+            name: data.name,
+            engines: data.engines,
+            prompts: data.prompts,
+            triggerType: data.triggerType ?? 'MANUAL',
+            retestArticleId: data.retestArticleId ?? null,
+            briefsGeneratedAt: data.briefsGeneratedAt ?? null,
+            totalChecks: data.totalChecks,
+            doneCount: data.doneCount ?? 0,
+            failCount: data.failCount ?? 0,
+            unitPrice: data.unitPrice,
+            reservationId: data.reservationId ?? null,
+            status: data.status ?? 'QUEUED',
             lastError: data.lastError ?? null,
-            finishedAt: data.finishedAt ?? null,
             createdAt: now,
             updatedAt: now,
+            finishedAt: data.finishedAt ?? null,
           };
           this.runs.set(rec.id, rec);
           return { ...rec };
@@ -1051,14 +943,6 @@ class InMemoryVisibilityStore {
           for (const [id, r] of this.runs.entries()) {
             if (this.matchRun(r, where)) {
               this.runs.delete(id);
-              for (const [obsId, obs] of this.observations.entries()) {
-                if (obs.runId === id) {
-                  this.observations.delete(obsId);
-                  for (const [citeId, cite] of this.citations.entries()) {
-                    if (cite.observationId === obsId) this.citations.delete(citeId);
-                  }
-                }
-              }
               count += 1;
             }
           }
@@ -1092,8 +976,8 @@ class InMemoryVisibilityStore {
           data: Array<{
             tenantId: string;
             runId: string;
-            profileId: string;
-            questionId: string | null;
+            brandId: string;
+            brandMarketId: string;
             promptText: string;
             engine: string;
             status: ObservationRec['status'];
@@ -1106,8 +990,8 @@ class InMemoryVisibilityStore {
               id,
               tenantId: item.tenantId,
               runId: item.runId,
-              profileId: item.profileId,
-              questionId: item.questionId,
+              brandId: item.brandId,
+              brandMarketId: item.brandMarketId,
               promptText: item.promptText,
               engine: item.engine,
               status: item.status,
@@ -1175,11 +1059,7 @@ class InMemoryVisibilityStore {
         createMany: async ({ data }: { data: Array<Omit<CitationRec, 'id' | 'createdAt'>> }) => {
           for (const item of data) {
             const id = this.nextId('vcite');
-            this.citations.set(id, {
-              id,
-              ...item,
-              createdAt: new Date(),
-            });
+            this.citations.set(id, { id, ...item, createdAt: new Date() });
           }
           return { count: data.length };
         },
@@ -1217,14 +1097,14 @@ async function httpJson<T = unknown>(
   return { status: response.status, ...payload };
 }
 
-describe('visibility HTTP, billing settlement, writeback & analytics pipeline (offline)', () => {
+describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarket (offline)', () => {
   let app: INestApplication;
   let base = '';
   let store: InMemoryVisibilityStore;
   let runner: VisibilityRunRunner;
   let billing: BillingService;
   let collector: VisibilityCollectorService;
-  let enqueuedJobs: VisibilityCheckJobData[] = [];
+  const enqueuedJobs: VisibilityCheckJobData[] = [];
 
   let tokenStrictA = '';
   let tokenShadowB = '';
@@ -1290,26 +1170,7 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     vi.restoreAllMocks();
   });
 
-  it('supports profile CRUD with Keyword & KnowledgeBase prefill, domain normalization, and duplicate/compliance checks', async () => {
-    const kwId = 'kw_prefill_1';
-    store.keywords.set(kwId, {
-      id: kwId,
-      tenantId: tenantA,
-      main: '企业GEO智能优化',
-      brands: ['GeoMix智混', '吉奥米克斯'],
-      optStatus: 'NONE',
-      createdAt: new Date(),
-    });
-    const kbId = 'kb_prefill_1';
-    store.knowledgeBases.set(kbId, {
-      id: kbId,
-      tenantId: tenantA,
-      name: '企业核心知识库',
-      companyName: '上海吉奥米克斯科技有限公司',
-      brandShort: 'GeoMix',
-      createdAt: new Date(),
-    });
-
+  it('supports profile CRUD backed by Brand + BrandMarket with domain normalization and duplicate checks', async () => {
     const initialList = await httpJson<VisibilityProfileListResponse>(
       base,
       'GET',
@@ -1318,10 +1179,7 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
     );
     expect(initialList.status).toBe(200);
     expect(initialList.data.items).toHaveLength(0);
-    expect(initialList.data.prefillSources?.keywords).toHaveLength(1);
-    expect(initialList.data.prefillSources?.knowledgeBases).toHaveLength(1);
 
-    // Create profile importing from Keyword + KnowledgeBase without manually typing brandName
     const created = await httpJson<VisibilityProfileRecord>(
       base,
       'POST',
@@ -1329,263 +1187,123 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
       {
         token: tokenStrictA,
         body: {
-          name: '  主力产品监测档案  ',
-          importFromKeywordId: kwId,
-          importFromKbId: kbId,
-          ownedDomains: ['https://www.GeoMix.example.com/docs', 'geomix.example.com'],
-          competitors: [
-            {
-              name: '云析智联',
-              aliases: ['YunXi'],
-              domains: ['https://www.yunxizhilian.example.com/pricing'],
-            },
-          ],
+          name: '极光NAS监测',
+          brandName: '极光NAS',
+          brandAliases: ['AuroraNAS'],
+          ownedDomains: ['https://WWW.AuroraNas.cn/docs'],
+          competitors: [{ name: '群晖', aliases: ['Synology'], domains: ['https://synology.com'] }],
         },
       },
     );
     expect(created.status).toBe(200);
-    expect(created.code).toBe(0);
-    expect(created.data.name).toBe('主力产品监测档案');
-    expect(created.data.brandName).toBe('GeoMix智混');
-    expect(created.data.brandAliases).toEqual([
-      '吉奥米克斯',
-      'GeoMix',
-      '上海吉奥米克斯科技有限公司',
-    ]);
-    expect(created.data.ownedDomains).toEqual(['geomix.example.com']);
-    expect(created.data.competitors).toEqual([
-      {
-        name: '云析智联',
-        aliases: ['YunXi'],
-        domains: ['yunxizhilian.example.com'],
-      },
-    ]);
+    expect(created.data.ownedDomains).toEqual(['auroranas.cn']);
+    expect(created.data.competitors[0]?.domains).toEqual(['synology.com']);
 
-    // Duplicate (tenantId, name) returns 409
-    const duplicate = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
+    const dup = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
       token: tokenStrictA,
-      body: {
-        name: '主力产品监测档案',
-        brandName: 'GeoMix智混',
-      },
+      body: { name: '极光NAS监测', brandName: '极光NAS' },
     });
-    expect(duplicate.status).toBe(409);
-    expect(duplicate.code).toBe(BILLING_ERROR.CONFLICT);
-
-    // Compliance blocks forbidden terms
-    const blocked = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
-      token: tokenStrictA,
-      body: {
-        name: '违规博彩档案',
-        brandName: '测试品牌',
-      },
-    });
-    expect(blocked.status).toBe(403);
-    expect(blocked.code).toBe(API_ERROR.FORBIDDEN_INDUSTRY);
-
-    // Patch & Delete temporary profile
-    const temp = await httpJson<VisibilityProfileRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/profiles',
-      {
-        token: tokenStrictA,
-        body: { name: '临时档案', brandName: 'TempBrand' },
-      },
-    );
-    expect(temp.status).toBe(200);
-
-    const patched = await httpJson<VisibilityProfileRecord>(
-      base,
-      'PATCH',
-      `/api/v1/visibility/profiles/${temp.data.id}`,
-      {
-        token: tokenStrictA,
-        body: { brandAliases: ['TB'] },
-      },
-    );
-    expect(patched.status).toBe(200);
-    expect(patched.data.brandAliases).toEqual(['TB']);
-
-    const deleted = await httpJson<{ deleted: number }>(
-      base,
-      'DELETE',
-      `/api/v1/visibility/profiles/${temp.data.id}`,
-      { token: tokenStrictA },
-    );
-    expect(deleted.status).toBe(200);
-    expect(deleted.data.deleted).toBe(1);
+    expect(dup.status).toBe(409);
+    expect(dup.code).toBe(BILLING_ERROR.CONFLICT);
   });
 
-  it('reserves 12 points (3 questions × 2 engines @ 2 pts), settles 10 pts & releases 2 pts on 1 failure -> PARTIAL with zero ledger drift', async () => {
-    enqueuedJobs = [];
-    const profilesRes = await httpJson<VisibilityProfileListResponse>(
+  it('reserves points, settles succeeded checks & releases failed checks -> PARTIAL with zero ledger drift', async () => {
+    const listRes = await httpJson<VisibilityProfileListResponse>(
       base,
       'GET',
       '/api/v1/visibility/profiles',
       { token: tokenStrictA },
     );
-    const profileId = profilesRes.data.items[0]!.id;
+    const profileId = listRes.data.items[0]!.id;
 
-    const kwId = 'kw_strict_1';
-    store.keywords.set(kwId, {
-      id: kwId,
-      tenantId: tenantA,
-      main: 'AI品牌可见度监测',
-      brands: ['GeoMix智混'],
-      optStatus: 'NONE',
-      createdAt: new Date(),
-    });
-    const qIds = ['q_s1', 'q_s2', 'q_s3'];
-    qIds.forEach((id, idx) => {
-      store.questions.set(id, {
-        id,
-        tenantId: tenantA,
-        keywordId: kwId,
-        text: `企业如何评估AI搜索可见度方案第${idx + 1}问？`,
-        source: 'MANUAL',
-        usedCount: 0,
-        lastUsedAt: null,
-        included: false,
-        createdAt: new Date(),
-      });
-    });
-
-    // Missing Idempotency-Key -> 400
-    const missingIdem = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
-      token: tokenStrictA,
-      body: {
-        profileId,
-        keywordId: kwId,
-        engines: ['deepseek', 'doubao'],
-        questionIds: qIds,
-      },
-    });
-    expect(missingIdem.status).toBe(400);
-    expect(missingIdem.code).toBe(API_ERROR.BAD_REQUEST);
-
-    // Create 3 × 2 = 6 checks @ 2 pts = 12 pts reserved
-    const created = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/runs',
-      {
-        token: tokenStrictA,
-        headers: { 'Idempotency-Key': 'idem-strict-partial-001' },
-        body: {
-          profileId,
-          keywordId: kwId,
-          name: '严格计费6次测试',
-          engines: ['deepseek', 'doubao'],
-          questionIds: qIds,
-        },
-      },
-    );
-    expect(created.status).toBe(200);
-    expect(created.data.totalChecks).toBe(6);
-    expect(created.data.unitPrice).toBe(2);
-    expect(created.data.frozenPoints).toBe(12);
-    expect(created.data.status).toBe('QUEUED');
-    expect(created.data.observations).toHaveLength(6);
-    expect(enqueuedJobs).toHaveLength(1);
-
-    // Wallet has 12 points reserved immediately
-    const walletAfterReserve = store.wallets.get(tenantA)!;
-    expect(walletAfterReserve.points).toBe(100);
-    expect(walletAfterReserve.pointsReserved).toBe(12);
-
-    // Idempotent replay with same Idempotency-Key does NOT double-charge or double-enqueue
-    const replayed = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/runs',
-      {
-        token: tokenStrictA,
-        headers: { 'Idempotency-Key': 'idem-strict-partial-001' },
-        body: {
-          profileId,
-          keywordId: kwId,
-          name: '严格计费6次测试',
-          engines: ['deepseek', 'doubao'],
-          questionIds: qIds,
-        },
-      },
-    );
-    expect(replayed.status).toBe(200);
-    expect(replayed.data.id).toBe(created.data.id);
-    expect(store.wallets.get(tenantA)!.pointsReserved).toBe(12);
-    expect(enqueuedJobs).toHaveLength(1);
-
-    // Replay with same key but different engines -> 409 CONFLICT
-    const conflictReplay = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
-      token: tokenStrictA,
-      headers: { 'Idempotency-Key': 'idem-strict-partial-001' },
-      body: {
-        profileId,
-        keywordId: kwId,
-        engines: ['deepseek'],
-        questionIds: qIds,
-      },
-    });
-    expect(conflictReplay.status).toBe(409);
-
-    // Orphan hold guard keeps QUEUED visibility_run alive
-    const prismaSvc = app.get(PrismaService);
-    const activeWhileQueued = await hasLiveActiveWork(
-      prismaSvc,
-      { tenantId: tenantA, refType: 'visibility_run', refId: created.data.id },
-      new Date(Date.now() + 4 * 3600 * 1000),
-      30 * 60_000,
-    );
-    expect(activeWhileQueued).toBe(true);
-
-    // Simulate 1 collector failure on the 3rd call, other 5 succeed
-    const realCollect = collector.collect.bind(collector);
-    let callIdx = 0;
-    const spy = vi.spyOn(collector, 'collect').mockImplementation(async (input) => {
-      callIdx += 1;
-      if (callIdx === 3) {
-        throw new Error('模拟上游引擎响应超时');
+    let calls = 0;
+    const collectSpy = vi.spyOn(collector, 'collect').mockImplementation(async (input) => {
+      calls += 1;
+      if (calls === 2) {
+        throw new Error('upstream timeout');
       }
-      return realCollect(input);
+      return {
+        collectorKind: 'fake',
+        answerText: `针对${input.promptText}，极光NAS在静音和吞吐表现领先于群晖。`,
+        citations: [
+          {
+            url: 'https://docs.auroranas.cn/spec',
+            title: '官网参数',
+            snippet: '四盘位静音',
+            position: 1,
+          },
+          {
+            url: 'https://item.jd.com/1001.html',
+            title: '京东自营',
+            snippet: '电商评测',
+            position: 2,
+          },
+        ],
+        fanOutQueries: ['四盘位NAS静音对比; 极光NAS评测'],
+      };
     });
 
-    await runner.process({ tenantId: tenantA, runId: created.data.id });
-    spy.mockRestore();
+    const createRes = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      '/api/v1/visibility/runs',
+      {
+        token: tokenStrictA,
+        headers: { 'idempotency-key': 'vis-run-strict-0001' },
+        body: {
+          profileId,
+          engines: ['deepseek', 'doubao'],
+          customPrompts: ['家用四盘位NAS怎么选', 'NAS噪音实测对比'],
+        },
+      },
+    );
+    expect(createRes.status).toBe(200);
+    expect(createRes.data.totalChecks).toBe(4);
+    expect(createRes.data.frozenPoints).toBe(8);
+
+    const runId = createRes.data.id;
+    await runner.process({ tenantId: tenantA, runId });
+    collectSpy.mockRestore();
 
     const detail = await httpJson<VisibilityRunDetailRecord>(
       base,
       'GET',
-      `/api/v1/visibility/runs/${created.data.id}`,
+      `/api/v1/visibility/runs/${runId}`,
       { token: tokenStrictA },
     );
     expect(detail.status).toBe(200);
     expect(detail.data.status).toBe('PARTIAL');
-    expect(detail.data.doneCount).toBe(5);
+    expect(detail.data.doneCount).toBe(3);
     expect(detail.data.failCount).toBe(1);
-    expect(detail.data.frozenPoints).toBe(12);
-    expect(detail.data.settledPoints).toBe(10);
+    expect(detail.data.settledPoints).toBe(6);
     expect(detail.data.releasedPoints).toBe(2);
 
-    // Wallet final state: 100 - 10 = 90 points, 0 reserved
-    const walletAfterRun = store.wallets.get(tenantA)!;
-    expect(walletAfterRun.points).toBe(90);
-    expect(walletAfterRun.pointsReserved).toBe(0);
+    const wallet = await billing.wallet(tenantA);
+    expect(wallet.points).toBe(94);
+    expect(wallet.pointsReserved).toBe(0);
 
-    // Reservation CLOSED and real BillingService audit invariants hold 100%
-    const resv = store.reservations.get(detail.data.reservationId!)!;
-    expect(resv.status).toBe('CLOSED');
-    expect(resv.frozen).toBe(12);
-    expect(resv.settled).toBe(10);
-    expect(resv.released).toBe(2);
+    const citations = await httpJson<VisibilityCitationListResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/citations?profileId=${profileId}&days=30`,
+      { token: tokenStrictA },
+    );
+    expect(citations.status).toBe(200);
+    expect(citations.data.sourceBreakdown?.OWNED).toBeGreaterThan(0);
+    expect(citations.data.sourceBreakdown?.ECOMMERCE).toBeGreaterThan(0);
 
-    const driftIssues = await billing.auditTenant(tenantA);
-    expect(driftIssues).toEqual([]);
-    const snapshot = await billing.ledgerSnapshot(tenantA, 100);
-    billing.assertSnapshot(snapshot);
+    const opps = await httpJson<VisibilityOpportunitiesResponse>(
+      base,
+      'GET',
+      `/api/v1/visibility/opportunities?profileId=${profileId}&days=30`,
+      { token: tokenStrictA },
+    );
+    expect(opps.status).toBe(200);
+    expect(opps.data.fanOutQueries.map((f) => f.query)).toContain('四盘位NAS静音对比');
+    expect(opps.data.fanOutQueries.map((f) => f.query)).toContain('极光NAS评测');
   });
 
-  it('supports SHADOW mode (wallet balance unchanged, delta=0, listPrice=2 with 免费期), writes back Question.included & Keyword.optStatus, and deduplicates /me/rights model cards', async () => {
+  it('supports SHADOW mode, /me/rights model cards, pause/resume/cancel, cross-tenant 404, expired 40301, and off-topic downgrade', async () => {
     const profRes = await httpJson<VisibilityProfileRecord>(
       base,
       'POST',
@@ -1593,1385 +1311,108 @@ describe('visibility HTTP, billing settlement, writeback & analytics pipeline (o
       {
         token: tokenShadowB,
         body: {
-          name: '影子计费与收录回写档案',
-          brandName: '星图智造',
-          brandAliases: ['StarMap'],
-          ownedDomains: ['starmap.example.com'],
-          competitors: [
-            {
-              name: '领航数科',
-              aliases: [],
-              domains: ['linghang.example.com'],
-            },
-          ],
+          name: '影子品牌档案',
+          brandName: '影子品牌',
+          ownedDomains: ['shadow-brand.cn'],
         },
       },
     );
     expect(profRes.status).toBe(200);
-    const profileId = profRes.data.id;
+    const profBId = profRes.data.id;
 
-    const kwHitId = 'kw_shadow_hit';
-    store.keywords.set(kwHitId, {
-      id: kwHitId,
-      tenantId: tenantB,
-      main: '星图智造选型指南',
-      brands: ['星图智造'],
-      optStatus: 'NONE',
-      createdAt: new Date(),
+    // Expired tenant blocked on POST
+    const expRes = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
+      token: tokenExpiredC,
+      body: { name: '过期档案', brandName: '过期品牌' },
     });
-    const q1 = 'q_sh_1';
-    const q2 = 'q_sh_2';
-    const q3 = 'q_sh_3';
-    [
-      { id: q1, text: '星图智造在工业质检场景有哪些优势？' },
-      { id: q2, text: '中小企业部署星图智造系统成本如何？' },
-      { id: q3, text: '传统人工质检与自动化视觉方案对比？' },
-    ].forEach((row) => {
-      store.questions.set(row.id, {
-        id: row.id,
-        tenantId: tenantB,
-        keywordId: kwHitId,
-        text: row.text,
-        source: 'DISTILL',
-        usedCount: 0,
-        lastUsedAt: null,
-        included: false,
-        createdAt: new Date(),
-      });
-    });
+    expect(expRes.status).toBe(403);
+    expect(expRes.code).toBe(API_ERROR.TENANT_EXPIRED);
 
-    // Deterministic collector mock for exact hit verification:
-    // - q1 hits on BOTH deepseek & doubao
-    // - q2 hits ONLY on deepseek (misses on doubao)
-    // - q3 misses on BOTH deepseek & doubao (competitor only)
-    const collectSpy = vi.spyOn(collector, 'collect').mockImplementation(async (input) => {
-      const hitQ1 = input.promptText.includes('工业质检');
-      const hitQ2Deepseek =
-        input.promptText.includes('部署星图智造') && input.engine === 'deepseek';
-      if (hitQ1 || hitQ2Deepseek) {
-        return {
-          collectorKind: 'fake',
-          answerText: `1. 星图智造：系统稳定可靠、性价比突出，值得优先推荐。2. 领航数科：可作为备选参考。`,
-          citations: [
-            {
-              url: 'https://docs.starmap.example.com/guide',
-              title: '星图智造产品白皮书',
-              snippet: '核心架构说明',
-              position: 1,
-            },
-            {
-              url: 'https://zhuanlan.zhihu.com/p/998877',
-              title: '工业视觉选型测评',
-              snippet: '行业对比',
-              position: 2,
-            },
-          ],
-          fanOutQueries: [input.promptText, '星图智造 价格与口碑', '工业视觉质检排名'],
-        };
-      }
-      return {
-        collectorKind: 'fake',
-        answerText: `目前讨论较多的是领航数科，适合传统报表场景。`,
-        citations: [
-          {
-            url: 'https://www.linghang.example.com/report',
-            title: '领航数科案例',
-            snippet: '行业案例',
-            position: 1,
-          },
-          {
-            url: 'https://36kr.com/p/112233',
-            title: '2026行业报告',
-            snippet: '权威分析',
-            position: 2,
-          },
-        ],
-        fanOutQueries: ['工业质检软件对比'],
-      };
-    });
-
-    // Run #1: 3 questions × 2 engines = 6 checks in SHADOW mode
-    const run1 = await httpJson<VisibilityRunDetailRecord>(
+    // Create shadow run & test pause/resume/cancel
+    const runRes = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
       '/api/v1/visibility/runs',
       {
         token: tokenShadowB,
-        headers: { 'Idempotency-Key': 'idem-shadow-run-001' },
+        headers: { 'idempotency-key': 'vis-run-shadow-0001' },
         body: {
-          profileId,
-          keywordId: kwHitId,
-          name: '影子监测首轮',
-          engines: ['deepseek', 'doubao'],
-          questionIds: [q1, q2, q3],
-        },
-      },
-    );
-    expect(run1.status).toBe(200);
-    await runner.process({ tenantId: tenantB, runId: run1.data.id });
-
-    // Verify SHADOW wallet & PointLog
-    const shadowWallet = store.wallets.get(tenantB)!;
-    expect(shadowWallet.points).toBe(500);
-    expect(shadowWallet.pointsReserved).toBe(0);
-
-    const shadowLogs = store.pointLogs.filter((l) => l.tenantId === tenantB);
-    expect(shadowLogs).toHaveLength(6);
-    for (const log of shadowLogs) {
-      expect(log.action).toBe('visibility_check');
-      expect(log.status).toBe('SETTLED');
-      expect(log.delta).toBe(0);
-      expect(log.listPrice).toBe(2);
-      expect(log.title).toBe('AI可见性监测-影子监测首轮（免费期）');
-    }
-    expect(await billing.auditTenant(tenantB)).toEqual([]);
-
-    // Verify writeback to Question.included & Keyword.optStatus
-    expect(store.questions.get(q1)!.included).toBe(true);
-    expect(store.questions.get(q2)!.included).toBe(true);
-    expect(store.questions.get(q3)!.included).toBe(false);
-    expect(store.keywords.get(kwHitId)!.optStatus).toBe('INCLUDED');
-
-    // Verify /api/v1/me/rights INCLUDED card & 8 model cards
-    const rights1 = await httpJson<{
-      cards: Array<{ key: string; used?: string; text: string }>;
-      models: Array<{ key: string; label: string; count: number }>;
-    }>(base, 'GET', '/api/v1/me/rights', { token: tokenShadowB });
-    expect(rights1.status).toBe(200);
-    const includedCard1 = rights1.data.cards.find((c) => c.key === 'INCLUDED');
-    expect(includedCard1?.text).toBe('2');
-    const modelMap1 = new Map(rights1.data.models.map((m) => [m.key, m.count]));
-    expect(modelMap1.get('deepseek')).toBe(2); // q1 + q2
-    expect(modelMap1.get('doubao')).toBe(1); // q1
-    expect(modelMap1.get('yuanbao')).toBe(0);
-    expect(modelMap1.get('kimi')).toBe(0);
-
-    // Run #2: re-run the exact same questions [q1, q2] on deepseek & doubao -> must NOT inflate deduplicated model counts!
-    const run2 = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/runs',
-      {
-        token: tokenShadowB,
-        headers: { 'Idempotency-Key': 'idem-shadow-run-002' },
-        body: {
-          profileId,
-          keywordId: kwHitId,
-          name: '影子监测次轮复测',
-          engines: ['deepseek', 'doubao'],
-          questionIds: [q1, q2],
-        },
-      },
-    );
-    expect(run2.status).toBe(200);
-    await runner.process({ tenantId: tenantB, runId: run2.data.id });
-
-    const rights2 = await httpJson<{
-      cards: Array<{ key: string; used?: string; text: string }>;
-      models: Array<{ key: string; label: string; count: number }>;
-    }>(base, 'GET', '/api/v1/me/rights', { token: tokenShadowB });
-    const modelMap2 = new Map(rights2.data.models.map((m) => [m.key, m.count]));
-    expect(modelMap2.get('deepseek')).toBe(2);
-    expect(modelMap2.get('doubao')).toBe(1);
-
-    // Run #3: keyword whose tested questions ALL miss -> Keyword.optStatus transitions NONE -> OPTIMIZING
-    const kwMissId = 'kw_shadow_miss';
-    store.keywords.set(kwMissId, {
-      id: kwMissId,
-      tenantId: tenantB,
-      main: '未命中待优化主词',
-      brands: ['星图智造'],
-      optStatus: 'NONE',
-      createdAt: new Date(),
-    });
-    const qMiss = 'q_sh_miss_1';
-    store.questions.set(qMiss, {
-      id: qMiss,
-      tenantId: tenantB,
-      keywordId: kwMissId,
-      text: '通用行业无品牌提及测试问题？',
-      source: 'MANUAL',
-      usedCount: 0,
-      lastUsedAt: null,
-      included: false,
-      createdAt: new Date(),
-    });
-
-    const run3 = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/runs',
-      {
-        token: tokenShadowB,
-        headers: { 'Idempotency-Key': 'idem-shadow-run-003' },
-        body: {
-          profileId,
-          keywordId: kwMissId,
-          name: '零命中回写测试',
+          profileId: profBId,
           engines: ['deepseek'],
-          questionIds: [qMiss],
+          customPrompts: ['影子品牌家用评测怎么样'],
         },
       },
     );
-    expect(run3.status).toBe(200);
-    await runner.process({ tenantId: tenantB, runId: run3.data.id });
-    expect(store.questions.get(qMiss)!.included).toBe(false);
-    expect(store.keywords.get(kwMissId)!.optStatus).toBe('OPTIMIZING');
+    expect(runRes.status).toBe(200);
+    const runId = runRes.data.id;
 
-    collectSpy.mockRestore();
+    // Cross-tenant GET -> 404
+    const crossRes = await httpJson(base, 'GET', `/api/v1/visibility/runs/${runId}`, {
+      token: tokenStrictA,
+    });
+    expect(crossRes.status).toBe(404);
+    expect(crossRes.code).toBe(AUTH_ERROR.NOT_FOUND);
 
-    // Verify /api/v1/visibility/overview aggregation on Tenant B
-    // Total completed observations for Tenant B across Run 1 (6) + Run 2 (4) + Run 3 (1) = 11 checks:
-    // Brand mentioned: Run 1 (3: q1×2 + q2×1) + Run 2 (3: q1×2 + q2×1) + Run 3 (0) = 6 checks -> 54.5%
-    // Competitor '领航数科' mentioned in all 11 checks -> SoV: 6 / (6 + 11) = 35.3%
-    const overview = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/overview?profileId=${profileId}&days=7`,
-      { token: tokenShadowB },
-    );
-    expect(overview.status).toBe(200);
-    expect(overview.data.profileId).toBe(profileId);
-    expect(overview.data.metrics.completedChecks).toBe(11);
-    expect(overview.data.metrics.mentionedChecks).toBe(6);
-    expect(overview.data.metrics.visibilityPct).toBe(54.5);
-    expect(overview.data.metrics.shareOfVoice.brandSharePct).toBe(35.3);
-    expect(overview.data.metrics.avgPosition).toBe(1);
-    expect(overview.data.metrics.sentimentSummary.positive).toBe(6);
-    expect(overview.data.trend.filter((pt) => pt.engine === 'all')).toHaveLength(7);
+    // Active work check sees QUEUED visibility_run as live
+    const prismaSvc = app.get(PrismaService);
     expect(
-      overview.data.trend.some((pt) => pt.engine === 'deepseek' && pt.completedChecks > 0),
+      await hasLiveActiveWork(
+        prismaSvc,
+        { tenantId: tenantB, refType: 'visibility_run', refId: runId },
+        new Date(),
+        60_000,
+      ),
     ).toBe(true);
-
-    // Verify /api/v1/visibility/citations leaderboard & sourceKind filtering
-    const allCitations = await httpJson<VisibilityCitationListResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/citations?profileId=${profileId}&days=30`,
-      { token: tokenShadowB },
-    );
-    expect(allCitations.status).toBe(200);
-    expect(allCitations.data.sourceBreakdown).toEqual({
-      OWNED: 6,
-      COMPETITOR: 5,
-      AUTHORITY: 5,
-      SOCIAL: 6,
-      OTHER: 0,
-    });
-
-    const ownedOnly = await httpJson<VisibilityCitationListResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/citations?profileId=${profileId}&sourceKind=OWNED`,
-      { token: tokenShadowB },
-    );
-    expect(ownedOnly.status).toBe(200);
-    expect(ownedOnly.data.total).toBe(1);
-    expect(ownedOnly.data.items[0]).toMatchObject({
-      domain: 'docs.starmap.example.com',
-      sourceKind: 'OWNED',
-      citationCount: 6,
-      questionCount: 2, // q1 + q2 deduplicated across Run 1 & Run 2!
-    });
-  });
-
-  it('supports pause, resume, cancel releasing remaining frozen points, cross-tenant 404 isolation, and expired-tenant 40301 guard', async () => {
-    const profA = (
-      await httpJson<VisibilityProfileListResponse>(base, 'GET', '/api/v1/visibility/profiles', {
-        token: tokenStrictA,
-      })
-    ).data.items[0]!;
-    const profB = (
-      await httpJson<VisibilityProfileListResponse>(base, 'GET', '/api/v1/visibility/profiles', {
-        token: tokenShadowB,
-      })
-    ).data.items[0]!;
-
-    // Cross-tenant isolation: Tenant A accessing Tenant B's profile, overview, citations, or runs -> 404
-    const crossGetProfile = await httpJson(base, 'GET', `/api/v1/visibility/profiles/${profB.id}`, {
-      token: tokenStrictA,
-    });
-    expect(crossGetProfile.status).toBe(404);
-    expect(crossGetProfile.code).toBe(AUTH_ERROR.NOT_FOUND);
-
-    const crossOverview = await httpJson(
-      base,
-      'GET',
-      `/api/v1/visibility/overview?profileId=${profB.id}`,
-      { token: tokenStrictA },
-    );
-    expect(crossOverview.status).toBe(404);
-
-    const crossCitations = await httpJson(
-      base,
-      'GET',
-      `/api/v1/visibility/citations?profileId=${profB.id}`,
-      { token: tokenStrictA },
-    );
-    expect(crossCitations.status).toBe(404);
-
-    const bRuns = await httpJson<VisibilityRunListResponse>(
-      base,
-      'GET',
-      '/api/v1/visibility/runs',
-      { token: tokenShadowB },
-    );
-    const bRunId = bRuns.data.items[0]!.id;
-
-    const crossRunDetail = await httpJson(base, 'GET', `/api/v1/visibility/runs/${bRunId}`, {
-      token: tokenStrictA,
-    });
-    expect(crossRunDetail.status).toBe(404);
-
-    // Pause -> worker skips -> Resume -> Cancel releases frozen points in STRICT mode
-    const openingPoints = store.wallets.get(tenantA)!.points; // 90
-    const created = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/runs',
-      {
-        token: tokenStrictA,
-        headers: { 'Idempotency-Key': 'idem-pause-cancel-001' },
-        body: {
-          profileId: profA.id,
-          name: '暂停与取消退点测试',
-          engines: ['deepseek', 'doubao'],
-          customPrompts: [
-            '自定义监测问题一：GEO工具怎么选？',
-            '自定义监测问题二：企业如何提升AI推荐率？',
-          ],
-        },
-      },
-    );
-    expect(created.status).toBe(200);
-    expect(created.data.frozenPoints).toBe(8); // 2 prompts × 2 engines × 2 pts
-    expect(store.wallets.get(tenantA)!.pointsReserved).toBe(8);
 
     const paused = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      `/api/v1/visibility/runs/${created.data.id}/pause`,
-      { token: tokenStrictA },
+      `/api/v1/visibility/runs/${runId}/pause`,
+      { token: tokenShadowB },
     );
-    expect(paused.status).toBe(200);
     expect(paused.data.status).toBe('PAUSED');
 
-    // Worker stops immediately when PAUSED without consuming checks or closing reservation
-    await runner.process({ tenantId: tenantA, runId: created.data.id });
-    expect(store.wallets.get(tenantA)!.pointsReserved).toBe(8);
-
-    // Resume transitions PAUSED -> QUEUED
     const resumed = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      `/api/v1/visibility/runs/${created.data.id}/resume`,
-      { token: tokenStrictA },
+      `/api/v1/visibility/runs/${runId}/resume`,
+      { token: tokenShadowB },
     );
-    expect(resumed.status).toBe(200);
     expect(resumed.data.status).toBe('QUEUED');
 
-    // Cancel transitions -> CANCELLED, marks pending observations SKIPPED, and releases all 8 frozen points!
-    const cancelled = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'POST',
-      `/api/v1/visibility/runs/${created.data.id}/cancel`,
-      { token: tokenStrictA },
-    );
-    expect(cancelled.status).toBe(200);
-    expect(cancelled.data.status).toBe('CANCELLED');
-    expect(cancelled.data.releasedPoints).toBe(8);
-    expect(store.wallets.get(tenantA)!.points).toBe(openingPoints);
-    expect(store.wallets.get(tenantA)!.pointsReserved).toBe(0);
-    expect(await billing.auditTenant(tenantA)).toEqual([]);
-
-    // Expired Tenant C: GET endpoints return 200, POST endpoints return 403 (40301)
-    const expiredOverview = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      '/api/v1/visibility/overview',
-      { token: tokenExpiredC },
-    );
-    expect(expiredOverview.status).toBe(200);
-
-    const expiredProfilesGet = await httpJson<VisibilityProfileListResponse>(
-      base,
-      'GET',
-      '/api/v1/visibility/profiles',
-      { token: tokenExpiredC },
-    );
-    expect(expiredProfilesGet.status).toBe(200);
-
-    const expiredCreateProfile = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
-      token: tokenExpiredC,
-      body: { name: '到期租户不可写', brandName: 'ExpiredBrand' },
-    });
-    expect(expiredCreateProfile.status).toBe(403);
-    expect(expiredCreateProfile.code).toBe(API_ERROR.TENANT_EXPIRED);
-
-    const expiredCreateRun = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
-      token: tokenExpiredC,
-      headers: { 'Idempotency-Key': 'idem-expired-001' },
-      body: {
-        profileId: 'prof_any',
-        engines: ['deepseek'],
-        customPrompts: ['到期租户测试问题'],
-      },
-    });
-    expect(expiredCreateRun.status).toBe(403);
-    expect(expiredCreateRun.code).toBe(API_ERROR.TENANT_EXPIRED);
-  });
-
-  it('aggregates competitor gaps & query fan-out opportunities, imports AI questions with deduplication & QUESTION quota guard', async () => {
-    const keywordId = store.nextId('kw');
-    store.keywords.set(keywordId, {
-      id: keywordId,
-      tenantId: tenantA,
-      main: 'AI可见性监测工具',
-      brands: ['GeoMix'],
-      optStatus: 'INCLUDED',
-      createdAt: new Date(),
-    });
-
-    const otherTenantKwId = store.nextId('kw');
-    store.keywords.set(otherTenantKwId, {
-      id: otherTenantKwId,
-      tenantId: tenantB,
-      main: '竞品租户主词',
-      brands: ['OtherBrand'],
-      optStatus: 'NONE',
-      createdAt: new Date(),
-    });
-
-    const profileId = store.nextId('vprof');
-    const now = new Date();
-    store.profiles.set(profileId, {
-      id: profileId,
-      tenantId: tenantA,
-      name: '机会闭环测试档案',
-      brandName: 'GeoMix',
-      brandAliases: [],
-      ownedDomains: ['geomix.cn'],
-      competitors: [
-        { name: '竞品Alpha', aliases: [], domains: ['alpha.cn'] },
-        { name: '竞品Beta', aliases: [], domains: ['beta.cn'] },
-      ],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const runId = store.nextId('vrun');
-    store.runs.set(runId, {
-      id: runId,
-      tenantId: tenantA,
-      profileId,
-      keywordId,
-      name: '机会测试任务',
-      engines: ['deepseek', 'doubao'],
-      questionIds: [],
-      totalChecks: 3,
-      doneCount: 3,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-
-    const obs1Id = store.nextId('vobs');
-    store.observations.set(obs1Id, {
-      id: obs1Id,
-      tenantId: tenantA,
-      runId,
-      profileId,
-      questionId: null,
-      promptText: '企业级 GEO 品牌监测平台哪家好？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
+    // Run with off-topic FAKE answer to verify overview & detail downgrade
+    const spy = vi.spyOn(collector, 'collect').mockResolvedValue({
       collectorKind: 'fake',
-      answerText: '推荐竞品Alpha 与竞品Beta。',
-      brandMentioned: false,
-      brandPosition: null,
-      brandSentiment: null,
-      brandPassage: null,
-      competitorHits: [
-        { name: '竞品Alpha', mentioned: true, position: 1, sentiment: 'positive' },
-        { name: '竞品Beta', mentioned: true, position: 2, sentiment: 'neutral' },
-      ],
-      fanOutQueries: ['GEO 品牌监测平台评测', 'AI 引用溯源工具对比', '大模型可见率怎么提升'],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 200,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
+      answerText: `${FAKE_MARK}影子品牌占位回答`,
+      citations: [],
+      fanOutQueries: [],
     });
+    await runner.process({ tenantId: tenantB, runId });
+    spy.mockRestore();
 
-    const obs2Id = store.nextId('vobs');
-    store.observations.set(obs2Id, {
-      id: obs2Id,
-      tenantId: tenantA,
-      runId,
-      profileId,
-      questionId: null,
-      promptText: '国内大模型引用排名怎么看？',
-      engine: 'doubao',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText: 'GeoMix 表现不错。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: 'GeoMix 表现不错',
-      competitorHits: [{ name: '竞品Alpha', mentioned: false, position: null, sentiment: null }],
-      fanOutQueries: ['GEO 品牌监测平台评测'],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 200,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
+    const walletB = await billing.wallet(tenantB);
+    expect(walletB.points).toBe(500);
 
-    // 1. GET /api/v1/visibility/opportunities
-    const oppRes = await httpJson<VisibilityOpportunitiesResponse>(
+    const overview = await httpJson<VisibilityOverviewResponse>(
       base,
       'GET',
-      `/api/v1/visibility/opportunities?profileId=${profileId}`,
-      { token: tokenStrictA },
+      `/api/v1/visibility/overview?profileId=${profBId}&days=7`,
+      { token: tokenShadowB },
     );
-    expect(oppRes.status).toBe(200);
-    expect(oppRes.data.gaps).toHaveLength(1);
-    expect(oppRes.data.gaps[0]).toMatchObject({
-      promptText: '企业级 GEO 品牌监测平台哪家好？',
-      competitors: ['竞品Alpha', '竞品Beta'],
-      engines: ['deepseek'],
-      observationCount: 1,
-    });
-    expect(oppRes.data.fanOutQueries).toHaveLength(3);
-    expect(oppRes.data.fanOutQueries[0]).toMatchObject({
-      query: 'GEO 品牌监测平台评测',
-      frequency: 2,
-      brandMentionedPct: 50,
-    });
+    expect(overview.status).toBe(200);
+    expect(overview.data.metrics.completedChecks).toBe(1);
+    expect(overview.data.metrics.mentionedChecks).toBe(0);
 
-    // 2. Import 3 fanOutQueries -> creates 3 Question rows with source='AI' and increments QUESTION quota by 3
-    const quotaBefore = store.quotas.find((q) => q.tenantId === tenantA && q.key === 'QUESTION')!;
-    const usedBefore = quotaBefore.used;
-
-    const importRes = await httpJson<ImportQuestionsResult>(
+    // Legacy import-questions returns 410
+    const importRes = await httpJson(
       base,
       'POST',
       '/api/v1/visibility/opportunities/import-questions',
       {
-        token: tokenStrictA,
-        body: {
-          keywordId,
-          titles: oppRes.data.fanOutQueries.map((f) => f.query),
-        },
+        token: tokenShadowB,
+        body: { keywordId: 'kw_legacy', titles: ['问题1'] },
       },
     );
-    expect(importRes.status).toBe(200);
-    expect(importRes.data).toMatchObject({
-      insertedCount: 3,
-      skippedCount: 0,
-      keywordId,
-    });
-    expect(quotaBefore.used).toBe(usedBefore + 3n);
-
-    const createdQuestions = [...store.questions.values()].filter(
-      (q) => q.tenantId === tenantA && q.keywordId === keywordId,
-    );
-    expect(createdQuestions).toHaveLength(3);
-    expect(createdQuestions.every((q) => q.source === 'AI' && q.included === false)).toBe(true);
-
-    // 3. Re-importing with duplicates skips existing titles and returns accurate skippedCount
-    const dupRes = await httpJson<ImportQuestionsResult>(
-      base,
-      'POST',
-      '/api/v1/visibility/opportunities/import-questions',
-      {
-        token: tokenStrictA,
-        body: {
-          keywordId,
-          titles: ['GEO 品牌监测平台评测', '企业级 GEO 品牌监测平台哪家好？'],
-        },
-      },
-    );
-    expect(dupRes.status).toBe(200);
-    expect(dupRes.data).toMatchObject({
-      insertedCount: 1,
-      skippedCount: 1,
-    });
-    expect(quotaBefore.used).toBe(usedBefore + 4n);
-
-    // 4. Exceeding QUESTION quota returns 409 (QUOTA_EXCEEDED) with 0 partial writes
-    const prevLimit = quotaBefore.limit;
-    quotaBefore.limit = quotaBefore.used + 1n; // only 1 slot left
-    const countBeforeQuotaErr = store.questions.size;
-    const quotaErrRes = await httpJson(
-      base,
-      'POST',
-      '/api/v1/visibility/opportunities/import-questions',
-      {
-        token: tokenStrictA,
-        body: {
-          keywordId,
-          titles: ['配额超限测试问题A', '配额超限测试问题B'],
-        },
-      },
-    );
-    expect(quotaErrRes.status).toBe(409);
-    expect(quotaErrRes.code).toBe(API_ERROR.QUOTA_EXCEEDED);
-    expect(store.questions.size).toBe(countBeforeQuotaErr);
-    quotaBefore.limit = prevLimit;
-
-    // 5. Cross-tenant keywordId returns 404
-    const crossTenantRes = await httpJson(
-      base,
-      'POST',
-      '/api/v1/visibility/opportunities/import-questions',
-      {
-        token: tokenStrictA,
-        body: {
-          keywordId: otherTenantKwId,
-          titles: ['跨租户写入测试'],
-        },
-      },
-    );
-    expect(crossTenantRes.status).toBe(404);
-    expect(crossTenantRes.code).toBe(AUTH_ERROR.NOT_FOUND);
-
-    // 6. Expired tenant returns 403 (40301)
-    const expiredImportRes = await httpJson(
-      base,
-      'POST',
-      '/api/v1/visibility/opportunities/import-questions',
-      {
-        token: tokenExpiredC,
-        body: {
-          keywordId,
-          titles: ['到期租户导入测试'],
-        },
-      },
-    );
-    expect(expiredImportRes.status).toBe(403);
-    expect(expiredImportRes.code).toBe(API_ERROR.TENANT_EXPIRED);
-  });
-
-  it('returns null SoV on 0-sample dates in trend (#186) and preserves separate own-brands & competitor tracks under 全部监测档案 (#211)', async () => {
-    const tenantMulti = 'ten_multi_brand';
-    const tokenMulti = store.seedTenant({
-      tenantId: tenantMulti,
-      userId: 'usr_multi_brand',
-      username: 'merchant_multi_brand',
-      points: 300,
-      billingMode: 'SHADOW',
-    });
-
-    const now = new Date();
-    const profArzopaId = store.nextId('vprof');
-    store.profiles.set(profArzopaId, {
-      id: profArzopaId,
-      tenantId: tenantMulti,
-      name: 'ARZOPA便携屏全链路监测档案',
-      brandName: '阿卓帕',
-      brandAliases: ['ARZOPA'],
-      ownedDomains: ['arzopa.example.com'],
-      competitors: [
-        { name: '联想ThinkVision', aliases: [], domains: ['lenovo.example.com'] },
-        { name: '小米', aliases: [], domains: ['mi.example.com'] },
-      ],
-      createdAt: new Date(now.getTime() - 20_000),
-      updatedAt: now,
-    });
-
-    const profAnkerId = store.nextId('vprof');
-    store.profiles.set(profAnkerId, {
-      id: profAnkerId,
-      tenantId: tenantMulti,
-      name: '安克创新（Anker）全品类监测档案',
-      brandName: '安克创新',
-      brandAliases: ['Anker'],
-      ownedDomains: ['anker.example.com'],
-      competitors: [
-        { name: '绿联 UGREEN', aliases: [], domains: ['ugreen.example.com'] },
-        { name: '倍思 Baseus', aliases: [], domains: ['baseus.example.com'] },
-      ],
-      createdAt: new Date(now.getTime() - 10_000),
-      updatedAt: now,
-    });
-
-    const runArzopaId = store.nextId('vrun');
-    store.runs.set(runArzopaId, {
-      id: runArzopaId,
-      tenantId: tenantMulti,
-      profileId: profArzopaId,
-      keywordId: null,
-      name: '阿卓帕今日监测',
-      engines: ['deepseek'],
-      questionIds: [],
-      totalChecks: 2,
-      doneCount: 2,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-
-    const runAnkerId = store.nextId('vrun');
-    store.runs.set(runAnkerId, {
-      id: runAnkerId,
-      tenantId: tenantMulti,
-      profileId: profAnkerId,
-      keywordId: null,
-      name: '安克创新今日监测',
-      engines: ['deepseek'],
-      questionIds: [],
-      totalChecks: 2,
-      doneCount: 2,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-
-    const obsArz1 = store.nextId('vobs');
-    store.observations.set(obsArz1, {
-      id: obsArz1,
-      tenantId: tenantMulti,
-      runId: runArzopaId,
-      profileId: profArzopaId,
-      questionId: null,
-      promptText: '便携显示器推荐哪款？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText: '首推阿卓帕便携屏，其次可看联想ThinkVision。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: '首推阿卓帕便携屏',
-      competitorHits: [
-        { name: '联想ThinkVision', mentioned: true, position: 2, sentiment: 'neutral' },
-        { name: '小米', mentioned: false, position: null, sentiment: null },
-      ],
-      fanOutQueries: [],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 100,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-    store.citations.set(store.nextId('vcite'), {
-      id: 'vcite_arz_1',
-      tenantId: tenantMulti,
-      observationId: obsArz1,
-      url: 'https://arzopa.example.com/guide',
-      domain: 'arzopa.example.com',
-      title: '阿卓帕官方指南',
-      snippet: '便携屏评测',
-      sourceKind: 'OWNED',
-      position: 1,
-      createdAt: now,
-    });
-
-    const obsArz2 = store.nextId('vobs');
-    store.observations.set(obsArz2, {
-      id: obsArz2,
-      tenantId: tenantMulti,
-      runId: runArzopaId,
-      profileId: profArzopaId,
-      questionId: null,
-      promptText: '出差外接屏哪个牌子好？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText: '阿卓帕轻量便携屏体验不错。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: '阿卓帕轻量便携屏体验不错',
-      competitorHits: [
-        { name: '联想ThinkVision', mentioned: false, position: null, sentiment: null },
-        { name: '小米', mentioned: false, position: null, sentiment: null },
-      ],
-      fanOutQueries: [],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 100,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    const obsAnk1 = store.nextId('vobs');
-    store.observations.set(obsAnk1, {
-      id: obsAnk1,
-      tenantId: tenantMulti,
-      runId: runAnkerId,
-      profileId: profAnkerId,
-      questionId: null,
-      promptText: '氮化镓充电头哪家好？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText: '推荐安克创新和绿联 UGREEN。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: '推荐安克创新和绿联 UGREEN',
-      competitorHits: [
-        { name: '绿联 UGREEN', mentioned: true, position: 2, sentiment: 'neutral' },
-        { name: '倍思 Baseus', mentioned: false, position: null, sentiment: null },
-      ],
-      fanOutQueries: [],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 100,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-    store.citations.set(store.nextId('vcite'), {
-      id: 'vcite_ank_1',
-      tenantId: tenantMulti,
-      observationId: obsAnk1,
-      url: 'https://anker.example.com/gan',
-      domain: 'anker.example.com',
-      title: '安克创新氮化镓白皮书',
-      snippet: '快充技术',
-      sourceKind: 'OWNED',
-      position: 1,
-      createdAt: now,
-    });
-
-    const obsAnk2 = store.nextId('vobs');
-    store.observations.set(obsAnk2, {
-      id: obsAnk2,
-      tenantId: tenantMulti,
-      runId: runAnkerId,
-      profileId: profAnkerId,
-      questionId: null,
-      promptText: '100W桌面快充推荐？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText: '绿联 UGREEN 与倍思 Baseus 都有多口方案。',
-      brandMentioned: false,
-      brandPosition: null,
-      brandSentiment: null,
-      brandPassage: null,
-      competitorHits: [
-        { name: '绿联 UGREEN', mentioned: true, position: 1, sentiment: 'positive' },
-        { name: '倍思 Baseus', mentioned: true, position: 2, sentiment: 'neutral' },
-      ],
-      fanOutQueries: [],
-      judgeModel: 'fake-judge',
-      tokensIn: 100,
-      tokensOut: 100,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    // #186: Single profile overview with 6 historical 0-sample days + 1 active day
-    const singleOverview = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/overview?profileId=${profArzopaId}&days=7`,
-      { token: tokenMulti },
-    );
-    expect(singleOverview.status).toBe(200);
-    const allTrend = singleOverview.data.trend.filter((pt) => pt.engine === 'all');
-    expect(allTrend).toHaveLength(7);
-    for (const emptyDay of allTrend.slice(0, 6)) {
-      expect(emptyDay.completedChecks).toBe(0);
-      expect(emptyDay.visibilityPct).toBe(0);
-      expect((emptyDay as { shareOfVoicePct?: number | null }).shareOfVoicePct).toBeNull();
-    }
-    const activeDay = allTrend[6]!;
-    expect(activeDay.completedChecks).toBe(2);
-    expect((activeDay as { shareOfVoicePct?: number | null }).shareOfVoicePct).toBe(66.7);
-
-    // #211: All profiles overview preserves both own-brands and separates their competitor tracks
-    const multiOverview = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      '/api/v1/visibility/overview?days=7',
-      { token: tokenMulti },
-    );
-    expect(multiOverview.status).toBe(200);
-    expect(multiOverview.data.profileId).toBeNull();
-    expect(multiOverview.data.metrics.completedChecks).toBe(4);
-    expect(multiOverview.data.metrics.mentionedChecks).toBe(3);
-    expect(multiOverview.data.metrics.ownedCitations).toBe(2);
-
-    const brandEntries = multiOverview.data.metrics.shareOfVoice.entries.filter((e) => e.isBrand);
-    expect(brandEntries.map((e) => e.name).sort()).toEqual(['安克创新', '阿卓帕']);
-
-    const groups = (
-      multiOverview.data as VisibilityOverviewResponse & {
-        brandGroups?: Array<{
-          brandName: string;
-          completedChecks: number;
-          mentionedChecks: number;
-          visibilityPct: number;
-          shareOfVoice: {
-            brandSharePct: number;
-            entries: Array<{ name: string; isBrand: boolean; mentions: number; sharePct: number }>;
-          };
-        }>;
-      }
-    ).brandGroups;
-    expect(groups).toHaveLength(2);
-
-    const arzopaGroup = groups?.find((g) => g.brandName === '阿卓帕');
-    const ankerGroup = groups?.find((g) => g.brandName === '安克创新');
-    expect(arzopaGroup?.shareOfVoice.brandSharePct).toBe(66.7);
-    expect(arzopaGroup?.shareOfVoice.entries.map((e) => e.name)).toEqual([
-      '阿卓帕',
-      '联想ThinkVision',
-      '小米',
-    ]);
-    expect(ankerGroup?.shareOfVoice.brandSharePct).toBe(25);
-    expect(ankerGroup?.shareOfVoice.entries.map((e) => e.name)).toEqual([
-      '绿联 UGREEN',
-      '安克创新',
-      '倍思 Baseus',
-    ]);
-  });
-
-  it('rejects cross-brand keywordId or mismatched questionIds when creating a run or importing opportunity questions with profileId (#218, #213)', async () => {
-    const tenantIso = 'ten_kw_iso';
-    const tokenIso = store.seedTenant({
-      tenantId: tenantIso,
-      userId: 'usr_kw_iso',
-      username: 'merchant_kw_iso',
-      points: 200,
-      billingMode: 'SHADOW',
-    });
-
-    const now = new Date();
-    const profArzopaId = store.nextId('vprof');
-    store.profiles.set(profArzopaId, {
-      id: profArzopaId,
-      tenantId: tenantIso,
-      name: 'ARZOPA便携屏监测档案',
-      brandName: 'ARZOPA',
-      brandAliases: ['Arzopa Portable Monitor', '便携显示器'],
-      ownedDomains: ['arzopa.com'],
-      competitors: [{ name: 'ASUS ZenScreen', aliases: [], domains: ['asus.com'] }],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const kwAnkerId = store.nextId('kw');
-    store.keywords.set(kwAnkerId, {
-      id: kwAnkerId,
-      tenantId: tenantIso,
-      main: 'Anker氮化镓充电器',
-      brands: ['Anker'],
-      optStatus: 'NONE',
-      createdAt: now,
-    });
-
-    const qAnkerId = store.nextId('q');
-    store.questions.set(qAnkerId, {
-      id: qAnkerId,
-      tenantId: tenantIso,
-      keywordId: kwAnkerId,
-      text: 'Anker氮化镓充电器支持MacBook快充吗？',
-      source: 'MANUAL',
-      usedCount: 0,
-      lastUsedAt: null,
-      included: false,
-      createdAt: now,
-    });
-
-    // 1. Creating a run for ARZOPA profile with Anker keywordId -> 400 BAD_REQUEST
-    const wrongKwRun = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
-      token: tokenIso,
-      headers: { 'Idempotency-Key': 'idem-iso-wrong-kw-001' },
-      body: {
-        profileId: profArzopaId,
-        keywordId: kwAnkerId,
-        engines: ['deepseek'],
-        questionIds: [qAnkerId],
-      },
-    });
-    expect(wrongKwRun.status).toBe(400);
-    expect(wrongKwRun.code).toBe(API_ERROR.BAD_REQUEST);
-
-    // 2. Creating a run for ARZOPA profile omitting keywordId but sneaking in Anker questionIds -> 400 BAD_REQUEST
-    const wrongQuestionRun = await httpJson(base, 'POST', '/api/v1/visibility/runs', {
-      token: tokenIso,
-      headers: { 'Idempotency-Key': 'idem-iso-wrong-q-001' },
-      body: {
-        profileId: profArzopaId,
-        engines: ['deepseek'],
-        questionIds: [qAnkerId],
-      },
-    });
-    expect(wrongQuestionRun.status).toBe(400);
-    expect(wrongQuestionRun.code).toBe(API_ERROR.BAD_REQUEST);
-
-    // 3. Importing ARZOPA opportunity questions into Anker keywordId when profileId=profArzopaId is provided -> 400 BAD_REQUEST
-    const wrongImport = await httpJson(
-      base,
-      'POST',
-      '/api/v1/visibility/opportunities/import-questions',
-      {
-        token: tokenIso,
-        body: {
-          profileId: profArzopaId,
-          keywordId: kwAnkerId,
-          titles: ['Switch外接便携屏哪款延迟低？'],
-        },
-      },
-    );
-    expect(wrongImport.status).toBe(400);
-    expect(wrongImport.code).toBe(API_ERROR.BAD_REQUEST);
-  });
-
-  it('flags and downgrades historical off-topic observations in run detail and overview metrics (#217)', async () => {
-    const tenantId = 'tenant_offtopic_217';
-    const token = store.seedTenant({
-      tenantId,
-      userId: 'user_offtopic_217',
-      username: 'offtopic_user',
-      points: 100,
-      billingMode: 'SHADOW',
-    });
-
-    const profId = store.nextId('vprof');
-    const now = new Date();
-    store.profiles.set(profId, {
-      id: profId,
-      tenantId,
-      name: 'ARZOPA 便携屏档案',
-      brandName: 'ARZOPA',
-      brandAliases: ['阿卓帕'],
-      ownedDomains: ['arzopa.com'],
-      competitors: [{ name: '联想ThinkVision', aliases: [], domains: ['lenovo.com'] }],
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    const runId = store.nextId('vrun');
-    store.runs.set(runId, {
-      id: runId,
-      tenantId,
-      profileId: profId,
-      keywordId: null,
-      name: 'ARZOPA 实测诊断',
-      engines: ['deepseek'],
-      questionIds: [],
-      totalChecks: 2,
-      doneCount: 2,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-
-    store.observations.set(store.nextId('vobs'), {
-      id: 'vobs_off_1',
-      tenantId,
-      runId,
-      profileId: profId,
-      questionId: null,
-      promptText: 'Switch外接ARZOPA便携屏怎么样',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText:
-        '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察数据可审计性、合规边界与长期运维成本。目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: '目前 ARZOPA 在中文语义理解、引用溯源归类以及团队协作闭环上具备成熟实践',
-      competitorHits: [],
-      fanOutQueries: [],
-      judgeModel: 'fake-cheap',
-      tokensIn: 10,
-      tokensOut: 20,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    store.observations.set(store.nextId('vobs'), {
-      id: 'vobs_on_2',
-      tenantId,
-      runId,
-      profileId: profId,
-      questionId: null,
-      promptText: 'Switch外接便携显示器推荐哪款？',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'llm_api',
-      answerText:
-        'Switch 外接便携显示器可以优先考虑 ARZOPA，支持全功能 Type-C 一线直连，携带方便且色彩表现稳定。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: 'Switch 外接便携显示器可以优先考虑 ARZOPA，支持全功能 Type-C 一线直连',
-      competitorHits: [],
-      fanOutQueries: [],
-      judgeModel: 'deepseek-chat',
-      tokensIn: 10,
-      tokensOut: 20,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    const detailRes = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'GET',
-      `/api/v1/visibility/runs/${runId}`,
-      { token },
-    );
-    expect(detailRes.status).toBe(200);
-    expect(detailRes.data.metrics.completedChecks).toBe(2);
-    expect(detailRes.data.metrics.mentionedChecks).toBe(1);
-    expect(detailRes.data.visibilityPct).toBe(50);
-
-    const offObs = detailRes.data.observations.find((o) => o.id === 'vobs_off_1')!;
-    const onObs = detailRes.data.observations.find((o) => o.id === 'vobs_on_2')!;
-    expect(offObs.topicRelevant).toBe(false);
-    expect(offObs.relevanceReason).toBeTruthy();
-    expect(offObs.brandMentioned).toBe(false);
-    expect(offObs.brandPassage).toBeNull();
-    expect(onObs.topicRelevant).toBe(true);
-    expect(onObs.brandMentioned).toBe(true);
-
-    const overviewRes = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/overview?profileId=${profId}&days=7`,
-      { token },
-    );
-    expect(overviewRes.status).toBe(200);
-    expect(overviewRes.data.metrics.completedChecks).toBe(2);
-    expect(overviewRes.data.metrics.mentionedChecks).toBe(1);
-    expect(overviewRes.data.metrics.visibilityPct).toBe(50);
-    expect(overviewRes.data.byEngine?.[0]).toMatchObject({
-      engine: 'deepseek',
-      completedChecks: 2,
-      mentionedChecks: 1,
-      visibilityPct: 50,
-    });
-
-    // Also seed a 100% off-topic historical run with persisted brandMentioned=true
-    const allOffRunId = store.nextId('vrun');
-    store.runs.set(allOffRunId, {
-      id: allOffRunId,
-      tenantId,
-      profileId: profId,
-      keywordId: null,
-      name: 'ARZOPA 全跑题历史任务',
-      engines: ['deepseek'],
-      questionIds: [],
-      totalChecks: 1,
-      doneCount: 1,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-    store.observations.set(store.nextId('vobs'), {
-      id: 'vobs_all_off_1',
-      tenantId,
-      runId: allOffRunId,
-      profileId: profId,
-      questionId: null,
-      promptText: 'Switch外接ARZOPA便携屏怎么样',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText:
-        '在评估「Switch外接ARZOPA便携屏怎么样」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: 'ARZOPA 提供多维度看板与行业基准对比',
-      competitorHits: [],
-      fanOutQueries: [],
-      judgeModel: 'fake-cheap',
-      tokensIn: 10,
-      tokensOut: 20,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    const listRes = await httpJson<VisibilityRunListResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/runs?profileId=${profId}`,
-      { token },
-    );
-    expect(listRes.status).toBe(200);
-    expect(listRes.data.items.find((r) => r.id === runId)?.visibilityPct).toBe(50);
-    expect(listRes.data.items.find((r) => r.id === allOffRunId)?.visibilityPct).toBe(0);
-
-    const allOffDetailRes = await httpJson<VisibilityRunDetailRecord>(
-      base,
-      'GET',
-      `/api/v1/visibility/runs/${allOffRunId}`,
-      { token },
-    );
-    expect(allOffDetailRes.status).toBe(200);
-    expect(allOffDetailRes.data.visibilityPct).toBe(0);
-  });
-
-  it('excludes off-topic demoted observations from fanOutQueries brandMentionedPct in /opportunities (#279)', async () => {
-    const tenantId = 'tenant_offtopic_fanout_279';
-    const token = store.seedTenant({
-      tenantId,
-      userId: 'user_offtopic_fanout_279',
-      username: 'offtopic_fanout_user',
-      points: 100,
-      billingMode: 'SHADOW',
-    });
-
-    const profRes = await httpJson<VisibilityProfileRecord>(
-      base,
-      'POST',
-      '/api/v1/visibility/profiles',
-      {
-        token,
-        body: {
-          name: '安克创新（Anker）全品类监测档案',
-          brandName: 'Anker',
-          brandAliases: ['安克创新', '安克'],
-          ownedDomains: ['anker.com'],
-          competitors: [{ name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] }],
-        },
-      },
-    );
-    expect(profRes.status).toBe(200);
-    const profId = profRes.data.id;
-
-    const runId = store.nextId('vrun');
-    const now = new Date();
-    store.runs.set(runId, {
-      id: runId,
-      tenantId,
-      profileId: profId,
-      keywordId: null,
-      name: 'Anker 跑题降权一致性回归',
-      engines: ['deepseek', 'doubao'],
-      questionIds: [],
-      totalChecks: 2,
-      doneCount: 2,
-      failCount: 0,
-      unitPrice: 2,
-      reservationId: null,
-      status: 'COMPLETED',
-      lastError: null,
-      createdAt: now,
-      updatedAt: now,
-      finishedAt: now,
-    });
-
-    // Two off-topic boilerplate answers with persisted brandMentioned=true and fanOutQueries
-    store.observations.set(store.nextId('vobs'), {
-      id: 'vobs_279_off_1',
-      tenantId,
-      runId,
-      profileId: profId,
-      questionId: null,
-      promptText: 'Anker氮化镓充电器支持MacBook和iPhone快充吗',
-      engine: 'deepseek',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText:
-        '在评估「Anker氮化镓充电器支持MacBook和iPhone快充吗」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: 'Anker 提供多维度看板与行业基准对比',
-      competitorHits: [{ name: '绿联', mentioned: true, position: 2, sentiment: 'neutral' }],
-      fanOutQueries: ['DeepSeek 品牌提及率优化实操方法', '氮化镓充电器快充协议对比'],
-      judgeModel: 'fake-cheap',
-      tokensIn: 10,
-      tokensOut: 20,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    store.observations.set(store.nextId('vobs'), {
-      id: 'vobs_279_off_2',
-      tenantId,
-      runId,
-      profileId: profId,
-      questionId: null,
-      promptText: 'Anker氮化镓充电器发热严重吗',
-      engine: 'doubao',
-      status: 'SUCCESS',
-      collectorKind: 'fake',
-      answerText:
-        '在评估「Anker氮化镓充电器发热严重吗」时，核心应考察多维度看板、行业基准对比与基础词条管理，配合标准化报表模板推进长期运维。',
-      brandMentioned: true,
-      brandPosition: 1,
-      brandSentiment: 'positive',
-      brandPassage: 'Anker 提供多维度看板',
-      competitorHits: [],
-      fanOutQueries: ['豆包 品牌提及率优化实操方法', '氮化镓充电器快充协议对比'],
-      judgeModel: 'fake-cheap',
-      tokensIn: 10,
-      tokensOut: 20,
-      error: null,
-      checkedAt: now,
-      createdAt: now,
-    });
-
-    const overviewRes = await httpJson<VisibilityOverviewResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/overview?profileId=${profId}&days=14`,
-      { token },
-    );
-    expect(overviewRes.status).toBe(200);
-    expect(overviewRes.data.metrics.completedChecks).toBe(2);
-    expect(overviewRes.data.metrics.mentionedChecks).toBe(0);
-    expect(overviewRes.data.metrics.visibilityPct).toBe(0);
-
-    const oppRes = await httpJson<VisibilityOpportunitiesResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/opportunities?profileId=${profId}&days=14`,
-      { token },
-    );
-    expect(oppRes.status).toBe(200);
-    expect(oppRes.data.fanOutQueries.length).toBeGreaterThanOrEqual(2);
-    for (const item of oppRes.data.fanOutQueries) {
-      expect(item.brandMentionedPct).toBe(0);
-    }
-    expect(oppRes.data.gaps).toHaveLength(1);
-    expect(oppRes.data.gaps[0]?.competitors).toEqual(['绿联']);
+    expect(importRes.status).toBe(410);
   });
 });

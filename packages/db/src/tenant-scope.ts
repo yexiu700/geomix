@@ -8,11 +8,7 @@ import { createPrismaClient } from './client';
  * 不自动隔离的表：
  * - Tenant：租户本身
  * - AuditLog：可选 tenantId，登录撤销记录要按 userId 读取，不能被请求上下文藏掉
- * - KnowledgeChunk / AiTaskItem：没有 tenantId，必须先查出属于当前租户的父记录再访问
  * - PricingItem / Announcement：全局数据
- *
- * PromptTemplate.tenantId 可空。读的时候包含系统模板（null）和本租户模板；
- * 写的时候只允许改本租户行，系统模板不会被更新或删除。
  */
 
 export const REQUIRED_TENANT_MODELS = [
@@ -23,45 +19,34 @@ export const REQUIRED_TENANT_MODELS = [
   'PointLog',
   'MoneyLog',
   'Verification',
-  'AgreementSignature',
-  'Keyword',
-  'Question',
-  'MediaCategory',
-  'MediaAsset',
-  'KnowledgeBase',
-  'ArticleCategory',
-  'AiTask',
-  'Article',
-  'RewriteBatch',
-  'RewriteRecord',
-  'AiImageJob',
   'WorkRun',
   'WorkUnit',
   'ActiveWork',
-  'CrudSample',
-  'VisibilityProfile',
+  'Brand',
+  'BrandMarket',
+  'BrandFact',
+  'BrandFactChunk',
+  'BrandMediaAsset',
   'VisibilityRun',
   'VisibilityObservation',
   'VisibilityCitation',
+  'GeoBrief',
+  'GeoArticle',
+  'GeoPublishRecord',
+  'GeoBatchJob',
+  'PromptPreference',
 ] as const;
 
-export const NULLABLE_TENANT_MODELS = ['PromptTemplate'] as const;
+export const NULLABLE_TENANT_MODELS = [] as const;
 
 /** 可选 tenantId，但故意不自动过滤。 */
 export const UNSCOPED_OPTIONAL_TENANT_MODELS = ['AuditLog'] as const;
 
 /**
  * 不按请求租户过滤的模型。
- * Tenant 自己就是租户；PricingItem / Announcement 是全局数据；
- * KnowledgeChunk / AiTaskItem 没有 tenantId，要先确认父记录属于当前租户。
+ * Tenant 自己就是租户；PricingItem / Announcement 是全局数据。
  */
-export const UNSCOPED_UNOWNED_MODELS = [
-  'Tenant',
-  'PricingItem',
-  'Announcement',
-  'KnowledgeChunk',
-  'AiTaskItem',
-] as const;
+export const UNSCOPED_UNOWNED_MODELS = ['Tenant', 'PricingItem', 'Announcement'] as const;
 
 const REQUIRED = new Set<string>(REQUIRED_TENANT_MODELS);
 const NULLABLE = new Set<string>(NULLABLE_TENANT_MODELS);

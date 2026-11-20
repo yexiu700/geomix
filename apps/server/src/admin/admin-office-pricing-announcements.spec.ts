@@ -8,13 +8,13 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
   it('lists prices with Chinese labels, units, and descriptions, and updates multiple items atomically (#196)', async () => {
     const rows = [
       {
-        action: 'ai_write',
+        action: 'geo_write',
         unitPoints: 10,
         enabled: true,
         updatedAt: new Date('2026-11-18T00:00:00.000Z'),
       },
       {
-        action: 'kb_addon',
+        action: 'inline_image_gen',
         unitPoints: 5,
         enabled: true,
         updatedAt: new Date('2026-11-18T00:00:00.000Z'),
@@ -60,15 +60,15 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
     const service = new AdminOfficeService(prisma, {} as BillingService);
 
     const listed = await service.listPrices();
-    expect(listed.items.find((item) => item.action === 'ai_write')).toMatchObject({
-      action: 'ai_write',
-      label: 'AI 文章写作',
+    expect(listed.items.find((item) => item.action === 'geo_write')).toMatchObject({
+      action: 'geo_write',
+      label: 'GEO 靶向写作',
       unit: '点/篇',
     });
-    expect(listed.items.find((item) => item.action === 'kb_addon')).toMatchObject({
-      action: 'kb_addon',
-      label: '知识库增强附加费',
-      unit: '点/篇',
+    expect(listed.items.find((item) => item.action === 'inline_image_gen')).toMatchObject({
+      action: 'inline_image_gen',
+      label: '行内 AI 配图',
+      unit: '点/张',
     });
 
     const updated = await (
@@ -83,15 +83,15 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
       { userId: 'admin-1', role: 'ADMIN' },
       {
         items: [
-          { action: 'ai_write', unitPoints: 12, enabled: true },
-          { action: 'kb_addon', unitPoints: 8, enabled: false },
+          { action: 'geo_write', unitPoints: 12, enabled: true },
+          { action: 'inline_image_gen', unitPoints: 8, enabled: false },
         ],
       },
       'batch_key_0001',
     );
 
-    expect(updated.items.find((item) => item.action === 'ai_write')?.unitPoints).toBe(12);
-    expect(updated.items.find((item) => item.action === 'kb_addon')).toMatchObject({
+    expect(updated.items.find((item) => item.action === 'geo_write')?.unitPoints).toBe(12);
+    expect(updated.items.find((item) => item.action === 'inline_image_gen')).toMatchObject({
       unitPoints: 8,
       enabled: false,
     });
@@ -123,7 +123,7 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
     await expect(
       updatePrices(
         { userId: 'merchant-1', role: 'MERCHANT' },
-        { items: [{ action: 'ai_write', unitPoints: 10, enabled: true }] },
+        { items: [{ action: 'geo_write', unitPoints: 10, enabled: true }] },
       ),
     ).rejects.toBeInstanceOf(ApiError);
 

@@ -11,13 +11,10 @@ import {
 } from '@geomix/shared';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import type { ImageJobEnqueuer } from '../image/image-job.runner';
-import type { RewriteBatchEnqueuer } from '../rewrite/rewrite-batch.runner';
 import type {
   VisibilityCheckJobData,
   VisibilityRunEnqueuer,
 } from '../visibility/visibility-run.runner';
-import type { AiTaskEnqueuer } from '../writing/ai-task.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
 
 export type { VisibilityCheckJobData };
@@ -36,15 +33,7 @@ type JobCounts = {
  * API 侧只负责入队。连接推迟到第一次使用，避免没装 Redis 时把登录和计费接口一起拖垮。
  */
 @Injectable()
-export class QueueProducer
-  implements
-    JobEnqueuer,
-    AiTaskEnqueuer,
-    RewriteBatchEnqueuer,
-    ImageJobEnqueuer,
-    VisibilityRunEnqueuer,
-    OnModuleDestroy
-{
+export class QueueProducer implements JobEnqueuer, VisibilityRunEnqueuer, OnModuleDestroy {
   private connection: IORedis | undefined;
   private readonly queues = new Map<QueueName, Queue>();
   private board: ReturnType<ExpressAdapter['getRouter']> | undefined;
@@ -68,66 +57,6 @@ export class QueueProducer
     await queue.add(
       'drive',
       { tenantId: job.tenantId, runId: job.runId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueKbIndex(job: { tenantId: string; kbId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('kb-index');
-    await queue.add(
-      'kb-index',
-      { tenantId: job.tenantId, kbId: job.kbId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueAiTask(job: { tenantId: string; taskId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('write-article');
-    await queue.add(
-      'ai-task',
-      { tenantId: job.tenantId, taskId: job.taskId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueRewriteBatch(job: { tenantId: string; batchId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('rewrite-batch');
-    await queue.add(
-      'rewrite-batch',
-      { tenantId: job.tenantId, batchId: job.batchId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueImageJob(job: { tenantId: string; jobId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('image-gen');
-    await queue.add(
-      'image-gen',
-      { tenantId: job.tenantId, jobId: job.jobId },
       {
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },

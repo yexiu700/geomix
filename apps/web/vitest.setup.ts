@@ -1,4 +1,9 @@
+import { afterAll } from 'vitest';
+
 if (typeof window !== 'undefined') {
+  const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const RealMessageChannel = globalThis.MessageChannel;
+
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     value: (query: string) => ({
@@ -48,4 +53,21 @@ if (typeof window !== 'undefined') {
     if (pseudoElt) return { getPropertyValue: () => '' } as unknown as CSSStyleDeclaration;
     return computed(element);
   }) as typeof window.getComputedStyle;
+
+  afterAll(async () => {
+    if (typeof RealMessageChannel !== 'undefined') {
+      await new Promise<void>((resolve) => {
+        const channel = new RealMessageChannel();
+        channel.port1.onmessage = () => {
+          channel.port1.close();
+          channel.port2.close();
+          resolve();
+        };
+        channel.port2.postMessage(undefined);
+      });
+    }
+    await new Promise<void>((resolve) => {
+      realSetTimeout(resolve, 0);
+    });
+  });
 }

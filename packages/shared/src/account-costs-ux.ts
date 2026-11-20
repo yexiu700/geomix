@@ -51,6 +51,8 @@ const LEDGER_COT_LEAK_PATTERNS: readonly RegExp[] = [
 ];
 
 const KNOWN_LEDGER_PREFIXES = [
+  'GEO写作',
+  '行内AI配图',
   'AI生图',
   'AI写作',
   '知识库加价',

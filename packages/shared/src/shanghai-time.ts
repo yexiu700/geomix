@@ -57,3 +57,81 @@ export function parseShanghaiDateTimeLocal(raw: string | null | undefined): stri
 
   return null;
 }
+
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FIVE_DAY_WINDOW = 5;
+
+/**
+ * 将任意时间转换为 Asia/Shanghai（UTC+8）下的 YYYY-MM-DD 字符串。
+ */
+export function toShanghaiDateKey(input: Date | string): string {
+  const d = typeof input === 'string' ? new Date(input) : input;
+  if (Number.isNaN(d.getTime())) {
+    throw new Error('无效的时间戳');
+  }
+  const shifted = new Date(d.getTime() + SHANGHAI_OFFSET_MS);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * 计算以 now 所在上海自然日为终点的近 5 日窗口（含首尾 UTC 边界与严格 5 个升序日期键）。
+ */
+export function shanghaiFiveDayWindowUtc(now: Date = new Date()): {
+  keys: string[];
+  startUtc: Date;
+  endUtc: Date;
+} {
+  const shiftedNow = new Date(now.getTime() + SHANGHAI_OFFSET_MS);
+  const todayMidnightShanghaiAsUtcMs = Date.UTC(
+    shiftedNow.getUTCFullYear(),
+    shiftedNow.getUTCMonth(),
+    shiftedNow.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+  const firstDayMidnightShanghaiAsUtcMs =
+    todayMidnightShanghaiAsUtcMs - (FIVE_DAY_WINDOW - 1) * DAY_MS;
+
+  const keys: string[] = [];
+  for (let i = 0; i < FIVE_DAY_WINDOW; i += 1) {
+    const cur = new Date(firstDayMidnightShanghaiAsUtcMs + i * DAY_MS);
+    const y = cur.getUTCFullYear();
+    const m = String(cur.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(cur.getUTCDate()).padStart(2, '0');
+    keys.push(`${y}-${m}-${day}`);
+  }
+
+  const startUtc = new Date(firstDayMidnightShanghaiAsUtcMs - SHANGHAI_OFFSET_MS);
+  const endUtc = new Date(todayMidnightShanghaiAsUtcMs + DAY_MS - 1 - SHANGHAI_OFFSET_MS);
+
+  return { keys, startUtc, endUtc };
+}
+
+/**
+ * 计算 now 所在上海自然月的首尾 UTC 区间 `[startUtc, endUtc)` 及 `YYYY-MM` 月份标识。
+ */
+export function shanghaiCurrentMonthWindowUtc(now: Date = new Date()): {
+  monthKey: string;
+  startUtc: Date;
+  endUtc: Date;
+} {
+  const shiftedNow = new Date(now.getTime() + SHANGHAI_OFFSET_MS);
+  const year = shiftedNow.getUTCFullYear();
+  const monthIdx = shiftedNow.getUTCMonth();
+  const monthKey = `${year}-${String(monthIdx + 1).padStart(2, '0')}`;
+
+  const monthStartShanghaiAsUtcMs = Date.UTC(year, monthIdx, 1, 0, 0, 0, 0);
+  const nextMonthStartShanghaiAsUtcMs = Date.UTC(year, monthIdx + 1, 1, 0, 0, 0, 0);
+
+  return {
+    monthKey,
+    startUtc: new Date(monthStartShanghaiAsUtcMs - SHANGHAI_OFFSET_MS),
+    endUtc: new Date(nextMonthStartShanghaiAsUtcMs - SHANGHAI_OFFSET_MS),
+  };
+}
