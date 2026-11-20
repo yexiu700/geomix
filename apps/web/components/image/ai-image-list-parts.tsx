@@ -43,9 +43,13 @@ export function buildAiImageColumns({
       title: '订单编号',
       dataIndex: 'orderNo',
       key: 'orderNo',
-      width: 175,
+      width: 114,
       render: (val: string) => (
-        <Typography.Text code className="gm-num" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        <Typography.Text
+          code
+          className="gm-num"
+          style={{ fontSize: 11, wordBreak: 'break-all', whiteSpace: 'normal' }}
+        >
           {val}
         </Typography.Text>
       ),
@@ -53,7 +57,7 @@ export function buildAiImageColumns({
     thumb: {
       title: '缩略图',
       key: 'thumb',
-      width: 120,
+      width: 68,
       render: (_: unknown, row: AiImageJobItem) => {
         if (row.assets.length === 0) {
           return (
@@ -63,7 +67,7 @@ export function buildAiImageColumns({
           );
         }
         return (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {row.assets.map((asset, index) => (
               <button
                 key={asset.id}
@@ -75,8 +79,8 @@ export function buildAiImageColumns({
                   border: '1px solid var(--gm-line-1)',
                   borderRadius: 6,
                   overflow: 'hidden',
-                  width: 56,
-                  height: 42,
+                  width: 40,
+                  height: 40,
                   cursor: 'pointer',
                   background: 'var(--gm-bg-elevated)',
                 }}
@@ -96,10 +100,10 @@ export function buildAiImageColumns({
     prompt: {
       title: '提示词',
       key: 'prompt',
-      width: 210,
+      width: 170,
       render: (_: unknown, row: AiImageJobItem) => (
-        <div style={{ maxWidth: 210 }}>
-          <TableClampText text={row.prompt} lines={3} maxWidth={210} />
+        <div style={{ maxWidth: 170 }}>
+          <TableClampText text={row.prompt} lines={3} maxWidth={170} />
           {row.error ? (
             <div
               style={{
@@ -118,7 +122,7 @@ export function buildAiImageColumns({
     styleRatio: {
       title: '风格/比例',
       key: 'styleRatio',
-      width: 112,
+      width: 88,
       render: (_: unknown, row: AiImageJobItem) => (
         <Space size={4} wrap>
           <Tag>{row.style ?? '默认风格'}</Tag>
@@ -129,7 +133,7 @@ export function buildAiImageColumns({
     count: {
       title: '张数',
       key: 'count',
-      width: 72,
+      width: 58,
       render: (_: unknown, row: AiImageJobItem) => (
         <Tag color="cyan">
           {row.successCount}/{row.count} 张
@@ -139,7 +143,7 @@ export function buildAiImageColumns({
     category: {
       title: '归属分类',
       key: 'category',
-      width: 100,
+      width: 80,
       render: (_: unknown, row: AiImageJobItem) =>
         row.saveCategoryName ? (
           <span style={{ fontSize: 12, color: 'var(--gm-sig-cited)' }}>{row.saveCategoryName}</span>
@@ -150,7 +154,7 @@ export function buildAiImageColumns({
     status: {
       title: '状态',
       key: 'status',
-      width: 84,
+      width: 72,
       render: (_: unknown, row: AiImageJobItem) =>
         isPlaceholderJob(row) ? (
           <Tag color="warning">演示占位图</Tag>
@@ -163,9 +167,9 @@ export function buildAiImageColumns({
     points: {
       title: '消耗点数',
       key: 'points',
-      width: 118,
+      width: 96,
       render: (_: unknown, row: AiImageJobItem) => (
-        <div className="gm-num" style={{ fontSize: 12, lineHeight: 1.6 }}>
+        <div className="gm-num" style={{ fontSize: 12, lineHeight: 1.5 }}>
           <div style={{ fontWeight: 600, color: 'var(--gm-info)' }}>
             {isJobInProgress(row)
               ? `预冻 ${row.reservedPoints} 点`
@@ -182,9 +186,12 @@ export function buildAiImageColumns({
       title: '创建时间',
       dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 120,
+      width: 90,
       render: (val: string) => (
-        <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+        <span
+          className="gm-num"
+          style={{ fontSize: 12, color: 'var(--gm-fg-2)', whiteSpace: 'normal' }}
+        >
           {formatTime(val)}
         </span>
       ),
@@ -192,16 +199,17 @@ export function buildAiImageColumns({
     actions: {
       title: '操作',
       key: 'actions',
-      width: 148,
+      width: 126,
       render: (_: unknown, row: AiImageJobItem) => {
         const hasAssets = row.assets.length > 0;
         const placeholder = isPlaceholderJob(row);
         const savedToGallery = isJobSavedToGallery(row);
         return (
-          <Space size={4} wrap>
+          <Space size={2} wrap>
             <Button
               size="small"
               type="link"
+              style={{ padding: '0 4px' }}
               disabled={!hasAssets || placeholder}
               title={placeholder ? '演示占位图不可下载为商业原图' : undefined}
               onClick={() => {
@@ -224,11 +232,12 @@ export function buildAiImageColumns({
                       : '已存入图库，点击可更换图库分组'
                     : '存入企业画像图库'
               }
-              style={
-                !placeholder && savedToGallery
+              style={{
+                padding: '0 4px',
+                ...(!placeholder && savedToGallery
                   ? { color: 'var(--gm-sig-cited)', fontWeight: 500 }
-                  : undefined
-              }
+                  : undefined),
+              }}
               onClick={() => onSaveGallery(row)}
             >
               {savedToGallery ? '已存入（更换）' : '存入图库'}
@@ -237,6 +246,7 @@ export function buildAiImageColumns({
               size="small"
               type="link"
               danger
+              style={{ padding: '0 4px' }}
               disabled={readOnly || isJobInProgress(row)}
               onClick={() => onDelete(row)}
             >
@@ -252,7 +262,7 @@ export function buildAiImageColumns({
     {
       title: '序号',
       key: 'seq',
-      width: 52,
+      width: 42,
       render: (_: unknown, __: AiImageJobItem, idx: number) => (page - 1) * pageSize + idx + 1,
     },
     // 按 visibleCols 过滤但保持固定列序

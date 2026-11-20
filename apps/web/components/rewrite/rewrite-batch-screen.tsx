@@ -324,15 +324,15 @@ export function RewriteBatchScreen({
       {
         title: '序号',
         key: 'seq',
-        width: 52,
+        width: 42,
         render: (_val, _row, idx) => (query.page - 1) * query.pageSize + idx + 1,
       },
       {
         title: '任务名',
         dataIndex: 'name',
         key: 'name',
-        width: 170,
-        minWidth: 145,
+        width: 150,
+        minWidth: 120,
         ellipsis: H.BATCH_CELL_ELLIPSIS,
         render: (_val, row) => {
           const categoryLabel = row.categoryName || '查看分类文章';
@@ -359,8 +359,8 @@ export function RewriteBatchScreen({
         title: '关键词',
         dataIndex: 'keyword',
         key: 'keyword',
-        width: 150,
-        minWidth: 130,
+        width: 128,
+        minWidth: 108,
         ellipsis: H.BATCH_CELL_ELLIPSIS,
         render: (_val, row) => <BatchKeywordCell row={row} />,
       },
@@ -368,19 +368,19 @@ export function RewriteBatchScreen({
         title: '最大改写量',
         dataIndex: 'maxCount',
         key: 'maxCount',
-        width: 86,
+        width: 74,
         render: (val: number) => <span className="gm-num">{val} 篇</span>,
       },
       {
         title: '当前数量',
         key: 'doneCount',
-        width: 150,
+        width: 130,
         render: (_val, row) => (
           <div>
             <div className="gm-num" style={{ fontWeight: 600 }}>
               {row.doneCount} / {row.maxCount} 篇
             </div>
-            <div className="gm-num" style={S.doneSummary}>
+            <div className="gm-num" style={{ ...S.doneSummary, whiteSpace: 'normal' }}>
               预冻 {row.reservedPoints} · 已结 {row.settledPoints} · 已退 {row.releasedPoints} 点
             </div>
           </div>
@@ -390,15 +390,15 @@ export function RewriteBatchScreen({
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 165,
-        minWidth: 140,
+        width: 136,
+        minWidth: 112,
         ellipsis: H.BATCH_CELL_ELLIPSIS,
         render: (_val, row) => <BatchStatusCell row={row} />,
       },
       {
         title: '查看任务',
         key: 'inspect',
-        width: 102,
+        width: 92,
         render: (_val, row) => (
           <Button size="small" onClick={() => void openTaskDrawer(row.id)}>
             查看任务 ({row.candidateCount || row.doneCount})
@@ -409,9 +409,9 @@ export function RewriteBatchScreen({
         title: '添加时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
-        width: 120,
+        width: 94,
         render: (val: string) => (
-          <span className="gm-num" style={S.createdAt}>
+          <span className="gm-num" style={{ ...S.createdAt, whiteSpace: 'normal' }}>
             {H.formatTime(val)}
           </span>
         ),
@@ -419,7 +419,7 @@ export function RewriteBatchScreen({
       {
         title: '操作',
         key: 'actions',
-        width: 122,
+        width: 104,
         render: (_val, row) =>
           readOnly ? (
             <Typography.Text type="secondary">只读</Typography.Text>
@@ -550,6 +550,7 @@ export function RewriteBatchScreen({
       <div style={S.tableCard}>
         <Table<RewriteBatchItem>
           rowKey="id"
+          size="small"
           loading={loading}
           dataSource={listData.items}
           scroll={{ x: 'max-content' }}

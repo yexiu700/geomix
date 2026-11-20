@@ -44,13 +44,18 @@ const LABEL_STYLE: CSSProperties = {
   marginBottom: 4,
 };
 
-const SLIDER_MARKS: Record<number, string> = {
-  0: '0张',
-  1: '1张',
-  2: '2张',
-  3: '3张',
-  4: '4张',
-  5: '5张',
+const SLIDER_MARK_STYLE: CSSProperties = {
+  fontSize: 11,
+  whiteSpace: 'nowrap',
+};
+
+const SLIDER_MARKS: Record<number, { style: CSSProperties; label: string }> = {
+  0: { style: SLIDER_MARK_STYLE, label: '0张' },
+  1: { style: SLIDER_MARK_STYLE, label: '1张' },
+  2: { style: SLIDER_MARK_STYLE, label: '2张' },
+  3: { style: SLIDER_MARK_STYLE, label: '3张' },
+  4: { style: SLIDER_MARK_STYLE, label: '4张' },
+  5: { style: SLIDER_MARK_STYLE, label: '5张' },
 };
 
 export type UseAiTaskCreateModalOptions = {
@@ -349,10 +354,20 @@ export function AiTaskCreateModal({
                   marginBottom: 4,
                 }}
               >
-                <label htmlFor="gm-aitask-gallery" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                <label
+                  htmlFor="gm-aitask-gallery"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    margin: 0,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {editor.draft.imageCount > 0 ? (
                     <>
-                      <span style={{ color: 'var(--gm-danger)' }}>*</span> 画像图库
+                      <span style={{ color: 'var(--gm-danger)' }}>*</span>
+                      <span>画像图库</span>
                     </>
                   ) : (
                     '画像图库（0 张配图时无需选择）'
@@ -406,6 +421,7 @@ export function AiTaskCreateModal({
                 <Typography.Text strong>{editor.draft.imageCount} 张/篇</Typography.Text>
               </div>
               <Slider
+                style={{ margin: '10px 12px 24px' }}
                 min={AI_TASK_IMAGE_MIN}
                 max={AI_TASK_IMAGE_MAX}
                 step={1}

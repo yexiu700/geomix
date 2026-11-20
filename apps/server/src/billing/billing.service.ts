@@ -909,13 +909,49 @@ export class BillingService {
     const now = this.options.now();
     if (pending > 0) {
       const balanceAfter = await this.applyReleaseWallet(tx, reservation, pending);
-      const freezeLog = await tx.pointLog.findFirst({
-        where: { tenantId, reservationId: reservation.id, status: 'RESERVED' },
-        orderBy: { createdAt: 'asc' },
-        select: { title: true },
-      });
-      const rawFreezeTitle = (freezeLog?.title ?? '').replace(/^\[免费体验\]\s*/, '').trim();
-      const baseTitle = rawFreezeTitle ? `释放未完成预扣：${rawFreezeTitle}` : '释放未完成预扣';
+      let sourceLabel = '';
+      if (reservation.refType === 'rewrite_batch') {
+        const batch = await tx.rewriteBatch.findFirst({
+          where: { id: reservation.refId, tenantId },
+          select: { name: true },
+        });
+        sourceLabel = batch?.name
+          ? `批量复刻-${batch.name}`
+          : `批量复刻(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'ai_task') {
+        const task = await tx.aiTask.findFirst({
+          where: { id: reservation.refId, tenantId },
+          select: { name: true },
+        });
+        sourceLabel = task?.name ? `AI写作-${task.name}` : `AI写作(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'image_job') {
+        const job = await tx.aiImageJob.findFirst({
+          where: { id: reservation.refId, tenantId },
+          select: { prompt: true },
+        });
+        const shortPrompt = job?.prompt?.trim().slice(0, 18);
+        sourceLabel = shortPrompt
+          ? `AI生图-${shortPrompt}`
+          : `AI生图(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'visibility_run') {
+        const run = await tx.visibilityRun.findFirst({
+          where: { id: reservation.refId, tenantId },
+          select: { name: true },
+        });
+        sourceLabel = run?.name
+          ? `可见度监测-${run.name}`
+          : `可见度监测(${reservation.refId.slice(-8)})`;
+      } else {
+        const freezeLog = await tx.pointLog.findFirst({
+          where: { tenantId, reservationId: reservation.id, status: 'RESERVED' },
+          orderBy: { createdAt: 'asc' },
+          select: { title: true },
+        });
+        sourceLabel =
+          (freezeLog?.title ?? '').replace(/^\[免费体验\]\s*/, '').trim() ||
+          `${reservation.refType}(${reservation.refId.slice(-8)})`;
+      }
+      const baseTitle = sourceLabel ? `释放未完成预扣：${sourceLabel}` : '释放未完成预扣';
       await tx.pointLog.create({
         data: {
           tenantId,
@@ -932,6 +968,7 @@ export class BillingService {
             reason: 'close',
             refType: reservation.refType,
             refId: reservation.refId,
+            sourceLabel,
           },
         },
       });

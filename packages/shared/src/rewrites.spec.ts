@@ -288,6 +288,8 @@ describe('rewrites shared helpers', () => {
     expect(parsed.newTitle).not.toMatch(/^围绕/);
     expect(parsed.newTitle).not.toContain('多口快的');
     expect(parsed.contentText).toContain('常见问题（FAQ）');
+    expect(parsed.contentText).not.toContain('数据留存');
+    expect(parsed.contentText).not.toContain('权限隔离');
     expect(parsed.contentText).not.toContain('围绕围绕');
     expect(parsed.contentText).not.toContain('多口快的');
     expect(parsed.contentText).not.toContain('氮化镓多的');

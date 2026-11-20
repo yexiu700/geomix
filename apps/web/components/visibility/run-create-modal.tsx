@@ -104,7 +104,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'name',
       title: '任务名称',
-      width: 155,
+      width: 118,
       hideable: false,
       render: (row) => (
         <button type="button" className="gm-monitors-name-btn" onClick={() => onOpenDetail(row.id)}>
@@ -133,7 +133,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'keywordMain',
       title: '关联主词',
-      width: 116,
+      width: 114,
       render: (row) => (
         <span
           data-testid={`run-keyword-cell-${row.id}`}
@@ -151,17 +151,17 @@ export function buildMonitorsRunColumns({
     {
       key: 'engines',
       title: '监测引擎',
-      width: 145,
-      render: (row) => <EngineChipList engines={row.engines} max={3} />,
+      width: 98,
+      render: (row) => <EngineChipList engines={row.engines} max={2} />,
     },
     {
       key: 'progress',
       title: '检测进度',
-      width: 105,
+      width: 74,
       render: (row) => {
         const { donePct, failPct, skipPct } = computeRunProgressPercents(row);
         return (
-          <div style={{ width: 96 }}>
+          <div style={{ width: 66 }}>
             <span className="gm-num" style={{ fontSize: 12, color: 'var(--gm-fg-1)' }}>
               {row.doneCount}/{row.totalChecks}
             </span>
@@ -192,13 +192,13 @@ export function buildMonitorsRunColumns({
     {
       key: 'visibilityPct',
       title: '品牌提及率',
-      width: 105,
+      width: 84,
       render: (row) => {
         const pct = row.visibilityPct;
         const barWidth = clampVisibilityPct(pct);
         return (
           <div
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}
           >
             <span aria-hidden="true" style={PCT_TRACK_STYLE}>
               <span
@@ -225,15 +225,15 @@ export function buildMonitorsRunColumns({
     {
       key: 'points',
       title: '预冻 / 结算点数',
-      width: 110,
+      width: 96,
       render: (row) => (
         <Tooltip title={`已退回 ${row.releasedPoints ?? 0} 点`}>
           <div
             className="gm-num"
-            style={{ textAlign: 'right', fontSize: 13, whiteSpace: 'nowrap', minWidth: 92 }}
+            style={{ textAlign: 'right', fontSize: 12, whiteSpace: 'nowrap', minWidth: 80 }}
           >
             <div style={{ color: 'var(--gm-fg-1)' }}>预冻 {row.frozenPoints ?? 0} 点</div>
-            <div style={{ color: 'var(--gm-fg-3)', fontSize: 12 }}>
+            <div style={{ color: 'var(--gm-fg-3)', fontSize: 11 }}>
               已结 {row.settledPoints ?? 0} 点
             </div>
           </div>
@@ -243,10 +243,10 @@ export function buildMonitorsRunColumns({
     {
       key: 'status',
       title: '状态',
-      width: 96,
+      width: 74,
       render: (row) => (
         <span
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
         >
           <StatusPill kind="task" status={row.status} />
           {row.lastError ? (
@@ -262,7 +262,7 @@ export function buildMonitorsRunColumns({
     {
       key: 'createdAt',
       title: '创建时间',
-      width: 156,
+      width: 92,
       render: (row) => (
         <span
           className="gm-num"
@@ -270,7 +270,8 @@ export function buildMonitorsRunColumns({
             display: 'inline-block',
             fontSize: 12,
             color: 'var(--gm-fg-3)',
-            whiteSpace: 'nowrap',
+            whiteSpace: 'normal',
+            lineHeight: 1.35,
           }}
         >
           {formatTime(row.createdAt)}
@@ -280,10 +281,10 @@ export function buildMonitorsRunColumns({
     {
       key: 'actions',
       title: '操作',
-      width: 240,
+      width: 136,
       hideable: false,
       render: (row) => (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 210 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 120 }}>
           <RowActBtn
             label={`查看详情-${row.name}`}
             text="查看详情"
