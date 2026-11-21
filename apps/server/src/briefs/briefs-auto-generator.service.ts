@@ -385,6 +385,11 @@ function buildBriefSynthesisMessages(
     '强制约束：',
     '- outlineH2 至少包含 3–5 个清晰 H2 小节。',
     '- 若引用源列表为空，请基于回答正文、竞品露出差距与品牌事实卡生成高质量意见，严禁输出空大纲或报错。',
+    ...(ctx.sourceType === 'CITATION_COUNTER'
+      ? [
+          '- sourceType=CITATION_COUNTER 时，recommendedRecipe 必须固定为 "CITATION_COUNTER"，outlineH2 须覆盖并超越竞品高引用页议题骨架，强制注入我方已匹配品牌事实卡的实测参数与对比表。',
+        ]
+      : []),
     ...languageRules,
     ...(strictRetry
       ? [
@@ -407,14 +412,23 @@ function buildBriefSynthesisMessages(
   const citeLines = ctx.citations
     .slice(0, 8)
     .map((c) => `[${c.sourceKind}] ${c.domain} ${c.title ?? ''} ${c.url}`);
+  const sourceHeadingLines = (ctx.sourceArticleHeadings ?? [])
+    .slice(0, 8)
+    .map((heading, idx) => `${idx + 1}. ${heading}`);
+  const sourceExcerpt = ctx.sourceArticleExcerpt?.trim().slice(0, 4000) ?? '';
 
   const userContent = [
     `品牌：${ctx.brandName}（当地品牌名：${ctx.localBrandName}，品类：${ctx.category}，市场：${ctx.market}）`,
     `信号来源：${ctx.sourceType}（优先级：${ctx.priorityScore}）`,
     `目标问题：${cleanPromptForDisplay(ctx.targetPrompt) || `${ctx.localBrandName} ${ctx.category}`}`,
     ctx.sourceCitationUrl ? `目标高引用链接：${ctx.sourceCitationUrl}` : '',
+    ctx.sourceCitationTitle ? `目标页标题：${ctx.sourceCitationTitle}` : '',
     ctx.competitorFocus.length > 0 ? `重点竞品：${ctx.competitorFocus.join('、')}` : '',
     ctx.targetFanOuts.length > 0 ? `搜索拆解子词：${ctx.targetFanOuts.join('、')}` : '',
+    sourceHeadingLines.length > 0
+      ? `--- 竞品高引用页议题骨架 ---\n${sourceHeadingLines.join('\n')}`
+      : '',
+    sourceExcerpt ? `--- 竞品高引用页正文摘录 ---\n${sourceExcerpt}` : '',
     obsLines.length > 0 ? `--- AI 回答观测摘要 ---\n${obsLines.join('\n')}` : '',
     citeLines.length > 0
       ? `--- 引用来源（共 ${ctx.citations.length} 条）---\n${citeLines.join('\n')}`

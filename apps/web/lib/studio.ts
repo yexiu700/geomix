@@ -32,7 +32,7 @@ export type StudioClientOptions = {
   signal?: AbortSignal;
 };
 
-export function createStudioIdempotencyKey(prefix: 'art' | 'batch' = 'art'): string {
+export function createStudioIdempotencyKey(prefix: 'art' | 'batch' | 'img' = 'art'): string {
   const rand =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID().replace(/-/g, '')
@@ -247,4 +247,53 @@ export function mergeFactFeedbackContent(
   if (!base) return entry;
   if (base.includes(cleanValue)) return base;
   return `${base}\n${entry}`;
+}
+
+export function buildMarkdownImageToken(alt: string, url: string): string {
+  const safeAlt =
+    alt
+      .replace(/[\r\n[\]]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || '产品配图';
+  return `![${safeAlt}](${url.trim()})`;
+}
+
+export function insertMarkdownAtCursor(
+  markdown: string,
+  snippet: string,
+  cursorOffset?: number | null,
+): string {
+  const cleanSnippet = snippet.trim();
+  if (!cleanSnippet) return markdown;
+  if (
+    typeof cursorOffset === 'number' &&
+    Number.isInteger(cursorOffset) &&
+    cursorOffset >= 0 &&
+    cursorOffset <= markdown.length
+  ) {
+    const before = markdown.slice(0, cursorOffset).replace(/\n+$/, '');
+    const after = markdown.slice(cursorOffset).replace(/^\n+/, '');
+    return [before, cleanSnippet, after].filter((part) => part.length > 0).join('\n\n');
+  }
+  const trimmed = markdown.trimEnd();
+  return trimmed ? `${trimmed}\n\n${cleanSnippet}` : cleanSnippet;
+}
+
+/**
+ * 仅用于客户端实时预览：将相对签名图片路径 /api/... 重写为完整 API 源地址，
+ * 避免 Next.js :3000 预览发出 404 请求，同时保持保存至后端的 Markdown 路径可移植。
+ */
+function escapeHtmlAttrUrl(raw: string): string {
+  return raw.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function rewritePreviewRelativeMediaUrls(
+  html: string,
+  resolveUrl: (raw: string) => string,
+): string {
+  return html.replace(
+    /(<img\b[^>]*\bsrc=")(\/api\/[^"]+)(")/gi,
+    (_match, prefix: string, relPath: string, suffix: string) =>
+      `${prefix}${escapeHtmlAttrUrl(resolveUrl(relPath))}${suffix}`,
+  );
 }

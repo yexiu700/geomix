@@ -93,6 +93,7 @@ function forwardToLocalFixture(localPort, req) {
 }
 
 async function startFixtureServer() {
+  const pendingTimers = new Set();
   const server = http.createServer((req, res) => {
     const pathname = (req.url || '/').split('?')[0] || '/';
     if (pathname === '/robots.txt') {
@@ -162,6 +163,76 @@ async function startFixtureServer() {
 </html>`);
       return;
     }
+    if (pathname === '/competitor/nas-review') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>2026 四盘位家用 NAS 深度横向评测：噪音、功耗与 Docker 实测对比</title></head>
+<body>
+  <article>
+    <h1>2026 四盘位家用 NAS 深度横向评测：噪音、功耗与 Docker 实测对比</h1>
+    <p>本篇深度评测针对 2026 年主流四盘位家用私有云 NAS 进行 72 小时连续拷贝、1 米消声室噪音与 Docker 容器并发负载实测，帮助家庭影音用户与小型工作室快速选型。</p>
+    <h2>硬件架构与扩展接口对比</h2>
+    <p>主流四盘位机型普遍采用四核低功耗 x86 处理器与双 M.2 NVMe 固态缓存槽，但在网口规格与内存扩展性上差异明显。部分入门款仍停留在单 1GbE 网口，无法发挥多盘 RAID 顺序吞吐优势。</p>
+    <table>
+      <thead>
+        <tr><th>对比维度</th><th>主流竞品 A</th><th>主流竞品 B</th><th>家用推荐门槛</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>满载噪音（1 米）</td><td>32 dB</td><td>29 dB</td><td>&le; 28 dB</td></tr>
+        <tr><td>四盘休眠待机功耗</td><td>24 W</td><td>21 W</td><td>&le; 16 W</td></tr>
+        <tr><td>有线网络规格</td><td>单 2.5GbE</td><td>双 1GbE</td><td>双 2.5GbE 聚合</td></tr>
+        <tr><td>本地 AI 离线相册</td><td>部分云端依赖</td><td>基础人脸聚类</td><td>完全离线语义检索</td></tr>
+      </tbody>
+    </table>
+    <h2>满载噪音与待机功耗实测表现</h2>
+    <p>在 25°C 室温环境持续写入 4K 蓝光原盘时，传统直吹风道机型满载噪音达到 31–33 dB，放置在卧室或客厅电视柜容易感知风扇低频共振，且全天 24 小时待机功耗偏高。</p>
+    <h2>Docker 容器与本地 AI 相册生态体验</h2>
+    <p>对于进阶家庭玩家，Docker Compose 一键部署影音刮削、家庭自动化与私有网盘是核心刚需。本地离线 AI 相册的检索速度与隐私保护边界，直接决定了全家照片备份的长期留存体验。</p>
+    <h2>不同家庭与工作室选购结论</h2>
+    <ul>
+      <li>客厅影音与夜间卧室部署优先关注满载噪音低于 28 dB 且待机功耗低于 16 W 的静音风道机型。</li>
+      <li>多设备 4K 剪辑与多成员并发备份建议优先选择双 2.5GbE 网口与 16GB DDR5 内存配置。</li>
+      <li>注重隐私的家庭用户应核验 AI 相册识别是否支持纯本地离线运行，避免云端上传隐患。</li>
+    </ul>
+  </article>
+</body>
+</html>`);
+      return;
+    }
+    if (pathname === '/anti-scrape/403') {
+      res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1><p>请求被反爬防火墙拦截，请稍后重试。</p></body></html>',
+      );
+      return;
+    }
+    if (pathname === '/anti-scrape/login-wall') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" /><title>访问受限</title></head><body><main><h1>访问受限</h1><p>当前内容仅对注册会员开放，请登录后查看完整评测正文。</p></main></body></html>',
+      );
+      return;
+    }
+    if (pathname === '/anti-scrape/slow-timeout') {
+      const timer = setTimeout(() => {
+        pendingTimers.delete(timer);
+        if (!res.writableEnded && !res.destroyed) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+          res.end('<!doctype html><html><body><p>slow response</p></body></html>');
+        }
+      }, 15_000);
+      timer.unref?.();
+      pendingTimers.add(timer);
+      const cleanup = () => {
+        if (pendingTimers.delete(timer)) {
+          clearTimeout(timer);
+        }
+      };
+      req.once('close', cleanup);
+      res.once('close', cleanup);
+      return;
+    }
     if (pathname === '/articles/cnc-maintenance') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(
@@ -180,6 +251,12 @@ async function startFixtureServer() {
       ),
     );
   });
+  server.on('close', () => {
+    for (const timer of pendingTimers) {
+      clearTimeout(timer);
+    }
+    pendingTimers.clear();
+  });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   return { server, port: address.port };
@@ -189,6 +266,9 @@ async function bootstrap() {
   loadRootEnv();
   if (!process.env.E2E_MEMORY_MAX_OBJECTS) {
     process.env.E2E_MEMORY_MAX_OBJECTS = '2000';
+  }
+  if (!process.env.IMAGE_PROVIDER) {
+    process.env.IMAGE_PROVIDER = 'fake';
   }
   if (
     (process.env.VISIBILITY_COLLECTOR || 'fake').trim().toLowerCase() === 'fake' &&
@@ -254,7 +334,10 @@ async function bootstrap() {
   const shutdown = async () => {
     await workerApp.close().catch(() => undefined);
     await apiApp.close().catch(() => undefined);
-    await new Promise((resolve) => fixture.server.close(() => resolve()));
+    await new Promise((resolve) => {
+      fixture.server.close(() => resolve());
+      fixture.server.closeAllConnections?.();
+    });
     process.exit(0);
   };
   process.once('SIGINT', shutdown);

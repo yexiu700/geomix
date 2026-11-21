@@ -12,6 +12,7 @@ import {
   type ExtractBrandFactsInput,
   type ExtractBrandFactsResponse,
   type GeoMarket,
+  type InlineAiImageGenInput,
   type UpdateBrandInput,
   type UpdateBrandMarketInput,
   type UpdateBrandMediaInput,
@@ -268,6 +269,26 @@ export function deleteBrandMedia(
     `/brands/${encodeURIComponent(brandId)}/media/${encodeURIComponent(mediaId)}`,
     {
       method: 'DELETE',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function generateBrandAiImage(
+  brandId: string,
+  input: InlineAiImageGenInput,
+  idempotencyKey: string,
+  options?: BrandClientOptions,
+): Promise<BrandMediaAssetRecord> {
+  return authorizedV2Request<BrandMediaAssetRecord>(
+    `/brands/${encodeURIComponent(brandId)}/media/ai-gen`,
+    {
+      method: 'POST',
+      body: input,
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       storage: options?.storage,
       signal: options?.signal,
     },

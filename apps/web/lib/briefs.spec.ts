@@ -1,13 +1,17 @@
+import { API_ERROR } from '@geomix/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from './api';
 import {
+  createBriefFromCitationUrl,
   deriveObservationBriefSource,
   dismissBrief,
   fetchBriefs,
   generateBrief,
   getBrief,
+  isCitationCounterFallbackError,
   updateBrief,
 } from './briefs';
+import { GatewayApiError } from './envelope';
 
 describe('apps/web/lib/briefs v2 client', () => {
   const spy = vi.spyOn(api, 'authorizedV2Request');
@@ -101,5 +105,47 @@ describe('apps/web/lib/briefs v2 client', () => {
         brandPosition: 4,
       }),
     ).toBe('LOW_RANK');
+  });
+
+  it('calls POST /brands/:id/briefs/from-citation-url and detects 422/42201 fallback errors', async () => {
+    const controller = new AbortController();
+    spy.mockResolvedValueOnce({ id: 'b_counter_1', sourceType: 'CITATION_COUNTER' });
+
+    await createBriefFromCitationUrl(
+      'brand/1',
+      {
+        market: 'CN',
+        citationUrl: 'https://competitor.example.com/review',
+        pastedTitle: '竞品参考评测',
+        pastedContent: '这是一段超过二十个字的竞品高引用网页参考正文内容用于反制。',
+      },
+      { signal: controller.signal },
+    );
+
+    expect(spy).toHaveBeenCalledWith('/brands/brand%2F1/briefs/from-citation-url', {
+      method: 'POST',
+      body: {
+        market: 'CN',
+        citationUrl: 'https://competitor.example.com/review',
+        pastedTitle: '竞品参考评测',
+        pastedContent: '这是一段超过二十个字的竞品高引用网页参考正文内容用于反制。',
+      },
+      storage: undefined,
+      signal: controller.signal,
+    });
+
+    expect(
+      isCitationCounterFallbackError(
+        new GatewayApiError(422, API_ERROR.UPSTREAM_UNAVAILABLE, '反爬拦截'),
+      ),
+    ).toBe(true);
+    expect(isCitationCounterFallbackError(new GatewayApiError(422, 42299, '无法抓取'))).toBe(true);
+    expect(
+      isCitationCounterFallbackError(
+        new GatewayApiError(400, API_ERROR.BAD_REQUEST, '链接格式错误'),
+      ),
+    ).toBe(false);
+    expect(isCitationCounterFallbackError(new GatewayApiError(429, 42901, '限流'))).toBe(false);
+    expect(isCitationCounterFallbackError(new Error('network'))).toBe(false);
   });
 });

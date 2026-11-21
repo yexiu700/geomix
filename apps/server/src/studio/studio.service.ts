@@ -300,12 +300,19 @@ export class StudioService {
       include: { brandMarket: { select: { market: true } } },
     });
 
-    if (input.usedMediaIds && input.usedMediaIds.length > 0) {
-      const uniqueMediaIds = [...new Set(input.usedMediaIds)];
+    const newlyEmbeddedMediaIds =
+      input.contentMarkdown !== undefined
+        ? diffNewlyEmbeddedBrandMediaIds(existing.contentMarkdown, nextMarkdown, existing.brandId)
+        : [];
+    const mediaIdsToIncrement = [
+      ...new Set([...(input.usedMediaIds ?? []), ...newlyEmbeddedMediaIds]),
+    ];
+
+    if (mediaIdsToIncrement.length > 0) {
       await this.prisma.scoped.brandMediaAsset.updateMany({
         where: {
           brandId: existing.brandId,
-          id: { in: uniqueMediaIds },
+          id: { in: mediaIdsToIncrement },
         },
         data: { usedCount: { increment: 1 } },
       });
@@ -1171,4 +1178,38 @@ function detachListener(
   } else if (typeof emitter.removeListener === 'function') {
     (emitter.removeListener as (e: string, l: () => void) => void)(event, listener);
   }
+}
+
+function escapeRegExp(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractBrandMediaIdsFromMarkdown(markdown: string, brandId: string): string[] {
+  if (!markdown || !brandId) return [];
+  const escapedBrandId = escapeRegExp(brandId);
+  const encodedBrandId = escapeRegExp(encodeURIComponent(brandId));
+  const brandSegment =
+    encodedBrandId === escapedBrandId ? escapedBrandId : `(?:${escapedBrandId}|${encodedBrandId})`;
+  const pattern = new RegExp(
+    `/api/v2/brands/${brandSegment}/media/([A-Za-z0-9_-]{1,64})/(?:file|thumb)(?=[?)"'\\s]|$)`,
+    'g',
+  );
+  const ids = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(markdown)) !== null) {
+    const id = match[1];
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+function diffNewlyEmbeddedBrandMediaIds(
+  previousMarkdown: string,
+  nextMarkdown: string,
+  brandId: string,
+): string[] {
+  const nextIds = extractBrandMediaIdsFromMarkdown(nextMarkdown, brandId);
+  if (nextIds.length === 0) return [];
+  const prevSet = new Set(extractBrandMediaIdsFromMarkdown(previousMarkdown, brandId));
+  return nextIds.filter((id) => !prevSet.has(id));
 }

@@ -9,11 +9,12 @@ import type {
   VisibilityRunDetailRecord,
   VisibilityRunListResponse,
 } from '@geomix/shared';
-import { CITATION_SOURCE_KINDS } from '@geomix/shared';
+import { API_ERROR, CITATION_SOURCE_KINDS } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
+import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
@@ -915,6 +916,12 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       .spyOn(briefsApi, 'fetchBriefs')
       .mockResolvedValue({ items: [sampleBrief1, sampleBrief2], total: 2 });
     const generateBriefSpy = vi.spyOn(briefsApi, 'generateBrief').mockResolvedValue(sampleBrief1);
+    const counterFromUrlSpy = vi.spyOn(briefsApi, 'createBriefFromCitationUrl').mockResolvedValue({
+      ...sampleBrief1,
+      sourceType: 'CITATION_COUNTER',
+      recommendedRecipe: 'CITATION_COUNTER',
+      sourceCitationUrl: 'https://synology.com/review',
+    });
     const updateBriefSpy = vi
       .spyOn(briefsApi, 'updateBrief')
       .mockImplementation(async (_id, patch) => ({
@@ -1013,11 +1020,10 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     });
     fireEvent.click(screen.getByTestId('citation-counter-btn'));
     await waitFor(() => {
-      expect(generateBriefSpy).toHaveBeenCalledWith(
+      expect(counterFromUrlSpy).toHaveBeenCalledWith(
         'brand_dual_1',
         expect.objectContaining({
           market: 'GLOBAL',
-          sourceType: 'CITATION_COUNTER',
           citationUrl: 'https://synology.com/review',
         }),
         expect.any(Object),
@@ -1137,6 +1143,123 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
         '/studio?brandId=brand_dual_1&market=CN&batchJobId=gb_from_vis_1',
       );
       expect(refreshWallet).toHaveBeenCalled();
+    });
+  });
+
+  it('opens CitationCounterModal pasted-content fallback on 422/42201 from Tab 3 citation-counter-btn and resets synchronously on market switch (M4-B #332)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: null,
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+
+    const createdCounterBrief: GeoBriefRecord = {
+      id: 'brief_fallback_1',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      sourceType: 'CITATION_COUNTER',
+      sourceRunId: null,
+      sourceObservationIds: [],
+      sourceCitationUrl: 'https://synology.com/review',
+      targetPrompt: '四盘位家用 NAS 对比评测反制',
+      priorityScore: 74,
+      diagnosisSummary: '已基于粘贴参考正文提炼核心议题并生成超越版意见卡。',
+      recommendedRecipe: 'CITATION_COUNTER',
+      targetFormat: 'CN_DEEP_REVIEW',
+      suggestedTitle: '2026 四盘位家用 NAS 实测超越指南',
+      outlineH2: [{ heading: '噪音与功耗对比表', intent: '提供对比表格' }],
+      targetFanOuts: ['安静NAS'],
+      competitorFocus: ['群晖'],
+      matchedFactIds: ['fact_1'],
+      missingFactHints: [],
+      recommendedChannels: [{ channel: '知乎', reason: '覆盖深度评测问答' }],
+      status: 'OPEN',
+      createdAt: '2026-11-20T08:00:00.000Z',
+      updatedAt: '2026-11-20T08:00:00.000Z',
+    };
+
+    const counterSpy = vi
+      .spyOn(briefsApi, 'createBriefFromCitationUrl')
+      .mockRejectedValueOnce(
+        new GatewayApiError(
+          422,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '目标网页受反爬限制无法直接抓取，请改用「粘贴参考正文」继续反制',
+        ),
+      )
+      .mockRejectedValueOnce(
+        new GatewayApiError(
+          422,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '目标网页触发反爬拦截，请改用「粘贴参考正文」继续反制',
+        ),
+      )
+      .mockResolvedValueOnce({ ...createdCounterBrief, market: 'GLOBAL' });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    fireEvent.click(await screen.findByTestId('citation-counter-btn'));
+
+    // 422/42201 opens CitationCounterModal in fallback mode
+    const fallbackBox = await screen.findByTestId('counter-pasted-fallback');
+    expect(fallbackBox.textContent).toContain('粘贴参考正文');
+
+    // Market switch closes fallback modal synchronously
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('citation-counter-modal')).toBeNull();
+    });
+
+    // Trigger again on GLOBAL -> submit pasted fallback -> opens GeoBriefDrawer
+    fireEvent.click(await screen.findByTestId('citation-counter-btn'));
+    await screen.findByTestId('counter-pasted-fallback');
+    fireEvent.change(screen.getByTestId('counter-pasted-content'), {
+      target: {
+        value:
+          '## Benchmark Summary\nCompetitor model runs at 32dB and 24W idle without local AI photo indexing.',
+      },
+    });
+    fireEvent.click(screen.getByTestId('counter-submit-btn'));
+
+    await waitFor(() => {
+      expect(counterSpy).toHaveBeenLastCalledWith(
+        DUAL_BRAND.id,
+        expect.objectContaining({
+          market: 'GLOBAL',
+          citationUrl: 'https://synology.com/review',
+          pastedContent: expect.stringContaining('Benchmark Summary'),
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(screen.getByTestId('geo-brief-drawer')).toBeTruthy();
     });
   });
 });

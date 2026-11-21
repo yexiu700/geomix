@@ -115,10 +115,21 @@ export function StudioPrewriteBar({
         <div className="gm-studio-section-label">
           <span>1. 目标问题与大纲上下文</span>
           {linkedBrief ? (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+            >
               <Tag color="cyan" style={{ margin: 0 }}>
                 来自意见卡 · {linkedBrief.suggestedTitle.slice(0, 28)}
               </Tag>
+              {linkedBrief.sourceCitationUrl &&
+              /^https?:\/\//i.test(linkedBrief.sourceCitationUrl) ? (
+                <Tag color="gold" style={{ margin: 0 }} title={linkedBrief.sourceCitationUrl}>
+                  反制信源 ·{' '}
+                  {linkedBrief.sourceCitationUrl.length > 36
+                    ? `${linkedBrief.sourceCitationUrl.slice(0, 36)}…`
+                    : linkedBrief.sourceCitationUrl}
+                </Tag>
+              ) : null}
               <Button size="small" type="link" style={{ padding: 0 }} onClick={onClearLinkedBrief}>
                 解除关联
               </Button>

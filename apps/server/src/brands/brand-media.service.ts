@@ -1,8 +1,10 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  AI_IMAGE_DEFAULT_RATIO,
   API_ERROR,
   AUTH_ERROR,
+  BILLING_ERROR,
   BRAND_MEDIA_FILE_FORMAT_MSG,
   BRAND_MEDIA_FILE_TOO_LARGE_MSG,
   BRAND_MEDIA_THUMB_MAX_EDGE,
@@ -22,14 +24,17 @@ import {
   type BrandMediaOrigin,
   type BrandMediaUploadResponse,
   type MediaStorageSummary,
+  type ParsedInlineAiImageGenInput,
   type UpdateBrandMediaInput,
 } from '@geomix/shared';
 import sharp from 'sharp';
+import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
-import { compressImage, placeholderPng } from '../infra/compress';
+import { compressImage, placeholderPng, type CompressedImage } from '../infra/compress';
+import { ImageService } from '../infra/image';
 import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,13 +74,25 @@ type BrandMediaRow = {
 
 export const MEDIA_URL_TTL_SECONDS = 86_400;
 
+function deriveInlineMediaId(tenantId: string, idempotencyKey: string): string {
+  const hash = createHash('sha256')
+    .update(`inline_image_gen:${tenantId}:${idempotencyKey}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `bma_ai_${hash}`;
+}
+
 @Injectable()
 export class BrandMediaService {
+  private readonly inFlightAiGen = new Set<string>();
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(BillingService) private readonly billing: BillingService,
     @Inject(QuotaService) private readonly quota: QuotaService,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ComplianceService) private readonly compliance: ComplianceService,
+    @Inject(ImageService) private readonly image: ImageService,
     @Inject(GALLERY_MAX_INPUT_BYTES_TOKEN) private readonly maxInputBytes: () => number,
   ) {}
 
@@ -241,64 +258,17 @@ export class BrandMediaService {
       });
 
       const assetId = `bma_${Date.now().toString(36)}_${randomBytes(6).toString('hex')}`;
-      const mainName = `brand-media-${assetId}.jpg`;
-      const thumbName = `brand-media-${assetId}-thumb.jpg`;
-
-      const storedMain = await this.storage.put({
+      const created = await this.persistCompressedAsset({
         tenantId,
-        name: mainName,
-        body: compressed.body,
-        contentType: compressed.contentType,
-        idempotencyKey: `brand-media-main-${assetId}`,
+        brandId,
+        assetId,
+        origin: 'PRODUCT_UPLOAD',
+        title,
+        compressed,
+        thumbBuffer,
       });
 
-      let storedThumb;
-      try {
-        storedThumb = await this.storage.put({
-          tenantId,
-          name: thumbName,
-          body: thumbBuffer,
-          contentType: 'image/jpeg',
-          idempotencyKey: `brand-media-thumb-${assetId}`,
-        });
-      } catch (error) {
-        await this.storage.delete(tenantId, mainName).catch(() => undefined);
-        throw error;
-      }
-
-      const url = `/api/v2/brands/${brandId}/media/${assetId}/file`;
-      const thumbUrl = `/api/v2/brands/${brandId}/media/${assetId}/thumb`;
-
-      try {
-        const created = await this.prisma.base.$transaction(async (tx) => {
-          await this.quota.consume(tenantId, 'STORAGE_BYTES', compressed.bytes, tx);
-          return tx.brandMediaAsset.create({
-            data: {
-              id: assetId,
-              tenantId,
-              brandId,
-              origin: 'PRODUCT_UPLOAD',
-              title,
-              objectKey: storedMain.key,
-              thumbKey: storedThumb.key,
-              url,
-              thumbUrl,
-              mime: compressed.contentType,
-              bytes: compressed.bytes,
-              width: compressed.width,
-              height: compressed.height,
-            },
-          });
-        }, TX_OPTIONS);
-
-        uploadedItems.push(this.presentAsset(tenantId, created));
-      } catch (error) {
-        await Promise.allSettled([
-          this.storage.delete(tenantId, mainName),
-          this.storage.delete(tenantId, thumbName),
-        ]);
-        throw error;
-      }
+      uploadedItems.push(this.presentAsset(tenantId, created));
     }
 
     const storage = await this.readStorageSummary(tenantId);
@@ -308,6 +278,299 @@ export class BrandMediaService {
       warnings,
       storage,
     };
+  }
+
+  async generateAiImage(
+    tenantId: string,
+    userId: string,
+    brandId: string,
+    input: ParsedInlineAiImageGenInput,
+    idempotencyKey: string,
+  ): Promise<BrandMediaAssetRecord> {
+    if (process.env.FEATURE_AI_IMAGE?.trim().toLowerCase() === 'false') {
+      throw new ApiError(403, API_ERROR.BAD_REQUEST, '当前环境未启用 AI 配图功能');
+    }
+
+    const brand = await this.prisma.scoped.brand.findFirst({
+      where: { id: brandId },
+      select: { id: true },
+    });
+    if (!brand) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '品牌不存在');
+    }
+
+    const prompt = input.prompt.trim();
+    const title = (input.title?.trim() || prompt).slice(0, 120);
+    const ratio = input.ratio ?? AI_IMAGE_DEFAULT_RATIO;
+    const style = input.style?.trim() || undefined;
+
+    // Compliance check BEFORE reserving any points (403/40302 leaves wallet untouched)
+    await this.compliance.assertAllowed({
+      text: [prompt, title].join('\n'),
+      action: 'inline_image_gen',
+      tenantId,
+      userId,
+    });
+
+    const assetId = deriveInlineMediaId(tenantId, idempotencyKey);
+    const inFlightKey = `${tenantId}::${assetId}`;
+    if (this.inFlightAiGen.has(inFlightKey)) {
+      throw new ApiError(
+        409,
+        BILLING_ERROR.CONFLICT,
+        '相同 Idempotency-Key 的配图请求正在处理中，请稍后重试',
+      );
+    }
+
+    const existing = await this.prisma.scoped.brandMediaAsset.findFirst({
+      where: { id: assetId },
+    });
+    if (existing) {
+      if (
+        existing.brandId !== brandId ||
+        existing.origin !== 'AI_INLINE_GEN' ||
+        existing.aiPrompt !== prompt
+      ) {
+        throw new ApiError(
+          409,
+          BILLING_ERROR.CONFLICT,
+          '相同 Idempotency-Key 不能用于不同的配图请求',
+        );
+      }
+      return this.presentAsset(tenantId, existing);
+    }
+
+    this.inFlightAiGen.add(inFlightKey);
+    try {
+      const unitPrice = await this.billing.unitPrice('inline_image_gen');
+      const reservation = await this.billing.reserve({
+        tenantId,
+        refType: 'inline_image_gen',
+        refId: assetId,
+        amount: unitPrice,
+      });
+
+      if (reservation.status === 'CLOSED') {
+        const winner = await this.prisma.scoped.brandMediaAsset.findFirst({
+          where: { id: assetId },
+        });
+        if (winner) {
+          if (
+            winner.brandId !== brandId ||
+            winner.origin !== 'AI_INLINE_GEN' ||
+            winner.aiPrompt !== prompt
+          ) {
+            throw new ApiError(
+              409,
+              BILLING_ERROR.CONFLICT,
+              '相同 Idempotency-Key 不能用于不同的配图请求',
+            );
+          }
+          return this.presentAsset(tenantId, winner);
+        }
+        throw new ApiError(
+          409,
+          BILLING_ERROR.CONFLICT,
+          '该幂等键对应的配图任务已结束，请更换新的 Idempotency-Key 重试',
+        );
+      }
+
+      let settledOrRefunded = false;
+      const refundOnce = async (reasonTitle: string) => {
+        if (settledOrRefunded) return;
+        settledOrRefunded = true;
+        try {
+          await this.billing.releaseUnit({
+            tenantId,
+            reservationId: reservation.id,
+            unitKey: `inline_image:${assetId}`,
+            amount: unitPrice,
+            title: reasonTitle,
+          });
+        } catch {
+          // close() below releases any remaining frozen points idempotently
+        }
+        await this.billing
+          .close({ tenantId, reservationId: reservation.id })
+          .catch(() => undefined);
+      };
+
+      try {
+        const raw = await this.image.generateRaw({
+          tenantId,
+          prompt,
+          style,
+          ratio,
+          count: 1,
+        });
+        const rawItem = raw.items[0];
+        if (!rawItem || !Buffer.isBuffer(rawItem.body) || rawItem.body.length === 0) {
+          throw new ProviderError(
+            PROVIDER_KIND.UPSTREAM,
+            'AI 配图服务未返回有效图片，已自动退还本次点数',
+            'empty_image',
+          );
+        }
+
+        const compressed = await compressImage(rawItem.body, {
+          maxInputBytes: this.maxInputBytes(),
+          maxOutputBytes: IMAGE_MAX_OUTPUT_BYTES,
+          maxEdge: IMAGE_MAX_EDGE,
+          maxPixels: IMAGE_MAX_PIXELS,
+          warnWidth: IMAGE_WARN_WIDTH,
+        });
+
+        const thumbBuffer = await sharp(compressed.body)
+          .resize({
+            width: BRAND_MEDIA_THUMB_MAX_EDGE,
+            height: BRAND_MEDIA_THUMB_MAX_EDGE,
+            fit: 'cover',
+          })
+          .jpeg({ quality: 75 })
+          .toBuffer();
+
+        const created = await this.persistCompressedAsset({
+          tenantId,
+          brandId,
+          assetId,
+          origin: 'AI_INLINE_GEN',
+          title,
+          compressed,
+          thumbBuffer,
+          aiPrompt: prompt,
+          aiModel: rawItem.model,
+        });
+
+        try {
+          await this.billing.settle({
+            tenantId,
+            reservationId: reservation.id,
+            unitKey: `inline_image:${assetId}`,
+            action: 'inline_image_gen',
+            amount: unitPrice,
+            title: `行内AI配图-${title.slice(0, 40)}`,
+            detail: { brandId, assetId, model: rawItem.model, ratio },
+          });
+          settledOrRefunded = true;
+        } catch (settleErr) {
+          await this.removeMedia(tenantId, brandId, created.id).catch(() => undefined);
+          throw settleErr;
+        }
+
+        await this.billing
+          .close({ tenantId, reservationId: reservation.id })
+          .catch(() => undefined);
+
+        return this.presentAsset(tenantId, created);
+      } catch (error) {
+        await refundOnce('行内AI配图失败退还预扣');
+        if (error instanceof ApiError) {
+          throw error;
+        }
+        if (error instanceof ProviderError) {
+          if (error.kind === PROVIDER_KIND.CONTRACT) {
+            throw new ApiError(400, API_ERROR.BAD_REQUEST, error.message);
+          }
+          if (error.kind === PROVIDER_KIND.TOO_LARGE) {
+            throw new ApiError(413, API_ERROR.BAD_REQUEST, error.message);
+          }
+          throw new ApiError(
+            502,
+            API_ERROR.UPSTREAM_UNAVAILABLE,
+            error.message || 'AI 配图服务暂时不可用，已自动退还本次点数',
+          );
+        }
+        throw new ApiError(
+          502,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          'AI 配图生成失败，已自动退还本次点数',
+        );
+      }
+    } finally {
+      this.inFlightAiGen.delete(inFlightKey);
+    }
+  }
+
+  private async persistCompressedAsset(params: {
+    tenantId: string;
+    brandId: string;
+    assetId: string;
+    origin: BrandMediaOrigin;
+    title: string;
+    compressed: CompressedImage;
+    thumbBuffer: Buffer;
+    aiPrompt?: string;
+    aiModel?: string;
+  }): Promise<BrandMediaRow> {
+    const {
+      tenantId,
+      brandId,
+      assetId,
+      origin,
+      title,
+      compressed,
+      thumbBuffer,
+      aiPrompt,
+      aiModel,
+    } = params;
+    const mainName = `brand-media-${assetId}.jpg`;
+    const thumbName = `brand-media-${assetId}-thumb.jpg`;
+
+    const storedMain = await this.storage.put({
+      tenantId,
+      name: mainName,
+      body: compressed.body,
+      contentType: compressed.contentType,
+      idempotencyKey: `brand-media-main-${assetId}`,
+    });
+
+    let storedThumb;
+    try {
+      storedThumb = await this.storage.put({
+        tenantId,
+        name: thumbName,
+        body: thumbBuffer,
+        contentType: 'image/jpeg',
+        idempotencyKey: `brand-media-thumb-${assetId}`,
+      });
+    } catch (error) {
+      await this.storage.delete(tenantId, mainName).catch(() => undefined);
+      throw error;
+    }
+
+    const url = `/api/v2/brands/${brandId}/media/${assetId}/file`;
+    const thumbUrl = `/api/v2/brands/${brandId}/media/${assetId}/thumb`;
+
+    try {
+      return await this.prisma.base.$transaction(async (tx) => {
+        await this.quota.consume(tenantId, 'STORAGE_BYTES', compressed.bytes, tx);
+        return tx.brandMediaAsset.create({
+          data: {
+            id: assetId,
+            tenantId,
+            brandId,
+            origin,
+            title,
+            objectKey: storedMain.key,
+            thumbKey: storedThumb.key,
+            url,
+            thumbUrl,
+            mime: compressed.contentType,
+            bytes: compressed.bytes,
+            width: compressed.width,
+            height: compressed.height,
+            ...(aiPrompt !== undefined ? { aiPrompt } : {}),
+            ...(aiModel !== undefined ? { aiModel } : {}),
+          },
+        });
+      }, TX_OPTIONS);
+    } catch (error) {
+      await Promise.allSettled([
+        this.storage.delete(tenantId, mainName),
+        this.storage.delete(tenantId, thumbName),
+      ]);
+      throw error;
+    }
   }
 
   async updateMedia(

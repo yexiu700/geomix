@@ -180,6 +180,17 @@ describe('brands v2 contracts and extracted utilities', () => {
 
     const img = inlineAiImageGenSchema.parse({ prompt: '极简桌面四盘位NAS产品实拍' });
     expect(img.ratio).toBe('16:9');
+    expect(img.title).toBeUndefined();
+
+    const imgWithAlias = inlineAiImageGenSchema.parse({
+      prompt: '极简桌面四盘位NAS产品实拍',
+      aspectRatio: '4:3',
+      title: '   ',
+      style: '',
+    });
+    expect(imgWithAlias.ratio).toBe('4:3');
+    expect(imgWithAlias.title).toBeUndefined();
+    expect(imgWithAlias.style).toBeUndefined();
   });
 
   it('normalizes domains with strict IPv4 octet check, chunks long facts, and formats company/brand labels', () => {

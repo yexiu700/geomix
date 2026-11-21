@@ -12,12 +12,15 @@ const TENANT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const OBJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_MEMORY_MAX_OBJECTS = 200;
+const MAX_MEMORY_OBJECTS_CAP = 100_000;
 
 function resolveMemoryMaxObjects(env: Record<string, string | undefined>): number {
   const raw = env.E2E_MEMORY_MAX_OBJECTS?.trim();
   if (!raw || !/^[1-9]\d*$/.test(raw)) return DEFAULT_MEMORY_MAX_OBJECTS;
   const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MEMORY_MAX_OBJECTS;
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? Math.min(parsed, MAX_MEMORY_OBJECTS_CAP)
+    : DEFAULT_MEMORY_MAX_OBJECTS;
 }
 
 export type StoredObject = {

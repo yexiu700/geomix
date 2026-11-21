@@ -14,6 +14,7 @@ import {
 import {
   API_ERROR,
   GEO_BRIEF_ID_PATTERN,
+  geoBriefFromCitationUrlSchema,
   geoBriefGenerateSchema,
   geoBriefListQuerySchema,
   geoBriefUpdateSchema,
@@ -87,6 +88,25 @@ export class BrandBriefsController {
     const queryMarket = parseOptionalMarket(flat.market);
     const input = parseBody(geoBriefGenerateSchema, body);
     return ok(await this.briefs.generate(auth.tenantId, auth.userId, brandId, input, queryMarket));
+  }
+
+  @Post('from-citation-url')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async fromCitationUrl(
+    @Req() req: unknown,
+    @Param('brandId') brandIdRaw: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(req);
+    const brandId = parseBrandId(brandIdRaw);
+    const flat = flattenQuery(query);
+    const queryMarket = parseOptionalMarket(flat.market);
+    const input = parseBody(geoBriefFromCitationUrlSchema, body);
+    return ok(
+      await this.briefs.fromCitationUrl(auth.tenantId, auth.userId, brandId, input, queryMarket),
+    );
   }
 }
 

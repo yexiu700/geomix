@@ -1,16 +1,19 @@
 'use client';
 
-import type {
-  GeoBriefGenerateInput,
-  GeoBriefListResponse,
-  GeoBriefRecord,
-  GeoBriefSource,
-  GeoBriefStatus,
-  GeoBriefUpdateInput,
-  GeoMarket,
-  VisibilityObservationRecord,
+import {
+  API_ERROR,
+  type GeoBriefFromCitationUrlInput,
+  type GeoBriefGenerateInput,
+  type GeoBriefListResponse,
+  type GeoBriefRecord,
+  type GeoBriefSource,
+  type GeoBriefStatus,
+  type GeoBriefUpdateInput,
+  type GeoMarket,
+  type VisibilityObservationRecord,
 } from '@geomix/shared';
 import { authorizedV2Request } from './api';
+import { GatewayApiError } from './envelope';
 import type { SessionStorageLike } from './session';
 
 export type BriefClientOptions = {
@@ -86,6 +89,29 @@ export async function generateBrief(
       storage: options?.storage,
       signal: options?.signal,
     },
+  );
+}
+
+export async function createBriefFromCitationUrl(
+  brandId: string,
+  input: GeoBriefFromCitationUrlInput,
+  options?: BriefClientOptions,
+): Promise<GeoBriefRecord> {
+  return authorizedV2Request<GeoBriefRecord>(
+    `/brands/${encodeURIComponent(brandId)}/briefs/from-citation-url`,
+    {
+      method: 'POST',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function isCitationCounterFallbackError(err: unknown): boolean {
+  return (
+    err instanceof GatewayApiError &&
+    (err.status === 422 || err.code === API_ERROR.UPSTREAM_UNAVAILABLE)
   );
 }
 

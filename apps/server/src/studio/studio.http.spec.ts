@@ -1356,4 +1356,62 @@ describe('Studio HTTP v2 endpoints, SSE streaming, billing refund & WorkerModule
     expect(retryClosedBatchRes.status).toBe(409);
     expect(((await retryClosedBatchRes.json()) as Envelope).code).toBe(40902);
   });
+
+  it('tracks BrandMediaAsset.usedCount cleanly across explicit usedMediaIds, newly embedded markdown URLs, deduplication, and repeated saves', async () => {
+    const streamRes = await fetch(`${baseUrl}/brands/brand_a/articles/stream`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${tokenTenantA}`,
+        'content-type': 'application/json',
+        'idempotency-key': 'idem-media-used-count-01',
+      },
+      body: JSON.stringify({
+        market: 'CN',
+        recipe: 'AUTHORITY_GUIDE',
+        targetFormat: 'CN_DEEP_REVIEW',
+        targetPrompt: '测试图片引用计数逻辑',
+      }),
+    });
+    expect(streamRes.status).toBe(200);
+    const frames = parseSseFrames(await streamRes.text());
+    const completeData = frames.find((f) => f.event === 'complete')?.data as {
+      article: GeoArticleRecord;
+    };
+    const article = completeData.article;
+    mediaUsedCounts.clear();
+
+    // 1. Insert media_1 via both usedMediaIds AND markdown URL, plus media_2 via markdown URL only,
+    //    plus a foreign-brand URL that must be ignored.
+    const md1 = `${article.contentMarkdown}\n\n![实拍1](/api/v2/brands/brand_a/media/media_1/file?tid=tenant_a&exp=999&sig=abc)\n\n![实拍2](/api/v2/brands/brand_a/media/media_2/thumb?tid=tenant_a&exp=999&sig=def)\n\n![越权](/api/v2/brands/brand_other/media/media_foreign/file?tid=tenant_b)`;
+    const patch1 = await fetch(`${baseUrl}/articles/${article.id}`, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${tokenTenantA}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        contentMarkdown: md1,
+        usedMediaIds: ['media_1'],
+      }),
+    });
+    expect(patch1.status).toBe(200);
+    expect(mediaUsedCounts.get('media_1')).toBe(1);
+    expect(mediaUsedCounts.get('media_2')).toBe(1);
+    expect(mediaUsedCounts.get('media_foreign')).toBeUndefined();
+
+    // 2. Subsequent unrelated text edit keeps existing image URLs -> zero double-counting!
+    const patch2 = await fetch(`${baseUrl}/articles/${article.id}`, {
+      method: 'PATCH',
+      headers: {
+        authorization: `Bearer ${tokenTenantA}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        contentMarkdown: `${md1}\n\n补充一段客观说明文字。`,
+      }),
+    });
+    expect(patch2.status).toBe(200);
+    expect(mediaUsedCounts.get('media_1')).toBe(1);
+    expect(mediaUsedCounts.get('media_2')).toBe(1);
+  });
 });

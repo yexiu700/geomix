@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FAKE_MARK } from '@geomix/shared';
 import { ComplianceService } from './compliance';
 import { ImageService } from './image';
+import { PROVIDER_KIND } from './provider-error';
 import { StorageService } from './storage';
 
 describe('image provider', () => {
@@ -93,6 +94,36 @@ describe('image provider', () => {
       model: 'grok-imagine-image-2.0',
       size: '1280x720',
       aspect_ratio: '16:9',
+    });
+
+    // [E2E_IMAGE_FAIL] must NEVER trigger when IMAGE_PROVIDER=openai
+    const openaiWithToken = await service.generateRaw({
+      tenantId: 'tenant_demo',
+      prompt: '[E2E_IMAGE_FAIL] 简约现代商业办公桌面实拍图',
+      ratio: '16:9',
+      count: 1,
+    });
+    expect(openaiWithToken.items).toHaveLength(1);
+    expect(openaiWithToken.fake).toBe(false);
+  });
+
+  it('throws ProviderError(UPSTREAM) on [E2E_IMAGE_FAIL] strictly in fake mode', async () => {
+    const storage = StorageService.fromEnv({ STORAGE_DRIVER: 'memory' });
+    const service = ImageService.fromEnv(
+      { IMAGE_PROVIDER: 'fake' },
+      { storage, compliance: new ComplianceService() },
+    );
+
+    await expect(
+      service.generateRaw({
+        tenantId: 'tenant_demo',
+        prompt: '[E2E_IMAGE_FAIL] 测试故障退点场景配图',
+        ratio: '16:9',
+        count: 1,
+      }),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.UPSTREAM,
+      reason: 'e2e_image_fail',
     });
   });
 });

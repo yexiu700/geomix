@@ -5,8 +5,15 @@ import {
   AUTH_ERROR,
   BRAND_FACT_TOP_K_CHUNKS,
   GEO_BRIEF_ID_PATTERN,
+  canonicalizeRewriteUrl,
+  classifyCitationSource,
   computeGeoBriefPriorityScore,
+  extractArticleFromHtml,
+  extractSourceHeadingsFromHtml,
+  extractSourceHeadingsFromText,
   normalizeFanOutQueries,
+  normalizePastedSource,
+  stripHtmlToText,
   targetFormatsForMarket,
   type BrandFactSlot,
   type CitationSourceKind,
@@ -16,6 +23,7 @@ import {
   type GeoBriefRecord,
   type GeoBriefUpdateInput,
   type GeoMarket,
+  type ParsedGeoBriefFromCitationUrlInput,
 } from '@geomix/shared';
 import { BrandFactIndexRunner } from '../brands/brand-fact-index.runner';
 import { BrandsService } from '../brands/brands.service';
@@ -24,7 +32,10 @@ import {
   FreeActionRateLimiter,
   readBriefGenerateRateLimit,
 } from '../common/free-action-rate-limiter';
+import { PublicFetchService } from '../infra/adapters.module';
 import { ComplianceService } from '../infra/compliance';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
+import { UrlPolicyError, assertPublicUrl, parseSsrfAllowlist } from '../infra/ssrf';
 import { PrismaService } from '../prisma/prisma.service';
 import { BriefsAutoGeneratorService } from './briefs-auto-generator.service';
 import {
@@ -88,6 +99,7 @@ export class BriefsService {
     @Inject(ComplianceService) private readonly compliance: ComplianceService,
     @Inject(FreeActionRateLimiter) private readonly rateLimiter: FreeActionRateLimiter,
     @Inject(BriefsAutoGeneratorService) private readonly synthesizer: BriefsAutoGeneratorService,
+    @Inject(PublicFetchService) private readonly publicFetch: PublicFetchService,
   ) {}
 
   async list(brandId: string, query: GeoBriefListQuery): Promise<GeoBriefListResponse> {
@@ -452,6 +464,371 @@ export class BriefsService {
         priorityScore,
         diagnosisSummary: draft.diagnosisSummary,
         recommendedRecipe: draft.recommendedRecipe,
+        targetFormat: draft.targetFormat,
+        suggestedTitle: draft.suggestedTitle,
+        outlineH2: draft.outlineH2 as unknown as Prisma.InputJsonValue,
+        targetFanOuts: draft.targetFanOuts,
+        competitorFocus: draft.competitorFocus,
+        matchedFactIds: draft.matchedFactIds,
+        missingFactHints: draft.missingFactHints,
+        recommendedChannels: draft.recommendedChannels as unknown as Prisma.InputJsonValue,
+        status: 'OPEN',
+      },
+      include: {
+        brandMarket: { select: { market: true } },
+      },
+    });
+
+    return presentBrief(created, market.market);
+  }
+
+  async fromCitationUrl(
+    tenantId: string,
+    userId: string,
+    brandId: string,
+    input: ParsedGeoBriefFromCitationUrlInput,
+    queryMarket?: GeoMarket,
+  ): Promise<GeoBriefRecord> {
+    if (queryMarket && input.market && queryMarket !== input.market) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '查询参数与请求体的 market 不一致');
+    }
+
+    const { brand, market } = await this.brands.resolveBrandMarket(
+      brandId,
+      input.market ?? queryMarket,
+    );
+
+    const rawCitationUrl = input.citationUrl ? assertHttpCitationUrl(input.citationUrl) : null;
+    if (rawCitationUrl) {
+      try {
+        const parsedPublicUrl = assertPublicUrl(rawCitationUrl, {
+          allowlist: parseSsrfAllowlist('', { includeDefaults: false }),
+        });
+        const host = parsedPublicUrl.hostname.trim().toLowerCase().replace(/\.$/, '');
+        if (!host.includes('.') && !host.includes(':')) {
+          throw new UrlPolicyError('internal_host');
+        }
+      } catch (error) {
+        if (error instanceof UrlPolicyError) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标地址不允许访问');
+        }
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '参考引用链接格式不正确');
+      }
+    }
+    const citationUrl = rawCitationUrl ? canonicalizeRewriteUrl(rawCitationUrl) : null;
+
+    const pastedContent = input.pastedContent?.trim() || null;
+    const pastedTitle = input.pastedTitle?.trim() || undefined;
+    const explicitPrompt = input.targetPrompt?.trim() || null;
+
+    const userTextForCompliance = [explicitPrompt ?? '', pastedTitle ?? '', pastedContent ?? '']
+      .filter(Boolean)
+      .join('\n');
+    if (userTextForCompliance) {
+      await this.compliance.assertAllowed({
+        text: userTextForCompliance,
+        action: 'geo_brief_counter',
+        market: market.market,
+        tenantId,
+        userId,
+      });
+    }
+
+    // 免费防刷限流（0 点扣费；放在归属校验、SSRF 语法校验与合规校验之后、远程抓取/LLM 之前）
+    this.rateLimiter.assertAllowed('geo_brief', tenantId, readBriefGenerateRateLimit());
+
+    let sourceTitle = '';
+    let sourceText = '';
+    let sourceHeadings: string[] = [];
+    const usedPastedFallback = Boolean(pastedContent);
+
+    if (pastedContent) {
+      const normalized = normalizePastedSource({
+        pastedTitle,
+        pastedContent,
+      });
+      if (normalized.charCount < 10) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '粘贴参考正文内容过短，请至少提供 20 字有效正文',
+        );
+      }
+      sourceTitle = normalized.title;
+      sourceText = normalized.contentText;
+      sourceHeadings = extractSourceHeadingsFromText(pastedContent);
+    } else if (citationUrl) {
+      let page: { url: string; body: string };
+      try {
+        page = await this.publicFetch.fetch(citationUrl);
+      } catch (error) {
+        if (error instanceof ProviderError) {
+          if (error.kind === PROVIDER_KIND.SSRF) {
+            throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标地址不允许访问');
+          }
+          if (error.kind === PROVIDER_KIND.NOT_PUBLIC && error.reason === 'login_wall') {
+            throw new ApiError(
+              422,
+              API_ERROR.UPSTREAM_UNAVAILABLE,
+              '目标网页需要登录或人机验证，无法直接抓取，请改用「粘贴参考正文」继续反制',
+            );
+          }
+          if (error.kind === PROVIDER_KIND.TIMEOUT) {
+            throw new ApiError(
+              422,
+              API_ERROR.UPSTREAM_UNAVAILABLE,
+              '目标网页访问超时，请改用「粘贴参考正文」继续反制',
+            );
+          }
+          if (error.kind === PROVIDER_KIND.ROBOTS) {
+            throw new ApiError(
+              422,
+              API_ERROR.UPSTREAM_UNAVAILABLE,
+              '目标站点 robots.txt 限制抓取，请改用「粘贴参考正文」继续反制',
+            );
+          }
+          throw new ApiError(
+            422,
+            API_ERROR.UPSTREAM_UNAVAILABLE,
+            '目标网页受反爬限制无法直接抓取，请改用「粘贴参考正文」继续反制',
+          );
+        }
+        throw new ApiError(
+          422,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '目标网页抓取失败，请改用「粘贴参考正文」继续反制',
+        );
+      }
+
+      const extracted = extractArticleFromHtml(page.body, page.url);
+      const fallbackPlain =
+        extracted.charCount < 20 ? stripHtmlToText(page.body).trim() : extracted.contentText;
+      const nonWhitespaceCount = Array.from(fallbackPlain.replace(/\s+/g, '')).length;
+      if (nonWhitespaceCount < 20) {
+        throw new ApiError(
+          422,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '目标网页正文过短或为动态渲染页，请改用「粘贴参考正文」继续反制',
+        );
+      }
+      sourceTitle = extracted.title;
+      sourceText = extracted.charCount >= 20 ? extracted.contentText : fallbackPlain.slice(0, 6000);
+      sourceHeadings = extractSourceHeadingsFromHtml(page.body);
+
+      await this.compliance.assertAllowed({
+        text: [sourceTitle, sourceText.slice(0, 4000)].filter(Boolean).join('\n'),
+        action: 'geo_brief_counter_source',
+        market: market.market,
+        tenantId,
+        userId,
+      });
+    } else {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请提供目标网页链接或粘贴参考正文');
+    }
+
+    let observations: BriefSignalObservation[] = [];
+    let extraCitations: BriefSignalCitation[] = [];
+
+    if (citationUrl) {
+      const candidateUrls = Array.from(
+        new Set([citationUrl, ...(rawCitationUrl ? [rawCitationUrl] : [])]),
+      );
+      const storedCitations = await this.prisma.scoped.visibilityCitation.findMany({
+        where: {
+          url: { in: candidateUrls },
+          observation: {
+            brandId: brand.id,
+            brandMarketId: market.id,
+          },
+        },
+        include: {
+          observation: true,
+        },
+        take: 10,
+      });
+
+      if (storedCitations.length > 0) {
+        extraCitations = storedCitations.map((c) => ({
+          url: c.url,
+          domain: c.domain,
+          title: c.title,
+          sourceKind: toCitationSourceKind(c.sourceKind),
+        }));
+        const obsMap = new Map<string, BriefSignalObservation>();
+        for (const item of storedCitations) {
+          const obs = item.observation;
+          if (!obsMap.has(obs.id)) {
+            obsMap.set(obs.id, {
+              id: obs.id,
+              runId: obs.runId,
+              promptText: obs.promptText,
+              engine: obs.engine,
+              answerText: obs.answerText,
+              brandMentioned: obs.brandMentioned,
+              brandPosition: obs.brandPosition,
+              brandSentiment: obs.brandSentiment,
+              competitorHits: obs.competitorHits,
+              fanOutQueries: obs.fanOutQueries,
+              citations: [],
+            });
+          }
+          obsMap.get(obs.id)!.citations.push({
+            url: item.url,
+            domain: item.domain,
+            title: item.title,
+            sourceKind: toCitationSourceKind(item.sourceKind),
+          });
+        }
+        observations = [...obsMap.values()];
+      } else {
+        let host = citationUrl;
+        try {
+          host = new URL(citationUrl).hostname;
+        } catch {
+          // keep fallback
+        }
+        const sourceKind = classifyCitationSource(host, {
+          ownedDomains: market.ownedDomains,
+          competitorDomains: market.competitors.flatMap((c) => c.domains),
+        });
+        extraCitations = [
+          {
+            url: citationUrl,
+            domain: host,
+            title: sourceTitle || explicitPrompt,
+            sourceKind: sourceKind === 'OTHER' ? 'COMPETITOR' : sourceKind,
+          },
+        ];
+      }
+    }
+
+    const allCitations =
+      observations.length > 0 ? observations.flatMap((o) => o.citations) : extraCitations;
+    const mergedFanOuts = normalizeFanOutQueries([
+      ...observations.flatMap((o) => o.fanOutQueries),
+      ...sourceHeadings.slice(0, 6),
+    ]).slice(0, 20);
+
+    const competitorCounts = new Map<string, number>();
+    let competitorEngineHits = 0;
+    for (const obs of observations) {
+      const hits = parseObservationCompetitorHits(obs.competitorHits);
+      if (hits.some((h) => h.mentioned)) competitorEngineHits += 1;
+      for (const hit of hits) {
+        if (hit.mentioned) {
+          competitorCounts.set(hit.name, (competitorCounts.get(hit.name) ?? 0) + 1);
+        }
+      }
+    }
+    const observedCompetitors = [...competitorCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name]) => name);
+    const marketCompetitors = market.competitors.map((c) => c.name);
+    const competitorFocus = dedupeTrimmed(
+      observedCompetitors.length > 0 ? observedCompetitors : marketCompetitors,
+      10,
+    );
+
+    const targetPrompt = deriveTargetPrompt({
+      customPrompt: explicitPrompt,
+      observations,
+      fanOutQueries: [],
+      citationUrl,
+      citationTitle: sourceTitle && sourceTitle !== '未命名源文章' ? sourceTitle : null,
+      localBrandName: market.localBrandName || brand.name,
+      category: brand.category,
+      market: market.market,
+    });
+
+    const sourceRunId = observations[0]?.runId ?? null;
+    const sourceObservationIds = Array.from(
+      new Set(observations.map((o) => o.id).filter(Boolean)),
+    ).slice(0, 50);
+
+    const ownedCitationCount = allCitations.filter((c) => c.sourceKind === 'OWNED').length;
+    const isCompetitorSource =
+      allCitations.some((c) => c.sourceKind === 'COMPETITOR') || Boolean(citationUrl);
+
+    const priorityScore = computeGeoBriefPriorityScore({
+      sourceType: 'CITATION_COUNTER',
+      competitorEngineHits,
+      competitorCount: competitorFocus.length,
+      citationCount: Math.max(1, allCitations.length),
+      ownedCitationCount,
+      isCompetitorSource,
+      fanOutCount: mergedFanOuts.length,
+    });
+
+    const [factSlotRows, retrievedFacts] = await Promise.all([
+      this.prisma.scoped.brandFact.findMany({
+        where: { brandId: brand.id },
+        select: { slot: true, content: true },
+      }),
+      this.factIndexRunner.retrieveRelevantBrandFacts(
+        tenantId,
+        brand.id,
+        [
+          cleanPromptForDisplay(targetPrompt),
+          sourceTitle,
+          ...sourceHeadings.slice(0, 4),
+          ...competitorFocus.slice(0, 3),
+        ]
+          .filter(Boolean)
+          .join(' '),
+        BRAND_FACT_TOP_K_CHUNKS,
+      ),
+    ]);
+
+    const presentFactSlots = new Set<BrandFactSlot>(
+      factSlotRows
+        .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
+        .map((row) => toBrandFactSlot(row.slot)),
+    );
+    const matchedFacts: BriefMatchedFact[] = retrievedFacts.map((item) => ({
+      factId: item.factId,
+      slot: item.slot,
+      title: item.title,
+      content: item.content,
+    }));
+
+    const synthCtx: BriefSynthesisContext = {
+      market: market.market,
+      brandName: brand.name,
+      localBrandName: market.localBrandName || brand.name,
+      category: brand.category,
+      sourceType: 'CITATION_COUNTER',
+      priorityScore,
+      targetPrompt,
+      sourceRunId,
+      sourceObservationIds,
+      sourceCitationUrl: citationUrl,
+      sourceCitationTitle: sourceTitle || null,
+      sourceArticleHeadings: sourceHeadings,
+      sourceArticleExcerpt: sourceText.slice(0, 4000),
+      usedPastedFallback,
+      competitorFocus,
+      targetFanOuts: mergedFanOuts,
+      observations,
+      citations: allCitations,
+      matchedFacts,
+      presentFactSlots,
+    };
+
+    const draft = await this.synthesizer.synthesizeSingleBrief(tenantId, synthCtx);
+
+    const created = await this.prisma.scoped.geoBrief.create({
+      data: {
+        tenantId,
+        brandId: brand.id,
+        brandMarketId: market.id,
+        sourceType: 'CITATION_COUNTER',
+        sourceRunId,
+        sourceObservationIds,
+        sourceCitationUrl: citationUrl,
+        targetPrompt,
+        priorityScore,
+        diagnosisSummary: draft.diagnosisSummary,
+        recommendedRecipe: 'CITATION_COUNTER',
         targetFormat: draft.targetFormat,
         suggestedTitle: draft.suggestedTitle,
         outlineH2: draft.outlineH2 as unknown as Prisma.InputJsonValue,

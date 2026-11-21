@@ -14,7 +14,9 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Popover, Segmented } from 'antd';
 import type { JSX, ReactNode, SyntheticEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { resolveMediaUrl } from '../../lib/brands';
+import { rewritePreviewRelativeMediaUrls } from '../../lib/studio';
 import { SignalEmpty } from '../geo/primitives';
 
 export type StudioEditorCanvasProps = {
@@ -38,6 +40,7 @@ export type StudioEditorCanvasProps = {
     action: GeoRewriteAction,
   ) => Promise<{ rewrittenText: string } | null>;
   onApplyRewrittenText: (original: string, rewritten: string) => Promise<void>;
+  onCursorChange?: (offset: number | null) => void;
   readOnly: boolean;
   mediaToolbarSlot?: ReactNode;
 };
@@ -58,6 +61,7 @@ export function StudioEditorCanvas({
   onBackfillMissingFact,
   onRewriteSection,
   onApplyRewrittenText,
+  onCursorChange,
   readOnly,
   mediaToolbarSlot,
 }: StudioEditorCanvasProps): JSX.Element {
@@ -78,13 +82,20 @@ export function StudioEditorCanvas({
 
   const effectiveMarkdown = streaming ? streamMarkdown : draftMarkdown;
   const renderedHtml = useMemo(
-    () => markdownToSanitizedHtml(effectiveMarkdown),
+    () =>
+      rewritePreviewRelativeMediaUrls(markdownToSanitizedHtml(effectiveMarkdown), resolveMediaUrl),
     [effectiveMarkdown],
   );
   const missingSlots = useMemo(
     () => (streaming ? [] : extractMissingFactSlots(draftMarkdown)),
     [draftMarkdown, streaming],
   );
+
+  useEffect(() => {
+    if (viewMode === 'preview') {
+      onCursorChange?.(null);
+    }
+  }, [viewMode, article?.id, onCursorChange]);
 
   const paragraphs = useMemo(
     () =>
@@ -95,8 +106,14 @@ export function StudioEditorCanvas({
     [draftMarkdown],
   );
 
+  const reportCursorOffset = (target: HTMLTextAreaElement) => {
+    const start = target.selectionStart;
+    onCursorChange?.(typeof start === 'number' ? start : null);
+  };
+
   const handleTextareaSelect = (e: SyntheticEvent<HTMLTextAreaElement>) => {
     const target = e.currentTarget;
+    reportCursorOffset(target);
     const start = target.selectionStart ?? 0;
     const end = target.selectionEnd ?? 0;
     if (end > start) {
@@ -137,6 +154,8 @@ export function StudioEditorCanvas({
       });
       setOpenSlotKey(null);
       setSlotInputValue('');
+    } catch {
+      // Parent notifies user; keep popover open for retry without unhandled rejection
     } finally {
       setSlotSubmitting(false);
     }
@@ -373,8 +392,13 @@ export function StudioEditorCanvas({
             aria-label="文章 Markdown 正文"
             rows={18}
             value={draftMarkdown}
-            onChange={(e) => onDraftMarkdownChange(e.target.value)}
+            onChange={(e) => {
+              onDraftMarkdownChange(e.target.value);
+              reportCursorOffset(e.currentTarget);
+            }}
             onSelect={handleTextareaSelect}
+            onClick={(e) => reportCursorOffset(e.currentTarget)}
+            onKeyUp={(e) => reportCursorOffset(e.currentTarget)}
             disabled={readOnly}
             style={{ fontFamily: 'var(--gm-font-mono)', fontSize: 13 }}
           />
@@ -384,8 +408,13 @@ export function StudioEditorCanvas({
               aria-label="文章 Markdown 正文"
               rows={18}
               value={draftMarkdown}
-              onChange={(e) => onDraftMarkdownChange(e.target.value)}
+              onChange={(e) => {
+                onDraftMarkdownChange(e.target.value);
+                reportCursorOffset(e.currentTarget);
+              }}
               onSelect={handleTextareaSelect}
+              onClick={(e) => reportCursorOffset(e.currentTarget)}
+              onKeyUp={(e) => reportCursorOffset(e.currentTarget)}
               disabled={readOnly}
               style={{ fontFamily: 'var(--gm-font-mono)', fontSize: 13 }}
             />

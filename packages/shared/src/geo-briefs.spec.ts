@@ -11,6 +11,8 @@ import {
   computeRewriteUrlHash,
   defaultRecipeForBriefSource,
   extractArticleFromHtml,
+  extractSourceHeadingsFromHtml,
+  extractSourceHeadingsFromText,
   geoBriefFromCitationUrlSchema,
   geoBriefGenerateSchema,
   geoBriefListQuerySchema,
@@ -55,7 +57,27 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
         citationUrl: 'https://example.com/nas-review',
       }).success,
     ).toBe(true);
+    expect(
+      geoBriefFromCitationUrlSchema.safeParse({
+        citationUrl: 'http://example.com/nas-review',
+      }).success,
+    ).toBe(true);
     expect(geoBriefFromCitationUrlSchema.safeParse({ market: 'GLOBAL' }).success).toBe(false);
+    for (const badUrl of [
+      '',
+      '   ',
+      'not-a-url',
+      'ftp://example.com/a',
+      'javascript:alert(1)',
+      'file:///etc/passwd',
+    ]) {
+      expect(
+        geoBriefFromCitationUrlSchema.safeParse({
+          market: 'CN',
+          citationUrl: badUrl,
+        }).success,
+      ).toBe(false);
+    }
 
     expect(
       geoBriefUpdateSchema.safeParse({
@@ -259,6 +281,11 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
     expect(pasted.title).toBe('手工参考');
     expect(pasted.contentText).toContain('正文第一段');
 
+    const pastedFromHeading = normalizePastedSource({
+      pastedContent: '# 2026 四盘位家用 NAS 横向实测\n## 硬件规格对比\n满载噪音与功耗详细记录。',
+    });
+    expect(pastedFromHeading.title).toBe('2026 四盘位家用 NAS 横向实测');
+
     const same = computeChar5GramJaccard(
       '这是一段测试重复度的中文示例文本',
       '这是一段测试重复度的中文示例文本',
@@ -269,5 +296,20 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
     );
     expect(same).toBe(1);
     expect(diff).toBeLessThan(0.2);
+
+    const htmlHeadings = extractSourceHeadingsFromHtml(
+      '<html><body><nav><h2>导航</h2></nav><article><h2>硬件规格与接口</h2><h2>满载噪音实测</h2><h2>硬件规格与接口</h2><h3>补充</h3></article></body></html>',
+    );
+    expect(htmlHeadings).toEqual(['硬件规格与接口', '满载噪音实测']);
+
+    const mdHeadings = extractSourceHeadingsFromText(
+      '## 硬件对比\n内容\n### 噪音与功耗实测\n## 硬件对比\n',
+    );
+    expect(mdHeadings).toEqual(['硬件对比', '噪音与功耗实测']);
+
+    const numberedHeadings = extractSourceHeadingsFromText(
+      '一、硬件架构与扩展性\n正文内容\n二、家庭影音与离线相册\n正文内容',
+    );
+    expect(numberedHeadings).toEqual(['硬件架构与扩展性', '家庭影音与离线相册']);
   });
 });

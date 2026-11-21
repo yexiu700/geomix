@@ -137,6 +137,7 @@ describe('geo-delivery pure evaluator, JSON-LD, and llms.txt builders', () => {
       '<img src="vbscript:msgbox(1)" alt="vbs" />',
       '<img src="&#106;avascript:alert(1)" alt="ent" />',
       '<img src="//evil.com/payload.svg" alt="proto-rel" />',
+      '<img src="/\\evil.com/backslash.svg" alt="proto-bs" />',
       '<img src="javascript:alert(1)" alt="js" />',
       '<img src="https://cdn.example.com/product.png" alt="Product" />',
       '<img src="/uploads/brand/hero.webp" alt="Hero" />',
@@ -148,6 +149,7 @@ describe('geo-delivery pure evaluator, JSON-LD, and llms.txt builders', () => {
     expect(contentHtml).not.toContain('vbscript:');
     expect(contentHtml).not.toContain('avascript:');
     expect(contentHtml).not.toContain('//evil.com');
+    expect(contentHtml).not.toContain('/\\evil.com');
     expect(contentHtml).toContain('<img src="https://cdn.example.com/product.png" alt="Product"');
     expect(contentHtml).toContain('<img src="/uploads/brand/hero.webp" alt="Hero"');
   });

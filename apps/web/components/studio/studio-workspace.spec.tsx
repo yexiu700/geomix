@@ -1,16 +1,19 @@
 // @vitest-environment jsdom
-import type {
-  BrandFactRecord,
-  BrandRecord,
-  GeoArticleRecord,
-  GeoBatchJobRecord,
-  GeoBriefRecord,
-  PromptPreferenceRecord,
+import {
+  API_ERROR,
+  type BrandFactRecord,
+  type BrandMediaAssetRecord,
+  type BrandRecord,
+  type GeoArticleRecord,
+  type GeoBatchJobRecord,
+  type GeoBriefRecord,
+  type PromptPreferenceRecord,
 } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
+import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
@@ -257,6 +260,35 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       customForbiddenWords: ['神级方案', '颠覆行业'],
       recipeOverrides: null,
       updatedAt: '2026-11-20T00:00:00.000Z',
+    });
+    vi.spyOn(brandsApi, 'listBrandMedia').mockResolvedValue({
+      items: [
+        {
+          id: 'media_photo_1',
+          brandId: 'brand_studio_1',
+          origin: 'PRODUCT_UPLOAD',
+          title: 'DXP4800 静音风道实拍图',
+          objectKey: 'tenants/t1/brand-media-media_photo_1.jpg',
+          thumbKey: 'tenants/t1/brand-media-media_photo_1-thumb.jpg',
+          url: '/api/v2/brands/brand_studio_1/media/media_photo_1/file?tid=t1&exp=9999999999&sig=abc',
+          thumbUrl:
+            '/api/v2/brands/brand_studio_1/media/media_photo_1/thumb?tid=t1&exp=9999999999&sig=def',
+          mime: 'image/jpeg',
+          bytes: 42_000,
+          width: 1200,
+          height: 800,
+          aiPrompt: null,
+          aiModel: null,
+          usedCount: 0,
+          createdAt: '2026-11-20T00:00:00.000Z',
+        },
+      ],
+      storage: {
+        used: '42000',
+        limit: '104857600',
+        usedText: '41 KB',
+        limitText: '100 MB',
+      },
     });
   });
 
@@ -769,6 +801,431 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     await waitFor(() => {
       expect(callOrder).toEqual(['saveBrandFacts', 'updateArticle']);
+    });
+  });
+
+  it('supports Left Pane Competitor URL Counter modal with automatic 422/42201 pasted-content fallback (M4-B #332)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    const counterBrief: GeoBriefRecord = {
+      ...BRIEF_1,
+      id: 'brief_counter_1',
+      sourceType: 'CITATION_COUNTER',
+      recommendedRecipe: 'CITATION_COUNTER',
+      sourceCitationUrl: 'http://public.e2e.example/anti-scrape/403',
+      targetPrompt: '四盘位静音 NAS 噪音功耗实测反制',
+      suggestedTitle: '2026 四盘位家用 NAS 实测超越稿：星辰存储 DXP4800',
+      outlineH2: [
+        { heading: '硬件规格与双 2.5GbE 实测升级', intent: '超越竞品参数' },
+        { heading: '18.5dB 满载噪音与功耗横向对比表', intent: '提供对比表格' },
+      ],
+    };
+
+    let createdCounter = false;
+    vi.spyOn(briefsApi, 'fetchBriefs').mockImplementation(async () => ({
+      items: createdCounter ? [counterBrief, BRIEF_1, BRIEF_2] : [BRIEF_1, BRIEF_2],
+      total: createdCounter ? 3 : 2,
+    }));
+
+    const counterSpy = vi
+      .spyOn(briefsApi, 'createBriefFromCitationUrl')
+      .mockRejectedValueOnce(
+        new GatewayApiError(
+          422,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '目标网页受反爬限制无法直接抓取，请改用「粘贴参考正文」继续反制',
+        ),
+      )
+      .mockImplementationOnce(async () => {
+        createdCounter = true;
+        return counterBrief;
+      });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('studio-counter-url-btn'));
+    const urlInput = await screen.findByTestId('counter-url-input');
+    fireEvent.change(urlInput, { target: { value: 'http://public.e2e.example/anti-scrape/403' } });
+    fireEvent.click(screen.getByTestId('counter-submit-btn'));
+
+    // 422/42201 automatically reveals 粘贴参考正文 fallback block
+    const fallbackBox = await screen.findByTestId('counter-pasted-fallback');
+    expect(fallbackBox.textContent).toContain('粘贴参考正文');
+
+    const pasteArea = screen.getByTestId('counter-pasted-content');
+    fireEvent.change(pasteArea, {
+      target: {
+        value:
+          '## 硬件参数对比\n主流竞品噪音 32dB、待机功耗 24W，缺少双 2.5GbE 网口与离线相册。\n## 选购结论\n建议关注低噪音与低功耗四盘位机型。',
+      },
+    });
+    fireEvent.click(screen.getByTestId('counter-submit-btn'));
+
+    await waitFor(() => {
+      expect(counterSpy).toHaveBeenCalledTimes(2);
+      expect(counterSpy).toHaveBeenLastCalledWith(
+        'brand_studio_1',
+        expect.objectContaining({
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/anti-scrape/403',
+          pastedContent: expect.stringContaining('硬件参数对比'),
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect((screen.getByLabelText('目标问题') as HTMLTextAreaElement).value).toBe(
+        '四盘位静音 NAS 噪音功耗实测反制',
+      );
+    });
+    expect(screen.getByTestId('studio-brief-item-brief_counter_1')).toBeTruthy();
+  });
+
+  it('supports Inline Media Popover Tab 1 free product photo insert and Tab 2 5-pt AI image gen & error handling (M4-B #332)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    const refreshWallet = vi.fn(async () => undefined);
+    const updateSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      .mockImplementation(async (_id, patch) => ({
+        ...SAMPLE_ARTICLE,
+        contentMarkdown: patch.contentMarkdown ?? SAMPLE_ARTICLE.contentMarkdown,
+      }));
+
+    const aiAsset: BrandMediaAssetRecord = {
+      id: 'media_ai_1',
+      brandId: 'brand_studio_1',
+      origin: 'AI_INLINE_GEN',
+      title: '四盘位 NAS 风道散热示意图',
+      objectKey: 'tenants/t1/brand-media-media_ai_1.jpg',
+      thumbKey: 'tenants/t1/brand-media-media_ai_1-thumb.jpg',
+      url: '/api/v2/brands/brand_studio_1/media/media_ai_1/file?tid=t1&exp=9999999999&sig=ai1',
+      thumbUrl:
+        '/api/v2/brands/brand_studio_1/media/media_ai_1/thumb?tid=t1&exp=9999999999&sig=ai2',
+      mime: 'image/jpeg',
+      bytes: 51_200,
+      width: 1280,
+      height: 720,
+      aiPrompt: '极简桌面四盘位家用NAS静音散热风道原理示意图',
+      aiModel: 'fake-image',
+      usedCount: 0,
+      createdAt: '2026-11-20T03:00:00.000Z',
+    };
+    const aiGenSpy = vi
+      .spyOn(brandsApi, 'generateBrandAiImage')
+      .mockRejectedValueOnce(new GatewayApiError(402, API_ERROR.INSUFFICIENT_POINTS, '点数不足'))
+      .mockResolvedValueOnce(aiAsset);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ refreshWallet })}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Select an article so Insert Media button is enabled
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    expect(screen.queryByTestId('studio-media-popover')).toBeNull();
+
+    // Tab 1: Free real product photo insert
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    const popover = await screen.findByTestId('studio-media-popover');
+    expect(popover.textContent).toContain('从品牌实拍图插入');
+    fireEvent.click(await screen.findByTestId('studio-media-item-media_photo_1'));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledWith(
+        'art_st_1',
+        expect.objectContaining({
+          contentMarkdown: expect.stringContaining(
+            '![DXP4800 静音风道实拍图](/api/v2/brands/brand_studio_1/media/media_photo_1/file?tid=t1&exp=9999999999&sig=abc)',
+          ),
+          usedMediaIds: ['media_photo_1'],
+        }),
+      );
+    });
+    // Preview rewrites relative /api/v2/... img src to full API origin
+    const previewImg = screen.getByTestId('studio-preview-body').querySelector('img');
+    expect(previewImg?.getAttribute('src')).toMatch(
+      /^https?:\/\/.*\/api\/v2\/brands\/brand_studio_1\/media\/media_photo_1\/file/,
+    );
+
+    // Tab 2: 5-pt AI image gen error (402) keeps popover open & refreshes wallet, then retry succeeds
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    await screen.findByTestId('studio-media-popover');
+    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+
+    const promptInput = await screen.findByTestId('studio-ai-image-prompt');
+    fireEvent.change(promptInput, {
+      target: { value: '极简桌面四盘位家用NAS静音散热风道原理示意图' },
+    });
+    fireEvent.click(screen.getByTestId('studio-ai-image-gen-btn'));
+
+    expect(await screen.findByTestId('studio-ai-image-error')).toBeTruthy();
+    expect(refreshWallet).toHaveBeenCalled();
+    expect(screen.getByTestId('studio-media-popover')).toBeTruthy();
+
+    // Retry succeeds -> inserts AI image and persists usedMediaIds: ['media_ai_1']
+    fireEvent.click(screen.getByTestId('studio-ai-image-gen-btn'));
+    await waitFor(() => {
+      expect(aiGenSpy).toHaveBeenCalledTimes(2);
+      expect(aiGenSpy).toHaveBeenLastCalledWith(
+        'brand_studio_1',
+        expect.objectContaining({
+          prompt: '极简桌面四盘位家用NAS静音散热风道原理示意图',
+          ratio: '16:9',
+        }),
+        expect.stringMatching(/^geo_img_/),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(updateSpy).toHaveBeenLastCalledWith(
+        'art_st_1',
+        expect.objectContaining({
+          contentMarkdown: expect.stringContaining(
+            '/api/v2/brands/brand_studio_1/media/media_ai_1/file',
+          ),
+          usedMediaIds: ['media_ai_1'],
+        }),
+      );
+    });
+  });
+
+  it('catches backfill errors cleanly in StudioEditorCanvas.handleConfirmSlot without unhandled rejection', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(brandsApi, 'saveBrandFacts').mockRejectedValueOnce(new Error('网络暂时不可用'));
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      render(
+        <ConsoleProvider value={makeConsoleContext()}>
+          <StudioWorkspace />
+        </ConsoleProvider>,
+      );
+
+      fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+      fireEvent.click(await screen.findByTestId('missing-fact-pill'));
+      const input = await screen.findByPlaceholderText('输入真实实测数值或参数');
+      fireEvent.change(input, { target: { value: '12.5W' } });
+      fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
+
+      await waitFor(() => {
+        expect(mockNotifyError).toHaveBeenCalledWith('网络暂时不可用');
+      });
+      // Popover remains open for retry and zero unhandled rejections occurred
+      expect(screen.getByPlaceholderText('输入真实实测数值或参数')).toBeTruthy();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('closes StudioMediaPopover and aborts in-flight AI image gen on same-brand market switch and when clicking studio-free-topic-btn (M4-B iter2)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    let capturedAiSignal: AbortSignal | undefined;
+    vi.spyOn(brandsApi, 'generateBrandAiImage').mockImplementation(
+      async (_brandId, _input, _idemKey, opts) => {
+        capturedAiSignal = opts?.signal;
+        return new Promise<BrandMediaAssetRecord>((_resolve, reject) => {
+          opts?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      },
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // 1. Open popover on an active article, click + 自由选题 (!hasArticle) -> popover closes immediately
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    expect(await screen.findByTestId('studio-media-popover')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('studio-free-topic-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('studio-media-popover')).toBeNull();
+    });
+
+    // 2. Re-select article, start AI image generation, then switch market CN -> GLOBAL on SAME brand
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    await screen.findByTestId('studio-media-popover');
+    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+
+    fireEvent.change(await screen.findByTestId('studio-ai-image-prompt'), {
+      target: { value: '四盘位 NAS 散热风道结构示意图' },
+    });
+    fireEvent.click(screen.getByTestId('studio-ai-image-gen-btn'));
+
+    await waitFor(() => {
+      expect(capturedAiSignal).toBeDefined();
+      expect(capturedAiSignal?.aborted).toBe(false);
+    });
+
+    act(() => {
+      useWorkspaceStore.setState({ activeMarket: 'GLOBAL', contextEpoch: 2 });
+    });
+
+    await waitFor(() => {
+      expect(capturedAiSignal?.aborted).toBe(true);
+      expect(screen.queryByTestId('studio-media-popover')).toBeNull();
+    });
+  });
+
+  it('prevents same-tick rapid double-click duplicate mutations in StudioMediaPopover Tab 1/Tab 2 and CitationCounterModal (M4-B iter2)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    let resolveUpdate!: (val: GeoArticleRecord) => void;
+    const updateSpy = vi.spyOn(studioApi, 'updateArticle').mockImplementation(
+      () =>
+        new Promise<GeoArticleRecord>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    let resolveAiGen!: (val: BrandMediaAssetRecord) => void;
+    const aiGenSpy = vi.spyOn(brandsApi, 'generateBrandAiImage').mockImplementation(
+      () =>
+        new Promise<BrandMediaAssetRecord>((resolve) => {
+          resolveAiGen = resolve;
+        }),
+    );
+
+    let resolveCounter!: (val: GeoBriefRecord) => void;
+    const counterSpy = vi.spyOn(briefsApi, 'createBriefFromCitationUrl').mockImplementation(
+      () =>
+        new Promise<GeoBriefRecord>((resolve) => {
+          resolveCounter = resolve;
+        }),
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Select article & open popover
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    const photoItem = await screen.findByTestId('studio-media-item-media_photo_1');
+
+    // 1. Same-tick rapid double-click on Tab 1 photo item -> strictly 1 updateArticle call
+    act(() => {
+      photoItem.click();
+      photoItem.click();
+    });
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveUpdate({
+        ...SAMPLE_ARTICLE,
+        contentMarkdown: `${SAMPLE_ARTICLE.contentMarkdown}\n\n![DXP4800 静音风道实拍图](/api/v2/brands/brand_studio_1/media/media_photo_1/file?tid=t1&exp=9999999999&sig=abc)`,
+      });
+    });
+
+    // 2. Same-tick rapid double-click on Tab 2 AI Generate -> strictly 1 generateBrandAiImage call
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    await screen.findByTestId('studio-media-popover');
+    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+    fireEvent.change(await screen.findByTestId('studio-ai-image-prompt'), {
+      target: { value: '极简四盘位家用NAS内部风道示意' },
+    });
+    const genBtn = screen.getByTestId('studio-ai-image-gen-btn');
+    act(() => {
+      genBtn.click();
+      genBtn.click();
+    });
+    expect(aiGenSpy).toHaveBeenCalledTimes(1);
+
+    // Finish AI gen cleanly
+    updateSpy.mockResolvedValueOnce(SAMPLE_ARTICLE);
+    await act(async () => {
+      resolveAiGen({
+        id: 'media_ai_guard_1',
+        brandId: 'brand_studio_1',
+        origin: 'AI_INLINE_GEN',
+        title: 'AI 风道示意',
+        objectKey: 'tenants/t1/brand-media-media_ai_guard_1.jpg',
+        thumbKey: 'tenants/t1/brand-media-media_ai_guard_1-thumb.jpg',
+        url: '/api/v2/brands/brand_studio_1/media/media_ai_guard_1/file?tid=t1&exp=9999999999&sig=ai',
+        thumbUrl:
+          '/api/v2/brands/brand_studio_1/media/media_ai_guard_1/thumb?tid=t1&exp=9999999999&sig=ait',
+        mime: 'image/jpeg',
+        bytes: 30_000,
+        width: 1280,
+        height: 720,
+        aiPrompt: '极简四盘位家用NAS内部风道示意',
+        aiModel: 'fake-image',
+        usedCount: 0,
+        createdAt: '2026-11-20T03:00:00.000Z',
+      });
+    });
+
+    // 3. Same-tick rapid double-click on CitationCounterModal submit -> strictly 1 createBriefFromCitationUrl call
+    fireEvent.click(screen.getByTestId('studio-counter-url-btn'));
+    fireEvent.change(await screen.findByTestId('counter-url-input'), {
+      target: { value: 'https://competitor.example/nas-review' },
+    });
+    const submitBtn = screen.getByTestId('counter-submit-btn');
+    act(() => {
+      submitBtn.click();
+      submitBtn.click();
+    });
+    expect(counterSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCounter({
+        ...BRIEF_1,
+        id: 'brief_counter_guard_1',
+        sourceType: 'CITATION_COUNTER',
+        recommendedRecipe: 'CITATION_COUNTER',
+        sourceCitationUrl: 'https://competitor.example/nas-review',
+      });
     });
   });
 });

@@ -781,8 +781,14 @@ export function normalizePastedSource(input: {
         .trim()
         .slice(0, 120)
     : '';
+  const firstLineTitle =
+    lines[0]
+      ?.replace(/^#+\s*/, '')
+      .replace(/\s*#+$/, '')
+      .trim() ?? '';
   const derivedTitle =
-    explicitTitle || (lines[0] && lines[0].length <= 60 ? lines[0] : '粘贴原文素材');
+    explicitTitle ||
+    (firstLineTitle && firstLineTitle.length <= 60 ? firstLineTitle : '粘贴原文素材');
   const truncatedResult = truncateSourceText(plain, REWRITE_MAX_SOURCE_CHARS);
 
   return {
@@ -792,6 +798,80 @@ export function normalizePastedSource(input: {
     charCount: truncatedResult.charCount,
     truncated: truncatedResult.truncated,
   };
+}
+
+function pushUniqueHeading(target: string[], seen: Set<string>, raw: string, maxHeadings: number) {
+  if (target.length >= maxHeadings) return;
+  const cleaned = decodeHtmlEntities(raw.replace(/<[^>]+>/g, ' '))
+    .replace(/[*_`~]+/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/#+$/g, '')
+    .trim()
+    .slice(0, 120);
+  if (cleaned.length < 2) return;
+  const key = cleaned.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  target.push(cleaned);
+}
+
+/**
+ * 从竞品高引用网页 HTML 中提取 H2/H3 议题骨架（纯字符串解析，零第三方依赖）。
+ */
+export function extractSourceHeadingsFromHtml(rawHtml: string, maxHeadings = 8): string[] {
+  const limit = Math.max(1, Math.min(20, Math.floor(maxHeadings)));
+  const stripped = removeNoiseBlocks(stripMediaAndNoiseElements(rawHtml));
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const h2Re = /<h2\b[^>]*>([\s\S]*?)<\/h2>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = h2Re.exec(stripped)) !== null && out.length < limit) {
+    pushUniqueHeading(out, seen, match[1] ?? '', limit);
+  }
+
+  if (out.length < 2) {
+    const h3Re = /<h3\b[^>]*>([\s\S]*?)<\/h3>/gi;
+    while ((match = h3Re.exec(stripped)) !== null && out.length < limit) {
+      pushUniqueHeading(out, seen, match[1] ?? '', limit);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * 从粘贴的参考正文（Markdown 或纯文本编号章节）中提取议题骨架。
+ */
+export function extractSourceHeadingsFromText(rawText: string, maxHeadings = 8): string[] {
+  const limit = Math.max(1, Math.min(20, Math.floor(maxHeadings)));
+  const lines = rawText.replace(/\r\n?/g, '\n').split('\n');
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    if (out.length >= limit) break;
+    const trimmed = line.trim();
+    const mdHeading = /^#{2,3}\s+(.+)$/.exec(trimmed);
+    if (mdHeading) {
+      pushUniqueHeading(out, seen, mdHeading[1] ?? '', limit);
+    }
+  }
+
+  if (out.length < 2) {
+    for (const line of lines) {
+      if (out.length >= limit) break;
+      const trimmed = line.trim();
+      const numbered = /^(?:[一二三四五六七八九十]+[、.．]|\d{1,2}[.、)）])\s*([^\n]{2,60})$/.exec(
+        trimmed,
+      );
+      if (numbered) {
+        pushUniqueHeading(out, seen, numbered[1] ?? '', limit);
+      }
+    }
+  }
+
+  return out;
 }
 
 export function computeChar5GramJaccard(sourceText: string, candidateText: string): number {
@@ -1137,12 +1217,27 @@ export const geoBriefGenerateSchema = z.object({
 
 export type GeoBriefGenerateInput = z.infer<typeof geoBriefGenerateSchema>;
 
+function isHttpOrHttpsUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export const geoBriefFromCitationUrlSchema = z
   .object({
-    market: z.enum(GEO_MARKETS),
-    citationUrl: z.string().trim().url('请输入有效的高引用网页链接').max(2048).optional(),
+    market: z.enum(GEO_MARKETS).optional(),
+    citationUrl: z
+      .string()
+      .trim()
+      .min(1, '请输入有效的高引用网页链接')
+      .max(2048, '网页链接过长')
+      .refine(isHttpOrHttpsUrl, '仅支持以 http:// 或 https:// 开头的公开网页链接')
+      .optional(),
     pastedTitle: z.string().trim().max(120).optional(),
-    pastedContent: z.string().trim().min(20).max(50_000).optional(),
+    pastedContent: z.string().trim().min(20, '参考正文至少 20 字').max(50_000).optional(),
     targetPrompt: z.string().trim().min(2).max(300).optional(),
   })
   .refine(
@@ -1150,7 +1245,8 @@ export const geoBriefFromCitationUrlSchema = z
     '请提供目标网页链接或粘贴参考正文',
   );
 
-export type GeoBriefFromCitationUrlInput = z.infer<typeof geoBriefFromCitationUrlSchema>;
+export type GeoBriefFromCitationUrlInput = z.input<typeof geoBriefFromCitationUrlSchema>;
+export type ParsedGeoBriefFromCitationUrlInput = z.output<typeof geoBriefFromCitationUrlSchema>;
 
 export const geoBriefUpdateSchema = z
   .object({

@@ -316,8 +316,10 @@ function escapeHtml(text: string): string {
 
 function isSafeMarkdownUrl(raw: string): boolean {
   const trimmed = raw.trim();
-  if (!trimmed || /[\u0000-\u001f\s"'<>]/.test(trimmed)) return false;
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
+  if (!trimmed || /[\u0000-\u001f\u007f\s"'<>]/.test(trimmed)) return false;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\')) {
+    return true;
+  }
   if (/^https?:\/\//i.test(trimmed)) return true;
   return false;
 }

@@ -15,6 +15,9 @@ import { signToken } from '../auth/token';
 import { BrandFactIndexRunner } from '../brands/brand-fact-index.runner';
 import { createApiApp } from '../common/create-api-app';
 import { FreeActionRateLimiter } from '../common/free-action-rate-limiter';
+import { PublicFetchService } from '../infra/adapters.module';
+import { LlmService } from '../infra/llm';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueRuntime } from '../queue/queue.runtime';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -893,5 +896,220 @@ describe('Briefs HTTP API & ApiModule/WorkerModule DI boot checks', () => {
     expect(limited.status).toBe(429);
     expect(limited.body.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
     expect(Number(limited.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+  });
+
+  it('supports POST /briefs/from-citation-url with CN/GLOBAL fetch, 422/42201 anti-scrape fallback, pastedContent, SSRF/malformed 400, 403/404/429, and #321 STRICT guard', async () => {
+    const publicFetch = app.get(PublicFetchService);
+    const fetchSpy = vi.spyOn(publicFetch, 'fetch');
+
+    const cnReviewHtml = `<!doctype html><html lang="zh-CN"><head><title>2026 四盘位家用 NAS 深度对比评测</title></head><body><article><h1>2026 四盘位家用 NAS 深度对比评测</h1><h2>硬件规格与双网口对比</h2><p>主流机型在满载噪音与待机功耗上表现差异明显，需要结合 72 小时实测数据判断。</p><h2>Docker 容器与离线相册体验</h2><p>离线本地 AI 相册检索速度与隐私安全成为家庭用户关注重点。</p></article></body></html>`;
+    const globalReviewHtml = `<!doctype html><html lang="en"><head><title>2026 4-Bay Home NAS Benchmark Roundup</title></head><body><article><h1>2026 4-Bay Home NAS Benchmark Roundup</h1><h2>Hardware Architecture and 10GbE Throughput</h2><p>Measured sustained transfer speeds, thermal acoustics, and standby wattage across top four-bay NAS enclosures in real home labs.</p><h2>Local AI Photo Indexing and Docker Reliability</h2><p>Hands-on testing compares local inference speed, snapshot automation, and power draw under heavy load.</p></article></body></html>`;
+
+    fetchSpy.mockImplementation(async (url: string) => {
+      if (url.includes('/competitor/nas-review')) {
+        return {
+          url,
+          status: 200,
+          contentType: 'text/html',
+          body: cnReviewHtml,
+          bytes: Buffer.byteLength(cnReviewHtml),
+        };
+      }
+      if (url.includes('/competitor/global-nas')) {
+        return {
+          url,
+          status: 200,
+          contentType: 'text/html',
+          body: globalReviewHtml,
+          bytes: Buffer.byteLength(globalReviewHtml),
+        };
+      }
+      if (url.includes('/anti-scrape/403')) {
+        throw new ProviderError(PROVIDER_KIND.NOT_PUBLIC, '无法公开访问', 'status_403');
+      }
+      if (url.includes('/anti-scrape/login-wall')) {
+        throw new ProviderError(PROVIDER_KIND.NOT_PUBLIC, '无法公开访问', 'login_wall');
+      }
+      if (url.includes('/anti-scrape/slow-timeout')) {
+        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '访问超时', 'timeout');
+      }
+      if (url.includes('/anti-scrape/robots')) {
+        throw new ProviderError(PROVIDER_KIND.ROBOTS, '禁止抓取', 'robots_disallow');
+      }
+      throw new ProviderError(PROVIDER_KIND.UPSTREAM, '上游异常', 'status_502');
+    });
+
+    try {
+      // 1. Happy path CN live fetch
+      const cnRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url',
+        tokenA,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/competitor/nas-review',
+        },
+      );
+      expect(cnRes.status).toBe(200);
+      expect(cnRes.body.data.sourceType).toBe('CITATION_COUNTER');
+      expect(cnRes.body.data.recommendedRecipe).toBe('CITATION_COUNTER');
+      expect(cnRes.body.data.sourceCitationUrl).toBe(
+        'http://public.e2e.example/competitor/nas-review',
+      );
+      expect(cnRes.body.data.outlineH2.length).toBeGreaterThanOrEqual(3);
+      expect(cnRes.body.data.matchedFactIds.length).toBeGreaterThan(0);
+
+      // 2. Happy path GLOBAL live fetch (English headings + Chinese diagnosis + global channels)
+      const globalRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url',
+        tokenA,
+        {
+          market: 'GLOBAL',
+          citationUrl: 'https://reviews.example.com/competitor/global-nas',
+        },
+      );
+      expect(globalRes.status).toBe(200);
+      expect(globalRes.body.data.market).toBe('GLOBAL');
+      expect(globalRes.body.data.recommendedRecipe).toBe('CITATION_COUNTER');
+      expect(/[\u4e00-\u9fa5]/.test(globalRes.body.data.diagnosisSummary)).toBe(true);
+      expect(globalRes.body.data.outlineH2.every((h) => /[A-Za-z]{3,}/.test(h.heading))).toBe(true);
+
+      // 3. Anti-scrape 403 / login-wall / timeout / robots -> 422 / 42201
+      for (const path of [
+        '/anti-scrape/403',
+        '/anti-scrape/login-wall',
+        '/anti-scrape/slow-timeout',
+        '/anti-scrape/robots',
+      ]) {
+        const blocked = await req(
+          'POST',
+          '/api/v2/brands/brand_dual/briefs/from-citation-url',
+          tokenA,
+          {
+            market: 'CN',
+            citationUrl: `http://public.e2e.example${path}`,
+          },
+        );
+        expect(blocked.status).toBe(422);
+        expect(blocked.body.code).toBe(API_ERROR.UPSTREAM_UNAVAILABLE);
+        expect(blocked.body.msg).toContain('粘贴参考正文');
+        rateLimiter.reset();
+      }
+
+      // 4. Pasted content fallback bypasses remote fetch even with 403 citationUrl
+      fetchSpy.mockClear();
+      const pasteRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url',
+        tokenA,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/anti-scrape/403',
+          pastedTitle: '2026 家用四盘位 NAS 实测参考稿',
+          pastedContent:
+            '## 硬件参数对比\n竞品机型噪音 32dB、待机功耗 24W，缺少双 2.5GbE 接口。\n## 家庭隐私与离线相册\n部分竞品相册依赖云端处理，不支持纯本地离线识别。',
+        },
+      );
+      expect(pasteRes.status).toBe(200);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(pasteRes.body.data.sourceType).toBe('CITATION_COUNTER');
+      expect(pasteRes.body.data.recommendedRecipe).toBe('CITATION_COUNTER');
+      expect(pasteRes.body.data.sourceCitationUrl).toBe(
+        'http://public.e2e.example/anti-scrape/403',
+      );
+      expect(pasteRes.body.data.matchedFactIds.length).toBeGreaterThan(0);
+
+      // 5. Malformed, non-HTTP, SSRF, and nested qs -> 400 / 40001
+      for (const badUrl of [
+        '',
+        'not-a-url',
+        'ftp://example.com/a',
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        'http://127.0.0.1:3001/api/v1/health',
+        'http://localhost:3000/',
+        'http://169.254.169.254/latest/meta-data/',
+        'http://10.0.0.1/secret',
+        'http://192.168.1.1/admin',
+        'http://sonargate/v1/collect',
+        'http://sonargate:8080/v1/collect',
+      ]) {
+        const badRes = await req(
+          'POST',
+          '/api/v2/brands/brand_dual/briefs/from-citation-url',
+          tokenA,
+          {
+            market: 'CN',
+            citationUrl: badUrl,
+          },
+        );
+        expect(badRes.status).toBe(400);
+        expect(badRes.body.code).toBe(API_ERROR.BAD_REQUEST);
+      }
+
+      const nestedQs = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url?market[foo]=CN',
+        tokenA,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/competitor/nas-review',
+        },
+      );
+      expect(nestedQs.status).toBe(400);
+      expect(nestedQs.body.code).toBe(API_ERROR.BAD_REQUEST);
+
+      // 6. Cross-tenant 404 & expired tenant 403/40301
+      const foreign = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url',
+        tokenB,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/competitor/nas-review',
+        },
+      );
+      expect(foreign.status).toBe(404);
+
+      const expired = await req(
+        'POST',
+        '/api/v2/brands/brand_exp/briefs/from-citation-url',
+        tokenExp,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/competitor/nas-review',
+        },
+      );
+      expect(expired.status).toBe(403);
+      expect(expired.body.code).toBe(API_ERROR.TENANT_EXPIRED);
+
+      // 7. #321 zero fake-template fallback when real LLM rejects fake output
+      rateLimiter.reset();
+      const llm = app.get(LlmService);
+      const llmSpy = vi
+        .spyOn(llm, 'complete')
+        .mockRejectedValueOnce(
+          new ProviderError(
+            PROVIDER_KIND.UPSTREAM,
+            '大模型上游暂时不可用',
+            'fake_fallback_rejected',
+          ),
+        );
+      const strictFail = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-citation-url',
+        tokenA,
+        {
+          market: 'CN',
+          citationUrl: 'http://public.e2e.example/competitor/nas-review',
+        },
+      );
+      expect(strictFail.status).toBe(503);
+      expect(strictFail.body.code).toBe(API_ERROR.UPSTREAM_UNAVAILABLE);
+      llmSpy.mockRestore();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

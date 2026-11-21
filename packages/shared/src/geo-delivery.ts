@@ -141,7 +141,9 @@ export function sanitizeRichArticleHtml(input: string): {
           /[\u0000-\u001f\u007f\s"'<>]/.test(decodedSrc) ||
           !(
             /^https?:\/\//i.test(decodedSrc) ||
-            (decodedSrc.startsWith('/') && !decodedSrc.startsWith('//'))
+            (decodedSrc.startsWith('/') &&
+              !decodedSrc.startsWith('//') &&
+              !decodedSrc.startsWith('/\\'))
           )
         ) {
           return '';

@@ -110,6 +110,9 @@ export type BriefSynthesisContext = {
   sourceObservationIds: string[];
   sourceCitationUrl: string | null;
   sourceCitationTitle?: string | null;
+  sourceArticleHeadings?: readonly string[];
+  sourceArticleExcerpt?: string | null;
+  usedPastedFallback?: boolean;
   competitorFocus: string[];
   targetFanOuts: string[];
   observations: readonly BriefSignalObservation[];
@@ -346,7 +349,14 @@ function buildChineseDiagnosisSummary(
       const citeHint = ctx.sourceCitationUrl
         ? `高引用来源（${safeHostFromUrl(ctx.sourceCitationUrl)}）`
         : '第三方高引用评测页';
-      return `${citeHint}在「${displayPrompt}」场景下被 AI 反复引用，我方自有阵地缺少可替代的结构化深度对照内容。${citationNote}`;
+      const sourceNote = ctx.usedPastedFallback ? '已基于粘贴参考正文' : '已解析目标页';
+      const headingNote =
+        ctx.sourceArticleHeadings && ctx.sourceArticleHeadings.length > 0
+          ? `${sourceNote}提炼 ${ctx.sourceArticleHeadings.length} 个核心议题骨架，并匹配 ${ctx.matchedFacts.length} 项品牌真实事实卡用于超越式重写。`
+          : ctx.matchedFacts.length > 0
+            ? `${sourceNote}核心议题并匹配 ${ctx.matchedFacts.length} 项品牌事实卡用于结构化反制。`
+            : '';
+      return `${citeHint}在「${displayPrompt}」场景下被 AI 反复引用，我方自有阵地缺少可替代的结构化深度对照内容。${headingNote}${citationNote}`;
     }
     case 'FANOUT_CLUSTER': {
       const fanLabel = ctx.targetFanOuts.slice(0, 3).join('、') || displayPrompt;
@@ -559,6 +569,48 @@ function buildEnglishOutline(
             },
           ];
 
+  if (
+    recipe === 'CITATION_COUNTER' &&
+    ctx.sourceArticleHeadings &&
+    ctx.sourceArticleHeadings.length > 0
+  ) {
+    const englishSourceHeadings = ctx.sourceArticleHeadings
+      .filter((h) => /[A-Za-z]{4,}/.test(h))
+      .slice(0, 2);
+    if (englishSourceHeadings.length > 0) {
+      const counterBase: GeoOutlineHeading[] = [
+        {
+          heading: `Direct Verdict: Why ${brand} Outperforms Reference Benchmarks`,
+          intent:
+            'Deliver a verifiable opening answer addressing the cited article topic with concrete brand data.',
+          ...(ref0 ? { fanOutRef: ref0 } : {}),
+        },
+        ...englishSourceHeadings.map((srcHeading, idx) => ({
+          heading: `${srcHeading}: Verified ${brand} Benchmarks & Update`,
+          intent:
+            'Cover and surpass the cited competitor section by injecting verified BrandFact metrics and 2026 updates.',
+          ...(idx === 0 && ref1 ? { fanOutRef: ref1 } : {}),
+        })),
+        {
+          heading: `Side-by-Side Spec Matrix: ${brand} vs ${comp}`,
+          intent:
+            'Provide a structured Markdown comparison table with measurable hardware/service specs and trade-offs.',
+          ...(ref2 ? { fanOutRef: ref2 } : {}),
+        },
+        {
+          heading: `Frequently Asked Questions & Practical Selection Checklist`,
+          intent:
+            'Answer remaining high-intent follow-up queries in quotable 80-150 word Schema-ready blocks.',
+        },
+      ];
+      return counterBase.map((item) => ({
+        heading: item.heading.slice(0, 158),
+        intent: item.intent.slice(0, 295),
+        ...(item.fanOutRef ? { fanOutRef: item.fanOutRef.slice(0, 195) } : {}),
+      }));
+    }
+  }
+
   return base.map((item) => ({
     heading: item.heading.slice(0, 158),
     intent: item.intent.slice(0, 295),
@@ -643,6 +695,38 @@ function buildChineseOutline(
               intent: '集中回应 AI 搜索拆解子词，输出可切片问答段落。',
             },
           ];
+
+  if (
+    recipe === 'CITATION_COUNTER' &&
+    ctx.sourceArticleHeadings &&
+    ctx.sourceArticleHeadings.length > 0
+  ) {
+    const pickedHeadings = ctx.sourceArticleHeadings.slice(0, 3);
+    const counterBase: GeoOutlineHeading[] = [
+      ...pickedHeadings.map((srcHeading, idx) => ({
+        heading: `${srcHeading}（${brand} 实测数据对比升级）`,
+        intent:
+          idx === 0
+            ? '承接竞品高引用页首段议题，前 100 字直答结论并注入我方品牌事实卡量化规格。'
+            : '全面覆盖并超越目标页同主题维度，补充 2026 最新实测数据与适用边界。',
+        ...(idx === 0 && ref0 ? { fanOutRef: ref0 } : idx === 1 && ref1 ? { fanOutRef: ref1 } : {}),
+      })),
+      {
+        heading: `核心参数横向对比表：${brand} vs ${comp}`,
+        intent: '用标准 Markdown 对比表汇总关键规格、实测功耗/噪音与质保条款，拉开事实密度差距。',
+        ...(ref2 ? { fanOutRef: ref2 } : {}),
+      },
+      {
+        heading: `高频追问 FAQ 与不同人群选型避坑清单`,
+        intent: '针对目标页遗漏的长尾疑问输出 80–150 字独立可切片问答块，强化 AI 引擎直接摘录率。',
+      },
+    ];
+    return counterBase.slice(0, 5).map((item) => ({
+      heading: item.heading.slice(0, 158),
+      intent: item.intent.slice(0, 295),
+      ...(item.fanOutRef ? { fanOutRef: item.fanOutRef.slice(0, 195) } : {}),
+    }));
+  }
 
   return base.map((item) => ({
     heading: item.heading.slice(0, 158),
@@ -760,7 +844,10 @@ export function finalizeRealLlmBriefDraft(
   }
 
   const citationCounts = summarizeCitationKinds(ctx.citations);
-  const recommendedRecipe = parsed.recommendedRecipe ?? defaultRecipeForBriefSource(ctx.sourceType);
+  const recommendedRecipe =
+    ctx.sourceType === 'CITATION_COUNTER'
+      ? 'CITATION_COUNTER'
+      : (parsed.recommendedRecipe ?? defaultRecipeForBriefSource(ctx.sourceType));
   const allowedFormats = targetFormatsForMarket(ctx.market);
   const targetFormat =
     parsed.targetFormat && allowedFormats.includes(parsed.targetFormat)

@@ -11,7 +11,9 @@ vi.mock('./sse', () => ({
 import { authorizedV2Request } from './api';
 import { streamSsePost } from './sse';
 import {
+  buildMarkdownImageToken,
   createBatchJob,
+  createStudioIdempotencyKey,
   deleteArticle,
   extractMissingFactSlots,
   fetchArticles,
@@ -19,9 +21,11 @@ import {
   getArticle,
   getBatchJob,
   getPromptPreferences,
+  insertMarkdownAtCursor,
   mergeFactFeedbackContent,
   replaceMissingFactSlot,
   rewriteArticleSection,
+  rewritePreviewRelativeMediaUrls,
   savePromptPreferences,
   streamGenerateArticle,
   updateArticle,
@@ -143,6 +147,42 @@ describe('Studio v2 client (studio.ts)', () => {
     // Deduplicates if value already present
     expect(mergeFactFeedbackContent('- 待机功耗：12.5W', '如待机功耗 W', '12.5W')).toBe(
       '- 待机功耗：12.5W',
+    );
+  });
+
+  it('builds sanitized Markdown image tokens, inserts at cursor, and rewrites relative preview media URLs', () => {
+    expect(createStudioIdempotencyKey('img').startsWith('geo_img_')).toBe(true);
+    expect(
+      buildMarkdownImageToken('DXP4800 [实拍]\n正面', ' /api/v2/brands/b1/media/m1/file '),
+    ).toBe('![DXP4800 实拍 正面](/api/v2/brands/b1/media/m1/file)');
+    expect(buildMarkdownImageToken('   ', '/api/v2/brands/b1/media/m1/file')).toBe(
+      '![产品配图](/api/v2/brands/b1/media/m1/file)',
+    );
+
+    const token = '![产品图](/api/v2/brands/b1/media/m1/file)';
+    expect(insertMarkdownAtCursor('', token, null)).toBe(token);
+    expect(insertMarkdownAtCursor('首段内容', token, null)).toBe(`首段内容\n\n${token}`);
+    expect(insertMarkdownAtCursor('第一段\n\n第二段', token, 3)).toBe(
+      `第一段\n\n${token}\n\n第二段`,
+    );
+
+    const html =
+      '<p>正文 /api/v2/brands/b1/media/m1/file</p>' +
+      '<img src="/api/v2/brands/b1/media/m1/file?tid=t1&amp;exp=123&amp;sig=abc" alt="实拍" />' +
+      '<img src="https://cdn.example.com/a.jpg" alt="外链" />';
+    const rewritten = rewritePreviewRelativeMediaUrls(html, (rel) => `http://127.0.0.1:3001${rel}`);
+    expect(rewritten).toContain(
+      '<img src="http://127.0.0.1:3001/api/v2/brands/b1/media/m1/file?tid=t1&amp;exp=123&amp;sig=abc"',
+    );
+    expect(rewritten).toContain('<img src="https://cdn.example.com/a.jpg"');
+    expect(rewritten).toContain('<p>正文 /api/v2/brands/b1/media/m1/file</p>');
+
+    const escaped = rewritePreviewRelativeMediaUrls(
+      '<img src="/api/v2/brands/b1/media/m1/file?tid=t1&amp;sig=abc" alt="x" />',
+      (rel) => `https://cdn.example.com"onerror="<alert>${rel}`,
+    );
+    expect(escaped).toContain(
+      '<img src="https://cdn.example.com&quot;onerror=&quot;&lt;alert&gt;/api/v2/brands/b1/media/m1/file?tid=t1&amp;sig=abc"',
     );
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Body,
   Controller,
@@ -20,10 +21,13 @@ import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import {
   API_ERROR,
   AUTH_ERROR,
+  AccountQueryError,
   BRAND_MEDIA_FILE_TOO_LARGE_MSG,
   BRAND_MEDIA_UPLOAD_MAX_FILES,
   IMAGE_MAX_INPUT_BYTES,
+  inlineAiImageGenSchema,
   ok,
+  readIdempotencyKey,
   updateBrandMediaSchema,
 } from '@geomix/shared';
 import { AuthGuard } from '../auth/auth.guard';
@@ -46,6 +50,28 @@ type BinaryResponseLike = {
   setHeader(name: string, value: string): void;
   status(code: number): { send(body: Buffer): void };
 };
+
+function resolveIdempotencyHeader(req: unknown): string {
+  const headers =
+    req && typeof req === 'object' && 'headers' in req
+      ? ((req as { headers?: Record<string, unknown> }).headers ?? {})
+      : {};
+  const raw = headers['idempotency-key'] ?? headers['Idempotency-Key'];
+  if (raw === undefined || raw === null || raw === '') {
+    return `auto_${randomUUID().replace(/-/g, '')}`;
+  }
+  if (Array.isArray(raw) || typeof raw !== 'string') {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, 'Idempotency-Key 请求头格式不正确');
+  }
+  try {
+    return readIdempotencyKey(raw);
+  } catch (err) {
+    if (err instanceof AccountQueryError) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, err.message);
+    }
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, 'Idempotency-Key 请求头格式不正确');
+  }
+}
 
 @Controller({ path: 'brands', version: '2' })
 @UseGuards(AuthGuard)
@@ -108,6 +134,25 @@ export class BrandMediaController {
         brandId,
         normalizedFiles,
         title,
+      ),
+    );
+  }
+
+  @Post(':id/media/ai-gen')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async generateAiImage(@Req() request: unknown, @Param('id') id: string, @Body() body: unknown) {
+    const auth = requireAuth(request);
+    const brandId = parseBrandId(id);
+    const input = parseBody(inlineAiImageGenSchema, body);
+    const idempotencyKey = resolveIdempotencyHeader(request);
+    return ok(
+      await this.brandMedia.generateAiImage(
+        auth.tenantId,
+        auth.userId,
+        brandId,
+        input,
+        idempotencyKey,
       ),
     );
   }

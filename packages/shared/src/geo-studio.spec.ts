@@ -120,8 +120,8 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
       '| **DXP4800** | `14W` | 18.5dB |',
       '| CompX | 28W | <img src=x onerror=alert(1)> |',
       '',
-      '![产品图](https://cdn.example.com/nas.png) ![bad](javascript:alert(1))',
-      '[官网](https://example.com) [xss](javascript:alert(2)) [data](data:text/html,hi)',
+      '![产品图](https://cdn.example.com/nas.png) ![bad](javascript:alert(1)) ![bs](/\\evil.example/p.png)',
+      '[官网](https://example.com) [xss](javascript:alert(2)) [data](data:text/html,hi) [bslink](/\\evil.example)',
       '',
       '```json',
       '{"x":"<script>alert(3)</script>"}',
@@ -139,10 +139,17 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
     expect(html).toContain('<pre><code>');
     expect(html).not.toContain('javascript:');
     expect(html).not.toContain('data:text/html');
+    expect(html).not.toContain('evil.example');
     expect(html).not.toContain('<script>');
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(html).not.toContain('bad)');
+
+    const delHtml = markdownToSanitizedHtml(
+      '![del](/api/v2/brands/b1/media/m1/file\u007ftest) [delLink](/api/\u007ftest)',
+    );
+    expect(delHtml).not.toContain('<img');
+    expect(delHtml).not.toContain('<a ');
   });
 
   it('extracts and replaces missing-fact capsules and preserves GLOBAL markdown & images', async () => {

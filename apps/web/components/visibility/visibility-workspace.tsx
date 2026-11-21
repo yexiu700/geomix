@@ -24,10 +24,12 @@ import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
 import {
+  createBriefFromCitationUrl,
   deriveObservationBriefSource,
   dismissBrief,
   fetchBriefs,
   generateBrief,
+  isCitationCounterFallbackError,
   updateBrief,
 } from '../../lib/briefs';
 import { buildWorkspaceHref } from '../../lib/routes';
@@ -57,6 +59,7 @@ import {
   useWorkspaceStore,
 } from '../../lib/workspace-store';
 import { BriefListPanel, type BriefStatusFilterValue } from '../briefs/brief-list-panel';
+import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
@@ -199,6 +202,11 @@ export function VisibilityWorkspace(): JSX.Element {
   const [briefStatusFilter, setBriefStatusFilter] = useState<BriefStatusFilterValue>('OPEN');
   const [selectedBriefIds, setSelectedBriefIds] = useState<string[]>([]);
   const [activeBrief, setActiveBrief] = useState<GeoBriefRecord | null>(null);
+  const [citationFallback, setCitationFallback] = useState<{
+    url: string;
+    title: string;
+    errorMessage: string;
+  } | null>(null);
   const [generatingBriefKey, setGeneratingBriefKey] = useState<string | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [brandFacts, setBrandFacts] = useState<BrandFactRecord[]>([]);
@@ -561,6 +569,7 @@ export function VisibilityWorkspace(): JSX.Element {
     setBriefStatusFilter('OPEN');
     setSelectedBriefIds([]);
     setActiveBrief(null);
+    setCitationFallback(null);
     setGeneratingBriefKey(null);
     setBatchSubmitting(false);
     setBrandFacts([]);
@@ -1077,14 +1086,52 @@ export function VisibilityWorkspace(): JSX.Element {
     });
   };
 
-  const handleGenerateFromCitation = (row: RankedCitationRow) => {
+  const handleGenerateFromCitation = async (row: RankedCitationRow) => {
+    if (!activeBrandId || readOnly || generatingBriefKey !== null) return;
     if (!isSafeHttpUrl(row.url)) return;
-    void handleGenerateBrief(`cite:${row.key}`, {
-      market: activeMarket,
-      sourceType: 'CITATION_COUNTER',
-      citationUrl: row.url,
-      ...(row.title?.trim() ? { customPrompt: row.title.trim().slice(0, 300) } : {}),
-    });
+
+    briefGenCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    briefGenCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setGeneratingBriefKey(`cite:${row.key}`);
+
+    const trimmedTitle = row.title?.trim() ?? '';
+
+    try {
+      const created = await createBriefFromCitationUrl(
+        activeBrandId,
+        {
+          market: activeMarket,
+          citationUrl: row.url,
+          ...(trimmedTitle.length >= 2 ? { targetPrompt: trimmedTitle.slice(0, 300) } : {}),
+        },
+        { signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      setActiveBrief(created);
+      feedback.notifySuccess('已生成高引用信源反制意见（0 点免费）');
+      invalidateFreshness('briefs');
+      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+    } catch (err) {
+      if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
+      if (isCitationCounterFallbackError(err)) {
+        setCitationFallback({
+          url: row.url,
+          title: row.title?.trim() ?? '',
+          errorMessage: extractErrorMessage(
+            err,
+            '目标页面触发反爬或抓取超时，请粘贴参考正文继续生成反制意见',
+          ),
+        });
+      } else {
+        feedback.notifyError(extractErrorMessage(err, '生成竞品反制意见失败，请稍后重试'));
+      }
+    } finally {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setGeneratingBriefKey(null);
+      }
+    }
   };
 
   const handleGenerateFromFanOuts = (queries: readonly string[]) => {
@@ -1429,7 +1476,7 @@ export function VisibilityWorkspace(): JSX.Element {
                 data-testid="citation-counter-btn"
                 disabled={readOnly || generatingBriefKey !== null}
                 loading={generatingBriefKey === `cite:${row.key}`}
-                onClick={() => handleGenerateFromCitation(row)}
+                onClick={() => void handleGenerateFromCitation(row)}
               >
                 反制重写此页
               </Button>
@@ -1517,6 +1564,35 @@ export function VisibilityWorkspace(): JSX.Element {
         onDismiss={handleDismissBrief}
         onWrite={handleNavigateToStudioWithBrief}
       />
+
+      {/* M4-B Anti-Scrape Pasted-Content Fallback Modal */}
+      {activeBrandId ? (
+        <CitationCounterModal
+          open={Boolean(citationFallback)}
+          brandId={activeBrandId}
+          market={activeMarket}
+          readOnly={readOnly}
+          mode="fallback"
+          initialUrl={citationFallback?.url ?? ''}
+          initialTitle={citationFallback?.title ?? ''}
+          initialTargetPrompt={citationFallback?.title ?? ''}
+          initialErrorMessage={citationFallback?.errorMessage ?? null}
+          onClose={() => setCitationFallback(null)}
+          onCreated={(created) => {
+            setCitationFallback(null);
+            setActiveBrief(created);
+            feedback.notifySuccess('已基于参考正文生成反制意见（0 点免费）');
+            invalidateFreshness('briefs');
+            void loadBriefs(
+              activeBrandId,
+              activeMarket,
+              contextSeqRef.current,
+              briefFilterRef.current,
+              true,
+            );
+          }}
+        />
+      ) : null}
     </section>
   );
 }

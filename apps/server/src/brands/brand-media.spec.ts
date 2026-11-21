@@ -1,12 +1,13 @@
 import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
-import { API_ERROR, parseEnv } from '@geomix/shared';
+import { API_ERROR, BILLING_ERROR, parseEnv } from '@geomix/shared';
 import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { passwordFingerprint } from '../auth/auth.service';
 import { PrismaAuthStore } from '../auth/prisma-auth.store';
 import { signToken } from '../auth/token';
+import { BillingService, type ReservationView } from '../billing/billing.service';
 import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import { createApiApp } from '../common/create-api-app';
@@ -58,13 +59,13 @@ function createMediaStore(getTenantId: () => string | undefined) {
           (a) => a.brandId === args.where.brandId && (!tid || a.tenantId === tid),
         );
       }),
-      findFirst: vi.fn(async (args: { where: { id: string; brandId: string } }) => {
+      findFirst: vi.fn(async (args: { where: { id: string; brandId?: string } }) => {
         const tid = getTenantId();
         return (
           assets.find(
             (a) =>
               a.id === args.where.id &&
-              a.brandId === args.where.brandId &&
+              (!args.where.brandId || a.brandId === args.where.brandId) &&
               (!tid || a.tenantId === tid),
           ) ?? null
         );
@@ -85,12 +86,15 @@ function createMediaStore(getTenantId: () => string | undefined) {
       const tx = {
         brandMediaAsset: {
           create: async (args: {
-            data: Omit<StoredMedia, 'aiPrompt' | 'aiModel' | 'usedCount' | 'createdAt'>;
+            data: Omit<StoredMedia, 'aiPrompt' | 'aiModel' | 'usedCount' | 'createdAt'> & {
+              aiPrompt?: string | null;
+              aiModel?: string | null;
+            };
           }) => {
             const row: StoredMedia = {
               ...args.data,
-              aiPrompt: null,
-              aiModel: null,
+              aiPrompt: args.data.aiPrompt ?? null,
+              aiModel: args.data.aiModel ?? null,
               usedCount: 0,
               createdAt: new Date(),
             };
@@ -549,5 +553,342 @@ describe('BrandMediaController, BrandMediaPublicController & BrandMediaService (
       releasedBytes: asset.bytes,
     });
     expect(delBody.data.storage.used).toBe('0');
+  });
+
+  it('generates inline AI images via POST /media/ai-gen with STRICT/SHADOW billing, 402, [E2E_IMAGE_FAIL] refund, idempotency, quota rollback, and guards', async () => {
+    const tokenA = makeToken('u_a', 'tenant_a');
+    const tokenB = makeToken('u_b', 'tenant_b');
+    const tokenExp = makeToken('u_exp', 'tenant_exp');
+
+    const wallets = new Map<string, { points: number; reserved: number; strict: boolean }>([
+      ['tenant_a', { points: 20, reserved: 0, strict: true }],
+      ['tenant_b', { points: 20, reserved: 0, strict: false }],
+    ]);
+    const reservations = new Map<string, ReservationView>();
+
+    const billing = app.get(BillingService);
+    const unitPriceSpy = vi.spyOn(billing, 'unitPrice').mockResolvedValue(5);
+    const reserveSpy = vi.spyOn(billing, 'reserve').mockImplementation(async (input) => {
+      const key = `${input.tenantId}:${input.refType}:${input.refId}`;
+      const existing = reservations.get(key);
+      if (existing) return existing;
+      const wallet = wallets.get(input.tenantId) ?? { points: 0, reserved: 0, strict: true };
+      if (wallet.strict && wallet.points - wallet.reserved < input.amount) {
+        throw new ApiError(402, API_ERROR.INSUFFICIENT_POINTS, '点数不足');
+      }
+      if (wallet.strict) {
+        wallet.reserved += input.amount;
+      }
+      const view: ReservationView = {
+        id: `res_${reservations.size + 1}`,
+        tenantId: input.tenantId,
+        refType: input.refType,
+        refId: input.refId,
+        shadow: !wallet.strict,
+        frozen: input.amount,
+        settled: 0,
+        released: 0,
+        status: 'OPEN',
+      };
+      reservations.set(key, view);
+      return view;
+    });
+    const settleSpy = vi.spyOn(billing, 'settle').mockImplementation(async (input) => {
+      const found = [...reservations.values()].find((r) => r.id === input.reservationId)!;
+      const wallet = wallets.get(input.tenantId)!;
+      found.settled += input.amount;
+      if (wallet.strict) {
+        wallet.points -= input.amount;
+        wallet.reserved = Math.max(0, wallet.reserved - input.amount);
+      }
+      return {
+        reservation: found,
+        lines: [],
+        replayed: false,
+      };
+    });
+    const releaseSpy = vi.spyOn(billing, 'releaseUnit').mockImplementation(async (input) => {
+      const found = [...reservations.values()].find((r) => r.id === input.reservationId)!;
+      const wallet = wallets.get(input.tenantId)!;
+      found.released += input.amount;
+      if (wallet.strict) {
+        wallet.reserved = Math.max(0, wallet.reserved - input.amount);
+      }
+      return {
+        reservation: found,
+        lines: [],
+        replayed: false,
+      };
+    });
+    const closeSpy = vi.spyOn(billing, 'close').mockImplementation(async (input) => {
+      const found = [...reservations.values()].find((r) => r.id === input.reservationId)!;
+      found.status = 'CLOSED';
+      return { reservation: found, releasedNow: 0 };
+    });
+
+    try {
+      // 1. STRICT success (5 pts settled, direct BrandMediaAssetRecord in data)
+      const idemKey = 'idem_ai_img_0001';
+      const genRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+          'idempotency-key': idemKey,
+        },
+        body: JSON.stringify({
+          prompt: '极简桌面四盘位家用NAS静音散热风道原理示意图',
+          title: '  ',
+          aspectRatio: '16:9',
+        }),
+      });
+      expect(genRes.status).toBe(200);
+      const genBody = (await genRes.json()) as {
+        code: number;
+        data: {
+          id: string;
+          brandId: string;
+          origin: string;
+          title: string;
+          url: string;
+          thumbUrl: string | null;
+          aiPrompt: string | null;
+          aiModel: string | null;
+          usedCount: number;
+        };
+      };
+      expect(genBody.code).toBe(0);
+      expect(genBody.data.origin).toBe('AI_INLINE_GEN');
+      expect(genBody.data.aiPrompt).toBe('极简桌面四盘位家用NAS静音散热风道原理示意图');
+      expect(genBody.data.aiModel).toBe('fake-image');
+      expect(genBody.data.title).toContain('极简桌面四盘位');
+      expect(genBody.data.usedCount).toBe(0);
+      expect(genBody.data.url).toContain(`/api/v2/brands/brand_a1/media/${genBody.data.id}/file?`);
+      expect(wallets.get('tenant_a')).toEqual({ points: 15, reserved: 0, strict: true });
+
+      // 2. Idempotency replay returns same asset ID at 0 additional points
+      const replayRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+          'idempotency-key': idemKey,
+        },
+        body: JSON.stringify({
+          prompt: '极简桌面四盘位家用NAS静音散热风道原理示意图',
+        }),
+      });
+      expect(replayRes.status).toBe(200);
+      const replayBody = (await replayRes.json()) as { data: { id: string } };
+      expect(replayBody.data.id).toBe(genBody.data.id);
+      expect(wallets.get('tenant_a')).toEqual({ points: 15, reserved: 0, strict: true });
+
+      // 3. Mismatched prompt or brand on same Idempotency-Key -> 409 / 40902
+      const conflictRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+          'idempotency-key': idemKey,
+        },
+        body: JSON.stringify({ prompt: '完全不同的另一张配图描述内容' }),
+      });
+      expect(conflictRes.status).toBe(409);
+      expect(((await conflictRes.json()) as { code: number }).code).toBe(BILLING_ERROR.CONFLICT);
+
+      // 4. Omitted Idempotency-Key auto-generates cleanly; malformed key -> 400 / 40001
+      const badKeyRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'bad key!!',
+        },
+        body: JSON.stringify({ prompt: '极简桌面四盘位NAS产品图' }),
+      });
+      expect(badKeyRes.status).toBe(400);
+      expect(((await badKeyRes.json()) as { code: number }).code).toBe(API_ERROR.BAD_REQUEST);
+
+      // 5. [E2E_IMAGE_FAIL] -> 502 + atomic refund + 0 persisted assets
+      const assetCountBeforeFail = store.assets.length;
+      const failRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '[E2E_IMAGE_FAIL] 触发上游故障自动退点' }),
+      });
+      expect(failRes.status).toBe(502);
+      expect(((await failRes.json()) as { code: number }).code).toBe(
+        API_ERROR.UPSTREAM_UNAVAILABLE,
+      );
+      expect(wallets.get('tenant_a')).toEqual({ points: 15, reserved: 0, strict: true });
+      expect(store.assets.length).toBe(assetCountBeforeFail);
+
+      // 6. Quota exceeded -> 409 / 40901 + atomic refund + storage cleanup
+      storageLimit = storageUsed + 10n;
+      const storageDelSpy = vi.spyOn(app.get(StorageService), 'delete');
+      const quotaRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '超出存储配额测试配图生成' }),
+      });
+      expect(quotaRes.status).toBe(409);
+      expect(((await quotaRes.json()) as { code: number }).code).toBe(API_ERROR.QUOTA_EXCEEDED);
+      expect(wallets.get('tenant_a')).toEqual({ points: 15, reserved: 0, strict: true });
+      expect(storageDelSpy).toHaveBeenCalled();
+      storageLimit = 100n * 1024n * 1024n;
+
+      // 7. Prohibited industry prompt -> 403 / 40302 BEFORE reserve
+      const reserveCallsBeforeComp = reserveSpy.mock.calls.length;
+      const compRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '制作网络赌博推广宣传海报' }),
+      });
+      expect(compRes.status).toBe(403);
+      expect(((await compRes.json()) as { code: number }).code).toBe(API_ERROR.FORBIDDEN_INDUSTRY);
+      expect(reserveSpy.mock.calls.length).toBe(reserveCallsBeforeComp);
+
+      // 8. Insufficient points in STRICT -> 402 / 40201 + 0 persisted assets
+      wallets.set('tenant_a', { points: 3, reserved: 0, strict: true });
+      const lowBalRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '点数不足拦截验证测试配图' }),
+      });
+      expect(lowBalRes.status).toBe(402);
+      expect(((await lowBalRes.json()) as { code: number }).code).toBe(
+        API_ERROR.INSUFFICIENT_POINTS,
+      );
+      expect(wallets.get('tenant_a')).toEqual({ points: 3, reserved: 0, strict: true });
+
+      // 9. SHADOW mode succeeds with 0 wallet deduction
+      const shadowRes = await fetch(`${baseUrl}/api/v2/brands/brand_b1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenB}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: 'SHADOW 模式下生成的产品场景示意图' }),
+      });
+      expect(shadowRes.status).toBe(200);
+      expect(wallets.get('tenant_b')).toEqual({ points: 20, reserved: 0, strict: false });
+
+      // 10. Cross-tenant 404 & expired tenant 403 / 40301
+      const crossRes = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenB}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '跨租户越权测试配图提示词' }),
+      });
+      expect(crossRes.status).toBe(404);
+
+      const expRes = await fetch(`${baseUrl}/api/v2/brands/brand_exp1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenExp}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ prompt: '到期租户拦截测试配图提示词' }),
+      });
+      expect(expRes.status).toBe(403);
+      expect(((await expRes.json()) as { code: number }).code).toBe(API_ERROR.TENANT_EXPIRED);
+    } finally {
+      unitPriceSpy.mockRestore();
+      reserveSpy.mockRestore();
+      settleSpy.mockRestore();
+      releaseSpy.mockRestore();
+      closeSpy.mockRestore();
+    }
+  });
+
+  it('preserves paid BrandMediaAsset and returns 200 when billing.close() rejects after billing.settle() succeeds', async () => {
+    const tokenA = makeToken('u_a', 'tenant_a');
+    const wallet = { points: 50, reserved: 0 };
+    const reservation: ReservationView = {
+      id: 'res_close_fail_1',
+      tenantId: 'tenant_a',
+      refType: 'inline_image_gen',
+      refId: 'close_fail_idem_0001',
+      shadow: false,
+      frozen: 5,
+      settled: 0,
+      released: 0,
+      status: 'OPEN',
+    };
+
+    const billing = app.get(BillingService);
+    const storage = app.get(StorageService);
+    const unitPriceSpy = vi.spyOn(billing, 'unitPrice').mockResolvedValue(5);
+    const reserveSpy = vi.spyOn(billing, 'reserve').mockImplementation(async (input) => {
+      wallet.reserved += input.amount;
+      return reservation;
+    });
+    const settleSpy = vi.spyOn(billing, 'settle').mockImplementation(async (input) => {
+      reservation.settled += input.amount;
+      wallet.points -= input.amount;
+      wallet.reserved = Math.max(0, wallet.reserved - input.amount);
+      return { reservation, lines: [], replayed: false };
+    });
+    const releaseSpy = vi.spyOn(billing, 'releaseUnit').mockImplementation(async () => ({
+      reservation,
+      lines: [],
+      replayed: false,
+    }));
+    const closeSpy = vi
+      .spyOn(billing, 'close')
+      .mockRejectedValueOnce(new Error('simulated_db_close_failure'));
+    const storageDeleteSpy = vi.spyOn(storage, 'delete');
+
+    try {
+      const assetsBefore = store.assets.length;
+      const res = await fetch(`${baseUrl}/api/v2/brands/brand_a1/media/ai-gen`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenA}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'close_fail_idem_0001',
+        },
+        body: JSON.stringify({
+          prompt: 'Close failure after settle verification prompt',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        code: number;
+        data: { id: string; origin: string; brandId: string };
+      };
+      expect(body.code).toBe(0);
+      expect(body.data.origin).toBe('AI_INLINE_GEN');
+      expect(body.data.brandId).toBe('brand_a1');
+      expect(store.assets.length).toBe(assetsBefore + 1);
+      expect(store.assets.some((a) => a.id === body.data.id)).toBe(true);
+      expect(wallet).toEqual({ points: 45, reserved: 0 });
+      expect(settleSpy).toHaveBeenCalledTimes(1);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).not.toHaveBeenCalled();
+      expect(storageDeleteSpy).not.toHaveBeenCalled();
+    } finally {
+      unitPriceSpy.mockRestore();
+      reserveSpy.mockRestore();
+      settleSpy.mockRestore();
+      releaseSpy.mockRestore();
+      closeSpy.mockRestore();
+      storageDeleteSpy.mockRestore();
+    }
   });
 });

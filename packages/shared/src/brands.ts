@@ -747,18 +747,33 @@ export const updateBrandMediaSchema = z.object({
 
 export type UpdateBrandMediaInput = z.infer<typeof updateBrandMediaSchema>;
 
-export const inlineAiImageGenSchema = z.object({
-  prompt: z
+const optionalNonBlankString = (max: number) =>
+  z
     .string()
     .trim()
-    .min(AI_IMAGE_PROMPT_MIN, `提示词至少 ${AI_IMAGE_PROMPT_MIN} 个字`)
-    .max(AI_IMAGE_PROMPT_MAX, `提示词不超过 ${AI_IMAGE_PROMPT_MAX} 个字`),
-  ratio: z.enum(AI_IMAGE_RATIOS).default(AI_IMAGE_DEFAULT_RATIO),
-  style: z.string().trim().max(32).optional(),
-  title: z.string().trim().max(120).optional(),
-});
+    .max(max)
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined));
+
+export const inlineAiImageGenSchema = z
+  .object({
+    prompt: z
+      .string()
+      .trim()
+      .min(AI_IMAGE_PROMPT_MIN, `提示词至少 ${AI_IMAGE_PROMPT_MIN} 个字`)
+      .max(AI_IMAGE_PROMPT_MAX, `提示词不超过 ${AI_IMAGE_PROMPT_MAX} 个字`),
+    ratio: z.enum(AI_IMAGE_RATIOS).optional(),
+    aspectRatio: z.enum(AI_IMAGE_RATIOS).optional(),
+    style: optionalNonBlankString(32),
+    title: optionalNonBlankString(120),
+  })
+  .transform(({ aspectRatio, ratio, ...rest }) => ({
+    ...rest,
+    ratio: ratio ?? aspectRatio ?? AI_IMAGE_DEFAULT_RATIO,
+  }));
 
 export type InlineAiImageGenInput = z.input<typeof inlineAiImageGenSchema>;
+export type ParsedInlineAiImageGenInput = z.output<typeof inlineAiImageGenSchema>;
 
 export type BrandMarketRecord = {
   id: string;

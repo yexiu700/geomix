@@ -6,6 +6,7 @@ import {
   targetFormatsForMarket,
   type BrandFactRecord,
   type BrandFactSlot,
+  type BrandMediaAssetRecord,
   type GeoArticleRecord,
   type GeoArticleStatus,
   type GeoBatchJobRecord,
@@ -17,13 +18,14 @@ import {
   type MissingFactSlot,
   type PromptPreferenceRecord,
 } from '@geomix/shared';
-import { Skeleton } from 'antd';
+import { Button, Skeleton } from 'antd';
 import type { JSX, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getBrandFacts, saveBrandFacts } from '../../lib/brands';
+import { getBrandFacts, listBrandMedia, saveBrandFacts } from '../../lib/brands';
 import { fetchBriefs, getBrief } from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
 import {
+  buildMarkdownImageToken,
   createBatchJob,
   createStudioIdempotencyKey,
   deleteArticle,
@@ -32,6 +34,7 @@ import {
   getArticle,
   getBatchJob,
   getPromptPreferences,
+  insertMarkdownAtCursor,
   mergeFactFeedbackContent,
   replaceMissingFactSlot,
   rewriteArticleSection,
@@ -46,11 +49,13 @@ import {
   selectActiveBrandMarket,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioEditorCanvas } from './studio-editor-canvas';
 import { StudioLeftPane } from './studio-left-pane';
+import { StudioMediaPopover } from './studio-media-popover';
 import { StudioPrewriteBar } from './studio-prewrite-bar';
 import { StudioRightPane } from './studio-right-pane';
 
@@ -139,6 +144,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [highlightedBatchJobId, setHighlightedBatchJobId] = useState<string | null>(null);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [brandFacts, setBrandFacts] = useState<BrandFactRecord[]>([]);
+  const [brandMedia, setBrandMedia] = useState<BrandMediaAssetRecord[]>([]);
+  const [brandMediaLoading, setBrandMediaLoading] = useState(false);
+  const [counterModalOpen, setCounterModalOpen] = useState(false);
   const [promptPreference, setPromptPreference] = useState<PromptPreferenceRecord>(EMPTY_PREF);
   const [prefsSaving, setPrefsSaving] = useState(false);
 
@@ -167,7 +175,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const contextSeqRef = useRef(0);
   const loadCtrlRef = useRef<AbortController | null>(null);
   const streamCtrlRef = useRef<AbortController | null>(null);
+  const mediaRefreshCtrlRef = useRef<AbortController | null>(null);
+  const insertingMediaRef = useRef(false);
   const hadActiveBatchRef = useRef(false);
+  const editorCursorRef = useRef<number | null>(null);
+  const pendingUsedMediaIdsRef = useRef<string[]>([]);
+  const lastLoadedBrandIdRef = useRef<string | null>(null);
   const articleFiltersRef = useRef<{ status: GeoArticleStatus | ''; tag: string }>({
     status: '',
     tag: '',
@@ -221,26 +234,29 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
       setBriefsLoading(true);
       setArticlesLoading(true);
+      setBrandMediaLoading(true);
 
       const urlParams = readStudioUrlParams();
       const { status: currentStatus, tag: currentTag } = articleFiltersRef.current;
 
-      const [briefsRes, articlesRes, batchRes, factsRes, prefRes] = await Promise.allSettled([
-        fetchBriefs(brandId, market, { status: 'OPEN', pageSize: 50 }, { signal: ctrl.signal }),
-        fetchArticles(
-          brandId,
-          market,
-          {
-            status: currentStatus || undefined,
-            tag: currentTag.trim() || undefined,
-            pageSize: 50,
-          },
-          { signal: ctrl.signal },
-        ),
-        fetchBatchJobs(brandId, market, { signal: ctrl.signal }),
-        getBrandFacts(brandId, { signal: ctrl.signal }),
-        getPromptPreferences({ signal: ctrl.signal }),
-      ]);
+      const [briefsRes, articlesRes, batchRes, factsRes, prefRes, mediaRes] =
+        await Promise.allSettled([
+          fetchBriefs(brandId, market, { status: 'OPEN', pageSize: 50 }, { signal: ctrl.signal }),
+          fetchArticles(
+            brandId,
+            market,
+            {
+              status: currentStatus || undefined,
+              tag: currentTag.trim() || undefined,
+              pageSize: 50,
+            },
+            { signal: ctrl.signal },
+          ),
+          fetchBatchJobs(brandId, market, { signal: ctrl.signal }),
+          getBrandFacts(brandId, { signal: ctrl.signal }),
+          getPromptPreferences({ signal: ctrl.signal }),
+          listBrandMedia(brandId, { signal: ctrl.signal }),
+        ]);
 
       if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
 
@@ -256,8 +272,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (prefRes.status === 'fulfilled') {
         setPromptPreference(prefRes.value);
       }
+      if (mediaRes.status === 'fulfilled') {
+        setBrandMedia(mediaRes.value.items);
+      }
       setBriefsLoading(false);
       setArticlesLoading(false);
+      setBrandMediaLoading(false);
 
       if (options?.preserveSelection) return;
 
@@ -317,6 +337,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   useEffect(() => {
     loadCtrlRef.current?.abort();
     streamCtrlRef.current?.abort();
+    mediaRefreshCtrlRef.current?.abort();
+    mediaRefreshCtrlRef.current = null;
+    insertingMediaRef.current = false;
     const seq = ++contextSeqRef.current;
     const contextKey = `${activeBrandId ?? ''}::${activeBrandMarketId ?? ''}::${activeMarket}::${state.contextEpoch}`;
 
@@ -342,12 +365,20 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setStreamMarkdown('');
     setStreamError(null);
     setMatchedFactIds([]);
+    setCounterModalOpen(false);
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
+    editorCursorRef.current = null;
+    pendingUsedMediaIdsRef.current = [];
+    if (lastLoadedBrandIdRef.current !== activeBrandId) {
+      setBrandMedia([]);
+      lastLoadedBrandIdRef.current = activeBrandId;
+    }
 
     if (!activeBrandId || !activeBrandMarketId) {
       setBriefsLoading(false);
       setArticlesLoading(false);
+      setBrandMediaLoading(false);
       return;
     }
 
@@ -356,6 +387,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     return () => {
       loadCtrlRef.current?.abort();
       streamCtrlRef.current?.abort();
+      mediaRefreshCtrlRef.current?.abort();
+      mediaRefreshCtrlRef.current = null;
+      insertingMediaRef.current = false;
     };
   }, [activeBrandId, activeBrandMarketId, activeMarket, state.contextEpoch, loadWorkspaceData]);
 
@@ -457,7 +491,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   // Cross-tab freshness sync
   useTabFreshness({
-    domains: ['briefs', 'articles', 'brand-facts'],
+    domains: ['briefs', 'articles', 'brand-facts', 'brand-media'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     onRefresh: () => {
       if (!activeBrandId || !activeBrandMarket || streaming) return;
@@ -506,6 +540,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         {
           market: activeMarket,
           ...(linkedBrief ? { briefId: linkedBrief.id } : {}),
+          ...(linkedBrief?.sourceCitationUrl
+            ? { sourceCitationUrl: linkedBrief.sourceCitationUrl }
+            : {}),
           recipe,
           targetFormat: safeTargetFormat,
           targetPrompt: promptTrimmed,
@@ -580,23 +617,123 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   };
 
   const handleSaveArticle = async () => {
-    if (!activeArticle || readOnly) return;
+    if (!activeArticle || readOnly || savingArticle) return;
     setSavingArticle(true);
+    const queuedMediaIds = [...pendingUsedMediaIdsRef.current];
     try {
       const updated = await updateArticle(activeArticle.id, {
         title: draftTitle.trim() || activeArticle.title,
         contentMarkdown: draftMarkdown,
+        ...(queuedMediaIds.length > 0 ? { usedMediaIds: queuedMediaIds } : {}),
       });
+      pendingUsedMediaIdsRef.current = [];
       applyArticleToCanvas(updated);
       setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       feedback.notifySuccess('文章修改已保存');
-      invalidateFreshness('articles');
+      if (queuedMediaIds.length > 0) {
+        setBrandMedia((prev) =>
+          prev.map((item) =>
+            queuedMediaIds.includes(item.id) ? { ...item, usedCount: item.usedCount + 1 } : item,
+          ),
+        );
+        invalidateFreshness('articles', 'brand-media');
+      } else {
+        invalidateFreshness('articles');
+      }
     } catch (err) {
       feedback.notifyError(formatStudioError(err, '保存文章失败'));
     } finally {
       setSavingArticle(false);
     }
   };
+
+  const handleRefreshBrandMedia = useCallback(async () => {
+    if (!activeBrandId) return;
+    mediaRefreshCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    mediaRefreshCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setBrandMediaLoading(true);
+    try {
+      const res = await listBrandMedia(activeBrandId, { signal: ctrl.signal });
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      setBrandMedia(res.items);
+    } catch {
+      // Non-blocking refresh
+    } finally {
+      if (mediaRefreshCtrlRef.current === ctrl) {
+        mediaRefreshCtrlRef.current = null;
+      }
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setBrandMediaLoading(false);
+      }
+    }
+  }, [activeBrandId]);
+
+  const handleCounterBriefCreated = (created: GeoBriefRecord) => {
+    setCounterModalOpen(false);
+    setBriefs((prev) => [created, ...prev.filter((b) => b.id !== created.id)]);
+    applyBriefToPrewrite(created);
+    feedback.notifySuccess('已生成竞品高引用反制意见，已载入写前确认条（0 点免费）');
+    invalidateFreshness('briefs');
+  };
+
+  const handleInsertMedia = async (asset: BrandMediaAssetRecord) => {
+    if (!activeArticle || readOnly || insertingMediaRef.current) return;
+    insertingMediaRef.current = true;
+    const token = buildMarkdownImageToken(asset.title, asset.url);
+    const nextMarkdown = insertMarkdownAtCursor(draftMarkdown, token, editorCursorRef.current);
+    setDraftMarkdown(nextMarkdown);
+
+    const seq = contextSeqRef.current;
+    const articleId = activeArticle.id;
+    const nextTitle = draftTitle.trim() || activeArticle.title;
+    setSavingArticle(true);
+    try {
+      const updated = await updateArticle(articleId, {
+        title: nextTitle,
+        contentMarkdown: nextMarkdown,
+        usedMediaIds: [asset.id],
+      });
+      if (seq !== contextSeqRef.current) return;
+      pendingUsedMediaIdsRef.current = pendingUsedMediaIdsRef.current.filter(
+        (id) => id !== asset.id,
+      );
+      applyArticleToCanvas(updated);
+      setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      setBrandMedia((prev) =>
+        prev.map((item) =>
+          item.id === asset.id ? { ...item, usedCount: item.usedCount + 1 } : item,
+        ),
+      );
+      feedback.notifySuccess(
+        asset.origin === 'AI_INLINE_GEN' ? 'AI 配图已生成并插入正文' : '已免费插入品牌实拍图',
+      );
+      invalidateFreshness('articles', 'brand-media');
+    } catch (err) {
+      if (seq !== contextSeqRef.current) return;
+      if (!pendingUsedMediaIdsRef.current.includes(asset.id)) {
+        pendingUsedMediaIdsRef.current = [...pendingUsedMediaIdsRef.current, asset.id];
+      }
+      feedback.notifyError(formatStudioError(err, '插入图片保存失败，可点击「保存修改」重试'));
+    } finally {
+      if (seq === contextSeqRef.current) {
+        insertingMediaRef.current = false;
+        setSavingArticle(false);
+      }
+    }
+  };
+
+  const handleAiImageGenerated = async (asset: BrandMediaAssetRecord) => {
+    setBrandMedia((prev) => [asset, ...prev.filter((item) => item.id !== asset.id)]);
+    void consoleCtx?.refreshWallet();
+    invalidateFreshness('points', 'brand-media');
+    await handleInsertMedia(asset);
+  };
+
+  const handleEditorCursorChange = useCallback((offset: number | null) => {
+    editorCursorRef.current = offset;
+  }, []);
 
   const handleDeleteArticle = async (article: GeoArticleRecord) => {
     await deleteArticle(article.id);
@@ -846,7 +983,18 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           onSelectArticle={applyArticleToCanvas}
           onDeleteArticle={handleDeleteArticle}
           readOnly={readOnly}
-          counterEntrySlot={slots?.counterEntrySlot}
+          counterEntrySlot={
+            slots?.counterEntrySlot ?? (
+              <Button
+                size="small"
+                data-testid="studio-counter-url-btn"
+                disabled={readOnly || streaming}
+                onClick={() => setCounterModalOpen(true)}
+              >
+                竞品 URL 反制
+              </Button>
+            )
+          }
         />
 
         {/* Center Pane: 3-Item Prewrite Bar + Live SSE Editor & Preview */}
@@ -896,8 +1044,27 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             onBackfillMissingFact={handleBackfillMissingFact}
             onRewriteSection={handleRewriteSection}
             onApplyRewrittenText={handleApplyRewrittenText}
+            onCursorChange={handleEditorCursorChange}
             readOnly={readOnly}
-            mediaToolbarSlot={slots?.mediaToolbarSlot}
+            mediaToolbarSlot={
+              slots?.mediaToolbarSlot ?? (
+                <StudioMediaPopover
+                  brandId={activeBrand.id}
+                  market={activeMarket}
+                  hasArticle={Boolean(activeArticle)}
+                  mediaItems={brandMedia}
+                  mediaLoading={brandMediaLoading}
+                  readOnly={readOnly}
+                  streaming={streaming}
+                  onRefreshMedia={handleRefreshBrandMedia}
+                  onInsertMedia={handleInsertMedia}
+                  onAiImageGenerated={handleAiImageGenerated}
+                  onAiImageError={() => {
+                    void consoleCtx?.refreshWallet();
+                  }}
+                />
+              )
+            }
           />
         </main>
 
@@ -915,6 +1082,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           publishRetestSlot={slots?.publishRetestSlot}
         />
       </div>
+
+      <CitationCounterModal
+        open={counterModalOpen}
+        brandId={activeBrand.id}
+        market={activeMarket}
+        readOnly={readOnly}
+        mode="url"
+        onClose={() => setCounterModalOpen(false)}
+        onCreated={handleCounterBriefCreated}
+      />
     </section>
   );
 }

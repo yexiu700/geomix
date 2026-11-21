@@ -4898,3 +4898,108 @@ input:not([class*='ant-']):hover {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* === M4-B Inline Media Popover & Competitor Counter Modal === */
+.gm-studio-preview-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid var(--gm-line-1);
+  display: block;
+  margin: 10px 0;
+}
+
+.gm-studio-media-popover {
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.gm-studio-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.gm-studio-media-item {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid var(--gm-line-1);
+  background: var(--gm-bg-elevated);
+  min-width: 0;
+  transition: border-color var(--gm-dur-fast) ease;
+}
+
+.gm-studio-media-item:hover {
+  border-color: var(--gm-phosphor);
+}
+
+.gm-studio-media-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gm-studio-media-thumb {
+  width: 100%;
+  height: 84px;
+  object-fit: cover;
+  border-radius: var(--gm-radius-xs);
+  background: var(--gm-bg-base);
+  display: block;
+}
+
+.gm-studio-media-item-title {
+  font-size: 12px;
+  color: var(--gm-fg-1);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gm-studio-media-item-meta {
+  font-size: 11px;
+  color: var(--gm-fg-3);
+}
+
+.gm-studio-media-ai-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gm-studio-media-ai-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.gm-counter-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gm-counter-fallback-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid rgba(242, 184, 75, 0.35);
+  background: rgba(242, 184, 75, 0.06);
+}

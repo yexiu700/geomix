@@ -7,6 +7,7 @@ import {
   deleteBrandMedia,
   enableBrandMarket,
   extractBrandFacts,
+  generateBrandAiImage,
   getBrand,
   getBrandFacts,
   listBrandMedia,
@@ -170,6 +171,21 @@ describe('apps/web/lib/brands v2 API client', () => {
       method: 'DELETE',
       storage: undefined,
       signal: undefined,
+    });
+
+    const aiCtrl = new AbortController();
+    await generateBrandAiImage(
+      'b/1',
+      { prompt: '极简四盘位家用NAS风道结构图', ratio: '16:9', title: '风道示意图' },
+      'geo_img_test_001',
+      { signal: aiCtrl.signal },
+    );
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b%2F1/media/ai-gen', {
+      method: 'POST',
+      body: { prompt: '极简四盘位家用NAS风道结构图', ratio: '16:9', title: '风道示意图' },
+      headers: { 'Idempotency-Key': 'geo_img_test_001' },
+      storage: undefined,
+      signal: aiCtrl.signal,
     });
   });
 
