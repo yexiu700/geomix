@@ -96,30 +96,16 @@ v2Describe(
           await expect(createFirstBtn).toBeVisible({ timeout: 15_000 });
           await createFirstBtn.click();
 
-          const wizard = page
-            .getByTestId('brand-quick-create')
-            .or(page.locator('.ant-modal-content:visible, form').first());
+          const wizard = page.getByTestId('brand-quick-create');
           await expect(wizard).toBeVisible();
 
-          await wizard
-            .getByLabel(/品牌名称/)
-            .or(wizard.locator('input').nth(0))
-            .fill(brandName);
-          await wizard
-            .getByLabel(/所属品类|品类/)
-            .or(wizard.locator('input').nth(1))
-            .fill('家用NAS网络存储');
-          await wizard
-            .getByLabel(/官网域名|自有域名/)
-            .or(wizard.locator('input').nth(2))
-            .fill(ownedDomain);
+          await wizard.getByRole('textbox', { name: '品牌名称' }).fill(brandName);
+          await wizard.getByRole('textbox', { name: '所属品类' }).fill('家用NAS网络存储');
+          await wizard.getByRole('textbox', { name: '官网域名' }).fill(ownedDomain);
 
-          const compInput = wizard
-            .getByLabel(/主要竞品|竞品/)
-            .or(wizard.locator('input, textarea').nth(3));
-          if ((await compInput.count()) > 0) {
-            await compInput.first().fill('极空存储, jikong.example');
-          }
+          await wizard.getByRole('button', { name: /\+\s*添加竞品|添加竞品/ }).click();
+          await wizard.getByRole('textbox', { name: '竞品名称 1' }).fill('极空存储');
+          await wizard.getByRole('textbox', { name: '竞品官网域名 1' }).fill('jikong.example');
 
           await wizard
             .getByRole('button', { name: /创建并进入工作区|立即创建|保存/ })
@@ -146,13 +132,12 @@ v2Describe(
           const brand: BrandDto = polledBrand;
           await expect(page.getByText(/请阅读并滚动至底部/)).toHaveCount(0);
 
-          // Dismiss optional Step-2 BrandQuickCreateModal ("跳过，直接进入") if shown before sidebar navigation
-          const skipBtn = page.getByRole('button', { name: /跳过，直接进入/ });
-          await skipBtn.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {});
-          if (await skipBtn.isVisible().catch(() => false)) {
-            await skipBtn.click();
-            await expect(skipBtn).toBeHidden({ timeout: 10_000 });
-          }
+          // Step 1 transitions BrandQuickCreateModal to Step 2 ("跳过，直接进入"); dismiss cleanly before sidebar navigation
+          const skipBtn = wizard.getByRole('button', { name: '跳过，直接进入' });
+          await expect(skipBtn).toBeVisible({ timeout: 10_000 });
+          await skipBtn.click();
+          await expect(wizard).toBeHidden({ timeout: 10_000 });
+          await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0, { timeout: 10_000 });
 
           // Start counting distinct workspace pathname hops from the first active workspace
           navTracker.start();
@@ -162,32 +147,33 @@ v2Describe(
             await navigateWorkspace(page, '品牌资产', /\/brands/);
           }
 
-          const urlInput = page
-            .locator('input[placeholder*="URL"], input[placeholder*="链接"], input[type="url"]')
-            .first();
-          await expect(urlInput).toBeVisible({ timeout: 15_000 });
+          const openExtractBtn = page.getByTestId('fact-ai-extract-btn');
+          await expect(openExtractBtn).toBeVisible({ timeout: 15_000 });
+          await openExtractBtn.click();
+
+          const extractModal = page.getByRole('dialog', { name: /AI 自动提炼/ });
+          await expect(extractModal).toBeVisible({ timeout: 10_000 });
+
+          const urlInput = extractModal.getByRole('textbox', { name: '官网链接' });
+          await expect(urlInput).toBeVisible();
           await urlInput.fill(FIXTURE_URLS.cnProduct);
 
-          const extractBtn = page
-            .getByTestId('fact-ai-extract-btn')
-            .or(page.getByRole('button', { name: /AI.*提炼|一键提炼/ }))
-            .first();
-          await extractBtn.click();
+          await extractModal.getByRole('button', { name: /开始 AI 提炼/ }).click();
+
+          const applyExtractBtn = extractModal.getByRole('button', { name: '应用到事实卡' });
+          await expect(applyExtractBtn).toBeVisible({ timeout: 20_000 });
+          await applyExtractBtn.click();
+          await expect(extractModal).toBeHidden({ timeout: 10_000 });
 
           for (const slot of ['PRODUCT_SPECS', 'DIFFERENTIATORS', 'CREDENTIALS', 'CASE_STUDIES']) {
             const slotCard = page.getByTestId(`fact-slot-${slot}`);
             await expect(slotCard).toBeVisible({ timeout: 20_000 });
+            const contentArea = slotCard.locator('textarea');
+            await expect(contentArea).toBeVisible();
             await expect
-              .poll(
-                async () => {
-                  const field = slotCard.locator('textarea, input').first();
-                  if ((await field.count()) > 0) {
-                    return (await field.inputValue()).trim().length;
-                  }
-                  return (await slotCard.innerText()).trim().length;
-                },
-                { timeout: 20_000 },
-              )
+              .poll(async () => (await contentArea.inputValue()).trim().length, {
+                timeout: 20_000,
+              })
               .toBeGreaterThan(10);
           }
 
@@ -199,10 +185,7 @@ v2Describe(
             await complianceCheckbox.check();
           }
 
-          await page
-            .getByRole('button', { name: /保存事实|保存品牌事实|保存/ })
-            .first()
-            .click();
+          await page.getByRole('button', { name: '保存品牌事实卡' }).click();
 
           await pollUntil(
             async () =>
@@ -224,13 +207,17 @@ v2Describe(
           await openVisibilityTab(page, 'runs');
 
           const cnEngines = await listMarketEnginesApi(tenant.session, brand.id, 'CN');
+          const onlineCn = cnEngines.find((e) => e.available || e.status === 'online');
+          expect(onlineCn, 'Expected at least one online CN engine in E2E catalog').toBeTruthy();
+          await expect(page.getByTestId(`engine-option-${onlineCn!.key}`)).toBeVisible({
+            timeout: 15_000,
+          });
           const offlineCn = cnEngines.find((e) => !e.available || e.status === 'offline');
-          if (offlineCn) {
-            const offlineOption = page.getByTestId(`engine-option-${offlineCn.key}`);
-            if ((await offlineOption.count()) > 0) {
-              await expect(offlineOption).toContainText('暂未上线');
-            }
-          }
+          expect(offlineCn, 'Expected at least one offline CN engine in E2E catalog').toBeTruthy();
+          const offlineOption = page.getByTestId(`engine-option-${offlineCn!.key}`);
+          await expect(offlineOption).toBeVisible();
+          await expect(offlineOption).toContainText('暂未上线');
+          await expect(offlineOption.locator('input[type="checkbox"]')).toBeDisabled();
 
           const promptInput = page
             .locator('textarea[placeholder*="问题"], textarea[placeholder*="问句"], textarea')
@@ -290,6 +277,7 @@ v2Describe(
             .or(page.getByRole('button', { name: /立即生成|确认并写作/ }))
             .first();
           await expect(streamBtn).toBeVisible();
+          await expect(streamBtn).toBeEnabled({ timeout: 15_000 });
           await streamBtn.click();
 
           const { durationMs } = await waitForStudioSseComplete(page, 30_000);
@@ -348,6 +336,7 @@ v2Describe(
           expect(retestedRecord?.beforeMetrics).not.toBeNull();
           expect(retestedRecord?.afterMetrics).not.toBeNull();
           expect(retestedRecord?.latestRetestRunId).toBeTruthy();
+          await expect(page.getByTestId('publish-before-after')).toBeVisible({ timeout: 15_000 });
 
           // Hard PRD §5 Quality Redline #4 Assertions
           expect(
@@ -408,19 +397,21 @@ v2Describe(
           const modal = page.locator('.ant-modal-content:visible, .ant-drawer-open:visible').last();
           await expect(modal).toBeVisible();
           await modal
-            .getByLabel(/当地品牌名|品牌名|Brand Name/i)
+            .getByLabel(/当地品牌名称|当地品牌名|品牌名|Brand Name/i)
             .or(modal.locator('input').nth(0))
+            .first()
             .fill(globalBrandName);
           await modal
-            .getByLabel(/官网域名|域名|Domain/i)
+            .getByLabel(/当地官网域名|官网域名|域名|Domain/i)
             .or(modal.locator('input').nth(1))
+            .first()
             .fill(globalDomain);
           const compInput = modal
-            .getByLabel(/竞品|Competitor/i)
-            .or(modal.locator('input, textarea').nth(2));
-          if ((await compInput.count()) > 0) {
-            await compInput.first().fill('EcoPeak, ecopeak.example');
-          }
+            .getByLabel(/当地主要竞品|竞品|Competitor/i)
+            .or(modal.locator('textarea').first())
+            .first();
+          await expect(compInput).toBeVisible();
+          await compInput.fill('EcoPeak, ecopeak.example');
           await modal
             .getByRole('button', { name: /确认|开启|保存/ })
             .first()

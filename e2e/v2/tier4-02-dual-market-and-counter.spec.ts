@@ -212,7 +212,13 @@ v2Describe(
             `/brands?brandId=${brand.id}&market=GLOBAL`,
           );
           try {
-            await expect(page.locator('body')).toContainText('RTK 双目视觉割草参数');
+            const specsCard = page.getByTestId('fact-slot-PRODUCT_SPECS');
+            await expect(specsCard.locator('input').first()).toHaveValue('RTK 双目视觉割草参数', {
+              timeout: 15_000,
+            });
+            await expect(specsCard.locator('textarea').first()).toHaveValue(
+              /厘米级 RTK \+ 视觉融合无边界导航/,
+            );
             await expect(page.locator('body')).toContainText(photoTitle);
 
             await navigateWorkspace(page, '行动首页', /\/home/);

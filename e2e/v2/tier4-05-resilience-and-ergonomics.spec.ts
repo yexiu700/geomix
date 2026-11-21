@@ -245,10 +245,10 @@ v2Describe(
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
           for (const tabLabel of [/点数明细|点数/, /账号权益|权益/, /实名认证|认证/]) {
             const tab = page.getByRole('tab', { name: tabLabel }).first();
-            if ((await tab.count()) > 0) {
-              await tab.click();
-              await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
-            }
+            await expect(tab).toBeVisible({ timeout: 15_000 });
+            await tab.click();
+            await expect(tab).toHaveAttribute('aria-selected', 'true');
+            await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
           }
           assertNoConsoleOrPageErrors(errors);
         } finally {
