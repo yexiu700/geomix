@@ -1,20 +1,23 @@
 import { createHash } from 'node:crypto';
 import {
-  CITATION_SOURCE_KINDS,
+  CITATION_SOURCE_PRIORITY,
   VISIBILITY_MAX_COMPETITORS,
   assessAnswerTopicRelevance,
+  classifyCitationSource,
   computeAvgPosition,
   computeSentimentSummary,
   computeVisibilityPct,
   isCitationSourceKind,
   isVisibilityEngine,
   isVisibilitySentiment,
+  normalizeFanOutQueries,
   normalizeVisibilityDomain,
   recomputeRunMetrics,
   toShanghaiDateKey,
   type CitationSourceKind,
   type CompetitorHit,
   type DomainMetricItem,
+  type GeoMarket,
   type ItemStatusName,
   type ProfileForMetrics,
   type RawObservationForMetrics,
@@ -27,7 +30,6 @@ import {
   type VisibilityEngineBreakdownItem,
   type VisibilityEngineKey,
   type VisibilityObservationRecord,
-  type VisibilityProfileRecord,
   type VisibilityRunRecord,
   type VisibilitySentiment,
   type VisibilityTrendPoint,
@@ -239,34 +241,6 @@ export function isEffectiveBrandMention(
   return evaluateObservationRelevance(obs, ctx).relevant;
 }
 
-export type ProfileRowForMapper = {
-  id: string;
-  name: string;
-  brandName: string;
-  brandAliases: string[];
-  ownedDomains: string[];
-  competitors: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export function presentProfile(
-  row: ProfileRowForMapper,
-  runCount?: number,
-): VisibilityProfileRecord {
-  return {
-    id: row.id,
-    name: row.name,
-    brandName: row.brandName,
-    brandAliases: row.brandAliases,
-    ownedDomains: row.ownedDomains,
-    competitors: parseProfileCompetitors(row.competitors),
-    ...(runCount !== undefined ? { runCount } : {}),
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
 export type ReservationPointsSnapshot = { frozen: number; settled: number; released: number };
 
 export type RunRowForMapper = {
@@ -331,6 +305,7 @@ export function presentRunRecord(
     keywordMain: null,
     name: row.name,
     engines: row.engines.filter((e): e is VisibilityEngineKey => isVisibilityEngine(e)),
+    prompts: row.prompts,
     questionIds: [],
     triggerType: row.triggerType,
     retestArticleId: row.retestArticleId ?? null,
@@ -389,14 +364,28 @@ export type ObservationRowForMapper = {
   citations: readonly CitationRowForMapper[];
 };
 
-export function presentCitationRecord(cite: CitationRowForMapper): VisibilityCitationRecord {
+export type CitationClassificationContext = {
+  ownedDomains?: readonly string[];
+  competitorDomains?: readonly string[];
+};
+
+export function presentCitationRecord(
+  cite: CitationRowForMapper,
+  citationContext?: CitationClassificationContext,
+): VisibilityCitationRecord {
+  const sourceKind: CitationSourceKind = citationContext
+    ? classifyCitationSource(cite.url || cite.domain, citationContext)
+    : isCitationSourceKind(cite.sourceKind)
+      ? cite.sourceKind
+      : 'OTHER';
+
   return {
     id: cite.id,
     url: cite.url,
     domain: cite.domain,
     title: cite.title,
     snippet: cite.snippet,
-    sourceKind: isCitationSourceKind(cite.sourceKind) ? cite.sourceKind : 'OTHER',
+    sourceKind,
     position: cite.position,
     createdAt: cite.createdAt.toISOString(),
   };
@@ -405,6 +394,10 @@ export function presentCitationRecord(cite: CitationRowForMapper): VisibilityCit
 export function presentObservationRecord(
   obs: ObservationRowForMapper,
   ctx: RelevanceBrandContext,
+  options?: {
+    market?: GeoMarket;
+    citationContext?: CitationClassificationContext;
+  },
 ): VisibilityObservationRecord {
   const relevance = evaluateObservationRelevance(obs, ctx);
   const allowBrand = relevance.relevant;
@@ -415,6 +408,7 @@ export function presentObservationRecord(
     profileId: obs.brandMarketId,
     brandId: obs.brandId,
     brandMarketId: obs.brandMarketId,
+    ...(options?.market ? { market: options.market } : {}),
     questionId: null,
     promptText: obs.promptText,
     engine: isVisibilityEngine(obs.engine) ? obs.engine : obs.engine,
@@ -431,14 +425,14 @@ export function presentObservationRecord(
     topicRelevant: relevance.relevant,
     relevanceReason: relevance.reason,
     competitorHits: parseStoredCompetitorHits(obs.competitorHits),
-    fanOutQueries: obs.fanOutQueries,
+    fanOutQueries: normalizeFanOutQueries(obs.fanOutQueries ?? [], obs.promptText),
     judgeModel: obs.judgeModel,
     tokensIn: obs.tokensIn,
     tokensOut: obs.tokensOut,
     error: obs.error,
     checkedAt: obs.checkedAt ? obs.checkedAt.toISOString() : null,
     createdAt: obs.createdAt.toISOString(),
-    citations: obs.citations.map(presentCitationRecord),
+    citations: obs.citations.map((cite) => presentCitationRecord(cite, options?.citationContext)),
   };
 }
 
@@ -494,7 +488,7 @@ export function higherPrioritySourceKind(
   left: CitationSourceKind,
   right: CitationSourceKind,
 ): CitationSourceKind {
-  const order: readonly CitationSourceKind[] = CITATION_SOURCE_KINDS;
+  const order: readonly CitationSourceKind[] = CITATION_SOURCE_PRIORITY;
   const leftIdx = order.indexOf(left);
   const rightIdx = order.indexOf(right);
   if (leftIdx < 0) return right;

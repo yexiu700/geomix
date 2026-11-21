@@ -1,0 +1,844 @@
+// @vitest-environment jsdom
+import type {
+  BrandRecord,
+  VisibilityCitationListResponse,
+  VisibilityEngineAvailabilityResponse,
+  VisibilityOpportunitiesResponse,
+  VisibilityOverviewResponse,
+  VisibilityRunDetailRecord,
+  VisibilityRunListResponse,
+} from '@geomix/shared';
+import { CITATION_SOURCE_KINDS } from '@geomix/shared';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as visibilityApi from '../../lib/visibility';
+import { useWorkspaceStore } from '../../lib/workspace-store';
+import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
+import { VisibilityWorkspace } from './visibility-workspace';
+
+const mockConfirm = vi.fn();
+const mockNotifySuccess = vi.fn();
+const mockNotifyError = vi.fn();
+
+vi.mock('../crud/ux-feedback', () => ({
+  useUxFeedback: () => ({
+    confirm: mockConfirm,
+    notifySuccess: mockNotifySuccess,
+    notifyWarning: vi.fn(),
+    notifyError: mockNotifyError,
+  }),
+}));
+
+const DUAL_BRAND: BrandRecord = {
+  id: 'brand_dual_1',
+  name: '极光NAS',
+  category: '家用NAS',
+  truthAgreementSignedAt: '2026-11-18T00:00:00.000Z',
+  createdAt: '2026-11-18T00:00:00.000Z',
+  updatedAt: '2026-11-18T00:00:00.000Z',
+  markets: [
+    {
+      id: 'bm_cn_1',
+      brandId: 'brand_dual_1',
+      market: 'CN',
+      locale: 'zh-CN',
+      region: 'CN',
+      localBrandName: '极光NAS',
+      aliases: ['JiguangNAS'],
+      ownedDomains: ['jiguangnas.cn'],
+      competitors: [{ name: '群晖', aliases: ['Synology'], domains: ['synology.com'] }],
+      seedPrompts: ['家用静音四盘位NAS推荐', '客厅静音NAS功耗对比'],
+      createdAt: '2026-11-18T00:00:00.000Z',
+      updatedAt: '2026-11-18T00:00:00.000Z',
+    },
+    {
+      id: 'bm_gl_1',
+      brandId: 'brand_dual_1',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      localBrandName: 'AuroraNAS',
+      aliases: ['Aurora NAS'],
+      ownedDomains: ['auroranas.com'],
+      competitors: [{ name: 'Synology', aliases: [], domains: ['synology.com'] }],
+      seedPrompts: ['Best quiet 4-bay NAS for home office'],
+      createdAt: '2026-11-18T00:00:00.000Z',
+      updatedAt: '2026-11-18T00:00:00.000Z',
+    },
+  ],
+};
+
+const CN_ENGINES_RES: VisibilityEngineAvailabilityResponse = {
+  collector: 'fake',
+  market: 'CN',
+  checkedAt: '2026-11-20T00:00:00.000Z',
+  refreshIntervalMs: 300_000,
+  engines: [
+    {
+      key: 'deepseek',
+      label: 'DeepSeek',
+      domestic: true,
+      market: 'CN',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'doubao',
+      label: '豆包',
+      domestic: true,
+      market: 'CN',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'yuanbao',
+      label: '腾讯元宝',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+    {
+      key: 'tongyi',
+      label: '通义千问',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+    {
+      key: 'wenxin',
+      label: '文心一言',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+    {
+      key: 'nami',
+      label: '纳米',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+    {
+      key: 'kimi',
+      label: 'Kimi',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+    {
+      key: 'zhipu',
+      label: '智谱',
+      domestic: true,
+      market: 'CN',
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    },
+  ],
+};
+
+const GLOBAL_ENGINES_RES: VisibilityEngineAvailabilityResponse = {
+  collector: 'fake',
+  market: 'GLOBAL',
+  checkedAt: '2026-11-20T00:00:00.000Z',
+  refreshIntervalMs: 300_000,
+  engines: [
+    {
+      key: 'chatgpt',
+      label: 'ChatGPT',
+      domestic: false,
+      market: 'GLOBAL',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'perplexity',
+      label: 'Perplexity',
+      domestic: false,
+      market: 'GLOBAL',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'claude',
+      label: 'Claude',
+      domestic: false,
+      market: 'GLOBAL',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'gemini',
+      label: 'Gemini',
+      domestic: false,
+      market: 'GLOBAL',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+    {
+      key: 'google_aio',
+      label: 'Google AI Overviews',
+      domestic: false,
+      market: 'GLOBAL',
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    },
+  ],
+};
+
+const CN_OVERVIEW_RES: VisibilityOverviewResponse = {
+  profileId: 'bm_cn_1',
+  brandId: 'brand_dual_1',
+  brandMarketId: 'bm_cn_1',
+  market: 'CN',
+  metrics: {
+    completedChecks: 4,
+    mentionedChecks: 3,
+    visibilityPct: 75,
+    avgPosition: 1.5,
+    sentimentSummary: {
+      positive: 2,
+      neutral: 1,
+      mixed: 0,
+      negative: 0,
+      total: 3,
+      positivePct: 66.7,
+      negativePct: 0,
+    },
+    totalCitations: 3,
+    ownedCitations: 1,
+    ownedCitationChecks: 1,
+    ownedCitationRatePct: 33.3,
+    ownedCitationCheckRatePct: 25,
+    shareOfVoice: {
+      totalMentions: 5,
+      brandMentions: 3,
+      brandSharePct: 60,
+      entries: [
+        { name: '极光NAS', isBrand: true, mentions: 3, sharePct: 60 },
+        { name: '群晖', isBrand: false, mentions: 2, sharePct: 40 },
+      ],
+    },
+    topDomains: [],
+  },
+  trend: [
+    {
+      date: '2026-11-19',
+      engine: 'all',
+      completedChecks: 2,
+      mentionedChecks: 1,
+      visibilityPct: 50,
+    },
+    {
+      date: '2026-11-20',
+      engine: 'all',
+      completedChecks: 2,
+      mentionedChecks: 2,
+      visibilityPct: 100,
+    },
+  ],
+  byEngine: [
+    {
+      engine: 'deepseek',
+      completedChecks: 2,
+      mentionedChecks: 2,
+      visibilityPct: 100,
+      avgPosition: 1,
+    },
+    { engine: 'doubao', completedChecks: 2, mentionedChecks: 1, visibilityPct: 50, avgPosition: 2 },
+  ],
+};
+
+const GLOBAL_OVERVIEW_RES: VisibilityOverviewResponse = {
+  ...CN_OVERVIEW_RES,
+  profileId: 'bm_gl_1',
+  brandMarketId: 'bm_gl_1',
+  market: 'GLOBAL',
+  metrics: {
+    ...CN_OVERVIEW_RES.metrics,
+    visibilityPct: 40,
+    completedChecks: 5,
+    mentionedChecks: 2,
+  },
+  byEngine: [
+    {
+      engine: 'chatgpt',
+      completedChecks: 3,
+      mentionedChecks: 1,
+      visibilityPct: 33.3,
+      avgPosition: 2,
+    },
+    {
+      engine: 'perplexity',
+      completedChecks: 2,
+      mentionedChecks: 1,
+      visibilityPct: 50,
+      avgPosition: 1,
+    },
+  ],
+};
+
+const SAMPLE_RUN_DETAIL: VisibilityRunDetailRecord = {
+  id: 'vrun_sample_1',
+  profileId: 'bm_cn_1',
+  profileName: '极光NAS',
+  brandName: '极光NAS',
+  brandId: 'brand_dual_1',
+  brandMarketId: 'bm_cn_1',
+  market: 'CN',
+  keywordId: null,
+  keywordMain: null,
+  name: 'CN首轮监测',
+  engines: ['deepseek', 'doubao'],
+  prompts: ['家用静音四盘位NAS推荐'],
+  questionIds: [],
+  triggerType: 'MANUAL',
+  retestArticleId: null,
+  totalChecks: 2,
+  doneCount: 2,
+  failCount: 0,
+  skipCount: 0,
+  unitPrice: 2,
+  frozenPoints: 4,
+  settledPoints: 4,
+  releasedPoints: 0,
+  reservationId: null,
+  status: 'COMPLETED',
+  visibilityPct: 100,
+  lastError: null,
+  createdAt: '2026-11-20T06:00:00.000Z',
+  updatedAt: '2026-11-20T06:01:00.000Z',
+  finishedAt: '2026-11-20T06:01:00.000Z',
+  metrics: CN_OVERVIEW_RES.metrics,
+  observations: [
+    {
+      id: 'obs_1',
+      runId: 'vrun_sample_1',
+      profileId: 'bm_cn_1',
+      brandId: 'brand_dual_1',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      questionId: null,
+      promptText: '家用静音四盘位NAS推荐',
+      engine: 'deepseek',
+      status: 'SUCCESS',
+      collectorKind: 'fake',
+      answerText: '1. 极光NAS：静音且功耗低。\n2. 群晖：生态成熟。',
+      brandMentioned: true,
+      brandPosition: 1,
+      brandSentiment: 'positive',
+      brandPassage: '1. 极光NAS：静音且功耗低。',
+      competitorHits: [{ name: '群晖', mentioned: true, position: 2, sentiment: 'neutral' }],
+      fanOutQueries: ['安静NAS', '四盘位NAS'],
+      judgeModel: 'fake',
+      tokensIn: 10,
+      tokensOut: 10,
+      error: null,
+      checkedAt: '2026-11-20T06:01:00.000Z',
+      createdAt: '2026-11-20T06:00:00.000Z',
+      citations: [
+        {
+          id: 'cite_1',
+          url: 'https://jiguangnas.cn/specs',
+          domain: 'jiguangnas.cn',
+          title: '极光NAS参数',
+          snippet: '实测噪音 19dB',
+          sourceKind: 'OWNED',
+          position: 1,
+          createdAt: '2026-11-20T06:01:00.000Z',
+        },
+      ],
+    },
+  ],
+};
+
+const SAMPLE_RUNS_RES: VisibilityRunListResponse = {
+  page: 1,
+  pageSize: 25,
+  total: 1,
+  items: [SAMPLE_RUN_DETAIL],
+};
+
+const SAMPLE_CITATIONS_RES: VisibilityCitationListResponse = {
+  page: 1,
+  pageSize: 25,
+  total: 2,
+  totalCitations: 3,
+  sourceBreakdown: {
+    OWNED: 1,
+    COMPETITOR: 1,
+    SOCIAL: 1,
+    AUTHORITY: 0,
+    ECOMMERCE: 0,
+    OTHER: 0,
+  },
+  items: [
+    {
+      domain: 'synology.com',
+      sourceKind: 'COMPETITOR',
+      citationCount: 2,
+      questionCount: 1,
+      topUrls: [
+        { url: 'https://synology.com/review', title: '群晖对比页', count: 2 },
+        { url: 'javascript:alert(1)', title: '恶意脚本测试链接', count: 1 },
+      ],
+    },
+  ],
+};
+
+const SAMPLE_OPPS_RES: VisibilityOpportunitiesResponse = {
+  gaps: [
+    {
+      promptText: '入门四盘位NAS推荐',
+      questionId: null,
+      competitors: ['群晖'],
+      engines: ['deepseek'],
+      observationCount: 1,
+      latestCheckedAt: '2026-11-20T06:00:00.000Z',
+    },
+  ],
+  fanOutQueries: [
+    {
+      query: '安静NAS',
+      frequency: 3,
+      sourcePrompts: ['家用静音四盘位NAS推荐'],
+      engines: ['deepseek'],
+      brandMentionedPct: 66.7,
+    },
+    {
+      query: '家用NAS功耗',
+      frequency: 2,
+      sourcePrompts: ['家用静音四盘位NAS推荐'],
+      engines: ['doubao'],
+      brandMentionedPct: 50,
+    },
+  ],
+};
+
+const SAMPLE_ACCOUNT: ConsoleContextValue['account'] = {
+  id: 'u-vis-1',
+  username: 'demo',
+  nickname: '演示用户',
+  role: 'MERCHANT',
+  tenant: {
+    id: 't-vis-1',
+    name: '演示租户',
+    expiresAt: '2027-12-31T00:00:00.000Z',
+    isActive: true,
+    readOnly: false,
+  },
+};
+
+function makeConsoleContext(overrides?: Partial<ConsoleContextValue>): ConsoleContextValue {
+  return {
+    account: SAMPLE_ACCOUNT,
+    readOnly: false,
+    wallet: {
+      points: 200,
+      pointsReserved: 0,
+      available: 200,
+      money: '0.00',
+      billingMode: 'SHADOW',
+      billingModeSource: 'global',
+      tenantBillingMode: null,
+    },
+    walletLoading: false,
+    openCreateBrandModal: vi.fn(),
+    openEnableMarketModal: vi.fn(),
+    refreshWallet: vi.fn(async () => undefined),
+    navigateWorkspace: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
+  beforeEach(() => {
+    useWorkspaceStore.getState().reset();
+    mockConfirm.mockReset();
+    mockNotifySuccess.mockReset();
+    mockNotifyError.mockReset();
+    window.history.replaceState(null, '', '/visibility');
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('renders cold-load Skeleton without 0% / 0 点 / 免费体验期 flash while brandsLoading=true', () => {
+    useWorkspaceStore.setState({ brandsLoading: true, brandsLoaded: false, brands: [] });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ walletLoading: true, wallet: null })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const loadingEl = screen.getByTestId('visibility-loading');
+    expect(loadingEl.getAttribute('aria-busy')).toBe('true');
+    expect(loadingEl.textContent).not.toContain('0 点');
+    expect(loadingEl.textContent).not.toContain('免费体验期');
+    expect(loadingEl.textContent).not.toContain('0.0%');
+  });
+
+  it('switches 3 tabs cleanly, enforces CN (8) vs GLOBAL (5) isolation with AbortController anti-race, and pre-checks only online engines', async () => {
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    let resolveDelayedCnOverview!: (val: VisibilityOverviewResponse) => void;
+    let cnOverviewSignal: AbortSignal | undefined;
+    let overviewCalls = 0;
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockImplementation(
+      (_bid, market, _p, opts) => {
+        overviewCalls += 1;
+        if (market === 'CN' && overviewCalls === 1) {
+          return Promise.resolve(CN_OVERVIEW_RES);
+        }
+        if (market === 'CN') {
+          cnOverviewSignal = opts?.signal;
+          return new Promise((resolve) => {
+            resolveDelayedCnOverview = resolve;
+          });
+        }
+        return Promise.resolve(GLOBAL_OVERVIEW_RES);
+      },
+    );
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockImplementation(async (_bid, market) =>
+      market === 'CN' ? CN_ENGINES_RES : GLOBAL_ENGINES_RES,
+    );
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Tab 1: CN SonarDial has exactly 8 spokes
+    await waitFor(() => {
+      expect(document.querySelector('.gm-sonar')?.getAttribute('data-engine-count')).toBe('8');
+    });
+    expect(screen.getAllByText('75.0%').length).toBeGreaterThan(0);
+
+    // Switch to Tab 2 (Runs): 8 CN engines, ONLY 2 online pre-checked, 6 offline disabled with 暂未上线
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    expect(window.location.search).toContain('tab=runs');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('engine-option-deepseek')).toBeTruthy();
+      expect(screen.getByTestId('engine-option-yuanbao')).toBeTruthy();
+    });
+    expect(document.querySelectorAll('[data-testid^="engine-option-"]')).toHaveLength(8);
+    expect(screen.queryByTestId('engine-option-chatgpt')).toBeNull();
+
+    const deepseekBox = within(screen.getByTestId('engine-option-deepseek')).getByRole('checkbox');
+    const yuanbaoBox = within(screen.getByTestId('engine-option-yuanbao')).getByRole('checkbox');
+    expect((deepseekBox as HTMLInputElement).checked).toBe(true);
+    expect((yuanbaoBox as HTMLInputElement).checked).toBe(false);
+    expect((yuanbaoBox as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByTestId('engine-option-yuanbao').textContent).toContain('暂未上线');
+
+    // Trigger a delayed CN overview request, then immediately switch global market to GLOBAL
+    fireEvent.click(screen.getByTestId('visibility-tab-overview'));
+    fireEvent.click(screen.getByText('30 天'));
+    expect(cnOverviewSignal?.aborted).toBe(false);
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL');
+    });
+
+    // Previous in-flight CN request MUST be aborted!
+    expect(cnOverviewSignal?.aborted).toBe(true);
+
+    // Late resolution of stale CN response must be ignored; GLOBAL 5 spokes & 40.0% must win
+    await act(async () => {
+      resolveDelayedCnOverview(CN_OVERVIEW_RES);
+    });
+
+    await waitFor(() => {
+      expect(document.querySelector('.gm-sonar')?.getAttribute('data-engine-count')).toBe('5');
+      expect(screen.getAllByText('40.0%').length).toBeGreaterThan(0);
+    });
+
+    // Switch to Tab 2 on GLOBAL: strictly 5 GLOBAL engines, zero CN engines
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-testid^="engine-option-"]')).toHaveLength(5);
+    });
+    expect(screen.getByTestId('engine-option-chatgpt')).toBeTruthy();
+    expect(screen.queryByTestId('engine-option-deepseek')).toBeNull();
+  });
+
+  it('creates run with Idempotency-Key, refreshes wallet, uses useUxFeedback().confirm on delete, renders Tab 3 XSS-safe citations & Fan-Out, and respects readOnly', async () => {
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    const createSpy = vi
+      .spyOn(visibilityApi, 'createVisibilityRun')
+      .mockResolvedValue(SAMPLE_RUN_DETAIL);
+    const deleteSpy = vi
+      .spyOn(visibilityApi, 'deleteVisibilityRun')
+      .mockResolvedValue({ deleted: 1 });
+
+    const refreshWallet = vi.fn(async () => undefined);
+    const { rerender } = render(
+      <ConsoleProvider value={makeConsoleContext({ refreshWallet })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Tab 2: click seedPrompt chip, verify live estimate (1 prompt * 2 online engines * 2 = 4 pts) & submit
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    await waitFor(() => {
+      expect(screen.getByTestId('engine-option-deepseek')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('+ 家用静音四盘位NAS推荐'));
+    const submitBtn = screen.getByRole('button', { name: /发起监测（4 点）/ });
+    expect((submitBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+    const [brandArg, payloadArg, idemArg] = createSpy.mock.calls[0]!;
+    expect(brandArg).toBe('brand_dual_1');
+    expect(payloadArg).toEqual({
+      market: 'CN',
+      prompts: ['家用静音四盘位NAS推荐'],
+      engines: ['deepseek', 'doubao'],
+    });
+    expect(typeof idemArg).toBe('string');
+    expect(idemArg.length).toBeGreaterThanOrEqual(8);
+    expect(refreshWallet).toHaveBeenCalled();
+
+    // Delete run triggers useUxFeedback().confirm (NOT Modal.confirm)
+    const deleteBtn = screen.getByRole('button', { name: '删除' });
+    fireEvent.click(deleteBtn);
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    const confirmOpts = mockConfirm.mock.calls[0]![0] as { onOk?: () => Promise<void> };
+    await act(async () => {
+      await confirmOpts.onOk?.();
+    });
+    expect(deleteSpy).toHaveBeenCalledWith('brand_dual_1', 'vrun_sample_1', 'CN');
+
+    // Tab 3: all 6 CITATION_SOURCE_KINDS filter pills, XSS-safe links, Fan-Out multi-select
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    await waitFor(() => {
+      for (const kind of CITATION_SOURCE_KINDS) {
+        expect(screen.getByTestId(`citation-filter-${kind}`)).toBeTruthy();
+      }
+    });
+
+    // Safe https link has rel="noopener noreferrer"; javascript: link is NOT rendered as <a href>
+    const safeLink = screen.getByRole('link', { name: /synology\.com\/review/ });
+    expect(safeLink.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
+
+    // Fan-Out checkbox multi-select
+    const fanOutCb = screen.getByLabelText('选择拆解词-安静NAS');
+    fireEvent.click(fanOutCb);
+    expect(screen.getByText(/个拆解词/).textContent).toContain('1');
+
+    // Read-only expired tenant mode disables mutating CTA while allowing browsing
+    rerender(
+      <ConsoleProvider value={makeConsoleContext({ readOnly: true })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+    const topCta = screen.getByRole('button', { name: '发起新监测' });
+    expect((topCta as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('never fires cross-market fetchVisibilityRunDetail on CN->GLOBAL switch and resets submitting lockout when createVisibilityRun is in-flight (B1 & B2)', async () => {
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockImplementation(async (_b, market) =>
+      market === 'CN' ? CN_OVERVIEW_RES : GLOBAL_OVERVIEW_RES,
+    );
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockImplementation(async (_b, market) =>
+      market === 'CN' ? CN_ENGINES_RES : GLOBAL_ENGINES_RES,
+    );
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockImplementation(async (_b, market) =>
+      market === 'CN' ? SAMPLE_RUNS_RES : { page: 1, pageSize: 25, total: 0, items: [] },
+    );
+    const runDetailSpy = vi
+      .spyOn(visibilityApi, 'fetchVisibilityRunDetail')
+      .mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+
+    let resolvePendingCreate!: (val: VisibilityRunDetailRecord) => void;
+    vi.spyOn(visibilityApi, 'createVisibilityRun').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePendingCreate = resolve;
+        }),
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Wait for CN run auto-selection and CN detail load
+    await waitFor(() => {
+      expect(runDetailSpy).toHaveBeenCalledWith(
+        'brand_dual_1',
+        'vrun_sample_1',
+        'CN',
+        expect.anything(),
+      );
+    });
+
+    // Open Tab 2 and submit a CN run (stays in-flight)
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    await waitFor(() => {
+      expect(screen.getByText('+ 家用静音四盘位NAS推荐')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByText('+ 家用静音四盘位NAS推荐'));
+    fireEvent.click(screen.getByRole('button', { name: /发起监测（4 点）/ }));
+
+    const promptsTextarea = screen.getByLabelText('监测问题列表') as HTMLTextAreaElement;
+    expect(promptsTextarea.disabled).toBe(true);
+
+    // Switch market CN -> GLOBAL while createVisibilityRun is still pending
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL');
+    });
+
+    // Form MUST unlock immediately on GLOBAL, and zero cross-market fetchVisibilityRunDetail calls may occur
+    await waitFor(() => {
+      expect((screen.getByLabelText('监测问题列表') as HTMLTextAreaElement).disabled).toBe(false);
+    });
+
+    await act(async () => {
+      resolvePendingCreate(SAMPLE_RUN_DETAIL);
+    });
+
+    const crossMarketDetailCalls = runDetailSpy.mock.calls.filter(
+      ([_b, runId, market]) => runId === 'vrun_sample_1' && market === 'GLOBAL',
+    );
+    expect(crossMarketDetailCalls).toEqual([]);
+    expect((screen.getByLabelText('监测问题列表') as HTMLTextAreaElement).disabled).toBe(false);
+  });
+
+  it('enforces table-layout: fixed on Tab 2 runs table and both Tab 3 citation/fan-out tables (#306)', async () => {
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue({
+      ...SAMPLE_OPPS_RES,
+      fanOutQueries: [
+        ...SAMPLE_OPPS_RES.fanOutQueries,
+        {
+          query: '无覆盖率字段测试词',
+          frequency: 1,
+          sourcePrompts: ['家用静音四盘位NAS推荐'],
+          engines: ['deepseek'],
+          brandMentionedPct: undefined,
+        },
+      ],
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    await waitFor(() => {
+      const runsTable = document.querySelector(
+        '.gm-vis-table-wrap table',
+      ) as HTMLTableElement | null;
+      expect(runsTable).not.toBeNull();
+      expect(runsTable?.style.tableLayout).toBe('fixed');
+    });
+
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    await waitFor(() => {
+      const allVisTables = Array.from(
+        document.querySelectorAll('.gm-vis-table-wrap table'),
+      ) as HTMLTableElement[];
+      expect(allVisTables).toHaveLength(3);
+      expect(allVisTables.map((t) => t.style.tableLayout)).toEqual(['fixed', 'fixed', 'fixed']);
+    });
+    expect(document.body.textContent).not.toContain('NaN%');
+  });
+});

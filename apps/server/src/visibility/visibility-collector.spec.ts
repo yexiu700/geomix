@@ -532,6 +532,10 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
     expect(JSON.parse(capturedRequest!.body ?? '{}')).toEqual({
       prompt: '测试远端采集',
       engine: 'tongyi',
+      market: 'CN',
+      locale: 'zh-CN',
+      region: 'CN',
+      languageCode: 'zh',
     });
 
     expect(res).toEqual({
@@ -743,5 +747,257 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
       reason: 'status',
       message: '远端采集服务返回了异常状态码',
     });
+  });
+
+  it('forwards market, locale, region, languageCode to remote_scraper and maps 408 to TIMEOUT', async () => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const okTransport: HttpTransport = async (req) => {
+      payloads.push(JSON.parse(req.body ?? '{}') as Record<string, unknown>);
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: Buffer.from(
+          JSON.stringify({
+            answerText: 'Top NAS picks include Synology, QNAP, and AcmeNAS.',
+            citations: [{ url: 'https://www.reddit.com/r/homelab/1', title: 'Homelab' }],
+            fanOutQueries: ['quiet NAS; home NAS power；quiet NAS'],
+          }),
+          'utf8',
+        ),
+      };
+    };
+
+    const collector = VisibilityCollectorService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'https://scraper.example.com/v1/collect',
+      },
+      { resolver: publicResolver, transport: okTransport },
+    );
+
+    const globalRes = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'perplexity',
+      promptText: '[E2E_GAP] Best quiet 4-bay NAS for home office',
+      brandName: 'AcmeNAS',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+    });
+
+    expect(payloads[0]).toEqual({
+      prompt: '[E2E_GAP] Best quiet 4-bay NAS for home office',
+      engine: 'perplexity',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      languageCode: 'en',
+    });
+    // Security invariant: [E2E_*] tokens are NEVER intercepted by remote_scraper
+    expect(globalRes.collectorKind).toBe('remote_scraper');
+    expect(globalRes.answerText).toContain('AcmeNAS');
+    expect(globalRes.fanOutQueries).toEqual(['quiet NAS', 'home NAS power']);
+
+    await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: 'Leiser Heim-NAS Vergleich',
+      brandName: 'AcmeNAS',
+      market: 'GLOBAL',
+      locale: 'de-DE',
+      region: 'DE',
+    });
+    expect(payloads[1]).toMatchObject({
+      market: 'GLOBAL',
+      locale: 'de-DE',
+      region: 'DE',
+      languageCode: 'de',
+    });
+
+    const timeoutCollector = VisibilityCollectorService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'https://scraper.example.com/v1/collect',
+      },
+      {
+        resolver: publicResolver,
+        transport: async () => ({
+          status: 408,
+          headers: { 'content-type': 'application/json' },
+          body: Buffer.from(JSON.stringify({ code: 'TIMEOUT' }), 'utf8'),
+        }),
+      },
+    );
+
+    await expect(
+      timeoutCollector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'doubao',
+        promptText: '家用 NAS 推荐',
+        brandName: '绿联',
+        market: 'CN',
+      }),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.TIMEOUT,
+      reason: 'timeout',
+    });
+  });
+
+  it('uses English system prompt in llm_api mode for GLOBAL market and ignores [E2E_*] tokens', async () => {
+    let capturedSystem = '';
+    const mockLlm = {
+      complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
+        capturedSystem = input.messages.find((m) => m.role === 'system')?.content ?? '';
+        return {
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          fake: false,
+          tokensIn: 100,
+          tokensOut: 120,
+          text: JSON.stringify({
+            answerText: 'Top picks for home NAS include AcmeNAS and Synology.',
+            citations: [{ url: 'https://www.techradar.com/reviews/nas', title: 'TechRadar' }],
+            fanOutQueries: ['best home NAS 2026'],
+          }),
+        };
+      },
+    } as unknown as LlmService;
+
+    const collector = VisibilityCollectorService.fromEnv(
+      { VISIBILITY_COLLECTOR: 'llm_api' },
+      { llm: mockLlm },
+    );
+
+    const res = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: '[E2E_ECHO_TRAP] Best home NAS 2026',
+      brandName: 'AcmeNAS',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+    });
+
+    expect(capturedSystem).toContain('en-US');
+    expect(capturedSystem).toContain('region: US');
+    expect(res.collectorKind).toBe('llm_api');
+    expect(res.answerText).toContain('AcmeNAS');
+  });
+
+  it('emits market-aware GLOBAL answers and deterministic [E2E_*] / RETEST scenarios exclusively in fake mode', async () => {
+    const collector = VisibilityCollectorService.fromEnv({ VISIBILITY_COLLECTOR: 'fake' });
+    const baseInput = {
+      tenantId: 'tenant_demo',
+      brandName: '极光NAS',
+      ownedDomains: ['jiguangnas.cn'],
+      competitors: [
+        { name: '群晖', domains: ['synology.com'] },
+        { name: '极空间', domains: ['zspace.cn'] },
+        { name: '威联通', domains: ['qnap.com'] },
+      ],
+    };
+
+    const globalDefault = await collector.collect({
+      ...baseInput,
+      brandName: 'AcmeNAS',
+      ownedDomains: ['acmenas.com'],
+      engine: 'perplexity',
+      promptText: 'Best quiet 4-bay NAS for home office',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+    });
+    expect(globalDefault.rawMeta?.market).toBe('GLOBAL');
+    expect(globalDefault.rawMeta?.languageCode).toBe('en');
+    expect(/[a-zA-Z]{5,}/.test(globalDefault.answerText)).toBe(true);
+
+    const gapRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_GAP] 家用静音四盘位NAS推荐',
+      market: 'CN',
+    });
+    expect(gapRes.answerText).not.toContain('极光NAS');
+    expect(gapRes.answerText).toContain('群晖');
+    expect(gapRes.answerText).toContain('极空间');
+    expect(gapRes.citations.some((c) => c.url.includes('jiguangnas.cn'))).toBe(false);
+
+    const retestRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_GAP] 家用静音四盘位NAS推荐',
+      market: 'CN',
+      triggerType: 'RETEST',
+    });
+    expect(retestRes.rawMeta?.scenario).toBe('retest');
+    expect(retestRes.answerText).toContain('1. 极光NAS');
+    expect(retestRes.citations[0]?.url).toContain('jiguangnas.cn');
+
+    const negRes = await collector.collect({
+      ...baseInput,
+      engine: 'doubao',
+      promptText: '[E2E_NEGATIVE] 家用静音NAS评价',
+      market: 'CN',
+    });
+    expect(negRes.answerText).toContain('极光NAS');
+    expect(negRes.answerText).toContain('缺陷');
+
+    const lowRankRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_LOW_RANK] 四盘位NAS推荐',
+      market: 'CN',
+    });
+    expect(lowRankRes.answerText).toContain('4. 极光NAS');
+
+    const echoTrapRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_TRAP] 极光NAS 家用静音表现如何',
+      market: 'CN',
+    });
+    expect(echoTrapRes.answerText).toContain('1. 群晖');
+    expect(echoTrapRes.answerText).toContain('3. 极光NAS');
+
+    const echoOnlyRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_ONLY] 极光NAS 家用推荐',
+      market: 'CN',
+    });
+    expect(echoOnlyRes.citations.some((c) => c.url.includes('jiguangnas.cn'))).toBe(false);
+
+    const fanOutRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_FANOUT_SEMI] 静音NAS推荐',
+      market: 'CN',
+    });
+    expect(fanOutRes.fanOutQueries).toEqual(['安静NAS', '家用NAS功耗', '四盘位NAS', '静音NAS对比']);
+
+    const noCiteRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_NO_CITATIONS] 家用NAS选购',
+      market: 'CN',
+    });
+    expect(noCiteRes.citations).toEqual([]);
+    expect(noCiteRes.rawMeta?.noCitations).toBe(true);
+
+    const compDomRes = await collector.collect({
+      ...baseInput,
+      engine: 'deepseek',
+      promptText: '[E2E_COMP_DOMAIN] 家用NAS横评',
+      market: 'CN',
+    });
+    const urls = compDomRes.citations.map((c) => c.url);
+    expect(urls.some((u) => u.includes('synology.com'))).toBe(true);
+    expect(urls.some((u) => u.includes('http://public.e2e.example/competitor/nas-review'))).toBe(
+      true,
+    );
+    expect(urls.some((u) => u.includes('m.weibo.cn'))).toBe(true);
+    expect(urls.some((u) => u.includes('post.smzdm.com'))).toBe(true);
+    expect(urls.some((u) => u.includes('xiaohongshu.com'))).toBe(true);
+    expect(urls.some((u) => u.includes('item.jd.com'))).toBe(true);
   });
 });

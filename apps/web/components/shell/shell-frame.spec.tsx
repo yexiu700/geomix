@@ -137,6 +137,7 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     fireEvent.click(screen.getByRole('button', { name: '60 秒创建首个品牌' }));
 
     const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    expect(within(dialog).getByTestId('brand-quick-create')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), {
       target: { value: '智造激光' },
     });

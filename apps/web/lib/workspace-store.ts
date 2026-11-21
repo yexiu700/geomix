@@ -59,6 +59,8 @@ type WorkspaceActions = {
       persistStorage?: KeyValueStorage;
     },
   ) => void;
+  removeBrand: (brandId: string, persistStorage?: KeyValueStorage) => void;
+  markBrandTruthSigned: (brandId: string, signedAt: string) => void;
   setMenuCollapsed: (collapsed: boolean, persistStorage?: KeyValueStorage) => void;
   reset: (persistStorage?: KeyValueStorage) => void;
 };
@@ -358,6 +360,38 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       menuCollapsed: state.menuCollapsed,
     });
     syncWorkspaceQueryInUrl(resolved.activeBrandId, resolved.activeMarket);
+  },
+
+  removeBrand: (brandId, persistStorage) => {
+    const state = get();
+    const nextBrands = state.brands.filter((item) => item.id !== brandId);
+    const preferredBrandId = state.activeBrandId === brandId ? null : state.activeBrandId;
+    const resolved = resolveActiveWorkspace(nextBrands, preferredBrandId, state.activeMarket);
+
+    set({
+      brands: nextBrands,
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: resolved.activeBrandId,
+      activeMarket: resolved.activeMarket,
+      loadSeq: state.loadSeq + 1,
+      contextEpoch: state.contextEpoch + 1,
+    });
+    writeWorkspaceStorage(persistStorage ?? defaultPersistStorage(), {
+      activeBrandId: resolved.activeBrandId,
+      activeMarket: resolved.activeMarket,
+      menuCollapsed: state.menuCollapsed,
+    });
+    syncWorkspaceQueryInUrl(resolved.activeBrandId, resolved.activeMarket);
+  },
+
+  markBrandTruthSigned: (brandId, signedAt) => {
+    const state = get();
+    const nextBrands = state.brands.map((item) =>
+      item.id === brandId ? { ...item, truthAgreementSignedAt: signedAt } : item,
+    );
+    set({ brands: nextBrands });
   },
 
   setMenuCollapsed: (collapsed, persistStorage) => {

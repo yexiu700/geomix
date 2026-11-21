@@ -9,6 +9,11 @@ import {
 import { readReconcileConfig } from '@geomix/shared';
 import { Worker } from 'bullmq';
 import {
+  FACT_INDEX_ENQUEUER,
+  FACT_INDEX_HANDLER,
+  type FactIndexHandler,
+} from '../brands/brand-fact-index.runner';
+import {
   readVisibilityConfig,
   resolveVisibilityHealthRefreshMs,
 } from '../visibility/visibility.config';
@@ -22,7 +27,7 @@ import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
 
-export { VISIBILITY_RUN_ENQUEUER, VISIBILITY_RUN_HANDLER };
+export { FACT_INDEX_ENQUEUER, FACT_INDEX_HANDLER, VISIBILITY_RUN_ENQUEUER, VISIBILITY_RUN_HANDLER };
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -44,6 +49,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(VISIBILITY_RUN_HANDLER)
     private readonly visibilityRunner?: VisibilityRunHandler,
+    @Optional()
+    @Inject(FACT_INDEX_HANDLER)
+    private readonly factIndexer?: FactIndexHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -66,6 +74,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const visData = readPayload(job.data);
             if (visData && this.visibilityRunner) {
               await this.visibilityRunner.process(visData);
+            }
+            return;
+          }
+          if (name === 'fact-index' && job.name === 'fact-index') {
+            const factData = readFactIndexPayload(job.data);
+            if (factData && this.factIndexer) {
+              await this.factIndexer.process(factData);
             }
             return;
           }
@@ -177,6 +192,16 @@ function readPayload(data: unknown): { tenantId: string; runId: string } | null 
   if (!ID.test(tenantId) || !ID.test(runId)) return null;
   if (tenantId === 'system' || runId === 'system') return null;
   return { tenantId, runId };
+}
+
+function readFactIndexPayload(data: unknown): { tenantId: string; brandId: string } | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const brandId = (data as { brandId?: unknown }).brandId;
+  if (typeof tenantId !== 'string' || typeof brandId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(brandId)) return null;
+  if (tenantId === 'system' || brandId === 'system') return null;
+  return { tenantId, brandId };
 }
 
 function readKind(name: string, data: unknown): string {

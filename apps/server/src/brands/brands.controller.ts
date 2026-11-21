@@ -1,33 +1,32 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import {
-  API_ERROR,
-  AUTH_ERROR,
-  BRAND_ID_PATTERN,
-  GEO_MARKETS,
   createBrandSchema,
   ok,
+  updateBrandMarketSchema,
+  updateBrandSchema,
   upsertBrandMarketSchema,
-  type GeoMarket,
 } from '@geomix/shared';
 import { AuthGuard } from '../auth/auth.guard';
-import { asHttpRequest } from '../auth/http-request';
+import { clientAddress } from '../auth/client-address';
 import { TenantActiveGuard } from '../auth/tenant-active.guard';
-import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
+import { parseBrandId, parseMarket, requireAuth } from './brands.http-utils';
 import { BrandsService } from './brands.service';
 
 @Controller({ path: 'brands', version: '2' })
-@UseGuards(AuthGuard, TenantActiveGuard)
+@UseGuards(AuthGuard)
 export class BrandsController {
   constructor(@Inject(BrandsService) private readonly brands: BrandsService) {}
 
@@ -38,14 +37,41 @@ export class BrandsController {
 
   @Post()
   @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
   async create(@Req() request: unknown, @Body() body: unknown) {
     const auth = requireAuth(request);
     const input = parseBody(createBrandSchema, body);
-    return ok(await this.brands.create(auth.tenantId, auth.userId, input));
+    return ok(await this.brands.create(auth.tenantId, auth.userId, input, clientAddress(request)));
+  }
+
+  @Get(':id')
+  async getById(@Param('id') id: string) {
+    const brandId = parseBrandId(id);
+    return ok(await this.brands.getById(brandId));
+  }
+
+  @Patch(':id')
+  @UseGuards(TenantActiveGuard)
+  async update(@Req() request: unknown, @Param('id') id: string, @Body() body: unknown) {
+    const auth = requireAuth(request);
+    const brandId = parseBrandId(id);
+    const input = parseBody(updateBrandSchema, body);
+    return ok(
+      await this.brands.update(auth.tenantId, auth.userId, brandId, input, clientAddress(request)),
+    );
+  }
+
+  @Delete(':id')
+  @UseGuards(TenantActiveGuard)
+  async remove(@Req() request: unknown, @Param('id') id: string) {
+    const auth = requireAuth(request);
+    const brandId = parseBrandId(id);
+    return ok(await this.brands.remove(auth.tenantId, brandId));
   }
 
   @Post(':id/markets/:market')
   @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
   async enableMarket(
     @Req() request: unknown,
     @Param('id') id: string,
@@ -59,28 +85,19 @@ export class BrandsController {
     const input = parseBody(upsertBrandMarketSchema, normalizedBody);
     return ok(await this.brands.enableMarket(auth.tenantId, auth.userId, brandId, market, input));
   }
-}
 
-function requireAuth(request: unknown): { tenantId: string; userId: string } {
-  const http = asHttpRequest(request);
-  if (!http.auth) {
-    throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '未登录');
+  @Patch(':id/markets/:market')
+  @UseGuards(TenantActiveGuard)
+  async updateMarket(
+    @Req() request: unknown,
+    @Param('id') id: string,
+    @Param('market') rawMarket: string,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(request);
+    const brandId = parseBrandId(id);
+    const market = parseMarket(rawMarket);
+    const input = parseBody(updateBrandMarketSchema, body);
+    return ok(await this.brands.updateMarket(auth.tenantId, auth.userId, brandId, market, input));
   }
-  return { tenantId: http.auth.tenantId, userId: http.auth.userId };
-}
-
-function parseBrandId(raw: string): string {
-  const trimmed = raw.trim();
-  if (!BRAND_ID_PATTERN.test(trimmed)) {
-    throw new ApiError(400, API_ERROR.BAD_REQUEST, '品牌编号不正确');
-  }
-  return trimmed;
-}
-
-function parseMarket(raw: string): GeoMarket {
-  const upper = raw.trim().toUpperCase();
-  if ((GEO_MARKETS as readonly string[]).includes(upper)) {
-    return upper as GeoMarket;
-  }
-  throw new ApiError(400, API_ERROR.BAD_REQUEST, '市场参数仅支持 CN 或 GLOBAL');
 }

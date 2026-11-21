@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { type LlmRouteConfig } from '@geomix/shared';
 import { LlmRouter, LlmService, type LlmProvider } from '../infra/llm';
 import { VisibilityCollectorService } from './visibility-collector.service';
-import { VisibilityJudgeService } from './visibility-judge.service';
+import { VisibilityJudgeService, classifyPassageSentiment } from './visibility-judge.service';
 
 function createMockLlm(onCall: (prompt: string) => string): {
   llm: LlmService;
@@ -594,5 +594,342 @@ describe('VisibilityJudgeService', () => {
     expect(res.brandMentioned).toBe(true);
     expect(res.brandSentiment).toBe('positive');
     expect(res.judgeModel).not.toContain('deterministic-fallback');
+  });
+
+  it('evaluates collector(fake) -> real judge pipeline for [E2E_ECHO_TRAP], [E2E_ECHO_ONLY], [E2E_GAP], [E2E_NEGATIVE], [E2E_LOW_RANK]', async () => {
+    const env = { VISIBILITY_COLLECTOR: 'fake', LLM_PROVIDERS: '{}' };
+    const collector = VisibilityCollectorService.fromEnv(env);
+    const judge = VisibilityJudgeService.fromEnv(env);
+
+    const cnProfile = {
+      brandName: '极光NAS',
+      brandAliases: ['JiguangNAS'],
+      ownedDomains: ['jiguangnas.cn'],
+      competitors: [
+        { name: '群晖', aliases: ['Synology'], domains: ['synology.com'] },
+        { name: '极空间', aliases: ['ZSpace'], domains: ['zspace.cn'] },
+        { name: '威联通', aliases: ['QNAP'], domains: ['qnap.com'] },
+      ],
+    };
+
+    // [E2E_ECHO_TRAP] -> skips intro echo, ranks brand at #3
+    const trapCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_TRAP] 极光NAS 家用四盘位推荐',
+      brandName: cnProfile.brandName,
+      brandAliases: cnProfile.brandAliases,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const trapJudge = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_TRAP] 极光NAS 家用四盘位推荐',
+      answerText: trapCol.answerText,
+      citations: trapCol.citations,
+      profile: cnProfile,
+    });
+    expect(trapJudge.brandMentioned).toBe(true);
+    expect(trapJudge.brandPosition).toBe(3);
+    expect(trapJudge.brandPassage).toContain('极光NAS');
+    expect(trapJudge.brandPassage).not.toContain('针对您询问');
+
+    // [E2E_ECHO_ONLY] -> brand echoed only in intro -> brandMentioned: false, brandPosition: null
+    const echoOnlyCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_ONLY] 极光NAS 家用推荐',
+      brandName: cnProfile.brandName,
+      brandAliases: cnProfile.brandAliases,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const echoOnlyJudge = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_ECHO_ONLY] 极光NAS 家用推荐',
+      answerText: echoOnlyCol.answerText,
+      citations: echoOnlyCol.citations,
+      profile: cnProfile,
+    });
+    expect(echoOnlyJudge.brandMentioned).toBe(false);
+    expect(echoOnlyJudge.brandPosition).toBeNull();
+    expect(echoOnlyJudge.brandPassage).toBeNull();
+
+    // [E2E_GAP] -> unmentioned brand, >=2 competitors mentioned
+    const gapCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_GAP] 家用四盘位静音NAS推荐',
+      brandName: cnProfile.brandName,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const gapJudge = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_GAP] 家用四盘位静音NAS推荐',
+      answerText: gapCol.answerText,
+      citations: gapCol.citations,
+      profile: cnProfile,
+    });
+    expect(gapJudge.brandMentioned).toBe(false);
+    expect(gapJudge.competitorHits.filter((c) => c.mentioned).length).toBeGreaterThanOrEqual(2);
+
+    // [E2E_NEGATIVE] -> negative sentiment
+    const negCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'doubao',
+      promptText: '[E2E_NEGATIVE] 家用静音NAS口碑',
+      brandName: cnProfile.brandName,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const negJudge = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'doubao',
+      promptText: '[E2E_NEGATIVE] 家用静音NAS口碑',
+      answerText: negCol.answerText,
+      citations: negCol.citations,
+      profile: cnProfile,
+    });
+    expect(negJudge.brandMentioned).toBe(true);
+    expect(negJudge.brandSentiment).toBe('negative');
+
+    // [E2E_LOW_RANK] -> ordered list #4 even with fewer configured competitors
+    const lowCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_LOW_RANK] 四盘位NAS推荐榜',
+      brandName: cnProfile.brandName,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const lowJudge = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '[E2E_LOW_RANK] 四盘位NAS推荐榜',
+      answerText: lowCol.answerText,
+      citations: lowCol.citations,
+      profile: { ...cnProfile, competitors: [{ name: '群晖' }] },
+    });
+    expect(lowJudge.brandMentioned).toBe(true);
+    expect(lowJudge.brandPosition).toBe(4);
+  });
+
+  it('uses structured list header rank over item #1 body cross-reference, supports headings/CN numerals/bold, enforces whole-word boundary, and finishes 50KB input <200ms', async () => {
+    const offlineJudge = VisibilityJudgeService.fromEnv({ LLM_PROVIDERS: '{}' });
+
+    // Cross-reference in item #1 body vs own header at item #3
+    const crossRef = await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '家用四盘位NAS推荐',
+      answerText: [
+        '以下为您盘点四盘位家用NAS热门品牌：',
+        '### 1. 群晖：系统生态比绿联更成熟，适合进阶折腾玩家。',
+        '### 2. 极空间：新手引导友好，影音海报墙体验佳。',
+        '### 3. 绿联：静音与性价比突出，适合家用NAS。',
+      ].join('\n'),
+      profile: {
+        brandName: '绿联',
+        competitors: [{ name: '群晖' }, { name: '极空间' }],
+      },
+    });
+    expect(crossRef.brandMentioned).toBe(true);
+    expect(crossRef.brandPosition).toBe(3);
+
+    // Chinese numeral list + real LLM judge mode
+    const { llm } = createMockLlm(() =>
+      JSON.stringify({
+        topicRelevant: true,
+        verdicts: [
+          { subjectKey: 'brand', portrayal: 'positive', evidence: '绿联静音性价比突出' },
+          { subjectKey: 'comp_0', portrayal: 'positive', evidence: '群晖生态成熟' },
+          { subjectKey: 'comp_1', portrayal: 'neutral', evidence: '极空间界面易用' },
+        ],
+      }),
+    );
+    const llmJudge = new VisibilityJudgeService(llm);
+    const cnNumeralRes = await llmJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '家用NAS怎么选',
+      answerText: [
+        '想了解绿联家用NAS，以下为您整理热门榜单：',
+        '一、群晖：生态最成熟的家用NAS品牌。',
+        '二、极空间：界面易用，适合家用NAS入门。',
+        '三、绿联：静音性价比突出的家用NAS选择。',
+      ].join('\n'),
+      profile: {
+        brandName: '绿联',
+        competitors: [{ name: '群晖' }, { name: '极空间' }],
+      },
+    });
+    expect(cnNumeralRes.brandMentioned).toBe(true);
+    expect(cnNumeralRes.brandPosition).toBe(3);
+
+    // Whole-word boundary for "Arc" vs "search architecture" -> skipped LLM, brandMentioned: false
+    const boundaryRes = await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: 'Best modern web browser',
+      answerText: 'Modern browser research focuses on search architecture and privacy.',
+      profile: {
+        brandName: 'Arc',
+        competitors: [],
+      },
+    });
+    expect(boundaryRes.brandMentioned).toBe(false);
+    expect(boundaryRes.skippedLlm).toBe(true);
+
+    // 50KB adversarial input ReDoS ceiling (<200ms)
+    const huge = `${'1. '.repeat(12_000)}\n${'#'.repeat(12_000)}\n1. 群晖：不错\n2. 绿联：静音家用NAS`;
+    const t0 = Date.now();
+    await offlineJudge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: '家用NAS推荐',
+      answerText: huge,
+      profile: { brandName: '绿联', competitors: [{ name: '群晖' }] },
+    });
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+
+  it('classifies CN negated positives, EN word boundaries & negated positives, [E2E_NEGATIVE] prompts with positive words, and short bracketed prompts cleanly (B4 & B6)', async () => {
+    // B4-a: Chinese negated positive -> negative (not neutral)
+    expect(classifyPassageSentiment('该产品不够稳定，偶发断连')).toBe('negative');
+
+    // B4-b: English word boundary ("desktop" must not match "top") & negated positive ("not recommended", "unreliable")
+    expect(
+      classifyPassageSentiment(
+        'Reviewers advise buyers to avoid this desktop NAS due to poor reliability and unstable firmware.',
+      ),
+    ).toBe('negative');
+    expect(
+      classifyPassageSentiment(
+        'This model is not recommended because it is unreliable and expensive.',
+      ),
+    ).toBe('negative');
+    expect(classifyPassageSentiment('This top laptop NAS is reliable and recommended.')).toBe(
+      'positive',
+    );
+
+    // B4-c: collectFake -> real VisibilityJudgeService for [E2E_NEGATIVE] prompts containing positive words
+    const env = { VISIBILITY_COLLECTOR: 'fake', LLM_PROVIDERS: '{}' };
+    const collector = VisibilityCollectorService.fromEnv(env);
+    const judge = VisibilityJudgeService.fromEnv(env);
+
+    const cnProfile = {
+      brandName: '极光NAS',
+      brandAliases: ['JiguangNAS'],
+      ownedDomains: ['jiguangnas.cn'],
+      competitors: [{ name: '群晖', domains: ['synology.com'] }],
+    };
+    const glProfile = {
+      brandName: 'AuroraNAS',
+      brandAliases: [],
+      ownedDomains: ['auroranas.com'],
+      competitors: [{ name: 'Synology', domains: ['synology.com'] }],
+    };
+
+    for (const cnPrompt of [
+      '[E2E_NEGATIVE] 家用NAS稳定性口碑',
+      '[E2E_NEGATIVE] 2026年家用静音NAS推荐哪家好',
+    ]) {
+      const col = await collector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: cnPrompt,
+        brandName: cnProfile.brandName,
+        ownedDomains: cnProfile.ownedDomains,
+        competitors: cnProfile.competitors,
+        market: 'CN',
+      });
+      const evaluated = await judge.evaluate({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: cnPrompt,
+        answerText: col.answerText,
+        citations: col.citations,
+        profile: cnProfile,
+      });
+      expect(evaluated.topicRelevant).toBe(true);
+      expect(evaluated.brandMentioned).toBe(true);
+      expect(evaluated.brandSentiment).toBe('negative');
+    }
+
+    const glNegPrompt = '[E2E_NEGATIVE] What is the best quiet desktop NAS?';
+    const glNegCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: glNegPrompt,
+      brandName: glProfile.brandName,
+      ownedDomains: glProfile.ownedDomains,
+      competitors: glProfile.competitors,
+      market: 'GLOBAL',
+    });
+    const glNegEval = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: glNegPrompt,
+      answerText: glNegCol.answerText,
+      citations: glNegCol.citations,
+      profile: glProfile,
+    });
+    expect(glNegEval.topicRelevant).toBe(true);
+    expect(glNegEval.brandMentioned).toBe(true);
+    expect(glNegEval.brandSentiment).toBe('negative');
+
+    // B6: short brand+stopword [E2E_ECHO_TRAP] prompts stay topicRelevant=true
+    const cnShortPrompt = '[E2E_ECHO_TRAP] 极光NAS推荐哪款好';
+    const cnShortCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: cnShortPrompt,
+      brandName: cnProfile.brandName,
+      ownedDomains: cnProfile.ownedDomains,
+      competitors: cnProfile.competitors,
+      market: 'CN',
+    });
+    const cnShortEval = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'deepseek',
+      promptText: cnShortPrompt,
+      answerText: cnShortCol.answerText,
+      citations: cnShortCol.citations,
+      profile: cnProfile,
+    });
+    expect(cnShortEval.topicRelevant).toBe(true);
+    expect(cnShortEval.brandMentioned).toBe(true);
+    expect(cnShortEval.brandPosition).toBe(3);
+
+    const glShortPrompt = '[E2E_ECHO_TRAP] Best AuroraNAS review';
+    const glShortCol = await collector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: glShortPrompt,
+      brandName: glProfile.brandName,
+      ownedDomains: glProfile.ownedDomains,
+      competitors: glProfile.competitors,
+      market: 'GLOBAL',
+    });
+    const glShortEval = await judge.evaluate({
+      tenantId: 'tenant_demo',
+      engine: 'chatgpt',
+      promptText: glShortPrompt,
+      answerText: glShortCol.answerText,
+      citations: glShortCol.citations,
+      profile: glProfile,
+    });
+    expect(glShortEval.topicRelevant).toBe(true);
+    expect(glShortEval.brandMentioned).toBe(true);
+    expect(glShortEval.brandPosition).toBe(3);
   });
 });

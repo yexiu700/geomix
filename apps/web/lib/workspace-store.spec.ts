@@ -260,4 +260,54 @@ describe('useWorkspaceStore', () => {
     expect(useWorkspaceStore.getState().brands).toEqual([]);
     expect(useWorkspaceStore.getState().brandsLoading).toBe(true);
   });
+
+  it('removes brands via removeBrand, falls back to remaining brand or clears URL at 0 brands, and invalidates in-flight loads', async () => {
+    const b1 = makeBrand('b-1', '品牌甲', ['CN', 'GLOBAL']);
+    const b2 = makeBrand('b-2', '品牌乙', ['CN']);
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, market: 'GLOBAL', persistStorage: window.localStorage });
+
+    expect(window.location.search).toBe('?brandId=b-1&market=GLOBAL');
+
+    let resolveStale!: (value: { items: BrandRecord[] }) => void;
+    const staleLoad = useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      fetcher: () =>
+        new Promise((resolve) => {
+          resolveStale = resolve;
+        }),
+    });
+
+    useWorkspaceStore.getState().removeBrand('b-1', window.localStorage);
+    expect(useWorkspaceStore.getState().brands.map((b) => b.id)).toEqual(['b-2']);
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-2');
+    expect(useWorkspaceStore.getState().activeMarket).toBe('CN');
+    expect(window.location.search).toBe('?brandId=b-2&market=CN');
+
+    resolveStale({ items: [b1, b2] });
+    await staleLoad;
+    expect(useWorkspaceStore.getState().brands.map((b) => b.id)).toEqual(['b-2']);
+
+    useWorkspaceStore.getState().removeBrand('b-2', window.localStorage);
+    expect(useWorkspaceStore.getState().brands).toEqual([]);
+    expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
+    expect(window.location.search).toBe('');
+  });
+
+  it('marks brand truth agreement timestamp via markBrandTruthSigned without bumping contextEpoch', () => {
+    const b1 = makeBrand('b-1', '品牌甲', ['CN']);
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+    const epochBefore = useWorkspaceStore.getState().contextEpoch;
+    const signedAt = '2026-11-20T08:00:00.000Z';
+
+    useWorkspaceStore.getState().markBrandTruthSigned('b-1', signedAt);
+    expect(useWorkspaceStore.getState().contextEpoch).toBe(epochBefore);
+    expect(useWorkspaceStore.getState().brands[0]?.truthAgreementSignedAt).toBe(signedAt);
+  });
 });

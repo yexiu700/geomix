@@ -12,14 +12,16 @@ import {
   isSimulatedCollectorKind,
   isVisibilitySentiment,
   wholeWordPattern,
+  type BrandMarketRecord,
   type VisibilityObservationRecord,
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
 } from '@geomix/shared';
 import { Button, Segmented, Tooltip } from 'antd';
-import type { JSX, KeyboardEvent } from 'react';
+import type { JSX, KeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
+import { isSafeHttpUrl } from '../../lib/visibility';
 import { AnswerLens, buildLensSegments, type AnswerLensHandle } from './answer-lens';
 import { CitationTrace } from './citation-trace';
 import {
@@ -37,7 +39,12 @@ import {
 export interface RunWorkspaceProps {
   run: VisibilityRunDetailRecord | null;
   loading?: boolean;
-  profile: VisibilityProfileRecord | undefined;
+  /** Legacy v1 profile (backward-compatible). */
+  profile?: VisibilityProfileRecord | undefined;
+  /** v2 active BrandMarket context (preferred over `profile` when provided). */
+  brandMarket?: BrandMarketRecord | null;
+  /** Optional action slot rendered at the top-right of each observation detail card (e.g. M3 brief button). */
+  renderObservationAction?: (obs: VisibilityObservationRecord) => ReactNode;
   obsEngineFilter: string;
   onObsEngineFilterChange: (value: string) => void;
   obsMentionFilter: 'all' | 'mentioned' | 'unmentioned';
@@ -62,6 +69,8 @@ export function RunWorkspace({
   run,
   loading = false,
   profile,
+  brandMarket,
+  renderObservationAction,
   obsEngineFilter,
   onObsEngineFilterChange,
   obsMentionFilter,
@@ -168,16 +177,27 @@ export function RunWorkspace({
 
   const brandSubject = useMemo(
     () => ({
-      name: profile?.brandName ?? run?.brandName ?? '',
-      aliases: profile?.brandAliases ?? [],
+      name: brandMarket?.localBrandName ?? profile?.brandName ?? run?.brandName ?? '',
+      aliases: brandMarket?.aliases ?? profile?.brandAliases ?? [],
     }),
-    [profile?.brandName, profile?.brandAliases, run?.brandName],
+    [
+      brandMarket?.localBrandName,
+      brandMarket?.aliases,
+      profile?.brandName,
+      profile?.brandAliases,
+      run?.brandName,
+    ],
+  );
+
+  const configuredCompetitors = useMemo(
+    () => brandMarket?.competitors ?? profile?.competitors ?? [],
+    [brandMarket?.competitors, profile?.competitors],
   );
 
   const competitorSubjects = useMemo(() => {
     const base =
-      profile && profile.competitors.length > 0
-        ? profile.competitors.map((c) => ({ name: c.name, aliases: c.aliases }))
+      configuredCompetitors.length > 0
+        ? configuredCompetitors.map((c) => ({ name: c.name, aliases: c.aliases }))
         : [];
     const seen = new Set(base.map((c) => c.name));
     for (const hit of selectedObs?.competitorHits ?? []) {
@@ -187,7 +207,7 @@ export function RunWorkspace({
       }
     }
     return base;
-  }, [profile, selectedObs]);
+  }, [configuredCompetitors, selectedObs]);
 
   const selectedObsRelevance = useMemo(() => {
     if (!selectedObs || selectedObs.status !== 'SUCCESS' || !selectedObs.answerText) {
@@ -495,8 +515,13 @@ export function RunWorkspace({
                 data-testid={`observation-card-${selectedObs.id}`}
                 className="gm-run-ws-detail-card"
               >
-                {/* 1. Full Prompt */}
-                <div className="gm-run-ws-prompt">{selectedObs.promptText}</div>
+                {/* 1. Full Prompt & Optional Action Slot */}
+                <div className="gm-vis-obs-header">
+                  <div className="gm-run-ws-prompt">{selectedObs.promptText}</div>
+                  {renderObservationAction ? (
+                    <div className="gm-vis-obs-action">{renderObservationAction(selectedObs)}</div>
+                  ) : null}
+                </div>
 
                 {/* 2. Meta Row */}
                 <div className="gm-run-ws-meta-row">
@@ -559,7 +584,7 @@ export function RunWorkspace({
                   const showSection =
                     mentionedComps.length > 0 ||
                     selectedObs.competitorHits.length > 0 ||
-                    Boolean(profile && profile.competitors.length > 0);
+                    configuredCompetitors.length > 0;
                   if (!showSection) return null;
 
                   const domainOnlyAll = mentionedComps.length > 0 && lensCompetitorHitCount === 0;
@@ -661,34 +686,47 @@ export function RunWorkspace({
                       引用信源（<span className="gm-num">{selectedObs.citations.length}</span>）
                     </div>
                     <div className="gm-run-ws-cite-list">
-                      {selectedObs.citations.map((cite) => (
-                        <a
-                          key={cite.id}
-                          id={`citation-item-${cite.id}`}
-                          href={cite.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`gm-run-ws-cite-item${
-                            highlightedCitationId === cite.id ? ' gm-run-ws-cite-blink' : ''
-                          }`}
-                        >
-                          <span className="gm-lens-cite-chip gm-num">{cite.position}</span>
-                          <div className="gm-run-ws-cite-body">
-                            <div className="gm-clamp-1 gm-run-ws-cite-title">
-                              {cite.title ?? cite.domain}
-                            </div>
-                            <div className="gm-run-ws-cite-meta">
-                              <span className="gm-mono">{cite.domain}</span>
-                              <SourceKindChip kind={cite.sourceKind} />
-                            </div>
-                            {cite.snippet ? (
-                              <div className="gm-clamp-2 gm-run-ws-cite-snippet">
-                                {cite.snippet}
+                      {selectedObs.citations.map((cite) => {
+                        const safeHref = isSafeHttpUrl(cite.url);
+                        const itemClass = `gm-run-ws-cite-item${
+                          highlightedCitationId === cite.id ? ' gm-run-ws-cite-blink' : ''
+                        }`;
+                        const inner = (
+                          <>
+                            <span className="gm-lens-cite-chip gm-num">{cite.position}</span>
+                            <div className="gm-run-ws-cite-body">
+                              <div className="gm-clamp-1 gm-run-ws-cite-title">
+                                {cite.title ?? cite.domain}
                               </div>
-                            ) : null}
+                              <div className="gm-run-ws-cite-meta">
+                                <span className="gm-mono">{cite.domain}</span>
+                                <SourceKindChip kind={cite.sourceKind} />
+                              </div>
+                              {cite.snippet ? (
+                                <div className="gm-clamp-2 gm-run-ws-cite-snippet">
+                                  {cite.snippet}
+                                </div>
+                              ) : null}
+                            </div>
+                          </>
+                        );
+                        return safeHref ? (
+                          <a
+                            key={cite.id}
+                            id={`citation-item-${cite.id}`}
+                            href={cite.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={itemClass}
+                          >
+                            {inner}
+                          </a>
+                        ) : (
+                          <div key={cite.id} id={`citation-item-${cite.id}`} className={itemClass}>
+                            {inner}
                           </div>
-                        </a>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}

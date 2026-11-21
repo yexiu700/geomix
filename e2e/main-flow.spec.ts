@@ -110,6 +110,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
   const createdBrandId = createJson.data?.id ?? '';
   expect(createdBrandId).not.toBe('');
 
+  await createDialog.getByRole('button', { name: '跳过，直接进入' }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByTestId('global-brand-switcher')).toContainText(brandName);
   await expect(page.getByTestId('global-market-switcher')).toContainText('国内');

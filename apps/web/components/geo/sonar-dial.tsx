@@ -1,7 +1,7 @@
 'use client';
 
-import type { VisibilityEngineBreakdownItem, VisibilityEngineKey } from '@geomix/shared';
-import { VISIBILITY_ENGINES } from '@geomix/shared';
+import type { GeoMarket, VisibilityEngineBreakdownItem, VisibilityEngineKey } from '@geomix/shared';
+import { VISIBILITY_ENGINES, enginesForMarket } from '@geomix/shared';
 import type { JSX, KeyboardEvent } from 'react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
@@ -12,6 +12,10 @@ export type SonarDialProps = {
   overallPct: number;
   selectedEngine?: VisibilityEngineKey;
   onSelectEngine: (engine: VisibilityEngineKey | undefined) => void;
+  /** Optional market filter: CN → 8 spokes, GLOBAL → 5 spokes. Omit for all 13 (backward-compat). */
+  market?: GeoMarket;
+  /** Optional explicit engine key list (takes precedence over `market`). */
+  engines?: readonly VisibilityEngineKey[];
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -27,7 +31,6 @@ const RING_RADII = [28, 56, 84, 112] as const;
 const RING_LABEL_DEG = -76;
 const SHORT_LABELS: Partial<Record<VisibilityEngineKey, string>> = { google_aio: 'Google AIO' };
 const DEG = Math.PI / 180;
-const STEP = 360 / VISIBILITY_ENGINES.length;
 const polar = (r: number, deg: number) => ({
   x: CX + r * Math.cos(deg * DEG),
   y: CY + r * Math.sin(deg * DEG),
@@ -35,7 +38,8 @@ const polar = (r: number, deg: number) => ({
 const sectorPath = (r: number, a0: number, a1: number) => {
   const s = polar(r, a0);
   const e = polar(r, a1);
-  return `M ${CX} ${CY} L ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 0 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)} Z`;
+  const largeArc = Math.abs(a1 - a0) > 180 ? 1 : 0;
+  return `M ${CX} ${CY} L ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${e.x.toFixed(2)} ${e.y.toFixed(2)} Z`;
 };
 const fmtPos = (v: number | null) => (v === null || !Number.isFinite(v) ? '—' : `#${v.toFixed(1)}`);
 
@@ -43,17 +47,31 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
   const gradId = useId();
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [mounted, setMounted] = useState(false);
+
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
+  const dialEngines = useMemo(() => {
+    const allowedKeys = p.engines ?? (p.market ? enginesForMarket(p.market) : null);
+    if (!allowedKeys) return VISIBILITY_ENGINES;
+    const keySet = new Set<string>(allowedKeys);
+    const filtered = VISIBILITY_ENGINES.filter((eng) => keySet.has(eng.key));
+    return filtered.length > 0 ? filtered : VISIBILITY_ENGINES;
+  }, [p.engines, p.market]);
+
+  useEffect(() => {
+    setHoveredIdx(null);
+  }, [dialEngines.length, p.market]);
+
   const nodes = useMemo(() => {
     const map = new Map((p.byEngine ?? []).map((row) => [row.engine, row]));
-    return VISIBILITY_ENGINES.map((eng, idx) => {
+    const step = 360 / dialEngines.length;
+    return dialEngines.map((eng, idx) => {
       const item = map.get(eng.key);
       const completed = item?.completedChecks ?? 0;
-      const deg = -90 + idx * STEP;
+      const deg = -90 + idx * step;
       const hasData = completed > 0;
       const pct = hasData ? Math.max(0, Math.min(100, item?.visibilityPct ?? 0)) : 0;
       const cos = Math.cos(deg * DEG);
@@ -71,10 +89,10 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
         labelPos: polar(R + 12, deg),
         anchor: (cos > 0.2 ? 'start' : cos < -0.2 ? 'end' : 'middle') as 'start' | 'end' | 'middle',
         dialLabel: eng.label.length > 6 ? (SHORT_LABELS[eng.key] ?? eng.label) : eng.label,
-        hitD: sectorPath(R + 28, deg - STEP / 2, deg + STEP / 2),
+        hitD: sectorPath(R + 28, deg - step / 2, deg + step / 2),
       };
     });
-  }, [p.byEngine]);
+  }, [p.byEngine, dialEngines]);
 
   if (p.error) return <SignalError message={p.error} onRetry={p.onRetry} />;
   if (p.loading) {
@@ -87,11 +105,12 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
     );
   }
 
-  const isEmpty = !p.byEngine?.length || p.byEngine.every((item) => item.completedChecks === 0);
+  const isEmpty = nodes.every((n) => n.completed === 0);
+  const showCombinedDivider = dialEngines.length === VISIBILITY_ENGINES.length;
   const polyPoints = nodes.map((n) => `${n.point.x.toFixed(2)},${n.point.y.toFixed(2)}`).join(' ');
   const sweepStart = polar(R, -90);
   const sweepLead = polar(R, -60);
-  const hovered = hoveredIdx !== null && !isEmpty ? nodes[hoveredIdx] : null;
+  const hovered = hoveredIdx !== null && !isEmpty ? (nodes[hoveredIdx] ?? null) : null;
   const toggle = (key: VisibilityEngineKey) =>
     p.onSelectEngine(p.selectedEngine === key ? undefined : key);
   const onKey = (e: KeyboardEvent<SVGPathElement>, key: VisibilityEngineKey) => {
@@ -105,7 +124,12 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
   };
 
   return (
-    <div className="gm-sonar" onKeyDown={(e) => e.key === 'Escape' && p.onSelectEngine(undefined)}>
+    <div
+      className="gm-sonar"
+      data-market={p.market ?? 'ALL'}
+      data-engine-count={nodes.length}
+      onKeyDown={(e) => e.key === 'Escape' && p.onSelectEngine(undefined)}
+    >
       <svg
         viewBox={`${VB_X} ${VB_Y} ${VB_SIZE} ${VB_SIZE}`}
         width="100%"
@@ -163,7 +187,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                 stroke={sel ? GM.phosphor : GM.line.l1}
                 strokeWidth={sel ? 1.5 : 1}
               />
-              {idx === 0 || idx === 8 ? (
+              {showCombinedDivider && (idx === 0 || idx === 8) ? (
                 <line
                   x1={polar(R + 2, deg).x}
                   y1={polar(R + 2, deg).y}
@@ -260,6 +284,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
           style={{
             left: `calc(${(((hovered.point.x - VB_X) / VB_SIZE) * 100).toFixed(2)}% + 12px)`,
             top: `calc(${(((hovered.point.y - VB_Y) / VB_SIZE) * 100).toFixed(2)}% + 12px)`,
+            ...(hovered.point.x > CX + 30 ? { transform: 'translateX(calc(-100% - 24px))' } : {}),
           }}
         >
           <div className="gm-sonar-tooltip-title">{hovered.eng.label}</div>

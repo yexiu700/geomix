@@ -5,6 +5,7 @@ import {
   replaceUxJargon,
   type CreateBrandInput,
   type GeoMarket,
+  type UpsertBrandFactsInput,
   type UpsertBrandMarketInput,
 } from '@geomix/shared';
 import { Button } from 'antd';
@@ -32,7 +33,13 @@ import {
   saveAccountUiPrefs,
   type AccountProfile,
 } from '../../lib/api';
-import { createBrand, enableBrandMarket } from '../../lib/brands';
+import {
+  createBrand,
+  enableBrandMarket,
+  extractBrandFacts,
+  saveBrandFacts,
+  type ExtractBrandFactsRequest,
+} from '../../lib/brands';
 import { safeConsoleHref } from '../../lib/route-map';
 import {
   HOME_ROUTE,
@@ -41,7 +48,7 @@ import {
   matchRoute,
 } from '../../lib/routes';
 import { clearSession, readAccessToken } from '../../lib/session';
-import { useTabFreshness } from '../../lib/tab-freshness';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { WORKSPACE_USER_KEY, parseGeoMarket, useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider } from './console-context';
 import { ShellFrame } from './shell-frame';
@@ -373,6 +380,18 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
           useWorkspaceStore.getState().setActiveMarket(market, window.localStorage)
         }
         onCreateBrand={handleCreateBrand}
+        onExtractBrandFacts={(brandId: string, input: ExtractBrandFactsRequest) =>
+          extractBrandFacts(brandId, input, { storage: window.sessionStorage })
+        }
+        onSaveBrandFacts={(brandId: string, input: UpsertBrandFactsInput) =>
+          saveBrandFacts(brandId, input, { storage: window.sessionStorage })
+        }
+        onBrandFactsSaved={(brandId, signedAt) => {
+          if (signedAt) {
+            useWorkspaceStore.getState().markBrandTruthSigned(brandId, signedAt);
+          }
+          invalidateFreshness('brand-facts');
+        }}
         onEnableMarket={handleEnableMarket}
         onToggleMenu={handleToggleMenu}
         onLogout={() => void handleLogout()}

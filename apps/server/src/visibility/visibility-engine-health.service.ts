@@ -2,7 +2,9 @@ import { Inject, Injectable, Logger, Optional, type OnModuleDestroy } from '@nes
 import {
   VISIBILITY_ENGINES,
   VISIBILITY_ENGINE_KEYS,
+  enginesMetaForMarket,
   isVisibilityEngine,
+  type GeoMarket,
   type VisibilityEngineAvailabilityResponse,
   type VisibilityEngineHealthStatus,
   type VisibilityEngineKey,
@@ -195,20 +197,25 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
     return resolveVisibilityHealthRefreshMs(this.config);
   }
 
-  async getAvailability(): Promise<VisibilityEngineAvailabilityResponse> {
+  async getAvailability(market?: GeoMarket): Promise<VisibilityEngineAvailabilityResponse> {
     const refreshIntervalMs = this.getRefreshIntervalMs();
 
     if (this.config.collector === 'fake') {
-      return this.buildResponse(createEmptyState(), refreshIntervalMs, () => true);
+      return this.buildResponse(createEmptyState(), refreshIntervalMs, () => true, market);
     }
 
     if (this.config.collector === 'llm_api') {
       const state = await this.loadState(false);
       const hasAnyLlm = hasConfiguredLlmProvider(this.env);
-      return this.buildResponse(state, refreshIntervalMs, (key) => {
-        if (!hasAnyLlm) return false;
-        return !state.trippedOffline[key];
-      });
+      return this.buildResponse(
+        state,
+        refreshIntervalMs,
+        (key) => {
+          if (!hasAnyLlm) return false;
+          return !state.trippedOffline[key];
+        },
+        market,
+      );
     }
 
     // remote_scraper mode
@@ -217,18 +224,24 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
         { ...createEmptyState(), serviceReachable: false },
         refreshIntervalMs,
         () => false,
+        market,
       );
     }
 
     const state = await this.loadState(true);
-    return this.buildResponse(state, refreshIntervalMs, (key) => {
-      if (!state.serviceReachable) return false;
-      if (state.trippedOffline[key]) return false;
-      if (state.remoteEngines) {
-        return state.remoteEngines[key] === true;
-      }
-      return true;
-    });
+    return this.buildResponse(
+      state,
+      refreshIntervalMs,
+      (key) => {
+        if (!state.serviceReachable) return false;
+        if (state.trippedOffline[key]) return false;
+        if (state.remoteEngines) {
+          return state.remoteEngines[key] === true;
+        }
+        return true;
+      },
+      market,
+    );
   }
 
   async getUnavailableEngines(
@@ -475,17 +488,21 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
     state: PersistedEngineHealth,
     refreshIntervalMs: number,
     isBaseAvailable: (key: VisibilityEngineKey) => boolean,
+    market?: GeoMarket,
   ): VisibilityEngineAvailabilityResponse {
     const enabledOverride = this.config.enabledEngines ? new Set(this.config.enabledEngines) : null;
     const disabledOverride = this.config.disabledEngines
       ? new Set(this.config.disabledEngines)
       : null;
 
+    const targetEngines = market ? enginesMetaForMarket(market) : VISIBILITY_ENGINES;
+
     return {
       collector: this.config.collector,
+      ...(market ? { market } : {}),
       checkedAt: state.checkedAt,
       refreshIntervalMs,
-      engines: VISIBILITY_ENGINES.map((eng) => {
+      engines: targetEngines.map((eng) => {
         let available = isBaseAvailable(eng.key);
         if (enabledOverride) {
           available = enabledOverride.has(eng.key);
@@ -494,12 +511,16 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
           available = false;
         }
         const status: VisibilityEngineHealthStatus = available ? 'online' : 'offline';
+        const engineMarket: GeoMarket = eng.domestic ? 'CN' : 'GLOBAL';
         return {
           key: eng.key,
           label: eng.label,
           domestic: eng.domestic,
+          market: engineMarket,
           available,
           status,
+          defaultChecked: available,
+          unavailableReason: available ? null : '暂未上线',
         };
       }),
     };

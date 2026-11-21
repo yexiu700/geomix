@@ -11,13 +11,14 @@ import {
 } from '@geomix/shared';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import type { FactIndexEnqueuer, FactIndexJobData } from '../brands/brand-fact-index.runner';
 import type {
   VisibilityCheckJobData,
   VisibilityRunEnqueuer,
 } from '../visibility/visibility-run.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
 
-export type { VisibilityCheckJobData };
+export type { FactIndexJobData, VisibilityCheckJobData };
 
 export const BOARD_PATH = '/api/v1/admin/queues/board';
 
@@ -33,7 +34,9 @@ type JobCounts = {
  * API 侧只负责入队。连接推迟到第一次使用，避免没装 Redis 时把登录和计费接口一起拖垮。
  */
 @Injectable()
-export class QueueProducer implements JobEnqueuer, VisibilityRunEnqueuer, OnModuleDestroy {
+export class QueueProducer
+  implements JobEnqueuer, VisibilityRunEnqueuer, FactIndexEnqueuer, OnModuleDestroy
+{
   private connection: IORedis | undefined;
   private readonly queues = new Map<QueueName, Queue>();
   private board: ReturnType<ExpressAdapter['getRouter']> | undefined;
@@ -74,6 +77,21 @@ export class QueueProducer implements JobEnqueuer, VisibilityRunEnqueuer, OnModu
       { tenantId: data.tenantId, runId: data.runId },
       {
         jobId: `visibility-run-${data.runId}`,
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: true,
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueFactIndex(data: FactIndexJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('fact-index');
+    await queue.add(
+      'fact-index',
+      { tenantId: data.tenantId, brandId: data.brandId },
+      {
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },
         removeOnComplete: true,

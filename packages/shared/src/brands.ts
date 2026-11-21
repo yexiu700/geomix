@@ -20,13 +20,15 @@ export const GEO_MARKET_DEFAULTS: Record<GeoMarket, { locale: string; region: st
   GLOBAL: { locale: 'en-US', region: 'US' },
 };
 
-export const BRAND_FACT_SLOTS = [
+export const BRAND_FACT_CORE_SLOTS = [
   'PRODUCT_SPECS',
   'DIFFERENTIATORS',
   'CREDENTIALS',
   'CASE_STUDIES',
-  'EXTRA_DOC',
 ] as const;
+export type BrandFactCoreSlot = (typeof BRAND_FACT_CORE_SLOTS)[number];
+
+export const BRAND_FACT_SLOTS = [...BRAND_FACT_CORE_SLOTS, 'EXTRA_DOC'] as const;
 export type BrandFactSlot = (typeof BRAND_FACT_SLOTS)[number];
 
 export const BRAND_FACT_SLOT_LABELS: Record<BrandFactSlot, string> = {
@@ -68,6 +70,7 @@ export const BRAND_FACT_CHUNK_SIZE = 600 as const;
 export const BRAND_FACT_CHUNK_OVERLAP = 80 as const;
 export const BRAND_FACT_TOP_K_CHUNKS = 5 as const;
 export const BRAND_FACT_CARD_MAX = 20_000 as const;
+export const BRAND_FACT_EXTRACT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 export const BRAND_TRUTH_CHECKBOX_LABEL =
   '我确认所填品牌参数、资质与案例真实客观，符合广告与合规要求';
@@ -92,17 +95,6 @@ const VALID_DOMAIN_LABEL =
   /^[a-z0-9\u00a1-\uffff](?:[a-z0-9\u00a1-\uffff-]{0,61}[a-z0-9\u00a1-\uffff])?$/u;
 const IPV4_DOTTED = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 
-function extractRawBrandHost(raw: string): string {
-  const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^\/\//, '');
-  const authority = withoutScheme.split(/[/?#]/)[0] ?? '';
-  const withoutUser = authority.includes('@') ? (authority.split('@').pop() ?? '') : authority;
-  if (withoutUser.startsWith('[')) {
-    const end = withoutUser.indexOf(']');
-    return end >= 0 ? withoutUser.slice(1, end) : '';
-  }
-  return withoutUser.replace(/:\d+$/, '');
-}
-
 /**
  * 归一化品牌官网/竞品域名为小写裸域名（去掉协议、www.、端口、路径、锚点与末尾点）。
  * 输入非法时返回空字符串，不抛异常。
@@ -116,19 +108,20 @@ export function normalizeBrandDomain(urlOrDomain: string): string {
   let host = '';
   const candidateUrl = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidateUrl)) {
+    if (!/^https?:\/\//i.test(candidateUrl)) return '';
     try {
       const parsed = new URL(candidateUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
       host = parsed.hostname;
     } catch {
-      host = extractRawBrandHost(trimmed);
+      return '';
     }
   } else {
     try {
       const parsed = new URL(`https://${trimmed}`);
       host = parsed.hostname;
     } catch {
-      host = extractRawBrandHost(trimmed);
+      return '';
     }
   }
 
@@ -140,7 +133,10 @@ export function normalizeBrandDomain(urlOrDomain: string): string {
     .replace(/^www\./, '');
 
   if (!cleaned || cleaned.includes(':')) return '';
-  if (IPV4_DOTTED.test(cleaned)) return cleaned;
+  if (IPV4_DOTTED.test(cleaned)) {
+    const octets = cleaned.split('.').map(Number);
+    return octets.every((n) => n >= 0 && n <= 255) ? cleaned : '';
+  }
 
   const parts = cleaned.split('.');
   if (parts.length < 2) return '';
@@ -149,6 +145,172 @@ export function normalizeBrandDomain(urlOrDomain: string): string {
   if (!parts.every((part) => VALID_DOMAIN_LABEL.test(part))) return '';
 
   return cleaned;
+}
+
+// ==================== 品类感知双市场监控问句种子（#313） ====================
+
+export type BrandCategorySegment = 'CONSUMER' | 'B2B_SAAS' | 'B2B_INDUSTRIAL';
+
+const B2B_SAAS_CATEGORY_RE =
+  /(?:saas|crm|erp|hrm|scrm|cdp|mes|wms|scm|devops|cybersecurity|b2b|enterprise\s+software|cloud\s+platform|marketing\s+automation|analytics\s+platform|workflow|helpdesk|企业软件|企业服务|企业级|云计算|云服务|协同办公|数据中台|营销自动化|客服系统|财税软件|开发平台|工单系统)/i;
+
+const B2B_INDUSTRIAL_CATEGORY_RE =
+  /(?:industrial|cnc|machinery|manufacturing|automation\s+equipment|supply\s+chain|raw\s+material|commercial\s+equipment|wholesale|\boem\b|\bodm\b|工业|机床|注塑机|数控|自动化设备|激光切割|仓储设备|物流设备|供应链|化工原料|建筑材料|光伏组件|储能电站|工业机器人|精密加工|模具|医疗器械|冷链设备|商用厨房)/i;
+
+const CN_TO_EN_CATEGORY_MAP: ReadonlyArray<readonly [RegExp, string]> = [
+  [/便携储能|户外电源/i, 'portable power station'],
+  [/家用\s*nas|私有云|\bnas\b/i, 'home NAS'],
+  [/智能相框|数码相框|电子相框/i, 'digital photo frame'],
+  [/扫地机器人|扫拖机器人|洗地机/i, 'robot vacuum'],
+  [/咖啡机/i, 'coffee maker'],
+  [/洗碗机/i, 'dishwasher'],
+  [/蓝牙耳机|无线耳机|降噪耳机/i, 'wireless earbuds'],
+  [/空气净化器/i, 'air purifier'],
+  [/投影仪/i, 'home projector'],
+  [/护肤品|美妆/i, 'skincare'],
+  [/宠物食品|猫粮|狗粮/i, 'pet food'],
+  [/户外装备|露营装备/i, 'outdoor gear'],
+  [/消费电子/i, 'consumer electronics'],
+  [/智能硬件|智能家居/i, 'smart home hardware'],
+  [/企业软件|企业服务|协同办公/i, 'enterprise software'],
+  [/客服系统|工单系统/i, 'customer support software'],
+  [/营销自动化/i, 'marketing automation platform'],
+  [/工业激光|激光切割/i, 'industrial laser cutting machine'],
+  [/数控机床|工业机床/i, 'CNC machinery'],
+  [/自动化设备|工业机器人/i, 'industrial automation equipment'],
+  [/工业设备/i, 'industrial equipment'],
+];
+
+/**
+ * 识别品牌所属品类的受众分层，确保 C 端消费品类绝不误用 B2B 工厂/批发话术（#313）。
+ */
+export function classifyBrandCategorySegment(category: string): BrandCategorySegment {
+  const clean = category.trim();
+  if (!clean) return 'CONSUMER';
+  if (B2B_SAAS_CATEGORY_RE.test(clean)) return 'B2B_SAAS';
+  if (B2B_INDUSTRIAL_CATEGORY_RE.test(clean)) return 'B2B_INDUSTRIAL';
+  return 'CONSUMER';
+}
+
+function resolveGlobalCategoryLabel(category: string): string {
+  const clean = category.trim();
+  if (!clean) return 'product';
+  for (const [pattern, label] of CN_TO_EN_CATEGORY_MAP) {
+    if (pattern.test(clean)) return label;
+  }
+  return clean;
+}
+
+/**
+ * 按目标市场（CN / GLOBAL）与品类分层生成默认监控问句种子（5–6 条，去重）。
+ */
+export function generateBrandSeedPrompts(input: {
+  market: GeoMarket;
+  brandName: string;
+  category: string;
+  competitors?: ReadonlyArray<{ name: string }>;
+}): string[] {
+  const brand = input.brandName.trim() || '本品牌';
+  const cat = input.category.trim() || '产品';
+  const segment = classifyBrandCategorySegment(cat);
+  const compNames = Array.from(
+    new Set(
+      (input.competitors ?? [])
+        .map((c) => c.name.trim())
+        .filter((name) => name.length > 0 && name.toLowerCase() !== brand.toLowerCase()),
+    ),
+  );
+  const comp1 = compNames[0];
+  const comp2 = compNames[1];
+
+  let candidates: string[];
+
+  if (input.market === 'CN') {
+    if (segment === 'B2B_SAAS') {
+      candidates = [
+        `2026年${cat}哪家好用？主流产品核心能力对比`,
+        `选型${cat}重点看哪些功能、安全合规与集成能力？`,
+        `${brand}的${cat}怎么样？实际部署体验与优缺点分析`,
+        comp1
+          ? `${brand}和${comp1}的${cat}对比，团队选型怎么选？`
+          : `不同规模团队选型${cat}有哪些主流方案推荐？`,
+        comp1 && comp2
+          ? `${cat}在${brand}、${comp1}和${comp2}之间如何选型？`
+          : `${cat}实施落地的常见痛点与收费模式解析`,
+        `${cat}真实客户落地案例与 ROI 提升效果如何？`,
+      ];
+    } else if (segment === 'B2B_INDUSTRIAL') {
+      candidates = [
+        `2026年${cat}主流品牌推荐与关键技术参数对比`,
+        `选型${cat}重点关注哪些稳定性指标、认证标准与维保成本？`,
+        `${brand}的${cat}性能怎么样？真实交付精度与售后口碑如何？`,
+        comp1
+          ? `${brand}与${comp1}的${cat}对比，各自适合什么工况？`
+          : `${cat}不同工况与产能需求应该如何配置选型？`,
+        comp1 && comp2
+          ? `${cat}选${brand}、${comp1}还是${comp2}？全生命周期成本对比`
+          : `${cat}连续运行维护要点与常见问题避坑指南`,
+        `${cat}有哪些通过权威认证且交付周期稳定的品牌？`,
+      ];
+    } else {
+      candidates = [
+        `2026年${cat}哪个品牌好？值得推荐的型号有哪些？`,
+        `选购${cat}应该怎么挑？重点看哪些核心参数和真实口碑？`,
+        `性价比高的${cat}推荐，不同预算怎么选最划算？`,
+        `${brand}的${cat}怎么样？真实使用体验和优缺点是什么？`,
+        comp1
+          ? `${brand}和${comp1}的${cat}对比，哪款更值得买？`
+          : `${cat}有哪些主流品牌？各自适合什么使用场景？`,
+        comp1 && comp2
+          ? `${cat}买${brand}、${comp1}还是${comp2}？各自适合什么使用场景？`
+          : `${cat}日常使用常见痛点和避坑指南有哪些？`,
+      ];
+    }
+  } else {
+    const enCat = resolveGlobalCategoryLabel(cat);
+    if (segment === 'B2B_SAAS') {
+      candidates = [
+        `What is the best ${enCat} for growing teams in 2026?`,
+        `How to evaluate ${enCat}: key features, security, and integrations`,
+        `${brand} ${enCat} review: pros, cons, and pricing breakdown`,
+        comp1
+          ? `${brand} vs ${comp1}: which ${enCat} is better for your workflow?`
+          : `Top ${enCat} alternatives compared for different team sizes`,
+        comp1 && comp2
+          ? `Comparing ${brand}, ${comp1}, and ${comp2} for ${enCat}`
+          : `Common implementation challenges when adopting ${enCat}`,
+        `Real customer case studies and ROI of ${enCat} platforms`,
+      ];
+    } else if (segment === 'B2B_INDUSTRIAL') {
+      candidates = [
+        `Top ${enCat} brands in 2026: specs, reliability, and certifications`,
+        `How to specify ${enCat}: key technical metrics and lifecycle cost`,
+        `${brand} ${enCat} review: real-world performance and service support`,
+        comp1
+          ? `${brand} vs ${comp1}: comparing ${enCat} precision and durability`
+          : `Leading ${enCat} systems compared by production workload`,
+        comp1 && comp2
+          ? `Comparing ${brand}, ${comp1}, and ${comp2} for ${enCat}`
+          : `Preventive maintenance checklist and common failure modes for ${enCat}`,
+        `Key safety certifications and warranty terms to verify for ${enCat}`,
+      ];
+    } else {
+      candidates = [
+        `What is the best ${enCat} to buy in 2026?`,
+        `How to choose a ${enCat}: key specs, features, and buying guide`,
+        `Best value ${enCat} recommendations for everyday use`,
+        `Is ${brand} ${enCat} worth buying? Pros, cons, and real reviews`,
+        comp1
+          ? `${brand} vs ${comp1}: which ${enCat} is better?`
+          : `Top ${enCat} brands compared for different needs`,
+        comp1 && comp2
+          ? `Comparing ${brand}, ${comp1}, and ${comp2} for ${enCat}`
+          : `Common issues to avoid when buying a ${enCat}`,
+      ];
+    }
+  }
+
+  return Array.from(new Set(candidates.map((item) => item.trim()).filter(Boolean))).slice(0, 6);
 }
 
 // ==================== 事实分块与品牌名格式化（从 knowledge.ts 抽取） ====================
@@ -408,16 +570,59 @@ export function isPlaceholderImageModel(model: string | null | undefined): boole
 
 // ==================== Zod Schemas & DTOs ====================
 
+function brandDomainArraySchema(max: number) {
+  return z
+    .array(z.string().trim().min(1, '域名不能为空').max(255, '域名长度不超过 255 字符'))
+    .max(max, `最多填写 ${max} 个域名`)
+    .transform((items, ctx) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      items.forEach((raw, idx) => {
+        const normalized = normalizeBrandDomain(raw);
+        if (!normalized) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [idx],
+            message: `无效的域名格式：${raw}`,
+          });
+          return;
+        }
+        if (!seen.has(normalized)) {
+          seen.add(normalized);
+          out.push(normalized);
+        }
+      });
+      return out;
+    });
+}
+
+function brandAliasArraySchema() {
+  return z
+    .array(z.string().trim().min(1, '别名不能为空').max(BRAND_NAME_MAX))
+    .max(20, '最多填写 20 个别名')
+    .transform((items) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const item of items) {
+        const key = item.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(item);
+      }
+      return out;
+    });
+}
+
+function brandSeedPromptArraySchema() {
+  return z
+    .array(z.string().trim().min(2, '监控问题至少 2 个字').max(300, '监控问题最多 300 字'))
+    .max(50, '最多配置 50 条监控问题');
+}
+
 export const brandCompetitorSchema = z.object({
   name: z.string().trim().min(1, '请填写竞品名称').max(BRAND_NAME_MAX),
-  aliases: z.array(z.string().trim().min(1).max(BRAND_NAME_MAX)).max(20).default([]),
-  domains: z
-    .array(z.string().trim().min(1).max(255))
-    .max(10)
-    .default([])
-    .transform((items) =>
-      Array.from(new Set(items.map((d) => normalizeBrandDomain(d)).filter(Boolean))),
-    ),
+  aliases: brandAliasArraySchema().default([]),
+  domains: brandDomainArraySchema(10).default([]),
 });
 
 export type BrandCompetitor = z.output<typeof brandCompetitorSchema>;
@@ -427,10 +632,13 @@ export const brandMarketConfigSchema = z.object({
   locale: z.string().trim().min(2).max(16).optional(),
   region: z.string().trim().min(2).max(16).optional(),
   localBrandName: z.string().trim().min(1, '请填写当地品牌名称').max(BRAND_NAME_MAX).optional(),
-  aliases: z.array(z.string().trim().min(1).max(BRAND_NAME_MAX)).max(20).default([]),
-  ownedDomains: z.array(z.string().trim().min(1).max(255)).max(20).default([]),
-  competitors: z.array(brandCompetitorSchema).max(BRAND_MAX_COMPETITORS).default([]),
-  seedPrompts: z.array(z.string().trim().min(2).max(300)).max(50).default([]),
+  aliases: brandAliasArraySchema().default([]),
+  ownedDomains: brandDomainArraySchema(20).default([]),
+  competitors: z
+    .array(brandCompetitorSchema)
+    .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
+    .default([]),
+  seedPrompts: brandSeedPromptArraySchema().default([]),
 });
 
 const brandMarketEntrySchema = z.union([
@@ -452,8 +660,12 @@ export const createBrandSchema = z.object({
     .min(1, '请至少选择一个目标市场')
     .max(2)
     .refine((ms) => new Set(ms.map((m) => m.market)).size === ms.length, '目标市场不能重复'),
-  ownedDomains: z.array(z.string().trim().min(1).max(255)).max(20).optional(),
-  competitors: z.array(brandCompetitorSchema).max(BRAND_MAX_COMPETITORS).optional(),
+  aliases: brandAliasArraySchema().optional(),
+  ownedDomains: brandDomainArraySchema(20).optional(),
+  competitors: z
+    .array(brandCompetitorSchema)
+    .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
+    .optional(),
   truthAgreed: z.boolean().optional(),
 });
 
@@ -475,31 +687,65 @@ export const upsertBrandMarketSchema = brandMarketConfigSchema.omit({ market: tr
 export type UpsertBrandMarketInput = z.input<typeof upsertBrandMarketSchema>;
 export type ParsedUpsertBrandMarketInput = z.output<typeof upsertBrandMarketSchema>;
 
+export const updateBrandMarketSchema = z
+  .object({
+    locale: z.string().trim().min(2).max(16).optional(),
+    region: z.string().trim().min(2).max(16).optional(),
+    localBrandName: z.string().trim().min(1, '请填写当地品牌名称').max(BRAND_NAME_MAX).optional(),
+    aliases: brandAliasArraySchema().optional(),
+    ownedDomains: brandDomainArraySchema(20).optional(),
+    competitors: z
+      .array(brandCompetitorSchema)
+      .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
+      .optional(),
+    seedPrompts: brandSeedPromptArraySchema().optional(),
+  })
+  .refine((val) => Object.keys(val).length > 0, '至少修改一项市场配置');
+
+export type UpdateBrandMarketInput = z.input<typeof updateBrandMarketSchema>;
+export type ParsedUpdateBrandMarketInput = z.output<typeof updateBrandMarketSchema>;
+
+const optionalSourceUrlSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().url('来源链接格式不正确').max(2048).nullable().optional(),
+);
+
 export const brandFactItemInputSchema = z.object({
+  id: z.string().trim().regex(BRAND_ID_PATTERN, '事实卡编号不正确').optional(),
   slot: z.enum(BRAND_FACT_SLOTS),
-  title: z.string().trim().min(1, '请填写事实卡标题').max(120),
+  title: z.string().trim().max(120, '事实卡标题不超过 120 字').optional(),
   content: z.string().trim().max(BRAND_FACT_CARD_MAX),
   sourceType: z.enum(FACT_SOURCE_TYPES).default('MANUAL'),
-  sourceUrl: z.string().trim().url('来源链接格式不正确').max(2048).nullable().optional(),
+  sourceUrl: optionalSourceUrlSchema,
 });
 
 export const upsertBrandFactsSchema = z.object({
   facts: z.array(brandFactItemInputSchema).min(1, '请至少保存一条事实卡').max(20),
   truthAgreed: z.boolean().optional(),
+  agreeTruthTerms: z.boolean().optional(),
 });
 
 export type UpsertBrandFactsInput = z.input<typeof upsertBrandFactsSchema>;
+export type ParsedUpsertBrandFactsInput = z.output<typeof upsertBrandFactsSchema>;
 
 export const extractBrandFactsSchema = z
   .object({
-    sourceType: z.enum(['URL_EXTRACT', 'DOC_UPLOAD', 'MANUAL']),
+    sourceType: z.enum(['URL_EXTRACT', 'DOC_UPLOAD', 'MANUAL']).optional(),
     url: z.string().trim().url('请输入有效的官网链接').max(2048).optional(),
     rawText: z.string().trim().min(10, '资料内容至少 10 字').max(50_000).optional(),
+    text: z.string().trim().min(10, '资料内容至少 10 字').max(50_000).optional(),
     fileName: z.string().trim().max(160).optional(),
   })
-  .refine((data) => Boolean(data.url || data.rawText), '请提供官网链接或粘贴产品资料');
+  .refine((data) => Boolean(data.url || data.rawText || data.text), '请提供官网链接或粘贴产品资料');
 
-export type ExtractBrandFactsInput = z.infer<typeof extractBrandFactsSchema>;
+export type ExtractBrandFactsInput = z.input<typeof extractBrandFactsSchema>;
+export type ParsedExtractBrandFactsInput = z.output<typeof extractBrandFactsSchema>;
+
+export const updateBrandMediaSchema = z.object({
+  title: z.string().trim().min(1, '请填写图片说明').max(120, '图片说明不超过 120 字'),
+});
+
+export type UpdateBrandMediaInput = z.infer<typeof updateBrandMediaSchema>;
 
 export const inlineAiImageGenSchema = z.object({
   prompt: z
@@ -575,4 +821,54 @@ export type BrandRecord = {
 
 export type BrandListResponse = {
   items: BrandRecord[];
+};
+
+export type BrandDeleteResponse = {
+  deleted: number;
+  id: string;
+  releasedBytes: number;
+};
+
+export type BrandFactsResponse = {
+  brandId: string;
+  truthAgreementSignedAt: string | null;
+  totalChars: number;
+  vectorIndexRequired: boolean;
+  vectorIndexed: boolean;
+  items: BrandFactRecord[];
+};
+
+export type ExtractedBrandFactDraft = {
+  slot: BrandFactCoreSlot;
+  title: string;
+  content: string;
+};
+
+export type ExtractBrandFactsResponse = {
+  sourceType: FactSourceType;
+  sourceUrl: string | null;
+  fileName: string | null;
+  extractedChars: number;
+  facts: ExtractedBrandFactDraft[];
+  fake: boolean;
+  warnings?: string[];
+};
+
+export type BrandMediaListResponse = {
+  items: BrandMediaAssetRecord[];
+  storage: MediaStorageSummary;
+};
+
+export type BrandMediaUploadResponse = {
+  items: BrandMediaAssetRecord[];
+  item: BrandMediaAssetRecord;
+  warnings: string[];
+  storage: MediaStorageSummary;
+};
+
+export type BrandMediaDeleteResponse = {
+  deleted: number;
+  id: string;
+  releasedBytes: number;
+  storage: MediaStorageSummary;
 };

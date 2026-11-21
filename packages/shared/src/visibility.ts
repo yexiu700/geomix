@@ -55,8 +55,24 @@ export function enginesForMarket(market: GeoMarket): readonly VisibilityEngineKe
   return market === 'GLOBAL' ? GLOBAL_VISIBILITY_ENGINE_KEYS : DOMESTIC_VISIBILITY_ENGINE_KEYS;
 }
 
+export const VISIBILITY_ENGINES_BY_MARKET: Record<GeoMarket, readonly VisibilityEngineItem[]> = {
+  CN: VISIBILITY_ENGINES.filter((item) => item.domestic),
+  GLOBAL: VISIBILITY_ENGINES.filter((item) => !item.domestic),
+};
+
+export function enginesMetaForMarket(market: GeoMarket): readonly VisibilityEngineItem[] {
+  return VISIBILITY_ENGINES_BY_MARKET[market];
+}
+
 export function isEngineAllowedForMarket(engine: VisibilityEngineKey, market: GeoMarket): boolean {
   return (enginesForMarket(market) as readonly string[]).includes(engine);
+}
+
+export function findDisallowedMarketEngines(
+  engines: readonly VisibilityEngineKey[],
+  market: GeoMarket,
+): VisibilityEngineKey[] {
+  return engines.filter((engine) => !isEngineAllowedForMarket(engine, market));
 }
 
 export const VISIBILITY_TRIGGER_TYPES = ['MANUAL', 'RETEST'] as const;
@@ -98,6 +114,18 @@ export const CITATION_SOURCE_KINDS = [
 ] as const;
 export type CitationSourceKind = (typeof CITATION_SOURCE_KINDS)[number];
 
+/**
+ * 引用来源分类优先级：OWNED > COMPETITOR > ECOMMERCE > SOCIAL > AUTHORITY > OTHER。
+ */
+export const CITATION_SOURCE_PRIORITY: readonly CitationSourceKind[] = [
+  'OWNED',
+  'COMPETITOR',
+  'ECOMMERCE',
+  'SOCIAL',
+  'AUTHORITY',
+  'OTHER',
+] as const;
+
 export const CITATION_SOURCE_LABELS: Record<CitationSourceKind, string> = {
   OWNED: '自有阵地',
   COMPETITOR: '竞品官网',
@@ -118,6 +146,7 @@ export const VISIBILITY_RUN_NAME_MAX = 80;
 export const VISIBILITY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export const SOCIAL_CITATION_DOMAINS = [
+  // CN social & UGC
   'zhihu.com',
   'xiaohongshu.com',
   'xhslink.com',
@@ -127,9 +156,9 @@ export const SOCIAL_CITATION_DOMAINS = [
   'bilibili.com',
   'b23.tv',
   'douyin.com',
-  'tieba.baidu.com',
-  'mp.weixin.qq.com',
   'toutiao.com',
+  'mp.weixin.qq.com',
+  'tieba.baidu.com',
   'douban.com',
   'hupu.com',
   'v2ex.com',
@@ -137,21 +166,36 @@ export const SOCIAL_CITATION_DOMAINS = [
   'csdn.net',
   'segmentfault.com',
   'oschina.net',
+  'nga.cn',
+  'ngabbs.com',
+  'kuaishou.com',
+  'jianshu.com',
+  'cnblogs.com',
+  // GLOBAL review & community
   'reddit.com',
   'quora.com',
+  'trustpilot.com',
+  'g2.com',
+  'capterra.com',
+  'producthunt.com',
   'youtube.com',
   'youtu.be',
   'x.com',
   'twitter.com',
   'medium.com',
+  'substack.com',
   'linkedin.com',
   'facebook.com',
   'instagram.com',
   'tiktok.com',
   'discord.com',
+  'news.ycombinator.com',
+  'stackoverflow.com',
+  'dev.to',
 ] as const;
 
 export const AUTHORITY_CITATION_DOMAINS = [
+  // Encyclopedias, official media & standards
   'baike.baidu.com',
   'wikipedia.org',
   'wikidata.org',
@@ -176,32 +220,71 @@ export const AUTHORITY_CITATION_DOMAINS = [
   'iso.org',
   'w3.org',
   'mozilla.org',
-  'trustpilot.com',
-  'g2.com',
-  'capterra.com',
-  'wirecutter.com',
-  'rtings.com',
-  'theverge.com',
+  // CN tech/product review media
+  'sspai.com',
+  'ithome.com',
+  'pconline.com.cn',
+  'zol.com.cn',
+  'chiphell.com',
+  'mydrivers.com',
+  'leiphone.com',
+  'geekpark.net',
+  'pingwest.com',
+  'chongdiantou.com',
+  'zealer.com',
+  // GLOBAL editorial authority & review media
   'techradar.com',
+  'wirecutter.com',
+  'nytimes.com',
   'pcmag.com',
+  'theverge.com',
+  'rtings.com',
   'tomsguide.com',
+  'tomshardware.com',
+  'cnet.com',
+  'forbes.com',
+  'wired.com',
+  'engadget.com',
+  'arstechnica.com',
+  'zdnet.com',
+  'techcrunch.com',
+  'anandtech.com',
+  'notebookcheck.net',
+  'consumerreports.org',
+  'gartner.com',
+  'forrester.com',
+  'idc.com',
 ] as const;
 
 export const ECOMMERCE_CITATION_DOMAINS = [
+  // CN storefronts
   'jd.com',
   'tmall.com',
   'taobao.com',
   'pinduoduo.com',
   'yangkeduo.com',
   'suning.com',
+  'vip.com',
+  '1688.com',
+  // GLOBAL storefronts
   'amazon.com',
   'amazon.co.uk',
   'amazon.de',
   'amazon.co.jp',
-  'bestbuy.com',
-  'walmart.com',
+  'amazon.ca',
+  'amazon.fr',
   'ebay.com',
+  'walmart.com',
+  'bestbuy.com',
+  'newegg.com',
+  'target.com',
+  'costco.com',
+  'aliexpress.com',
 ] as const;
+
+const ECOMMERCE_DOMAIN_SET = new Set<string>(ECOMMERCE_CITATION_DOMAINS);
+const SOCIAL_DOMAIN_SET = new Set<string>(SOCIAL_CITATION_DOMAINS);
+const AUTHORITY_DOMAIN_SET = new Set<string>(AUTHORITY_CITATION_DOMAINS);
 
 export const AUTHORITY_CITATION_TLD_SUFFIXES = [
   '.gov.cn',
@@ -312,8 +395,18 @@ export function matchesDomain(domain: string, candidate: string): boolean {
   return d === c || d.endsWith(`.${c}`);
 }
 
+function matchesDomainSet(normalizedDomain: string, set: ReadonlySet<string>): boolean {
+  if (set.has(normalizedDomain)) return true;
+  let idx = normalizedDomain.indexOf('.');
+  while (idx !== -1) {
+    if (set.has(normalizedDomain.slice(idx + 1))) return true;
+    idx = normalizedDomain.indexOf('.', idx + 1);
+  }
+  return false;
+}
+
 /**
- * 按 OWNED > COMPETITOR > SOCIAL > AUTHORITY > ECOMMERCE > OTHER 优先级对引用来源归类。
+ * 按 OWNED > COMPETITOR > ECOMMERCE > SOCIAL > AUTHORITY > OTHER 优先级对引用来源归类。
  */
 export function classifyCitationSource(
   urlOrDomain: string,
@@ -331,17 +424,11 @@ export function classifyCitationSource(
   for (const comp of context.competitorDomains ?? []) {
     if (matchesDomain(domain, comp)) return 'COMPETITOR';
   }
-  for (const social of SOCIAL_CITATION_DOMAINS) {
-    if (matchesDomain(domain, social)) return 'SOCIAL';
-  }
-  for (const authority of AUTHORITY_CITATION_DOMAINS) {
-    if (matchesDomain(domain, authority)) return 'AUTHORITY';
-  }
+  if (matchesDomainSet(domain, ECOMMERCE_DOMAIN_SET)) return 'ECOMMERCE';
+  if (matchesDomainSet(domain, SOCIAL_DOMAIN_SET)) return 'SOCIAL';
+  if (matchesDomainSet(domain, AUTHORITY_DOMAIN_SET)) return 'AUTHORITY';
   for (const suffix of AUTHORITY_CITATION_TLD_SUFFIXES) {
     if (domain.endsWith(suffix) && domain.length > suffix.length) return 'AUTHORITY';
-  }
-  for (const ecom of ECOMMERCE_CITATION_DOMAINS) {
-    if (matchesDomain(domain, ecom)) return 'ECOMMERCE';
   }
   return 'OTHER';
 }
@@ -445,7 +532,523 @@ const ANAPHORIC_BRAND_CONTINUATION =
 const COMPETITOR_LIST_LEAD_IN =
   /(?:几款|以下|市面|目前|热门|主流|常见|值得|高性价比|同类|替代).{0,16}(?:品牌|产品|方案|工具|选择|平台|厂商|推荐|清单|榜单|型号)|(?:以下|如下|为您)(?:整理|推荐|盘点|汇总|介绍|列举|对比)|主要包括|top\s+(?:brands|picks|options|choices|alternatives|tools)|here\s+are\s+(?:some\s+)?(?:top|popular|recommended)/iu;
 
-const ATTRIBUTE_ONLY_LEAD_IN = /^(?:以下|主要|核心)?(?:优势|优点|特点|缺点|亮点|参数|规格)/u;
+const ATTRIBUTE_ONLY_LEAD_IN =
+  /^(?:以下|主要|核心)?(?:优势|优点|特点|缺点|亮点|参数|规格|核心特性)/u;
+
+const ATTRIBUTE_ONLY_LEAD_IN_ANYWHERE =
+  /(?:主要|核心|以下)?(?:优势|优点|特点|缺点|亮点|参数|规格|核心特性|特性|性能表现|使用体验)(?:如下|包括|有|为)?|(?:main|key|core)\s+(?:pros|cons|features|advantages|highlights|specs|specifications|benefits)\b/iu;
+
+const MULTI_OPTION_LIST_LEAD_IN =
+  /(?:几款|多款|市面|目前|热门|主流|常见|值得|高性价比|同类|替代).{0,16}(?:品牌|产品|方案|工具|选择|平台|厂商|推荐|清单|榜单|型号)|(?:以下|如下|为您)(?:整理|推荐|盘点|汇总|列举|对比|是.{0,12}(?:品牌|产品|方案|推荐|榜单|选择|型号|工具))|推荐(?:如下|榜单|清单)|值得关注|热门选择|主流(?:品牌|方案|产品|选择)|(?:here\s+are|below\s+are|the\s+following)\s+(?:some\s+)?(?:the\s+)?(?:top|best|popular|recommended|leading|main|key)?\s*(?:picks|recommendations|options|brands|models|alternatives|choices|tools|solutions)|(?:top|best)\s+(?:picks|recommendations|options|brands|models|alternatives|choices|tools)|worth\s+considering|alternatives\s+to/iu;
+
+const UNFRAMED_QUESTION_ECHO =
+  /^(?:想了解|很多人问|很多用户|如果你在找|在选购|在对比|对比.{0,30}时|关于|针对)|^(?:if\s+you(?:'re|\s+are)|when\s+(?:choosing|comparing|evaluating|looking)|looking\s+for|wondering|comparing|for\s+those\s+looking)\b/iu;
+
+const CN_NUMERAL_TO_RANK: Record<string, number> = {
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+  十一: 11,
+  十二: 12,
+  十三: 13,
+  十四: 14,
+  十五: 15,
+  十六: 16,
+  十七: 17,
+  十八: 18,
+  十九: 19,
+  二十: 20,
+};
+
+export type StructuredListItemKind = 'ordered' | 'heading' | 'bullet';
+
+export type StructuredListItem = {
+  kind: StructuredListItemKind;
+  blockId: number;
+  explicitRank: number | null;
+  ordinal: number;
+  startOffset: number;
+  endOffset: number;
+  headerText: string;
+  headerStartOffset: number;
+  headerEndOffset: number;
+  bodyText: string;
+};
+
+// Bounded prefix patterns applied only to line.slice(0, 240) — strictly O(1) per line, O(N) total.
+const HEADING_NUMBERED_LINE =
+  /^[ \t]{0,4}(#{1,4})[ \t]+(?:\*\*|__)?(\d{1,2})(?:[.)](?:\*\*|__)?[ \t]+|[、）](?:\*\*|__)?[ \t]*)(.+)$/u;
+const BOLD_NUMBERED_LINE =
+  /^[ \t]{0,4}(?:\*\*|__)(\d{1,2})(?:[.)](?:\*\*|__)?[ \t]+|[、）](?:\*\*|__)?[ \t]*)(.+)$/u;
+const PLAIN_NUMBERED_LINE = /^[ \t]{0,4}(\d{1,2})(?:[.)][ \t]+|[、）][ \t]*)(.+)$/u;
+const PAREN_NUMBERED_LINE = /^[ \t]{0,4}[(（\[](\d{1,2})[)）\]][ \t]*(.+)$/u;
+const CN_NUMERAL_LINE =
+  /^[ \t]{0,4}(?:#{1,4}[ \t]+)?(?:\*\*|__)?([一二三四五六七八九十]{1,2})[、.．](?:\*\*|__)?[ \t]*(.+)$/u;
+const ORDINAL_RANK_LINE =
+  /^[ \t]{0,4}(?:#{1,4}[ \t]+)?(?:\*\*|__)?(?:第([1-9]\d?|[一二三四五六七八九十]{1,2})[位名款个]?|top[ \t]{0,2}([1-9]\d?)|#([1-9]\d?))(?:\*\*|__)?[：:.\-—][ \t]*(.+)$/iu;
+const MARKDOWN_HEADING_LINE = /^[ \t]{0,4}(#{2,4})[ \t]+(.+)$/u;
+const BULLET_LINE = /^[ \t]{0,4}[-*•▪▸][ \t]+(.+)$/u;
+
+function parseRankToken(raw: string): number | null {
+  const cn = CN_NUMERAL_TO_RANK[raw];
+  if (typeof cn === 'number') return cn;
+  const num = Number(raw);
+  if (Number.isInteger(num) && num >= 1 && num <= 20) return num;
+  return null;
+}
+
+function extractItemHeader(rest: string): string {
+  const bounded = rest.slice(0, 160).replace(/^[ \t]*(?:\*\*|__|\*|`)+/, '');
+  let depth = 0;
+  let cutAt = Math.min(bounded.length, 120);
+
+  for (let i = 0; i < cutAt; i += 1) {
+    const ch = bounded[i] ?? '';
+    if (ch === '(' || ch === '（' || ch === '[' || ch === '【') {
+      depth += 1;
+      continue;
+    }
+    if (ch === ')' || ch === '）' || ch === ']' || ch === '】') {
+      if (depth > 0) depth -= 1;
+      continue;
+    }
+    if (depth === 0) {
+      if (ch === '：' || ch === ':' || ch === '—' || ch === '–' || ch === '。') {
+        cutAt = i;
+        break;
+      }
+      if (ch === '-' && i > 0 && bounded[i - 1] === ' ' && bounded[i + 1] === ' ') {
+        cutAt = i - 1;
+        break;
+      }
+    }
+  }
+
+  return bounded
+    .slice(0, cutAt)
+    .replace(/\*\*|__/g, '')
+    .replace(/^[ \t*`]+|[ \t*`]+$/g, '')
+    .trim();
+}
+
+/**
+ * 线性时间 $O(N)$ 解析回答中的有序列表 / Markdown 标题 / 项目符号推荐清单。
+ * 小数如 "2.5G"、"14.5W" 不会误判为编号列表项。
+ */
+export function extractStructuredRecommendationItems(text: string): StructuredListItem[] {
+  if (typeof text !== 'string' || !text.trim()) return [];
+
+  type ParsedLineItem = {
+    kind: StructuredListItemKind;
+    headingLevel: number;
+    explicitRank: number | null;
+    startOffset: number;
+    lineEndOffset: number;
+    headerText: string;
+    headerStartOffset: number;
+    headerEndOffset: number;
+  };
+
+  type ActiveOrderedState = {
+    blockId: number;
+    headingLevel: number;
+    lastExplicitRank: number | null;
+    ordinal: number;
+    lastItem: StructuredListItem;
+    sawBreakingProse: boolean;
+  };
+  type ActiveHeadingState = {
+    blockId: number;
+    headingLevel: number;
+    ordinal: number;
+    lastItem: StructuredListItem;
+  };
+  type ActiveBulletState = {
+    blockId: number;
+    ordinal: number;
+    lastItem: StructuredListItem;
+    sawBreakingProse: boolean;
+  };
+
+  const items: StructuredListItem[] = [];
+  let nextBlockId = 0;
+  let activeOrdered: ActiveOrderedState | null = null;
+  const headingBlocksByLevel = new Map<number, ActiveHeadingState>();
+  let activeBullet: ActiveBulletState | null = null;
+  let sawBlankLine = false;
+
+  const closeItem = (item: StructuredListItem | null | undefined, endOffset: number) => {
+    if (item && item.endOffset === text.length) {
+      item.endOffset = endOffset;
+      item.bodyText = text.slice(item.startOffset, item.endOffset).trim();
+    }
+  };
+
+  const closeHeadingsAtOrDeeperThan = (minLevel: number, endOffset: number) => {
+    for (const [level, state] of [...headingBlocksByLevel.entries()]) {
+      if (level >= minLevel) {
+        closeItem(state.lastItem, endOffset);
+        headingBlocksByLevel.delete(level);
+      }
+    }
+  };
+
+  const parseLine = (line: string, lineStart: number): ParsedLineItem | null => {
+    const sample = line.slice(0, 240);
+    let match: RegExpMatchArray | null;
+
+    if ((match = sample.match(HEADING_NUMBERED_LINE))) {
+      const rank = parseRankToken(match[2] ?? '');
+      const rest = match[3] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: (match[1] ?? '').length,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(BOLD_NUMBERED_LINE))) {
+      const rank = parseRankToken(match[1] ?? '');
+      const rest = match[2] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: 0,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(PLAIN_NUMBERED_LINE))) {
+      const rank = parseRankToken(match[1] ?? '');
+      const rest = match[2] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: 0,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(PAREN_NUMBERED_LINE))) {
+      const rank = parseRankToken(match[1] ?? '');
+      const rest = match[2] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: 0,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(CN_NUMERAL_LINE))) {
+      const rank = parseRankToken(match[1] ?? '');
+      const rest = match[2] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: 0,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(ORDINAL_RANK_LINE))) {
+      const rawRank = match[1] ?? match[2] ?? match[3] ?? '';
+      const rank = parseRankToken(rawRank);
+      const rest = match[4] ?? '';
+      if (rank !== null && rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'ordered',
+          headingLevel: 0,
+          explicitRank: rank,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(MARKDOWN_HEADING_LINE))) {
+      const rest = match[2] ?? '';
+      if (rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'heading',
+          headingLevel: (match[1] ?? '').length,
+          explicitRank: null,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    if ((match = sample.match(BULLET_LINE))) {
+      const rest = match[1] ?? '';
+      if (rest.trim()) {
+        const restStart = lineStart + sample.length - rest.length;
+        const headerText = extractItemHeader(rest);
+        return {
+          kind: 'bullet',
+          headingLevel: 0,
+          explicitRank: null,
+          startOffset: lineStart,
+          lineEndOffset: lineStart + line.length,
+          headerText,
+          headerStartOffset: restStart,
+          headerEndOffset: Math.min(lineStart + line.length, restStart + headerText.length),
+        };
+      }
+    }
+
+    return null;
+  };
+
+  let pos = 0;
+  const len = text.length;
+  while (pos <= len) {
+    const nlIdx = text.indexOf('\n', pos);
+    const rawLineEnd = nlIdx === -1 ? len : nlIdx;
+    const lineEnd = rawLineEnd > pos && text[rawLineEnd - 1] === '\r' ? rawLineEnd - 1 : rawLineEnd;
+    const line = text.slice(pos, lineEnd);
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      sawBlankLine = true;
+    } else {
+      const parsed = parseLine(line, pos);
+      if (parsed) {
+        if (parsed.kind === 'ordered') {
+          if (activeBullet) {
+            closeItem(activeBullet.lastItem, parsed.startOffset);
+            activeBullet = null;
+          }
+          if (parsed.headingLevel > 0) {
+            closeHeadingsAtOrDeeperThan(parsed.headingLevel, parsed.startOffset);
+          }
+
+          let blockId: number;
+          let ordinal: number;
+          const canContinueOrdered =
+            activeOrdered !== null &&
+            activeOrdered.headingLevel === parsed.headingLevel &&
+            !(
+              parsed.explicitRank !== null &&
+              activeOrdered.lastExplicitRank !== null &&
+              parsed.explicitRank <= activeOrdered.lastExplicitRank
+            ) &&
+            (!activeOrdered.sawBreakingProse ||
+              parsed.headingLevel > 0 ||
+              (parsed.explicitRank !== null &&
+                activeOrdered.lastExplicitRank !== null &&
+                parsed.explicitRank > activeOrdered.lastExplicitRank &&
+                parsed.explicitRank <= activeOrdered.lastExplicitRank + 3));
+
+          if (activeOrdered) {
+            closeItem(activeOrdered.lastItem, parsed.startOffset);
+          }
+          if (canContinueOrdered && activeOrdered) {
+            blockId = activeOrdered.blockId;
+            ordinal = activeOrdered.ordinal + 1;
+          } else {
+            blockId = nextBlockId;
+            nextBlockId += 1;
+            ordinal = 1;
+          }
+
+          const newItem: StructuredListItem = {
+            kind: 'ordered',
+            blockId,
+            explicitRank: parsed.explicitRank,
+            ordinal,
+            startOffset: parsed.startOffset,
+            endOffset: text.length,
+            headerText: parsed.headerText,
+            headerStartOffset: parsed.headerStartOffset,
+            headerEndOffset: parsed.headerEndOffset,
+            bodyText: '',
+          };
+          items.push(newItem);
+          activeOrdered = {
+            blockId,
+            headingLevel: parsed.headingLevel,
+            lastExplicitRank: parsed.explicitRank,
+            ordinal,
+            lastItem: newItem,
+            sawBreakingProse: false,
+          };
+        } else if (parsed.kind === 'heading') {
+          if (activeBullet) {
+            closeItem(activeBullet.lastItem, parsed.startOffset);
+            activeBullet = null;
+          }
+          if (
+            activeOrdered &&
+            (activeOrdered.headingLevel === 0 || parsed.headingLevel <= activeOrdered.headingLevel)
+          ) {
+            closeItem(activeOrdered.lastItem, parsed.startOffset);
+            activeOrdered = null;
+          }
+
+          closeHeadingsAtOrDeeperThan(parsed.headingLevel + 1, parsed.startOffset);
+          const existingSameLevel = headingBlocksByLevel.get(parsed.headingLevel) ?? null;
+          let blockId: number;
+          let ordinal: number;
+          if (existingSameLevel) {
+            closeItem(existingSameLevel.lastItem, parsed.startOffset);
+            blockId = existingSameLevel.blockId;
+            ordinal = existingSameLevel.ordinal + 1;
+          } else {
+            blockId = nextBlockId;
+            nextBlockId += 1;
+            ordinal = 1;
+          }
+
+          const newItem: StructuredListItem = {
+            kind: 'heading',
+            blockId,
+            explicitRank: null,
+            ordinal,
+            startOffset: parsed.startOffset,
+            endOffset: text.length,
+            headerText: parsed.headerText,
+            headerStartOffset: parsed.headerStartOffset,
+            headerEndOffset: parsed.headerEndOffset,
+            bodyText: '',
+          };
+          items.push(newItem);
+          headingBlocksByLevel.set(parsed.headingLevel, {
+            blockId,
+            headingLevel: parsed.headingLevel,
+            ordinal,
+            lastItem: newItem,
+          });
+        } else {
+          // Bullet item: keep enclosing heading / ordered blocks intact so sub-bullets
+          // under ### headings or numbered items do not fragment the parent recommendation list.
+          if (activeBullet) {
+            closeItem(activeBullet.lastItem, parsed.startOffset);
+          }
+          let blockId: number;
+          let ordinal: number;
+          if (activeBullet && !activeBullet.sawBreakingProse) {
+            blockId = activeBullet.blockId;
+            ordinal = activeBullet.ordinal + 1;
+          } else {
+            blockId = nextBlockId;
+            nextBlockId += 1;
+            ordinal = 1;
+          }
+
+          const newItem: StructuredListItem = {
+            kind: 'bullet',
+            blockId,
+            explicitRank: null,
+            ordinal,
+            startOffset: parsed.startOffset,
+            endOffset: text.length,
+            headerText: parsed.headerText,
+            headerStartOffset: parsed.headerStartOffset,
+            headerEndOffset: parsed.headerEndOffset,
+            bodyText: '',
+          };
+          items.push(newItem);
+          activeBullet = {
+            blockId,
+            ordinal,
+            lastItem: newItem,
+            sawBreakingProse: false,
+          };
+        }
+        sawBlankLine = false;
+      } else {
+        // Unindented prose after a blank line closes the current bullet/plain-ordered item span.
+        if (sawBlankLine) {
+          if (activeBullet) {
+            closeItem(activeBullet.lastItem, pos);
+            activeBullet.sawBreakingProse = true;
+          }
+          if (activeOrdered && activeOrdered.headingLevel === 0) {
+            closeItem(activeOrdered.lastItem, pos);
+            activeOrdered.sawBreakingProse = true;
+          }
+        }
+        sawBlankLine = false;
+      }
+    }
+
+    if (nlIdx === -1) break;
+    pos = nlIdx + 1;
+  }
+
+  for (const item of items) {
+    if (!item.bodyText) {
+      item.bodyText = text.slice(item.startOffset, item.endOffset).trim();
+    }
+  }
+
+  return items;
+}
+
+const BRACKETED_METADATA_TAG = /\[[A-Z][A-Z0-9_-]{1,31}\]/g;
+
+function stripBracketedMetadataTags(raw: string): string {
+  return raw.replace(BRACKETED_METADATA_TAG, ' ');
+}
 
 function normalizeForEchoCompare(raw: string): string {
   return raw
@@ -456,7 +1059,7 @@ function normalizeForEchoCompare(raw: string): string {
 function sharesPromptEcho(clauseBody: string, promptText?: string): boolean {
   if (!promptText) return false;
   const normClause = normalizeForEchoCompare(clauseBody);
-  const normPrompt = normalizeForEchoCompare(promptText);
+  const normPrompt = normalizeForEchoCompare(stripBracketedMetadataTags(promptText));
   if (normClause.length < 3 || normPrompt.length < 3) return false;
   if (normPrompt.includes(normClause) || normClause.includes(normPrompt)) {
     return true;
@@ -527,9 +1130,47 @@ function scanOpeningClauseEnd(
   return null;
 }
 
+function findPrimaryPreListOffset(text: string): number {
+  const items = extractStructuredRecommendationItems(text);
+  if (items.length < 2) return 0;
+
+  const blocks = new Map<number, StructuredListItem[]>();
+  for (const item of items) {
+    const arr = blocks.get(item.blockId);
+    if (arr) arr.push(item);
+    else blocks.set(item.blockId, [item]);
+  }
+
+  const kindWeight: Record<StructuredListItemKind, number> = {
+    ordered: 3,
+    heading: 2,
+    bullet: 1,
+  };
+
+  let bestBlock: StructuredListItem[] | null = null;
+  for (const block of blocks.values()) {
+    if (block.length < 2) continue;
+    const first = block[0];
+    if (!first || first.startOffset <= 0 || first.startOffset > 360) continue;
+    if (!bestBlock) {
+      bestBlock = block;
+      continue;
+    }
+    const prevFirst = bestBlock[0];
+    if (!prevFirst) continue;
+    const wNew = kindWeight[first.kind];
+    const wOld = kindWeight[prevFirst.kind];
+    if (wNew > wOld || (wNew === wOld && first.startOffset < prevFirst.startOffset)) {
+      bestBlock = block;
+    }
+  }
+
+  return bestBlock?.[0]?.startOffset ?? 0;
+}
+
 /**
  * 识别回答开头的“提问复述/导语”结束偏移量（返回 0 表示无此类导语）。
- * 用于排除诸如「针对您询问的 Anker 氮化镓充电器推荐，以下为您整理热门品牌：」首句中的品牌词复述，
+ * 用于排除诸如「针对您询问的 Anker 氮化镓充电器推荐，以下为您整理热门品牌：」或无前缀列表导语中的品牌词复述，
  * 避免正文仅推荐竞品时误判本品牌命中且顺位 #1。
  */
 export function findQuestionEchoIntroEnd(text: string, promptText?: string): number {
@@ -537,7 +1178,7 @@ export function findQuestionEchoIntroEnd(text: string, promptText?: string): num
 
   const leadingWs = text.match(/^\s*/)?.[0].length ?? 0;
   const candidateStarts = [leadingWs];
-  const greetingMatch = text.slice(leadingWs).match(INTRO_GREETING_PREFIX);
+  const greetingMatch = text.slice(leadingWs, leadingWs + 80).match(INTRO_GREETING_PREFIX);
   if (greetingMatch?.[0]) {
     candidateStarts.push(leadingWs + greetingMatch[0].length);
   }
@@ -551,7 +1192,7 @@ export function findQuestionEchoIntroEnd(text: string, promptText?: string): num
     if (!clause || clause.length > 200) continue;
     if (DIRECT_RECOMMENDATION_PREFIX.test(clause)) return 0;
 
-    const nextRest = text.slice(scanned.afterDelimiter);
+    const nextRest = text.slice(scanned.afterDelimiter, scanned.afterDelimiter + 300);
     const nextSentence = nextRest.split(/[。！？.!?\r\n]/u, 1)[0]?.trim() ?? '';
     const isCommaDelimiter = scanned.delimiter === '，' || scanned.delimiter === ',';
 
@@ -582,6 +1223,65 @@ export function findQuestionEchoIntroEnd(text: string, promptText?: string): num
       ) {
         return scanned.afterDelimiter;
       }
+    }
+  }
+
+  // Fallback: unframed CN/EN multi-option list lead-in before an ordered/heading/bullet recommendation block.
+  const listStartOffset = findPrimaryPreListOffset(text);
+  if (listStartOffset > 0 && listStartOffset <= 360) {
+    const preList = text.slice(0, listStartOffset).trim().slice(0, 360);
+    if (!preList) return 0;
+
+    const preListNoGreeting = preList.replace(INTRO_GREETING_PREFIX, '').trim();
+    const preListWithoutColon = preListNoGreeting.replace(/[：:]\s*$/, '').trim();
+    const finalClauseParts = preListWithoutColon
+      .split(/[，,。！？.!?;；]/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const finalClause = finalClauseParts[finalClauseParts.length - 1] ?? preListWithoutColon;
+    const finalClauseIsMultiOption =
+      MULTI_OPTION_LIST_LEAD_IN.test(finalClause) || COMPETITOR_LIST_LEAD_IN.test(finalClause);
+
+    // If the clause immediately introducing the list describes attributes/pros of the subject
+    // itself (e.g. "其主要特点如下：" or "Its main pros are:"), never suppress the intro as an echo
+    // even if an earlier descriptive clause contained "热门产品" or "best options".
+    if (
+      !finalClauseIsMultiOption &&
+      (ATTRIBUTE_ONLY_LEAD_IN_ANYWHERE.test(finalClause) ||
+        (finalClauseParts.length >= 2 && ANAPHORIC_BRAND_CONTINUATION.test(finalClause)))
+    ) {
+      return 0;
+    }
+
+    const isMultiOptionLeadIn =
+      MULTI_OPTION_LIST_LEAD_IN.test(preList) || COMPETITOR_LIST_LEAD_IN.test(preList);
+
+    if (DIRECT_RECOMMENDATION_PREFIX.test(preListNoGreeting) && !isMultiOptionLeadIn) {
+      return 0;
+    }
+    if (ATTRIBUTE_ONLY_LEAD_IN_ANYWHERE.test(preList) && !isMultiOptionLeadIn) {
+      return 0;
+    }
+
+    const firstClause = scanOpeningClauseEnd(preList, 0);
+    if (firstClause && !isMultiOptionLeadIn) {
+      const followUp = preList.slice(firstClause.afterDelimiter).trim();
+      if (ANAPHORIC_BRAND_CONTINUATION.test(followUp)) {
+        return 0;
+      }
+    }
+
+    if (isMultiOptionLeadIn) {
+      return listStartOffset;
+    }
+
+    const endsWithColon = /[：:]$/.test(preList);
+    if (
+      endsWithColon &&
+      (sharesPromptEcho(preListNoGreeting, promptText) ||
+        UNFRAMED_QUESTION_ECHO.test(preListNoGreeting))
+    ) {
+      return listStartOffset;
     }
   }
 
@@ -701,37 +1401,211 @@ function splitSentenceSpans(text: string): Array<{ start: number; end: number; t
   return spans;
 }
 
+export type StructuredSubjectMatch = {
+  subjectKey: string;
+  structuredRank: number | null;
+  matchedItemOffset: number | null;
+  matchedItemPassage: string | null;
+};
+
+function subjectMatchesText(text: string, patterns: readonly RegExp[]): boolean {
+  if (!text) return false;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * 在有序列表 / Markdown 标题 / 项目符号推荐清单中解析各追踪对象的结构化顺位。
+ * 优先按条目头部（headerText）匹配，避免第 #1 条正文中顺带提及我方品牌时抢占顺位。
+ */
+export function resolveStructuredSubjectRanks(
+  text: string,
+  subjects: ReadonlyArray<{ key: string; subject: TrackedSubject }>,
+  options?: SubjectMentionOptions,
+): Map<string, StructuredSubjectMatch> {
+  const result = new Map<string, StructuredSubjectMatch>();
+  if (typeof text !== 'string' || !text.trim() || subjects.length === 0) return result;
+
+  const introEnd =
+    options?.excludeQuestionEchoIntro === false
+      ? 0
+      : findQuestionEchoIntroEnd(text, options?.promptText);
+  const allItems = extractStructuredRecommendationItems(text).filter(
+    (item) => item.startOffset >= introEnd,
+  );
+  if (allItems.length === 0) return result;
+
+  const blocks = new Map<number, StructuredListItem[]>();
+  for (const item of allItems) {
+    const list = blocks.get(item.blockId);
+    if (list) list.push(item);
+    else blocks.set(item.blockId, [item]);
+  }
+
+  const compiledSubjects = subjects.map(({ key, subject }) => ({
+    key,
+    patterns: collectSubjectTerms(subject).map((term) => wholeWordPattern(term)),
+  }));
+
+  const kindPriority: Record<StructuredListItemKind, number> = {
+    ordered: 3,
+    heading: 2,
+    bullet: 1,
+  };
+
+  let bestScore: {
+    headerMatches: number;
+    totalMatches: number;
+    kindWeight: number;
+    startOffset: number;
+    matches: Map<string, StructuredSubjectMatch>;
+  } | null = null;
+
+  for (const blockItems of blocks.values()) {
+    const first = blockItems[0];
+    if (!first) continue;
+    const isCandidate =
+      blockItems.length >= 2 ||
+      (first.kind === 'ordered' && first.explicitRank !== null && first.explicitRank >= 1);
+    if (!isCandidate) continue;
+
+    const blockMatches = new Map<string, StructuredSubjectMatch>();
+    let headerMatches = 0;
+
+    // Pass 1: headerText match (highest precision, immune to item #1 body cross-references)
+    for (const subj of compiledSubjects) {
+      for (const item of blockItems) {
+        if (subjectMatchesText(item.headerText, subj.patterns)) {
+          headerMatches += 1;
+          blockMatches.set(subj.key, {
+            subjectKey: subj.key,
+            structuredRank: Math.max(1, item.explicitRank ?? item.ordinal),
+            matchedItemOffset: item.startOffset,
+            matchedItemPassage: item.bodyText.replace(/\s+/g, ' ').trim().slice(0, 240) || null,
+          });
+          break;
+        }
+      }
+    }
+
+    // Pass 2: bodyText fallback for subjects not matched in any item header
+    for (const subj of compiledSubjects) {
+      if (blockMatches.has(subj.key)) continue;
+      for (const item of blockItems) {
+        if (subjectMatchesText(item.bodyText, subj.patterns)) {
+          blockMatches.set(subj.key, {
+            subjectKey: subj.key,
+            structuredRank: Math.max(1, item.explicitRank ?? item.ordinal),
+            matchedItemOffset: item.startOffset,
+            matchedItemPassage: item.bodyText.replace(/\s+/g, ' ').trim().slice(0, 240) || null,
+          });
+          break;
+        }
+      }
+    }
+
+    if (blockMatches.size === 0) continue;
+
+    const candidate = {
+      headerMatches,
+      totalMatches: blockMatches.size,
+      kindWeight: kindPriority[first.kind],
+      startOffset: first.startOffset,
+      matches: blockMatches,
+    };
+
+    if (
+      !bestScore ||
+      candidate.headerMatches > bestScore.headerMatches ||
+      (candidate.headerMatches === bestScore.headerMatches &&
+        candidate.totalMatches > bestScore.totalMatches) ||
+      (candidate.headerMatches === bestScore.headerMatches &&
+        candidate.totalMatches === bestScore.totalMatches &&
+        candidate.kindWeight > bestScore.kindWeight) ||
+      (candidate.headerMatches === bestScore.headerMatches &&
+        candidate.totalMatches === bestScore.totalMatches &&
+        candidate.kindWeight === bestScore.kindWeight &&
+        candidate.startOffset < bestScore.startOffset)
+    ) {
+      bestScore = candidate;
+    }
+  }
+
+  return bestScore ? bestScore.matches : result;
+}
+
 export type RankedSubjectInput = {
   name: string;
   mentioned: boolean;
   firstMention: number | null;
+  structuredRank?: number | null;
 };
 
 export type RankedSubjectResult<T extends RankedSubjectInput = RankedSubjectInput> = T & {
   position: number | null;
 };
 
+function isValidStructuredRank(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1;
+}
+
 /**
- * 按首次提及偏移量（或引用链接兜底顺序）对所有命中的追踪对象赋予 1-based 推荐顺位（1, 2, 3...）。
+ * 优先按有序列表/标题的结构化顺位（structuredRank），否则按首次提及偏移量赋予 1-based 推荐顺位（1, 2, 3...）。
  * 未命中的对象顺位固定为 null，返回数组保持输入顺序。
  */
 export function rankTrackedSubjects<T extends RankedSubjectInput>(
   subjects: readonly T[],
 ): Array<RankedSubjectResult<T>> {
-  const mentionedIndices = subjects
+  const mentioned = subjects
     .map((subject, idx) => ({ subject, idx }))
-    .filter((entry) => entry.subject.mentioned)
-    .sort((left, right) => {
+    .filter((entry) => entry.subject.mentioned);
+
+  const hasAnyStructuredRank = mentioned.some((entry) =>
+    isValidStructuredRank(entry.subject.structuredRank),
+  );
+
+  const positionByIndex = new Map<number, number>();
+
+  if (!hasAnyStructuredRank) {
+    mentioned.sort((left, right) => {
       const leftOffset = left.subject.firstMention ?? Number.MAX_SAFE_INTEGER;
       const rightOffset = right.subject.firstMention ?? Number.MAX_SAFE_INTEGER;
       if (leftOffset !== rightOffset) return leftOffset - rightOffset;
       return left.idx - right.idx;
     });
 
-  const positionByIndex = new Map<number, number>();
-  mentionedIndices.forEach((entry, rankIdx) => {
-    positionByIndex.set(entry.idx, rankIdx + 1);
-  });
+    mentioned.forEach((entry, rankIdx) => {
+      positionByIndex.set(entry.idx, rankIdx + 1);
+    });
+  } else {
+    mentioned.sort((left, right) => {
+      const leftHas = isValidStructuredRank(left.subject.structuredRank);
+      const rightHas = isValidStructuredRank(right.subject.structuredRank);
+      if (leftHas !== rightHas) return leftHas ? -1 : 1;
+      if (leftHas && rightHas) {
+        const lRank = Math.floor(left.subject.structuredRank as number);
+        const rRank = Math.floor(right.subject.structuredRank as number);
+        if (lRank !== rRank) return lRank - rRank;
+      }
+      const leftOffset = left.subject.firstMention ?? Number.MAX_SAFE_INTEGER;
+      const rightOffset = right.subject.firstMention ?? Number.MAX_SAFE_INTEGER;
+      if (leftOffset !== rightOffset) return leftOffset - rightOffset;
+      return left.idx - right.idx;
+    });
+
+    let lastPos = 0;
+    for (const entry of mentioned) {
+      const rank = entry.subject.structuredRank;
+      const pos = isValidStructuredRank(rank)
+        ? Math.max(Math.floor(rank), lastPos + 1)
+        : lastPos + 1;
+      positionByIndex.set(entry.idx, pos);
+      lastPos = pos;
+    }
+  }
 
   return subjects.map((subject, idx) => ({
     ...subject,
@@ -869,35 +1743,47 @@ export function computeSentimentSummary(
   };
 }
 
+const FANOUT_SPLIT_RE = /[;；\r\n]+/;
+const FANOUT_CONTROL_RE = /[\u0000-\u001f\u007f]/g;
+const FANOUT_WHITESPACE_RE = /\s+/g;
+// Anchored at ^ with bounded quantifiers, disjoint from decimal/negative prefixes like "2.5G", "14.5W", "-10℃":
+const FANOUT_LEADING_MARKER_RE =
+  /^(?:[-*·–—]{1,3}(?:\s+|$)|[•▪▸●○◆◇➤►]{1,3}\s*|\d{1,2}[.)](?:\s+|$)|\d{1,2}[、）]\s*|[(（\[]\d{1,2}[)）\]]\s*|[一二三四五六七八九十]{1,2}[、.．]\s*)/u;
+const FANOUT_HAS_ALNUM_RE = /[\p{L}\p{N}]/u;
+
 /**
- * 清洗 Query Fan-Out 搜索拆解词：按分号/换行拆行、压缩空白、剥离行首项目符号或序号、过滤空串及与原问题（不区分大小写）相同的词，保序去重。
+ * 清洗 Query Fan-Out 搜索拆解词：按分号/换行拆行、压缩空白、剥离行首项目符号或序号、过滤纯标点/空串及与原问题（不区分大小写）相同的词，保序去重。
  */
-export function normalizeFanOutQueries(queries: readonly string[], promptText: string): string[] {
-  const normalizedPrompt = promptText
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+export function normalizeFanOutQueries(queries: readonly string[], promptText = ''): string[] {
+  const normalizedPrompt =
+    typeof promptText === 'string'
+      ? promptText
+          .replace(FANOUT_CONTROL_RE, ' ')
+          .replace(FANOUT_WHITESPACE_RE, ' ')
+          .trim()
+          .toLowerCase()
+      : '';
 
   const seen = new Set<string>();
   const cleaned: string[] = [];
 
   for (const raw of queries) {
     if (typeof raw !== 'string') continue;
-    const segments = raw.split(/[;；\r\n]+/);
+    // Split on \r\n BEFORE stripping control characters (\u0000-\u001f includes \r and \n).
+    const segments = raw.split(FANOUT_SPLIT_RE);
     for (const seg of segments) {
-      const collapsed = seg
-        .replace(/[\u0000-\u001f\u007f]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^(?:(?:[-*·–—]+|\d{1,2}[.)])\s+|(?:[•▪▸]+|\d{1,2}[、）])\s*)/, '')
-        .trim();
-      if (!collapsed) continue;
-      const key = collapsed.toLowerCase();
-      if (key === normalizedPrompt) continue;
+      let token = seg.replace(FANOUT_CONTROL_RE, ' ').replace(FANOUT_WHITESPACE_RE, ' ').trim();
+      for (let pass = 0; pass < 2 && token.length > 0; pass += 1) {
+        const stripped = token.replace(FANOUT_LEADING_MARKER_RE, '').trim();
+        if (stripped === token) break;
+        token = stripped;
+      }
+      if (!token || !FANOUT_HAS_ALNUM_RE.test(token)) continue;
+      const key = token.toLowerCase();
+      if (normalizedPrompt && key === normalizedPrompt) continue;
       if (seen.has(key)) continue;
       seen.add(key);
-      cleaned.push(collapsed);
+      cleaned.push(token);
     }
   }
 
@@ -1159,7 +2045,9 @@ function extractPromptTopicTokens(
   promptText: string,
   context: TopicRelevanceContext = {},
 ): string[] {
-  let cleaned = promptText;
+  // Strip generic bracketed uppercase metadata/tag prefixes (e.g. [TAG_NAME], [V2-TEST])
+  // so operational/tracking tags do not act as required answer topic keywords.
+  let cleaned = stripBracketedMetadataTags(promptText);
   const excludeTerms = [
     context.brandName ?? '',
     ...(context.brandAliases ?? []),
@@ -1461,25 +2349,42 @@ export function recomputeRunMetrics(
     } else if (typeof obs.brandMentioned === 'boolean') {
       brandMentioned = obs.brandMentioned;
     } else {
+      const brandSubject: TrackedSubject = {
+        name: profile.brandName,
+        aliases: profile.brandAliases ?? [],
+        domains: ownedDomains,
+      };
       const brandOffsets = findSubjectMentionOffsets(
         obs.answerText ?? '',
-        {
-          name: profile.brandName,
-          aliases: profile.brandAliases ?? [],
-          domains: ownedDomains,
-        },
+        brandSubject,
         citedUrls,
         mentionOptions,
       );
       brandMentioned = brandOffsets.length > 0;
       if (brandMentioned && brandPosition === null) {
+        const structuredRanks = resolveStructuredSubjectRanks(
+          obs.answerText ?? '',
+          [
+            { key: 'brand', subject: brandSubject },
+            ...competitors.map((comp, idx) => ({
+              key: `comp:${idx}`,
+              subject: {
+                name: comp.name,
+                aliases: comp.aliases ?? [],
+                domains: comp.domains ?? [],
+              },
+            })),
+          ],
+          mentionOptions,
+        );
         const ranked = rankTrackedSubjects([
           {
             name: profile.brandName,
             mentioned: true,
             firstMention: brandOffsets[0] ?? null,
+            structuredRank: structuredRanks.get('brand')?.structuredRank ?? null,
           },
-          ...competitors.map((comp) => {
+          ...competitors.map((comp, idx) => {
             const compOffsets = findSubjectMentionOffsets(
               obs.answerText ?? '',
               {
@@ -1494,6 +2399,7 @@ export function recomputeRunMetrics(
               name: comp.name,
               mentioned: compOffsets.length > 0,
               firstMention: compOffsets[0] ?? null,
+              structuredRank: structuredRanks.get(`comp:${idx}`)?.structuredRank ?? null,
             };
           }),
         ]);
@@ -2173,29 +3079,54 @@ export const visibilityRunCreateSchema = z
 
 export type VisibilityRunCreateInput = z.input<typeof visibilityRunCreateSchema>;
 
-export const visibilityRunV2CreateSchema = z.object({
-  market: z.enum(GEO_MARKETS),
-  name: z
-    .string()
-    .trim()
-    .min(1, '任务名称不能为空')
-    .max(VISIBILITY_RUN_NAME_MAX, `任务名称不超过 ${VISIBILITY_RUN_NAME_MAX} 字`)
-    .optional(),
-  engines: z
-    .array(z.enum(VISIBILITY_ENGINE_KEYS))
-    .min(1, '请至少选择一个 AI 引擎')
-    .max(VISIBILITY_ENGINE_KEYS.length)
-    .transform((items) => [...new Set(items)]),
-  prompts: z
-    .array(z.string().trim().min(2, '监测问题至少 2 个字').max(300, '监测问题最多 300 字'))
-    .min(1, '请至少填写一条监测问题')
-    .max(100, '单次最多输入 100 个监测问题')
-    .transform((items) => dedupeTrimmedStrings(items)),
-  triggerType: z.enum(VISIBILITY_TRIGGER_TYPES).default('MANUAL'),
-  retestArticleId: optionalVisibilityIdSchema,
-});
+const optionalGeoMarketSchema = z
+  .string()
+  .trim()
+  .optional()
+  .transform((val) => (val && val.length > 0 ? val.toUpperCase() : undefined))
+  .refine(
+    (val): val is GeoMarket | undefined =>
+      val === undefined || (GEO_MARKETS as readonly string[]).includes(val),
+    '目标市场参数仅支持 CN 或 GLOBAL',
+  );
+
+export const visibilityRunV2CreateSchema = z
+  .object({
+    market: z.enum(GEO_MARKETS).optional(),
+    name: z
+      .string()
+      .trim()
+      .min(1, '任务名称不能为空')
+      .max(VISIBILITY_RUN_NAME_MAX, `任务名称不超过 ${VISIBILITY_RUN_NAME_MAX} 字`)
+      .optional(),
+    engines: z
+      .array(z.enum(VISIBILITY_ENGINE_KEYS))
+      .min(1, '请至少选择一个 AI 引擎')
+      .max(VISIBILITY_ENGINE_KEYS.length)
+      .transform((items) => [...new Set(items)]),
+    prompts: z
+      .array(z.string().trim().min(2, '监测问题至少 2 个字').max(300, '监测问题最多 300 字'))
+      .min(1, '请至少填写一条监测问题')
+      .max(100, '单次最多输入 100 个监测问题')
+      .transform((items) => dedupeTrimmedStrings(items)),
+    triggerType: z.enum(VISIBILITY_TRIGGER_TYPES).default('MANUAL'),
+    retestArticleId: optionalVisibilityIdSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (!data.market) return;
+    const disallowed = findDisallowedMarketEngines(data.engines, data.market);
+    if (disallowed.length > 0) {
+      const labels = disallowed.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key).join('、');
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['engines'],
+        message: `所选 AI 引擎不属于当前市场（${data.market}）：${labels}`,
+      });
+    }
+  });
 
 export type VisibilityRunV2CreateInput = z.input<typeof visibilityRunV2CreateSchema>;
+export type ParsedVisibilityRunV2CreateInput = z.output<typeof visibilityRunV2CreateSchema>;
 
 export const visibilityRunBulkDeleteSchema = z.object({
   ids: z
@@ -2257,6 +3188,7 @@ export type VisibilityRunRecord = {
   keywordMain: string | null;
   name: string;
   engines: VisibilityEngineKey[];
+  prompts?: string[];
   questionIds: string[];
   triggerType?: VisibilityTriggerType;
   retestArticleId?: string | null;
@@ -2392,6 +3324,16 @@ export type VisibilityBrandShareOfVoiceGroup = {
   shareOfVoice: ShareOfVoiceSummary;
 };
 
+export type VisibilityRankedCitationUrlItem = {
+  url: string;
+  domain: string;
+  title: string | null;
+  sourceKind: CitationSourceKind;
+  citationCount: number;
+  questionCount: number;
+  engines: VisibilityEngineKey[];
+};
+
 export type VisibilityOverviewResponse = {
   profileId: string | null;
   brandId?: string | null;
@@ -2401,6 +3343,11 @@ export type VisibilityOverviewResponse = {
   trend: VisibilityTrendPoint[];
   byEngine?: VisibilityEngineBreakdownItem[];
   brandGroups?: VisibilityBrandShareOfVoiceGroup[];
+  sourceBreakdown?: VisibilityCitationSourceBreakdown;
+  topCitations?: VisibilityCitationSummaryItem[];
+  topUrls?: VisibilityRankedCitationUrlItem[];
+  fanOutQueries?: VisibilityFanOutItem[];
+  gaps?: VisibilityOpportunityGapItem[];
 };
 
 export const visibilityCitationQuerySchema = z.object({
@@ -2569,17 +3516,211 @@ export type VisibilityEngineAvailabilityItem = {
   key: VisibilityEngineKey;
   label: string;
   domestic: boolean;
+  market?: GeoMarket;
   available: boolean;
   status: VisibilityEngineHealthStatus;
+  defaultChecked?: boolean;
+  unavailableReason?: string | null;
 };
 
 export type VisibilityEngineAvailabilityResponse = {
   collector: VisibilityCollectorKind;
+  market?: GeoMarket;
   checkedAt: string | null;
   refreshIntervalMs: number;
   engines: VisibilityEngineAvailabilityItem[];
 };
 
 export function formatVisibilityEngineDisplayLabel(label: string, available: boolean): string {
-  return available ? label : `${label}（未上线）`;
+  return available ? label : `${label}（暂未上线）`;
+}
+
+export const visibilityV2EnginesQuerySchema = z.object({
+  market: optionalGeoMarketSchema,
+});
+export type VisibilityV2EnginesQuery = z.output<typeof visibilityV2EnginesQuerySchema>;
+
+export const visibilityV2OverviewQuerySchema = z.object({
+  market: optionalGeoMarketSchema,
+  engine: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined))
+    .refine((val) => val === undefined || isVisibilityEngine(val), 'AI 引擎参数不合法'),
+  days: z.coerce.number().int().min(1).max(365).default(14),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
+});
+
+export type VisibilityV2OverviewQuery = {
+  market?: GeoMarket;
+  engine?: VisibilityEngineKey;
+  days: number;
+  from?: string;
+  to?: string;
+};
+
+export function parseVisibilityV2OverviewQuery(
+  raw: Record<string, unknown>,
+): VisibilityV2OverviewQuery {
+  const parsed = visibilityV2OverviewQuerySchema.safeParse(raw);
+  if (!parsed.success) {
+    return { days: 14 };
+  }
+  return {
+    ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    engine: parsed.data.engine as VisibilityEngineKey | undefined,
+    days: parsed.data.days,
+    ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
+    ...(parsed.data.to !== undefined ? { to: parsed.data.to } : {}),
+  };
+}
+
+export const visibilityV2RunListQuerySchema = z.object({
+  market: optionalGeoMarketSchema,
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .default(25)
+    .transform((val): CrudPageSize =>
+      (CRUD_PAGE_SIZES as readonly number[]).includes(val) ? (val as CrudPageSize) : 25,
+    ),
+  status: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined))
+    .refine(
+      (val): val is TaskStatusName | undefined =>
+        val === undefined || (TASK_STATUSES as readonly string[]).includes(val),
+      '任务状态参数不合法',
+    ),
+  keyword: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val.slice(0, 100) : undefined)),
+});
+
+export type VisibilityV2RunListQuery = {
+  market?: GeoMarket;
+  page: number;
+  pageSize: CrudPageSize;
+  status?: TaskStatusName;
+  keyword?: string;
+};
+
+export function parseVisibilityV2RunListQuery(
+  raw: Record<string, unknown>,
+): VisibilityV2RunListQuery {
+  const parsed = visibilityV2RunListQuerySchema.safeParse(raw);
+  if (!parsed.success) {
+    return { page: 1, pageSize: 25 };
+  }
+  return {
+    ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+    ...(parsed.data.keyword !== undefined ? { keyword: parsed.data.keyword } : {}),
+  };
+}
+
+export const visibilityV2CitationQuerySchema = z.object({
+  market: optionalGeoMarketSchema,
+  engine: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined))
+    .refine((val) => val === undefined || isVisibilityEngine(val), 'AI 引擎参数不合法'),
+  sourceKind: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined))
+    .refine((val) => val === undefined || isCitationSourceKind(val), '来源分类参数不合法'),
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  pageSize: z.coerce
+    .number()
+    .int()
+    .default(25)
+    .transform((val): CrudPageSize =>
+      (CRUD_PAGE_SIZES as readonly number[]).includes(val) ? (val as CrudPageSize) : 25,
+    ),
+});
+
+export type VisibilityV2CitationQuery = {
+  market?: GeoMarket;
+  engine?: VisibilityEngineKey;
+  sourceKind?: CitationSourceKind;
+  days: number;
+  from?: string;
+  to?: string;
+  page: number;
+  pageSize: CrudPageSize;
+};
+
+export function parseVisibilityV2CitationQuery(
+  raw: Record<string, unknown>,
+): VisibilityV2CitationQuery {
+  const parsed = visibilityV2CitationQuerySchema.safeParse(raw);
+  if (!parsed.success) {
+    return { days: 30, page: 1, pageSize: 25 };
+  }
+  return {
+    ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    engine: parsed.data.engine as VisibilityEngineKey | undefined,
+    sourceKind: parsed.data.sourceKind as CitationSourceKind | undefined,
+    days: parsed.data.days,
+    ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
+    ...(parsed.data.to !== undefined ? { to: parsed.data.to } : {}),
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+  };
+}
+
+export const visibilityV2OpportunitiesQuerySchema = z.object({
+  market: optionalGeoMarketSchema,
+  engine: z
+    .string()
+    .trim()
+    .optional()
+    .transform((val) => (val && val.length > 0 ? val : undefined))
+    .refine((val) => val === undefined || isVisibilityEngine(val), 'AI 引擎参数不合法'),
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  from: isoDateString.optional(),
+  to: isoDateString.optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export type VisibilityV2OpportunitiesQuery = {
+  market?: GeoMarket;
+  engine?: VisibilityEngineKey;
+  days: number;
+  from?: string;
+  to?: string;
+  limit: number;
+};
+
+export function parseVisibilityV2OpportunitiesQuery(
+  raw: Record<string, unknown>,
+): VisibilityV2OpportunitiesQuery {
+  const parsed = visibilityV2OpportunitiesQuerySchema.safeParse(raw);
+  if (!parsed.success) {
+    return { days: 30, limit: 50 };
+  }
+  return {
+    ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    engine: parsed.data.engine as VisibilityEngineKey | undefined,
+    days: parsed.data.days,
+    ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
+    ...(parsed.data.to !== undefined ? { to: parsed.data.to } : {}),
+    limit: parsed.data.limit,
+  };
 }

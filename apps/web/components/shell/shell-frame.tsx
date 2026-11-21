@@ -5,15 +5,17 @@ import {
   SITE_NAME,
   normalizeBrandDomain,
   type BrandCompetitor,
+  type BrandFactsResponse,
   type BrandRecord,
   type CreateBrandInput,
+  type ExtractBrandFactsResponse,
   type GeoMarket,
+  type UpsertBrandFactsInput,
   type UpsertBrandMarketInput,
 } from '@geomix/shared';
 import {
   Alert,
   Button,
-  Checkbox,
   Divider,
   Form,
   Input,
@@ -28,7 +30,9 @@ import Link from 'next/link';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
+import type { ExtractBrandFactsRequest } from '../../lib/brands';
 import { HOME_ROUTE, matchRoute } from '../../lib/routes';
+import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { BrandMark, SideMenu } from './side-menu';
 
@@ -37,14 +41,6 @@ const CommandPalette = dynamic(() => import('./command-palette').then((m) => m.C
 
 const { Header, Sider, Content } = Layout;
 const MOBILE_BREAKPOINT = 768;
-
-type CreateBrandFormValues = {
-  name: string;
-  category: string;
-  markets: GeoMarket[];
-  ownedDomainsText?: string;
-  competitorsText?: string;
-};
 
 type EnableMarketFormValues = {
   localBrandName: string;
@@ -107,6 +103,12 @@ export type ShellFrameProps = {
   onSelectBrand: (brandId: string) => void;
   onSelectMarket: (market: GeoMarket) => void;
   onCreateBrand: (input: CreateBrandInput) => Promise<BrandRecord>;
+  onExtractBrandFacts?: (
+    brandId: string,
+    input: ExtractBrandFactsRequest,
+  ) => Promise<ExtractBrandFactsResponse>;
+  onSaveBrandFacts?: (brandId: string, input: UpsertBrandFactsInput) => Promise<BrandFactsResponse>;
+  onBrandFactsSaved?: (brandId: string, signedAt: string | null) => void;
   onEnableMarket: (
     brandId: string,
     market: GeoMarket,
@@ -144,6 +146,9 @@ export function ShellFrame({
   onSelectBrand,
   onSelectMarket,
   onCreateBrand,
+  onExtractBrandFacts,
+  onSaveBrandFacts,
+  onBrandFactsSaved,
   onEnableMarket,
   onToggleMenu,
   onLogout,
@@ -156,8 +161,6 @@ export function ShellFrame({
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
   const [internalEnableMarket, setInternalEnableMarket] = useState<GeoMarket | null>(null);
-  const [createSubmitting, setCreateSubmitting] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
   const [enableSubmitting, setEnableSubmitting] = useState(false);
   const [enableError, setEnableError] = useState<string | null>(null);
   const [isWindows, setIsWindows] = useState(false);
@@ -165,7 +168,6 @@ export function ShellFrame({
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [createForm] = Form.useForm<CreateBrandFormValues>();
   const [enableForm] = Form.useForm<EnableMarketFormValues>();
 
   const isCreateOpen = createBrandModalOpen ?? internalCreateOpen;
@@ -173,7 +175,6 @@ export function ShellFrame({
     enableMarketModalTarget !== undefined ? enableMarketModalTarget : internalEnableMarket;
 
   const openCreateModal = () => {
-    setCreateError(null);
     if (onOpenCreateBrandModal) {
       onOpenCreateBrandModal();
     } else {
@@ -182,8 +183,6 @@ export function ShellFrame({
   };
 
   const closeCreateModal = () => {
-    if (createSubmitting) return;
-    setCreateError(null);
     if (onCloseCreateBrandModal) {
       onCloseCreateBrandModal();
     } else {
@@ -264,17 +263,6 @@ export function ShellFrame({
     activeBrand && !hasBothMarkets ? (hasCN ? 'GLOBAL' : 'CN') : null;
 
   useEffect(() => {
-    if (!isCreateOpen) return;
-    createForm.setFieldsValue({
-      name: '',
-      category: '',
-      markets: ['CN'],
-      ownedDomainsText: '',
-      competitorsText: '',
-    });
-  }, [createForm, isCreateOpen]);
-
-  useEffect(() => {
     if (!enableTarget || !activeBrand) return;
     enableForm.setFieldsValue({
       localBrandName: activeBrand.name,
@@ -304,31 +292,6 @@ export function ShellFrame({
       setMobileMenuOpen(false);
     }
     onNavigate(href);
-  };
-
-  const handleCreateSubmit = async (values: CreateBrandFormValues) => {
-    setCreateSubmitting(true);
-    setCreateError(null);
-    try {
-      const payload: CreateBrandInput = {
-        name: values.name.trim(),
-        category: values.category.trim(),
-        markets: values.markets,
-        ownedDomains: parseDomainLines(values.ownedDomainsText),
-        competitors: parseCompetitorLines(values.competitorsText),
-      };
-      const created = await onCreateBrand(payload);
-      feedback.notifySuccess(`已创建品牌「${created.name}」`);
-      if (onCloseCreateBrandModal) {
-        onCloseCreateBrandModal();
-      } else {
-        setInternalCreateOpen(false);
-      }
-    } catch (reason: unknown) {
-      setCreateError(reason instanceof Error && reason.message ? reason.message : '创建品牌失败');
-    } finally {
-      setCreateSubmitting(false);
-    }
   };
 
   const handleEnableSubmit = async (values: EnableMarketFormValues) => {
@@ -623,78 +586,15 @@ export function ShellFrame({
         </Content>
       </Layout>
 
-      <Modal
+      <BrandQuickCreateModal
         open={isCreateOpen}
-        title="60 秒创建品牌"
-        onCancel={closeCreateModal}
-        keyboard
-        maskClosable
-        destroyOnHidden
-        okText="创建并进入工作区"
-        cancelText="取消"
-        confirmLoading={createSubmitting}
-        onOk={() => createForm.submit()}
-      >
-        <Form<CreateBrandFormValues>
-          form={createForm}
-          layout="vertical"
-          initialValues={{ markets: ['CN'] }}
-          onFinish={(values) => void handleCreateSubmit(values)}
-        >
-          <Form.Item
-            label="品牌名称"
-            name="name"
-            rules={[
-              { required: true, whitespace: true, message: '请填写品牌名称' },
-              { max: 80, message: '品牌名称不超过 80 字' },
-            ]}
-          >
-            <Input aria-label="品牌名称" placeholder="例如：绿联、智造激光" />
-          </Form.Item>
-          <Form.Item
-            label="所属品类"
-            name="category"
-            rules={[
-              { required: true, whitespace: true, message: '请填写所属品类' },
-              { max: 60, message: '所属品类不超过 60 字' },
-            ]}
-          >
-            <Input aria-label="所属品类" placeholder="例如：家用 NAS、工业激光设备" />
-          </Form.Item>
-          <Form.Item
-            label="目标市场"
-            name="markets"
-            rules={[
-              {
-                validator: (_, value: GeoMarket[] | undefined) =>
-                  Array.isArray(value) && value.length > 0
-                    ? Promise.resolve()
-                    : Promise.reject(new Error('请至少选择一个目标市场')),
-              },
-            ]}
-          >
-            <Checkbox.Group
-              options={[
-                { label: '🇨🇳 国内市场 (CN · zh-CN)', value: 'CN' },
-                { label: '🌐 海外市场 (GLOBAL · en-US)', value: 'GLOBAL' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="官网域名（选填）" name="ownedDomainsText">
-            <Input aria-label="官网域名" placeholder="例如：example.com（多个域名可用逗号分隔）" />
-          </Form.Item>
-          <Form.Item label="主要竞品（选填）" name="competitorsText">
-            <Input.TextArea
-              aria-label="主要竞品"
-              rows={3}
-              placeholder="每行一个竞品，格式：竞品名, 竞品域名（域名选填）"
-            />
-          </Form.Item>
-          {createError ? (
-            <Alert type="error" showIcon message={createError} style={{ marginBottom: 8 }} />
-          ) : null}
-        </Form>
-      </Modal>
+        readOnly={account.tenant.readOnly}
+        onClose={closeCreateModal}
+        onCreateBrand={onCreateBrand}
+        onExtractFacts={onExtractBrandFacts}
+        onSaveFacts={onSaveBrandFacts}
+        onBrandFactsSaved={onBrandFactsSaved}
+      />
 
       <Modal
         open={enableTarget !== null}

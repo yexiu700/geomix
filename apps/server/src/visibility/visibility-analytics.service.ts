@@ -2,29 +2,30 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   API_ERROR,
   AUTH_ERROR,
+  VISIBILITY_ENGINE_LABELS,
   classifyCitationSource,
   computeVisibilityPct,
-  isCitationSourceKind,
+  isEngineAllowedForMarket,
   isVisibilityEngine,
+  normalizeFanOutQueries,
   normalizeVisibilityDomain,
   type CitationSourceKind,
-  type ImportQuestionsInput,
-  type ImportQuestionsResult,
+  type GeoMarket,
+  type ProfileForMetrics,
   type VisibilityCitationListResponse,
-  type VisibilityCitationQuery,
   type VisibilityCitationSourceBreakdown,
   type VisibilityCitationSummaryItem,
   type VisibilityEngineKey,
   type VisibilityFanOutItem,
-  type VisibilityOpportunitiesQuery,
   type VisibilityOpportunitiesResponse,
   type VisibilityOpportunityGapItem,
-  type VisibilityOverviewQuery,
   type VisibilityOverviewResponse,
+  type VisibilityV2CitationQuery,
+  type VisibilityV2OpportunitiesQuery,
+  type VisibilityV2OverviewQuery,
 } from '@geomix/shared';
-import { QuotaService } from '../billing/quota.service';
+import { BrandsService } from '../brands/brands.service';
 import { ApiError } from '../common/api-error';
-import { ComplianceService } from '../infra/compliance';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
 import {
@@ -38,10 +39,11 @@ import {
   computeOverviewMetricsAndGroups,
   higherPrioritySourceKind,
   isEffectiveBrandMention,
+  parseProfileCompetitors,
   parseStoredCompetitorHits,
   shanghaiWindowFromQuery,
+  type OverviewProfileContext,
 } from './visibility.mapper';
-import { VisibilityProfileService } from './visibility-profile.service';
 
 function requireTenant(): string {
   const tenantId = currentTenantId();
@@ -55,15 +57,53 @@ function normalizePromptKey(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+function assertMarketEngine(engine: VisibilityEngineKey | undefined, market: GeoMarket): void {
+  if (!engine) return;
+  if (!isEngineAllowedForMarket(engine, market)) {
+    const label = VISIBILITY_ENGINE_LABELS[engine] ?? engine;
+    throw new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      `AI 引擎「${label}」不属于当前市场（${market}）`,
+    );
+  }
+}
+
+function buildSingleMarketOverviewContext(market: {
+  id: string;
+  localBrandName: string;
+  aliases: string[];
+  ownedDomains: string[];
+  competitors: unknown;
+}): OverviewProfileContext {
+  const competitors = parseProfileCompetitors(market.competitors);
+  const profileForMetrics: ProfileForMetrics = {
+    brandName: market.localBrandName,
+    brandAliases: market.aliases,
+    ownedDomains: market.ownedDomains,
+    competitors,
+  };
+  return {
+    resolvedProfileId: market.id,
+    profilesById: new Map([[market.id, profileForMetrics]]),
+    brandEntries: [
+      {
+        brandName: market.localBrandName,
+        profileIds: [market.id],
+        profileForMetrics,
+      },
+    ],
+    fallbackProfileForMetrics: profileForMetrics,
+  };
+}
+
 @Injectable()
 export class VisibilityAnalyticsService {
   private readonly config: VisibilityConfig;
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(QuotaService) private readonly _quota: QuotaService,
-    @Inject(ComplianceService) private readonly _compliance: ComplianceService,
-    @Inject(VisibilityProfileService) private readonly profileService: VisibilityProfileService,
+    @Inject(BrandsService) private readonly brands: BrandsService,
     @Optional() @Inject(VISIBILITY_CONFIG) config?: VisibilityConfig,
   ) {
     this.config = config ?? readVisibilityConfig(process.env);
@@ -75,25 +115,28 @@ export class VisibilityAnalyticsService {
     }
   }
 
-  async overview(query: VisibilityOverviewQuery): Promise<VisibilityOverviewResponse> {
+  async overview(
+    brandId: string,
+    query: VisibilityV2OverviewQuery,
+  ): Promise<VisibilityOverviewResponse> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
+    requireTenant();
 
-    const overviewCtx = await this.profileService.loadOverviewProfileContexts(
-      tenantId,
-      query.profileId,
-    );
+    const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
+    assertMarketEngine(query.engine, market.market);
+
+    const overviewCtx = buildSingleMarketOverviewContext(market);
     const window = shanghaiWindowFromQuery({
       days: query.days,
       from: query.from,
       to: query.to,
     });
 
-    const observations = await this.prisma.base.visibilityObservation.findMany({
+    const observations = await this.prisma.scoped.visibilityObservation.findMany({
       where: {
-        tenantId,
+        brandId: brand.id,
+        brandMarketId: market.id,
         status: 'SUCCESS',
-        ...(query.profileId ? { brandMarketId: query.profileId } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -113,8 +156,10 @@ export class VisibilityAnalyticsService {
     const byEngine = buildEngineBreakdown(observations, overviewCtx);
 
     return {
-      profileId: overviewCtx.resolvedProfileId,
-      brandMarketId: overviewCtx.resolvedProfileId,
+      profileId: market.id,
+      brandId: brand.id,
+      brandMarketId: market.id,
+      market: market.market,
       metrics,
       trend,
       byEngine,
@@ -122,18 +167,19 @@ export class VisibilityAnalyticsService {
     };
   }
 
-  async listCitations(query: VisibilityCitationQuery): Promise<VisibilityCitationListResponse> {
+  async listCitations(
+    brandId: string,
+    query: VisibilityV2CitationQuery,
+  ): Promise<VisibilityCitationListResponse> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
+    requireTenant();
 
-    const { profileForMetrics } = await this.profileService.resolveProfileContext(
-      tenantId,
-      query.profileId,
-    );
-    const ownedDomains = profileForMetrics.ownedDomains ?? [];
-    const competitorDomains = (profileForMetrics.competitors ?? []).flatMap(
-      (comp) => comp.domains ?? [],
-    );
+    const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
+    assertMarketEngine(query.engine, market.market);
+
+    const competitors = parseProfileCompetitors(market.competitors);
+    const ownedDomains = market.ownedDomains ?? [];
+    const competitorDomains = competitors.flatMap((comp) => comp.domains ?? []);
 
     const window = shanghaiWindowFromQuery({
       days: query.days,
@@ -141,13 +187,12 @@ export class VisibilityAnalyticsService {
       to: query.to,
     });
 
-    const rows = await this.prisma.base.visibilityCitation.findMany({
+    const rows = await this.prisma.scoped.visibilityCitation.findMany({
       where: {
-        tenantId,
         observation: {
-          tenantId,
+          brandId: brand.id,
+          brandMarketId: market.id,
           status: 'SUCCESS',
-          ...(query.profileId ? { brandMarketId: query.profileId } : {}),
           ...(query.engine ? { engine: query.engine } : {}),
           OR: [
             { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -190,9 +235,11 @@ export class VisibilityAnalyticsService {
       const domain = normalizeVisibilityDomain(row.domain || row.url);
       if (!domain) continue;
 
-      const resolvedKind: CitationSourceKind = isCitationSourceKind(row.sourceKind)
-        ? row.sourceKind
-        : classifyCitationSource(row.url || domain, { ownedDomains, competitorDomains });
+      // Always reclassify dynamically against live BrandMarket owned/competitor domains (T3-21).
+      const resolvedKind: CitationSourceKind = classifyCitationSource(row.url || domain, {
+        ownedDomains,
+        competitorDomains,
+      });
 
       sourceBreakdown[resolvedKind] += 1;
 
@@ -267,32 +314,35 @@ export class VisibilityAnalyticsService {
     };
   }
 
-  async citations(query: VisibilityCitationQuery): Promise<VisibilityCitationListResponse> {
-    return this.listCitations(query);
+  async citations(
+    brandId: string,
+    query: VisibilityV2CitationQuery,
+  ): Promise<VisibilityCitationListResponse> {
+    return this.listCitations(brandId, query);
   }
 
   async opportunities(
-    query: VisibilityOpportunitiesQuery,
+    brandId: string,
+    query: VisibilityV2OpportunitiesQuery,
   ): Promise<VisibilityOpportunitiesResponse> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
+    requireTenant();
 
-    const overviewCtx = await this.profileService.loadOverviewProfileContexts(
-      tenantId,
-      query.profileId,
-    );
+    const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
+    assertMarketEngine(query.engine, market.market);
 
+    const overviewCtx = buildSingleMarketOverviewContext(market);
     const window = shanghaiWindowFromQuery({
       days: query.days,
       from: query.from,
       to: query.to,
     });
 
-    const observations = await this.prisma.base.visibilityObservation.findMany({
+    const observations = await this.prisma.scoped.visibilityObservation.findMany({
       where: {
-        tenantId,
+        brandId: brand.id,
+        brandMarketId: market.id,
         status: 'SUCCESS',
-        ...(query.profileId ? { brandMarketId: query.profileId } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -378,10 +428,9 @@ export class VisibilityAnalyticsService {
         }
       }
 
-      for (const rawQuery of obs.fanOutQueries ?? []) {
-        if (typeof rawQuery !== 'string') continue;
-        const cleanedQuery = rawQuery.replace(/\s+/g, ' ').trim();
-        if (!cleanedQuery) continue;
+      // Always normalize & deduplicate fanOutQueries on read (F10 Fix 1).
+      const normalizedQueries = normalizeFanOutQueries(obs.fanOutQueries ?? [], obs.promptText);
+      for (const cleanedQuery of normalizedQueries) {
         const qKey = cleanedQuery.toLowerCase();
 
         let bucket = fanOutMap.get(qKey);
@@ -445,14 +494,5 @@ export class VisibilityAnalyticsService {
       .slice(0, query.limit);
 
     return { gaps, fanOutQueries };
-  }
-
-  async importOpportunityQuestions(
-    _input: ImportQuestionsInput,
-    _userId: string,
-  ): Promise<ImportQuestionsResult> {
-    this.assertFeatureEnabled();
-    requireTenant();
-    throw new ApiError(410, API_ERROR.BAD_REQUEST, '旧版问题库已下线，请直接使用 GEO 写作意见卡');
   }
 }

@@ -13,6 +13,12 @@ const systemChromium =
   explicitChromium ||
   (!process.env.CI && existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
 
+const visibilityCollector = process.env.VISIBILITY_COLLECTOR || 'fake';
+const defaultVisibilityDisabledEngines =
+  visibilityCollector.trim().toLowerCase() === 'fake'
+    ? 'yuanbao,tongyi,wenxin,nami,kimi,zhipu'
+    : undefined;
+
 const sharedEnv: Record<string, string> = {
   ...(process.env as Record<string, string>),
   API_PORT: process.env.API_PORT || '3001',
@@ -28,7 +34,12 @@ const sharedEnv: Record<string, string> = {
   LLM_PROVIDERS: process.env.LLM_PROVIDERS || '{}',
   EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'fake',
   IMAGE_PROVIDER: process.env.IMAGE_PROVIDER || 'fake',
-  VISIBILITY_COLLECTOR: process.env.VISIBILITY_COLLECTOR || 'fake',
+  VISIBILITY_COLLECTOR: visibilityCollector,
+  ...(process.env.VISIBILITY_DISABLED_ENGINES !== undefined
+    ? { VISIBILITY_DISABLED_ENGINES: process.env.VISIBILITY_DISABLED_ENGINES }
+    : defaultVisibilityDisabledEngines !== undefined
+      ? { VISIBILITY_DISABLED_ENGINES: defaultVisibilityDisabledEngines }
+      : {}),
   STORAGE_DRIVER: process.env.STORAGE_DRIVER || 'memory',
   SEARCH_PROVIDER: process.env.SEARCH_PROVIDER || 'link_list',
   FEATURE_AI_IMAGE: process.env.FEATURE_AI_IMAGE || 'true',

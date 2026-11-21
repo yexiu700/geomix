@@ -238,4 +238,62 @@ describe('VisibilityEngineHealthService', () => {
     );
     expect(await svc.getUnavailableEngines(['yuanbao'])).toEqual(['yuanbao']);
   });
+
+  it('filters availability strictly by market (CN=8 canonical tongyi, GLOBAL=5) with defaultChecked and 暂未上线 reason', async () => {
+    const svc = VisibilityEngineHealthService.fromEnv({
+      VISIBILITY_COLLECTOR: 'fake',
+      VISIBILITY_DISABLED_ENGINES: 'yuanbao,kimi,claude',
+    });
+
+    const cn = await svc.getAvailability('CN');
+    expect(cn.market).toBe('CN');
+    expect(cn.engines).toHaveLength(8);
+    expect(cn.engines.map((e) => e.key)).toEqual([
+      'deepseek',
+      'doubao',
+      'yuanbao',
+      'tongyi',
+      'wenxin',
+      'nami',
+      'kimi',
+      'zhipu',
+    ]);
+    expect(cn.engines.every((e) => e.domestic && e.market === 'CN')).toBe(true);
+    expect(cn.engines.find((e) => e.key === 'deepseek')).toMatchObject({
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    });
+    expect(cn.engines.find((e) => e.key === 'yuanbao')).toMatchObject({
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    });
+
+    const global = await svc.getAvailability('GLOBAL');
+    expect(global.market).toBe('GLOBAL');
+    expect(global.engines).toHaveLength(5);
+    expect(global.engines.map((e) => e.key)).toEqual([
+      'chatgpt',
+      'perplexity',
+      'claude',
+      'gemini',
+      'google_aio',
+    ]);
+    expect(global.engines.every((e) => !e.domestic && e.market === 'GLOBAL')).toBe(true);
+    expect(global.engines.find((e) => e.key === 'claude')).toMatchObject({
+      available: false,
+      status: 'offline',
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    });
+    expect(global.engines.find((e) => e.key === 'chatgpt')).toMatchObject({
+      available: true,
+      status: 'online',
+      defaultChecked: true,
+      unavailableReason: null,
+    });
+  });
 });

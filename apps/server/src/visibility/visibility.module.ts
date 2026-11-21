@@ -1,6 +1,7 @@
 import { Inject, Logger, Module, type OnModuleInit } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
+import { BrandsModule } from '../brands/brands.module';
 import { AdaptersModule } from '../infra/adapters.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import {
@@ -13,13 +14,12 @@ import { VisibilityCollectorService } from './visibility-collector.service';
 import { VisibilityController } from './visibility.controller';
 import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityJudgeService } from './visibility-judge.service';
-import { VisibilityProfileService } from './visibility-profile.service';
 import { VISIBILITY_RUN_HANDLER, VisibilityRunRunner } from './visibility-run.runner';
 import { VisibilityRunLifecycleService } from './visibility-run-lifecycle.service';
 import { VisibilityService } from './visibility.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, BillingModule, AdaptersModule],
+  imports: [PrismaModule, AuthModule, BillingModule, AdaptersModule, BrandsModule],
   controllers: [VisibilityController],
   providers: [
     {
@@ -29,7 +29,6 @@ import { VisibilityService } from './visibility.service';
     VisibilityCollectorService,
     VisibilityEngineHealthService,
     VisibilityJudgeService,
-    VisibilityProfileService,
     VisibilityRunLifecycleService,
     VisibilityAnalyticsService,
     VisibilityService,

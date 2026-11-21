@@ -6,27 +6,34 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
-  FAKE_MARK,
   PRICING_DEFAULTS,
   QUOTA_DEFAULTS,
   parseEnv,
   type VisibilityCitationListResponse,
+  type VisibilityEngineAvailabilityResponse,
   type VisibilityOpportunitiesResponse,
   type VisibilityOverviewResponse,
-  type VisibilityProfileListResponse,
-  type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
+  type VisibilityRunListResponse,
 } from '@geomix/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { passwordFingerprint } from '../auth/auth.service';
 import { signToken } from '../auth/token';
 import { BillingService } from '../billing/billing.service';
 import { createApiApp } from '../common/create-api-app';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { hasLiveActiveWork } from '../queue/active-work';
 import { QueueProducer } from '../queue/queue.producer';
+import { currentTenantId } from '../tenant/tenant-context';
 import { VisibilityCollectorService } from './visibility-collector.service';
-import { VisibilityRunRunner, type VisibilityCheckJobData } from './visibility-run.runner';
+import { VisibilityEngineHealthService } from './visibility-engine-health.service';
+import {
+  VisibilityRunRunner,
+  type OnVisibilityRunCompleteHook,
+  type VisibilityCheckJobData,
+  type VisibilityRunCompleteEvent,
+} from './visibility-run.runner';
 
 type Envelope<T = unknown> = { code: number; msg: string; data: T };
 
@@ -274,6 +281,59 @@ class InMemoryVisibilityStore {
     );
   }
 
+  seedBrand(input: {
+    tenantId: string;
+    name: string;
+    category?: string;
+    markets: Array<{
+      market: 'CN' | 'GLOBAL';
+      locale?: string;
+      region?: string;
+      localBrandName?: string;
+      aliases?: string[];
+      ownedDomains?: string[];
+      competitors?: Array<{ name: string; aliases?: string[]; domains?: string[] }>;
+      seedPrompts?: string[];
+    }>;
+  }): { brand: BrandRec; markets: BrandMarketRec[] } {
+    const now = new Date();
+    const brandId = this.nextId('brand');
+    const brand: BrandRec = {
+      id: brandId,
+      tenantId: input.tenantId,
+      name: input.name,
+      category: input.category ?? '硬件',
+      truthAgreementSignedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.brands.set(brandId, brand);
+    const createdMarkets: BrandMarketRec[] = input.markets.map((m) => {
+      const bm: BrandMarketRec = {
+        id: this.nextId('bm'),
+        tenantId: input.tenantId,
+        brandId,
+        market: m.market,
+        locale: m.locale ?? (m.market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
+        region: m.region ?? (m.market === 'GLOBAL' ? 'US' : 'CN'),
+        localBrandName: m.localBrandName ?? input.name,
+        aliases: m.aliases ?? [],
+        ownedDomains: m.ownedDomains ?? [],
+        competitors: (m.competitors ?? []).map((c) => ({
+          name: c.name,
+          aliases: c.aliases ?? [],
+          domains: c.domains ?? [],
+        })),
+        seedPrompts: m.seedPrompts ?? [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.brandMarkets.set(bm.id, bm);
+      return bm;
+    });
+    return { brand, markets: createdMarkets };
+  }
+
   private uniqueError(): Error & { code: string } {
     const err = new Error('Unique constraint failed') as Error & { code: string };
     err.code = 'P2002';
@@ -299,6 +359,7 @@ class InMemoryVisibilityStore {
     if (typeof where.id === 'string' && obs.id !== where.id) return false;
     if (typeof where.tenantId === 'string' && obs.tenantId !== where.tenantId) return false;
     if (typeof where.runId === 'string' && obs.runId !== where.runId) return false;
+    if (typeof where.brandId === 'string' && obs.brandId !== where.brandId) return false;
     if (typeof where.brandMarketId === 'string' && obs.brandMarketId !== where.brandMarketId) {
       return false;
     }
@@ -352,6 +413,7 @@ class InMemoryVisibilityStore {
       if (inIds && !inIds.includes(run.id)) return false;
     }
     if (typeof where.tenantId === 'string' && run.tenantId !== where.tenantId) return false;
+    if (typeof where.brandId === 'string' && run.brandId !== where.brandId) return false;
     if (typeof where.brandMarketId === 'string' && run.brandMarketId !== where.brandMarketId) {
       return false;
     }
@@ -684,13 +746,19 @@ class InMemoryVisibilityStore {
           where,
         }: {
           where: { id?: string; tenantId?: string; name?: string };
-        }) =>
-          [...this.brands.values()].find(
+        }) => {
+          const found = [...this.brands.values()].find(
             (b) =>
               (!where.id || b.id === where.id) &&
               (!where.tenantId || b.tenantId === where.tenantId) &&
               (!where.name || b.name === where.name),
-          ) ?? null,
+          );
+          if (!found) return null;
+          const markets = [...this.brandMarkets.values()]
+            .filter((m) => m.brandId === found.id)
+            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+          return { ...found, markets };
+        },
         create: async ({
           data,
         }: {
@@ -1077,6 +1145,51 @@ class InMemoryVisibilityStore {
     };
     return client;
   }
+
+  createScopedClient() {
+    type Delegate = Record<string, (args?: Record<string, unknown>) => unknown>;
+    const base = this.createClient() as Record<string, unknown>;
+    const withTenant = (where?: Record<string, unknown>) => {
+      const tid = currentTenantId();
+      if (!tid || tid === 'system') return where ?? {};
+      return { ...(where ?? {}), tenantId: tid };
+    };
+    const wrapDelegate = (name: string, methods: readonly string[]): Delegate => {
+      const raw = base[name] as Delegate;
+      const wrapped: Delegate = { ...raw };
+      for (const method of methods) {
+        const fn = raw[method];
+        if (typeof fn === 'function') {
+          wrapped[method] = (args?: Record<string, unknown>) =>
+            fn({
+              ...(args ?? {}),
+              where: withTenant(args?.where as Record<string, unknown> | undefined),
+            });
+        }
+      }
+      return wrapped;
+    };
+    return {
+      ...base,
+      brand: wrapDelegate('brand', ['count', 'findFirst']),
+      brandMarket: wrapDelegate('brandMarket', ['findFirst', 'findMany']),
+      pointReservation: wrapDelegate('pointReservation', ['findFirst', 'findMany']),
+      visibilityRun: wrapDelegate('visibilityRun', [
+        'count',
+        'findFirst',
+        'findMany',
+        'updateMany',
+        'deleteMany',
+      ]),
+      visibilityObservation: wrapDelegate('visibilityObservation', [
+        'count',
+        'findFirst',
+        'findMany',
+        'updateMany',
+      ]),
+      visibilityCitation: wrapDelegate('visibilityCitation', ['findMany']),
+    };
+  }
 }
 
 async function httpJson<T = unknown>(
@@ -1097,13 +1210,14 @@ async function httpJson<T = unknown>(
   return { status: response.status, ...payload };
 }
 
-describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarket (offline)', () => {
+describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 precision & completion hooks (offline)', () => {
   let app: INestApplication;
   let base = '';
   let store: InMemoryVisibilityStore;
   let runner: VisibilityRunRunner;
   let billing: BillingService;
   let collector: VisibilityCollectorService;
+  let engineHealth: VisibilityEngineHealthService;
   const enqueuedJobs: VisibilityCheckJobData[] = [];
 
   let tokenStrictA = '';
@@ -1114,17 +1228,24 @@ describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarke
   const tenantB = 'ten_shadow_b';
   const tenantC = 'ten_expired_c';
 
+  let dualBrandAId = '';
+  let singleGlobalBrandAId = '';
+  let brandBId = '';
+  let brandCId = '';
+  let dualBrandAMarketCnId = '';
+
   beforeAll(async () => {
     store = new InMemoryVisibilityStore();
-    const fakeClient = store.createClient();
+    const fakeBaseClient = store.createClient();
+    const fakeScopedClient = store.createScopedClient();
 
     app = await createApiApp();
     const prismaSvc = app.get(PrismaService) as unknown as {
       base: unknown;
       scoped: unknown;
     };
-    prismaSvc.base = fakeClient;
-    prismaSvc.scoped = fakeClient;
+    prismaSvc.base = fakeBaseClient;
+    prismaSvc.scoped = fakeScopedClient;
 
     vi.spyOn(app.get(QueueProducer), 'enqueueVisibilityRun').mockImplementation(
       async (job: VisibilityCheckJobData) => {
@@ -1140,6 +1261,7 @@ describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarke
     runner = app.get(VisibilityRunRunner);
     billing = app.get(BillingService);
     collector = app.get(VisibilityCollectorService);
+    engineHealth = app.get(VisibilityEngineHealthService);
 
     tokenStrictA = store.seedTenant({
       tenantId: tenantA,
@@ -1163,6 +1285,84 @@ describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarke
       billingMode: 'SHADOW',
       expiresAt: new Date(Date.now() - 24 * 3600 * 1000),
     });
+
+    const dualA = store.seedBrand({
+      tenantId: tenantA,
+      name: '极光NAS',
+      category: '家用NAS',
+      markets: [
+        {
+          market: 'CN',
+          locale: 'zh-CN',
+          region: 'CN',
+          localBrandName: '极光NAS',
+          aliases: ['JiguangNAS'],
+          ownedDomains: ['jiguangnas.cn'],
+          competitors: [
+            { name: '群晖', aliases: ['Synology'], domains: ['synology.com'] },
+            { name: '极空间', aliases: ['ZSpace'], domains: ['zspace.cn'] },
+          ],
+          seedPrompts: ['家用静音四盘位NAS推荐'],
+        },
+        {
+          market: 'GLOBAL',
+          locale: 'en-US',
+          region: 'US',
+          localBrandName: 'AuroraNAS',
+          aliases: ['Aurora NAS'],
+          ownedDomains: ['auroranas.com'],
+          competitors: [
+            { name: 'Synology', domains: ['synology.com'] },
+            { name: 'QNAP', domains: ['qnap.com'] },
+          ],
+          seedPrompts: ['Best quiet 4-bay NAS for home office'],
+        },
+      ],
+    });
+    dualBrandAId = dualA.brand.id;
+    dualBrandAMarketCnId = dualA.markets[0]!.id;
+
+    const singleGlobalA = store.seedBrand({
+      tenantId: tenantA,
+      name: 'SoloGlobal',
+      category: 'SaaS',
+      markets: [
+        {
+          market: 'GLOBAL',
+          localBrandName: 'SoloGlobal',
+          ownedDomains: ['sologlobal.io'],
+          competitors: [{ name: 'RivalGlobal', domains: ['rivalglobal.io'] }],
+        },
+      ],
+    });
+    singleGlobalBrandAId = singleGlobalA.brand.id;
+
+    const brandB = store.seedBrand({
+      tenantId: tenantB,
+      name: '云图智创',
+      markets: [
+        {
+          market: 'CN',
+          localBrandName: '云图智创',
+          ownedDomains: ['yuntuzhichuang.cn'],
+          competitors: [{ name: '云析智联', domains: ['yunxizhilian.example.com'] }],
+        },
+      ],
+    });
+    brandBId = brandB.brand.id;
+
+    const brandC = store.seedBrand({
+      tenantId: tenantC,
+      name: '到期品牌',
+      markets: [
+        {
+          market: 'CN',
+          localBrandName: '到期品牌',
+          ownedDomains: ['expiredbrand.cn'],
+        },
+      ],
+    });
+    brandCId = brandC.brand.id;
   });
 
   afterAll(async () => {
@@ -1170,188 +1370,498 @@ describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarke
     vi.restoreAllMocks();
   });
 
-  it('supports profile CRUD backed by Brand + BrandMarket with domain normalization and duplicate checks', async () => {
-    const initialList = await httpJson<VisibilityProfileListResponse>(
+  it('removes legacy /api/v1/visibility/* routes (404) and enforces v2 market-scoped engine lists & brand resolution', async () => {
+    for (const legacyPath of [
+      '/api/v1/visibility/overview',
+      '/api/v1/visibility/profiles',
+      '/api/v1/visibility/runs',
+    ]) {
+      const res = await fetch(`${base}${legacyPath}`, {
+        headers: { authorization: `Bearer ${tokenStrictA}` },
+      });
+      expect(res.status).toBe(404);
+    }
+
+    // CN = 8 engines (canonical tongyi), GLOBAL = 5 engines
+    const cnEngines = await httpJson<VisibilityEngineAvailabilityResponse>(
       base,
       'GET',
-      '/api/v1/visibility/profiles',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market=CN`,
       { token: tokenStrictA },
     );
-    expect(initialList.status).toBe(200);
-    expect(initialList.data.items).toHaveLength(0);
+    expect(cnEngines.status).toBe(200);
+    expect(cnEngines.data.market).toBe('CN');
+    expect(cnEngines.data.engines).toHaveLength(8);
+    expect(cnEngines.data.engines.map((e) => e.key)).toContain('tongyi');
+    expect(cnEngines.data.engines.map((e) => e.key)).not.toContain('chatgpt');
 
-    const created = await httpJson<VisibilityProfileRecord>(
+    const globalEngines = await httpJson<VisibilityEngineAvailabilityResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market=GLOBAL`,
+      { token: tokenStrictA },
+    );
+    expect(globalEngines.status).toBe(200);
+    expect(globalEngines.data.market).toBe('GLOBAL');
+    expect(globalEngines.data.engines).toHaveLength(5);
+    expect(globalEngines.data.engines.map((e) => e.key)).toEqual([
+      'chatgpt',
+      'perplexity',
+      'claude',
+      'gemini',
+      'google_aio',
+    ]);
+
+    // Dual-market brand omitting ?market -> 400
+    const ambiguous = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines`,
+      { token: tokenStrictA },
+    );
+    expect(ambiguous.status).toBe(400);
+
+    // Single-market brand omitting ?market -> 200 (auto-resolves GLOBAL)
+    const autoSingle = await httpJson<VisibilityEngineAvailabilityResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${singleGlobalBrandAId}/visibility/engines`,
+      { token: tokenStrictA },
+    );
+    expect(autoSingle.status).toBe(200);
+    expect(autoSingle.data.market).toBe('GLOBAL');
+    expect(autoSingle.data.engines).toHaveLength(5);
+
+    // Unopened market -> 404; foreign brand -> 404; invalid market -> 400
+    const unopened = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${singleGlobalBrandAId}/visibility/engines?market=CN`,
+      { token: tokenStrictA },
+    );
+    expect(unopened.status).toBe(404);
+
+    const foreign = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${brandBId}/visibility/engines?market=CN`,
+      { token: tokenStrictA },
+    );
+    expect(foreign.status).toBe(404);
+
+    const invalidMarket = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market=JP`,
+      { token: tokenStrictA },
+    );
+    expect(invalidMarket.status).toBe(400);
+  });
+
+  it('validates CN/GLOBAL engine subsets, offline engines, idempotency, STRICT 402/40201 & 408 timeout atomic refund', async () => {
+    // Mismatched engine-market pairs -> 400
+    const badCnEngine = await httpJson(
       base,
       'POST',
-      '/api/v1/visibility/profiles',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
       {
         token: tokenStrictA,
-        body: {
-          name: '极光NAS监测',
-          brandName: '极光NAS',
-          brandAliases: ['AuroraNAS'],
-          ownedDomains: ['https://WWW.AuroraNas.cn/docs'],
-          competitors: [{ name: '群晖', aliases: ['Synology'], domains: ['https://synology.com'] }],
-        },
+        headers: { 'Idempotency-Key': 'vrun_bad_cn_eng_01' },
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['chatgpt'] },
+      },
+    );
+    expect(badCnEngine.status).toBe(400);
+
+    const badGlobalEngine = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_bad_gl_eng_01' },
+        body: { market: 'GLOBAL', prompts: ['Best home NAS'], engines: ['deepseek'] },
+      },
+    );
+    expect(badGlobalEngine.status).toBe(400);
+
+    // Nested Express qs query params must return 400 (never 500), while duplicate flat scalar params stay 200
+    const nestedObjEngines = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market[a]=CN`,
+      { token: tokenStrictA },
+    );
+    expect(nestedObjEngines.status).toBe(400);
+
+    const nestedArrEngines = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market[0][0]=CN`,
+      { token: tokenStrictA },
+    );
+    expect(nestedArrEngines.status).toBe(400);
+
+    const nestedRunQuery = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs?market[a]=CN`,
+      {
+        token: tokenStrictA,
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    expect(nestedRunQuery.status).toBe(400);
+
+    const dupFlatScalar = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/engines?market=CN&market=GLOBAL`,
+      { token: tokenStrictA },
+    );
+    expect(dupFlatScalar.status).toBe(200);
+
+    // Malformed / empty Idempotency-Key -> 400; empty prompts -> 400
+    const malformedIdem = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'bad key!!' },
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    expect(malformedIdem.status).toBe(400);
+
+    const emptyIdem = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': '' },
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    expect(emptyIdem.status).toBe(400);
+
+    // Omitted Idempotency-Key -> proceeds to ownership (404), billing (402), and run creation (200)
+    const omittedCrossTenant = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenShadowB,
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    expect(omittedCrossTenant.status).toBe(404);
+
+    const emptyPrompts = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_empty_prompts_01' },
+        body: { market: 'CN', prompts: [], engines: ['deepseek'] },
+      },
+    );
+    expect(emptyPrompts.status).toBe(400);
+
+    // Offline engine rejected with 400
+    const offlineSpy = vi
+      .spyOn(engineHealth, 'getUnavailableEngines')
+      .mockResolvedValueOnce(['yuanbao']);
+    const offlineRes = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_offline_eng_01' },
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek', 'yuanbao'] },
+      },
+    );
+    offlineSpy.mockRestore();
+    expect(offlineRes.status).toBe(400);
+    expect(offlineRes.msg).toContain('暂未上线');
+
+    // STRICT insufficient balance WITHOUT Idempotency-Key -> 402 / 40201 (tenantA starts with 100 pts; 60 * 2 = 120 pts)
+    const tooManyPrompts = Array.from(
+      { length: 60 },
+      (_, i) => `家用静音四盘位NAS推荐问题${i + 1}`,
+    );
+    const insufficient = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        body: { market: 'CN', prompts: tooManyPrompts, engines: ['deepseek'] },
+      },
+    );
+    expect(insufficient.status).toBe(402);
+    expect(insufficient.code).toBe(API_ERROR.INSUFFICIENT_POINTS);
+
+    // Create 2 prompts * 2 engines = 4 checks * 2 pts = 8 pts; simulate 408 timeout on 2nd check
+    let collectCalls = 0;
+    const origCollect = collector.collect.bind(collector);
+    const collectSpy = vi.spyOn(collector, 'collect').mockImplementation(async (input) => {
+      collectCalls += 1;
+      if (collectCalls === 2) {
+        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '远端采集服务超时', 'timeout');
+      }
+      return origCollect(input);
+    });
+
+    const createPayload = {
+      market: 'CN',
+      name: 'CN首轮监测',
+      prompts: ['[E2E_FANOUT_SEMI] 家用静音四盘位NAS推荐', '[E2E_COMP_DOMAIN] 家用NAS横评'],
+      engines: ['deepseek', 'doubao'],
+    };
+
+    const created = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_strict_partial_01' },
+        body: createPayload,
       },
     );
     expect(created.status).toBe(200);
-    expect(created.data.ownedDomains).toEqual(['auroranas.cn']);
-    expect(created.data.competitors[0]?.domains).toEqual(['synology.com']);
+    expect(created.data.totalChecks).toBe(4);
+    expect(created.data.unitPrice).toBe(2);
+    expect(created.data.frozenPoints).toBe(8);
+    expect(created.data.prompts).toHaveLength(2);
 
-    const dup = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
-      token: tokenStrictA,
-      body: { name: '极光NAS监测', brandName: '极光NAS' },
-    });
-    expect(dup.status).toBe(409);
-    expect(dup.code).toBe(BILLING_ERROR.CONFLICT);
-  });
-
-  it('reserves points, settles succeeded checks & releases failed checks -> PARTIAL with zero ledger drift', async () => {
-    const listRes = await httpJson<VisibilityProfileListResponse>(
-      base,
-      'GET',
-      '/api/v1/visibility/profiles',
-      { token: tokenStrictA },
-    );
-    const profileId = listRes.data.items[0]!.id;
-
-    let calls = 0;
-    const collectSpy = vi.spyOn(collector, 'collect').mockImplementation(async (input) => {
-      calls += 1;
-      if (calls === 2) {
-        throw new Error('upstream timeout');
-      }
-      return {
-        collectorKind: 'fake',
-        answerText: `针对${input.promptText}，极光NAS在静音和吞吐表现领先于群晖。`,
-        citations: [
-          {
-            url: 'https://docs.auroranas.cn/spec',
-            title: '官网参数',
-            snippet: '四盘位静音',
-            position: 1,
-          },
-          {
-            url: 'https://item.jd.com/1001.html',
-            title: '京东自营',
-            snippet: '电商评测',
-            position: 2,
-          },
-        ],
-        fanOutQueries: ['四盘位NAS静音对比; 极光NAS评测'],
-      };
-    });
-
-    const createRes = await httpJson<VisibilityRunDetailRecord>(
+    // Identical Idempotency-Key replay returns same run without double-charging
+    const replayed = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      '/api/v1/visibility/runs',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
       {
         token: tokenStrictA,
-        headers: { 'idempotency-key': 'vis-run-strict-0001' },
-        body: {
-          profileId,
-          engines: ['deepseek', 'doubao'],
-          customPrompts: ['家用四盘位NAS怎么选', 'NAS噪音实测对比'],
-        },
+        headers: { 'Idempotency-Key': 'vrun_strict_partial_01' },
+        body: createPayload,
       },
     );
-    expect(createRes.status).toBe(200);
-    expect(createRes.data.totalChecks).toBe(4);
-    expect(createRes.data.frozenPoints).toBe(8);
+    expect(replayed.status).toBe(200);
+    expect(replayed.data.id).toBe(created.data.id);
+    expect(store.wallets.get(tenantA)?.pointsReserved).toBe(8);
 
-    const runId = createRes.data.id;
-    await runner.process({ tenantId: tenantA, runId });
+    // Conflicting Idempotency-Key payload -> 409 / 40902
+    const conflict = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_strict_partial_01' },
+        body: { ...createPayload, engines: ['deepseek'] },
+      },
+    );
+    expect(conflict.status).toBe(409);
+    expect(conflict.code).toBe(BILLING_ERROR.CONFLICT);
+
+    // Register completion hooks: hook1 throws (isolated!), hook2 records event once-only
+    const hookEvents: VisibilityRunCompleteEvent[] = [];
+    const throwingHook: OnVisibilityRunCompleteHook = {
+      name: 'test-throwing-hook',
+      onVisibilityRunComplete() {
+        throw new Error('simulated hook crash');
+      },
+    };
+    const recordingHook: OnVisibilityRunCompleteHook = {
+      name: 'test-recording-hook',
+      onVisibilityRunComplete(evt) {
+        hookEvents.push(evt);
+      },
+    };
+    runner.registerCompleteHook(throwingHook);
+    runner.registerCompleteHook(recordingHook);
+
+    await runner.process({ tenantId: tenantA, runId: created.data.id });
+    // Calling runner.process again must NOT double-fire hooks
+    await runner.process({ tenantId: tenantA, runId: created.data.id });
     collectSpy.mockRestore();
 
-    const detail = await httpJson<VisibilityRunDetailRecord>(
+    expect(hookEvents).toHaveLength(1);
+    expect(hookEvents[0]).toEqual({
+      tenantId: tenantA,
+      brandId: dualBrandAId,
+      brandMarketId: dualBrandAMarketCnId,
+      runId: created.data.id,
+      triggerType: 'MANUAL',
+      retestArticleId: null,
+      status: 'PARTIAL',
+      successCount: 3,
+    });
+
+    const detailAfter = await httpJson<VisibilityRunDetailRecord>(
       base,
       'GET',
-      `/api/v1/visibility/runs/${runId}`,
+      `/api/v2/brands/${dualBrandAId}/visibility/runs/${created.data.id}`,
       { token: tokenStrictA },
     );
-    expect(detail.status).toBe(200);
-    expect(detail.data.status).toBe('PARTIAL');
-    expect(detail.data.doneCount).toBe(3);
-    expect(detail.data.failCount).toBe(1);
-    expect(detail.data.settledPoints).toBe(6);
-    expect(detail.data.releasedPoints).toBe(2);
+    expect(detailAfter.status).toBe(200);
+    expect(detailAfter.data.status).toBe('PARTIAL');
+    expect(detailAfter.data.doneCount).toBe(3);
+    expect(detailAfter.data.failCount).toBe(1);
+    expect(detailAfter.data.settledPoints).toBe(6);
+    expect(detailAfter.data.releasedPoints).toBe(2);
+    const walletA = await billing.wallet(tenantA);
+    expect(walletA.points).toBe(94);
+    expect(walletA.pointsReserved).toBe(0);
 
-    const wallet = await billing.wallet(tenantA);
-    expect(wallet.points).toBe(94);
-    expect(wallet.pointsReserved).toBe(0);
+    const prismaSvc = app.get(PrismaService);
+    expect(
+      await hasLiveActiveWork(
+        prismaSvc,
+        { tenantId: tenantA, refType: 'visibility_run', refId: created.data.id },
+        new Date(),
+        60_000,
+      ),
+    ).toBe(false);
 
-    const citations = await httpJson<VisibilityCitationListResponse>(
-      base,
-      'GET',
-      `/api/v1/visibility/citations?profileId=${profileId}&days=30`,
-      { token: tokenStrictA },
-    );
-    expect(citations.status).toBe(200);
-    expect(citations.data.sourceBreakdown?.OWNED).toBeGreaterThan(0);
-    expect(citations.data.sourceBreakdown?.ECOMMERCE).toBeGreaterThan(0);
-
+    // Verify F10 Fan-Out split + dedupe on GET /opportunities
     const opps = await httpJson<VisibilityOpportunitiesResponse>(
       base,
       'GET',
-      `/api/v1/visibility/opportunities?profileId=${profileId}&days=30`,
+      `/api/v2/brands/${dualBrandAId}/visibility/opportunities?market=CN`,
       { token: tokenStrictA },
     );
     expect(opps.status).toBe(200);
-    expect(opps.data.fanOutQueries.map((f) => f.query)).toContain('四盘位NAS静音对比');
-    expect(opps.data.fanOutQueries.map((f) => f.query)).toContain('极光NAS评测');
+    const fanOutLabels = opps.data.fanOutQueries.map((f) => f.query);
+    expect(fanOutLabels).toContain('安静NAS');
+    expect(fanOutLabels).toContain('家用NAS功耗');
+    expect(fanOutLabels).toContain('四盘位NAS');
+    expect(fanOutLabels.some((q) => q.includes(';') || q.includes('；'))).toBe(false);
+
+    // Verify T3-21 dynamic citation reclassification on BrandMarket competitor domain edit
+    const citesBefore = await httpJson<VisibilityCitationListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/citations?market=CN`,
+      { token: tokenStrictA },
+    );
+    expect(citesBefore.status).toBe(200);
+    const publicItemBefore = citesBefore.data.items.find((i) => i.domain === 'public.e2e.example');
+    expect(publicItemBefore?.sourceKind).toBe('OTHER');
+
+    // Add public.e2e.example as competitor domain on live BrandMarket
+    const cnMarketRow = store.brandMarkets.get(dualBrandAMarketCnId)!;
+    cnMarketRow.competitors = [
+      { name: '群晖', aliases: ['Synology'], domains: ['synology.com', 'public.e2e.example'] },
+      { name: '极空间', aliases: ['ZSpace'], domains: ['zspace.cn'] },
+    ];
+
+    const citesAfter = await httpJson<VisibilityCitationListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/citations?market=CN`,
+      { token: tokenStrictA },
+    );
+    expect(citesAfter.status).toBe(200);
+    const publicItemAfter = citesAfter.data.items.find((i) => i.domain === 'public.e2e.example');
+    expect(publicItemAfter?.sourceKind).toBe('COMPETITOR');
+
+    const runDetailReclassified = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs/${created.data.id}?market=CN`,
+      { token: tokenStrictA },
+    );
+    const allRunCites = runDetailReclassified.data.observations.flatMap((o) => o.citations);
+    expect(
+      allRunCites.some((c) => c.domain === 'public.e2e.example' && c.sourceKind === 'COMPETITOR'),
+    ).toBe(true);
+
+    // Dual-market strict isolation: CN run MUST NOT leak into GLOBAL overview/runs/citations
+    const globalOverview = await httpJson<VisibilityOverviewResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/overview?market=GLOBAL`,
+      { token: tokenStrictA },
+    );
+    expect(globalOverview.status).toBe(200);
+    expect(globalOverview.data.market).toBe('GLOBAL');
+    expect(globalOverview.data.metrics.completedChecks).toBe(0);
+
+    const globalRuns = await httpJson<VisibilityRunListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs?market=GLOBAL`,
+      { token: tokenStrictA },
+    );
+    expect(globalRuns.status).toBe(200);
+    expect(globalRuns.data.total).toBe(0);
   });
 
-  it('supports SHADOW mode, /me/rights model cards, pause/resume/cancel, cross-tenant 404, expired 40301, and off-topic downgrade', async () => {
-    const profRes = await httpJson<VisibilityProfileRecord>(
+  it('enforces expired-tenant read-only GET 200 vs write 403/40301, cross-tenant/brand 404, pause/resume/cancel/delete, and [E2E_NO_CITATIONS]', async () => {
+    // Expired tenant C: GET endpoints succeed (200), write endpoints fail with 403 / 40301
+    for (const readPath of [
+      `/api/v2/brands/${brandCId}/visibility/engines?market=CN`,
+      `/api/v2/brands/${brandCId}/visibility/overview?market=CN`,
+      `/api/v2/brands/${brandCId}/visibility/runs?market=CN`,
+      `/api/v2/brands/${brandCId}/visibility/citations?market=CN`,
+      `/api/v2/brands/${brandCId}/visibility/opportunities?market=CN`,
+    ]) {
+      const readRes = await httpJson(base, 'GET', readPath, { token: tokenExpiredC });
+      expect(readRes.status).toBe(200);
+    }
+
+    const expiredWrite = await httpJson(
       base,
       'POST',
-      '/api/v1/visibility/profiles',
+      `/api/v2/brands/${brandCId}/visibility/runs`,
       {
-        token: tokenShadowB,
-        body: {
-          name: '影子品牌档案',
-          brandName: '影子品牌',
-          ownedDomains: ['shadow-brand.cn'],
-        },
+        token: tokenExpiredC,
+        headers: { 'Idempotency-Key': 'vrun_expired_write_01' },
+        body: { market: 'CN', prompts: ['到期租户禁止写入'], engines: ['deepseek'] },
       },
     );
-    expect(profRes.status).toBe(200);
-    const profBId = profRes.data.id;
+    expect(expiredWrite.status).toBe(403);
+    expect(expiredWrite.code).toBe(API_ERROR.TENANT_EXPIRED);
 
-    // Expired tenant blocked on POST
-    const expRes = await httpJson(base, 'POST', '/api/v1/visibility/profiles', {
-      token: tokenExpiredC,
-      body: { name: '过期档案', brandName: '过期品牌' },
-    });
-    expect(expRes.status).toBe(403);
-    expect(expRes.code).toBe(API_ERROR.TENANT_EXPIRED);
-
-    // Create shadow run & test pause/resume/cancel
-    const runRes = await httpJson<VisibilityRunDetailRecord>(
+    // Shadow tenant B creates a run with [E2E_NO_CITATIONS], exercises pause/resume/cancel/delete
+    const shadowRun = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      '/api/v1/visibility/runs',
+      `/api/v2/brands/${brandBId}/visibility/runs`,
       {
         token: tokenShadowB,
-        headers: { 'idempotency-key': 'vis-run-shadow-0001' },
+        headers: { 'Idempotency-Key': 'vrun_shadow_lifecycle_01' },
         body: {
-          profileId: profBId,
+          market: 'CN',
+          prompts: ['[E2E_NO_CITATIONS] 企业知识库选型推荐'],
           engines: ['deepseek'],
-          customPrompts: ['影子品牌家用评测怎么样'],
         },
       },
     );
-    expect(runRes.status).toBe(200);
-    const runId = runRes.data.id;
+    expect(shadowRun.status).toBe(200);
+    const runId = shadowRun.data.id;
 
-    // Cross-tenant GET -> 404
-    const crossRes = await httpJson(base, 'GET', `/api/v1/visibility/runs/${runId}`, {
-      token: tokenStrictA,
-    });
-    expect(crossRes.status).toBe(404);
-    expect(crossRes.code).toBe(AUTH_ERROR.NOT_FOUND);
+    // Cross-tenant & cross-brand isolation -> 404
+    const crossTenant = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}`,
+      { token: tokenStrictA },
+    );
+    expect(crossTenant.status).toBe(404);
+    expect(crossTenant.code).toBe(AUTH_ERROR.NOT_FOUND);
+
+    const crossBrand = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${singleGlobalBrandAId}/visibility/runs/${runId}`,
+      { token: tokenStrictA },
+    );
+    expect(crossBrand.status).toBe(404);
 
     // Active work check sees QUEUED visibility_run as live
     const prismaSvc = app.get(PrismaService);
@@ -1364,55 +1874,105 @@ describe('visibility HTTP, billing settlement & analytics pipeline on BrandMarke
       ),
     ).toBe(true);
 
+    // Pause -> Active delete rejected (400) -> Resume -> Process -> Delete succeeds
     const paused = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      `/api/v1/visibility/runs/${runId}/pause`,
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}/pause`,
       { token: tokenShadowB },
     );
+    expect(paused.status).toBe(200);
     expect(paused.data.status).toBe('PAUSED');
+
+    const activeDelete = await httpJson(
+      base,
+      'DELETE',
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}`,
+      { token: tokenShadowB },
+    );
+    expect(activeDelete.status).toBe(400);
 
     const resumed = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      `/api/v1/visibility/runs/${runId}/resume`,
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}/resume`,
       { token: tokenShadowB },
     );
+    expect(resumed.status).toBe(200);
     expect(resumed.data.status).toBe('QUEUED');
 
-    // Run with off-topic FAKE answer to verify overview & detail downgrade
-    const spy = vi.spyOn(collector, 'collect').mockResolvedValue({
-      collectorKind: 'fake',
-      answerText: `${FAKE_MARK}影子品牌占位回答`,
-      citations: [],
-      fanOutQueries: [],
-    });
     await runner.process({ tenantId: tenantB, runId });
-    spy.mockRestore();
-
-    const walletB = await billing.wallet(tenantB);
-    expect(walletB.points).toBe(500);
-
-    const overview = await httpJson<VisibilityOverviewResponse>(
+    const doneShadow = await httpJson<VisibilityRunDetailRecord>(
       base,
       'GET',
-      `/api/v1/visibility/overview?profileId=${profBId}&days=7`,
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}`,
       { token: tokenShadowB },
     );
-    expect(overview.status).toBe(200);
-    expect(overview.data.metrics.completedChecks).toBe(1);
-    expect(overview.data.metrics.mentionedChecks).toBe(0);
+    expect(doneShadow.status).toBe(200);
+    expect(doneShadow.data.status).toBe('COMPLETED');
+    expect(doneShadow.data.observations[0]?.citations).toEqual([]);
 
-    // Legacy import-questions returns 410
-    const importRes = await httpJson(
+    const deleted = await httpJson<{ deleted: number }>(
+      base,
+      'DELETE',
+      `/api/v2/brands/${brandBId}/visibility/runs/${runId}`,
+      { token: tokenShadowB },
+    );
+    expect(deleted.status).toBe(200);
+    expect(deleted.data.deleted).toBe(1);
+
+    // Cancel path does NOT fire completion hook
+    const cancelHookEvents: VisibilityRunCompleteEvent[] = [];
+    runner.registerCompleteHook({
+      name: 'test-cancel-check',
+      onVisibilityRunComplete(evt) {
+        cancelHookEvents.push(evt);
+      },
+    });
+    const toCancel = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
-      '/api/v1/visibility/opportunities/import-questions',
+      `/api/v2/brands/${brandBId}/visibility/runs`,
       {
         token: tokenShadowB,
-        body: { keywordId: 'kw_legacy', titles: ['问题1'] },
+        headers: { 'Idempotency-Key': 'vrun_shadow_cancel_01' },
+        body: { market: 'CN', prompts: ['待取消任务'], engines: ['deepseek'] },
       },
     );
-    expect(importRes.status).toBe(410);
+    expect(toCancel.status).toBe(200);
+    const cancelled = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      `/api/v2/brands/${brandBId}/visibility/runs/${toCancel.data.id}/cancel`,
+      { token: tokenShadowB },
+    );
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.data.status).toBe('CANCELLED');
+    expect(cancelHookEvents).toHaveLength(0);
+
+    // Omitted Idempotency-Key succeeds with 200 and auto-generates a unique key per call
+    const autoIdem1 = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      `/api/v2/brands/${brandBId}/visibility/runs`,
+      {
+        token: tokenShadowB,
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    const autoIdem2 = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      `/api/v2/brands/${brandBId}/visibility/runs`,
+      {
+        token: tokenShadowB,
+        body: { market: 'CN', prompts: ['家用静音NAS推荐'], engines: ['deepseek'] },
+      },
+    );
+    expect(autoIdem1.status).toBe(200);
+    expect(autoIdem2.status).toBe(200);
+    expect(autoIdem1.data.id).not.toBe(autoIdem2.data.id);
+    await runner.process({ tenantId: tenantB, runId: autoIdem1.data.id });
+    await runner.process({ tenantId: tenantB, runId: autoIdem2.data.id });
   });
 });

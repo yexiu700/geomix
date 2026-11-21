@@ -24,7 +24,6 @@ import {
   parseStoredCompetitorHits,
   presentCitationRecord,
   presentObservationRecord,
-  presentProfile,
   presentRunRecord,
   shanghaiWindowFromQuery,
   type ObservationRowForMapper,
@@ -131,7 +130,7 @@ describe('visibility.mapper', () => {
       });
     });
 
-    it('parseProfileCompetitors safely handles malformed JSON and presentProfile maps runCount conditionally', () => {
+    it('parseProfileCompetitors safely handles malformed JSON and normalizes domains', () => {
       expect(parseProfileCompetitors(null)).toEqual([]);
       expect(parseProfileCompetitors(undefined)).toEqual([]);
       expect(parseProfileCompetitors('not-an-array')).toEqual([]);
@@ -154,35 +153,6 @@ describe('visibility.mapper', () => {
           domains: ['rivala.com'],
         },
       ]);
-
-      const now = new Date('2026-11-18T08:00:00.000Z');
-      const withoutRunCount = presentProfile({
-        id: 'prof_1',
-        name: '默认档案',
-        brandName: 'GeoMix',
-        brandAliases: ['GM'],
-        ownedDomains: ['geomix.cn'],
-        competitors: parsed,
-        createdAt: now,
-        updatedAt: now,
-      });
-      expect(withoutRunCount).not.toHaveProperty('runCount');
-      expect(withoutRunCount.createdAt).toBe('2026-11-18T08:00:00.000Z');
-
-      const withZeroRuns = presentProfile(
-        {
-          id: 'prof_1',
-          name: '默认档案',
-          brandName: 'GeoMix',
-          brandAliases: ['GM'],
-          ownedDomains: ['geomix.cn'],
-          competitors: parsed,
-          createdAt: now,
-          updatedAt: now,
-        },
-        0,
-      );
-      expect(withZeroRuns.runCount).toBe(0);
     });
   });
 
@@ -506,7 +476,7 @@ describe('visibility.mapper', () => {
   });
 
   describe('overview, SoV, source priority, engine breakdown, and daily trend math', () => {
-    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > SOCIAL > AUTHORITY > ECOMMERCE > OTHER', () => {
+    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > ECOMMERCE > SOCIAL > AUTHORITY > OTHER and presentObservationRecord normalizes fanOut + reclassifies citations', () => {
       expect(CITATION_SOURCE_KINDS).toEqual([
         'OWNED',
         'COMPETITOR',
@@ -519,7 +489,58 @@ describe('visibility.mapper', () => {
       expect(higherPrioritySourceKind('SOCIAL', 'AUTHORITY')).toBe('SOCIAL');
       expect(higherPrioritySourceKind('OTHER', 'OWNED')).toBe('OWNED');
       expect(higherPrioritySourceKind('COMPETITOR', 'SOCIAL')).toBe('COMPETITOR');
-      expect(higherPrioritySourceKind('ECOMMERCE', 'AUTHORITY')).toBe('AUTHORITY');
+      expect(higherPrioritySourceKind('ECOMMERCE', 'AUTHORITY')).toBe('ECOMMERCE');
+      expect(higherPrioritySourceKind('ECOMMERCE', 'SOCIAL')).toBe('ECOMMERCE');
+
+      const now = new Date('2026-11-18T08:00:00.000Z');
+      const presented = presentObservationRecord(
+        {
+          id: 'obs_norm',
+          runId: 'run_1',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_1',
+          promptText: '静音家用NAS推荐',
+          engine: 'deepseek',
+          status: 'SUCCESS',
+          collectorKind: 'fake',
+          answerText: '静音家用NAS推荐绿联。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          brandPassage: '静音家用NAS推荐绿联。',
+          competitorHits: [],
+          fanOutQueries: ['安静NAS; 家用NAS功耗；安静NAS\n四盘位NAS'],
+          judgeModel: 'fake',
+          tokensIn: 10,
+          tokensOut: 10,
+          error: null,
+          checkedAt: now,
+          createdAt: now,
+          citations: [
+            {
+              id: 'cite_1',
+              url: 'https://newrival.example.com/review',
+              domain: 'newrival.example.com',
+              title: 'Rival Review',
+              snippet: null,
+              sourceKind: 'OTHER',
+              position: 1,
+              createdAt: now,
+            },
+          ],
+        },
+        { brandName: '绿联' },
+        {
+          market: 'CN',
+          citationContext: {
+            ownedDomains: ['ugreen.com'],
+            competitorDomains: ['newrival.example.com'],
+          },
+        },
+      );
+      expect(presented.market).toBe('CN');
+      expect(presented.fanOutQueries).toEqual(['安静NAS', '家用NAS功耗', '四盘位NAS']);
+      expect(presented.citations[0]?.sourceKind).toBe('COMPETITOR');
     });
 
     it('computeOverviewMetricsAndGroups supports 0-brand, 1-brand, and >=2-brand isolated SoV tracks with domain priority merge', () => {

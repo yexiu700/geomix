@@ -249,4 +249,103 @@ describe('RunWorkspace observation detail & fidelity (#191, #217)', () => {
     expect(card.textContent).not.toContain('gemini-4-hydrogen-xhigh');
     expect(within(card).getByText('大模型语义判别')).toBeTruthy();
   });
+
+  it('supports v2 brandMarket prop without legacy profile and renders renderObservationAction slot', () => {
+    const obs = makeObservation({ id: 'obs_v2_slot' });
+    const onBriefClick = vi.fn();
+
+    render(
+      <RunWorkspace
+        run={makeRunDetail([obs])}
+        brandMarket={{
+          id: 'bm_cn_1',
+          brandId: 'brand_1',
+          market: 'CN',
+          locale: 'zh-CN',
+          region: 'CN',
+          localBrandName: 'ARZOPA',
+          aliases: ['阿卓帕'],
+          ownedDomains: ['arzopa.com'],
+          competitors: [{ name: '联想ThinkVision', aliases: [], domains: ['lenovo.com'] }],
+          seedPrompts: ['Switch外接ARZOPA便携屏怎么样'],
+          createdAt: '2026-11-18T00:00:00.000Z',
+          updatedAt: '2026-11-18T00:00:00.000Z',
+        }}
+        renderObservationAction={(item) => (
+          <button
+            type="button"
+            data-testid="answer-brief-btn"
+            onClick={() => onBriefClick(item.id)}
+          >
+            针对此条提写作意见
+          </button>
+        )}
+        obsEngineFilter=""
+        onObsEngineFilterChange={vi.fn()}
+        obsMentionFilter="all"
+        onObsMentionFilterChange={vi.fn()}
+        obsSentimentFilter=""
+        onObsSentimentFilterChange={vi.fn()}
+        filteredObservations={[obs]}
+        onResetFilters={vi.fn()}
+      />,
+    );
+
+    const btn = screen.getByTestId('answer-brief-btn');
+    expect(btn.textContent).toContain('针对此条提写作意见');
+    btn.click();
+    expect(onBriefClick).toHaveBeenCalledWith('obs_v2_slot');
+  });
+
+  it('blocks empty-host http:// and https:// and non-http URLs from rendering as clickable anchors (M1)', () => {
+    const obs = makeObservation({
+      id: 'obs_urls',
+      citations: [
+        {
+          id: 'c_bad_1',
+          url: 'http://',
+          domain: '',
+          title: 'Empty HTTP',
+          snippet: null,
+          sourceKind: 'OTHER',
+          position: 1,
+          createdAt: '2026-11-18T06:00:00.000Z',
+        },
+        {
+          id: 'c_bad_2',
+          url: 'https://',
+          domain: '',
+          title: 'Empty HTTPS',
+          snippet: null,
+          sourceKind: 'OTHER',
+          position: 2,
+          createdAt: '2026-11-18T06:00:00.000Z',
+        },
+        {
+          id: 'c_bad_3',
+          url: 'javascript:alert(1)',
+          domain: '',
+          title: 'JS XSS',
+          snippet: null,
+          sourceKind: 'OTHER',
+          position: 3,
+          createdAt: '2026-11-18T06:00:00.000Z',
+        },
+        {
+          id: 'c_good',
+          url: 'https://valid.example.com/page',
+          domain: 'valid.example.com',
+          title: 'Valid Source',
+          snippet: null,
+          sourceKind: 'AUTHORITY',
+          position: 4,
+          createdAt: '2026-11-18T06:00:00.000Z',
+        },
+      ],
+    });
+
+    const { container } = renderWorkspace([obs]);
+    const anchors = Array.from(container.querySelectorAll('.gm-run-ws-cite-list a'));
+    expect(anchors.map((a) => a.getAttribute('href'))).toEqual(['https://valid.example.com/page']);
+  });
 });

@@ -8,6 +8,7 @@ import {
   type CitationSourceKind,
   type TaskStatusName,
   type VisibilityCompetitor,
+  type VisibilityTriggerType,
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS } from '../billing/billing.sql';
@@ -20,11 +21,28 @@ import { VisibilityJudgeService } from './visibility-judge.service';
 
 export const VISIBILITY_RUN_HANDLER = Symbol('VISIBILITY_RUN_HANDLER');
 export const VISIBILITY_RUN_ENQUEUER = Symbol('VISIBILITY_RUN_ENQUEUER');
+export const VISIBILITY_RUN_COMPLETE_HOOKS = Symbol('VISIBILITY_RUN_COMPLETE_HOOKS');
 
 export type VisibilityCheckJobData = {
   tenantId: string;
   runId: string;
 };
+
+export type VisibilityRunCompleteEvent = {
+  tenantId: string;
+  brandId: string;
+  brandMarketId: string;
+  runId: string;
+  triggerType: VisibilityTriggerType;
+  retestArticleId: string | null;
+  status: 'COMPLETED' | 'PARTIAL';
+  successCount: number;
+};
+
+export interface OnVisibilityRunCompleteHook {
+  readonly name: string;
+  onVisibilityRunComplete(event: VisibilityRunCompleteEvent): Promise<void> | void;
+}
 
 export interface VisibilityRunHandler {
   process(payload: VisibilityCheckJobData): Promise<void>;
@@ -90,6 +108,7 @@ function safeVisibilityError(error: unknown): string {
 @Injectable()
 export class VisibilityRunRunner implements VisibilityRunHandler {
   private readonly logger = new Logger(VisibilityRunRunner.name);
+  private readonly completeHooks: OnVisibilityRunCompleteHook[];
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -100,7 +119,21 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     @Optional()
     @Inject(VisibilityEngineHealthService)
     private readonly engineHealth?: VisibilityEngineHealthService,
-  ) {}
+    @Optional()
+    @Inject(VISIBILITY_RUN_COMPLETE_HOOKS)
+    initialHooks?: readonly OnVisibilityRunCompleteHook[],
+  ) {
+    this.completeHooks = [...(initialHooks ?? [])];
+  }
+
+  registerCompleteHook(hook: OnVisibilityRunCompleteHook): void {
+    const existingIdx = this.completeHooks.findIndex((item) => item.name === hook.name);
+    if (existingIdx >= 0) {
+      this.completeHooks[existingIdx] = hook;
+    } else {
+      this.completeHooks.push(hook);
+    }
+  }
 
   async process(payload: VisibilityCheckJobData): Promise<void> {
     const { tenantId, runId } = payload;
@@ -263,6 +296,10 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         brandAliases: run.brandMarket.aliases,
         ownedDomains,
         competitors,
+        market: run.brandMarket.market,
+        locale: run.brandMarket.locale,
+        region: run.brandMarket.region,
+        triggerType: run.triggerType,
         idempotencyKey: `vis-col:${obs.id}`,
       });
       if (this.engineHealth) {
@@ -554,6 +591,10 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         where: { id: runId, tenantId },
         select: {
           id: true,
+          brandId: true,
+          brandMarketId: true,
+          triggerType: true,
+          retestArticleId: true,
           status: true,
           totalChecks: true,
           reservationId: true,
@@ -587,33 +628,97 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       }
 
       const now = new Date();
-      await tx.visibilityRun.update({
-        where: { id: runId },
-        data: {
-          status: nextStatus,
-          doneCount: success,
-          failCount: failed,
-          finishedAt: run.finishedAt ?? (running === 0 ? now : null),
-        },
-      });
+      let transitioned = false;
+
+      if (run.status !== 'CANCELLED') {
+        const updated = await tx.visibilityRun.updateMany({
+          where: { id: runId, tenantId, status: { in: ['QUEUED', 'RUNNING'] } },
+          data: {
+            status: nextStatus,
+            doneCount: success,
+            failCount: failed,
+            finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+          },
+        });
+        transitioned = updated.count === 1;
+        if (!transitioned) {
+          await tx.visibilityRun.updateMany({
+            where: { id: runId, tenantId },
+            data: {
+              doneCount: success,
+              failCount: failed,
+              finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+            },
+          });
+        }
+      } else {
+        await tx.visibilityRun.update({
+          where: { id: runId },
+          data: {
+            status: nextStatus,
+            doneCount: success,
+            failCount: failed,
+            finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+          },
+        });
+      }
 
       return {
         closeReservation: running === 0,
         reservationId: run.reservationId,
+        transitioned,
+        brandId: run.brandId,
+        brandMarketId: run.brandMarketId,
+        triggerType: run.triggerType,
+        retestArticleId: run.retestArticleId ?? null,
+        status: nextStatus,
+        successCount: success,
       };
     }, TX_OPTIONS);
 
-    if (!summary?.closeReservation) return;
+    if (!summary) return;
 
-    const reservationId = await this.resolveReservationId(tenantId, runId, summary.reservationId);
-    if (!reservationId) return;
+    if (summary.closeReservation) {
+      const reservationId = await this.resolveReservationId(tenantId, runId, summary.reservationId);
+      if (reservationId) {
+        const reservation = await this.prisma.base.pointReservation.findFirst({
+          where: { id: reservationId, tenantId },
+          select: { id: true, status: true },
+        });
+        if (reservation && reservation.status === 'OPEN') {
+          await this.billing.close({ tenantId, reservationId: reservation.id });
+        }
+      }
+    }
 
-    const reservation = await this.prisma.base.pointReservation.findFirst({
-      where: { id: reservationId, tenantId },
-      select: { id: true, status: true },
-    });
-    if (reservation && reservation.status === 'OPEN') {
-      await this.billing.close({ tenantId, reservationId: reservation.id });
+    if (
+      summary.transitioned &&
+      (summary.status === 'COMPLETED' || summary.status === 'PARTIAL') &&
+      summary.successCount > 0 &&
+      this.completeHooks.length > 0
+    ) {
+      const event: VisibilityRunCompleteEvent = {
+        tenantId,
+        brandId: summary.brandId,
+        brandMarketId: summary.brandMarketId,
+        runId,
+        triggerType: summary.triggerType,
+        retestArticleId: summary.retestArticleId,
+        status: summary.status,
+        successCount: summary.successCount,
+      };
+
+      for (const hook of this.completeHooks) {
+        try {
+          await hook.onVisibilityRunComplete(event);
+        } catch (error) {
+          this.logger.error(
+            `visibility run complete hook "${hook.name}" failed for run ${runId}: ${
+              error instanceof Error ? error.message : 'unknown'
+            }`,
+          );
+        }
+      }
     }
   }
 }

@@ -9,6 +9,7 @@ import {
   isVisibilitySentiment,
   matchesDomain,
   rankTrackedSubjects,
+  resolveStructuredSubjectRanks,
   type CompetitorHit,
   type TrackedSubject,
   type VisibilitySentiment,
@@ -66,6 +67,12 @@ const POSITIVE_CUES = [
 
 const NEGATIVE_CUES = [
   '不推荐',
+  '不值得',
+  '不够稳定',
+  '不够出色',
+  '不够优秀',
+  '不够可靠',
+  '不可靠',
   '慎选',
   '缺陷',
   '故障',
@@ -87,6 +94,14 @@ const NEGATIVE_CUES = [
   'avoid',
   'expensive',
   'unstable',
+  'unreliable',
+  'not recommended',
+  'not reliable',
+  'not worth',
+  'not stable',
+  'defect',
+  'defects',
+  'complaints',
   'lacks',
   'weakness',
   'drawback',
@@ -102,6 +117,42 @@ const CONTRAST_CUES = [
   'however',
   'although',
 ] as const;
+
+type CompiledCue = {
+  cue: string;
+  regex: RegExp | null;
+};
+
+function compileSentimentCues(cues: readonly string[]): CompiledCue[] {
+  return cues.map((raw) => {
+    const cue = raw.toLowerCase();
+    if (/^[a-z0-9\s'-]+$/i.test(cue)) {
+      const escaped = cue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      return { cue, regex: new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i') };
+    }
+    return { cue, regex: null };
+  });
+}
+
+const COMPILED_POSITIVE_CUES = compileSentimentCues(POSITIVE_CUES);
+const COMPILED_NEGATIVE_CUES = compileSentimentCues(NEGATIVE_CUES);
+const COMPILED_CONTRAST_CUES = compileSentimentCues(CONTRAST_CUES);
+
+const CN_NEGATED_POSITIVE_PATTERN =
+  /不推荐|不值得|不够稳定|不稳定|不够出色|不够优秀|不够可靠|不可靠/gu;
+const EN_NEGATED_POSITIVE_PATTERN =
+  /\b(?:not|never|hardly|barely|rarely|no\s+longer)\s+(?:the\s+)?(?:recommended|reliable|stable|strong|excellent|best|top|leading|worth)\b/gi;
+
+function matchesCompiledCue(text: string, compiled: readonly CompiledCue[]): boolean {
+  for (const entry of compiled) {
+    if (entry.regex) {
+      if (entry.regex.test(text)) return true;
+    } else if (text.includes(entry.cue)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const llmJudgeVerdictSchema = z.object({
   topicRelevant: z.boolean().optional(),
@@ -163,6 +214,8 @@ type CandidateScan = {
   textOffsets: number[];
   domainCited: boolean;
   passages: string[];
+  structuredRank: number | null;
+  structuredPassage: string | null;
 };
 
 @Injectable()
@@ -216,6 +269,18 @@ export class VisibilityJudgeService {
     );
 
     const allCandidates = [brandCandidate, ...competitorCandidates];
+    const structuredRanks = resolveStructuredSubjectRanks(
+      answerText,
+      allCandidates.map((cand) => ({ key: cand.subjectKey, subject: cand.subject })),
+      { promptText: input.promptText },
+    );
+    for (const cand of allCandidates) {
+      const structured = structuredRanks.get(cand.subjectKey);
+      if (structured) {
+        cand.structuredRank = structured.structuredRank;
+        cand.structuredPassage = structured.matchedItemPassage;
+      }
+    }
     const matchedCandidates = allCandidates.filter((item) => item.offsets.length > 0);
 
     // Stage 1: 零命中快速短路，不消耗任何 LLM Token
@@ -445,6 +510,8 @@ function scanCandidate(
     textOffsets,
     domainCited,
     passages,
+    structuredRank: null,
+    structuredPassage: null,
   };
 }
 
@@ -469,6 +536,7 @@ function finalizeVerdicts(input: {
         name: cand.subject.name,
         mentioned: false,
         firstMention: null as number | null,
+        structuredRank: null as number | null,
         sentiment: null as VisibilitySentiment | null,
         passage: null as string | null,
       };
@@ -483,8 +551,9 @@ function finalizeVerdicts(input: {
             name: cand.subject.name,
             mentioned: true,
             firstMention: cand.offsets[0] ?? null,
+            structuredRank: null as number | null,
             sentiment: 'neutral' as VisibilitySentiment,
-            passage: cand.passages[0] ?? null,
+            passage: cand.structuredPassage ?? cand.passages[0] ?? null,
           };
         }
         return {
@@ -492,6 +561,7 @@ function finalizeVerdicts(input: {
           name: cand.subject.name,
           mentioned: false,
           firstMention: null,
+          structuredRank: null as number | null,
           sentiment: null,
           passage: null,
         };
@@ -503,29 +573,35 @@ function finalizeVerdicts(input: {
       const evidence =
         llmVerdict.evidence && llmVerdict.evidence.length > 0
           ? llmVerdict.evidence
-          : (cand.passages[0] ?? null);
+          : (cand.structuredPassage ?? cand.passages[0] ?? null);
 
       return {
         subjectKey: cand.subjectKey,
         name: cand.subject.name,
         mentioned: true,
         firstMention: cand.offsets[0] ?? null,
+        structuredRank: cand.structuredRank,
         sentiment,
         passage: evidence,
       };
     }
 
     // 确定性情感与提及兜底（离线 fake 模式或 LLM 未返回对应项）
-    const deterministicSentiment =
-      cand.passages.length > 0 ? classifyPassageSentiment(cand.passages.join(' ')) : 'neutral';
+    const sentimentSource = cand.structuredPassage
+      ? cand.structuredPassage
+      : cand.passages.join(' ');
+    const deterministicSentiment = sentimentSource
+      ? classifyPassageSentiment(sentimentSource)
+      : 'neutral';
 
     return {
       subjectKey: cand.subjectKey,
       name: cand.subject.name,
       mentioned: true,
       firstMention: cand.offsets[0] ?? null,
+      structuredRank: cand.structuredRank,
       sentiment: deterministicSentiment,
-      passage: cand.passages[0] ?? null,
+      passage: cand.structuredPassage ?? cand.passages[0] ?? null,
     };
   });
 
@@ -559,11 +635,13 @@ function finalizeVerdicts(input: {
 
 export function classifyPassageSentiment(passageText: string): VisibilitySentiment {
   const lower = passageText.toLowerCase();
-  const hasNeg = NEGATIVE_CUES.some((cue) => lower.includes(cue.toLowerCase()));
-  // 排除“不推荐”对“推荐”的包含干扰
-  const scrubbedForPos = lower.replace(/不推荐|不值得|不够稳定|不够出色/gu, '');
-  const hasPos = POSITIVE_CUES.some((cue) => scrubbedForPos.includes(cue.toLowerCase()));
-  const hasContrast = CONTRAST_CUES.some((cue) => lower.includes(cue.toLowerCase()));
+  const hasNeg = matchesCompiledCue(lower, COMPILED_NEGATIVE_CUES);
+  // 排除中英文否定表达（如“不够稳定 / not recommended”）对正面词的误匹配干扰
+  const scrubbedForPos = lower
+    .replace(CN_NEGATED_POSITIVE_PATTERN, ' ')
+    .replace(EN_NEGATED_POSITIVE_PATTERN, ' ');
+  const hasPos = matchesCompiledCue(scrubbedForPos, COMPILED_POSITIVE_CUES);
+  const hasContrast = matchesCompiledCue(lower, COMPILED_CONTRAST_CUES);
 
   if (hasPos && (hasNeg || hasContrast)) return 'mixed';
   if (hasPos) return 'positive';
