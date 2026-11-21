@@ -14,6 +14,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
+import * as studioApi from '../../lib/studio';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
@@ -1045,6 +1046,97 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     fireEvent.click(screen.getByTestId('visibility-tab-overview'));
     await waitFor(() => {
       expect(fetchBriefsSpy.mock.calls.length).toBeGreaterThan(callsBeforeOverviewSwitch);
+    });
+  });
+
+  it('launches POST /articles/batch from Tab 1 briefs-batch-btn and navigates to /studio with batchJobId', async () => {
+    const brief1: GeoBriefRecord = {
+      id: 'brief_b_1',
+      brandId: 'brand_dual_1',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      sourceType: 'AUTO_GAP',
+      sourceRunId: null,
+      sourceObservationIds: [],
+      sourceCitationUrl: null,
+      targetPrompt: '四盘位静音家用 NAS 推荐',
+      priorityScore: 95,
+      diagnosisSummary: '竞品命中 2 引擎',
+      recommendedRecipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'CN_DEEP_REVIEW',
+      suggestedTitle: '静音 NAS 选购指南',
+      outlineH2: [],
+      targetFanOuts: [],
+      competitorFocus: ['群晖'],
+      matchedFactIds: [],
+      missingFactHints: [],
+      recommendedChannels: [],
+      status: 'OPEN',
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const brief2: GeoBriefRecord = {
+      ...brief1,
+      id: 'brief_b_2',
+      suggestedTitle: '静音 NAS 功耗横评',
+      priorityScore: 88,
+    };
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [brief1, brief2], total: 2 });
+
+    const createBatchSpy = vi.spyOn(studioApi, 'createBatchJob').mockResolvedValue({
+      id: 'gb_from_vis_1',
+      brandId: 'brand_dual_1',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      briefIds: ['brief_b_1', 'brief_b_2'],
+      total: 2,
+      doneCount: 0,
+      failCount: 0,
+      unitPrice: 10,
+      reservationId: 'res_vis_1',
+      status: 'QUEUED',
+      lastError: null,
+      createdAt: '2026-11-20T01:00:00.000Z',
+      updatedAt: '2026-11-20T01:00:00.000Z',
+      finishedAt: null,
+    });
+
+    const navigateWorkspace = vi.fn();
+    const refreshWallet = vi.fn(async () => undefined);
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace, refreshWallet })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByLabelText('选择写作建议-静音 NAS 选购指南'));
+    fireEvent.click(screen.getByLabelText('选择写作建议-静音 NAS 功耗横评'));
+    fireEvent.click(screen.getByTestId('briefs-batch-btn'));
+
+    await waitFor(() => {
+      expect(createBatchSpy).toHaveBeenCalledWith(
+        'brand_dual_1',
+        { market: 'CN', briefIds: ['brief_b_1', 'brief_b_2'] },
+        expect.any(String),
+      );
+      expect(navigateWorkspace).toHaveBeenCalledWith(
+        '/studio?brandId=brand_dual_1&market=CN&batchJobId=gb_from_vis_1',
+      );
+      expect(refreshWallet).toHaveBeenCalled();
     });
   });
 });

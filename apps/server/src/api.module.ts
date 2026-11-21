@@ -13,6 +13,7 @@ import { AdaptersModule } from './infra/adapters.module';
 import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
+import { StudioModule } from './studio/studio.module';
 import { VisibilityModule } from './visibility/visibility.module';
 
 @Module({
@@ -29,6 +30,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     DashboardModule,
     VisibilityModule,
     BriefsModule,
+    StudioModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FAKE_MARK, LLM_SCENES, type LlmRouteConfig, type LlmScene } from '@geomix/shared';
-import type { HttpTransport } from './guarded-request';
+import { requestStream, type HttpTransport } from './guarded-request';
 import {
   FakeLlm,
   LlmRouter,
@@ -756,6 +756,315 @@ describe('llm routing', () => {
         env: { BILLING_MODE: 'SHADOW' },
       }),
     ).toThrow(/真实大模型调用失败或超时/);
+  });
+
+  it('streams OpenAI SSE deltas via pinned streamTransport, closes transport cleanly, and records geo_article cost', async () => {
+    let closeCalls = 0;
+    const chunks: string[] = [];
+    const ssePayloads = [
+      'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"GEO "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"World"}}],"usage":{"prompt_tokens":12,"completion_tokens":5}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const streamTransport = async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const frame of ssePayloads) {
+            controller.enqueue(new TextEncoder().encode(frame));
+          }
+          controller.close();
+        },
+      });
+      return {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: stream,
+        close: async () => {
+          closeCalls += 1;
+        },
+      };
+    };
+
+    const service = LlmService.fromEnv(
+      {
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: { geo_write: { primary: 'deepseek', backup: [] } },
+        }),
+        DEEPSEEK_API_KEY: 'test-key',
+      },
+      {
+        streamTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+      },
+    );
+
+    const res = await service.streamComplete({
+      tenantId: 'tenant_demo',
+      scene: 'geo_write',
+      idempotencyKey: 'geo_article:ga_stream_001',
+      messages: [{ role: 'user', content: 'Write GEO guide' }],
+      onDelta: (c) => {
+        chunks.push(c);
+      },
+    });
+
+    expect(chunks).toEqual(['Hello ', 'GEO ', 'World']);
+    expect(res.text).toBe('Hello GEO World');
+    expect(res.tokensIn).toBe(12);
+    expect(res.tokensOut).toBe(5);
+    expect(closeCalls).toBe(1);
+    const costs = service.listCosts('tenant_demo');
+    expect(costs).toHaveLength(1);
+    expect(costs[0]?.idempotencyKey).toBe('geo_article:ga_stream_001');
+  });
+
+  it('never retries or fails over after the first SSE delta has been emitted', async () => {
+    let primaryCalls = 0;
+    let backupCalls = 0;
+    const emitted: string[] = [];
+
+    const primary: LlmProvider = {
+      name: 'primary',
+      async complete() {
+        throw new Error('unused');
+      },
+      async streamComplete(call) {
+        primaryCalls += 1;
+        await call.onDelta('partial-chunk');
+        throw new ProviderError('upstream', 'mid-stream disconnect', 'upstream_5xx');
+      },
+    };
+    const backup: LlmProvider = {
+      name: 'backup',
+      async complete() {
+        backupCalls += 1;
+        return {
+          provider: 'backup',
+          model: 'backup',
+          fake: false,
+          text: 'should not run',
+          tokensIn: 1,
+          tokensOut: 1,
+        };
+      },
+    };
+
+    const service = new LlmService(router({ primary, backup }));
+    await expect(
+      service.streamComplete({
+        tenantId: 'tenant_demo',
+        scene: 'geo_write',
+        idempotencyKey: 'geo_article:ga_midfail_01',
+        messages: [{ role: 'user', content: 'test' }],
+        onDelta: (c) => {
+          emitted.push(c);
+        },
+      }),
+    ).rejects.toMatchObject({ kind: 'upstream', reason: 'upstream_5xx' });
+
+    expect(emitted).toEqual(['partial-chunk']);
+    expect(primaryCalls).toBe(1);
+    expect(backupCalls).toBe(0);
+    expect(service.listCosts('tenant_demo')).toHaveLength(0);
+  });
+
+  it('rejects 3xx redirects and enforces maxBytes in requestStream() with clean close()', async () => {
+    let redirectCloseCalls = 0;
+    await expect(
+      requestStream({
+        url: 'https://192.0.2.10/v1/chat/completions',
+        method: 'POST',
+        timeoutMs: 5000,
+        maxBytes: 1024,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        streamTransport: async () => ({
+          status: 302,
+          headers: { location: 'http://127.0.0.1/secret' },
+          body: null,
+          close: async () => {
+            redirectCloseCalls += 1;
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ kind: 'ssrf', reason: 'redirect_refused' });
+    expect(redirectCloseCalls).toBe(1);
+
+    let overflowCloseCalls = 0;
+    const streamRes = await requestStream({
+      url: 'https://192.0.2.10/v1/chat/completions',
+      method: 'POST',
+      timeoutMs: 5000,
+      maxBytes: 128,
+      resolver: {
+        async resolve() {
+          return [{ address: '192.0.2.10', family: 4 }];
+        },
+      },
+      streamTransport: async () => ({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(80));
+            controller.enqueue(new Uint8Array(80));
+            controller.close();
+          },
+        }),
+        close: async () => {
+          overflowCloseCalls += 1;
+        },
+      }),
+    });
+
+    const reader = streamRes.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    await expect(reader.read()).rejects.toMatchObject({ kind: 'too_large', reason: 'body' });
+    expect(overflowCloseCalls).toBe(1);
+    await streamRes.close();
+    expect(overflowCloseCalls).toBe(1);
+  });
+
+  it('closes streamTransport via finally when OpenAiLlm encounters an oversized 400 error body', async () => {
+    let transportCalls = 0;
+    let closeCalls = 0;
+    const streamTransport = async () => {
+      transportCalls += 1;
+      const body =
+        transportCalls === 1
+          ? new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('bad stream_options'));
+                controller.close();
+              },
+            })
+          : new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('x'.repeat(70_000)));
+                controller.close();
+              },
+            });
+      return {
+        status: 400,
+        headers: { 'content-type': 'text/plain' },
+        body,
+        close: async () => {
+          closeCalls += 1;
+        },
+      };
+    };
+
+    const service = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: { geo_write: { primary: 'deepseek', backup: [] } },
+        }),
+      },
+      {
+        streamTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        retryDelayMs: 0,
+      },
+    );
+
+    await expect(
+      service.streamComplete({
+        tenantId: 'tenant_demo',
+        scene: 'geo_write',
+        idempotencyKey: 'geo_article:ga_400_oversized_01',
+        messages: [{ role: 'user', content: 'test 400 close' }],
+        maxRetries: 0,
+        onDelta: () => undefined,
+      }),
+    ).rejects.toMatchObject({ kind: 'too_large' });
+
+    expect(transportCalls).toBe(2);
+    expect(closeCalls).toBe(2);
+  });
+
+  it('never leaks fake fallback deltas over SSE when allowFakeFallback is false (#321 Probe 2.4d)', async () => {
+    const emittedDeltas: string[] = [];
+    const service = LlmService.fromEnv(
+      {
+        BILLING_MODE: 'SHADOW',
+        LLM_FALLBACK_FAKE: 'true',
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: { geo_write: { primary: 'deepseek', backup: [] } },
+        }),
+      },
+      {
+        streamTransport: async () => ({
+          status: 503,
+          headers: {},
+          body: null,
+          close: async () => undefined,
+        }),
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        retryDelayMs: 0,
+      },
+    );
+
+    await expect(
+      service.streamComplete({
+        tenantId: 'tenant_strict',
+        scene: 'geo_write',
+        idempotencyKey: 'geo_article:ga_probe24d_01',
+        messages: [{ role: 'user', content: 'Write GEO guide' }],
+        maxRetries: 0,
+        allowFakeFallback: false,
+        onDelta: (chunk) => {
+          emittedDeltas.push(chunk);
+        },
+      }),
+    ).rejects.toMatchObject({ kind: 'upstream', reason: 'fake_fallback_rejected' });
+
+    expect(emittedDeltas).toEqual([]);
   });
 });
 

@@ -17,7 +17,10 @@ import { z } from 'zod';
 import {
   createDnsResolver,
   requestOnce,
+  requestStream,
   type DnsResolver,
+  type GuardedStreamResponse,
+  type HttpStreamTransport,
   type HttpTransport,
 } from './guarded-request';
 import { ProviderError, PROVIDER_KIND } from './provider-error';
@@ -77,6 +80,15 @@ export type LlmCompleteInput = {
   preferredProvider?: string;
 };
 
+export type LlmStreamCallbacks = {
+  onDelta: (chunk: string) => void | Promise<void>;
+};
+
+export type LlmStreamCompleteInput = LlmCompleteInput &
+  LlmStreamCallbacks & {
+    allowFakeFallback?: boolean;
+  };
+
 type ProviderCall = {
   scene: LlmScene;
   model: string;
@@ -91,6 +103,7 @@ type ProviderCall = {
 export interface LlmProvider {
   readonly name: string;
   complete(input: ProviderCall): Promise<LlmCompletion>;
+  streamComplete?(input: ProviderCall & LlmStreamCallbacks): Promise<LlmCompletion>;
 }
 
 const completionSchema = z.object({
@@ -184,6 +197,7 @@ export class OpenAiLlm implements LlmProvider {
     private readonly transport: HttpTransport,
     private readonly resolver: DnsResolver,
     private readonly timeoutMs: number,
+    private readonly streamTransport: HttpStreamTransport = liveStreamTransport(),
   ) {}
 
   async complete(input: ProviderCall): Promise<LlmCompletion> {
@@ -301,6 +315,250 @@ export class OpenAiLlm implements LlmProvider {
       tokensIn: parsed.tokensIn,
       tokensOut: parsed.tokensOut,
     };
+  }
+
+  async streamComplete(input: ProviderCall & LlmStreamCallbacks): Promise<LlmCompletion> {
+    const apiKey = readKey(this.env, this.config.apiKeyEnv);
+    const urls = resolveChatCompletionsUrls(this.config.baseUrl);
+    const promptText = input.messages.map((message) => message.content).join('\n');
+    let lastContractError: ProviderError | null = null;
+    let emittedAny = false;
+
+    for (let index = 0; index < urls.length; index += 1) {
+      const url = urls[index]!;
+      try {
+        return await this.requestStreamCompletion(url, apiKey, input, promptText, async (chunk) => {
+          if (chunk.length > 0) emittedAny = true;
+          await input.onDelta(chunk);
+        });
+      } catch (error) {
+        if (
+          !emittedAny &&
+          error instanceof ProviderError &&
+          error.kind === PROVIDER_KIND.CONTRACT &&
+          index + 1 < urls.length
+        ) {
+          lastContractError = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw (
+      lastContractError ??
+      new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status')
+    );
+  }
+
+  private async requestStreamCompletion(
+    url: URL,
+    apiKey: string,
+    input: ProviderCall,
+    promptText: string,
+    onDelta: (chunk: string) => Promise<void>,
+  ): Promise<LlmCompletion> {
+    const requestTimeoutMs = input.timeoutMs ?? this.timeoutMs;
+    const maxBytes = 2_000_000;
+    const send = (payload: Record<string, unknown>) =>
+      requestStream({
+        url,
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
+          accept: 'text/event-stream',
+        },
+        body: JSON.stringify(payload),
+        timeoutMs: requestTimeoutMs,
+        maxBytes,
+        signal: input.signal,
+        resolver: this.resolver,
+        streamTransport: this.streamTransport,
+      });
+
+    const isReasoner = /reasoner|thinking|qwq|\br1\b/i.test(input.model);
+    const effectiveMaxTokens = isReasoner
+      ? Math.max(input.maxTokens, requestTimeoutMs <= 25_000 ? 3000 : 4096)
+      : input.maxTokens;
+    const basePayload: Record<string, unknown> = {
+      model: input.model,
+      messages: input.messages,
+      temperature: input.temperature,
+      max_tokens: effectiveMaxTokens,
+      stream: true,
+    };
+    const streamOptionsPayload: Record<string, unknown> = {
+      ...basePayload,
+      stream_options: { include_usage: true },
+    };
+    const thinkingHint = input.disableThinking
+      ? resolveDisableThinkingPayload(this.name, this.config.baseUrl, input.model)
+      : undefined;
+
+    let response = await send(
+      thinkingHint ? { ...streamOptionsPayload, ...thinkingHint } : streamOptionsPayload,
+    );
+
+    if (response.status === 400 || response.status === 422) {
+      await response.close();
+      response = await send(basePayload);
+    }
+
+    if (response.status === 400 || response.status === 422) {
+      let errText = '';
+      try {
+        errText = await readStreamTextBounded(response, 64_000);
+      } finally {
+        await response.close();
+      }
+      if (isUnsupportedParamError(errText)) {
+        response = await send({
+          model: input.model,
+          messages: input.messages,
+          stream: true,
+        });
+      } else {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
+      }
+    }
+
+    try {
+      if (response.status >= 300 && response.status < 400) {
+        throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'redirect_refused');
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new ProviderError(PROVIDER_KIND.AUTH, '外部服务拒绝了密钥', 'upstream_auth');
+      }
+      if (response.status === 429) {
+        throw new ProviderError(PROVIDER_KIND.RATE_LIMIT, '外部服务繁忙', 'rate_limit');
+      }
+      if (response.status === 408) {
+        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+      }
+      if (response.status >= 500) {
+        throw new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'upstream_5xx');
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
+      }
+
+      const contentType = Object.entries(response.headers)
+        .find(([k]) => k.toLowerCase() === 'content-type')?.[1]
+        ?.toLowerCase();
+
+      if (contentType && contentType.includes('application/json')) {
+        const rawBody = await readStreamTextBounded(response, maxBytes);
+        const parsed = parseUpstreamCompletion(rawBody, promptText, {
+          allowReasoningFallback: !input.disableThinking,
+          stripAllThinking: Boolean(input.disableThinking),
+        });
+        if (!input.signal.aborted) {
+          await onDelta(parsed.text);
+        }
+        return {
+          provider: this.name,
+          model: input.model,
+          fake: false,
+          text: parsed.text,
+          tokensIn: parsed.tokensIn,
+          tokensOut: parsed.tokensOut,
+        };
+      }
+
+      if (!response.body) {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了空响应流', 'empty_stream');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let lineBuffer = '';
+      let totalBytes = 0;
+      const contentChunks: string[] = [];
+      let promptTokens: number | undefined;
+      let completionTokens: number | undefined;
+
+      const processLine = async (rawLine: string) => {
+        const trimmed = rawLine.trim();
+        if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') return;
+        let frame: unknown;
+        try {
+          frame = JSON.parse(payload) as unknown;
+        } catch {
+          return;
+        }
+        const parsed = upstreamEnvelopeSchema.safeParse(frame);
+        if (!parsed.success) return;
+        const choice = parsed.data.choices[0];
+        if (choice) {
+          const deltaText =
+            flattenContent(choice.delta?.content) ||
+            flattenContent(choice.message?.content) ||
+            (choice.text ?? '');
+          if (deltaText.length > 0) {
+            contentChunks.push(deltaText);
+            await onDelta(deltaText);
+          }
+        }
+        if (parsed.data.usage) {
+          promptTokens =
+            nonNegativeInt(parsed.data.usage.prompt_tokens ?? parsed.data.usage.input_tokens) ??
+            promptTokens;
+          completionTokens =
+            nonNegativeInt(
+              parsed.data.usage.completion_tokens ?? parsed.data.usage.output_tokens,
+            ) ?? completionTokens;
+        }
+      };
+
+      try {
+        for (;;) {
+          if (input.signal.aborted) {
+            throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+          }
+          const step = await reader.read();
+          if (step.done) break;
+          totalBytes += step.value.byteLength;
+          if (totalBytes > maxBytes) {
+            throw new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body');
+          }
+          lineBuffer += decoder.decode(step.value, { stream: true });
+          const lines = lineBuffer.split(/\r?\n/);
+          lineBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            await processLine(line);
+          }
+        }
+        lineBuffer += decoder.decode();
+        if (lineBuffer.trim()) {
+          for (const line of lineBuffer.split(/\r?\n/)) {
+            await processLine(line);
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+        reader.releaseLock();
+      }
+
+      const text = stripThinkingTags(contentChunks.join('').trim(), {
+        stripAll: Boolean(input.disableThinking),
+      });
+      if (!text) {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+      }
+      return {
+        provider: this.name,
+        model: input.model,
+        fake: false,
+        text,
+        tokensIn: promptTokens ?? countTokens(promptText),
+        tokensOut: completionTokens ?? countTokens(text),
+      };
+    } finally {
+      await response.close();
+    }
   }
 }
 
@@ -474,6 +732,167 @@ export class LlmRouter {
       throw new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'transport');
     }
   }
+
+  async streamComplete(
+    input: Omit<LlmStreamCompleteInput, 'tenantId' | 'idempotencyKey'>,
+  ): Promise<LlmCompletion> {
+    const messages = validateMessages(input.messages);
+    const temperature = input.temperature ?? (QUALITY.has(input.scene) ? 0.8 : 0.3);
+    const maxTokens = input.maxTokens ?? (QUALITY.has(input.scene) ? 3500 : 1024);
+    if (temperature < 0 || temperature > 2) {
+      throw new ProviderError(PROVIDER_KIND.CONTRACT, 'temperature 超出范围', 'temperature');
+    }
+    if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) {
+      throw new ProviderError(PROVIDER_KIND.CONTRACT, 'maxTokens 超出范围', 'max_tokens');
+    }
+    const effectiveTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const effectiveMaxRetries = input.maxRetries ?? this.options.maxRetries;
+    const providerConfig = this.route.route[input.scene];
+    const baseChain = [providerConfig.primary, ...providerConfig.backup];
+    const preferred = input.preferredProvider?.trim();
+    const preferredConfig = preferred ? this.route.providers[preferred] : undefined;
+    const chain =
+      preferred && preferredConfig && preferredConfig.kind !== 'fake'
+        ? [preferred, ...baseChain.filter((name) => name !== preferred)]
+        : baseChain;
+
+    let emittedAnyDelta = false;
+    const wrappedOnDelta = async (chunk: string) => {
+      if (chunk.length > 0) emittedAnyDelta = true;
+      await input.onDelta(chunk);
+    };
+
+    let last: ProviderError | null = null;
+    let rejectedFakeFallback = false;
+    for (const name of chain) {
+      const provider = this.providers[name];
+      const config = this.route.providers[name];
+      if (!provider || !config) {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '模型路由未配置', 'route');
+      }
+      if (input.allowFakeFallback === false && config.kind === 'fake') {
+        rejectedFakeFallback = true;
+        continue;
+      }
+      const primaryModel =
+        config.kind === 'fake'
+          ? QUALITY.has(input.scene)
+            ? 'fake-quality'
+            : 'fake-cheap'
+          : QUALITY.has(input.scene)
+            ? config.qualityModel
+            : config.cheapModel;
+      const canFallbackToCheap =
+        config.kind === 'openai' &&
+        QUALITY.has(input.scene) &&
+        config.cheapModel !== config.qualityModel &&
+        !/reasoner|thinking|qwq|\br1\b/i.test(config.cheapModel) &&
+        /reasoner|thinking|qwq|\br1\b/i.test(config.qualityModel);
+      const models = canFallbackToCheap
+        ? input.preferFastModel
+          ? [config.cheapModel]
+          : [primaryModel, config.cheapModel]
+        : [primaryModel];
+
+      for (let mIdx = 0; mIdx < models.length; mIdx += 1) {
+        const model = models[mIdx]!;
+        const attemptLimit = mIdx === 0 ? effectiveMaxRetries : 0;
+        for (let attempt = 0; attempt <= attemptLimit; attempt += 1) {
+          try {
+            return await this.callStream(provider, {
+              scene: input.scene,
+              model,
+              messages,
+              temperature,
+              maxTokens,
+              timeoutMs: effectiveTimeoutMs,
+              signal: input.signal,
+              disableThinking: input.disableThinking,
+              onDelta: wrappedOnDelta,
+            });
+          } catch (error) {
+            if (!(error instanceof ProviderError)) throw error;
+            if (error.kind === PROVIDER_KIND.CANCELLED || emittedAnyDelta) {
+              throw error;
+            }
+            last = error;
+            if (error.retryable && attempt < attemptLimit) {
+              if (this.options.retryDelayMs > 0) {
+                await delay(this.options.retryDelayMs * 2 ** attempt, input.signal);
+              }
+              continue;
+            }
+            if (config.kind !== 'fake') {
+              this.logger.warn(
+                `LLM stream scene="${input.scene}" provider="${name}" model="${model}" failed (${error.kind}/${error.reason})`,
+              );
+            }
+            if (error.kind === PROVIDER_KIND.AUTH || error.kind === PROVIDER_KIND.SSRF) {
+              break;
+            }
+            break;
+          }
+        }
+        if (last && (last.kind === PROVIDER_KIND.AUTH || last.kind === PROVIDER_KIND.SSRF)) {
+          break;
+        }
+      }
+    }
+    if (rejectedFakeFallback) {
+      throw new ProviderError(
+        PROVIDER_KIND.UPSTREAM,
+        '真实大模型调用失败或超时，已禁止使用占位模板交付并退还预扣点数，请稍后重试',
+        'fake_fallback_rejected',
+      );
+    }
+    throw last ?? new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'no_provider');
+  }
+
+  private async callStream(
+    provider: LlmProvider,
+    input: Omit<ProviderCall, 'signal'> & { signal?: AbortSignal } & LlmStreamCallbacks,
+  ): Promise<LlmCompletion> {
+    if (input.signal?.aborted) {
+      throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+    }
+    const callTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const timeout = AbortSignal.timeout(callTimeoutMs);
+    const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+    try {
+      if (provider.streamComplete) {
+        const result = completionSchema.parse(
+          await provider.streamComplete({ ...input, timeoutMs: callTimeoutMs, signal }),
+        );
+        return result;
+      }
+      const result = await this.call(provider, {
+        scene: input.scene,
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+        timeoutMs: callTimeoutMs,
+        signal: input.signal,
+        disableThinking: input.disableThinking,
+      });
+      if (!signal.aborted) {
+        await input.onDelta(result.text);
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      if (error instanceof z.ZodError) {
+        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
+      }
+      if (input.signal?.aborted) {
+        throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+      }
+      if (signal.aborted) {
+        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+      }
+      throw new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'transport');
+    }
+  }
 }
 
 export class MemoryCostLedger {
@@ -526,6 +945,7 @@ export class LlmService {
     env: Record<string, string | undefined>,
     overrides?: {
       transport?: HttpTransport;
+      streamTransport?: HttpStreamTransport;
       resolver?: DnsResolver;
       retryDelayMs?: number;
       timeoutMs?: number;
@@ -548,6 +968,7 @@ export class LlmService {
         overrides?.transport ?? liveTransport(),
         overrides?.resolver ?? createDnsResolver(),
         timeoutMs,
+        overrides?.streamTransport ?? liveStreamTransport(),
       );
     }
     const globalStrict = env.BILLING_MODE?.trim().toUpperCase() === 'STRICT';
@@ -639,6 +1060,50 @@ export class LlmService {
     }
   }
 
+  async streamComplete(input: LlmStreamCompleteInput): Promise<LlmCallResult> {
+    if (!TENANT_ID.test(input.tenantId)) {
+      throw new ProviderError(PROVIDER_KIND.CONTRACT, '租户不正确', 'tenant');
+    }
+    if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) {
+      throw new ProviderError(PROVIDER_KIND.CONTRACT, '幂等键不正确', 'idempotency');
+    }
+    const fingerprint = createHash('sha256')
+      .update(
+        JSON.stringify({
+          scene: input.scene,
+          messages: input.messages,
+          temperature: input.temperature ?? null,
+          maxTokens: input.maxTokens ?? null,
+          stream: true,
+        }),
+      )
+      .digest('hex');
+    const started = this.now();
+    const completion = await this.router.streamComplete(input);
+    const record = this.recordCost({
+      tenantId: input.tenantId,
+      idempotencyKey: input.idempotencyKey,
+      scene: input.scene,
+      completion,
+      latencyMs: Math.max(0, this.now() - started),
+      fingerprint,
+    });
+    return { ...completion, cost: record };
+  }
+
+  recordSyntheticCost(input: {
+    tenantId: string;
+    idempotencyKey: string;
+    scene: LlmScene;
+    completion: LlmCompletion;
+    latencyMs: number;
+  }): LlmCostRecord {
+    const fingerprint = createHash('sha256')
+      .update(`${input.tenantId}:${input.idempotencyKey}:${input.scene}`)
+      .digest('hex');
+    return this.recordCost({ ...input, fingerprint });
+  }
+
   listCosts(tenantId: string): LlmCostRecord[] {
     if (!TENANT_ID.test(tenantId))
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '租户不正确', 'tenant');
@@ -648,12 +1113,31 @@ export class LlmService {
   private async run(input: LlmCompleteInput, fingerprint: string): Promise<LlmCallResult> {
     const started = this.now();
     const completion = await this.router.complete(input);
+    const record = this.recordCost({
+      tenantId: input.tenantId,
+      idempotencyKey: input.idempotencyKey,
+      scene: input.scene,
+      completion,
+      latencyMs: Math.max(0, this.now() - started),
+      fingerprint,
+    });
+    return { ...completion, cost: record };
+  }
+
+  private recordCost(input: {
+    tenantId: string;
+    idempotencyKey: string;
+    scene: LlmScene;
+    completion: LlmCompletion;
+    latencyMs: number;
+    fingerprint: string;
+  }): LlmCostRecord {
     const estimated = estimateLlmCallCostMicro({
-      provider: completion.provider,
-      model: completion.model,
-      fake: completion.fake,
-      tokensIn: completion.tokensIn,
-      tokensOut: completion.tokensOut,
+      provider: input.completion.provider,
+      model: input.completion.model,
+      fake: input.completion.fake,
+      tokensIn: input.completion.tokensIn,
+      tokensOut: input.completion.tokensOut,
       rates: this.rates,
     });
     const record: LlmCostRecord = {
@@ -661,21 +1145,21 @@ export class LlmService {
       tenantId: input.tenantId,
       idempotencyKey: input.idempotencyKey,
       scene: input.scene,
-      provider: completion.provider,
-      model: completion.model,
-      fake: completion.fake,
-      tokensIn: completion.tokensIn,
-      tokensOut: completion.tokensOut,
+      provider: input.completion.provider,
+      model: input.completion.model,
+      fake: input.completion.fake,
+      tokensIn: input.completion.tokensIn,
+      tokensOut: input.completion.tokensOut,
       costMicro: estimated.costMicro,
       costBasis: estimated.costBasis,
-      latencyMs: Math.max(0, this.now() - started),
-      fingerprint,
+      latencyMs: input.latencyMs,
+      fingerprint: input.fingerprint,
     };
     this.ledger.put(record);
     if (this.costSink) {
       void Promise.resolve(this.costSink.write(record)).catch(() => undefined);
     }
-    return { ...completion, cost: record };
+    return record;
   }
 }
 
@@ -734,6 +1218,39 @@ function liveTransport(): HttpTransport {
     const { createUndiciTransport } = await import('./undici-transport');
     return createUndiciTransport()(request);
   };
+}
+
+function liveStreamTransport(): HttpStreamTransport {
+  return async (request) => {
+    const { createUndiciStreamTransport } = await import('./undici-transport');
+    return createUndiciStreamTransport()(request);
+  };
+}
+
+async function readStreamTextBounded(
+  response: GuardedStreamResponse,
+  maxBytes: number,
+): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      const chunk = Buffer.from(step.value);
+      total += chunk.length;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body');
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
 }
 
 async function withRetry<T>(

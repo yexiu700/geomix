@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { FAKE_MARK } from './adapters';
 import { GEO_MARKETS, type GeoMarket } from './brands';
+import type { GeoComplianceFlag } from './compliance';
 import type { TaskStatusName } from './task-status';
 
 /**
@@ -313,15 +314,95 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function renderInlineMarkdown(line: string): string {
-  const escaped = escapeHtml(line);
+function isSafeMarkdownUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed || /[\u0000-\u001f\s"'<>]/.test(trimmed)) return false;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  return false;
+}
+
+function renderEmphasisOnEscaped(escaped: string): string {
   return escaped
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
 }
 
+function renderNonCodeInline(segment: string): string {
+  // Parse Markdown images ![alt](url) and links [label](url) safely BEFORE escaping the surrounding text.
+  const tokenRe =
+    /!\[([^\]]*)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)|\[([^\]]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g;
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenRe.exec(segment)) !== null) {
+    if (match.index > lastIndex) {
+      out += renderEmphasisOnEscaped(escapeHtml(segment.slice(lastIndex, match.index)));
+    }
+    if (match[0].startsWith('![')) {
+      const alt = match[1] ?? '';
+      const url = match[2] ?? '';
+      if (isSafeMarkdownUrl(url)) {
+        out += `<img src="${escapeHtml(url.trim())}" alt="${escapeHtml(alt)}" style="max-width:100%" />`;
+      } else {
+        out += escapeHtml(alt);
+      }
+    } else {
+      const label = match[3] ?? '';
+      const url = match[4] ?? '';
+      if (isSafeMarkdownUrl(url)) {
+        out += `<a href="${escapeHtml(url.trim())}" target="_blank" rel="noopener noreferrer">${renderEmphasisOnEscaped(escapeHtml(label))}</a>`;
+      } else {
+        out += renderEmphasisOnEscaped(escapeHtml(label));
+      }
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < segment.length) {
+    out += renderEmphasisOnEscaped(escapeHtml(segment.slice(lastIndex)));
+  }
+  return out;
+}
+
+function renderInlineMarkdown(line: string): string {
+  const codeRe = /`([^`\n]+)`/g;
+  let out = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = codeRe.exec(line)) !== null) {
+    if (match.index > lastIndex) {
+      out += renderNonCodeInline(line.slice(lastIndex, match.index));
+    }
+    out += `<code>${escapeHtml(match[1] ?? '')}</code>`;
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < line.length) {
+    out += renderNonCodeInline(line.slice(lastIndex));
+  }
+  return out;
+}
+
+const GFM_TABLE_DELIMITER_RE = /^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/;
+
+function splitGfmTableCells(line: string): string[] {
+  let trimmed = line.trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map((cell) => cell.trim());
+}
+
+function isGfmTableHeaderPair(headerLine: string, delimiterLine: string | undefined): boolean {
+  if (!delimiterLine) return false;
+  if (!headerLine.includes('|')) return false;
+  const delimTrimmed = delimiterLine.trim();
+  if (!GFM_TABLE_DELIMITER_RE.test(delimTrimmed)) return false;
+  const headerCells = splitGfmTableCells(headerLine);
+  const delimCells = splitGfmTableCells(delimTrimmed);
+  return headerCells.length >= 2 && headerCells.length === delimCells.length;
+}
+
 /**
- * 将清洗后的 Markdown 转为严格白名单 HTML（仅输出 h2 / h3 / p / ul / ol / li / blockquote / strong / em）。
+ * 将清洗后的 Markdown 转为严格白名单 XSS 安全 HTML（支持 GFM table、代码块、标题、列表、引用、安全图片/链接与行内强调）。
  */
 export function markdownToSanitizedHtml(markdown: string): string {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
@@ -349,14 +430,75 @@ export function markdownToSanitizedHtml(markdown: string): string {
     listItems = [];
   };
 
-  for (const rawLine of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? '';
     const line = rawLine.trim();
+
+    // Fenced code blocks ``` ... ```
+    if (line.startsWith('```')) {
+      flushParagraph();
+      flushList();
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !(lines[i] ?? '').trim().startsWith('```')) {
+        codeLines.push(lines[i] ?? '');
+        i += 1;
+      }
+      blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+      continue;
+    }
+
     if (!line) {
       flushParagraph();
       flushList();
       continue;
     }
-    const h3 = /^###+\s+(.+)$/.exec(line);
+
+    // GFM Table: header row + delimiter row + 0..N body rows
+    if (isGfmTableHeaderPair(line, lines[i + 1])) {
+      flushParagraph();
+      flushList();
+      const headerCells = splitGfmTableCells(line);
+      const colCount = headerCells.length;
+      i += 2; // skip header & delimiter
+      const bodyRows: string[][] = [];
+      while (i < lines.length) {
+        const candidate = (lines[i] ?? '').trim();
+        if (!candidate || !candidate.includes('|')) break;
+        if (
+          /^#{1,6}\s+/.test(candidate) ||
+          candidate.startsWith('```') ||
+          candidate.startsWith('>')
+        ) {
+          break;
+        }
+        const cells = splitGfmTableCells(candidate);
+        if (cells.length === 0) break;
+        const normalized: string[] = [];
+        for (let c = 0; c < colCount; c += 1) {
+          normalized.push(cells[c] ?? '');
+        }
+        bodyRows.push(normalized);
+        i += 1;
+      }
+      i -= 1; // outer loop will increment
+      const theadHtml = `<thead><tr>${headerCells.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join('')}</tr></thead>`;
+      const tbodyHtml =
+        bodyRows.length > 0
+          ? `<tbody>${bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join('')}</tr>`).join('')}</tbody>`
+          : '<tbody></tbody>';
+      blocks.push(`<table>${theadHtml}${tbodyHtml}</table>`);
+      continue;
+    }
+
+    const h4 = /^####+\s+(.+)$/.exec(line);
+    if (h4) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<h4>${renderInlineMarkdown(h4[1]!.trim())}</h4>`);
+      continue;
+    }
+    const h3 = /^###\s+(.+)$/.exec(line);
     if (h3) {
       flushParagraph();
       flushList();
@@ -412,7 +554,8 @@ export function markdownToSanitizedHtml(markdown: string): string {
 export function stripHtmlToText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|h2|h3|li|blockquote|tr)>/gi, '\n')
+    .replace(/<\/(th|td)>/gi, ' ')
+    .replace(/<\/(p|h2|h3|h4|li|blockquote|tr|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -424,18 +567,75 @@ export function stripHtmlToText(html: string): string {
     .trim();
 }
 
+// ==================== 缺失事实显式留槽解析与回填（F14） ====================
+
+export const MISSING_FACT_CAPSULE_RE = /\[待补充[:：]([^\]\n]{1,120})\]/g;
+
+export type MissingFactSlot = {
+  raw: string;
+  hint: string;
+  index: number;
+  start: number;
+  end: number;
+};
+
+export function extractMissingFactSlots(markdown: string): MissingFactSlot[] {
+  const slots: MissingFactSlot[] = [];
+  const re = new RegExp(MISSING_FACT_CAPSULE_RE.source, 'g');
+  let match: RegExpExecArray | null;
+  let idx = 0;
+  while ((match = re.exec(markdown)) !== null) {
+    slots.push({
+      raw: match[0],
+      hint: (match[1] ?? '').trim(),
+      index: idx,
+      start: match.index,
+      end: match.index + match[0].length,
+    });
+    idx += 1;
+  }
+  return slots;
+}
+
+export function replaceMissingFactSlot(
+  markdown: string,
+  target: { raw: string; index?: number },
+  replacement: string,
+): string {
+  const cleanReplacement = replacement.trim();
+  const slots = extractMissingFactSlots(markdown);
+  const chosen =
+    typeof target.index === 'number' &&
+    slots[target.index] &&
+    slots[target.index]!.raw === target.raw
+      ? slots[target.index]!
+      : slots.find((s) => s.raw === target.raw);
+  if (!chosen) {
+    const fallbackPos = markdown.indexOf(target.raw);
+    if (fallbackPos < 0) return markdown;
+    return (
+      markdown.slice(0, fallbackPos) +
+      cleanReplacement +
+      markdown.slice(fallbackPos + target.raw.length)
+    );
+  }
+  return markdown.slice(0, chosen.start) + cleanReplacement + markdown.slice(chosen.end);
+}
+
 /**
- * 正文后处理：去开头客套话与重复一级标题、去手机号/固话/微信号/外部网址、补齐二级标题与 FAQ、转白名单 HTML。
+ * 正文后处理：去开头客套话与重复一级标题、去手机号/固话/微信号/外部裸网址（保留 Markdown 图片链接）、
+ * 按市场补齐二级标题与 FAQ、转白名单 HTML。
  */
 export function postProcessArticleMarkdown(
   rawMarkdown: string,
-  context?: { question?: string; mainKeyword?: string; brand?: string },
+  context?: { question?: string; mainKeyword?: string; brand?: string; market?: GeoMarket },
 ): {
   cleanedMarkdown: string;
   contentHtml: string;
   contentText: string;
   charCount: number;
 } {
+  const market: GeoMarket = context?.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
   let md = rawMarkdown.replace(/\r\n/g, '\n').trim();
   const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i.exec(md);
   if (fenced) {
@@ -446,6 +646,14 @@ export function postProcessArticleMarkdown(
     if (next === md) break;
     md = next;
   }
+
+  // Mask Markdown images ![alt](url) so URL_PATTERN does not strip product/inline images.
+  const preservedImages: string[] = [];
+  md = md.replace(/!\[[^\]]*\]\((?:https?:\/\/|\/)[^)\s]+\)/gi, (imgToken) => {
+    const key = `__GM_IMG_${preservedImages.length}__`;
+    preservedImages.push(imgToken);
+    return key;
+  });
 
   md = md
     .split('\n')
@@ -462,20 +670,36 @@ export function postProcessArticleMarkdown(
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
+  for (let i = 0; i < preservedImages.length; i += 1) {
+    md = md.replaceAll(`__GM_IMG_${i}__`, preservedImages[i]!);
+  }
+
   if (!/^##\s+/m.test(md)) {
-    const heading = context?.mainKeyword
-      ? `## ${context.mainKeyword}核心要点解析`
-      : '## 核心要点解析';
+    const heading =
+      market === 'GLOBAL'
+        ? context?.mainKeyword
+          ? `## ${context.mainKeyword} Key Takeaways`
+          : '## Key Takeaways'
+        : context?.mainKeyword
+          ? `## ${context.mainKeyword}核心要点解析`
+          : '## 核心要点解析';
     md = `${heading}\n\n${md}`;
   }
 
-  if (!/FAQ|常见问题/i.test(md)) {
-    const q = context?.question?.trim() || '实际选购与使用时应重点关注哪些指标？';
-    const kw = context?.mainKeyword?.trim() || '当前方案';
-    const brandNote = context?.brand?.trim()
-      ? `可优先对照「${context.brand.trim()}」在文中所列核心材质、工艺参数与真实使用场景体验，结合预算与日常使用频率做取舍。`
-      : `建议优先核对「${kw}」的核心参数、实际适配场景与长期维护成本，避免只看单一指标做决定。`;
-    md = `${md}\n\n## 常见问题（FAQ）\n**问：${q}**\n答：${brandNote}`;
+  if (!/FAQ|常见问题|Frequently Asked Questions/i.test(md)) {
+    if (market === 'GLOBAL') {
+      const q =
+        context?.question?.trim() || 'What key metrics should buyers evaluate before deciding?';
+      const brandLabel = context?.brand?.trim() || context?.mainKeyword?.trim() || 'this solution';
+      md = `${md}\n\n## Frequently Asked Questions (FAQ)\n**Q: ${q}**\nA: Compare verified specifications, real-world test figures, and long-term maintenance costs for ${brandLabel} against your primary workload requirements.`;
+    } else {
+      const q = context?.question?.trim() || '实际选购与使用时应重点关注哪些指标？';
+      const kw = context?.mainKeyword?.trim() || '当前方案';
+      const brandNote = context?.brand?.trim()
+        ? `可优先对照「${context.brand.trim()}」在文中所列核心材质、工艺参数与真实使用场景体验，结合预算与日常使用频率做取舍。`
+        : `建议优先核对「${kw}」的核心参数、实际适配场景与长期维护成本，避免只看单一指标做决定。`;
+      md = `${md}\n\n## 常见问题（FAQ）\n**问：${q}**\n答：${brandNote}`;
+    }
   }
 
   const contentHtml = markdownToSanitizedHtml(md);
@@ -528,12 +752,35 @@ export const geoArticleUpdateSchema = z
     title: z.string().trim().min(1).max(120).optional(),
     contentMarkdown: z.string().max(100_000).optional(),
     contentHtml: z.string().max(150_000).optional(),
+    outlineJson: z.array(geoOutlineHeadingSchema).max(15).optional(),
     tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
     status: z.enum(GEO_ARTICLE_STATUSES).optional(),
+    usedMediaIds: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   })
   .refine((val) => Object.keys(val).length > 0, '至少修改一项文章内容');
 
 export type GeoArticleUpdateInput = z.infer<typeof geoArticleUpdateSchema>;
+
+export const geoArticleListQuerySchema = z.object({
+  market: z.enum(GEO_MARKETS).optional(),
+  status: z.enum(GEO_ARTICLE_STATUSES).optional(),
+  tag: z.string().trim().min(1).max(40).optional(),
+  briefId: z.string().trim().min(1).max(64).optional(),
+  batchJobId: z.string().trim().min(1).max(64).optional(),
+  keyword: z.string().trim().min(1).max(80).optional(),
+  page: z.coerce.number().int().min(1).max(1000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export type GeoArticleListQuery = z.infer<typeof geoArticleListQuerySchema>;
+
+export const geoBatchListQuerySchema = z.object({
+  market: z.enum(GEO_MARKETS).optional(),
+  page: z.coerce.number().int().min(1).max(1000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export type GeoBatchListQuery = z.infer<typeof geoBatchListQuerySchema>;
 
 export const geoRewriteSectionSchema = z.object({
   selectedText: z.string().trim().min(1, '请先选中需要改写的段落').max(4000),
@@ -596,7 +843,7 @@ export type GeoArticleRecord = {
   model: string | null;
   tokensIn: number | null;
   tokensOut: number | null;
-  complianceFlags: Record<string, unknown> | null;
+  complianceFlags: GeoComplianceFlag[];
   createdAt: string;
   updatedAt: string;
 };
@@ -604,6 +851,15 @@ export type GeoArticleRecord = {
 export type GeoArticleListResponse = {
   items: GeoArticleRecord[];
   total: number;
+};
+
+export type GeoRewriteSectionResponse = {
+  rewrittenText: string;
+  action: GeoRewriteAction;
+  complianceFlags: GeoComplianceFlag[];
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
 };
 
 export type GeoBatchJobRecord = {
@@ -622,6 +878,11 @@ export type GeoBatchJobRecord = {
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
+};
+
+export type GeoBatchJobListResponse = {
+  items: GeoBatchJobRecord[];
+  total: number;
 };
 
 export type PromptPreferenceRecord = {

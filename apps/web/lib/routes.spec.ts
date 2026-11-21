@@ -74,6 +74,16 @@ describe('GeoMix 2.0 minimalist 5-workspace routes', () => {
     expect(buildWorkspaceHref('/studio', 'brand-1', 'CN', { briefId: 'brief-9' })).toBe(
       '/studio?brandId=brand-1&market=CN&briefId=brief-9',
     );
+    expect(buildWorkspaceHref('/studio', 'brand-1', 'CN', { batchJobId: 'gb_123456' })).toBe(
+      '/studio?brandId=brand-1&market=CN&batchJobId=gb_123456',
+    );
+    expect(
+      matchRoute('/studio?brandId=brand-1&market=CN&batchJobId=gb_123456&extra=ignored'),
+    ).toEqual({
+      href: '/studio?brandId=brand-1&market=CN&batchJobId=gb_123456',
+      path: '/studio',
+      title: 'GEO 写作台',
+    });
     expect(buildWorkspaceHref('/account', 'brand-1', 'CN', { tab: 'rights' })).toBe(
       '/account?tab=rights',
     );

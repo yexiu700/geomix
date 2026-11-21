@@ -8,6 +8,8 @@ import {
 } from '../brands/brand-fact-index.runner';
 import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.service';
 import { AdaptersModule } from '../infra/adapters.module';
+import { GEO_BATCH_ENQUEUER, GEO_BATCH_HANDLER, GeoBatchRunner } from '../studio/geo-batch.runner';
+import { StudioGenerationService } from '../studio/studio-generation.service';
 import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
 import { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
@@ -42,6 +44,7 @@ export class QueueModule {
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
         { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
+        { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
@@ -50,6 +53,7 @@ export class QueueModule {
         JOB_ENQUEUER,
         VISIBILITY_RUN_ENQUEUER,
         FACT_INDEX_ENQUEUER,
+        GEO_BATCH_ENQUEUER,
         WorkDriver,
         StepGate,
       ],
@@ -66,6 +70,7 @@ export class QueueModule {
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
         { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
+        { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
@@ -78,6 +83,9 @@ export class QueueModule {
         VisibilityJudgeService,
         BrandFactIndexRunner,
         { provide: FACT_INDEX_HANDLER, useExisting: BrandFactIndexRunner },
+        StudioGenerationService,
+        GeoBatchRunner,
+        { provide: GEO_BATCH_HANDLER, useExisting: GeoBatchRunner },
         BriefsAutoGeneratorService,
         {
           provide: VISIBILITY_RUN_COMPLETE_HOOKS,
@@ -95,8 +103,11 @@ export class QueueModule {
         QueueProducer,
         VISIBILITY_RUN_ENQUEUER,
         FACT_INDEX_ENQUEUER,
+        GEO_BATCH_ENQUEUER,
         VisibilityRunRunner,
         BrandFactIndexRunner,
+        StudioGenerationService,
+        GeoBatchRunner,
         BriefsAutoGeneratorService,
         QueueRuntime,
       ],

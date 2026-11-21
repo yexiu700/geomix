@@ -42,6 +42,20 @@ export type GuardedResponse = TransportResponse & {
   pinned: ResolvedAddress[];
 };
 
+export type TransportStreamResponse = {
+  status: number;
+  headers: Record<string, string>;
+  body: ReadableStream<Uint8Array> | null;
+  close: () => Promise<void>;
+};
+
+export type HttpStreamTransport = (request: TransportRequest) => Promise<TransportStreamResponse>;
+
+export type GuardedStreamResponse = TransportStreamResponse & {
+  url: URL;
+  pinned: ResolvedAddress[];
+};
+
 const HOP_HEADERS = new Set(['cookie', 'cookie2', 'proxy-authorization']);
 
 export function createDnsResolver(): DnsResolver {
@@ -131,6 +145,134 @@ export async function requestOnce(input: {
     url,
     pinned,
   };
+}
+
+export async function requestStream(input: {
+  url: string | URL;
+  method: 'GET' | 'POST';
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs: number;
+  maxBytes: number;
+  signal?: AbortSignal;
+  resolver: DnsResolver;
+  streamTransport: HttpStreamTransport;
+  allowlist?: SsrfAllowlist | string;
+}): Promise<GuardedStreamResponse> {
+  let url: URL;
+  try {
+    url = assertPublicUrl(input.url, { allowlist: input.allowlist });
+  } catch (error) {
+    if (error instanceof UrlPolicyError) {
+      throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', error.reason);
+    }
+    throw error;
+  }
+  const pinned = await resolvePinned(url, input.resolver, { allowlist: input.allowlist });
+  if (input.signal?.aborted) {
+    throw isTimeoutReason(input.signal.reason)
+      ? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout')
+      : new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+  }
+  const headers = publicHeaders(input.headers);
+  const signal = combineSignal(input.signal, input.timeoutMs);
+  let response: TransportStreamResponse;
+  try {
+    response = await input.streamTransport({
+      url,
+      method: input.method,
+      headers,
+      body: input.body,
+      pinned,
+      signal,
+      maxBytes: input.maxBytes,
+      timeoutMs: input.timeoutMs,
+    });
+  } catch (error) {
+    throw normalizeTransportError(error, signal, input.signal);
+  }
+  if (response.status >= 300 && response.status < 400) {
+    await response.close().catch(() => undefined);
+    throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'redirect_refused');
+  }
+  const { body, close } = wrapLimitedResponseStream(response.body, input.maxBytes, response.close);
+  return {
+    status: response.status,
+    headers: dropSensitiveHeaders(response.headers),
+    body,
+    close,
+    url,
+    pinned,
+  };
+}
+
+function wrapLimitedResponseStream(
+  rawBody: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+  rawClose: () => Promise<void>,
+): { body: ReadableStream<Uint8Array> | null; close: () => Promise<void> } {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let closed = false;
+
+  const closeOnce = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    if (reader) {
+      await reader.cancel().catch(() => undefined);
+      try {
+        reader.releaseLock();
+      } catch {
+        // ignore
+      }
+      reader = null;
+    } else if (rawBody && !rawBody.locked) {
+      await rawBody.cancel().catch(() => undefined);
+    }
+    await rawClose().catch(() => undefined);
+  };
+
+  if (!rawBody) {
+    return { body: null, close: closeOnce };
+  }
+
+  let total = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (!reader) {
+          reader = rawBody.getReader();
+        }
+        const step = await reader.read();
+        if (step.done) {
+          try {
+            reader.releaseLock();
+          } catch {
+            // ignore
+          }
+          reader = null;
+          await closeOnce();
+          controller.close();
+          return;
+        }
+        const chunk = step.value;
+        total += chunk.byteLength;
+        if (total > maxBytes) {
+          await closeOnce();
+          controller.error(new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body'));
+          return;
+        }
+        controller.enqueue(chunk);
+      } catch (err) {
+        await closeOnce();
+        controller.error(err);
+      }
+    },
+    async cancel() {
+      await closeOnce();
+    },
+  });
+
+  return { body, close: closeOnce };
 }
 
 export async function resolvePinned(

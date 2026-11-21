@@ -12,13 +12,14 @@ import {
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import type { FactIndexEnqueuer, FactIndexJobData } from '../brands/brand-fact-index.runner';
+import type { GeoBatchEnqueuer, GeoBatchJobData } from '../studio/geo-batch.runner';
 import type {
   VisibilityCheckJobData,
   VisibilityRunEnqueuer,
 } from '../visibility/visibility-run.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
 
-export type { FactIndexJobData, VisibilityCheckJobData };
+export type { FactIndexJobData, GeoBatchJobData, VisibilityCheckJobData };
 
 export const BOARD_PATH = '/api/v1/admin/queues/board';
 
@@ -35,7 +36,12 @@ type JobCounts = {
  */
 @Injectable()
 export class QueueProducer
-  implements JobEnqueuer, VisibilityRunEnqueuer, FactIndexEnqueuer, OnModuleDestroy
+  implements
+    JobEnqueuer,
+    VisibilityRunEnqueuer,
+    FactIndexEnqueuer,
+    GeoBatchEnqueuer,
+    OnModuleDestroy
 {
   private connection: IORedis | undefined;
   private readonly queues = new Map<QueueName, Queue>();
@@ -92,6 +98,27 @@ export class QueueProducer
       'fact-index',
       { tenantId: data.tenantId, brandId: data.brandId },
       {
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: true,
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueGeoBatch(data: GeoBatchJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('geo-batch');
+    await queue.add(
+      'geo-batch',
+      {
+        tenantId: data.tenantId,
+        jobId: data.jobId,
+        ...(data.recipe ? { recipe: data.recipe } : {}),
+        ...(data.targetFormat ? { targetFormat: data.targetFormat } : {}),
+      },
+      {
+        jobId: `geo-batch-${data.jobId}`,
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },
         removeOnComplete: true,

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { GeoMarket } from './brands';
+import type { GeoComplianceFlag } from './compliance';
 import {
+  extractMissingFactSlots,
   markdownToSanitizedHtml,
   stripHtmlToText,
   type GeoArticleStatus,
@@ -129,10 +131,23 @@ export function sanitizeRichArticleHtml(input: string): {
       if (tag === 'img') {
         const srcMatch = (rawAttrs ?? '').match(/\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/i);
         const altMatch = (rawAttrs ?? '').match(/\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
-        const src = (srcMatch?.[1] ?? srcMatch?.[2] ?? '').trim();
-        if (!src || /^javascript:/i.test(src)) return '';
+        const rawSrc = (srcMatch?.[1] ?? srcMatch?.[2] ?? '').trim();
+        if (!rawSrc || /[\u0000-\u001f\u007f\s"'<>]/.test(rawSrc) || /&#/i.test(rawSrc)) {
+          return '';
+        }
+        const decodedSrc = decodeHtmlEntities(rawSrc).trim();
+        if (
+          !decodedSrc ||
+          /[\u0000-\u001f\u007f\s"'<>]/.test(decodedSrc) ||
+          !(
+            /^https?:\/\//i.test(decodedSrc) ||
+            (decodedSrc.startsWith('/') && !decodedSrc.startsWith('//'))
+          )
+        ) {
+          return '';
+        }
         const alt = escapeHtmlAttr((altMatch?.[1] ?? altMatch?.[2] ?? '').trim());
-        return `<img src="${escapeHtmlAttr(src)}" alt="${alt}" style="max-width:100%" />`;
+        return `<img src="${escapeHtmlAttr(decodedSrc)}" alt="${alt}" style="max-width:100%" />`;
       }
       return `<${tag}>`;
     },
@@ -537,3 +552,508 @@ export type ActionHomeResponse = {
     publishRecord?: GeoPublishRecordDto | null;
   }>;
 };
+
+// ==================== GEO 0–100 实时体检、JSON-LD 与 llms.txt 纯函数 ====================
+
+export type EvaluateGeoArticleInput = {
+  market: GeoMarket;
+  locale?: string;
+  localBrandName: string;
+  category?: string;
+  ownedDomains?: readonly string[];
+  title: string;
+  targetPrompt: string;
+  contentMarkdown: string;
+  targetFanOuts?: readonly string[];
+  matchedFactIds?: readonly string[];
+  brandFactTexts?: readonly string[];
+  complianceFlags?: readonly GeoComplianceFlag[];
+};
+
+const AI_CLICHE_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  { pattern: /在数字化浪潮下/, label: '在数字化浪潮下' },
+  { pattern: /随着科技的飞速发展|随着人工智能的快速发展/, label: '随着科技的飞速发展' },
+  { pattern: /众所周知/, label: '众所周知' },
+  { pattern: /综上所述|总而言之/, label: '综上所述' },
+  { pattern: /不言而喻|毋庸置疑/, label: '不言而喻' },
+  {
+    pattern: /in today['’]s fast-paced digital world/i,
+    label: "in today's fast-paced digital world",
+  },
+  { pattern: /in conclusion,\s*it is worth noting/i, label: 'in conclusion, it is worth noting' },
+];
+
+const LEGACY_PLACEHOLDER_RE = /\{训练词占位符\}|\{转化词占位符\}|【品牌\d+】/;
+const GFM_TABLE_PRESENT_RE = /^\|?.+\|.+\n\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/m;
+const SPEC_METRIC_RE =
+  /\b\d+(?:\.\d+)?\s*(?:W|dB|dBA|TB|GB|MB\/s|GB\/s|GbE|%|Wh|mAh|mm|cm|kg|ms|Hz|GHz|℃|°C|nm|lm)\b|\d+(?:\.\d+)?\s*(?:瓦|分贝|盘位|年|小时|元|万元|倍|千兆|万兆)|\b(?:ISO\s*\d+|UL\s*\d*|CE|FCC|RoHS|DDR[45]|NVMe|RAID\s*\d+|N\d{3,4})\b/gi;
+
+function sanitizeJsonLdText(raw: string): string {
+  return raw
+    .replace(/<\s*\/\s*script/gi, '&lt;/script')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractFirstBodyParagraph(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const buf: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      if (buf.length > 0) break;
+      continue;
+    }
+    if (line.startsWith('#') || line.startsWith('|') || line.startsWith('```')) {
+      if (buf.length > 0) break;
+      continue;
+    }
+    if (/^[-*•]\s+/.test(line) || /^\d+[.、)]\s+/.test(line)) {
+      if (buf.length > 0) break;
+      continue;
+    }
+    buf.push(line.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1'));
+  }
+  return buf.join(' ').trim();
+}
+
+function extractFaqPairs(
+  markdown: string,
+  fallbackQuestion: string,
+  fallbackAnswer: string,
+): Array<{ question: string; answer: string }> {
+  const pairs: Array<{ question: string; answer: string }> = [];
+  const normalized = markdown.replace(/\r\n/g, '\n');
+
+  const qaRegex =
+    /(?:\*\*|###\s*)?(?:Q|问)\s*[:：]\s*([^\n*]+)\*{0,2}\s*\n+(?:\*\*)?(?:A|答)\s*[:：]\s*\*{0,2}\s*([^\n]+(?:\n(?!\s*(?:\*\*|###|##|(?:Q|问)\s*[:：]))[^\n]+)*)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = qaRegex.exec(normalized)) !== null) {
+    const q = sanitizeJsonLdText(match[1] ?? '');
+    const a = sanitizeJsonLdText(match[2] ?? '');
+    if (q && a) {
+      pairs.push({ question: q, answer: a });
+    }
+    if (pairs.length >= 6) break;
+  }
+
+  if (pairs.length === 0) {
+    const q = sanitizeJsonLdText(fallbackQuestion) || 'Key Selection Question';
+    const a = sanitizeJsonLdText(fallbackAnswer) || q;
+    pairs.push({ question: q, answer: a });
+  }
+  return pairs;
+}
+
+export function buildGeoSchemaJsonLd(input: {
+  market: GeoMarket;
+  locale?: string;
+  localBrandName: string;
+  category?: string;
+  title: string;
+  targetPrompt: string;
+  contentMarkdown: string;
+}): Record<string, unknown> {
+  const brandName = sanitizeJsonLdText(input.localBrandName || 'GeoMix Brand');
+  const headline = sanitizeJsonLdText(input.title || input.targetPrompt);
+  const firstParagraph = extractFirstBodyParagraph(input.contentMarkdown);
+  const description = sanitizeJsonLdText(firstParagraph || headline).slice(0, 240);
+  const inLanguage = sanitizeJsonLdText(
+    input.locale || (input.market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
+  );
+  const qaPairs = extractFaqPairs(input.contentMarkdown, input.targetPrompt, description);
+
+  const graph: Array<Record<string, unknown>> = [
+    {
+      '@type': 'Article',
+      headline,
+      description,
+      inLanguage,
+      author: {
+        '@type': 'Organization',
+        name: brandName,
+      },
+      publisher: {
+        '@type': 'Organization',
+        name: brandName,
+      },
+    },
+    {
+      '@type': 'FAQPage',
+      inLanguage,
+      mainEntity: qaPairs.map((item) => ({
+        '@type': 'Question',
+        name: item.question,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: item.answer,
+        },
+      })),
+    },
+  ];
+
+  if (input.market === 'GLOBAL' || input.category) {
+    graph.push({
+      '@type': 'Product',
+      name: brandName,
+      category: sanitizeJsonLdText(input.category || 'Consumer Hardware'),
+      description,
+      brand: {
+        '@type': 'Brand',
+        name: brandName,
+      },
+    });
+  }
+
+  return {
+    '@context': 'https://schema.org',
+    '@graph': graph,
+  };
+}
+
+function slugifyPathSegment(text: string): string {
+  const ascii = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return ascii || 'geo-guide';
+}
+
+export function buildLlmsTxtSnippet(input: {
+  market: GeoMarket;
+  localBrandName: string;
+  category?: string;
+  ownedDomains?: readonly string[];
+  title: string;
+  targetPrompt: string;
+  contentMarkdown: string;
+}): string | null {
+  if (input.market !== 'GLOBAL') return null;
+  const brandName = input.localBrandName.trim() || 'Brand';
+  const rawDomain = input.ownedDomains?.[0]?.trim() || '';
+  const cleanDomain =
+    rawDomain.replace(/^https?:\/\//i, '').replace(/\/.*$/, '') ||
+    `${slugifyPathSegment(brandName)}.com`;
+  const title = input.title.trim() || input.targetPrompt.trim() || `${brandName} Guide`;
+  const summary =
+    extractFirstBodyParagraph(input.contentMarkdown).slice(0, 160) ||
+    `Verified product comparison and specifications for ${brandName}.`;
+  const slug = slugifyPathSegment(title);
+
+  return [
+    `# ${brandName}`,
+    '',
+    `> Authoritative product specifications, independent benchmarks, and buying guides for ${brandName}${input.category ? ` (${input.category})` : ''}.`,
+    '',
+    '## Featured GEO Guides',
+    `- [${title}](https://${cleanDomain}/guides/${slug}): ${summary}`,
+  ].join('\n');
+}
+
+export function buildCrawlerChecklist(
+  market: GeoMarket,
+): Array<{ bot: string; purpose: string; recommended: boolean }> {
+  if (market === 'GLOBAL') {
+    return [
+      { bot: 'GPTBot', purpose: 'OpenAI ChatGPT retrieval & citation indexing', recommended: true },
+      { bot: 'OAI-SearchBot', purpose: 'ChatGPT live web search citations', recommended: true },
+      {
+        bot: 'PerplexityBot',
+        purpose: 'Perplexity answer citations & source verification',
+        recommended: true,
+      },
+      { bot: 'ClaudeBot', purpose: 'Anthropic Claude web knowledge indexing', recommended: true },
+      {
+        bot: 'Google-Extended',
+        purpose: 'Google AI Overviews & Gemini grounding',
+        recommended: true,
+      },
+    ];
+  }
+  return [
+    { bot: 'Bytespider', purpose: '豆包 / 今日头条内容检索与引用', recommended: true },
+    { bot: 'Baiduspider', purpose: '文心一言 / 百度搜索索引', recommended: true },
+    { bot: 'GPTBot', purpose: '海外/跨语种 AI 检索索引（官网可选）', recommended: false },
+  ];
+}
+
+export function buildRecommendedChannelsForMarket(
+  market: GeoMarket,
+): Array<{ channel: string; reason: string }> {
+  if (market === 'GLOBAL') {
+    return [
+      {
+        channel: 'Official Blog / Docs',
+        reason: 'Primary source for JSON-LD Schema & llms.txt citation',
+      },
+      {
+        channel: 'Reddit',
+        reason: 'High-trust community consensus frequently cited by Perplexity & ChatGPT',
+      },
+      {
+        channel: 'Quora / Tech Review Media',
+        reason: 'Long-tail Q&A authority for buyer comparison queries',
+      },
+    ];
+  }
+  return [
+    { channel: '知乎', reason: '深度问答与参数对比实测在国内 AI 引擎中引用权重高' },
+    { channel: '什么值得买 / 今日头条', reason: '豆包与 DeepSeek 高频抓取评测与选购清单阵地' },
+    { channel: '微信公众号 / 官网专栏', reason: '沉淀品牌一手实测参数与长期权威信源' },
+  ];
+}
+
+function isFanOutCovered(markdownLower: string, fanOut: string): boolean {
+  const cleaned = fanOut.trim().toLowerCase();
+  if (!cleaned) return true;
+  if (markdownLower.includes(cleaned)) return true;
+  const tokens = cleaned
+    .split(/[\s,，、/|+_-]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return false;
+  const matched = tokens.filter((token) => markdownLower.includes(token));
+  return matched.length >= Math.ceil(tokens.length * 0.6);
+}
+
+/**
+ * 实时免费 GEO 0–100 五维体检纯函数（同时在 M4-A 生成/编辑及 M5 实时体检接口复用）。
+ */
+export function evaluateGeoArticle(input: EvaluateGeoArticleInput): GeoEvaluationResult {
+  const md = input.contentMarkdown.replace(/\r\n/g, '\n').trim();
+  const mdLower = md.toLowerCase();
+  const market = input.market;
+
+  // 1. Direct Answer (max 20)
+  const firstPara = extractFirstBodyParagraph(md);
+  const directAnswerHints: string[] = [];
+  let directAnswerScore = 0;
+  if (!firstPara || firstPara.length < 12) {
+    directAnswerHints.push('建议在开篇首段直接给出明确结论或选购建议（60–120 字以内）');
+  } else {
+    const startsWithCliche = AI_CLICHE_PATTERNS.some((c) => c.pattern.test(firstPara.slice(0, 40)));
+    if (startsWithCliche) {
+      directAnswerScore = 4;
+      directAnswerHints.push('首段包含空泛 AI 套话，建议改为开门见山的直接结论');
+    } else {
+      const charLen = Array.from(firstPara).length;
+      const firstSentence = firstPara.split(/[。！？.!?]/)[0] ?? firstPara;
+      const firstSentenceLen = Array.from(firstSentence).length;
+      const mentionsBrandOrMetric =
+        (input.localBrandName &&
+          firstPara.toLowerCase().includes(input.localBrandName.toLowerCase())) ||
+        /\d+/.test(firstPara);
+      if (charLen <= 180 || firstSentenceLen <= 110) {
+        directAnswerScore = mentionsBrandOrMetric ? 20 : 17;
+      } else if (charLen <= 280) {
+        directAnswerScore = mentionsBrandOrMetric ? 16 : 14;
+        directAnswerHints.push('首段略长，可进一步精简至 120 字以内直答核心问题');
+      } else {
+        directAnswerScore = 10;
+        directAnswerHints.push('首段过长，建议提炼 60–100 字核心结论前置');
+      }
+    }
+  }
+
+  // 2. Structured Extractable (max 20)
+  const structuredHints: string[] = [];
+  let structuredScore = 0;
+  const hasTable = GFM_TABLE_PRESENT_RE.test(md);
+  if (hasTable) structuredScore += 8;
+  else structuredHints.push('建议增加 Markdown 参数对比表以提升 AI 结构化抽取率');
+
+  const h2Matches = md.match(/^##\s+.+$/gm) ?? [];
+  if (h2Matches.length >= 3) structuredScore += 6;
+  else if (h2Matches.length >= 1) {
+    structuredScore += 3;
+    structuredHints.push('建议补充至至少 3 个清晰 H2 二级标题拆解主题');
+  } else {
+    structuredHints.push('缺少二级标题（##），建议按子问题拆分为 3–5 个小节');
+  }
+
+  const hasList = /^[-*•]\s+.+$/m.test(md) || /^\d+[.、)]\s+.+$/m.test(md);
+  if (hasList) structuredScore += 3;
+  else structuredHints.push('建议增加要点清单方便 AI 快速摘录');
+
+  const hasFaq = /FAQ|常见问题|Frequently Asked Questions|\*\*Q[:：]|\*\*问[:：]/i.test(md);
+  if (hasFaq) structuredScore += 3;
+  else structuredHints.push('建议在文末补充 2–5 组 FAQ 问答块');
+
+  // 3. Fact Density (max 25)
+  const factHints: string[] = [];
+  const specMatches = new Set(
+    (md.match(SPEC_METRIC_RE) ?? []).map((s) => s.toLowerCase().replace(/\s+/g, '')),
+  );
+  const specCount = specMatches.size;
+  let numericPoints = 0;
+  if (specCount >= 5) numericPoints = 15;
+  else if (specCount === 4) numericPoints = 13;
+  else if (specCount === 3) numericPoints = 11;
+  else if (specCount === 2) numericPoints = 8;
+  else if (specCount === 1) numericPoints = 5;
+  else factHints.push('缺少量化规格参数或实测数值（如功耗 W、噪音 dB、容量 TB 等）');
+
+  const matchedFactsCount = input.matchedFactIds?.length ?? 0;
+  let brandFactPoints = 0;
+  if (matchedFactsCount >= 2) {
+    brandFactPoints = 10;
+  } else if (matchedFactsCount === 1) {
+    brandFactPoints = 8;
+  } else if ((input.brandFactTexts ?? []).length > 0) {
+    const anchors = (input.brandFactTexts ?? []).join(' ').match(SPEC_METRIC_RE) ?? [];
+    const overlapped = new Set(
+      anchors.map((a) => a.toLowerCase().replace(/\s+/g, '')).filter((a) => specMatches.has(a)),
+    ).size;
+    brandFactPoints = overlapped >= 2 ? 9 : overlapped === 1 ? 6 : 2;
+  } else if (
+    input.localBrandName &&
+    mdLower.includes(input.localBrandName.toLowerCase()) &&
+    specCount >= 2
+  ) {
+    brandFactPoints = 7;
+  }
+  const missingSlots = extractMissingFactSlots(md);
+  const factDensityScore = Math.max(
+    0,
+    Math.min(25, numericPoints + brandFactPoints - (missingSlots.length > 0 ? 2 : 0)),
+  );
+  if (factDensityScore < 15 && factHints.length === 0) {
+    factHints.push('建议注入更多来自品牌事实卡的实测数据、认证资质或真实案例');
+  }
+
+  // 4. Fan-Out Coverage (max 20)
+  const fanOutHints: string[] = [];
+  const cleanedFanOuts = Array.from(
+    new Set((input.targetFanOuts ?? []).map((q) => q.trim()).filter((q) => q.length > 0)),
+  );
+  const coveredFanOuts: string[] = [];
+  const missingFanOuts: string[] = [];
+  let fanOutScore = 0;
+  if (cleanedFanOuts.length > 0) {
+    for (const q of cleanedFanOuts) {
+      if (isFanOutCovered(mdLower, q)) coveredFanOuts.push(q);
+      else missingFanOuts.push(q);
+    }
+    fanOutScore = Math.round((coveredFanOuts.length / cleanedFanOuts.length) * 20);
+    if (missingFanOuts.length > 0) {
+      fanOutHints.push(`尚有 ${missingFanOuts.length} 个目标拆解词未覆盖，可一键补写小节`);
+    }
+  } else {
+    fanOutScore = h2Matches.length >= 3 ? 18 : h2Matches.length >= 1 ? 12 : 4;
+    if (fanOutScore < 14) {
+      fanOutHints.push('可围绕高频衍生提问补充更多子章节以提升覆盖度');
+    }
+  }
+
+  // 5. De-AI & Compliance (max 15)
+  const deAiHints: string[] = [];
+  let deAiScore = 15;
+  if (missingSlots.length > 0) {
+    deAiScore -= Math.min(8, missingSlots.length * 5);
+    deAiHints.push(`正文包含 ${missingSlots.length} 处 [待补充] 缺失事实槽位，补填后可立即提分`);
+  }
+  if (LEGACY_PLACEHOLDER_RE.test(md)) {
+    deAiScore -= 6;
+    deAiHints.push('检测到遗留占位符残留，请清理后发布');
+  }
+  const matchedCliches = AI_CLICHE_PATTERNS.filter((c) => c.pattern.test(md));
+  if (matchedCliches.length > 0) {
+    deAiScore -= Math.min(8, matchedCliches.length * 4);
+    deAiHints.push('检测到明显 AI 套话，建议使用「更客观去广告味」局部改写');
+  }
+  if (market === 'CN') {
+    const cnAdFlags = (input.complianceFlags ?? []).filter(
+      (f) => f.code === 'AD_LAW_SUPERLATIVE' || f.code === 'AD_LAW_FLAG',
+    );
+    const lingeringCnSuperlative = /全网第一|行业第一|国家级|世界级|最顶级|100\s*%|百分之百/.test(
+      md,
+    );
+    if (cnAdFlags.length > 0 || lingeringCnSuperlative) {
+      const penalty = Math.min(6, Math.max(cnAdFlags.length, lingeringCnSuperlative ? 1 : 0) * 3);
+      deAiScore -= penalty;
+      deAiHints.push('国内轨检测到广告法极限词或风险词，请核对合规表达');
+    }
+  }
+  deAiScore = Math.max(0, Math.min(15, deAiScore));
+
+  const geoScore = Math.max(
+    0,
+    Math.min(100, directAnswerScore + structuredScore + factDensityScore + fanOutScore + deAiScore),
+  );
+
+  const geoScoreDetail: GeoScoreDetail = {
+    dimensions: {
+      directAnswer: {
+        key: 'directAnswer',
+        label: '首段直答',
+        score: directAnswerScore,
+        maxScore: 20,
+        passed: directAnswerScore >= 14,
+        hints: directAnswerHints,
+      },
+      structuredExtractable: {
+        key: 'structuredExtractable',
+        label: '结构化可抽取',
+        score: structuredScore,
+        maxScore: 20,
+        passed: structuredScore >= 14,
+        hints: structuredHints,
+      },
+      factDensity: {
+        key: 'factDensity',
+        label: '事实与量化密度',
+        score: factDensityScore,
+        maxScore: 25,
+        passed: factDensityScore >= 15,
+        hints: factHints,
+      },
+      fanOutCoverage: {
+        key: 'fanOutCoverage',
+        label: 'Fan-Out 覆盖率',
+        score: fanOutScore,
+        maxScore: 20,
+        passed: fanOutScore >= 14,
+        hints: fanOutHints,
+      },
+      deAiCompliance: {
+        key: 'deAiCompliance',
+        label: '去 AI 味与合规',
+        score: deAiScore,
+        maxScore: 15,
+        passed: deAiScore >= 11,
+        hints: deAiHints,
+      },
+    },
+    coveredFanOuts,
+    missingFanOuts,
+  };
+
+  return {
+    geoScore,
+    geoScoreDetail,
+    schemaJsonLd: buildGeoSchemaJsonLd({
+      market,
+      locale: input.locale,
+      localBrandName: input.localBrandName,
+      category: input.category,
+      title: input.title,
+      targetPrompt: input.targetPrompt,
+      contentMarkdown: md,
+    }),
+    llmsTxtSnippet: buildLlmsTxtSnippet({
+      market,
+      localBrandName: input.localBrandName,
+      category: input.category,
+      ownedDomains: input.ownedDomains,
+      title: input.title,
+      targetPrompt: input.targetPrompt,
+      contentMarkdown: md,
+    }),
+    crawlerChecklist: buildCrawlerChecklist(market),
+    recommendedChannels: buildRecommendedChannelsForMarket(market),
+  };
+}

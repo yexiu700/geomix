@@ -74,6 +74,7 @@ export type ReservationView = {
 export type LedgerLineView = {
   id: string;
   action: string;
+  reason: string;
   title: string;
   unitKey: string;
   delta: number;
@@ -1165,6 +1166,7 @@ function presentLog(row: {
   return {
     id: row.id,
     action: row.action,
+    reason: row.action,
     title: row.title,
     unitKey: row.unitKey,
     delta: row.delta,

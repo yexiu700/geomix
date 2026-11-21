@@ -44,6 +44,7 @@ export type BriefListPanelProps = {
   onWriteBrief: (brief: GeoBriefRecord) => void;
   onDismissBrief: (brief: GeoBriefRecord) => Promise<void>;
   onBatchWrite: (briefIds: readonly string[]) => void;
+  batchSubmitting?: boolean;
   onSwitchToRuns: () => void;
   onRefresh: () => void;
 };
@@ -79,6 +80,7 @@ export function BriefListPanel({
   onWriteBrief,
   onDismissBrief,
   onBatchWrite,
+  batchSubmitting = false,
   onSwitchToRuns,
   onRefresh,
 }: BriefListPanelProps): JSX.Element {
@@ -174,10 +176,15 @@ export function BriefListPanel({
             size="small"
             type="primary"
             data-testid="briefs-batch-btn"
-            disabled={!canBatchWrite}
+            loading={batchSubmitting}
+            disabled={!canBatchWrite || batchSubmitting}
             onClick={() => onBatchWrite(selectedBriefIds)}
           >
-            批量写作（{selectedBriefIds.length} 篇）
+            批量写作（{selectedBriefIds.length} 篇
+            {selectedBriefIds.length >= MIN_BATCH_SELECT
+              ? ` · ${selectedBriefIds.length * 10} 点`
+              : ''}
+            ）
           </Button>
         </div>
       </div>

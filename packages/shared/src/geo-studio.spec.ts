@@ -110,4 +110,59 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
     expect(processed.cleanedMarkdown).toContain('## 常见问题（FAQ）');
     expect(processed.charCount).toBeGreaterThan(10);
   });
+
+  it('renders GFM tables, code blocks, safe images/links, and neutralizes XSS payloads', () => {
+    const md = [
+      '## 对比表',
+      '',
+      '| 型号 | 功耗 | 噪音 |',
+      '| --- | :---: | ---: |',
+      '| **DXP4800** | `14W` | 18.5dB |',
+      '| CompX | 28W | <img src=x onerror=alert(1)> |',
+      '',
+      '![产品图](https://cdn.example.com/nas.png) ![bad](javascript:alert(1))',
+      '[官网](https://example.com) [xss](javascript:alert(2)) [data](data:text/html,hi)',
+      '',
+      '```json',
+      '{"x":"<script>alert(3)</script>"}',
+      '```',
+    ].join('\n');
+
+    const html = markdownToSanitizedHtml(md);
+    expect(html).toContain(
+      '<table><thead><tr><th>型号</th><th>功耗</th><th>噪音</th></tr></thead>',
+    );
+    expect(html).toContain('<td><strong>DXP4800</strong></td>');
+    expect(html).toContain('<td><code>14W</code></td>');
+    expect(html).toContain('<img src="https://cdn.example.com/nas.png" alt="产品图"');
+    expect(html).toContain('<a href="https://example.com"');
+    expect(html).toContain('<pre><code>');
+    expect(html).not.toContain('javascript:');
+    expect(html).not.toContain('data:text/html');
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('bad)');
+  });
+
+  it('extracts and replaces missing-fact capsules and preserves GLOBAL markdown & images', async () => {
+    const { extractMissingFactSlots, replaceMissingFactSlot } = await import('./geo-studio');
+    const draft = '待机实测 [待补充：如待机功耗 W]，满载噪音 [待补充:如满载噪音 dB]。';
+    const slots = extractMissingFactSlots(draft);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]?.hint).toBe('如待机功耗 W');
+    expect(slots[1]?.hint).toBe('如满载噪音 dB');
+
+    const filled = replaceMissingFactSlot(draft, slots[0]!, '12.5W');
+    expect(filled).toContain('待机实测 12.5W');
+    expect(filled).toContain('[待补充:如满载噪音 dB]');
+
+    const globalProcessed = postProcessArticleMarkdown(
+      'Best 4-bay NAS with 100% aluminum chassis.\n\n![Photo](https://cdn.example.com/p.jpg)',
+      { market: 'GLOBAL', brand: 'AstraVault', question: 'Best 4-bay NAS?' },
+    );
+    expect(globalProcessed.cleanedMarkdown).toContain('![Photo](https://cdn.example.com/p.jpg)');
+    expect(globalProcessed.cleanedMarkdown).not.toContain('常见问题');
+    expect(globalProcessed.cleanedMarkdown).toContain('Frequently Asked Questions (FAQ)');
+  });
 });

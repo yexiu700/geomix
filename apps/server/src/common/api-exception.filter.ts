@@ -3,8 +3,11 @@ import { API_ERROR, AUTH_ERROR, GALLERY_FILE_TOO_LARGE_MSG } from '@geomix/share
 import { ApiError } from './api-error';
 
 type ResponseLike = {
+  headersSent?: boolean;
+  writableEnded?: boolean;
   setHeader(name: string, value: string): void;
   status(code: number): { json(body: unknown): void };
+  end?: () => void;
 };
 
 @Catch()
@@ -16,6 +19,12 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const mapped = mapException(exception);
     if (mapped.status >= 500) {
       this.logger.error(exception instanceof Error ? exception.stack : String(exception));
+    }
+    if (response.headersSent) {
+      if (!response.writableEnded) {
+        response.end?.();
+      }
+      return;
     }
     if (mapped.retryAfterSeconds !== undefined) {
       response.setHeader('Retry-After', String(mapped.retryAfterSeconds));

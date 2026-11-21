@@ -204,6 +204,7 @@ export {
 } from './task-status';
 export type { ItemStatusName, TaskStatusName } from './task-status';
 export * from './brands';
+export * from './compliance';
 export * from './geo-studio';
 export * from './geo-briefs';
 export * from './geo-delivery';

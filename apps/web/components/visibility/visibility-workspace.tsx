@@ -31,6 +31,7 @@ import {
   updateBrief,
 } from '../../lib/briefs';
 import { buildWorkspaceHref } from '../../lib/routes';
+import { createBatchJob, createStudioIdempotencyKey } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
@@ -199,6 +200,7 @@ export function VisibilityWorkspace(): JSX.Element {
   const [selectedBriefIds, setSelectedBriefIds] = useState<string[]>([]);
   const [activeBrief, setActiveBrief] = useState<GeoBriefRecord | null>(null);
   const [generatingBriefKey, setGeneratingBriefKey] = useState<string | null>(null);
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [brandFacts, setBrandFacts] = useState<BrandFactRecord[]>([]);
   const [brandFactsLoading, setBrandFactsLoading] = useState(false);
 
@@ -560,6 +562,7 @@ export function VisibilityWorkspace(): JSX.Element {
     setSelectedBriefIds([]);
     setActiveBrief(null);
     setGeneratingBriefKey(null);
+    setBatchSubmitting(false);
     setBrandFacts([]);
     setBrandFactsLoading(false);
     brandFactsLoadedBrandIdRef.current = null;
@@ -1142,16 +1145,39 @@ export function VisibilityWorkspace(): JSX.Element {
     }
   };
 
-  const handleBatchWriteBriefs = (briefIds: readonly string[]) => {
-    if (!activeBrandId || briefIds.length < 2) return;
-    const href = buildWorkspaceHref('/studio', activeBrandId, activeMarket, {
-      briefId: briefIds[0],
-    });
-    feedback.notifySuccess(`已选定 ${briefIds.length} 条意见，前往 GEO 写作台开启创作`);
-    if (consoleCtx?.navigateWorkspace) {
-      consoleCtx.navigateWorkspace(href);
-    } else if (typeof window !== 'undefined') {
-      window.location.assign(href);
+  const handleBatchWriteBriefs = async (briefIds: readonly string[]) => {
+    if (!activeBrandId || readOnly || batchSubmitting) return;
+    if (briefIds.length < 2 || briefIds.length > 20) return;
+    setBatchSubmitting(true);
+    const seq = contextSeqRef.current;
+    try {
+      const idemKey = createStudioIdempotencyKey('batch');
+      const job = await createBatchJob(
+        activeBrandId,
+        { market: activeMarket, briefIds: [...briefIds] },
+        idemKey,
+      );
+      if (seq !== contextSeqRef.current) return;
+      setSelectedBriefIds([]);
+      feedback.notifySuccess(`已提交 ${job.total} 篇批量写作任务，正在前往 GEO 写作台查看进度`);
+      invalidateFreshness('briefs', 'articles', 'points');
+      void consoleCtx?.refreshWallet();
+      const href = buildWorkspaceHref('/studio', activeBrandId, activeMarket, {
+        batchJobId: job.id,
+      });
+      if (consoleCtx?.navigateWorkspace) {
+        consoleCtx.navigateWorkspace(href);
+      } else if (typeof window !== 'undefined') {
+        window.location.assign(href);
+      }
+    } catch (err) {
+      if (seq !== contextSeqRef.current) return;
+      const msg = err instanceof Error && err.message.trim() ? err.message : '发起批量写作任务失败';
+      feedback.notifyError(msg);
+    } finally {
+      if (seq === contextSeqRef.current) {
+        setBatchSubmitting(false);
+      }
     }
   };
 
@@ -1256,7 +1282,10 @@ export function VisibilityWorkspace(): JSX.Element {
               onOpenBrief={(brief) => setActiveBrief(brief)}
               onWriteBrief={handleNavigateToStudioWithBrief}
               onDismissBrief={handleDismissBrief}
-              onBatchWrite={handleBatchWriteBriefs}
+              onBatchWrite={(ids) => {
+                void handleBatchWriteBriefs(ids);
+              }}
+              batchSubmitting={batchSubmitting}
               onSwitchToRuns={handleJumpToRunsCreate}
               onRefresh={() => {
                 if (!activeBrandId) return;

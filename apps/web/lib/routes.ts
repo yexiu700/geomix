@@ -29,7 +29,7 @@ const QUERY_KEYS: Record<WorkspacePath, readonly string[]> = {
   '/home': ['brandId', 'market'],
   '/brands': ['brandId', 'market'],
   '/visibility': ['brandId', 'market', 'tab', 'runId'],
-  '/studio': ['brandId', 'market', 'briefId', 'articleId'],
+  '/studio': ['brandId', 'market', 'briefId', 'articleId', 'batchJobId'],
   '/account': ['brandId', 'market', 'tab'],
 };
 

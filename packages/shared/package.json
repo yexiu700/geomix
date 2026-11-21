@@ -37,6 +37,10 @@
       "types": "./dist/catalog.d.ts",
       "default": "./dist/catalog.js"
     },
+    "./compliance": {
+      "types": "./dist/compliance.d.ts",
+      "default": "./dist/compliance.js"
+    },
     "./crud": {
       "types": "./dist/crud.d.ts",
       "default": "./dist/crud.js"

@@ -14,6 +14,12 @@ import {
   type FactIndexHandler,
 } from '../brands/brand-fact-index.runner';
 import {
+  GEO_BATCH_ENQUEUER,
+  GEO_BATCH_HANDLER,
+  type GeoBatchHandler,
+  type GeoBatchJobData,
+} from '../studio/geo-batch.runner';
+import {
   readVisibilityConfig,
   resolveVisibilityHealthRefreshMs,
 } from '../visibility/visibility.config';
@@ -27,7 +33,14 @@ import { MaintenanceRunner } from './maintenance.runner';
 import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
 
-export { FACT_INDEX_ENQUEUER, FACT_INDEX_HANDLER, VISIBILITY_RUN_ENQUEUER, VISIBILITY_RUN_HANDLER };
+export {
+  FACT_INDEX_ENQUEUER,
+  FACT_INDEX_HANDLER,
+  GEO_BATCH_ENQUEUER,
+  GEO_BATCH_HANDLER,
+  VISIBILITY_RUN_ENQUEUER,
+  VISIBILITY_RUN_HANDLER,
+};
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -52,6 +65,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(FACT_INDEX_HANDLER)
     private readonly factIndexer?: FactIndexHandler,
+    @Optional()
+    @Inject(GEO_BATCH_HANDLER)
+    private readonly geoBatchRunner?: GeoBatchHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -81,6 +97,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const factData = readFactIndexPayload(job.data);
             if (factData && this.factIndexer) {
               await this.factIndexer.process(factData);
+            }
+            return;
+          }
+          if (name === 'geo-batch' && job.name === 'geo-batch') {
+            const batchData = readGeoBatchPayload(job.data);
+            if (batchData && this.geoBatchRunner) {
+              await this.geoBatchRunner.process(batchData);
             }
             return;
           }
@@ -202,6 +225,27 @@ function readFactIndexPayload(data: unknown): { tenantId: string; brandId: strin
   if (!ID.test(tenantId) || !ID.test(brandId)) return null;
   if (tenantId === 'system' || brandId === 'system') return null;
   return { tenantId, brandId };
+}
+
+function readGeoBatchPayload(data: unknown): GeoBatchJobData | null {
+  if (!data || typeof data !== 'object') return null;
+  const raw = data as {
+    tenantId?: unknown;
+    jobId?: unknown;
+    recipe?: unknown;
+    targetFormat?: unknown;
+  };
+  if (typeof raw.tenantId !== 'string' || typeof raw.jobId !== 'string') return null;
+  if (!ID.test(raw.tenantId) || !ID.test(raw.jobId)) return null;
+  if (raw.tenantId === 'system' || raw.jobId === 'system') return null;
+  return {
+    tenantId: raw.tenantId,
+    jobId: raw.jobId,
+    ...(typeof raw.recipe === 'string' ? { recipe: raw.recipe as GeoBatchJobData['recipe'] } : {}),
+    ...(typeof raw.targetFormat === 'string'
+      ? { targetFormat: raw.targetFormat as GeoBatchJobData['targetFormat'] }
+      : {}),
+  };
 }
 
 function readKind(name: string, data: unknown): string {

@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
-import type { HttpTransport } from './guarded-request';
+import type { HttpStreamTransport, HttpTransport } from './guarded-request';
 import { ProviderError, PROVIDER_KIND } from './provider-error';
 import type { ResolvedAddress } from './ssrf';
 
@@ -41,6 +41,58 @@ export function createUndiciTransport(): HttpTransport {
       return { status: response.status, headers, body };
     } finally {
       await agent.close();
+    }
+  };
+}
+
+/**
+ * 流式传输版本：保持 SSRF IP 钉扎与 redirect: 'manual'，把响应 ReadableStream 与幂等 close() 交给调用方消费完后释放 Agent。
+ */
+export function createUndiciStreamTransport(): HttpStreamTransport {
+  return async (request) => {
+    const pinned = request.pinned[0];
+    if (!pinned) throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'unpinned');
+    const timeoutMs = Math.max(1_000, request.timeoutMs ?? 60_000);
+    const agent = new Agent({
+      connect: {
+        timeout: Math.min(10_000, timeoutMs),
+        servername: isIP(request.url.hostname.replace(/^\[|\]$/g, ''))
+          ? undefined
+          : request.url.hostname,
+        lookup: (_hostname, options, callback) => pinLookup(pinned, options, callback),
+      },
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+    });
+    let closed = false;
+    const closeOnce = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await agent.close().catch(() => undefined);
+    };
+    try {
+      const response = await undiciFetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        dispatcher: agent,
+        signal: request.signal,
+        redirect: 'manual',
+      });
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        if (key.toLowerCase() === 'set-cookie') return;
+        headers[key] = value;
+      });
+      return {
+        status: response.status,
+        headers,
+        body: response.body,
+        close: closeOnce,
+      };
+    } catch (error) {
+      await closeOnce();
+      throw error;
     }
   };
 }
