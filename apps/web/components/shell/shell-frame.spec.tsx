@@ -240,4 +240,69 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     fireEvent.click(screen.getByRole('button', { name: /海外/ }));
     expect(onSelectMarket).toHaveBeenCalledWith('GLOBAL');
   });
+
+  it('never leaks raw brand CUIDs into document.body textContent even if activeBrandId is transiently unmatched', () => {
+    const cuid1 = 'cmwqk6gel009syolb3wq0a756';
+    const cuid2 = 'cmwqk6gel009syolb3wq0a999';
+    const brandWithCuid: BrandRecord = makeBrand(cuid1, '极光智储', ['CN']);
+
+    const { rerender } = render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/brands"
+        brands={[brandWithCuid]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId={cuid1}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>品牌资产</div>
+      </ShellFrame>,
+    );
+
+    expect(document.body.textContent ?? '').toContain('极光智储');
+    expect(document.body.textContent ?? '').not.toContain(cuid1);
+
+    // Transiently unmatched activeBrandId must not fall back to displaying raw CUID
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/brands"
+        brands={[brandWithCuid]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId={cuid2}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>品牌资产</div>
+      </ShellFrame>,
+    );
+
+    expect(document.body.textContent ?? '').not.toContain(cuid1);
+    expect(document.body.textContent ?? '').not.toContain(cuid2);
+  });
 });

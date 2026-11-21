@@ -559,4 +559,44 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('fetches action home strictly once on cold load transition (brandsLoading: true -> false)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: true,
+      brandsLoaded: false,
+      brands: [],
+      activeBrandId: null,
+      activeMarket: 'CN',
+    });
+
+    const fetchSpy = vi
+      .spyOn(homeApi, 'fetchActionHome')
+      .mockResolvedValue(makeHomeData(BRAND_A.id, 'CN'));
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <HomeWorkspace />
+      </ConsoleProvider>,
+    );
+
+    expect(screen.getByTestId('home-loading')).toBeTruthy();
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      useWorkspaceStore.setState({
+        brandsLoading: false,
+        brandsLoaded: true,
+        brands: [BRAND_A],
+        activeBrandId: BRAND_A.id,
+        activeMarket: 'CN',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-health-strip')).toBeTruthy();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledWith(BRAND_A.id, 'CN', expect.anything());
+  });
 });

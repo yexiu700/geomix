@@ -3055,6 +3055,25 @@ input:not([class*='ant-']):hover {
   }
 }
 
+.gm-brand-competitor-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gm-brand-competitor-chips {
+  margin-top: 0;
+  max-width: 100%;
+}
+
+.gm-brand-competitor-chips .ant-tag {
+  margin-inline-end: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .gm-brand-seed-list {
   display: flex;
   flex-direction: column;

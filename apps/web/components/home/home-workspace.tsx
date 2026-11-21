@@ -248,6 +248,7 @@ export function HomeWorkspace(): JSX.Element {
   useTabFreshness({
     domains: ['brands', 'visibility-runs', 'briefs', 'articles', 'publish-records'],
     active: Boolean(activeBrandId && activeBrandMarket),
+    refreshOnActivate: false,
     onRefresh: () => {
       if (!activeBrandId || !activeBrandMarket) return;
       void loadHome(activeBrandId, activeMarket, contextSeqRef.current, { silent: true });

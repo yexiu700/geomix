@@ -336,4 +336,80 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     ).toBe(true);
     expect((screen.getByTestId('fact-ai-extract-btn') as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('renders competitor name, aliases, and normalized domain tags as visible text and isolates them on brand switch', async () => {
+    const b1: BrandRecord = {
+      ...makeBrand('b-comp-1', '青松存储'),
+      markets: [
+        {
+          ...makeBrand('b-comp-1', '青松存储').markets[0]!,
+          competitors: [
+            {
+              name: 'Synology',
+              aliases: ['群晖', '群晖科技'],
+              domains: ['synology.example', 'synology-cn.example'],
+            },
+          ],
+        },
+      ],
+    };
+    const b2: BrandRecord = {
+      ...makeBrand('b-comp-2', '凌云电源'),
+      markets: [
+        {
+          ...makeBrand('b-comp-2', '凌云电源').markets[0]!,
+          ownedDomains: ['lingyun.example'],
+          competitors: [
+            {
+              name: 'EcoFlow',
+              aliases: ['正浩'],
+              domains: ['ecoflow.example'],
+            },
+          ],
+        },
+      ],
+    };
+
+    getBrandFactsMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeFactsResponse(brandId)),
+    );
+    listBrandMediaMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeMediaResponse(brandId)),
+    );
+
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+
+    renderWorkspace();
+
+    await waitFor(() => {
+      expect(screen.getByText('synology.example')).toBeTruthy();
+    });
+    expect(screen.getByText('Synology')).toBeTruthy();
+    expect(screen.getByText('群晖')).toBeTruthy();
+    expect(screen.getByText('群晖科技')).toBeTruthy();
+    expect(screen.getByText('synology-cn.example')).toBeTruthy();
+
+    // Live editing domain input normalizes and reflects immediately as visible tags
+    fireEvent.change(screen.getByLabelText('市场竞品域名 1'), {
+      target: { value: 'https://WWW.JIKONG.EXAMPLE/path, forum.jikong.example' },
+    });
+    expect(screen.getByText('jikong.example')).toBeTruthy();
+    expect(screen.getByText('forum.jikong.example')).toBeTruthy();
+
+    // Brand switch cleanly isolates competitor tags to brand 2
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand('b-comp-2', 'CN', window.localStorage);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('ecoflow.example')).toBeTruthy();
+    });
+    expect(screen.getByText('EcoFlow')).toBeTruthy();
+    expect(screen.getByText('正浩')).toBeTruthy();
+    expect(screen.queryByText('forum.jikong.example')).toBeNull();
+  });
 });

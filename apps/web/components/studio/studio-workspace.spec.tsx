@@ -15,6 +15,7 @@ import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 import * as uxFoundation from '../../lib/ux-foundation';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
@@ -1891,5 +1892,120 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(copiedHtml).not.toContain('alert(1)');
     expect(copiedHtml).not.toContain('alert(2)');
     expect(copiedHtml).not.toContain('javascript:');
+  });
+
+  it('hydrates ?articleId= on cold load (brandsLoading: true -> false) with strictly 1 fetch and enables editor controls', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=CN&articleId=${SAMPLE_ARTICLE.id}`,
+    );
+    useWorkspaceStore.setState({
+      brandsLoading: true,
+      brandsLoaded: false,
+      brands: [],
+      activeBrandId: null,
+      activeMarket: 'CN',
+    });
+
+    const fetchArticlesSpy = vi.mocked(studioApi.fetchArticles);
+    fetchArticlesSpy.mockClear();
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    expect(screen.getByTestId('studio-loading')).toBeTruthy();
+    expect(fetchArticlesSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      useWorkspaceStore.setState({
+        brandsLoading: false,
+        brandsLoaded: true,
+        brands: [DUAL_BRAND],
+        activeBrandId: DUAL_BRAND.id,
+        activeMarket: 'CN',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('missing-fact-pill')).toBeTruthy();
+    });
+
+    expect(fetchArticlesSpy).toHaveBeenCalledTimes(1);
+    const insertBtn = screen.getByTestId('studio-insert-media-btn') as HTMLButtonElement;
+    expect(insertBtn.disabled).toBe(false);
+    expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe(
+      SAMPLE_ARTICLE.title,
+    );
+  });
+
+  it('preserves ?briefId= URL hydration if invalidateFreshness fires mid-flight during initial cold load', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=CN&briefId=${BRIEF_1.id}`,
+    );
+    useWorkspaceStore.setState({
+      brandsLoading: true,
+      brandsLoaded: false,
+      brands: [],
+      activeBrandId: null,
+      activeMarket: 'CN',
+    });
+
+    let resolveFirstBriefs!: (value: { items: GeoBriefRecord[]; total: number }) => void;
+    const firstBriefsPromise = new Promise<{ items: GeoBriefRecord[]; total: number }>(
+      (resolve) => {
+        resolveFirstBriefs = resolve;
+      },
+    );
+    const fetchBriefsSpy = vi.spyOn(briefsApi, 'fetchBriefs');
+    fetchBriefsSpy
+      .mockReturnValueOnce(firstBriefsPromise)
+      .mockResolvedValueOnce({ items: [BRIEF_1, BRIEF_2], total: 2 });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    act(() => {
+      useWorkspaceStore.setState({
+        brandsLoading: false,
+        brandsLoaded: true,
+        brands: [DUAL_BRAND],
+        activeBrandId: DUAL_BRAND.id,
+        activeMarket: 'CN',
+      });
+    });
+
+    await waitFor(() => {
+      expect(fetchBriefsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // External freshness invalidation arrives while initial load is still in flight
+    act(() => {
+      invalidateFreshness('brand-facts');
+    });
+
+    await waitFor(() => {
+      expect(fetchBriefsSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // Resolve aborted first request late (should be ignored) and verify ?briefId= still hydrated
+    await act(async () => {
+      resolveFirstBriefs({ items: [BRIEF_1, BRIEF_2], total: 2 });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('目标问题') as HTMLTextAreaElement).value).toBe(
+        BRIEF_1.targetPrompt,
+      );
+    });
   });
 });

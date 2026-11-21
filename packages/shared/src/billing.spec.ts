@@ -81,6 +81,40 @@ describe('GeoMix 2.0 billing rules', () => {
     expect(five.lines).toEqual([{ action: 'geo_write', listPrice: 10, title: 'GEO写作' }]);
   });
 
+  it('clamps quoteGeoWrite ledger titles to <= 80 chars without splitting UTF-16 surrogates', () => {
+    const subjects = [
+      'A'.repeat(75),
+      'Best 私有云 NAS 2026 Buying Guide: AstraVault f12t4-1763738000 Top-Rated Review',
+      '针对竞品高引用页面发起的 2026 年家用静音四盘位私有云 NAS 实测深度横向对比评测与选购完整指南（含噪音、功耗、RAID 扩展与备份实测数据）',
+    ];
+    for (const subject of subjects) {
+      const quote = quoteGeoWrite({ count: 1, geoWritePoints: 10, subject });
+      const title = quote.lines[0]?.title ?? '';
+      expect(title.startsWith('GEO写作-')).toBe(true);
+      expect(title.length).toBeGreaterThanOrEqual(7);
+      expect(title.length).toBeLessThanOrEqual(80);
+      expect(title).toBe(title.trim());
+    }
+
+    // Trailing boundary surrogate pair (73 ASCII chars + 1 emoji = 75 UTF-16 code units; max subject = 74)
+    const emojiBoundary = `${'a'.repeat(73)}🚀tail`;
+    const emojiQuote = quoteGeoWrite({ count: 1, geoWritePoints: 10, subject: emojiBoundary });
+    const emojiTitle = emojiQuote.lines[0]?.title ?? '';
+    expect(emojiTitle).toBe(`GEO写作-${'a'.repeat(73)}`);
+    expect(emojiTitle.length).toBe(79);
+    // Must not end in an unpaired UTF-16 high surrogate
+    const lastCode = emojiTitle.charCodeAt(emojiTitle.length - 1);
+    expect(lastCode < 0xd800 || lastCode > 0xdbff).toBe(true);
+
+    // Control characters and whitespace-only subjects fall back cleanly to 'GEO写作'
+    const controlOnly = quoteGeoWrite({
+      count: 1,
+      geoWritePoints: 10,
+      subject: '\u0000\u0007   \n\t  ',
+    });
+    expect(controlOnly.lines[0]?.title).toBe('GEO写作');
+  });
+
   it('rejects a non-positive price or invalid count instead of quoting a free charge', () => {
     expect(() => quoteGeoWrite({ count: 1, geoWritePoints: 0 })).toThrow(BillingRuleError);
     expect(() => quoteGeoWrite({ count: 1, geoWritePoints: -5 })).toThrow(BillingRuleError);

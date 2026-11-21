@@ -17,6 +17,8 @@ import { useWorkspaceStore } from '../../lib/workspace-store';
 import { useUxFeedback } from '../crud/ux-feedback';
 import {
   hydrateCompetitorRows,
+  parseCompetitorAliases,
+  parseDomainTokens,
   serializeCompetitorRows,
   type CompetitorDraftRow,
 } from './brand-form-helpers';
@@ -433,49 +435,75 @@ export function BrandIdentitySection({
                   主要竞品与竞品域名（{competitorRows.length} / {BRAND_MAX_COMPETITORS}）
                 </span>
                 <div className="gm-brand-competitor-list">
-                  {competitorRows.map((row, idx) => (
-                    <div key={row.key} className="gm-brand-competitor-row">
-                      <Input
-                        aria-label={`市场竞品名称 ${idx + 1}`}
-                        value={row.name}
-                        maxLength={BRAND_NAME_MAX}
-                        disabled={readOnly || savingMarket}
-                        placeholder="竞品名"
-                        onChange={(event) =>
-                          setCompetitorRows((prev) =>
-                            prev.map((item) =>
-                              item.key === row.key ? { ...item, name: event.target.value } : item,
-                            ),
-                          )
-                        }
-                      />
-                      <Input
-                        aria-label={`市场竞品域名 ${idx + 1}`}
-                        value={row.domainsText}
-                        disabled={readOnly || savingMarket}
-                        placeholder="竞品域名（逗号分隔，选填）"
-                        onChange={(event) =>
-                          setCompetitorRows((prev) =>
-                            prev.map((item) =>
-                              item.key === row.key
-                                ? { ...item, domainsText: event.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                      />
-                      <Button
-                        size="small"
-                        danger
-                        disabled={readOnly || savingMarket}
-                        onClick={() =>
-                          setCompetitorRows((prev) => prev.filter((item) => item.key !== row.key))
-                        }
-                      >
-                        移除
-                      </Button>
-                    </div>
-                  ))}
+                  {competitorRows.map((row, idx) => {
+                    const trimmedName = row.name.trim();
+                    const parsedAliases = parseCompetitorAliases(row.aliasesText);
+                    const parsedDomains = parseDomainTokens(row.domainsText);
+                    const hasPreviewChips =
+                      Boolean(trimmedName) || parsedAliases.length > 0 || parsedDomains.length > 0;
+                    return (
+                      <div key={row.key} className="gm-brand-competitor-item">
+                        <div className="gm-brand-competitor-row">
+                          <Input
+                            aria-label={`市场竞品名称 ${idx + 1}`}
+                            value={row.name}
+                            maxLength={BRAND_NAME_MAX}
+                            disabled={readOnly || savingMarket}
+                            placeholder="竞品名"
+                            onChange={(event) =>
+                              setCompetitorRows((prev) =>
+                                prev.map((item) =>
+                                  item.key === row.key
+                                    ? { ...item, name: event.target.value }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                          <Input
+                            aria-label={`市场竞品域名 ${idx + 1}`}
+                            value={row.domainsText}
+                            disabled={readOnly || savingMarket}
+                            placeholder="竞品域名（逗号分隔，选填）"
+                            onChange={(event) =>
+                              setCompetitorRows((prev) =>
+                                prev.map((item) =>
+                                  item.key === row.key
+                                    ? { ...item, domainsText: event.target.value }
+                                    : item,
+                                ),
+                              )
+                            }
+                          />
+                          <Button
+                            size="small"
+                            danger
+                            disabled={readOnly || savingMarket}
+                            onClick={() =>
+                              setCompetitorRows((prev) =>
+                                prev.filter((item) => item.key !== row.key),
+                              )
+                            }
+                          >
+                            移除
+                          </Button>
+                        </div>
+                        {hasPreviewChips ? (
+                          <div className="gm-brand-chip-list gm-brand-competitor-chips">
+                            {trimmedName ? <Tag>{trimmedName}</Tag> : null}
+                            {parsedAliases.map((alias) => (
+                              <Tag key={`alias-${alias}`}>{alias}</Tag>
+                            ))}
+                            {parsedDomains.map((domain) => (
+                              <Tag key={`domain-${domain}`} color="volcano">
+                                {domain}
+                              </Tag>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                   <Button
                     type="dashed"
                     size="small"

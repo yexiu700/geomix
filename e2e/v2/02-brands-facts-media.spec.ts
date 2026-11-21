@@ -1,6 +1,7 @@
 import { expect, test, v2Describe } from './support/v2-test';
 import {
   apiRequest,
+  apiV2Base,
   createBrand,
   deleteBrandMedia,
   extractItems,
@@ -69,7 +70,8 @@ v2Describe('F6: 60-Second Brand Creation & Dual-Market Identity', { tag: ['@F6',
         await expect(
           page
             .getByTestId('fact-ai-extract-btn')
-            .or(page.getByRole('button', { name: /AI.*提炼|一键提炼/ })),
+            .or(page.getByRole('button', { name: /AI.*提炼|一键提炼/ }))
+            .first(),
         ).toBeVisible();
       } finally {
         await context.close();
@@ -814,14 +816,14 @@ v2Describe('F8: Single-Level Real Product Photo Manager', { tag: ['@F8', '@M2'] 
         const asset = up.body!.data;
         mediaId = asset.id;
 
-        const imgRes = await fetch(asset.url);
+        const imgRes = await fetch(new URL(asset.url, apiV2Base()).toString());
         expect(imgRes.status).toBe(200);
         const storedBytes = Buffer.from(await imgRes.arrayBuffer());
         expect(storedBytes.toString('latin1')).not.toContain(FAKE_EXIF_MARKER);
         expect(storedBytes.toString('latin1')).not.toContain('Exif\0\0');
 
         expect(asset.thumbUrl, 'Expected thumbnail URL to be generated').toBeTruthy();
-        const thumbRes = await fetch(asset.thumbUrl!);
+        const thumbRes = await fetch(new URL(asset.thumbUrl!, apiV2Base()).toString());
         expect(thumbRes.status).toBe(200);
         expect((thumbRes.headers.get('content-type') ?? '').startsWith('image/')).toBe(true);
       } finally {

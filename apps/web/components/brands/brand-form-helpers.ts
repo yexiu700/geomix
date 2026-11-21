@@ -80,6 +80,18 @@ export function validateDomainListInput(raw: string | undefined): {
   return { domains, invalidTokens };
 }
 
+export function parseCompetitorAliases(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[,，;；\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
 export function hydrateCompetitorRows(
   competitors: readonly BrandCompetitor[],
 ): CompetitorDraftRow[] {
@@ -110,14 +122,7 @@ export function serializeCompetitorRows(rows: readonly CompetitorDraftRow[]): {
     if (invalidTokens.length > 0) {
       invalidDomainRows.push(`${name}（无效域名：${invalidTokens.join('、')}）`);
     }
-    const aliases = Array.from(
-      new Set(
-        (row.aliasesText ?? '')
-          .split(/[,，;；\n]+/)
-          .map((item) => item.trim())
-          .filter(Boolean),
-      ),
-    );
+    const aliases = parseCompetitorAliases(row.aliasesText);
     competitors.push({ name, aliases, domains });
   }
 

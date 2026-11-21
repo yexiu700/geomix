@@ -60,11 +60,21 @@ export function isPositivePoints(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0 && value <= MAX_POINT_AMOUNT;
 }
 
+const MAX_LEDGER_TITLE_LENGTH = 80;
+const GEO_WRITE_TITLE_PREFIX = 'GEO写作-';
+
+function sliceSafe(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value;
+  let end = maxLen;
+  const lastCode = value.charCodeAt(end - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function cleanSubject(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f]/g, '')
-    .trim()
-    .slice(0, 80);
+  return sliceSafe(value.replace(/[\u0000-\u001f]/g, '').trim(), MAX_LEDGER_TITLE_LENGTH).trim();
 }
 
 export function ledgerTitle(base: string, shadow: boolean): string {
@@ -110,7 +120,10 @@ export function quoteGeoWrite(input: {
   if (!Number.isSafeInteger(total) || total > MAX_POINT_AMOUNT) {
     throw new BillingRuleError('total');
   }
-  const subject = cleanSubject(input.subject ?? '');
+  const subject = sliceSafe(
+    cleanSubject(input.subject ?? ''),
+    MAX_LEDGER_TITLE_LENGTH - GEO_WRITE_TITLE_PREFIX.length,
+  ).trim();
   return {
     count: input.count,
     unitPrice: input.geoWritePoints,
@@ -119,7 +132,7 @@ export function quoteGeoWrite(input: {
       {
         action: 'geo_write',
         listPrice: input.geoWritePoints,
-        title: subject.length > 0 ? `GEO写作-${subject}` : 'GEO写作',
+        title: subject.length > 0 ? `${GEO_WRITE_TITLE_PREFIX}${subject}` : 'GEO写作',
       },
     ],
   };

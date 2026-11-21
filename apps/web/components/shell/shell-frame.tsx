@@ -394,7 +394,8 @@ export function ShellFrame({
                 data-testid="global-brand-switcher"
                 aria-label="切换当前品牌"
                 size="small"
-                value={activeBrandId ?? undefined}
+                value={activeBrand?.id}
+                virtual={false}
                 onChange={onSelectBrand}
                 className="gm-brand-select"
                 popupMatchSelectWidth={240}

@@ -197,6 +197,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   // Anti-race AbortControllers & monotonic context/article sequences
   const contextSeqRef = useRef(0);
+  const urlHydratedSeqRef = useRef(0);
   const articleSeqRef = useRef(0);
   const activeArticleIdRef = useRef<string | null>(null);
   const loadCtrlRef = useRef<AbortController | null>(null);
@@ -344,20 +345,27 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setArticlesLoading(false);
       setBrandMediaLoading(false);
 
-      if (options?.preserveSelection) return;
+      const shouldHydrateUrl = !options?.preserveSelection || urlHydratedSeqRef.current !== seq;
+      if (!shouldHydrateUrl) return;
+
+      const hydrationTasks: Promise<void>[] = [];
 
       // Hydrate ?batchJobId=
       if (urlParams.batchJobId) {
         setHighlightedBatchJobId(urlParams.batchJobId);
         if (!loadedBatches.some((j) => j.id === urlParams.batchJobId)) {
-          void getBatchJob(brandId, urlParams.batchJobId, { signal: ctrl.signal })
-            .then((job) => {
-              if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-              if (job.market === market) {
-                setBatchJobs((prev) => (prev.some((p) => p.id === job.id) ? prev : [job, ...prev]));
-              }
-            })
-            .catch(() => undefined);
+          hydrationTasks.push(
+            getBatchJob(brandId, urlParams.batchJobId, { signal: ctrl.signal })
+              .then((job) => {
+                if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+                if (job.market === market) {
+                  setBatchJobs((prev) =>
+                    prev.some((p) => p.id === job.id) ? prev : [job, ...prev],
+                  );
+                }
+              })
+              .catch(() => undefined),
+          );
         }
       }
 
@@ -367,14 +375,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (localMatch) {
           applyBriefToPrewrite(localMatch);
         } else {
-          void getBrief(urlParams.briefId, { signal: ctrl.signal })
-            .then((fetched) => {
-              if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-              if (fetched.brandId === brandId && fetched.market === market) {
-                applyBriefToPrewrite(fetched);
-              }
-            })
-            .catch(() => undefined);
+          hydrationTasks.push(
+            getBrief(urlParams.briefId, { signal: ctrl.signal })
+              .then((fetched) => {
+                if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+                if (fetched.brandId === brandId && fetched.market === market) {
+                  applyBriefToPrewrite(fetched);
+                }
+              })
+              .catch(() => undefined),
+          );
         }
       }
 
@@ -384,15 +394,27 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (localArt) {
           applyArticleToCanvas(localArt);
         } else {
-          void getArticle(urlParams.articleId, { signal: ctrl.signal })
-            .then((fetched) => {
-              if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-              if (fetched.brandId === brandId && fetched.market === market) {
-                applyArticleToCanvas(fetched);
-              }
-            })
-            .catch(() => undefined);
+          hydrationTasks.push(
+            getArticle(urlParams.articleId, { signal: ctrl.signal })
+              .then((fetched) => {
+                if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+                if (fetched.brandId === brandId && fetched.market === market) {
+                  applyArticleToCanvas(fetched);
+                }
+              })
+              .catch(() => undefined),
+          );
         }
+      }
+
+      if (hydrationTasks.length === 0) {
+        urlHydratedSeqRef.current = seq;
+      } else {
+        void Promise.allSettled(hydrationTasks).then(() => {
+          if (seq === contextSeqRef.current && !ctrl.signal.aborted) {
+            urlHydratedSeqRef.current = seq;
+          }
+        });
       }
     },
     [applyArticleToCanvas, applyBriefToPrewrite],
@@ -675,6 +697,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   useTabFreshness({
     domains: ['briefs', 'articles', 'brand-facts', 'brand-media', 'publish-records'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
+    refreshOnActivate: false,
     onRefresh: () => {
       if (!activeBrandId || !activeBrandMarket || streaming) return;
       void loadWorkspaceData(activeBrandId, activeMarket, contextSeqRef.current, {
@@ -964,6 +987,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   ) => {
     if (!activeArticle || !activeBrandId || readOnly) return;
     const nextMarkdown = replaceMissingFactSlot(draftMarkdown, slot, value);
+    let factsSynced = false;
     try {
       if (options.syncToFact) {
         let currentFacts = brandFacts;
@@ -991,7 +1015,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             .getState()
             .markBrandTruthSigned(activeBrandId, factRes.truthAgreementSignedAt);
         }
-        invalidateFreshness('brand-facts');
+        factsSynced = true;
       }
 
       const updatedArticle = await updateArticle(activeArticle.id, {
@@ -1001,8 +1025,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setArticles((prev) => prev.map((a) => (a.id === updatedArticle.id ? updatedArticle : a)));
 
       feedback.notifySuccess(options.syncToFact ? '已回填正文并同步存入品牌事实卡' : '已回填正文');
-      invalidateFreshness('articles');
+      if (factsSynced) {
+        invalidateFreshness('brand-facts', 'articles');
+      } else {
+        invalidateFreshness('articles');
+      }
     } catch (err) {
+      if (factsSynced) {
+        invalidateFreshness('brand-facts');
+      }
       feedback.notifyError(formatStudioError(err, '回填缺失事实失败'));
       throw err;
     }

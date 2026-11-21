@@ -499,7 +499,7 @@ v2Describe('F2: Simplified Unified Billing & Pricing', { tag: ['@F2', '@M1'] }, 
       const { context, page } = await createAuthenticatedContext(browser, admin);
       try {
         await page.goto('/admin/llm-costs', { waitUntil: 'domcontentloaded' });
-        const region = page.getByRole('region', { name: 'LLM成本日报' }).or(page.locator('main'));
+        const region = page.getByRole('region', { name: 'LLM成本日报' });
         await expect(region).toContainText('总调用次数');
         await expect(region).toContainText('总 Token 消耗');
         await expect(page.getByRole('button', { name: '导出 CSV' })).toBeEnabled();
