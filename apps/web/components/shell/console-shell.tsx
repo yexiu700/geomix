@@ -50,6 +50,7 @@ import {
 import { clearSession, readAccessToken } from '../../lib/session';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { WORKSPACE_USER_KEY, parseGeoMarket, useWorkspaceStore } from '../../lib/workspace-store';
+import { ConsoleBootSkeleton } from './console-boot-skeleton';
 import { ConsoleProvider } from './console-context';
 import { ShellFrame } from './shell-frame';
 
@@ -337,7 +338,7 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
   }
 
   if (booting || !account || !workspace.hydrated || !contextValue) {
-    return <main className="gm-boot">正在确认登录</main>;
+    return <ConsoleBootSkeleton />;
   }
 
   if (!isConsoleRouteAccessible(href)) {

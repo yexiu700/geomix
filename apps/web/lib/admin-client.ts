@@ -2,6 +2,7 @@ import type {
   AnnouncementInput,
   CreateTenantInput,
   LlmDailyCostReport,
+  PricingAction,
   PricingBatchUpdateInput,
   PricingUpdateInput,
   QuotaUpdateInput,
@@ -25,7 +26,7 @@ export type TenantRow = {
 };
 
 export type PriceRow = {
-  action: string;
+  action: PricingAction;
   unitPoints: number;
   enabled: boolean;
   updatedAt: string;

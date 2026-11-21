@@ -98,15 +98,25 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
     expect(auditCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects unknown pricing actions and non-admin callers in batch update (#196)', async () => {
+  it('rejects unknown/legacy pricing actions with 400/40001 and non-admin callers with 404 in updatePrices (#196)', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        action: 'kb_addon',
+        unitPoints: 5,
+        enabled: true,
+        updatedAt: new Date('2026-11-18T00:00:00.000Z'),
+      },
+    ]);
+    const transaction = vi.fn();
     const prisma = {
       base: {
         pricingItem: {
-          findMany: vi.fn().mockResolvedValue([]),
+          findMany,
         },
         auditLog: {
           findFirst: vi.fn().mockResolvedValue(null),
         },
+        $transaction: transaction,
       },
     } as unknown as PrismaService;
 
@@ -125,14 +135,67 @@ describe('AdminOfficeService pricing batch & announcement CRUD (#196, #199)', ()
         { userId: 'merchant-1', role: 'MERCHANT' },
         { items: [{ action: 'geo_write', unitPoints: 10, enabled: true }] },
       ),
-    ).rejects.toBeInstanceOf(ApiError);
+    ).rejects.toMatchObject({ status: 404 });
+
+    for (const action of ['unknown_action', 'kb_addon', 'ai_write', 'distill']) {
+      const error = await updatePrices(
+        { userId: 'admin-1', role: 'ADMIN' },
+        { items: [{ action, unitPoints: 10, enabled: true }] },
+      ).catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 400, code: 40001 });
+    }
+    expect(findMany).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy/unknown pricing actions in updatePrice with 400/40001 even if a stale DB row exists', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      action: 'kb_addon',
+      unitPoints: 5,
+      enabled: true,
+      updatedAt: new Date('2026-11-18T00:00:00.000Z'),
+    });
+    const transaction = vi.fn();
+    const prisma = {
+      base: {
+        pricingItem: {
+          findUnique,
+        },
+        auditLog: {
+          findFirst: vi.fn().mockResolvedValue(null),
+        },
+        $transaction: transaction,
+      },
+    } as unknown as PrismaService;
+
+    const service = new AdminOfficeService(prisma, {} as BillingService);
+    const updatePrice = (
+      service as unknown as {
+        updatePrice: (
+          actor: { userId: string; role: 'ADMIN' | 'MERCHANT' },
+          input: { action: string; unitPoints: number; enabled: boolean },
+        ) => Promise<unknown>;
+      }
+    ).updatePrice.bind(service);
 
     await expect(
-      updatePrices(
-        { userId: 'admin-1', role: 'ADMIN' },
-        { items: [{ action: 'unknown_action', unitPoints: 10, enabled: true }] },
+      updatePrice(
+        { userId: 'merchant-1', role: 'MERCHANT' },
+        { action: 'geo_write', unitPoints: 10, enabled: true },
       ),
-    ).rejects.toBeInstanceOf(ApiError);
+    ).rejects.toMatchObject({ status: 404 });
+
+    for (const action of ['kb_addon', 'ai_write', 'distill', 'unknown_action']) {
+      const error = await updatePrice(
+        { userId: 'admin-1', role: 'ADMIN' },
+        { action, unitPoints: 5, enabled: true },
+      ).catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 400, code: 40001 });
+    }
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
   });
 
   it('records operatorName and createdAt on announcement create/update and deletes with audit (#199)', async () => {

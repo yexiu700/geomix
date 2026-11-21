@@ -236,6 +236,98 @@ input:not([class*='ant-']):hover {
   padding: 24px;
 }
 
+.gm-boot-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  background: var(--gm-bg-base);
+  color: var(--gm-fg-1);
+  overflow-x: clip;
+  box-sizing: border-box;
+}
+
+.gm-boot-sider {
+  width: 220px;
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 14px;
+  background: var(--gm-bg-base);
+  border-right: 1px solid var(--gm-line-1);
+  box-sizing: border-box;
+}
+
+.gm-boot-sider-brand,
+.gm-boot-sider-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gm-boot-sider-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+}
+
+.gm-boot-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gm-boot-header {
+  height: 52px;
+  padding-inline: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--gm-bg-base);
+  border-bottom: 1px solid var(--gm-line-1);
+  box-sizing: border-box;
+}
+
+.gm-boot-header-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gm-boot-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gm-boot-panel {
+  padding: 20px;
+}
+
+.gm-boot-status {
+  margin: 4px 0 0;
+  color: var(--gm-fg-3);
+  font-size: var(--gm-text-caption);
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .gm-boot-sider {
+    display: none;
+  }
+
+  .gm-boot-content {
+    padding: 12px;
+  }
+}
+
 .ant-layout-header.gm-header {
   display: flex;
   align-items: center;

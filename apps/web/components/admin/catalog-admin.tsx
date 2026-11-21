@@ -1,6 +1,6 @@
 'use client';
 
-import { formatAdminDateTime, getPricingActionMeta } from '@geomix/shared';
+import { formatAdminDateTime, getPricingActionMeta, type PricingUpdateInput } from '@geomix/shared';
 import { Alert, Button, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import {
@@ -75,7 +75,7 @@ export function PricingAdmin({
 
   const handleBatchSave = async () => {
     if (dirtyRows.length === 0) return;
-    const updates: Array<{ action: string; unitPoints: number; enabled: boolean }> = [];
+    const updates: PricingUpdateInput[] = [];
     for (const row of dirtyRows) {
       const meta = getPricingActionMeta(row.action);
       const label = row.label ?? meta.label;

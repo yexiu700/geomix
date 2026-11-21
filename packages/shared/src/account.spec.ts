@@ -7,16 +7,19 @@ import {
   MODEL_INCLUSION_CARDS,
   POINT_LEDGER_COLUMNS,
   PRICING_ACTION_META,
+  PRICING_ACTION_NAMES,
   buildRightsCards,
   emptyModelInclusions,
   formatAdminDateTime,
   formatBytes,
   formatPointsCell,
   getPricingActionMeta,
+  isPricingAction,
   parseMoneyListQuery,
   parsePointListQuery,
   pointLedgerPhrase,
   pricingBatchUpdateSchema,
+  pricingUpdateSchema,
   summarizeMonthMoney,
   summarizeMonthPoints,
 } from './account';
@@ -188,6 +191,43 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
         ],
       }),
     ).toThrow();
+  });
+
+  it('enforces canonical v2 pricing actions in isPricingAction and pricing schemas', () => {
+    expect(PRICING_ACTION_NAMES).toEqual(['geo_write', 'visibility_check', 'inline_image_gen']);
+
+    for (const action of ['geo_write', 'visibility_check', 'inline_image_gen'] as const) {
+      expect(isPricingAction(action)).toBe(true);
+      const single = pricingUpdateSchema.safeParse({ action, unitPoints: 10, enabled: true });
+      expect(single.success).toBe(true);
+    }
+
+    const retiredOrUnknown = [
+      'kb_addon',
+      'ai_write',
+      'distill',
+      'rewrite_single',
+      'rewrite_batch',
+      'image_gen',
+      'unknown_action',
+      '',
+    ];
+    for (const action of retiredOrUnknown) {
+      expect(isPricingAction(action)).toBe(false);
+      const single = pricingUpdateSchema.safeParse({ action, unitPoints: 5, enabled: true });
+      expect(single.success).toBe(false);
+      if (!single.success) {
+        expect(single.error.issues[0]?.message).toBe('价格项不正确');
+      }
+
+      const batch = pricingBatchUpdateSchema.safeParse({
+        items: [{ action, unitPoints: 5, enabled: true }],
+      });
+      expect(batch.success).toBe(false);
+      if (!batch.success) {
+        expect(batch.error.issues[0]?.message).toBe('价格项不正确');
+      }
+    }
   });
 
   it('formats UTC timestamps to Asia/Shanghai (UTC+8) and handles empty values gracefully', () => {

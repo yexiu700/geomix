@@ -13,6 +13,7 @@ import {
   formatLlmTenantDisplayName,
   formatMoney,
   getPricingActionMeta,
+  isPricingAction,
   isQuotaKeyName,
   parseEnv,
   parseLlmCostQuery,
@@ -296,6 +297,7 @@ export class AdminOfficeService {
 
   async updatePrice(actor: Actor, input: PricingUpdateInput, idempotencyKey?: string) {
     assertAdmin(actor);
+    if (!isPricingAction(input.action)) throw badRequest('价格项不正确');
     if (idempotencyKey) {
       const prior = await this.findReplay('pricing_update', idempotencyKey);
       if (prior) {
@@ -307,7 +309,7 @@ export class AdminOfficeService {
       where: { action: input.action },
     });
     const fallbackDefault = PRICING_DEFAULTS.find((item) => item.action === input.action);
-    if (!current && !fallbackDefault) throw notFound('价格项不存在');
+    if (!current && !fallbackDefault) throw badRequest('价格项不正确');
     const priorValues = current
       ? { unitPoints: current.unitPoints, enabled: current.enabled }
       : { unitPoints: fallbackDefault!.unitPoints, enabled: true };
@@ -345,6 +347,7 @@ export class AdminOfficeService {
     assertAdmin(actor);
     const seen = new Set<string>();
     for (const item of input.items) {
+      if (!isPricingAction(item.action)) throw badRequest('价格项不正确');
       if (seen.has(item.action)) throw badRequest('存在重复的价格项目');
       seen.add(item.action);
     }
@@ -367,7 +370,7 @@ export class AdminOfficeService {
     for (const item of input.items) {
       const hasExisting = existingByAction.has(item.action);
       const hasDefault = PRICING_DEFAULTS.some((def) => def.action === item.action);
-      if (!hasExisting && !hasDefault) throw notFound('价格项不存在');
+      if (!hasExisting && !hasDefault) throw badRequest('价格项不正确');
     }
     await this.prisma.base.$transaction(async (tx) => {
       const changes: Array<{

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { QUOTA_DEFAULTS, type PricingAction, type QuotaKeyName } from './catalog';
+import { PRICING_DEFAULTS, QUOTA_DEFAULTS, type PricingAction, type QuotaKeyName } from './catalog';
 
 export { QUOTA_DEFAULTS };
 import {
@@ -59,6 +59,13 @@ export const QUOTA_KEY_NAMES = QUOTA_DEFAULTS.map((item) => item.key) as [
 ];
 
 const QUOTA_KEY_SET = new Set<string>(QUOTA_KEY_NAMES);
+
+export const PRICING_ACTION_NAMES = PRICING_DEFAULTS.map((item) => item.action) as [
+  PricingAction,
+  ...PricingAction[],
+];
+
+const PRICING_ACTION_SET = new Set<string>(PRICING_ACTION_NAMES);
 
 export class AccountQueryError extends Error {
   constructor(message: string) {
@@ -337,6 +344,10 @@ export function isQuotaKeyName(value: string): value is QuotaKeyName {
   return QUOTA_KEY_SET.has(value);
 }
 
+export function isPricingAction(value: string): value is PricingAction {
+  return PRICING_ACTION_SET.has(value);
+}
+
 export function parsePointListQuery(input: Record<string, unknown>): PointListQuery {
   assertQueryKeys(input);
   const filter = readFilter(input.filter, 'point');
@@ -445,10 +456,9 @@ export type QuotaUpdateInput = z.infer<typeof quotaUpdateSchema>;
 
 export const pricingUpdateSchema = z
   .object({
-    action: z
-      .string()
-      .trim()
-      .regex(/^[a-z0-9_]{1,40}$/, '价格项不正确'),
+    action: z.enum(PRICING_ACTION_NAMES, {
+      errorMap: () => ({ message: '价格项不正确' }),
+    }),
     unitPoints: z.number().int().positive().max(1_000_000),
     enabled: z.boolean(),
   })

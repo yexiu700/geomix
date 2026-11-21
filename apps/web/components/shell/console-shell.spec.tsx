@@ -170,6 +170,84 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     expect(screen.getByText('缓存直出内容')).toBeTruthy();
   });
 
+  it('renders boot skeleton and header skeletons without fake 0 点 / 免费体验期 / ¥0.00 during cold load', async () => {
+    let resolveAccount!: (value: { status: 'ok'; account: AccountProfile }) => void;
+    let resolveBrands!: (value: { items: BrandRecord[] }) => void;
+    let resolveWallet!: (value: {
+      points: number;
+      pointsReserved: number;
+      available: number;
+      money: string;
+      billingMode: 'SHADOW' | 'STRICT';
+      billingModeSource: 'global' | 'tenant';
+      tenantBillingMode: 'SHADOW' | 'STRICT' | null;
+    }) => void;
+
+    loadAccountMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveAccount = resolve;
+      }),
+    );
+    listBrandsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBrands = resolve;
+      }),
+    );
+    httpWalletMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveWallet = resolve;
+      }),
+    );
+
+    render(
+      <ConsoleShell>
+        <div>首页正文</div>
+      </ConsoleShell>,
+    );
+
+    const assertNoForbiddenFlicker = () => {
+      const text = document.body.textContent ?? '';
+      expect(text).not.toMatch(/(?:^|[^\d])0\s*点/);
+      expect(text).not.toContain('免费体验期');
+      expect(text).not.toContain('¥0.00');
+    };
+
+    const bootSkeleton = screen.getByTestId('console-boot-skeleton');
+    expect(bootSkeleton.getAttribute('aria-busy')).toBe('true');
+    expect(document.querySelector('.ant-skeleton')).toBeTruthy();
+    expect(screen.getByText('正在确认登录')).toBeTruthy();
+    assertNoForbiddenFlicker();
+
+    await act(async () => {
+      resolveAccount({ status: 'ok', account: merchantAccount });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('console-boot-skeleton')).toBeNull();
+    });
+    expect(screen.getByTestId('global-brand-switcher-loading').getAttribute('aria-busy')).toBe(
+      'true',
+    );
+    expect(screen.getByTestId('header-points-loading').getAttribute('aria-busy')).toBe('true');
+    assertNoForbiddenFlicker();
+
+    await act(async () => {
+      resolveBrands({ items: [sampleBrand] });
+      resolveWallet({
+        points: 888,
+        pointsReserved: 0,
+        available: 888,
+        money: '0.00',
+        billingMode: 'SHADOW',
+        billingModeSource: 'global',
+        tenantBillingMode: null,
+      });
+    });
+
+    const pointsPill = await screen.findByTestId('header-points-pill');
+    expect(pointsPill.textContent).toContain('888');
+  });
+
   it('resets stored workspace state when a different user signs in', async () => {
     window.localStorage.setItem(WORKSPACE_USER_KEY, 'u-previous');
     window.localStorage.setItem(

@@ -452,7 +452,7 @@ const COLD_LOAD_OBSERVER_INIT = () => {
   };
 
   const observer = new MutationObserver(() => scan());
-  observer.observe(document.documentElement, {
+  observer.observe(document.documentElement ?? document, {
     childList: true,
     subtree: true,
     characterData: true,
