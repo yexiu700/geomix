@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
   QUEUE_TENANT_LIMIT,
   classifyCitationSource,
@@ -287,6 +287,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       .filter(Boolean);
     const competitorDomains = competitors.flatMap((comp) => comp.domains);
 
+    let settleFailed = false;
     try {
       const collected = await this.collector.collect({
         tenantId,
@@ -378,22 +379,27 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
 
       if (reservationId) {
         const settleTitle = `AI可见性监测-${run.name}`.slice(0, 80);
-        await this.billing.settle({
-          tenantId,
-          reservationId,
-          unitKey: `visibility_obs:${obs.id}`,
-          action: 'visibility_check',
-          amount: run.unitPrice,
-          title: settleTitle,
-          detail: {
-            runId: run.id,
-            observationId: obs.id,
-            engine: obs.engine,
-          },
-        });
+        try {
+          await this.billing.settle({
+            tenantId,
+            reservationId,
+            unitKey: `visibility_obs:${obs.id}`,
+            action: 'visibility_check',
+            amount: run.unitPrice,
+            title: settleTitle,
+            detail: {
+              runId: run.id,
+              observationId: obs.id,
+              engine: obs.engine,
+            },
+          });
+        } catch (settleErr) {
+          settleFailed = true;
+          throw settleErr;
+        }
       }
     } catch (error) {
-      if (this.engineHealth) {
+      if (this.engineHealth && !settleFailed) {
         await this.engineHealth.recordObservationFailure(obs.engine, error);
       }
       await this.handleObservationFailure({
@@ -404,6 +410,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         reservationId,
         observationId: obs.id,
         error,
+        rollbackSuccess: settleFailed,
       });
     }
   }
@@ -529,6 +536,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     reservationId: string | null;
     observationId: string;
     error: unknown;
+    rollbackSuccess?: boolean;
   }): Promise<void> {
     const errMsg = safeVisibilityError(input.error);
 
@@ -552,7 +560,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     await this.prisma.base.$transaction(async (tx) => {
       const run = await tx.visibilityRun.findFirst({
         where: { id: input.runId, tenantId: input.tenantId },
-        select: { status: true },
+        select: { status: true, doneCount: true },
       });
       if (!run) return;
 
@@ -560,7 +568,44 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         where: { id: input.observationId, tenantId: input.tenantId },
         select: { status: true },
       });
-      if (!current || current.status === 'SUCCESS' || current.status === 'SKIPPED') {
+      if (!current || current.status === 'SKIPPED') {
+        return;
+      }
+      if (current.status === 'SUCCESS' && !input.rollbackSuccess) {
+        return;
+      }
+
+      if (current.status === 'SUCCESS' && input.rollbackSuccess) {
+        await tx.visibilityCitation.deleteMany({
+          where: { observationId: input.observationId, tenantId: input.tenantId },
+        });
+        await tx.visibilityObservation.update({
+          where: { id: input.observationId },
+          data: {
+            status: 'FAILED',
+            answerText: null,
+            brandMentioned: false,
+            brandPosition: null,
+            brandSentiment: null,
+            brandPassage: null,
+            competitorHits: Prisma.DbNull,
+            fanOutQueries: [],
+            judgeModel: null,
+            tokensIn: null,
+            tokensOut: null,
+            error: errMsg,
+            checkedAt: new Date(),
+          },
+        });
+
+        await tx.visibilityRun.update({
+          where: { id: input.runId },
+          data: {
+            ...(run.doneCount > 0 ? { doneCount: { decrement: 1 } } : {}),
+            failCount: { increment: 1 },
+            ...(run.status === 'PAUSED' ? {} : { lastError: errMsg }),
+          },
+        });
         return;
       }
 

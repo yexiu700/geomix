@@ -283,6 +283,70 @@ describe('public fetch SSRF', () => {
     ).rejects.toMatchObject({ kind: 'cancelled' });
     expect(seen).toEqual([]);
   });
+
+  it('blocks default sonargate and process.env.SSRF_ALLOWLIST directly and via 302 redirects (B-02)', async () => {
+    const prevAllowlist = process.env.SSRF_ALLOWLIST;
+    process.env.SSRF_ALLOWLIST = 'internal-svc.local:9000,127.0.0.1:8080';
+    try {
+      const seen: string[] = [];
+      const deps = mockDeps(
+        {
+          sonargate: [{ address: '127.0.0.1', family: 4 }],
+          'internal-svc.local': [{ address: '10.0.0.9', family: 4 }],
+          'public.example': [{ address: '192.0.2.10', family: 4 }],
+        },
+        (request) => {
+          seen.push(request.url.toString());
+        },
+        {
+          'https://public.example/robots.txt': { status: 404, body: '' },
+          'https://public.example/to-sonargate': {
+            status: 302,
+            headers: { location: 'http://sonargate:8080/internal-secret' },
+          },
+          'https://public.example/to-allowlist': {
+            status: 302,
+            headers: { location: 'http://internal-svc.local:9000/secret' },
+          },
+          'http://sonargate:8080/internal-secret': {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+            body: '<html>secret</html>',
+          },
+        },
+      );
+
+      await expect(
+        fetchPublicPage('http://sonargate:8080/internal-secret', deps),
+      ).rejects.toMatchObject({ kind: 'ssrf' });
+      await expect(
+        fetchPublicPage('http://internal-svc.local:9000/secret', deps),
+      ).rejects.toMatchObject({ kind: 'ssrf' });
+      await expect(
+        fetchPublicPage('https://public.example/to-sonargate', deps),
+      ).rejects.toMatchObject({ kind: 'ssrf' });
+      await expect(
+        fetchPublicPage('https://public.example/to-allowlist', deps),
+      ).rejects.toMatchObject({ kind: 'ssrf' });
+      await expect(
+        fetchBinary('http://sonargate:8080/img', {
+          ...deps,
+          allowTypes: ['image/png'],
+          maxBytes: 1024,
+        }),
+      ).rejects.toMatchObject({ kind: 'ssrf' });
+
+      expect(
+        seen.some((url) => {
+          const host = new URL(url).hostname;
+          return host === 'sonargate' || host === 'internal-svc.local';
+        }),
+      ).toBe(false);
+    } finally {
+      if (prevAllowlist === undefined) delete process.env.SSRF_ALLOWLIST;
+      else process.env.SSRF_ALLOWLIST = prevAllowlist;
+    }
+  });
 });
 
 describe('robots and lookup pin', () => {

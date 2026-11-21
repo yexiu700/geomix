@@ -246,6 +246,10 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
     },
   };
 
+  let activeRunCount = 0;
+  let activeBatchCount = 0;
+  let runningObsCount = 0;
+
   const base = {
     $disconnect: vi.fn(async () => undefined),
     $transaction: vi.fn(async <T>(fn: (tx: unknown) => Promise<T>) => {
@@ -271,6 +275,15 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
             return { count: 1 };
           },
         },
+        visibilityRun: {
+          count: vi.fn(async () => activeRunCount),
+        },
+        geoBatchJob: {
+          count: vi.fn(async () => activeBatchCount),
+        },
+        visibilityObservation: {
+          count: vi.fn(async () => runningObsCount),
+        },
         brandMediaAsset: {
           findMany: async (args: { where: { tenantId: string; brandId: string } }) =>
             media.filter(
@@ -286,9 +299,17 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
     prisma: { scoped, base },
     brands,
     media,
+    setActiveCounts: (counts: { runs?: number; batches?: number; runningObs?: number }) => {
+      if (counts.runs !== undefined) activeRunCount = counts.runs;
+      if (counts.batches !== undefined) activeBatchCount = counts.batches;
+      if (counts.runningObs !== undefined) runningObsCount = counts.runningObs;
+    },
     clear: () => {
       brands.splice(0, brands.length);
       media.splice(0, media.length);
+      activeRunCount = 0;
+      activeBatchCount = 0;
+      runningObsCount = 0;
     },
   };
 }
@@ -467,6 +488,53 @@ describe('BrandsService unit tests (F6 full CRUD & dual-market identity)', () =>
       status: 404,
       code: AUTH_ERROR.NOT_FOUND,
     });
+  });
+
+  it('blocks deleting a brand while active VisibilityRun or GeoBatchJob exists (B-09)', async () => {
+    const created = await service.create(
+      'tenant_a',
+      'u_1',
+      {
+        name: '活动任务品牌',
+        category: '家用 NAS',
+        aliases: [],
+        ownedDomains: ['active-brand.example'],
+        competitors: [],
+        markets: [
+          {
+            market: 'CN',
+            aliases: [],
+            ownedDomains: ['active-brand.example'],
+            competitors: [],
+            seedPrompts: [],
+          },
+        ],
+      },
+      null,
+    );
+
+    store.setActiveCounts({ runs: 1, batches: 0 });
+    await expect(service.remove('tenant_a', created.id)).rejects.toMatchObject({
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+    });
+
+    store.setActiveCounts({ runs: 0, batches: 1, runningObs: 0 });
+    await expect(service.remove('tenant_a', created.id)).rejects.toMatchObject({
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+    });
+
+    // B-12: CANCELLED run with in-flight RUNNING observation must still block brand deletion
+    store.setActiveCounts({ runs: 0, batches: 0, runningObs: 1 });
+    await expect(service.remove('tenant_a', created.id)).rejects.toMatchObject({
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+    });
+
+    store.setActiveCounts({ runs: 0, batches: 0, runningObs: 0 });
+    const removed = await service.remove('tenant_a', created.id);
+    expect(removed.deleted).toBe(1);
   });
 });
 

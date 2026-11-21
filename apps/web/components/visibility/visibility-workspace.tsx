@@ -62,7 +62,7 @@ import { BriefListPanel, type BriefStatusFilterValue } from '../briefs/brief-lis
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
+import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { VisibilityCitationsTab, type RankedCitationRow } from './visibility-citations-tab';
 import { VisibilityOverviewTab } from './visibility-overview-tab';
@@ -1249,6 +1249,22 @@ export function VisibilityWorkspace(): JSX.Element {
         <div className="gm-panel">
           <SignalSkeleton variant="block" height={300} />
         </div>
+      </section>
+    );
+  }
+
+  if (state.brandsError) {
+    return (
+      <section className="gm-vis-page" aria-label="可见度诊断">
+        <SignalError
+          message={state.brandsError}
+          onRetry={() =>
+            void useWorkspaceStore.getState().loadBrands({
+              storage: window.sessionStorage,
+              persistStorage: window.localStorage,
+            })
+          }
+        />
       </section>
     );
   }

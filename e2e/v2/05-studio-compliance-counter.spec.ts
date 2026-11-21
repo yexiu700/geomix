@@ -881,7 +881,8 @@ v2Describe(
             .first()
             .fill(`待机功耗实测 11.2W (${tag})`);
           const syncCheckbox = modalOrPopover.locator('input[type="checkbox"]').first();
-          if ((await syncCheckbox.count()) > 0 && !(await syncCheckbox.isChecked())) {
+          await expect(syncCheckbox).toBeVisible();
+          if (!(await syncCheckbox.isChecked())) {
             await syncCheckbox.check();
           }
           await modalOrPopover.getByRole('button', { name: /确认|填入|保存/ }).click();
@@ -1267,7 +1268,8 @@ v2Describe(
           const pop = page.locator('.ant-popover:visible, .ant-modal:visible').first();
           await pop.locator('input, textarea').first().fill(`仅正文数据 9.9W (${tag})`);
           const syncCheckbox = pop.locator('input[type="checkbox"]').first();
-          if ((await syncCheckbox.count()) > 0 && (await syncCheckbox.isChecked())) {
+          await expect(syncCheckbox).toBeVisible();
+          if (await syncCheckbox.isChecked()) {
             await syncCheckbox.uncheck();
           }
           await pop.getByRole('button', { name: /确认|填入|保存/ }).click();

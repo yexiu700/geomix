@@ -59,7 +59,7 @@ import {
 } from '../../lib/workspace-store';
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
+import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioDeliveryPack } from './studio-delivery-pack';
 import { StudioEditorCanvas } from './studio-editor-canvas';
@@ -225,6 +225,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     status: GeoArticleStatus | '';
     tag: string;
   } | null>(null);
+  const prevContextKeyRef = useRef<string | null>(null);
+  const abortWalletTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingFilterResetRef = useRef(false);
 
   articleFiltersRef.current = { status: articleStatusFilter, tag: articleTagFilter };
@@ -268,6 +270,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       activeArticleIdRef.current = nextArticleId;
       articleSeqRef.current += 1;
       clearArticleActionControllers();
+      insertingMediaRef.current = false;
+      pendingUsedMediaIdsRef.current = [];
+      setSavingArticle(false);
       setEvaluating(false);
       setSupplementingTerm(null);
       setRetestingRecordId(null);
@@ -429,11 +434,34 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     pubRecordsCtrlRef.current?.abort();
     pubRecordsCtrlRef.current = null;
     clearArticleActionControllers();
+    if (abortWalletTimerRef.current) {
+      clearTimeout(abortWalletTimerRef.current);
+      abortWalletTimerRef.current = null;
+    }
     activeArticleIdRef.current = null;
     articleSeqRef.current += 1;
     insertingMediaRef.current = false;
+    setSavingArticle(false);
+    setBatchSubmitting(false);
     const seq = ++contextSeqRef.current;
     const contextKey = `${activeBrandId ?? ''}::${activeBrandMarketId ?? ''}::${activeMarket}::${state.contextEpoch}`;
+    const brandMarketKey =
+      activeBrandId && activeBrandMarketId
+        ? `${activeBrandId}::${activeBrandMarketId}::${activeMarket}`
+        : null;
+    const contextChanged =
+      prevContextKeyRef.current !== null &&
+      brandMarketKey !== null &&
+      prevContextKeyRef.current !== brandMarketKey;
+    if (brandMarketKey !== null) {
+      prevContextKeyRef.current = brandMarketKey;
+    }
+    if (contextChanged) {
+      setHighlightedBatchJobId(null);
+      replaceStudioUrlParam('briefId', null);
+      replaceStudioUrlParam('articleId', null);
+      replaceStudioUrlParam('batchJobId', null);
+    }
 
     // Reset history filters on brand/market switch without triggering a duplicate filter fetch
     const hadNonEmptyFilters =
@@ -490,6 +518,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       mediaRefreshCtrlRef.current = null;
       pubRecordsCtrlRef.current?.abort();
       pubRecordsCtrlRef.current = null;
+      if (abortWalletTimerRef.current) {
+        clearTimeout(abortWalletTimerRef.current);
+        abortWalletTimerRef.current = null;
+      }
       clearArticleActionControllers();
       insertingMediaRef.current = false;
     };
@@ -797,11 +829,22 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
       if (result.aborted) {
         feedback.notifyWarning('已中断本次生成并自动退还冻结点数');
+        invalidateFreshness('points');
+        if (abortWalletTimerRef.current) {
+          clearTimeout(abortWalletTimerRef.current);
+        }
+        abortWalletTimerRef.current = setTimeout(() => {
+          abortWalletTimerRef.current = null;
+          void consoleCtx?.refreshWallet();
+        }, 800);
       } else if (completedArticle) {
         feedback.notifySuccess('GEO 文章生成完成');
         invalidateFreshness('articles', 'briefs', 'points');
-      } else if (!receivedErrorEvent) {
+      } else if (receivedErrorEvent) {
+        invalidateFreshness('points');
+      } else {
         setStreamError('流式连接意外结束，请检查余额或重试');
+        invalidateFreshness('points');
       }
       void consoleCtx?.refreshWallet();
     } catch (err) {
@@ -809,6 +852,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       const msg = formatStudioError(err, '流式生成文章失败');
       setStreamError(msg);
       feedback.notifyError(msg);
+      invalidateFreshness('points');
       void consoleCtx?.refreshWallet();
     } finally {
       if (seq === contextSeqRef.current) {
@@ -824,15 +868,26 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   const handleSaveArticle = async () => {
     if (!activeArticle || readOnly || savingArticle) return;
-    setSavingArticle(true);
+    const targetArticle = activeArticle;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     const queuedMediaIds = [...pendingUsedMediaIdsRef.current];
+    setSavingArticle(true);
     try {
-      const updated = await updateArticle(activeArticle.id, {
-        title: draftTitle.trim() || activeArticle.title,
+      const updated = await updateArticle(targetArticle.id, {
+        title: draftTitle.trim() || targetArticle.title,
         contentMarkdown: draftMarkdown,
         ...(queuedMediaIds.length > 0 ? { usedMediaIds: queuedMediaIds } : {}),
       });
-      pendingUsedMediaIdsRef.current = [];
+      if (queuedMediaIds.length > 0) {
+        invalidateFreshness('articles', 'brand-media');
+      } else {
+        invalidateFreshness('articles');
+      }
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
+      pendingUsedMediaIdsRef.current = pendingUsedMediaIdsRef.current.filter(
+        (id) => !queuedMediaIds.includes(id),
+      );
       applyArticleToCanvas(updated);
       setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       feedback.notifySuccess('文章修改已保存');
@@ -842,14 +897,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             queuedMediaIds.includes(item.id) ? { ...item, usedCount: item.usedCount + 1 } : item,
           ),
         );
-        invalidateFreshness('articles', 'brand-media');
-      } else {
-        invalidateFreshness('articles');
       }
     } catch (err) {
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       feedback.notifyError(formatStudioError(err, '保存文章失败'));
     } finally {
-      setSavingArticle(false);
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
+        setSavingArticle(false);
+      }
     }
   };
 
@@ -892,6 +947,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setDraftMarkdown(nextMarkdown);
 
     const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     const articleId = activeArticle.id;
     const nextTitle = draftTitle.trim() || activeArticle.title;
     setSavingArticle(true);
@@ -901,7 +957,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         contentMarkdown: nextMarkdown,
         usedMediaIds: [asset.id],
       });
-      if (seq !== contextSeqRef.current) return;
+      invalidateFreshness('articles', 'brand-media');
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       pendingUsedMediaIdsRef.current = pendingUsedMediaIdsRef.current.filter(
         (id) => id !== asset.id,
       );
@@ -915,15 +972,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       feedback.notifySuccess(
         asset.origin === 'AI_INLINE_GEN' ? 'AI 配图已生成并插入正文' : '已免费插入品牌实拍图',
       );
-      invalidateFreshness('articles', 'brand-media');
     } catch (err) {
-      if (seq !== contextSeqRef.current) return;
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       if (!pendingUsedMediaIdsRef.current.includes(asset.id)) {
         pendingUsedMediaIdsRef.current = [...pendingUsedMediaIdsRef.current, asset.id];
       }
       feedback.notifyError(formatStudioError(err, '插入图片保存失败，可点击「保存修改」重试'));
+      throw err;
     } finally {
-      if (seq === contextSeqRef.current) {
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
         insertingMediaRef.current = false;
         setSavingArticle(false);
       }
@@ -942,40 +999,57 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   }, []);
 
   const handleDeleteArticle = async (article: GeoArticleRecord) => {
-    await deleteArticle(article.id);
-    setArticles((prev) => prev.filter((a) => a.id !== article.id));
-    if (activeArticle?.id === article.id) {
-      resetActiveArticleContext(null);
-      setActiveArticle(null);
-      setDraftTitle('');
-      setDraftMarkdown('');
-      replaceStudioUrlParam('articleId', null);
+    const seq = contextSeqRef.current;
+    try {
+      await deleteArticle(article.id);
+      invalidateFreshness('articles');
+      if (seq !== contextSeqRef.current) return;
+      setArticles((prev) => prev.filter((a) => a.id !== article.id));
+      if (activeArticleIdRef.current === article.id) {
+        resetActiveArticleContext(null);
+        setActiveArticle(null);
+        setDraftTitle('');
+        setDraftMarkdown('');
+        replaceStudioUrlParam('articleId', null);
+      }
+      feedback.notifySuccess('已删除成稿');
+    } catch (err) {
+      if (seq !== contextSeqRef.current) return;
+      feedback.notifyError(formatStudioError(err, '删除成稿失败'));
     }
-    feedback.notifySuccess('已删除成稿');
-    invalidateFreshness('articles');
   };
 
   const handleChangeStatus = async (status: GeoArticleStatus) => {
     if (!activeArticle || readOnly) return;
+    const targetArticle = activeArticle;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     try {
-      const updated = await updateArticle(activeArticle.id, { status });
+      const updated = await updateArticle(targetArticle.id, { status });
+      invalidateFreshness('articles');
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       setActiveArticle(updated);
       setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       feedback.notifySuccess('已更新文章状态');
-      invalidateFreshness('articles');
     } catch (err) {
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       feedback.notifyError(formatStudioError(err, '更新文章状态失败'));
     }
   };
 
   const handleChangeTags = async (tags: string[]) => {
     if (!activeArticle || readOnly) return;
+    const targetArticle = activeArticle;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     try {
-      const updated = await updateArticle(activeArticle.id, { tags });
+      const updated = await updateArticle(targetArticle.id, { tags });
+      invalidateFreshness('articles');
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       setActiveArticle(updated);
       setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-      invalidateFreshness('articles');
     } catch (err) {
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
       feedback.notifyError(formatStudioError(err, '更新标签失败'));
     }
   };
@@ -986,18 +1060,23 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     options: { syncToFact: boolean; factSlot: BrandFactSlot },
   ) => {
     if (!activeArticle || !activeBrandId || readOnly) return;
+    const targetArticle = activeArticle;
+    const targetBrandId = activeBrandId;
+    const targetTitle = draftTitle.trim() || targetArticle.title;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     const nextMarkdown = replaceMissingFactSlot(draftMarkdown, slot, value);
     let factsSynced = false;
     try {
       if (options.syncToFact) {
         let currentFacts = brandFacts;
         if (currentFacts.length === 0) {
-          const loaded = await getBrandFacts(activeBrandId);
+          const loaded = await getBrandFacts(targetBrandId);
           currentFacts = loaded.items;
         }
         const existingFact = currentFacts.find((f) => f.slot === options.factSlot);
         const mergedContent = mergeFactFeedbackContent(existingFact?.content, slot.hint, value);
-        const factRes = await saveBrandFacts(activeBrandId, {
+        const factRes = await saveBrandFacts(targetBrandId, {
           facts: [
             {
               ...(existingFact ? { id: existingFact.id } : {}),
@@ -1009,32 +1088,37 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           ],
           ...(!activeBrand?.truthAgreementSignedAt ? { truthAgreed: true } : {}),
         });
-        setBrandFacts(factRes.items);
         if (factRes.truthAgreementSignedAt) {
           useWorkspaceStore
             .getState()
-            .markBrandTruthSigned(activeBrandId, factRes.truthAgreementSignedAt);
+            .markBrandTruthSigned(targetBrandId, factRes.truthAgreementSignedAt);
         }
         factsSynced = true;
+        if (seq === contextSeqRef.current) {
+          setBrandFacts(factRes.items);
+        }
       }
 
-      const updatedArticle = await updateArticle(activeArticle.id, {
+      const updatedArticle = await updateArticle(targetArticle.id, {
+        title: targetTitle,
         contentMarkdown: nextMarkdown,
       });
-      applyArticleToCanvas(updatedArticle);
-      setArticles((prev) => prev.map((a) => (a.id === updatedArticle.id ? updatedArticle : a)));
-
-      feedback.notifySuccess(options.syncToFact ? '已回填正文并同步存入品牌事实卡' : '已回填正文');
       if (factsSynced) {
         invalidateFreshness('brand-facts', 'articles');
       } else {
         invalidateFreshness('articles');
       }
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
+      applyArticleToCanvas(updatedArticle);
+      setArticles((prev) => prev.map((a) => (a.id === updatedArticle.id ? updatedArticle : a)));
+      feedback.notifySuccess(options.syncToFact ? '已回填正文并同步存入品牌事实卡' : '已回填正文');
     } catch (err) {
       if (factsSynced) {
         invalidateFreshness('brand-facts');
       }
-      feedback.notifyError(formatStudioError(err, '回填缺失事实失败'));
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
+        feedback.notifyError(formatStudioError(err, '回填缺失事实失败'));
+      }
       throw err;
     }
   };
@@ -1044,31 +1128,51 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     action: GeoRewriteAction,
   ): Promise<{ rewrittenText: string } | null> => {
     if (!activeArticle || readOnly) return null;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
     try {
       const res = await rewriteArticleSection(activeArticle.id, {
         selectedText,
         action,
       });
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return null;
       return { rewrittenText: res.rewrittenText };
     } catch (err) {
-      feedback.notifyError(formatStudioError(err, '局部改写失败'));
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
+        feedback.notifyError(formatStudioError(err, '局部改写失败'));
+      }
       return null;
     }
   };
 
-  const handleApplyRewrittenText = async (original: string, rewritten: string) => {
-    if (!activeArticle || readOnly) return;
+  const handleApplyRewrittenText = async (
+    original: string,
+    rewritten: string,
+  ): Promise<boolean> => {
+    if (!activeArticle || readOnly) return false;
+    const targetArticle = activeArticle;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
+    const nextTitle = draftTitle.trim() || targetArticle.title;
     const nextMarkdown = draftMarkdown.includes(original)
-      ? draftMarkdown.replace(original, rewritten)
+      ? draftMarkdown.replace(original, () => rewritten)
       : `${draftMarkdown}\n\n${rewritten}`;
     try {
-      const updated = await updateArticle(activeArticle.id, { contentMarkdown: nextMarkdown });
+      const updated = await updateArticle(targetArticle.id, {
+        title: nextTitle,
+        contentMarkdown: nextMarkdown,
+      });
+      invalidateFreshness('articles');
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return false;
       applyArticleToCanvas(updated);
       setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
       feedback.notifySuccess('已应用局部改写并重新计算 GEO 评分');
-      invalidateFreshness('articles');
+      return true;
     } catch (err) {
-      feedback.notifyError(formatStudioError(err, '应用改写结果失败'));
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
+        feedback.notifyError(formatStudioError(err, '应用改写结果失败'));
+      }
+      return false;
     }
   };
 
@@ -1092,6 +1196,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const handleLaunchBatch = async () => {
     if (!activeBrandId || !activeBrandMarket || readOnly || batchSubmitting) return;
     if (selectedBriefIds.length < 2 || selectedBriefIds.length > 20) return;
+    const seq = contextSeqRef.current;
     setBatchSubmitting(true);
     try {
       const idemKey = createStudioIdempotencyKey('batch');
@@ -1103,6 +1208,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         },
         idemKey,
       );
+      invalidateFreshness('briefs', 'articles', 'points');
+      void consoleCtx?.refreshWallet();
+      if (seq !== contextSeqRef.current) return;
       setSelectedBriefIds([]);
       setBatchJobs((prev) => [job, ...prev.filter((j) => j.id !== job.id)]);
       setHighlightedBatchJobId(job.id);
@@ -1110,12 +1218,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setBriefs((prev) => prev.filter((b) => !job.briefIds.includes(b.id)));
       hadActiveBatchRef.current = true;
       feedback.notifySuccess(`已启动 ${job.total} 篇批量写作任务`);
-      invalidateFreshness('briefs', 'articles', 'points');
-      void consoleCtx?.refreshWallet();
     } catch (err) {
-      feedback.notifyError(formatStudioError(err, '启动批量写作失败'));
+      if (seq === contextSeqRef.current) {
+        feedback.notifyError(formatStudioError(err, '启动批量写作失败'));
+      }
     } finally {
-      setBatchSubmitting(false);
+      if (seq === contextSeqRef.current) {
+        setBatchSubmitting(false);
+      }
     }
   };
 
@@ -1347,6 +1457,22 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             </div>
           </div>
         </div>
+      </section>
+    );
+  }
+
+  if (state.brandsError) {
+    return (
+      <section className="gm-studio-page" aria-label="GEO 写作台">
+        <SignalError
+          message={state.brandsError}
+          onRetry={() =>
+            void useWorkspaceStore.getState().loadBrands({
+              storage: window.sessionStorage,
+              persistStorage: window.localStorage,
+            })
+          }
+        />
       </section>
     );
   }

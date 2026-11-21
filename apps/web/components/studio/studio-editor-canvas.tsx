@@ -14,7 +14,7 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Popover, Segmented } from 'antd';
 import type { JSX, ReactNode, SyntheticEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { resolveMediaUrl } from '../../lib/brands';
 import { rewritePreviewRelativeMediaUrls } from '../../lib/studio';
 import { SignalEmpty } from '../geo/primitives';
@@ -39,7 +39,7 @@ export type StudioEditorCanvasProps = {
     selectedText: string,
     action: GeoRewriteAction,
   ) => Promise<{ rewrittenText: string } | null>;
-  onApplyRewrittenText: (original: string, rewritten: string) => Promise<void>;
+  onApplyRewrittenText: (original: string, rewritten: string) => Promise<boolean | void>;
   onCursorChange?: (offset: number | null) => void;
   readOnly: boolean;
   mediaToolbarSlot?: ReactNode;
@@ -91,6 +91,19 @@ export function StudioEditorCanvas({
     [draftMarkdown, streaming],
   );
 
+  const activeArticleIdRef = useRef<string | null>(article?.id ?? null);
+  const streamingRef = useRef<boolean>(streaming);
+  activeArticleIdRef.current = article?.id ?? null;
+  streamingRef.current = streaming;
+
+  useEffect(() => {
+    setSelectedText('');
+    setRewritePreview(null);
+    setOpenSlotKey(null);
+    setSlotInputValue('');
+    setRewritingAction(null);
+  }, [article?.id, streaming]);
+
   useEffect(() => {
     if (viewMode === 'preview') {
       onCursorChange?.(null);
@@ -131,15 +144,18 @@ export function StudioEditorCanvas({
   const handleTriggerRewrite = async (action: GeoRewriteAction) => {
     const snippet = selectedText.trim() || paragraphs[0] || '';
     if (!snippet || !article || streaming || readOnly) return;
+    const targetArticleId = article.id;
     setSelectedText(snippet);
     setRewritingAction(action);
     try {
       const res = await onRewriteSection(snippet, action);
-      if (res) {
+      if (res && activeArticleIdRef.current === targetArticleId && !streamingRef.current) {
         setRewritePreview({ original: snippet, rewritten: res.rewrittenText, action });
       }
     } finally {
-      setRewritingAction(null);
+      if (activeArticleIdRef.current === targetArticleId) {
+        setRewritingAction(null);
+      }
     }
   };
 
@@ -365,9 +381,14 @@ export function StudioEditorCanvas({
                     size="small"
                     type="primary"
                     onClick={async () => {
-                      await onApplyRewrittenText(rewritePreview.original, rewritePreview.rewritten);
-                      setRewritePreview(null);
-                      setSelectedText('');
+                      const applied = await onApplyRewrittenText(
+                        rewritePreview.original,
+                        rewritePreview.rewritten,
+                      );
+                      if (applied !== false) {
+                        setRewritePreview(null);
+                        setSelectedText('');
+                      }
                     }}
                   >
                     应用替换

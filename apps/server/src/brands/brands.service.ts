@@ -274,6 +274,32 @@ export class BrandsService {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '品牌不存在');
       }
 
+      const [activeRuns, activeBatches, runningObservations] = await Promise.all([
+        tx.visibilityRun.count({
+          where: { tenantId, brandId, status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] } },
+        }),
+        tx.geoBatchJob.count({
+          where: { tenantId, brandId, status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] } },
+        }),
+        tx.visibilityObservation.count({
+          where: { tenantId, brandId, status: 'RUNNING' },
+        }),
+      ]);
+      if (activeRuns > 0 || activeBatches > 0) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '该品牌存在进行中的监测任务或批量写作任务，请等待完成或终止后再删除',
+        );
+      }
+      if (runningObservations > 0) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '存在仍在执行中的监测请求，请等待数秒收尾后再删除',
+        );
+      }
+
       const mediaRows = await tx.brandMediaAsset.findMany({
         where: { tenantId, brandId },
         select: { objectKey: true, thumbKey: true, bytes: true },

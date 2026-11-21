@@ -189,4 +189,31 @@ describe('SSE POST streaming client (sse.ts)', () => {
     expect(result).toEqual({ aborted: false, receivedEvents: 0 });
     expect(events).toEqual([]);
   });
+
+  it('stops dispatching subsequent frames in the same chunk after AbortController.abort() (W-06)', async () => {
+    const controller = new AbortController();
+    const encoder = new TextEncoder();
+    const combinedChunk = encoder.encode(
+      'event: meta\ndata: {"unitPrice":10}\n\nevent: complete\ndata: {"geoScore":95}\n\n',
+    );
+    mockRawRequest.mockResolvedValueOnce(
+      new Response(streamFromChunks([combinedChunk]), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+    );
+
+    const events: SseFrame[] = [];
+    const result = await streamSsePost('/brands/b1/articles/stream', {
+      body: {},
+      signal: controller.signal,
+      onEvent: (f) => {
+        events.push(f);
+        if (f.event === 'meta') controller.abort();
+      },
+    });
+
+    expect(result).toEqual({ aborted: true, receivedEvents: 1 });
+    expect(events.map((e) => e.event)).toEqual(['meta']);
+  });
 });

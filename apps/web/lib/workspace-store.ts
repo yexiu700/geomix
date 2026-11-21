@@ -152,7 +152,7 @@ export function syncWorkspaceQueryInUrl(brandId: string | null, market: GeoMarke
   const nextUrl = query ? `${pathname}?${query}` : pathname;
   const currentUrl = `${window.location.pathname}${window.location.search}`;
   if (nextUrl !== currentUrl) {
-    window.history.replaceState(null, '', nextUrl);
+    window.history.replaceState(window.history.state, '', nextUrl);
   }
 }
 

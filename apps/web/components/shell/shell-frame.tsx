@@ -32,6 +32,7 @@ import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
 import type { ExtractBrandFactsRequest } from '../../lib/brands';
 import { HOME_ROUTE, matchRoute } from '../../lib/routes';
+import { useWorkspaceStore } from '../../lib/workspace-store';
 import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { BrandMark, SideMenu } from './side-menu';
@@ -102,6 +103,7 @@ export type ShellFrameProps = {
   onNavigate: (href: string) => void;
   onSelectBrand: (brandId: string) => void;
   onSelectMarket: (market: GeoMarket) => void;
+  onRetryBrands?: () => void;
   onCreateBrand: (input: CreateBrandInput) => Promise<BrandRecord>;
   onExtractBrandFacts?: (
     brandId: string,
@@ -145,6 +147,7 @@ export function ShellFrame({
   onNavigate,
   onSelectBrand,
   onSelectMarket,
+  onRetryBrands,
   onCreateBrand,
   onExtractBrandFacts,
   onSaveBrandFacts,
@@ -378,6 +381,25 @@ export function ShellFrame({
               >
                 <Skeleton.Input active size="small" style={{ width: 148, height: 28 }} />
               </span>
+            ) : brandsError && brands.length === 0 ? (
+              <Button
+                size="small"
+                danger
+                data-testid="global-brand-switcher-retry"
+                onClick={() => {
+                  if (onRetryBrands) {
+                    onRetryBrands();
+                  } else {
+                    void useWorkspaceStore.getState().loadBrands({
+                      storage: window.sessionStorage,
+                      persistStorage: window.localStorage,
+                    });
+                  }
+                }}
+                style={{ flexShrink: 0 }}
+              >
+                重新加载品牌
+              </Button>
             ) : brands.length === 0 ? (
               <Button
                 type="primary"

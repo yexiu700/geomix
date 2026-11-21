@@ -16,11 +16,13 @@ blocked.addSubnet('192.168.0.0', 16, 'ipv4');
 blocked.addSubnet('224.0.0.0', 4, 'ipv4');
 blocked.addSubnet('240.0.0.0', 4, 'ipv4');
 blocked.addAddress('255.255.255.255', 'ipv4');
-blocked.addAddress('::', 'ipv6');
-blocked.addAddress('::1', 'ipv6');
+blocked.addSubnet('::', 96, 'ipv6');
+blocked.addSubnet('::ffff:0:0:0', 96, 'ipv6');
 blocked.addSubnet('fc00::', 7, 'ipv6');
 blocked.addSubnet('fe80::', 10, 'ipv6');
+blocked.addSubnet('fec0::', 10, 'ipv6');
 blocked.addSubnet('ff00::', 8, 'ipv6');
+blocked.addSubnet('100::', 64, 'ipv6');
 blocked.addSubnet('64:ff9b:1::', 48, 'ipv6');
 
 const BLOCKED_HOSTS = new Set([
@@ -235,7 +237,7 @@ function addPortEntry(map: Map<string, Set<string>>, key: string, port: string):
 function normalizeHost(hostname: string): string {
   let host = hostname.trim().toLowerCase();
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
-  if (host.endsWith('.')) host = host.slice(0, -1);
+  while (host.endsWith('.')) host = host.slice(0, -1);
   return host;
 }
 
@@ -284,6 +286,7 @@ export function classifyHostname(
   | { kind: 'blocked'; reason: string } {
   let host = hostname.trim().toLowerCase();
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  while (host.endsWith('.')) host = host.slice(0, -1);
   if (!host || host.includes('%')) return { kind: 'blocked', reason: 'invalid_host' };
   if (
     !options?.allowlisted &&
@@ -400,29 +403,82 @@ function intToIpv4(value: number): string {
   return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join('.');
 }
 
-function embeddedIpv4(ipv6: string): string | null {
-  const lower = ipv6.toLowerCase();
-  const dotted = lower.match(/::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (dotted?.[1]) return dotted[1];
-  const mapped = lower.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mapped?.[1] && mapped[2]) {
-    return intToIpv4((Number.parseInt(mapped[1], 16) << 16) + Number.parseInt(mapped[2], 16));
+function expandIpv6Hextets(ip: string): number[] | null {
+  const lower = ip.trim().toLowerCase();
+  if (!lower || lower.includes('%')) return null;
+
+  let normalized = lower;
+  if (normalized.includes('.')) {
+    const lastColon = normalized.lastIndexOf(':');
+    if (lastColon === -1) return null;
+    const v4Part = normalized.slice(lastColon + 1);
+    const octets = v4Part.split('.');
+    if (octets.length !== 4) return null;
+    const nums = octets.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : Number.NaN));
+    if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    const hi = ((nums[0]! << 8) | nums[1]!).toString(16);
+    const lo = ((nums[2]! << 8) | nums[3]!).toString(16);
+    normalized = `${normalized.slice(0, lastColon + 1)}${hi}:${lo}`;
   }
-  if (lower.startsWith('2002:')) {
-    const pieces = lower.split(':');
-    const hi = Number.parseInt(pieces[1] ?? '', 16);
-    const lo = Number.parseInt(pieces[2] ?? '', 16);
-    if (Number.isFinite(hi) && Number.isFinite(lo)) return intToIpv4((hi << 16) + lo);
+
+  const halves = normalized.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+
+  if (halves.length === 1) {
+    if (left.length !== 8) return null;
+  } else if (left.length + right.length >= 8) {
+    return null;
   }
-  if (lower.startsWith('64:ff9b::')) {
-    const tail = lower.slice('64:ff9b::'.length);
-    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(tail)) return tail;
-    const pieces = tail.split(':');
-    if (pieces.length === 2 && pieces[0] && pieces[1]) {
-      const hi = Number.parseInt(pieces[0], 16);
-      const lo = Number.parseInt(pieces[1], 16);
-      if (Number.isFinite(hi) && Number.isFinite(lo)) return intToIpv4((hi << 16) + lo);
+
+  const parseHextet = (token: string): number | null => {
+    if (!/^[0-9a-f]{1,4}$/.test(token)) return null;
+    return Number.parseInt(token, 16);
+  };
+
+  const hextets: number[] = [];
+  for (const token of left) {
+    const val = parseHextet(token);
+    if (val === null) return null;
+    hextets.push(val);
+  }
+  if (halves.length === 2) {
+    const zeros = 8 - left.length - right.length;
+    for (let i = 0; i < zeros; i += 1) hextets.push(0);
+    for (const token of right) {
+      const val = parseHextet(token);
+      if (val === null) return null;
+      hextets.push(val);
     }
+  }
+  return hextets.length === 8 ? hextets : null;
+}
+
+function embeddedIpv4(ipv6: string): string | null {
+  const hextets = expandIpv6Hextets(ipv6);
+  if (!hextets) return null;
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = hextets as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  // IPv4-mapped ::ffff:0:0/96 -> 0:0:0:0:0:ffff:hi:lo
+  if (h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0xffff) {
+    return intToIpv4(((h6 << 16) | h7) >>> 0);
+  }
+  // 6to4 2002::/16 -> 2002:hi:lo:*
+  if (h0 === 0x2002) {
+    return intToIpv4(((h1 << 16) | h2) >>> 0);
+  }
+  // RFC 6052 NAT64 well-known prefix 64:ff9b::/96 -> 0064:ff9b:0:0:0:0:hi:lo
+  if (h0 === 0x0064 && h1 === 0xff9b && h2 === 0 && h3 === 0 && h4 === 0 && h5 === 0) {
+    return intToIpv4(((h6 << 16) | h7) >>> 0);
   }
   return null;
 }

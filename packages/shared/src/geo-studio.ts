@@ -713,19 +713,49 @@ export function stripHtmlTagsLinear(input: string, replacement = '', allowEmpty 
   return out + input.slice(lastEmit);
 }
 
+function decodeValidHtmlCodePoint(codePoint: number): string | null {
+  if (!Number.isFinite(codePoint) || codePoint < 0x0001 || codePoint > 0x10ffff) return null;
+  if (codePoint >= 0xd800 && codePoint <= 0xdfff) return null;
+  return String.fromCodePoint(codePoint);
+}
+
+const BASIC_HTML_ENTITIES: Readonly<Record<string, string>> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+};
+
+export function decodeBasicHtmlEntities(input: string): string {
+  if (!input.includes('&')) return input;
+  return input.replace(
+    /&(?:#x([0-9a-fA-F]{1,8})|#(\d{1,8})|(nbsp|amp|lt|gt|quot|apos));/gi,
+    (match, hex: string | undefined, dec: string | undefined, named: string | undefined) => {
+      if (hex) {
+        return decodeValidHtmlCodePoint(Number.parseInt(hex, 16)) ?? match;
+      }
+      if (dec) {
+        return decodeValidHtmlCodePoint(Number.parseInt(dec, 10)) ?? match;
+      }
+      if (named) {
+        return BASIC_HTML_ENTITIES[named.toLowerCase()] ?? match;
+      }
+      return match;
+    },
+  );
+}
+
 export function stripHtmlToText(html: string): string {
-  return stripHtmlTagsLinear(
-    html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(th|td)>/gi, ' ')
-      .replace(/<\/(p|h2|h3|h4|li|blockquote|tr|pre)>/gi, '\n'),
+  return decodeBasicHtmlEntities(
+    stripHtmlTagsLinear(
+      html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(th|td)>/gi, ' ')
+        .replace(/<\/(p|h2|h3|h4|li|blockquote|tr|pre)>/gi, '\n'),
+    ),
   )
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

@@ -305,4 +305,40 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     expect(document.body.textContent ?? '').not.toContain(cuid1);
     expect(document.body.textContent ?? '').not.toContain(cuid2);
   });
+
+  it('renders a compact retry button instead of Create First Brand when brandsError is set (W-04)', () => {
+    const onRetryBrands = vi.fn();
+    render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/visibility"
+        brands={[]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError="服务暂时不可用"
+        activeBrandId={null}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onRetryBrands={onRetryBrands}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>内容</div>
+      </ShellFrame>,
+    );
+
+    const retryBtn = screen.getByTestId('global-brand-switcher-retry');
+    expect(retryBtn.textContent).toContain('重新加载品牌');
+    expect(screen.queryByText('+ 创建首个品牌')).toBeNull();
+    fireEvent.click(retryBtn);
+    expect(onRetryBrands).toHaveBeenCalledTimes(1);
+  });
 });

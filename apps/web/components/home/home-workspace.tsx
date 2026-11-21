@@ -295,23 +295,33 @@ export function HomeWorkspace(): JSX.Element {
     briefId: string,
     patch: GeoBriefUpdateInput,
   ): Promise<GeoBriefRecord> => {
+    const seq = contextSeqRef.current;
+    const targetBrandId = activeBrandId;
+    const targetMarket = activeMarket;
+    const hasMarket = Boolean(activeBrandMarket);
     const saved = await updateBrief(briefId, patch);
-    setDrawerBrief(saved);
     invalidateFreshness('briefs');
-    if (activeBrandId && activeBrandMarket) {
-      void loadHome(activeBrandId, activeMarket, contextSeqRef.current, { silent: true });
+    if (seq !== contextSeqRef.current) return saved;
+    setDrawerBrief(saved);
+    if (targetBrandId && hasMarket) {
+      void loadHome(targetBrandId, targetMarket, seq, { silent: true });
     }
     return saved;
   };
 
   const handleDismissDrawerBrief = async (brief: GeoBriefRecord): Promise<void> => {
+    const seq = contextSeqRef.current;
+    const targetBrandId = activeBrandId;
+    const targetMarket = activeMarket;
+    const hasMarket = Boolean(activeBrandMarket);
     await dismissBrief(brief.id);
+    invalidateFreshness('briefs');
+    if (seq !== contextSeqRef.current) return;
     setDrawerOpen(false);
     setDrawerBrief(null);
     feedback.notifySuccess('已忽略该写作建议');
-    invalidateFreshness('briefs');
-    if (activeBrandId && activeBrandMarket) {
-      void loadHome(activeBrandId, activeMarket, contextSeqRef.current, { silent: true });
+    if (targetBrandId && hasMarket) {
+      void loadHome(targetBrandId, targetMarket, seq, { silent: true });
     }
   };
 

@@ -331,3 +331,136 @@ export function assertNoProhibitedContent(
   }
   return report;
 }
+
+/**
+ * 跨行内标签片段合规替换：按原始字符偏移将命中的 CN 极限词或租户自定义禁词精准回写到对应文本节点，
+ * 避免 `全网<b>第一</b>` / `国<em>家</em>级` 类行内标签拆分绕过合规替换。
+ */
+export function replaceComplianceInTextSegments(
+  segments: readonly string[],
+  options?: DualTrackComplianceOptions,
+): { segments: string[]; flags: GeoComplianceFlag[] } {
+  const market: GeoMarket = options?.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+  const current = [...segments];
+  const flags: GeoComplianceFlag[] = [];
+
+  if (current.length === 0) {
+    return { segments: current, flags };
+  }
+
+  const applyRuleAcrossSegments = (pattern: RegExp, replacement: string): number => {
+    const segStarts: number[] = [];
+    const segEnds: number[] = [];
+    let offset = 0;
+    for (const seg of current) {
+      segStarts.push(offset);
+      offset += seg.length;
+      segEnds.push(offset);
+    }
+    const joined = current.join('');
+    if (!joined) return 0;
+
+    const globalFlags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    const re = new RegExp(pattern.source, globalFlags);
+    const matches: Array<{ start: number; end: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(joined)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex += 1;
+        continue;
+      }
+      matches.push({ start: m.index, end: m.index + m[0].length });
+    }
+    if (matches.length === 0) return 0;
+
+    for (let idx = matches.length - 1; idx >= 0; idx -= 1) {
+      const { start, end } = matches[idx]!;
+      let placedReplacement = false;
+      for (let s = 0; s < current.length; s += 1) {
+        const sStart = segStarts[s]!;
+        const sEnd = segEnds[s]!;
+        if (sEnd <= start) continue;
+        if (sStart >= end) break;
+        const localStart = Math.max(start, sStart) - sStart;
+        const localEnd = Math.min(end, sEnd) - sStart;
+        const segText = current[s]!;
+        const insert = placedReplacement ? '' : replacement;
+        current[s] = segText.slice(0, localStart) + insert + segText.slice(localEnd);
+        placedReplacement = true;
+      }
+    }
+
+    return matches.length;
+  };
+
+  if (market === 'CN') {
+    for (const rule of CN_AD_LAW_REPLACEMENTS) {
+      const hits = applyRuleAcrossSegments(rule.pattern, rule.to);
+      if (hits > 0) {
+        flags.push({
+          code: 'AD_LAW_SUPERLATIVE',
+          market,
+          term: rule.label,
+          replacement: rule.to,
+          severity: 'replaced',
+          message: `已按中国广告法将「${rule.label}」替换为「${rule.to}」`,
+        });
+      }
+    }
+    const afterCn = current.join('');
+    for (const rule of CN_AD_LAW_FLAGS) {
+      if (rule.pattern.test(afterCn)) {
+        flags.push({
+          code: 'AD_LAW_FLAG',
+          market,
+          term: rule.label,
+          severity: 'warning',
+          message: `包含需谨慎核验的绝对化用语「${rule.label}」`,
+        });
+      }
+    }
+  } else {
+    const joinedGlobal = current.join('');
+    for (const rule of GLOBAL_FTC_NOTICE_PATTERNS) {
+      if (rule.pattern.test(joinedGlobal)) {
+        flags.push({
+          code: 'FTC_NOTICE',
+          market,
+          term: rule.label,
+          severity: 'info',
+          message: `FTC objectivity notice: verify substantiation for "${rule.label}"`,
+        });
+      }
+    }
+  }
+
+  const normalizedCustom = Array.from(
+    new Set((options?.customForbiddenWords ?? []).map((w) => w.trim()).filter((w) => w.length > 0)),
+  );
+  normalizedCustom.sort((a, b) => b.length - a.length);
+
+  for (const word of normalizedCustom) {
+    const escaped = escapeRegExp(word);
+    const pattern = new RegExp(escaped, isAsciiOnly(word) ? 'gi' : 'g');
+    const candidateReplacement = market === 'GLOBAL' ? 'notable option' : '主流方案';
+    const safeReplacement = normalizedCustom.some((w) =>
+      candidateReplacement.toLowerCase().includes(w.toLowerCase()),
+    )
+      ? ''
+      : candidateReplacement;
+
+    const hits = applyRuleAcrossSegments(pattern, safeReplacement);
+    if (hits > 0) {
+      flags.push({
+        code: 'CUSTOM_FORBIDDEN',
+        market,
+        term: word,
+        replacement: safeReplacement,
+        severity: 'replaced',
+        message: `已替换租户自定义禁词「${word}」`,
+      });
+    }
+  }
+
+  return { segments: current, flags };
+}

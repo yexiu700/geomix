@@ -312,4 +312,35 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
     );
     expect(numberedHeadings).toEqual(['硬件架构与扩展性', '家庭影音与离线相册']);
   });
+
+  it('parses pathological 50,000-tag HTML payloads in strictly linear O(N) time (<1000ms) (B-11)', () => {
+    const payloads: Array<[string, string]> = [
+      ['meta50k', '<meta '.repeat(50_000)],
+      ['meta50k_og', '<meta '.repeat(50_000) + 'property="og:title">'],
+      ['h2_50k', '<h2>'.repeat(50_000)],
+      ['h2_50k_close', '<h2>'.repeat(50_000) + '</h2>'],
+      ['script_50k', '<script>'.repeat(50_000)],
+      ['nav_50k_close', '<nav>'.repeat(50_000) + '</nav>'],
+      ['nav_close_50k', '</nav>'.repeat(50_000) + '<nav>'],
+      ['div_50k', '<div '.repeat(50_000)],
+      ['comment_50k', '<!--'.repeat(50_000)],
+    ];
+
+    for (const [label, payload] of payloads) {
+      const t0 = performance.now();
+      const article = extractArticleFromHtml(payload);
+      expect(performance.now() - t0, `extractArticleFromHtml(${label})`).toBeLessThan(1000);
+      expect(typeof article.contentText).toBe('string');
+
+      const t1 = performance.now();
+      const headings = extractSourceHeadingsFromHtml(payload);
+      expect(performance.now() - t1, `extractSourceHeadingsFromHtml(${label})`).toBeLessThan(1000);
+      expect(Array.isArray(headings)).toBe(true);
+
+      const t2 = performance.now();
+      const pasted = normalizePastedSource({ pastedContent: payload });
+      expect(performance.now() - t2, `normalizePastedSource(${label})`).toBeLessThan(1000);
+      expect(typeof pasted.contentText).toBe('string');
+    }
+  });
 });

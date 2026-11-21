@@ -792,6 +792,10 @@ v2Describe('F10: Visibility Precision Fixes', { tag: ['@F10', '@M2'] }, () => {
       );
       const run = await pollVisibilityRunDone(tenant.accessToken, brandId, runRes.body!.data.id);
       const fanOuts = run.observations![0].fanOutQueries;
+      expect(fanOuts.length).toBeGreaterThanOrEqual(2);
+      for (const f of fanOuts) {
+        expect(f).not.toMatch(/[;；\n]/);
+      }
       const lowerSet = new Set(fanOuts.map((f) => f.toLowerCase()));
       expect(lowerSet.size).toBe(fanOuts.length);
     },

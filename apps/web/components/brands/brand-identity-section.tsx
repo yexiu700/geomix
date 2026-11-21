@@ -129,9 +129,15 @@ export function BrandIdentitySection({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        await deleteBrand(brand.id, { storage: window.sessionStorage });
-        onBrandDeleted(brand.id);
-        feedback.notifySuccess(`已删除品牌「${brand.name}」`);
+        try {
+          await deleteBrand(brand.id, { storage: window.sessionStorage });
+          onBrandDeleted(brand.id);
+          feedback.notifySuccess(`已删除品牌「${brand.name}」`);
+        } catch (reason: unknown) {
+          feedback.notifyError(
+            reason instanceof Error && reason.message ? reason.message : '删除品牌失败',
+          );
+        }
       },
     });
   };

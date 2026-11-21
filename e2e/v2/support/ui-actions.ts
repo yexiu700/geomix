@@ -289,9 +289,8 @@ export async function openBriefDrawerAndEdit(
     const h2Inputs = drawer.locator(
       'input[placeholder*="H2"], input[placeholder*="小节"], input[data-testid*="outline"]',
     );
-    if ((await h2Inputs.count()) > 0) {
-      await h2Inputs.first().fill(opts.newH2);
-    }
+    await expect(h2Inputs.first()).toBeVisible();
+    await h2Inputs.first().fill(opts.newH2);
   }
 
   if (opts.clickWrite) {

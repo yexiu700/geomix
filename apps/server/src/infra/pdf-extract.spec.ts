@@ -259,4 +259,176 @@ endobj
       'Comment With Double Angle Bracket 14.5W 24dBA',
     );
   });
+
+  it('rejects multi-stream FlateDecode decompression bombs exceeding cumulative inflated budget (B-08)', () => {
+    const oneMbChunk = deflateSync(Buffer.alloc(1024 * 1024, 0x20));
+    const parts: Buffer[] = [Buffer.from('%PDF-1.7\n', 'latin1')];
+    for (let i = 1; i <= 25; i += 1) {
+      parts.push(
+        Buffer.from(
+          `${i} 0 obj\n<< /Filter /FlateDecode /Length ${oneMbChunk.length} >>\nstream\n`,
+          'latin1',
+        ),
+        oneMbChunk,
+        Buffer.from('\nendstream\nendobj\n', 'latin1'),
+      );
+    }
+    parts.push(Buffer.from('%%EOF', 'latin1'));
+    const bombPdf = Buffer.concat(parts);
+
+    expect(() => extractTextFromPdf(bombPdf)).toThrowError(PdfExtractError);
+    try {
+      extractTextFromPdf(bombPdf);
+    } catch (err) {
+      expect((err as PdfExtractError).reason).toBe('corrupt');
+      expect((err as PdfExtractError).message).toContain('超过安全上限');
+    }
+  });
+
+  it('completes in linear O(N) time (<500ms) on thousands of empty or skipped streams (B-08-R)', () => {
+    const emptyStreamsPdf = Buffer.from(
+      '%PDF-1.4\n' + 'stream\n\nendstream\n'.repeat(10_000) + '%%EOF',
+      'latin1',
+    );
+    const start1 = performance.now();
+    expect(() => extractTextFromPdf(emptyStreamsPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - start1).toBeLessThan(500);
+
+    const skippedStreamsPdf = Buffer.from(
+      '%PDF-1.4\n' +
+        '<< /Subtype /Image /Length 4 >>\nstream\nabcd\nendstream\n'.repeat(1_500) +
+        '%%EOF',
+      'latin1',
+    );
+    const start2 = performance.now();
+    expect(() => extractTextFromPdf(skippedStreamsPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - start2).toBeLessThan(500);
+  });
+
+  it('bounds findStreamDictionary reverse scan on 8 MB LF-only PDFs (<500ms) (B-08-R2)', () => {
+    const lfOnlyLargePdf = Buffer.from(
+      '%PDF-1.4\n' +
+        'A'.repeat(8 * 1024 * 1024) +
+        '\n' +
+        '<< /Subtype /Image >>\nstream\nX\nendstream\n'.repeat(2_040) +
+        '<< /Length 64 >>\nstream\nBT /F1 12 Tf (LF-Only Large PDF Linear Scan Verified 2026) Tj ET\nendstream\n%%EOF',
+      'latin1',
+    );
+    const start = performance.now();
+    const text = extractTextFromPdf(lfOnlyLargePdf);
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(text).toContain('LF-Only Large PDF Linear Scan Verified 2026');
+  });
+
+  it('parses unclosed CMap blocks, unclosed bfrange arrays, and pathological BT tokens in linear time (<500ms) (B-08-R2)', () => {
+    const unclosedBfChar = Buffer.from(
+      `%PDF-1.4\n1 0 obj << /Length 240000 >>\nstream\n${'beginbfchar '.repeat(20_000)}\nendstream\nendobj\n%%EOF`,
+      'latin1',
+    );
+    const t1 = performance.now();
+    expect(() => extractTextFromPdf(unclosedBfChar)).toThrowError(PdfExtractError);
+    expect(performance.now() - t1).toBeLessThan(500);
+
+    const unclosedBfRange = Buffer.from(
+      `%PDF-1.4\n1 0 obj << /Length 260000 >>\nstream\n${'beginbfrange '.repeat(20_000)}\nendstream\nendobj\n%%EOF`,
+      'latin1',
+    );
+    const t2 = performance.now();
+    expect(() => extractTextFromPdf(unclosedBfRange)).toThrowError(PdfExtractError);
+    expect(performance.now() - t2).toBeLessThan(500);
+
+    const unclosedBfRangeArray = Buffer.from(
+      `%PDF-1.4\n1 0 obj << /Length 120000 >>\nstream\nbeginbfrange\n${'<01> <02> [' + ' '.repeat(50_000)}\n${'<01> <02> [ '.repeat(5_000)}\nendbfrange\nendstream\nendobj\n%%EOF`,
+      'latin1',
+    );
+    const t3 = performance.now();
+    expect(() => extractTextFromPdf(unclosedBfRangeArray)).toThrowError(PdfExtractError);
+    expect(performance.now() - t3).toBeLessThan(500);
+
+    const pathologicalBtNum = Buffer.from(
+      `%PDF-1.4\n1 0 obj << /Length 10000 >>\nstream\nBT ${'1'.repeat(5_000)}a (Linear BT Tokenizing Verified 2026) Tj ET\nendstream\nendobj\n%%EOF`,
+      'latin1',
+    );
+    const t4 = performance.now();
+    const extracted = extractTextFromPdf(pathologicalBtNum);
+    expect(performance.now() - t4).toBeLessThan(500);
+    expect(extracted).toContain('Linear BT Tokenizing Verified 2026');
+  });
+
+  it('bounds cumulative CMap bfrange amplification and wide-hex bombs (<500ms) (B-08-R3)', () => {
+    const wrapFlatePdf = (streamBody: string): Buffer => {
+      const compressed = deflateSync(Buffer.from(streamBody, 'latin1'));
+      return Buffer.concat([
+        Buffer.from(
+          `%PDF-1.7\n1 0 obj\n<< /Filter /FlateDecode /Length ${compressed.length} >>\nstream\n`,
+          'latin1',
+        ),
+        compressed,
+        Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1'),
+      ]);
+    };
+
+    const bfRangeAmpPdf = wrapFlatePdf(
+      `begincmap\nbeginbfrange\n${'<0000> <0800> <0041>\n'.repeat(50_000)}endbfrange\nendcmap\n`,
+    );
+    const t1 = performance.now();
+    expect(() => extractTextFromPdf(bfRangeAmpPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - t1).toBeLessThan(500);
+
+    const wideStart = '0'.repeat(10_000);
+    const wideEnd = `${'0'.repeat(9_997)}800`;
+    const wideHexPdf = wrapFlatePdf(
+      `begincmap\nbeginbfrange\n${`<${wideStart}> <${wideEnd}> <0041>\n`.repeat(50)}endbfrange\nendcmap\n`,
+    );
+    const t2 = performance.now();
+    expect(() => extractTextFromPdf(wideHexPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - t2).toBeLessThan(500);
+  });
+
+  it('bounds FlateDecode BT token floods and 18 MB literal/hex text bombs (<500ms) (B-08-R3)', () => {
+    const wrapFlateStreamsPdf = (bodies: string[]): Buffer => {
+      const parts: Buffer[] = [Buffer.from('%PDF-1.7\n', 'latin1')];
+      bodies.forEach((body, idx) => {
+        const compressed = deflateSync(Buffer.from(body, 'latin1'));
+        parts.push(
+          Buffer.from(
+            `${idx + 1} 0 obj\n<< /Filter /FlateDecode /Length ${compressed.length} >>\nstream\n`,
+            'latin1',
+          ),
+          compressed,
+          Buffer.from('\nendstream\nendobj\n', 'latin1'),
+        );
+      });
+      parts.push(Buffer.from('%%EOF', 'latin1'));
+      return Buffer.concat(parts);
+    };
+
+    const parensFloodPdf = wrapFlateStreamsPdf([`BT ${'() '.repeat(3_000_000)}ET`]);
+    const t1 = performance.now();
+    expect(() => extractTextFromPdf(parensFloodPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - t1).toBeLessThan(500);
+
+    const opFloodPdf = wrapFlateStreamsPdf([`BT ${'a '.repeat(4_500_000)}ET`]);
+    const t2 = performance.now();
+    expect(() => extractTextFromPdf(opFloodPdf)).toThrowError(PdfExtractError);
+    expect(performance.now() - t2).toBeLessThan(500);
+
+    const nineMbLiteralStream = `BT (${'A'.repeat(9_000_000)}) Tj ET`;
+    const literalBombPdf = wrapFlateStreamsPdf([nineMbLiteralStream, nineMbLiteralStream]);
+    const t3 = performance.now();
+    const literalText = extractTextFromPdf(literalBombPdf);
+    expect(performance.now() - t3).toBeLessThan(500);
+    expect(literalText.length).toBeGreaterThan(0);
+    expect(literalText.length).toBeLessThanOrEqual(100_000);
+    expect(literalText.startsWith('AAAAAAAAAA')).toBe(true);
+
+    const nineMbHexStream = `BT <${'41'.repeat(4_500_000)}> Tj ET`;
+    const hexBombPdf = wrapFlateStreamsPdf([nineMbHexStream, nineMbHexStream]);
+    const t4 = performance.now();
+    const hexText = extractTextFromPdf(hexBombPdf);
+    expect(performance.now() - t4).toBeLessThan(500);
+    expect(hexText.length).toBeGreaterThan(0);
+    expect(hexText.length).toBeLessThanOrEqual(100_000);
+    expect(hexText.startsWith('AAAAAAAAAA')).toBe(true);
+  });
 });

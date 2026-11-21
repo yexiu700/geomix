@@ -412,4 +412,61 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     expect(screen.getByText('正浩')).toBeTruthy();
     expect(screen.queryByText('forum.jikong.example')).toBeNull();
   });
+
+  it('notifies error when deleteBrand fails inside confirm modal and avoids snapping back on stale brand save (W-07)', async () => {
+    const b1 = makeBrand('b-w7-1', '品牌甲');
+    const b2 = makeBrand('b-w7-2', '品牌乙');
+    getBrandFactsMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeFactsResponse(brandId)),
+    );
+    listBrandMediaMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeMediaResponse(brandId)),
+    );
+
+    deleteBrandMock.mockRejectedValueOnce(new Error('该品牌存在进行中的监测任务'));
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      void onOk?.();
+    });
+
+    let resolveUpdate!: (value: BrandRecord) => void;
+    updateBrandMock.mockImplementationOnce(
+      () =>
+        new Promise<BrandRecord>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+
+    renderWorkspace();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '删除品牌' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '删除品牌' }));
+    await waitFor(() => {
+      expect(notifyErrorMock).toHaveBeenCalledWith('该品牌存在进行中的监测任务');
+    });
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-w7-1');
+
+    // Start saving Brand 1, switch to Brand 2 mid-flight, then resolve Brand 1 save
+    fireEvent.click(screen.getByRole('button', { name: '保存基础信息' }));
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand('b-w7-2', 'CN', window.localStorage);
+    });
+    await act(async () => {
+      resolveUpdate({ ...b1, name: '品牌甲-新名' });
+      await Promise.resolve();
+    });
+
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-w7-2');
+    expect(useWorkspaceStore.getState().brands.find((b) => b.id === 'b-w7-1')?.name).toBe(
+      '品牌甲-新名',
+    );
+  });
 });

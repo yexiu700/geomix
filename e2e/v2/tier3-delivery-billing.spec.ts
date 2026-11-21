@@ -227,6 +227,7 @@ v2Describe(
               },
             });
             expect(sse.status).toBe(200);
+            expect(sse.complete?.article.id).toBeTruthy();
 
             // 3. Inline AI image: 5 pts
             const img = unwrapOk(
@@ -256,12 +257,14 @@ v2Describe(
           expect(
             strictNegEntries.every((i) => i.status === 'SETTLED' && i.listPrice === -i.delta),
           ).toBe(true);
+          expect(strictLogs.items.filter((i) => i.status === 'RELEASED').length).toBe(0);
 
           // SHADOW wallet: unchanged 100 with delta === 0 listPrice records (2, 2, 10, 5)
           const shadowWallet = await getTenantWallet(shadowTenant.session);
           expect(shadowWallet.points).toBe(100);
           expect(shadowWallet.pointsReserved).toBe(0);
           const shadowLogs = await getTenantPointLogs(shadowTenant.session, 50);
+          expect(shadowLogs.items.some((i) => i.delta < 0)).toBe(false);
           const shadowEntries = shadowLogs.items.filter((i) => i.delta === 0 && i.listPrice > 0);
           const shadowListPricesSorted = shadowEntries
             .map((i) => i.listPrice)
@@ -270,7 +273,7 @@ v2Describe(
           expect(shadowListPricesSorted.reduce((sum, p) => sum + p, 0)).toBe(19);
           expect(shadowEntries.every((i) => i.status === 'SETTLED')).toBe(true);
 
-          // Open /account as STRICT merchant: verify points tab & complete absence of ¥0.00 / 余额明细
+          // Open /account as STRICT merchant: verify points ledger table rows & complete absence of ¥0.00 / 余额明细
           const { context, page, errors } = await openAuthenticatedPage(
             browser,
             strictTenant.session,
@@ -280,11 +283,35 @@ v2Describe(
             await expect(page.locator('body')).toContainText('81');
             await expect(page.getByRole('tab', { name: '点数明细' })).toBeVisible();
             await expect(page.getByRole('tab', { name: /余额明细/ })).toHaveCount(0);
+            const rows = page.locator('table tbody tr');
+            await expect
+              .poll(async () => rows.count(), { timeout: 10_000 })
+              .toBeGreaterThanOrEqual(4);
+            const tableText = await page.locator('table tbody').innerText();
+            expect(tableText).toContain('-10');
+            expect(tableText).toContain('-5');
+            expect(tableText).toContain('-2');
             const bodyText = await page.locator('body').innerText();
             expect(bodyText).not.toContain('¥0.00');
             assertNoConsoleOrPageErrors(errors);
           } finally {
             await context.close();
+          }
+
+          // Open /account as SHADOW merchant: verify 100 balance & zero ¥0.00
+          const shadowUi = await openAuthenticatedPage(browser, shadowTenant.session, '/account');
+          try {
+            await expect(shadowUi.page.locator('body')).toContainText('100');
+            await expect(shadowUi.page.getByRole('tab', { name: '点数明细' })).toBeVisible();
+            const shadowRows = shadowUi.page.locator('table tbody tr');
+            await expect
+              .poll(async () => shadowRows.count(), { timeout: 10_000 })
+              .toBeGreaterThanOrEqual(4);
+            const shadowBodyText = await shadowUi.page.locator('body').innerText();
+            expect(shadowBodyText).not.toContain('¥0.00');
+            assertNoConsoleOrPageErrors(shadowUi.errors);
+          } finally {
+            await shadowUi.context.close();
           }
         } finally {
           for (const item of cleanupMedia) {

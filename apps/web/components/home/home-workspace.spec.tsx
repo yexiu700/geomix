@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ActionHomeResponse, BrandRecord, GeoBriefRecord } from '@geomix/shared';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
@@ -598,5 +598,96 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith(BRAND_A.id, 'CN', expect.anything());
+  });
+
+  it('does not re-fetch Brand A or lock in skeleton when drawer brief save resolves after switching to Brand B (W-02)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [BRAND_A, BRAND_B],
+      activeBrandId: BRAND_A.id,
+      activeMarket: 'CN',
+    });
+
+    const fetchHomeSpy = vi
+      .spyOn(homeApi, 'fetchActionHome')
+      .mockImplementation(async (brandId, market) => makeHomeData(brandId, market));
+
+    const briefA: GeoBriefRecord = {
+      id: 'brief_brand_home_a_1',
+      brandId: BRAND_A.id,
+      brandMarketId: 'bm_a_cn',
+      market: 'CN',
+      sourceType: 'AUTO_GAP',
+      sourceRunId: null,
+      sourceObservationIds: [],
+      sourceCitationUrl: null,
+      targetPrompt: '核心问句 1',
+      priorityScore: 95,
+      diagnosisSummary: '竞品霸榜缺口诊断详情',
+      recommendedRecipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'CN_DEEP_REVIEW',
+      suggestedTitle: 'brand_home_a 优先建议标题 1',
+      outlineH2: [{ heading: '实测参数对比', intent: '提供对比表格' }],
+      targetFanOuts: ['满载噪音'],
+      competitorFocus: ['群晖'],
+      matchedFactIds: [],
+      missingFactHints: [],
+      recommendedChannels: [{ channel: '知乎', reason: '高权阵地' }],
+      status: 'OPEN',
+      createdAt: '2026-11-21T00:00:00.000Z',
+      updatedAt: '2026-11-21T00:00:00.000Z',
+    };
+    vi.spyOn(briefsApi, 'getBrief').mockResolvedValueOnce(briefA);
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValueOnce({
+      brandId: BRAND_A.id,
+      truthAgreementSignedAt: null,
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+
+    let resolveUpdate!: (value: GeoBriefRecord) => void;
+    vi.spyOn(briefsApi, 'updateBrief').mockImplementationOnce(
+      () =>
+        new Promise<GeoBriefRecord>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <HomeWorkspace />
+      </ConsoleProvider>,
+    );
+
+    await screen.findByTestId('home-health-strip');
+    fireEvent.click(screen.getAllByRole('button', { name: '查看详细意见' })[0]!);
+    const drawer = await screen.findByTestId('geo-brief-drawer');
+    fireEvent.change(within(drawer).getByTestId('brief-drawer-title'), {
+      target: { value: '已修改标题' },
+    });
+    fireEvent.click(within(drawer).getByTestId('brief-drawer-save-btn'));
+
+    // Switch active brand to Brand B while Brand A's updateBrief is still pending
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand(BRAND_B.id, 'CN', window.localStorage);
+    });
+
+    // Resolve Brand A's updateBrief after brand switch
+    await act(async () => {
+      resolveUpdate({ ...briefA, suggestedTitle: '已修改标题' });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('home-health-strip')).toBeTruthy();
+      expect(screen.getByText('brand_home_b 优先建议标题 1')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('home-loading')).toBeNull();
+    // Brand A must NOT have been re-fetched after Brand B was selected
+    const brandAFetches = fetchHomeSpy.mock.calls.filter(([bid]) => bid === BRAND_A.id);
+    expect(brandAFetches).toHaveLength(1);
   });
 });

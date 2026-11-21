@@ -271,6 +271,9 @@ export class VisibilityRunLifecycleService {
     const tenantId = requireTenant();
     const runId = deriveVisibilityRunId(tenantId, idempotencyKey);
 
+    if (queryMarket && input.market && queryMarket !== input.market) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '查询参数 market 与请求体 market 不一致');
+    }
     const effectiveMarket = input.market ?? queryMarket;
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, effectiveMarket);
 
@@ -293,6 +296,26 @@ export class VisibilityRunLifecycleService {
     const triggerType: VisibilityTriggerType = input.triggerType ?? 'MANUAL';
     const retestArticleId = input.retestArticleId ?? null;
 
+    const assertMatchingReplay = (row: {
+      brandId: string;
+      brandMarketId: string;
+      engines: string[];
+      prompts: string[];
+      triggerType: VisibilityTriggerType;
+      retestArticleId: string | null;
+    }) => {
+      if (
+        row.brandId !== brand.id ||
+        row.brandMarketId !== market.id ||
+        row.engines.join(',') !== engines.join(',') ||
+        row.prompts.join('\n') !== promptList.join('\n') ||
+        row.triggerType !== triggerType ||
+        (row.retestArticleId ?? null) !== retestArticleId
+      ) {
+        throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
+      }
+    };
+
     const existing = await this.prisma.scoped.visibilityRun.findFirst({
       where: { id: runId },
       select: {
@@ -306,17 +329,18 @@ export class VisibilityRunLifecycleService {
       },
     });
     if (existing) {
-      if (
-        existing.brandId !== brand.id ||
-        existing.brandMarketId !== market.id ||
-        existing.engines.join(',') !== engines.join(',') ||
-        existing.prompts.join('\n') !== promptList.join('\n') ||
-        existing.triggerType !== triggerType ||
-        (existing.retestArticleId ?? null) !== retestArticleId
-      ) {
-        throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
-      }
+      assertMatchingReplay(existing);
       return this.detailInScope(existing.id, { brandId: brand.id, brandMarketId: market.id });
+    }
+
+    if (retestArticleId) {
+      const retestArticle = await this.prisma.scoped.geoArticle.findFirst({
+        where: { id: retestArticleId, brandId: brand.id, brandMarketId: market.id },
+        select: { id: true },
+      });
+      if (!retestArticle) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或不属于当前品牌市场');
+      }
     }
 
     if (this.engineHealth) {
@@ -352,6 +376,33 @@ export class VisibilityRunLifecycleService {
       refId: runId,
       amount: totalPoints,
     });
+
+    const replayedByReservation = await this.prisma.scoped.visibilityRun.findFirst({
+      where: { id: runId },
+      select: {
+        id: true,
+        brandId: true,
+        brandMarketId: true,
+        engines: true,
+        prompts: true,
+        triggerType: true,
+        retestArticleId: true,
+      },
+    });
+    if (replayedByReservation) {
+      assertMatchingReplay(replayedByReservation);
+      return this.detailInScope(replayedByReservation.id, {
+        brandId: brand.id,
+        brandMarketId: market.id,
+      });
+    }
+    if (reservation.status === 'CLOSED') {
+      throw new ApiError(
+        409,
+        BILLING_ERROR.CONFLICT,
+        '该幂等键对应的监测任务已结束，请更换新的 Idempotency-Key 重试',
+      );
+    }
 
     try {
       await this.prisma.base.$transaction(async (tx) => {
@@ -394,7 +445,23 @@ export class VisibilityRunLifecycleService {
       await this.enqueuer.enqueueVisibilityRun({ tenantId, runId });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        return this.detailInScope(runId, { brandId: brand.id, brandMarketId: market.id });
+        const winner = await this.prisma.scoped.visibilityRun.findFirst({
+          where: { id: runId },
+          select: {
+            id: true,
+            brandId: true,
+            brandMarketId: true,
+            engines: true,
+            prompts: true,
+            triggerType: true,
+            retestArticleId: true,
+          },
+        });
+        if (!winner) {
+          throw error;
+        }
+        assertMatchingReplay(winner);
+        return this.detailInScope(winner.id, { brandId: brand.id, brandMarketId: market.id });
       }
       await this.prisma.scoped.visibilityRun.deleteMany({ where: { id: runId } });
       await this.billing.close({ tenantId, reservationId: reservation.id });
@@ -575,6 +642,20 @@ export class VisibilityRunLifecycleService {
       );
     }
 
+    const runningObsCount = await this.prisma.scoped.visibilityObservation.count({
+      where: {
+        runId: existing.id,
+        status: 'RUNNING',
+      },
+    });
+    if (runningObsCount > 0) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '存在仍在执行中的监测请求，请等待数秒收尾后再删除',
+      );
+    }
+
     const result = await this.prisma.scoped.visibilityRun.deleteMany({
       where: {
         id: runId,
@@ -607,6 +688,22 @@ export class VisibilityRunLifecycleService {
         400,
         API_ERROR.BAD_REQUEST,
         '所选任务中包含排队中、运行中或已暂停的任务，请先终止后再删除',
+      );
+    }
+
+    const runningObsCount = await this.prisma.scoped.visibilityObservation.count({
+      where: {
+        brandId: brand.id,
+        brandMarketId: bm.id,
+        runId: { in: ids },
+        status: 'RUNNING',
+      },
+    });
+    if (runningObsCount > 0) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '存在仍在执行中的监测请求，请等待数秒收尾后再删除',
       );
     }
 

@@ -192,13 +192,23 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
         }
 
         let records = await tx.geoPublishRecord.findMany({
-          where: { tenantId: event.tenantId, latestRetestRunId: run.id },
+          where: {
+            tenantId: event.tenantId,
+            brandId: run.brandId,
+            brandMarketId: run.brandMarketId,
+            latestRetestRunId: run.id,
+          },
         });
 
         // Worker-first race fallback: worker may complete fake RETEST before API links latestRetestRunId
         if (records.length === 0 && run.retestArticleId) {
           records = await tx.geoPublishRecord.findMany({
-            where: { tenantId: event.tenantId, articleId: run.retestArticleId },
+            where: {
+              tenantId: event.tenantId,
+              brandId: run.brandId,
+              brandMarketId: run.brandMarketId,
+              articleId: run.retestArticleId,
+            },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             take: 1,
           });

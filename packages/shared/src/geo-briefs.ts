@@ -4,6 +4,7 @@ import {
   GEO_RECIPES,
   GEO_TARGET_FORMATS,
   geoOutlineHeadingSchema,
+  stripHtmlTagsLinear,
   type GeoOutlineHeading,
   type GeoRecipe,
   type GeoTargetFormat,
@@ -313,6 +314,16 @@ function isPrivateOrReservedIPv6Groups(g: readonly number[]): boolean {
   if (firstFiveZero && g5 === 0) {
     return isPrivateOrReservedIPv4Parts(embeddedV4);
   }
+  // 6to4 2002::/16
+  if (g0 === 0x2002) {
+    const sixToFourV4: [number, number, number, number] = [
+      (g1 >> 8) & 0xff,
+      g1 & 0xff,
+      (g2 >> 8) & 0xff,
+      g2 & 0xff,
+    ];
+    return isPrivateOrReservedIPv4Parts(sixToFourV4);
+  }
   // NAT64 well-known prefix 64:ff9b::/96
   if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
     return isPrivateOrReservedIPv4Parts(embeddedV4);
@@ -321,20 +332,27 @@ function isPrivateOrReservedIPv6Groups(g: readonly number[]): boolean {
   if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0x0001) {
     return true;
   }
+  // Discard prefix 100::/64
+  if (g0 === 0x0100 && g1 === 0 && g2 === 0 && g3 === 0) {
+    return true;
+  }
   // Unique local fc00::/7
   if ((g0 & 0xfe00) === 0xfc00) return true;
   // Link-local fe80::/10 (fe80:: through febf::)
   if ((g0 & 0xffc0) === 0xfe80) return true;
+  // Deprecated site-local fec0::/10
+  if ((g0 & 0xffc0) === 0xfec0) return true;
   // Multicast ff00::/8
   if ((g0 & 0xff00) === 0xff00) return true;
   return false;
 }
 
 export function isPrivateOrReservedHostLiteral(hostname: string): boolean {
-  const host = hostname
+  let host = hostname
     .trim()
     .toLowerCase()
     .replace(/^\[|\]$/g, '');
+  while (host.endsWith('.')) host = host.slice(0, -1);
   if (!host) return true;
   if (
     host === 'localhost' ||
@@ -391,11 +409,9 @@ function decodeHtmlEntities(input: string): string {
     });
 }
 
-const STRIP_PAIRED_TAGS = [
-  'script',
-  'style',
-  'noscript',
-  'template',
+const RAW_TEXT_STRIP_TAGS = ['script', 'style', 'noscript', 'template'] as const;
+
+const STRUCTURAL_STRIP_TAGS = [
   'svg',
   'canvas',
   'video',
@@ -412,9 +428,29 @@ const STRIP_PAIRED_TAGS = [
   'footer',
   'aside',
   'figcaption',
-];
+] as const;
 
-const VOID_MEDIA_TAG_RE = /<(?:img|source|input|track|area|meta|link)\b[^>]*\/?>/gi;
+const VOID_MEDIA_TAGS = ['img', 'source', 'input', 'track', 'area', 'meta', 'link'] as const;
+const VOID_MEDIA_TAG_SET = new Set<string>(VOID_MEDIA_TAGS);
+
+const NOISE_CONTAINER_TAGS = ['div', 'section', 'p', 'span', 'ul'] as const;
+const NOISE_CONTAINER_TAG_SET = new Set<string>(NOISE_CONTAINER_TAGS);
+
+const BLOCK_CLOSE_NEWLINE_TAGS = new Set([
+  'p',
+  'div',
+  'section',
+  'article',
+  'li',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'tr',
+]);
 
 const NOISE_ATTR_RE =
   /\b(?:id|class)\s*=\s*["'][^"']*(?:qr_code|qrcode|js_pc_qr_code|rich_media_meta_list|profile_container|reward_area|js_tags|js_toobar|ContentItem-actions|RichContent-actions|Post-TopicsAndReviewer|Post-Sub|AuthorInfo|comment-list|related-articles|share-box|copyright-notice|ad-banner|ads-box|sidebar|breadcrumb)[^"']*["']/i;
@@ -431,93 +467,412 @@ const BOILERPLATE_LINE_PATTERNS = [
   /^(?:编辑|责编|来源|作者)[:：\s].{0,30}$/,
 ];
 
-function stripMediaAndNoiseElements(rawHtml: string): string {
-  let html = rawHtml.replace(/<!--[\s\S]*?-->/g, '');
-  for (const tag of STRIP_PAIRED_TAGS) {
-    const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
-    html = html.replace(re, ' ');
+function isTagNameBoundaryChar(ch: string | undefined): boolean {
+  return (
+    ch === undefined ||
+    ch === '>' ||
+    ch === '/' ||
+    ch === ' ' ||
+    ch === '\t' ||
+    ch === '\n' ||
+    ch === '\r' ||
+    ch === '\f'
+  );
+}
+
+function isAsciiWsCode(code: number): boolean {
+  return code === 32 || code === 9 || code === 10 || code === 13 || code === 12;
+}
+
+function isAsciiAlphaNumCode(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+}
+
+function escapeRegExpLiteral(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findCloseTagEndLinear(
+  lower: string,
+  tag: string,
+  from: number,
+): { start: number; end: number } | null {
+  const needle = `</${tag}`;
+  let cursor = from;
+  while (cursor < lower.length) {
+    const start = lower.indexOf(needle, cursor);
+    if (start === -1) return null;
+    let i = start + needle.length;
+    while (i < lower.length && isAsciiWsCode(lower.charCodeAt(i))) {
+      i += 1;
+    }
+    if (lower[i] === '>') {
+      return { start, end: i + 1 };
+    }
+    cursor = start + needle.length;
   }
-  html = html.replace(VOID_MEDIA_TAG_RE, ' ');
-  return html;
+  return null;
+}
+
+function stripCommentsLinear(html: string): string {
+  if (!html.includes('<!--')) return html;
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = html.indexOf('<!--', cursor);
+    if (start === -1) {
+      parts.push(html.slice(cursor));
+      break;
+    }
+    parts.push(html.slice(cursor, start));
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) {
+      break;
+    }
+    cursor = end + 3;
+  }
+  return parts.join('');
+}
+
+function stripRawTextTagLinear(html: string, lower: string, tag: string): string {
+  const openNeedle = `<${tag}`;
+  if (!lower.includes(openNeedle)) return html;
+
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const start = lower.indexOf(openNeedle, cursor);
+    if (start === -1) {
+      parts.push(html.slice(cursor));
+      break;
+    }
+    const afterName = start + openNeedle.length;
+    if (!isTagNameBoundaryChar(lower[afterName])) {
+      parts.push(html.slice(cursor, afterName));
+      cursor = afterName;
+      continue;
+    }
+    const openEnd = lower.indexOf('>', afterName);
+    if (openEnd === -1) {
+      parts.push(html.slice(cursor));
+      break;
+    }
+    parts.push(html.slice(cursor, start), ' ');
+    const closeMatch = findCloseTagEndLinear(lower, tag, openEnd + 1);
+    if (!closeMatch) {
+      break;
+    }
+    cursor = closeMatch.end;
+  }
+  return parts.join('');
+}
+
+function stripPairedStructuralTagLinear(html: string, lower: string, tag: string): string {
+  const openNeedle = `<${tag}`;
+  const closeNeedle = `</${tag}`;
+  if (!lower.includes(closeNeedle) || !lower.includes(openNeedle)) {
+    return html;
+  }
+
+  const openStack: number[] = [];
+  const ranges: Array<[number, number]> = [];
+  let pos = 0;
+  let nextOpen = lower.indexOf(openNeedle, 0);
+  let nextClose = lower.indexOf(closeNeedle, 0);
+
+  while (pos < lower.length) {
+    if (nextOpen !== -1 && nextOpen < pos) {
+      nextOpen = lower.indexOf(openNeedle, pos);
+    }
+    if (nextClose !== -1 && nextClose < pos) {
+      nextClose = lower.indexOf(closeNeedle, pos);
+    }
+    if (nextOpen === -1 && nextClose === -1) break;
+
+    if (nextOpen !== -1 && (nextClose === -1 || nextOpen < nextClose)) {
+      const afterName = nextOpen + openNeedle.length;
+      if (!isTagNameBoundaryChar(lower[afterName])) {
+        pos = afterName;
+        continue;
+      }
+      const openEnd = lower.indexOf('>', afterName);
+      if (openEnd === -1) {
+        break;
+      }
+      openStack.push(nextOpen);
+      pos = openEnd + 1;
+      continue;
+    }
+
+    const afterCloseName = nextClose + closeNeedle.length;
+    let i = afterCloseName;
+    while (i < lower.length && isAsciiWsCode(lower.charCodeAt(i))) {
+      i += 1;
+    }
+    if (lower[i] === '>') {
+      const matchedStart = openStack.pop();
+      if (matchedStart !== undefined) {
+        ranges.push([matchedStart, i + 1]);
+      }
+      pos = i + 1;
+    } else {
+      pos = afterCloseName;
+    }
+  }
+
+  if (ranges.length === 0) return html;
+  ranges.sort((a, b) => a[0] - b[0]);
+
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    if (end <= cursor) continue;
+    if (start > cursor) {
+      parts.push(html.slice(cursor, start));
+    }
+    parts.push(' ');
+    cursor = end;
+  }
+  if (cursor < html.length) {
+    parts.push(html.slice(cursor));
+  }
+  return parts.join('');
+}
+
+function stripVoidMediaTagsLinear(html: string, lower: string): string {
+  if (!html.includes('<')) return html;
+  if (!VOID_MEDIA_TAGS.some((tag) => lower.includes(`<${tag}`))) return html;
+  const parts: string[] = [];
+  let cursor = 0;
+  let lastEmit = 0;
+  let cachedGt = -1;
+  let cachedNextLt = html.indexOf('<', 0);
+
+  while (cursor < html.length) {
+    if (cachedNextLt !== -1 && cachedNextLt < cursor) {
+      cachedNextLt = html.indexOf('<', cursor);
+    }
+    const lt = cachedNextLt;
+    if (lt === -1) break;
+    if (cachedGt < lt + 1) {
+      cachedGt = html.indexOf('>', lt + 1);
+      if (cachedGt === -1) break;
+    }
+    const gt = cachedGt;
+    const afterLt = html.indexOf('<', lt + 1);
+    if (afterLt !== -1 && afterLt < gt) {
+      cachedNextLt = afterLt;
+      cursor = afterLt;
+      continue;
+    }
+
+    let p = lt + 1;
+    const nameStart = p;
+    while (p < gt && isAsciiAlphaNumCode(html.charCodeAt(p))) p += 1;
+    if (p > nameStart && isTagNameBoundaryChar(html[p])) {
+      const tag = html.slice(nameStart, p).toLowerCase();
+      if (VOID_MEDIA_TAG_SET.has(tag)) {
+        if (lt > lastEmit) parts.push(html.slice(lastEmit, lt));
+        parts.push(' ');
+        lastEmit = gt + 1;
+      }
+    }
+    cursor = gt + 1;
+  }
+
+  if (lastEmit === 0) return html;
+  if (lastEmit < html.length) parts.push(html.slice(lastEmit));
+  return parts.join('');
+}
+
+function stripMediaAndNoiseElements(rawHtml: string): string {
+  let html = stripCommentsLinear(rawHtml);
+  let lower = html.toLowerCase();
+  for (const tag of RAW_TEXT_STRIP_TAGS) {
+    const next = stripRawTextTagLinear(html, lower, tag);
+    if (next !== html) {
+      html = next;
+      lower = html.toLowerCase();
+    }
+  }
+  for (const tag of STRUCTURAL_STRIP_TAGS) {
+    const next = stripPairedStructuralTagLinear(html, lower, tag);
+    if (next !== html) {
+      html = next;
+      lower = html.toLowerCase();
+    }
+  }
+  return stripVoidMediaTagsLinear(html, lower);
+}
+
+function findBalancedTagCloseLinear(
+  lower: string,
+  tag: string,
+  from: number,
+): { closeStart: number; closeEnd: number } | null {
+  const openNeedle = `<${tag}`;
+  const closeNeedle = `</${tag}`;
+  let depth = 1;
+  let pos = from;
+  let nextOpen = lower.indexOf(openNeedle, pos);
+  let nextClose = lower.indexOf(closeNeedle, pos);
+
+  while (pos < lower.length) {
+    if (nextOpen !== -1 && nextOpen < pos) {
+      nextOpen = lower.indexOf(openNeedle, pos);
+    }
+    if (nextClose !== -1 && nextClose < pos) {
+      nextClose = lower.indexOf(closeNeedle, pos);
+    }
+    if (nextClose === -1) return null;
+
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      const afterName = nextOpen + openNeedle.length;
+      if (!isTagNameBoundaryChar(lower[afterName])) {
+        pos = afterName;
+        continue;
+      }
+      const openEnd = lower.indexOf('>', afterName);
+      if (openEnd === -1) return null;
+      const attrs = lower.slice(afterName, openEnd);
+      if (!attrs.trimEnd().endsWith('/')) {
+        depth += 1;
+      }
+      pos = openEnd + 1;
+      continue;
+    }
+
+    const afterCloseName = nextClose + closeNeedle.length;
+    if (!isTagNameBoundaryChar(lower[afterCloseName])) {
+      pos = afterCloseName;
+      continue;
+    }
+    const closeGt = lower.indexOf('>', afterCloseName);
+    if (closeGt === -1) return null;
+    depth -= 1;
+    if (depth === 0) {
+      return { closeStart: nextClose, closeEnd: closeGt + 1 };
+    }
+    pos = closeGt + 1;
+  }
+
+  return null;
 }
 
 function extractBalancedElementInner(
   html: string,
   tagNames: readonly string[],
   attrMatcher?: (attrs: string) => boolean,
+  precomputedLower?: string,
 ): string | null {
-  const tagGroup = tagNames.join('|');
-  const openSearch = new RegExp(`<(${tagGroup})\\b([^>]*)>`, 'gi');
-  let openMatch: RegExpExecArray | null;
-  while ((openMatch = openSearch.exec(html)) !== null) {
-    const matchedTag = openMatch[1]!.toLowerCase();
-    const attrs = openMatch[2] ?? '';
-    if (attrs.trimEnd().endsWith('/')) continue;
-    if (attrMatcher && !attrMatcher(attrs)) continue;
+  if (!html.includes('<')) return null;
+  const lower = precomputedLower ?? html.toLowerCase();
+  const normalizedTags = tagNames.map((t) => t.toLowerCase());
+  if (!normalizedTags.some((t) => lower.includes(`<${t}`))) return null;
+  const tagSet = new Set(normalizedTags);
+  let cursor = 0;
+  let cachedGt = -1;
+  let cachedNextLt = html.indexOf('<', 0);
 
-    const innerStart = openMatch.index + openMatch[0].length;
-    const sameTagRe = new RegExp(`<(\\/?)(${matchedTag})\\b([^>]*)>`, 'gi');
-    sameTagRe.lastIndex = innerStart;
-    let depth = 1;
-    let tok: RegExpExecArray | null;
-    while ((tok = sameTagRe.exec(html)) !== null) {
-      const isClosing = tok[1] === '/';
-      const tokAttrs = tok[3] ?? '';
-      if (!isClosing && !tokAttrs.trimEnd().endsWith('/')) {
-        depth += 1;
-      } else if (isClosing) {
-        depth -= 1;
-        if (depth === 0) {
-          return html.slice(innerStart, tok.index);
+  while (cursor < html.length) {
+    if (cachedNextLt !== -1 && cachedNextLt < cursor) {
+      cachedNextLt = html.indexOf('<', cursor);
+    }
+    const lt = cachedNextLt;
+    if (lt === -1) return null;
+    if (cachedGt < lt + 1) {
+      cachedGt = html.indexOf('>', lt + 1);
+      if (cachedGt === -1) return null;
+    }
+    const gt = cachedGt;
+    const afterLt = html.indexOf('<', lt + 1);
+    if (afterLt !== -1 && afterLt < gt) {
+      cachedNextLt = afterLt;
+      cursor = afterLt;
+      continue;
+    }
+
+    let p = lt + 1;
+    const nameStart = p;
+    while (p < gt && isAsciiAlphaNumCode(html.charCodeAt(p))) p += 1;
+    if (p > nameStart && isTagNameBoundaryChar(html[p])) {
+      const matchedTag = lower.slice(nameStart, p);
+      if (tagSet.has(matchedTag)) {
+        const attrs = html.slice(p, gt);
+        if (!attrs.trimEnd().endsWith('/') && (!attrMatcher || attrMatcher(attrs))) {
+          const innerStart = gt + 1;
+          const closed = findBalancedTagCloseLinear(lower, matchedTag, innerStart);
+          return closed ? html.slice(innerStart, closed.closeStart) : html.slice(innerStart);
         }
       }
     }
-    return html.slice(innerStart);
+    cursor = gt + 1;
   }
   return null;
 }
 
 function removeNoiseBlocks(html: string): string {
-  let current = html;
-  for (let guard = 0; guard < 24; guard += 1) {
-    const tagRe = /<(div|section|p|span|ul)\b([^>]*)>/gi;
-    let found: { start: number; end: number } | null = null;
-    let match: RegExpExecArray | null;
-    while ((match = tagRe.exec(current)) !== null) {
-      const tag = match[1]!.toLowerCase();
-      const attrs = match[2] ?? '';
-      if (!NOISE_ATTR_RE.test(attrs)) continue;
-      if (attrs.trimEnd().endsWith('/')) {
-        found = { start: match.index, end: match.index + match[0].length };
-        break;
-      }
-      const sameRe = new RegExp(`<(\\/?)(${tag})\\b([^>]*)>`, 'gi');
-      sameRe.lastIndex = match.index + match[0].length;
-      let depth = 1;
-      let tok: RegExpExecArray | null;
-      let closeEnd = current.length;
-      while ((tok = sameRe.exec(current)) !== null) {
-        if (tok[1] === '/') {
-          depth -= 1;
-          if (depth === 0) {
-            closeEnd = tok.index + tok[0].length;
-            break;
+  if (!html.includes('<')) return html;
+  const lower = html.toLowerCase();
+  if (!lower.includes('id') && !lower.includes('class')) return html;
+  if (!NOISE_CONTAINER_TAGS.some((tag) => lower.includes(`<${tag}`))) return html;
+  const parts: string[] = [];
+  let cursor = 0;
+  let lastEmit = 0;
+  let cachedGt = -1;
+  let cachedNextLt = html.indexOf('<', 0);
+  let removed = 0;
+
+  while (cursor < html.length && removed < 24) {
+    if (cachedNextLt !== -1 && cachedNextLt < cursor) {
+      cachedNextLt = html.indexOf('<', cursor);
+    }
+    const lt = cachedNextLt;
+    if (lt === -1) break;
+    if (cachedGt < lt + 1) {
+      cachedGt = html.indexOf('>', lt + 1);
+      if (cachedGt === -1) break;
+    }
+    const gt = cachedGt;
+    const afterLt = html.indexOf('<', lt + 1);
+    if (afterLt !== -1 && afterLt < gt) {
+      cachedNextLt = afterLt;
+      cursor = afterLt;
+      continue;
+    }
+
+    let p = lt + 1;
+    const nameStart = p;
+    while (p < gt && isAsciiAlphaNumCode(html.charCodeAt(p))) p += 1;
+    if (p > nameStart && isTagNameBoundaryChar(html[p])) {
+      const tag = lower.slice(nameStart, p);
+      if (NOISE_CONTAINER_TAG_SET.has(tag)) {
+        const attrs = html.slice(p, gt);
+        if (NOISE_ATTR_RE.test(attrs)) {
+          let closeEnd = gt + 1;
+          if (!attrs.trimEnd().endsWith('/')) {
+            const closed = findBalancedTagCloseLinear(lower, tag, gt + 1);
+            closeEnd = closed ? closed.closeEnd : html.length;
           }
-        } else if (!(tok[3] ?? '').trimEnd().endsWith('/')) {
-          depth += 1;
+          if (lt > lastEmit) parts.push(html.slice(lastEmit, lt));
+          parts.push(' ');
+          lastEmit = closeEnd;
+          cursor = closeEnd;
+          removed += 1;
+          continue;
         }
       }
-      found = { start: match.index, end: closeEnd };
-      break;
     }
-    if (!found) break;
-    current = `${current.slice(0, found.start)} ${current.slice(found.end)}`;
+    cursor = gt + 1;
   }
-  return current;
+
+  if (lastEmit === 0) return html;
+  if (lastEmit < html.length) parts.push(html.slice(lastEmit));
+  return parts.join('');
 }
 
 function hasId(attrs: string, id: string): boolean {
-  const re = new RegExp(`\\bid\\s*=\\s*["']${id}["']`, 'i');
+  const re = new RegExp(`\\bid\\s*=\\s*["']${escapeRegExpLiteral(id)}["']`, 'i');
   return re.test(attrs);
 }
 
@@ -529,31 +884,182 @@ function hasClassToken(attrs: string, token: string): boolean {
 }
 
 function extractMetaContent(html: string, key: string): string | null {
-  const re = new RegExp(
-    `<meta\\b[^>]+(?:property|name)\\s*=\\s*["']${key}["'][^>]+content\\s*=\\s*["']([^"']+)["'][^>]*>|<meta\\b[^>]+content\\s*=\\s*["']([^"']+)["'][^>]+(?:property|name)\\s*=\\s*["']${key}["'][^>]*>`,
+  const lower = html.toLowerCase();
+  const keyLower = key.toLowerCase();
+  if (!lower.includes(keyLower) || !lower.includes('<meta')) {
+    return null;
+  }
+  const keyRe = new RegExp(
+    `\\b(?:property|name)\\s*=\\s*(?:"${escapeRegExpLiteral(key)}"|'${escapeRegExpLiteral(key)}')`,
     'i',
   );
-  const m = re.exec(html);
-  const raw = m?.[1] ?? m?.[2];
-  return raw ? cleanExtractedTitle(raw) : null;
+  let cursor = 0;
+  let cachedCloseIdx = -1;
+  let cachedNextLt = html.indexOf('<', 0);
+
+  while (cursor < lower.length) {
+    const start = lower.indexOf('<meta', cursor);
+    if (start === -1) return null;
+    const afterName = start + 5;
+    if (!isTagNameBoundaryChar(lower[afterName])) {
+      cursor = afterName;
+      continue;
+    }
+    if (cachedCloseIdx < afterName) {
+      cachedCloseIdx = html.indexOf('>', afterName);
+      if (cachedCloseIdx === -1) return null;
+    }
+    const closeIdx = cachedCloseIdx;
+    if (cachedNextLt !== -1 && cachedNextLt < afterName) {
+      cachedNextLt = html.indexOf('<', afterName);
+    }
+    if (cachedNextLt !== -1 && cachedNextLt < closeIdx) {
+      cursor = cachedNextLt;
+      continue;
+    }
+    const tagSlice = html.slice(start, closeIdx + 1);
+    if (keyRe.test(tagSlice)) {
+      const contentMatch = /\bcontent\s*=\s*(?:"([^"]+)"|'([^']+)')/i.exec(tagSlice);
+      const raw = contentMatch?.[1] ?? contentMatch?.[2];
+      if (raw) return cleanExtractedTitle(raw);
+    }
+    cursor = closeIdx + 1;
+  }
+  return null;
+}
+
+function extractFirstTagContentLinear(rawHtml: string, lower: string, tag: string): string | null {
+  const openNeedle = `<${tag}`;
+  const closeNeedle = `</${tag}`;
+  if (!lower.includes(closeNeedle) || !lower.includes(openNeedle)) {
+    return null;
+  }
+  let cursor = 0;
+  while (cursor < lower.length) {
+    const start = lower.indexOf(openNeedle, cursor);
+    if (start === -1) return null;
+    const afterName = start + openNeedle.length;
+    if (!isTagNameBoundaryChar(lower[afterName])) {
+      cursor = afterName;
+      continue;
+    }
+    const openEnd = lower.indexOf('>', afterName);
+    if (openEnd === -1) return null;
+    const closeMatch = findCloseTagEndLinear(lower, tag, openEnd + 1);
+    if (!closeMatch) return null;
+    return rawHtml.slice(openEnd + 1, closeMatch.start);
+  }
+  return null;
+}
+
+function extractAllTagContentsLinear(
+  rawHtml: string,
+  lower: string,
+  tag: string,
+  maxMatches: number,
+): string[] {
+  const openNeedle = `<${tag}`;
+  const closeNeedle = `</${tag}`;
+  if (!lower.includes(closeNeedle) || !lower.includes(openNeedle)) {
+    return [];
+  }
+  const results: string[] = [];
+  let cursor = 0;
+  while (cursor < lower.length && results.length < maxMatches) {
+    const start = lower.indexOf(openNeedle, cursor);
+    if (start === -1) break;
+    const afterName = start + openNeedle.length;
+    if (!isTagNameBoundaryChar(lower[afterName])) {
+      cursor = afterName;
+      continue;
+    }
+    const openEnd = lower.indexOf('>', afterName);
+    if (openEnd === -1) break;
+    const closeMatch = findCloseTagEndLinear(lower, tag, openEnd + 1);
+    if (!closeMatch) break;
+    results.push(rawHtml.slice(openEnd + 1, closeMatch.start));
+    cursor = closeMatch.end;
+  }
+  return results;
 }
 
 function cleanExtractedTitle(rawHtmlOrText: string): string {
-  const plain = decodeHtmlEntities(rawHtmlOrText.replace(/<[^>]+>/g, ' '))
+  const plain = decodeHtmlEntities(stripHtmlTagsLinear(rawHtmlOrText, ' '))
     .replace(/\s+/g, ' ')
     .trim();
   const stripped = plain.replace(/\s*(?:[-_|—｜]\s*[^-_|—｜]{2,18})$/, '').trim();
   return (stripped.length >= 4 ? stripped : plain).slice(0, 120);
 }
 
-function htmlFragmentToPlainText(fragment: string): string {
-  const withBreaks = fragment
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(?:p|div|section|article|li|h1|h2|h3|h4|h5|h6|blockquote|tr)>/gi, '\n')
-    .replace(/<li\b[^>]*>/gi, '• ')
-    .replace(/<[^>]+>/g, '');
+function stripMarkdownImagesLinear(input: string): string {
+  if (!input.includes('![')) return input;
+  const parts: string[] = [];
+  let cursor = 0;
+  let lastEmit = 0;
+  while (cursor < input.length) {
+    const start = input.indexOf('![', cursor);
+    if (start === -1) break;
+    const closeBracket = input.indexOf(']', start + 2);
+    if (closeBracket === -1) break;
+    if (input[closeBracket + 1] !== '(') {
+      cursor = closeBracket + 1;
+      continue;
+    }
+    const closeParen = input.indexOf(')', closeBracket + 2);
+    if (closeParen === -1) break;
+    if (start > lastEmit) parts.push(input.slice(lastEmit, start));
+    lastEmit = closeParen + 1;
+    cursor = closeParen + 1;
+  }
+  if (lastEmit === 0) return input;
+  if (lastEmit < input.length) parts.push(input.slice(lastEmit));
+  return parts.join('');
+}
 
-  const decoded = decodeHtmlEntities(withBreaks).replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+function convertFragmentTagsToPlainLinear(fragment: string): string {
+  if (!fragment.includes('<')) return fragment;
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < fragment.length) {
+    const lt = fragment.indexOf('<', cursor);
+    if (lt === -1) {
+      parts.push(fragment.slice(cursor));
+      break;
+    }
+    const gt = fragment.indexOf('>', lt + 1);
+    if (gt === -1) {
+      parts.push(fragment.slice(cursor));
+      break;
+    }
+    if (lt > cursor) {
+      parts.push(fragment.slice(cursor, lt));
+    }
+
+    let p = lt + 1;
+    let isClosing = false;
+    if (p < gt && fragment.charCodeAt(p) === 47) {
+      isClosing = true;
+      p += 1;
+    }
+    const nameStart = p;
+    while (p < gt && isAsciiAlphaNumCode(fragment.charCodeAt(p))) p += 1;
+    const tagName = p > nameStart ? fragment.slice(nameStart, p).toLowerCase() : '';
+
+    if (!isClosing && tagName === 'br') {
+      parts.push('\n');
+    } else if (isClosing && BLOCK_CLOSE_NEWLINE_TAGS.has(tagName)) {
+      parts.push('\n');
+    } else if (!isClosing && tagName === 'li') {
+      parts.push('• ');
+    }
+    cursor = gt + 1;
+  }
+  return parts.join('');
+}
+
+function htmlFragmentToPlainText(fragment: string): string {
+  const withBreaks = convertFragmentTagsToPlainLinear(fragment);
+  const decoded = stripMarkdownImagesLinear(decodeHtmlEntities(withBreaks));
 
   const lines = decoded
     .split(/\r?\n/)
@@ -565,9 +1071,35 @@ function htmlFragmentToPlainText(fragment: string): string {
   return lines.join('\n\n').trim();
 }
 
+function countAnchorTextCharsLinear(inner: string): number {
+  const lower = inner.toLowerCase();
+  if (!lower.includes('<a') || !lower.includes('</a')) return 0;
+  let total = 0;
+  let cursor = 0;
+  while (cursor < lower.length) {
+    const start = lower.indexOf('<a', cursor);
+    if (start === -1) break;
+    const afterName = start + 2;
+    if (!isTagNameBoundaryChar(lower[afterName])) {
+      cursor = afterName;
+      continue;
+    }
+    const openEnd = lower.indexOf('>', afterName);
+    if (openEnd === -1) break;
+    const closeMatch = findCloseTagEndLinear(lower, 'a', openEnd + 1);
+    if (!closeMatch) break;
+    total += countSourceNonWhitespaceChars(
+      stripHtmlTagsLinear(inner.slice(openEnd + 1, closeMatch.start)),
+    );
+    cursor = closeMatch.end;
+  }
+  return total;
+}
+
 function pickReadabilityBestBlock(cleanedHtml: string): string {
+  const lower = cleanedHtml.toLowerCase();
   const semantic =
-    extractBalancedElementInner(cleanedHtml, ['article']) ??
+    extractBalancedElementInner(cleanedHtml, ['article'], undefined, lower) ??
     extractBalancedElementInner(
       cleanedHtml,
       ['div', 'section'],
@@ -580,58 +1112,71 @@ function pickReadabilityBestBlock(cleanedHtml: string): string {
         hasClassToken(attrs, 'post-content') ||
         hasClassToken(attrs, 'entry-content') ||
         hasClassToken(attrs, 'detail-content'),
+      lower,
     ) ??
-    extractBalancedElementInner(cleanedHtml, ['main']);
+    extractBalancedElementInner(cleanedHtml, ['main'], undefined, lower);
 
   if (semantic && countSourceNonWhitespaceChars(htmlFragmentToPlainText(semantic)) >= 80) {
     return semantic;
   }
 
-  const blockOpenRe = /<(div|section)\b([^>]*)>/gi;
   let bestScore = -1;
   let bestInner: string | null = null;
-  let m: RegExpExecArray | null;
-  let scanned = 0;
+  if (lower.includes('<div') || lower.includes('<section')) {
+    let scanned = 0;
+    let cursor = 0;
+    let cachedGt = -1;
+    let cachedNextLt = cleanedHtml.indexOf('<', 0);
 
-  while ((m = blockOpenRe.exec(cleanedHtml)) !== null && scanned < 60) {
-    scanned += 1;
-    const tag = m[1]!.toLowerCase();
-    const attrs = m[2] ?? '';
-    if (NOISE_ATTR_RE.test(attrs) || attrs.trimEnd().endsWith('/')) continue;
-    const start = m.index + m[0].length;
-    const sameRe = new RegExp(`<(\\/?)(${tag})\\b([^>]*)>`, 'gi');
-    sameRe.lastIndex = start;
-    let depth = 1;
-    let tok: RegExpExecArray | null;
-    let end = cleanedHtml.length;
-    while ((tok = sameRe.exec(cleanedHtml)) !== null) {
-      if (tok[1] === '/') {
-        depth -= 1;
-        if (depth === 0) {
-          end = tok.index;
-          break;
-        }
-      } else if (!(tok[3] ?? '').trimEnd().endsWith('/')) {
-        depth += 1;
+    while (cursor < cleanedHtml.length && scanned < 60) {
+      if (cachedNextLt !== -1 && cachedNextLt < cursor) {
+        cachedNextLt = cleanedHtml.indexOf('<', cursor);
       }
-    }
-    const inner = cleanedHtml.slice(start, end);
-    const pCount = (inner.match(/<p\b/gi) ?? []).length;
-    const linkMatches = inner.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
-    const linkChars = linkMatches.reduce(
-      (sum, anchor) => sum + countSourceNonWhitespaceChars(anchor.replace(/<[^>]+>/g, '')),
-      0,
-    );
-    const textChars = countSourceNonWhitespaceChars(htmlFragmentToPlainText(inner));
-    const score = textChars - linkChars * 2 + pCount * 25;
-    if (score > bestScore && textChars >= 40) {
-      bestScore = score;
-      bestInner = inner;
+      const lt = cachedNextLt;
+      if (lt === -1) break;
+      if (cachedGt < lt + 1) {
+        cachedGt = cleanedHtml.indexOf('>', lt + 1);
+        if (cachedGt === -1) break;
+      }
+      const gt = cachedGt;
+      const afterLt = cleanedHtml.indexOf('<', lt + 1);
+      if (afterLt !== -1 && afterLt < gt) {
+        cachedNextLt = afterLt;
+        cursor = afterLt;
+        continue;
+      }
+
+      let p = lt + 1;
+      const nameStart = p;
+      while (p < gt && isAsciiAlphaNumCode(cleanedHtml.charCodeAt(p))) p += 1;
+      if (p > nameStart && isTagNameBoundaryChar(cleanedHtml[p])) {
+        const tag = lower.slice(nameStart, p);
+        if (tag === 'div' || tag === 'section') {
+          scanned += 1;
+          const attrs = cleanedHtml.slice(p, gt);
+          if (!NOISE_ATTR_RE.test(attrs) && !attrs.trimEnd().endsWith('/')) {
+            const start = gt + 1;
+            const closed = findBalancedTagCloseLinear(lower, tag, start);
+            const end = closed ? closed.closeStart : cleanedHtml.length;
+            const inner = cleanedHtml.slice(start, end);
+            const pCount = (inner.match(/<p\b/gi) ?? []).length;
+            const linkChars = countAnchorTextCharsLinear(inner);
+            const textChars = countSourceNonWhitespaceChars(htmlFragmentToPlainText(inner));
+            const score = textChars - linkChars * 2 + pCount * 25;
+            if (score > bestScore && textChars >= 40) {
+              bestScore = score;
+              bestInner = inner;
+            }
+            if (!closed) break;
+          }
+        }
+      }
+      cursor = gt + 1;
     }
   }
 
   if (bestInner) return bestInner;
-  const bodyInner = extractBalancedElementInner(cleanedHtml, ['body']);
+  const bodyInner = extractBalancedElementInner(cleanedHtml, ['body'], undefined, lower);
   return bodyInner ?? cleanedHtml;
 }
 
@@ -648,14 +1193,17 @@ export function detectSourceSite(rawHtml: string, rawUrl?: string): ExtractedSou
   if (
     host === 'mp.weixin.qq.com' ||
     host.endsWith('.weixin.qq.com') ||
-    /\bid\s*=\s*["']js_content["']/i.test(rawHtml)
+    (rawHtml.toLowerCase().includes('js_content') && /\bid\s*=\s*["']js_content["']/i.test(rawHtml))
   ) {
     return 'wechat';
   }
   if (
     host === 'zhihu.com' ||
     host.endsWith('.zhihu.com') ||
-    /\bclass\s*=\s*["'][^"']*(?:Post-RichTextContainer|RichContent-inner)[^"']*["']/i.test(rawHtml)
+    ((rawHtml.includes('Post-RichTextContainer') || rawHtml.includes('RichContent-inner')) &&
+      /\bclass\s*=\s*["'][^"']{0,200}(?:Post-RichTextContainer|RichContent-inner)[^"']{0,200}["']/i.test(
+        rawHtml,
+      ))
   ) {
     return 'zhihu';
   }
@@ -706,10 +1254,11 @@ export function truncateSourceText(
 
 export function extractArticleFromHtml(rawHtml: string, rawUrl?: string): ExtractedSourceArticle {
   const site = detectSourceSite(rawHtml, rawUrl);
+  const rawLower = rawHtml.toLowerCase();
   const metaTitle =
     extractMetaContent(rawHtml, 'og:title') ?? extractMetaContent(rawHtml, 'twitter:title');
-  const docTitleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(rawHtml);
-  const docTitle = docTitleMatch ? cleanExtractedTitle(docTitleMatch[1]!) : '';
+  const docTitleRaw = extractFirstTagContentLinear(rawHtml, rawLower, 'title');
+  const docTitle = docTitleRaw ? cleanExtractedTitle(docTitleRaw) : '';
 
   const stripped = removeNoiseBlocks(stripMediaAndNoiseElements(rawHtml));
 
@@ -776,7 +1325,7 @@ export function normalizePastedSource(input: {
     .map((l) => l.trim())
     .filter(Boolean);
   const explicitTitle = input.pastedTitle?.trim()
-    ? decodeHtmlEntities(input.pastedTitle.replace(/<[^>]+>/g, ' '))
+    ? decodeHtmlEntities(stripHtmlTagsLinear(input.pastedTitle, ' '))
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 120)
@@ -802,7 +1351,7 @@ export function normalizePastedSource(input: {
 
 function pushUniqueHeading(target: string[], seen: Set<string>, raw: string, maxHeadings: number) {
   if (target.length >= maxHeadings) return;
-  const cleaned = decodeHtmlEntities(raw.replace(/<[^>]+>/g, ' '))
+  const cleaned = decodeHtmlEntities(stripHtmlTagsLinear(raw, ' '))
     .replace(/[*_`~]+/g, '')
     .replace(/\s+/g, ' ')
     .replace(/#+$/g, '')
@@ -821,19 +1370,19 @@ function pushUniqueHeading(target: string[], seen: Set<string>, raw: string, max
 export function extractSourceHeadingsFromHtml(rawHtml: string, maxHeadings = 8): string[] {
   const limit = Math.max(1, Math.min(20, Math.floor(maxHeadings)));
   const stripped = removeNoiseBlocks(stripMediaAndNoiseElements(rawHtml));
+  const strippedLower = stripped.toLowerCase();
   const out: string[] = [];
   const seen = new Set<string>();
 
-  const h2Re = /<h2\b[^>]*>([\s\S]*?)<\/h2>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = h2Re.exec(stripped)) !== null && out.length < limit) {
-    pushUniqueHeading(out, seen, match[1] ?? '', limit);
+  for (const heading of extractAllTagContentsLinear(stripped, strippedLower, 'h2', limit * 4)) {
+    if (out.length >= limit) break;
+    pushUniqueHeading(out, seen, heading, limit);
   }
 
   if (out.length < 2) {
-    const h3Re = /<h3\b[^>]*>([\s\S]*?)<\/h3>/gi;
-    while ((match = h3Re.exec(stripped)) !== null && out.length < limit) {
-      pushUniqueHeading(out, seen, match[1] ?? '', limit);
+    for (const heading of extractAllTagContentsLinear(stripped, strippedLower, 'h3', limit * 4)) {
+      if (out.length >= limit) break;
+      pushUniqueHeading(out, seen, heading, limit);
     }
   }
 

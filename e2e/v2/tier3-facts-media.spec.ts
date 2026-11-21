@@ -148,7 +148,8 @@ v2Describe(
           const syncCheckbox = popoverOrModal.getByRole('checkbox', {
             name: /同步存入品牌事实卡/,
           });
-          if ((await syncCheckbox.count()) > 0 && !(await syncCheckbox.isChecked())) {
+          await expect(syncCheckbox).toBeVisible();
+          if (!(await syncCheckbox.isChecked())) {
             await syncCheckbox.check();
           }
 

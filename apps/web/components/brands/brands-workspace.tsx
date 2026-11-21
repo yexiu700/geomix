@@ -272,9 +272,10 @@ export function BrandsWorkspace() {
         activeBrandMarket={activeBrandMarket}
         readOnly={readOnly}
         onBrandUpdated={(updated, market) => {
+          const isStillActive = useWorkspaceStore.getState().activeBrandId === updated.id;
           useWorkspaceStore.getState().upsertBrand(updated, {
-            activate: true,
-            market,
+            activate: isStillActive,
+            market: isStillActive ? market : undefined,
             persistStorage: window.localStorage,
           });
         }}

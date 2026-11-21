@@ -4,10 +4,13 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
+  decodeBasicHtmlEntities,
   defaultTargetFormatForMarket,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
+  replaceComplianceInTextSegments,
   sanitizeRichArticleHtml,
+  stripHtmlToText,
   targetFormatsForMarket,
   type GeoArticleListQuery,
   type GeoArticleListResponse,
@@ -18,6 +21,7 @@ import {
   type GeoBatchJobListResponse,
   type GeoBatchJobRecord,
   type GeoBatchListQuery,
+  type GeoComplianceFlag,
   type GeoMarket,
   type GeoOutlineHeading,
   type GeoRecipe,
@@ -30,6 +34,7 @@ import {
 import type { RetrievedBrandFactSnippet } from '../brands/brand-fact-index.runner';
 import { BrandsService } from '../brands/brands.service';
 import { BillingService, type ReservationView } from '../billing/billing.service';
+import { isUniqueViolation } from '../billing/billing.sql';
 import { QuotaService } from '../billing/quota.service';
 import { ApiError } from '../common/api-error';
 import {
@@ -213,7 +218,18 @@ export class StudioService {
     });
     const customForbiddenWords = pref?.customForbiddenWords ?? [];
 
-    const checkParts = [input.title ?? '', input.contentMarkdown ?? ''].filter((s) => s.length > 0);
+    const sanitizedHtmlInput =
+      input.contentHtml !== undefined ? sanitizeRichArticleHtml(input.contentHtml) : null;
+    const imgAltTexts = sanitizedHtmlInput
+      ? extractSanitizedImgAltTexts(sanitizedHtmlInput.contentHtml)
+      : [];
+
+    const checkParts = [
+      input.title ?? '',
+      input.contentMarkdown ?? '',
+      sanitizedHtmlInput?.contentText ?? '',
+      ...imgAltTexts,
+    ].filter((s) => s.length > 0);
     if (checkParts.length > 0) {
       await this.compliance.assertAllowed({
         text: checkParts.join('\n'),
@@ -258,9 +274,15 @@ export class StudioService {
       data.contentHtml = markdownToSanitizedHtml(nextMarkdown);
       data.complianceFlags = nextFlags as unknown as Prisma.InputJsonValue;
       shouldRecomputeEval = true;
-    } else if (input.contentHtml !== undefined) {
-      const sanitized = sanitizeRichArticleHtml(input.contentHtml);
-      data.contentHtml = sanitized.contentHtml;
+    } else if (sanitizedHtmlInput !== null) {
+      const rewritten = this.scanAndRewriteSanitizedHtml(sanitizedHtmlInput.contentHtml, {
+        market,
+        customForbiddenWords,
+      });
+      nextFlags = rewritten.complianceFlags;
+      data.contentHtml = rewritten.contentHtml;
+      data.complianceFlags = nextFlags as unknown as Prisma.InputJsonValue;
+      shouldRecomputeEval = true;
     }
 
     if (input.title !== undefined) {
@@ -881,17 +903,16 @@ export class StudioService {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标阵地形态与所选市场不匹配');
     }
 
-    const batchJobId = deriveGeoBatchJobId(auth.tenantId, idempotencyKey);
-    const existing = await this.prisma.scoped.geoBatchJob.findFirst({
-      where: { id: batchJobId },
-      include: { brandMarket: { select: { market: true } } },
-    });
-    if (existing) {
+    const assertMatchingBatchReplay = (row: {
+      brandId: string;
+      brandMarketId: string;
+      briefIds: string[];
+    }) => {
       const sameBriefs =
-        existing.brandId === resolved.brand.id &&
-        existing.brandMarketId === resolved.market.id &&
-        existing.briefIds.length === input.briefIds.length &&
-        existing.briefIds.every((id, idx) => id === input.briefIds[idx]);
+        row.brandId === resolved.brand.id &&
+        row.brandMarketId === resolved.market.id &&
+        row.briefIds.length === input.briefIds.length &&
+        row.briefIds.every((id, idx) => id === input.briefIds[idx]);
       if (!sameBriefs) {
         throw new ApiError(
           409,
@@ -899,6 +920,15 @@ export class StudioService {
           '相同 Idempotency-Key 不能用于不同的批量写作参数',
         );
       }
+    };
+
+    const batchJobId = deriveGeoBatchJobId(auth.tenantId, idempotencyKey);
+    const existing = await this.prisma.scoped.geoBatchJob.findFirst({
+      where: { id: batchJobId },
+      include: { brandMarket: { select: { market: true } } },
+    });
+    if (existing) {
+      assertMatchingBatchReplay(existing);
       return presentGeoBatchJob(existing, market);
     }
 
@@ -948,6 +978,7 @@ export class StudioService {
       include: { brandMarket: { select: { market: true } } },
     });
     if (replayedByReservation) {
+      assertMatchingBatchReplay(replayedByReservation);
       return presentGeoBatchJob(replayedByReservation, market);
     }
     if (reservation.status === 'CLOSED') {
@@ -997,6 +1028,16 @@ export class StudioService {
       }
       return presentGeoBatchJob(createdRow, market);
     } catch (err) {
+      if (!createdRow && isUniqueViolation(err)) {
+        const winner = await this.prisma.scoped.geoBatchJob.findFirst({
+          where: { id: batchJobId },
+          include: { brandMarket: { select: { market: true } } },
+        });
+        if (winner) {
+          assertMatchingBatchReplay(winner);
+          return presentGeoBatchJob(winner, market);
+        }
+      }
       this.logger.warn(
         `createBatchJob failed after reserve job=${batchJobId}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
@@ -1142,6 +1183,90 @@ export class StudioService {
 
     return presentPromptPreference(row);
   }
+
+  private scanAndRewriteSanitizedHtml(
+    sanitizedHtml: string,
+    options: { market: GeoMarket; customForbiddenWords: readonly string[] },
+  ): { contentHtml: string; complianceFlags: GeoComplianceFlag[] } {
+    const tokens = sanitizedHtml.split(/(<[^>]*>)/);
+    const flagMap = new Map<string, GeoComplianceFlag>();
+    const addFlags = (items: readonly GeoComplianceFlag[]) => {
+      for (const flag of items) {
+        const key = `${flag.code}:${flag.term}`;
+        if (!flagMap.has(key)) flagMap.set(key, flag);
+      }
+    };
+
+    // 1. Scan & sanitize <img alt="..."> attributes
+    for (let i = 1; i < tokens.length; i += 2) {
+      const tag = tokens[i]!;
+      if (!/^<img\b/i.test(tag)) continue;
+      const altMatch = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+      if (!altMatch) continue;
+      const rawAlt = altMatch[1] ?? altMatch[2] ?? '';
+      const decodedAlt = decodeBasicHtmlEntities(rawAlt);
+      if (!decodedAlt) continue;
+      const altScan = this.compliance.scan(decodedAlt, options);
+      addFlags(altScan.geoFlags);
+      if (altScan.text !== decodedAlt || rawAlt.includes('&#')) {
+        const safeAlt = escapeHtmlAttrValue(altScan.text);
+        tokens[i] = tag.replace(/\balt\s*=\s*(?:"[^"]*"|'[^']*')/i, `alt="${safeAlt}"`);
+      }
+    }
+
+    // 2. Group text-node tokens between block boundaries and run cross-inline-tag compliance replacement
+    const flushBlockRun = (textIndices: number[]) => {
+      if (textIndices.length === 0) return;
+      const decodedSegments = textIndices.map((idx) => decodeBasicHtmlEntities(tokens[idx]!));
+      const { segments: replacedSegments, flags } = replaceComplianceInTextSegments(
+        decodedSegments,
+        options,
+      );
+      addFlags(flags);
+      for (let s = 0; s < textIndices.length; s += 1) {
+        const tokenIdx = textIndices[s]!;
+        const rawToken = tokens[tokenIdx]!;
+        const decoded = decodedSegments[s]!;
+        const replaced = replacedSegments[s]!;
+        if (replaced !== decoded || rawToken.includes('&#')) {
+          tokens[tokenIdx] = escapeHtmlTextNode(replaced);
+        }
+      }
+    };
+
+    let currentBlockTextIndices: number[] = [];
+    for (let i = 0; i < tokens.length; i += 1) {
+      if (i % 2 === 1) {
+        if (HTML_BLOCK_BREAK_TAG_RE.test(tokens[i]!)) {
+          flushBlockRun(currentBlockTextIndices);
+          currentBlockTextIndices = [];
+        }
+      } else if (tokens[i]!.length > 0) {
+        currentBlockTextIndices.push(i);
+      }
+    }
+    flushBlockRun(currentBlockTextIndices);
+
+    let finalHtml = tokens.join('');
+    // Strip empty inline formatting wrappers left behind after cross-tag superlative collapse
+    for (let pass = 0; pass < 4; pass += 1) {
+      const next = finalHtml.replace(/<(strong|em|u|code)><\/\1>/gi, '');
+      if (next === finalHtml) break;
+      finalHtml = next;
+    }
+
+    // Fail-closed verification: ensure zero unreplaced superlatives or custom forbidden words remain
+    const verifyScan = this.compliance.scan(stripHtmlToText(finalHtml), options);
+    addFlags(verifyScan.geoFlags);
+    if (verifyScan.geoFlags.some((flag) => flag.severity === 'replaced')) {
+      finalHtml = markdownToSanitizedHtml(verifyScan.text);
+    }
+
+    return {
+      contentHtml: finalHtml,
+      complianceFlags: Array.from(flagMap.values()),
+    };
+  }
 }
 
 function writeSseEvent(res: SseResponseLike, event: string, data: unknown): void {
@@ -1212,4 +1337,29 @@ function diffNewlyEmbeddedBrandMediaIds(
   if (nextIds.length === 0) return [];
   const prevSet = new Set(extractBrandMediaIdsFromMarkdown(previousMarkdown, brandId));
   return nextIds.filter((id) => !prevSet.has(id));
+}
+
+const HTML_BLOCK_BREAK_TAG_RE = /^<(?:br\b|\/(?:p|h[1-4]|li|blockquote|tr|th|td|pre)\b)/i;
+
+function escapeHtmlTextNode(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttrValue(value: string): string {
+  return escapeHtmlTextNode(value).replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function extractSanitizedImgAltTexts(sanitizedHtml: string): string[] {
+  if (!sanitizedHtml.includes('<img')) return [];
+  const alts: string[] = [];
+  const tokens = sanitizedHtml.split(/(<[^>]*>)/);
+  for (let i = 1; i < tokens.length; i += 2) {
+    const tag = tokens[i]!;
+    if (!/^<img\b/i.test(tag)) continue;
+    const altMatch = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+    const rawAlt = altMatch?.[1] ?? altMatch?.[2] ?? '';
+    const decoded = decodeBasicHtmlEntities(rawAlt).trim();
+    if (decoded) alts.push(decoded);
+  }
+  return alts;
 }

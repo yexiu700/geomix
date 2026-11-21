@@ -13,9 +13,28 @@ export class PdfExtractError extends Error {
 }
 
 const MAX_INFLATE_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_INFLATED_BYTES = 20 * 1024 * 1024;
+const MAX_CANDIDATE_STREAMS = 256;
+const MAX_SCANNED_STREAMS = 2048;
 const MAX_OUTPUT_CHARS = 100_000;
+const MAX_RAW_TEXT_CHARS = MAX_OUTPUT_CHARS * 2;
+const MAX_TOTAL_CMAP_OPS = 65_536;
+const MAX_CMAP_HEX_LEN = 8;
+const MAX_CMAP_DST_HEX_LEN = 64;
+const MAX_TOTAL_PDF_TOKENS = 200_000;
+const MAX_LITERAL_STRING_BYTES = 131_072;
+const MAX_HEX_STRING_CHARS = MAX_LITERAL_STRING_BYTES * 2;
 const SKIP_STREAM_DICT_RE =
   /\/Subtype\s*\/(?:Image|Type1C|OpenType|CIDFontType0C)\b|\/Type\s*\/XRef\b|\/Length1\b/;
+
+interface CMapBudget {
+  ops: number;
+}
+
+interface PdfExtractBudget {
+  tokens: number;
+  rawChars: number;
+}
 
 /**
  * 零依赖纯 Node PDF 文本提取器（仅使用 node:zlib），支持未压缩与 FlateDecode 内容流、
@@ -54,15 +73,24 @@ export function extractTextFromPdf(buffer: Buffer): string {
   const cmap = new Map<string, string>();
   const textParts: string[] = [];
 
+  const cmapBudget: CMapBudget = { ops: 0 };
   for (const content of streams) {
+    if (cmapBudget.ops >= MAX_TOTAL_CMAP_OPS) break;
     if (content.includes('beginbfchar') || content.includes('beginbfrange')) {
-      parseCMap(content, cmap);
+      parseCMap(content, cmap, cmapBudget);
     }
   }
 
+  const extractBudget: PdfExtractBudget = { tokens: 0, rawChars: 0 };
   for (const content of streams) {
+    if (
+      extractBudget.tokens >= MAX_TOTAL_PDF_TOKENS ||
+      extractBudget.rawChars >= MAX_RAW_TEXT_CHARS
+    ) {
+      break;
+    }
     if (content.includes('BT') && content.includes('ET')) {
-      const extracted = extractTextFromContentStream(content, cmap);
+      const extracted = extractTextFromContentStream(content, cmap, extractBudget);
       if (extracted) {
         textParts.push(extracted);
       }
@@ -70,14 +98,21 @@ export function extractTextFromPdf(buffer: Buffer): string {
   }
 
   // Fallback for minimalist uncompressed PDFs with direct BT...ET outside stream objects
-  if (textParts.length === 0 && rawLatin1.includes('BT') && rawLatin1.includes('ET')) {
-    const direct = extractTextFromContentStream(rawLatin1, cmap);
+  if (
+    textParts.length === 0 &&
+    extractBudget.tokens < MAX_TOTAL_PDF_TOKENS &&
+    extractBudget.rawChars < MAX_RAW_TEXT_CHARS &&
+    rawLatin1.includes('BT') &&
+    rawLatin1.includes('ET')
+  ) {
+    const direct = extractTextFromContentStream(rawLatin1, cmap, extractBudget);
     if (direct) {
       textParts.push(direct);
     }
   }
 
-  const cleaned = normalizeExtractedText(textParts.join('\n')).slice(0, MAX_OUTPUT_CHARS);
+  const rawJoined = textParts.join('\n').slice(0, MAX_RAW_TEXT_CHARS);
+  const cleaned = normalizeExtractedText(rawJoined).slice(0, MAX_OUTPUT_CHARS);
   const nonWsCount = cleaned.replace(/\s+/g, '').length;
   if (nonWsCount < 10) {
     throw new PdfExtractError(
@@ -92,22 +127,30 @@ export function extractTextFromPdf(buffer: Buffer): string {
 const MAX_STREAM_DICT_LOOKBACK = 65_536;
 const MAX_BFRANGE_ENTRIES = 2048;
 
-function findStreamDictionary(rawLatin1: string, streamIdx: number): string {
-  const minPos = Math.max(0, streamIdx - MAX_STREAM_DICT_LOOKBACK);
+function findStreamDictionary(rawLatin1: string, streamIdx: number, prevCursor = 0): string {
+  const minPos = Math.max(prevCursor, streamIdx - MAX_STREAM_DICT_LOOKBACK);
   let i = streamIdx - 1;
   while (i >= minPos && /[\s\0]/.test(rawLatin1[i]!)) {
     i -= 1;
   }
 
-  const lineStart = Math.max(
-    minPos,
-    rawLatin1.lastIndexOf('\n', i) + 1,
-    rawLatin1.lastIndexOf('\r', i) + 1,
-  );
+  let lineStart = minPos;
+  for (let p = i; p >= minPos; p -= 1) {
+    const ch = rawLatin1.charCodeAt(p);
+    if (ch === 10 || ch === 13) {
+      lineStart = p + 1;
+      break;
+    }
+  }
   const linePrefix = rawLatin1.slice(lineStart, i + 1);
 
   let closeIdx = -1;
-  if (!linePrefix.includes('%') && i >= 1 && rawLatin1[i] === '>' && rawLatin1[i - 1] === '>') {
+  if (
+    !linePrefix.includes('%') &&
+    i >= minPos + 1 &&
+    rawLatin1[i] === '>' &&
+    rawLatin1[i - 1] === '>'
+  ) {
     closeIdx = i - 1;
   } else {
     const searchWindow = rawLatin1.slice(minPos, streamIdx);
@@ -146,6 +189,10 @@ function findStreamDictionary(rawLatin1: string, streamIdx: number): string {
 function collectCandidateStreams(buffer: Buffer, rawLatin1: string): string[] {
   const results: string[] = [];
   let cursor = 0;
+  let lastStreamEnd = 0;
+  let totalInflatedBytes = 0;
+  let candidateStreams = 0;
+  let scannedStreams = 0;
 
   while (cursor < rawLatin1.length) {
     const streamIdx = rawLatin1.indexOf('stream', cursor);
@@ -172,13 +219,24 @@ function collectCandidateStreams(buffer: Buffer, rawLatin1: string): string[] {
     const endIdx = rawLatin1.indexOf('endstream', dataStart);
     if (endIdx === -1) break;
 
+    scannedStreams += 1;
+    if (scannedStreams > MAX_SCANNED_STREAMS) {
+      throw new PdfExtractError('corrupt', 'PDF 内容流数量超过安全上限');
+    }
+
     let dataEnd = endIdx;
     if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\n') dataEnd -= 1;
     if (dataEnd > dataStart && rawLatin1[dataEnd - 1] === '\r') dataEnd -= 1;
 
-    const dictText = findStreamDictionary(rawLatin1, streamIdx);
-
+    const prevStreamEnd = lastStreamEnd;
     cursor = endIdx + 9;
+    lastStreamEnd = cursor;
+
+    if (dataEnd <= dataStart) {
+      continue;
+    }
+
+    const dictText = findStreamDictionary(rawLatin1, streamIdx, prevStreamEnd);
 
     if (SKIP_STREAM_DICT_RE.test(dictText)) {
       continue;
@@ -187,12 +245,34 @@ function collectCandidateStreams(buffer: Buffer, rawLatin1: string): string[] {
     const slice = buffer.subarray(dataStart, dataEnd);
     if (slice.length === 0) continue;
 
+    candidateStreams += 1;
+    if (candidateStreams > MAX_CANDIDATE_STREAMS) {
+      throw new PdfExtractError('corrupt', 'PDF 解压后体积超过安全上限');
+    }
+
+    const remainingBudget = MAX_TOTAL_INFLATED_BYTES - totalInflatedBytes;
+    if (remainingBudget <= 0) {
+      throw new PdfExtractError('corrupt', 'PDF 解压后体积超过安全上限');
+    }
+
     if (/\/FlateDecode\b/.test(dictText)) {
-      const inflated = tryInflate(slice);
+      const maxOutputLength = Math.min(MAX_INFLATE_BYTES, remainingBudget);
+      const inflated = tryInflate(slice, maxOutputLength);
+      if (inflated === 'too_large') {
+        throw new PdfExtractError('corrupt', 'PDF 解压后体积超过安全上限');
+      }
       if (inflated) {
+        totalInflatedBytes += inflated.length;
+        if (totalInflatedBytes > MAX_TOTAL_INFLATED_BYTES) {
+          throw new PdfExtractError('corrupt', 'PDF 解压后体积超过安全上限');
+        }
         results.push(inflated.toString('latin1'));
       }
     } else {
+      if (slice.length > remainingBudget) {
+        throw new PdfExtractError('corrupt', 'PDF 解压后体积超过安全上限');
+      }
+      totalInflatedBytes += slice.length;
       results.push(slice.toString('latin1'));
     }
   }
@@ -200,87 +280,191 @@ function collectCandidateStreams(buffer: Buffer, rawLatin1: string): string[] {
   return results;
 }
 
-function tryInflate(slice: Buffer): Buffer | null {
+function isBufferTooLargeError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE'
+  );
+}
+
+function tryInflate(slice: Buffer, maxOutputLength: number): Buffer | 'too_large' | null {
   try {
-    return inflateSync(slice, { maxOutputLength: MAX_INFLATE_BYTES });
-  } catch {
+    return inflateSync(slice, { maxOutputLength });
+  } catch (err) {
+    if (isBufferTooLargeError(err)) return 'too_large';
     try {
-      return inflateRawSync(slice, { maxOutputLength: MAX_INFLATE_BYTES });
-    } catch {
+      return inflateRawSync(slice, { maxOutputLength });
+    } catch (rawErr) {
+      if (isBufferTooLargeError(rawErr)) return 'too_large';
       return null;
     }
   }
 }
 
-function parseCMap(content: string, cmap: Map<string, string>): void {
-  const bfCharRe = /beginbfchar([\s\S]*?)endbfchar/g;
-  let match: RegExpExecArray | null = bfCharRe.exec(content);
-  while (match !== null) {
-    const body = match[1] ?? '';
+function parseCMap(content: string, cmap: Map<string, string>, budget: CMapBudget): void {
+  const BFCHAR_START = 'beginbfchar';
+  const BFCHAR_END = 'endbfchar';
+  let cursor = 0;
+  while (cursor < content.length && budget.ops < MAX_TOTAL_CMAP_OPS) {
+    const start = content.indexOf(BFCHAR_START, cursor);
+    if (start === -1) break;
+    const bodyStart = start + BFCHAR_START.length;
+    const end = content.indexOf(BFCHAR_END, bodyStart);
+    if (end === -1) break;
+    const body = content.slice(bodyStart, end);
+    cursor = end + BFCHAR_END.length;
+
     const pairRe = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
     let pair: RegExpExecArray | null = pairRe.exec(body);
-    while (pair !== null) {
-      const src = (pair[1] ?? '').toUpperCase();
-      const dst = decodeHexToUnicode(pair[2] ?? '');
-      if (src && dst) cmap.set(src, dst);
+    while (pair !== null && budget.ops < MAX_TOTAL_CMAP_OPS) {
+      budget.ops += 1;
+      const rawSrc = pair[1] ?? '';
+      const rawDst = pair[2] ?? '';
+      if (
+        rawSrc.length > 0 &&
+        rawSrc.length <= MAX_CMAP_HEX_LEN &&
+        rawDst.length > 0 &&
+        rawDst.length <= MAX_CMAP_DST_HEX_LEN
+      ) {
+        const src = rawSrc.toUpperCase();
+        const dst = decodeHexToUnicode(rawDst);
+        if (src && dst) cmap.set(src, dst);
+      }
       pair = pairRe.exec(body);
     }
-    match = bfCharRe.exec(content);
   }
 
-  const bfRangeRe = /beginbfrange([\s\S]*?)endbfrange/g;
-  match = bfRangeRe.exec(content);
-  while (match !== null) {
-    const body = match[1] ?? '';
-    const entryRe = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(?:<([0-9a-fA-F]+)>|\[([\s\S]*?)\])/g;
-    let entry: RegExpExecArray | null = entryRe.exec(body);
-    while (entry !== null) {
-      const startHex = entry[1] ?? '';
-      const endHex = entry[2] ?? '';
-      const dstScalarHex = entry[3];
-      const dstArrayBody = entry[4];
-      const startCode = Number.parseInt(startHex, 16);
-      const endCode = Number.parseInt(endHex, 16);
+  const BFRANGE_START = 'beginbfrange';
+  const BFRANGE_END = 'endbfrange';
+  cursor = 0;
+  while (cursor < content.length && budget.ops < MAX_TOTAL_CMAP_OPS) {
+    const start = content.indexOf(BFRANGE_START, cursor);
+    if (start === -1) break;
+    const bodyStart = start + BFRANGE_START.length;
+    const end = content.indexOf(BFRANGE_END, bodyStart);
+    if (end === -1) break;
+    const body = content.slice(bodyStart, end);
+    cursor = end + BFRANGE_END.length;
 
-      if (
-        Number.isFinite(startCode) &&
-        Number.isFinite(endCode) &&
-        endCode >= startCode &&
-        endCode - startCode <= MAX_BFRANGE_ENTRIES
-      ) {
-        const width = startHex.length;
-        if (dstScalarHex !== undefined) {
-          const dstStart = Number.parseInt(dstScalarHex, 16);
-          if (Number.isFinite(dstStart)) {
-            for (let offset = 0; offset <= endCode - startCode; offset += 1) {
-              const srcKey = (startCode + offset).toString(16).toUpperCase().padStart(width, '0');
-              const codePoint = dstStart + offset;
-              if (codePoint > 0 && codePoint <= 0x10ffff) {
-                cmap.set(srcKey, String.fromCodePoint(codePoint));
-              }
-            }
-          }
-        } else if (dstArrayBody !== undefined) {
-          const dstItems: string[] = [];
-          const hexItemRe = /<([0-9a-fA-F]+)>/g;
-          let itemMatch: RegExpExecArray | null = hexItemRe.exec(dstArrayBody);
-          const maxCount = Math.min(endCode - startCode + 1, MAX_BFRANGE_ENTRIES + 1);
-          while (itemMatch !== null && dstItems.length < maxCount) {
-            dstItems.push(itemMatch[1] ?? '');
-            itemMatch = hexItemRe.exec(dstArrayBody);
-          }
-          for (let offset = 0; offset < dstItems.length; offset += 1) {
-            const srcKey = (startCode + offset).toString(16).toUpperCase().padStart(width, '0');
-            const dst = decodeHexToUnicode(dstItems[offset] ?? '');
-            if (srcKey && dst) {
-              cmap.set(srcKey, dst);
-            }
+    parseBfRangeBody(body, cmap, budget);
+  }
+}
+
+function parseBfRangeBody(body: string, cmap: Map<string, string>, budget: CMapBudget): void {
+  let i = 0;
+  const len = body.length;
+
+  const skipWs = () => {
+    while (i < len) {
+      const c = body.charCodeAt(i);
+      if (c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 0) {
+        i += 1;
+      } else {
+        break;
+      }
+    }
+  };
+
+  const readHexToken = (): string | null => {
+    skipWs();
+    if (i >= len || body.charCodeAt(i) !== 60 /* '<' */) return null;
+    const close = body.indexOf('>', i + 1);
+    if (close === -1) {
+      i = len;
+      return null;
+    }
+    const innerLen = close - (i + 1);
+    if (innerLen === 0 || innerLen > MAX_CMAP_HEX_LEN) {
+      i = close + 1;
+      return null;
+    }
+    const inner = body.slice(i + 1, close);
+    i = close + 1;
+    return /^[0-9a-fA-F]+$/.test(inner) ? inner : null;
+  };
+
+  while (i < len && budget.ops < MAX_TOTAL_CMAP_OPS) {
+    const openIdx = body.indexOf('<', i);
+    if (openIdx === -1) break;
+    i = openIdx;
+    budget.ops += 1;
+
+    const startHex = readHexToken();
+    if (!startHex) continue;
+
+    const endHex = readHexToken();
+    if (!endHex) continue;
+
+    skipWs();
+    if (i >= len) break;
+
+    let dstScalarHex: string | undefined;
+    let dstArrayBody: string | undefined;
+    const nextCode = body.charCodeAt(i);
+    if (nextCode === 60 /* '<' */) {
+      const hex = readHexToken();
+      if (hex === null) continue;
+      dstScalarHex = hex;
+    } else if (nextCode === 91 /* '[' */) {
+      const arrEnd = body.indexOf(']', i + 1);
+      if (arrEnd === -1) break;
+      dstArrayBody = body.slice(i + 1, arrEnd);
+      i = arrEnd + 1;
+    } else {
+      continue;
+    }
+
+    if (startHex.length > MAX_CMAP_HEX_LEN || endHex.length > MAX_CMAP_HEX_LEN) {
+      continue;
+    }
+
+    const startCode = Number.parseInt(startHex, 16);
+    const endCode = Number.parseInt(endHex, 16);
+    if (
+      !Number.isFinite(startCode) ||
+      !Number.isFinite(endCode) ||
+      endCode < startCode ||
+      endCode - startCode > MAX_BFRANGE_ENTRIES
+    ) {
+      continue;
+    }
+
+    const width = startHex.length;
+    if (dstScalarHex !== undefined) {
+      if (dstScalarHex.length > MAX_CMAP_HEX_LEN) continue;
+      const dstStart = Number.parseInt(dstScalarHex, 16);
+      if (Number.isFinite(dstStart)) {
+        for (let offset = 0; offset <= endCode - startCode; offset += 1) {
+          if (budget.ops >= MAX_TOTAL_CMAP_OPS) break;
+          budget.ops += 1;
+          const srcKey = (startCode + offset).toString(16).toUpperCase().padStart(width, '0');
+          const codePoint = dstStart + offset;
+          if (codePoint > 0 && codePoint <= 0x10ffff) {
+            cmap.set(srcKey, String.fromCodePoint(codePoint));
           }
         }
       }
-      entry = entryRe.exec(body);
+    } else if (dstArrayBody !== undefined) {
+      const hexItemRe = /<([0-9a-fA-F]+)>/g;
+      const maxCount = Math.min(endCode - startCode + 1, MAX_BFRANGE_ENTRIES + 1);
+      let offset = 0;
+      let itemMatch: RegExpExecArray | null = hexItemRe.exec(dstArrayBody);
+      while (itemMatch !== null && offset < maxCount && budget.ops < MAX_TOTAL_CMAP_OPS) {
+        budget.ops += 1;
+        const itemHex = itemMatch[1] ?? '';
+        if (itemHex.length <= MAX_CMAP_DST_HEX_LEN) {
+          const srcKey = (startCode + offset).toString(16).toUpperCase().padStart(width, '0');
+          const dst = decodeHexToUnicode(itemHex);
+          if (srcKey && dst) {
+            cmap.set(srcKey, dst);
+          }
+        }
+        offset += 1;
+        itemMatch = hexItemRe.exec(dstArrayBody);
+      }
     }
-    match = bfRangeRe.exec(content);
   }
 }
 
@@ -309,39 +493,44 @@ type PdfToken =
   | { kind: 'number'; value: number }
   | { kind: 'op'; value: string };
 
-function isPdfDelimiterOrWs(ch: string): boolean {
+function isPdfWsCode(c: number): boolean {
+  return c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 0;
+}
+
+function isPdfDelimiterOrWsCode(c: number): boolean {
   return (
-    ch === ' ' ||
-    ch === '\t' ||
-    ch === '\n' ||
-    ch === '\r' ||
-    ch === '\f' ||
-    ch === '\0' ||
-    ch === '(' ||
-    ch === ')' ||
-    ch === '<' ||
-    ch === '>' ||
-    ch === '[' ||
-    ch === ']' ||
-    ch === '{' ||
-    ch === '}' ||
-    ch === '/' ||
-    ch === '%'
+    c === 32 ||
+    c === 9 ||
+    c === 10 ||
+    c === 13 ||
+    c === 12 ||
+    c === 0 ||
+    c === 40 /* '(' */ ||
+    c === 41 /* ')' */ ||
+    c === 60 /* '<' */ ||
+    c === 62 /* '>' */ ||
+    c === 91 /* '[' */ ||
+    c === 93 /* ']' */ ||
+    c === 123 /* '{' */ ||
+    c === 125 /* '}' */ ||
+    c === 47 /* '/' */ ||
+    c === 37 /* '%' */
   );
 }
 
 function skipPdfLiteralString(input: string, startIndex: number): number {
   let i = startIndex + 1;
+  const len = input.length;
   let depth = 1;
-  while (i < input.length && depth > 0) {
-    const ch = input[i]!;
-    if (ch === '\\') {
-      i += 2;
+  while (i < len && depth > 0) {
+    const c = input.charCodeAt(i);
+    if (c === 92 /* '\\' */) {
+      i = Math.min(i + 2, len);
       continue;
     }
-    if (ch === '(') {
+    if (c === 40 /* '(' */) {
       depth += 1;
-    } else if (ch === ')') {
+    } else if (c === 41 /* ')' */) {
       depth -= 1;
     }
     i += 1;
@@ -349,28 +538,38 @@ function skipPdfLiteralString(input: string, startIndex: number): number {
   return i;
 }
 
-function extractBtBlocks(stream: string): string[] {
+function extractBtBlocks(stream: string, maxBlocks: number): string[] {
   const blocks: string[] = [];
+  if (maxBlocks <= 0) return blocks;
+  const len = stream.length;
   let i = 0;
   let inBlock = false;
   let blockStart = -1;
 
-  while (i < stream.length) {
-    const ch = stream[i]!;
-    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '\0') {
+  while (i < len) {
+    const c = stream.charCodeAt(i);
+    if (isPdfWsCode(c)) {
       i += 1;
       continue;
     }
-    if (ch === '%') {
-      while (i < stream.length && stream[i] !== '\n' && stream[i] !== '\r') i += 1;
+    if (c === 37 /* '%' */) {
+      while (i < len) {
+        const cc = stream.charCodeAt(i);
+        if (cc === 10 || cc === 13) break;
+        i += 1;
+      }
       continue;
     }
-    if (ch === '(') {
+    if (c === 40 /* '(' */) {
+      if (i + 1 < len && stream.charCodeAt(i + 1) === 41 /* ')' */) {
+        i += 2;
+        continue;
+      }
       i = skipPdfLiteralString(stream, i);
       continue;
     }
-    if (ch === '<') {
-      if (stream[i + 1] === '<') {
+    if (c === 60 /* '<' */) {
+      if (i + 1 < len && stream.charCodeAt(i + 1) === 60) {
         i += 2;
         continue;
       }
@@ -379,61 +578,97 @@ function extractBtBlocks(stream: string): string[] {
       i = end + 1;
       continue;
     }
-    if (ch === '>') {
-      i += stream[i + 1] === '>' ? 2 : 1;
+    if (c === 62 /* '>' */) {
+      i += i + 1 < len && stream.charCodeAt(i + 1) === 62 ? 2 : 1;
       continue;
     }
-    if (ch === '/') {
+    if (c === 47 /* '/' */) {
       i += 1;
-      while (i < stream.length && !isPdfDelimiterOrWs(stream[i]!)) i += 1;
+      while (i < len && !isPdfDelimiterOrWsCode(stream.charCodeAt(i))) i += 1;
       continue;
     }
     if (
-      ch === '[' ||
-      ch === ']' ||
-      ch === '{' ||
-      ch === '}' ||
-      ch === ')' ||
-      ch === "'" ||
-      ch === '"'
+      c === 91 /* '[' */ ||
+      c === 93 /* ']' */ ||
+      c === 123 /* '{' */ ||
+      c === 125 /* '}' */ ||
+      c === 41 /* ')' */ ||
+      c === 39 /* "'" */ ||
+      c === 34 /* '"' */
     ) {
       i += 1;
       continue;
     }
 
     const tokenStart = i;
-    while (
-      i < stream.length &&
-      !isPdfDelimiterOrWs(stream[i]!) &&
-      stream[i] !== "'" &&
-      stream[i] !== '"'
-    ) {
+    while (i < len) {
+      const tc = stream.charCodeAt(i);
+      if (isPdfDelimiterOrWsCode(tc) || tc === 39 || tc === 34) break;
       i += 1;
     }
-    const word = stream.slice(tokenStart, i);
-    if (word === 'BT' && !inBlock) {
-      inBlock = true;
-      blockStart = i;
-    } else if (word === 'ET' && inBlock) {
-      blocks.push(stream.slice(blockStart, tokenStart));
-      inBlock = false;
-      blockStart = -1;
+    if (i - tokenStart === 2) {
+      const c0 = stream.charCodeAt(tokenStart);
+      const c1 = stream.charCodeAt(tokenStart + 1);
+      if (c0 === 66 /* 'B' */ && c1 === 84 /* 'T' */ && !inBlock) {
+        inBlock = true;
+        blockStart = i;
+      } else if (c0 === 69 /* 'E' */ && c1 === 84 /* 'T' */ && inBlock) {
+        let hasNonWs = false;
+        for (let p = blockStart; p < tokenStart; p += 1) {
+          if (!isPdfWsCode(stream.charCodeAt(p))) {
+            hasNonWs = true;
+            break;
+          }
+        }
+        if (hasNonWs) {
+          blocks.push(stream.slice(blockStart, tokenStart));
+          if (blocks.length >= maxBlocks) break;
+        }
+        inBlock = false;
+        blockStart = -1;
+      }
     }
   }
 
   return blocks;
 }
 
-function extractTextFromContentStream(stream: string, cmap: Map<string, string>): string {
-  const blocks = extractBtBlocks(stream);
+function extractTextFromContentStream(
+  stream: string,
+  cmap: Map<string, string>,
+  budget: PdfExtractBudget,
+): string {
+  const remainingTokens = MAX_TOTAL_PDF_TOKENS - budget.tokens;
+  if (remainingTokens <= 0 || budget.rawChars >= MAX_RAW_TEXT_CHARS) {
+    return '';
+  }
+
+  const blocks = extractBtBlocks(stream, remainingTokens);
   const lines: string[] = [];
 
+  const pushLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const remaining = MAX_RAW_TEXT_CHARS - budget.rawChars;
+    if (remaining <= 0) return;
+    const clipped = trimmed.length > remaining ? trimmed.slice(0, remaining) : trimmed;
+    lines.push(clipped);
+    budget.rawChars += clipped.length + 1;
+  };
+
   for (const block of blocks) {
-    const tokens = tokenizePdfBlock(block, cmap);
+    if (budget.tokens >= MAX_TOTAL_PDF_TOKENS || budget.rawChars >= MAX_RAW_TEXT_CHARS) {
+      break;
+    }
+    budget.tokens += 1;
+    const tokens = tokenizePdfBlock(block, cmap, budget);
     const operands: PdfToken[] = [];
     let currentLine = '';
 
     for (const token of tokens) {
+      if (budget.rawChars + currentLine.length >= MAX_RAW_TEXT_CHARS) {
+        break;
+      }
       if (token.kind !== 'op') {
         operands.push(token);
         continue;
@@ -449,6 +684,9 @@ function extractTextFromContentStream(stream: string, cmap: Map<string, string>)
         const last = operands[operands.length - 1];
         if (last && last.kind === 'array') {
           for (const item of last.items) {
+            if (budget.rawChars + currentLine.length >= MAX_RAW_TEXT_CHARS) {
+              break;
+            }
             if (item.kind === 'string') {
               currentLine += item.value;
             } else if (item.value < -150) {
@@ -457,8 +695,12 @@ function extractTextFromContentStream(stream: string, cmap: Map<string, string>)
           }
         }
       } else if (op === "'" || op === '"') {
-        if (currentLine.trim()) lines.push(currentLine.trim());
+        pushLine(currentLine);
         currentLine = '';
+        if (budget.rawChars >= MAX_RAW_TEXT_CHARS) {
+          operands.length = 0;
+          break;
+        }
         const last = operands[operands.length - 1];
         if (last && last.kind === 'string') {
           currentLine += last.value;
@@ -473,7 +715,7 @@ function extractTextFromContentStream(stream: string, cmap: Map<string, string>)
             Math.abs((operands[operands.length - 1] as { kind: 'number'; value: number }).value) >
               1);
         if (shouldBreak && currentLine.trim()) {
-          lines.push(currentLine.trim());
+          pushLine(currentLine);
           currentLine = '';
         }
       }
@@ -482,23 +724,37 @@ function extractTextFromContentStream(stream: string, cmap: Map<string, string>)
     }
 
     if (currentLine.trim()) {
-      lines.push(currentLine.trim());
+      pushLine(currentLine);
     }
   }
 
   return lines.join('\n');
 }
 
-function tokenizePdfBlock(block: string, cmap: Map<string, string>): PdfToken[] {
+function readHexString(
+  input: string,
+  startIndex: number,
+): { hex: string; nextIndex: number } | null {
+  const end = input.indexOf('>', startIndex + 1);
+  if (end === -1) return null;
+  const maxEnd = Math.min(end, startIndex + 1 + MAX_HEX_STRING_CHARS);
+  return { hex: input.slice(startIndex + 1, maxEnd), nextIndex: end + 1 };
+}
+
+function tokenizePdfBlock(
+  block: string,
+  cmap: Map<string, string>,
+  budget: PdfExtractBudget,
+): PdfToken[] {
   const tokens: PdfToken[] = [];
   let i = 0;
 
-  while (i < block.length) {
-    const ch = block[i]!;
-    if (/\s/.test(ch)) {
+  while (i < block.length && budget.tokens < MAX_TOTAL_PDF_TOKENS) {
+    if (isPdfWsCode(block.charCodeAt(i))) {
       i += 1;
       continue;
     }
+    const ch = block[i]!;
     if (ch === '%') {
       while (i < block.length && block[i] !== '\n' && block[i] !== '\r') i += 1;
       continue;
@@ -506,22 +762,25 @@ function tokenizePdfBlock(block: string, cmap: Map<string, string>): PdfToken[] 
     if (ch === '(') {
       const parsed = readLiteralString(block, i);
       tokens.push({ kind: 'string', value: parsed.value });
+      budget.tokens += 1 + Math.floor(parsed.value.length / 32);
       i = parsed.nextIndex;
       continue;
     }
     if (ch === '<') {
       if (block[i + 1] === '<') {
+        budget.tokens += 1;
         i += 2;
         continue;
       }
-      const end = block.indexOf('>', i + 1);
-      if (end === -1) break;
-      const hex = block.slice(i + 1, end);
-      tokens.push({ kind: 'string', value: decodePdfHexString(hex, cmap) });
-      i = end + 1;
+      const hexToken = readHexString(block, i);
+      if (!hexToken) break;
+      tokens.push({ kind: 'string', value: decodePdfHexString(hexToken.hex, cmap) });
+      budget.tokens += 1 + Math.floor(hexToken.hex.length / 32);
+      i = hexToken.nextIndex;
       continue;
     }
     if (ch === '>' && block[i + 1] === '>') {
+      budget.tokens += 1;
       i += 2;
       continue;
     }
@@ -529,138 +788,242 @@ function tokenizePdfBlock(block: string, cmap: Map<string, string>): PdfToken[] 
       const items: Array<{ kind: 'string'; value: string } | { kind: 'number'; value: number }> =
         [];
       i += 1;
-      while (i < block.length && block[i] !== ']') {
-        const cur = block[i]!;
-        if (/\s/.test(cur)) {
+      budget.tokens += 1;
+      while (i < block.length && block[i] !== ']' && budget.tokens < MAX_TOTAL_PDF_TOKENS) {
+        if (isPdfWsCode(block.charCodeAt(i))) {
           i += 1;
+          continue;
+        }
+        const cur = block[i]!;
+        if (cur === '%') {
+          while (i < block.length && block[i] !== '\n' && block[i] !== '\r') i += 1;
           continue;
         }
         if (cur === '(') {
           const parsed = readLiteralString(block, i);
           items.push({ kind: 'string', value: parsed.value });
+          budget.tokens += 1 + Math.floor(parsed.value.length / 32);
           i = parsed.nextIndex;
           continue;
         }
         if (cur === '<' && block[i + 1] !== '<') {
-          const end = block.indexOf('>', i + 1);
-          if (end === -1) break;
-          items.push({ kind: 'string', value: decodePdfHexString(block.slice(i + 1, end), cmap) });
-          i = end + 1;
+          const hexToken = readHexString(block, i);
+          if (!hexToken) break;
+          items.push({ kind: 'string', value: decodePdfHexString(hexToken.hex, cmap) });
+          budget.tokens += 1 + Math.floor(hexToken.hex.length / 32);
+          i = hexToken.nextIndex;
           continue;
         }
-        const numMatch = /^[+-]?(?:\d+\.?\d*|\.\d+)/.exec(block.slice(i));
-        if (numMatch) {
-          items.push({ kind: 'number', value: Number(numMatch[0]) });
-          i += numMatch[0].length;
+        const numLen = scanPdfNumber(block, i);
+        if (numLen > 0) {
+          items.push({ kind: 'number', value: Number(block.slice(i, i + numLen)) });
+          budget.tokens += 1;
+          i += numLen;
           continue;
         }
+        budget.tokens += 1;
         i += 1;
       }
-      if (block[i] === ']') i += 1;
+      if (i < block.length && block[i] === ']') i += 1;
       tokens.push({ kind: 'array', items });
       continue;
     }
     if (ch === "'" || ch === '"') {
       tokens.push({ kind: 'op', value: ch });
+      budget.tokens += 1;
       i += 1;
       continue;
     }
     if (ch === '/') {
+      budget.tokens += 1;
       i += 1;
-      while (i < block.length && !/[\s()<>[\]{}/%]/.test(block[i]!)) i += 1;
+      while (i < block.length && !isPdfDelimiterOrWsCode(block.charCodeAt(i))) i += 1;
       continue;
     }
-    const numMatch = /^[+-]?(?:\d+\.?\d*|\.\d+)(?=[\s()<>[\]{}/%]|$)/.exec(block.slice(i));
-    if (numMatch) {
-      tokens.push({ kind: 'number', value: Number(numMatch[0]) });
-      i += numMatch[0].length;
+    const tokenStart = i;
+    while (i < block.length) {
+      const tc = block.charCodeAt(i);
+      if (isPdfDelimiterOrWsCode(tc) || tc === 39 || tc === 34) break;
+      i += 1;
+    }
+    if (i === tokenStart) {
+      budget.tokens += 1;
+      i += 1;
       continue;
     }
-    const opMatch = /^[A-Za-z*]+/.exec(block.slice(i));
-    if (opMatch) {
-      tokens.push({ kind: 'op', value: opMatch[0] });
-      i += opMatch[0].length;
-      continue;
+    const rawToken = block.slice(tokenStart, i);
+    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(rawToken)) {
+      tokens.push({ kind: 'number', value: Number(rawToken) });
+      budget.tokens += 1;
+    } else if (/^[A-Za-z*]+$/.test(rawToken)) {
+      tokens.push({ kind: 'op', value: rawToken });
+      budget.tokens += 1;
+    } else {
+      budget.tokens += 1;
     }
-    i += 1;
   }
 
   return tokens;
+}
+
+function scanPdfNumber(input: string, start: number): number {
+  let i = start;
+  const len = input.length;
+  if (i < len && (input[i] === '+' || input[i] === '-')) {
+    i += 1;
+  }
+  let hasDigits = false;
+  while (i < len && input.charCodeAt(i) >= 48 && input.charCodeAt(i) <= 57) {
+    hasDigits = true;
+    i += 1;
+  }
+  if (i < len && input[i] === '.') {
+    i += 1;
+    while (i < len && input.charCodeAt(i) >= 48 && input.charCodeAt(i) <= 57) {
+      hasDigits = true;
+      i += 1;
+    }
+  }
+  return hasDigits ? i - start : 0;
+}
+
+function trimIncompleteTrailingUtf8(buf: Buffer): Buffer {
+  if (buf.length === 0) return buf;
+  let end = buf.length;
+  let contBytes = 0;
+  while (end > 0 && contBytes < 3 && (buf[end - 1]! & 0xc0) === 0x80) {
+    end -= 1;
+    contBytes += 1;
+  }
+  if (end === 0) return buf;
+  const lead = buf[end - 1]!;
+  let expectedLen = 1;
+  if ((lead & 0xe0) === 0xc0) expectedLen = 2;
+  else if ((lead & 0xf0) === 0xe0) expectedLen = 3;
+  else if ((lead & 0xf8) === 0xf0) expectedLen = 4;
+  if (expectedLen > 1 && contBytes + 1 < expectedLen) {
+    return buf.subarray(0, end - 1);
+  }
+  return buf;
 }
 
 function readLiteralString(
   input: string,
   startIndex: number,
 ): { value: string; nextIndex: number } {
+  const len = input.length;
   let i = startIndex + 1;
+  if (i < len && input.charCodeAt(i) === 41 /* ')' */) {
+    return { value: '', nextIndex: i + 1 };
+  }
   let depth = 1;
   const bytes: number[] = [];
+  let truncated = false;
+  let hasNonAscii = false;
 
-  while (i < input.length && depth > 0) {
-    const ch = input[i]!;
-    if (ch === '\\') {
-      const next = input[i + 1];
-      if (next === undefined) {
+  while (i < len && depth > 0) {
+    if (bytes.length >= MAX_LITERAL_STRING_BYTES) {
+      truncated = true;
+      while (i < len && depth > 0) {
+        const code = input.charCodeAt(i);
+        if (code === 92 /* '\\' */) {
+          i = Math.min(i + 2, len);
+          continue;
+        }
+        if (code === 40 /* '(' */) {
+          depth += 1;
+        } else if (code === 41 /* ')' */) {
+          depth -= 1;
+        }
+        i += 1;
+      }
+      break;
+    }
+
+    const code = input.charCodeAt(i);
+    if (code === 92 /* '\\' */) {
+      if (i + 1 >= len) {
         i += 1;
         break;
       }
-      if (next === '\r' && input[i + 2] === '\n') {
+      const nextCode = input.charCodeAt(i + 1);
+      if (nextCode === 13 && i + 2 < len && input.charCodeAt(i + 2) === 10) {
         i += 3;
         continue;
       }
-      if (next === '\n' || next === '\r') {
+      if (nextCode === 10 || nextCode === 13) {
         i += 2;
         continue;
       }
-      if (next === 'n') {
+      if (nextCode === 110 /* 'n' */) {
         bytes.push(0x0a);
         i += 2;
         continue;
       }
-      if (next === 'r') {
+      if (nextCode === 114 /* 'r' */) {
         bytes.push(0x0d);
         i += 2;
         continue;
       }
-      if (next === 't') {
+      if (nextCode === 116 /* 't' */) {
         bytes.push(0x09);
         i += 2;
         continue;
       }
-      if (next === 'b') {
+      if (nextCode === 98 /* 'b' */) {
         bytes.push(0x08);
         i += 2;
         continue;
       }
-      if (next === 'f') {
+      if (nextCode === 102 /* 'f' */) {
         bytes.push(0x0c);
         i += 2;
         continue;
       }
-      if (/[0-7]/.test(next)) {
-        const oct = input.slice(i + 1, i + 4).match(/^[0-7]{1,3}/)?.[0] ?? next;
-        bytes.push(Number.parseInt(oct, 8) & 0xff);
-        i += 1 + oct.length;
+      if (nextCode >= 48 && nextCode <= 55) {
+        let octVal = nextCode - 48;
+        let octLen = 1;
+        while (octLen < 3 && i + 1 + octLen < len) {
+          const c = input.charCodeAt(i + 1 + octLen);
+          if (c < 48 || c > 55) break;
+          octVal = (octVal << 3) + (c - 48);
+          octLen += 1;
+        }
+        const b = octVal & 0xff;
+        if (b >= 0x80) hasNonAscii = true;
+        bytes.push(b);
+        i += 1 + octLen;
         continue;
       }
-      bytes.push(next.charCodeAt(0) & 0xff);
+      const b = nextCode & 0xff;
+      if (b >= 0x80) hasNonAscii = true;
+      bytes.push(b);
       i += 2;
       continue;
     }
-    if (ch === '(') {
+    if (code === 40 /* '(' */) {
       depth += 1;
-      bytes.push(ch.charCodeAt(0));
+      bytes.push(40);
       i += 1;
       continue;
     }
-    if (ch === ')') {
+    if (code === 41 /* ')' */) {
       depth -= 1;
-      if (depth > 0) bytes.push(ch.charCodeAt(0));
+      if (depth > 0) bytes.push(41);
       i += 1;
       continue;
     }
-    bytes.push(ch.charCodeAt(0) & 0xff);
+    const b = code & 0xff;
+    if (b >= 0x80) hasNonAscii = true;
+    bytes.push(b);
     i += 1;
+  }
+
+  if (bytes.length === 0) {
+    return { value: '', nextIndex: i };
+  }
+  if (!hasNonAscii && bytes.length <= 256) {
+    return { value: String.fromCharCode(...bytes), nextIndex: i };
   }
 
   const rawBuf = Buffer.from(bytes);
@@ -668,7 +1031,8 @@ function readLiteralString(
   if (rawBuf.length >= 2 && rawBuf[0] === 0xfe && rawBuf[1] === 0xff) {
     return { value: decodeUtf16Be(rawBuf.subarray(2)), nextIndex: i };
   }
-  const utf8 = rawBuf.toString('utf8');
+  const utf8Buf = truncated ? trimIncompleteTrailingUtf8(rawBuf) : rawBuf;
+  const utf8 = utf8Buf.toString('utf8');
   return { value: utf8.includes('\uFFFD') ? rawBuf.toString('latin1') : utf8, nextIndex: i };
 }
 

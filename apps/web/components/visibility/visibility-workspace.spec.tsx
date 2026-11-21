@@ -1262,4 +1262,25 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       expect(screen.getByTestId('geo-brief-drawer')).toBeTruthy();
     });
   });
+
+  it('renders SignalError with retry instead of zero-brand empty state when brandsError is set (W-04)', () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: '品牌服务暂时不可用',
+      brands: [],
+      activeBrandId: null,
+      activeMarket: 'CN',
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    expect(screen.getByText('品牌服务暂时不可用')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeTruthy();
+    expect(screen.queryByText('尚未创建品牌资产')).toBeNull();
+  });
 });

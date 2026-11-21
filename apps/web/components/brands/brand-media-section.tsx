@@ -172,15 +172,21 @@ export function BrandMediaSection({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        const res = await deleteBrandMedia(brand.id, asset.id, {
-          storage: window.sessionStorage,
-        });
-        const nextItems = items.filter((item) => item.id !== asset.id);
-        onMediaChanged(nextItems, res.storage ?? storage);
-        if (previewAsset?.id === asset.id) {
-          setPreviewAsset(null);
+        try {
+          const res = await deleteBrandMedia(brand.id, asset.id, {
+            storage: window.sessionStorage,
+          });
+          const nextItems = items.filter((item) => item.id !== asset.id);
+          onMediaChanged(nextItems, res.storage ?? storage);
+          if (previewAsset?.id === asset.id) {
+            setPreviewAsset(null);
+          }
+          feedback.notifySuccess('已删除产品图片');
+        } catch (reason: unknown) {
+          feedback.notifyError(
+            reason instanceof Error && reason.message ? reason.message : '删除产品图片失败',
+          );
         }
-        feedback.notifySuccess('已删除产品图片');
       },
     });
   };

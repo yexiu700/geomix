@@ -2008,4 +2008,340 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       );
     });
   });
+
+  it('clears rewrite preview on article switch, preserves literal $ sequences, and keeps preview open on PATCH failure (W-01)', async () => {
+    const articleB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_st_2',
+      title: '第二篇独立对比文章',
+      contentMarkdown: '第二篇文章的正文内容，绝不可被第一篇改写污染。',
+    };
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [SAMPLE_ARTICLE, articleB],
+      total: 2,
+    });
+    vi.spyOn(studioApi, 'rewriteArticleSection').mockResolvedValue({
+      action: 'DE_AD',
+      rewrittenText: '实测售价 $$199（支持 $& 模式）',
+      complianceFlags: [],
+      model: 'fake',
+      tokensIn: 10,
+      tokensOut: 12,
+    });
+    const updateSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      .mockRejectedValueOnce(new GatewayApiError(500, -1, '保存失败，请重试'))
+      .mockImplementationOnce(async (_id, patch) => ({
+        ...SAMPLE_ARTICLE,
+        title: patch.title ?? SAMPLE_ARTICLE.title,
+        contentMarkdown: patch.contentMarkdown ?? SAMPLE_ARTICLE.contentMarkdown,
+      }));
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Open Article A and trigger rewrite preview
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(await screen.findByRole('button', { name: '更客观去广告味' }));
+    expect(await screen.findByTestId('studio-rewrite-preview')).toBeTruthy();
+
+    // First apply fails -> preview MUST stay open for retry
+    fireEvent.click(screen.getByRole('button', { name: '应用替换' }));
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('studio-rewrite-preview')).toBeTruthy();
+
+    // Second apply succeeds -> literal $$199 and $& MUST NOT be expanded by String.prototype.replace
+    fireEvent.click(screen.getByRole('button', { name: '应用替换' }));
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+    });
+    const secondPatch = updateSpy.mock.calls[1]?.[1];
+    expect(secondPatch?.contentMarkdown).toContain('实测售价 $$199（支持 $& 模式）');
+    expect(screen.queryByTestId('studio-rewrite-preview')).toBeNull();
+
+    // Re-open rewrite preview on Article A, then switch to Article B -> preview clears immediately
+    fireEvent.click(screen.getByRole('button', { name: '更客观去广告味' }));
+    expect(await screen.findByTestId('studio-rewrite-preview')).toBeTruthy();
+    fireEvent.click(screen.getByText('第二篇独立对比文章'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('studio-rewrite-preview')).toBeNull();
+    });
+  });
+
+  it('renders SignalError on brandsError (W-04) and strips stale studio URL params on brand switch (W-05)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: '品牌加载失败',
+      brands: [],
+      activeBrandId: null,
+      activeMarket: 'CN',
+    });
+
+    const { unmount } = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    expect(screen.getByText('品牌加载失败')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /重\s*试/ })).toBeTruthy();
+    expect(screen.queryByText('尚未创建品牌资产')).toBeNull();
+    unmount();
+
+    const secondBrand: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_studio_2',
+      name: '第二品牌',
+      markets: [
+        {
+          ...DUAL_BRAND.markets[0]!,
+          id: 'bm_cn_2',
+          brandId: 'brand_studio_2',
+          localBrandName: '第二品牌',
+        },
+      ],
+    };
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=CN&articleId=art_st_1&briefId=brief_st_1&batchJobId=bj_stale_1`,
+    );
+    const getBatchJobSpy = vi.spyOn(studioApi, 'getBatchJob').mockResolvedValue({
+      id: 'bj_stale_1',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      briefIds: ['brief_st_1', 'brief_st_2'],
+      total: 2,
+      doneCount: 0,
+      failCount: 0,
+      unitPrice: 10,
+      reservationId: 'res_stale_1',
+      status: 'QUEUED',
+      lastError: null,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+      finishedAt: null,
+    });
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND, secondBrand],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    await waitFor(() => {
+      expect(getBatchJobSpy).toHaveBeenCalledWith(DUAL_BRAND.id, 'bj_stale_1', expect.anything());
+    });
+    getBatchJobSpy.mockClear();
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand(secondBrand.id, 'CN', window.localStorage);
+    });
+
+    await waitFor(() => {
+      const sp = new URLSearchParams(window.location.search);
+      expect(sp.get('articleId')).toBeNull();
+      expect(sp.get('briefId')).toBeNull();
+      expect(sp.get('batchJobId')).toBeNull();
+    });
+    expect(getBatchJobSpy).not.toHaveBeenCalled();
+  });
+
+  it('guards W-03 mutations across article/brand switches, preserves draftTitle on backfill, and keeps media popover open on insert failure', async () => {
+    const articleB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_st_2',
+      title: '第二篇独立文章',
+      status: 'DRAFT',
+      contentMarkdown: '第二篇正文内容。',
+    };
+    const secondBrand: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_studio_2',
+      name: '第二品牌',
+      markets: [
+        {
+          ...DUAL_BRAND.markets[0]!,
+          id: 'bm_cn_2',
+          brandId: 'brand_studio_2',
+          localBrandName: '第二品牌',
+        },
+      ],
+    };
+    const sampleMedia: BrandMediaAssetRecord = {
+      id: 'media_w03_1',
+      brandId: DUAL_BRAND.id,
+      origin: 'PRODUCT_UPLOAD',
+      title: '产品实拍正面图',
+      objectKey: 'tenants/t1/brand-media-media_w03_1.jpg',
+      thumbKey: 'tenants/t1/brand-media-media_w03_1-thumb.jpg',
+      url: `/api/v2/brands/${DUAL_BRAND.id}/media/media_w03_1/file`,
+      thumbUrl: `/api/v2/brands/${DUAL_BRAND.id}/media/media_w03_1/thumb`,
+      mime: 'image/jpeg',
+      bytes: 2048,
+      width: 800,
+      height: 600,
+      aiPrompt: null,
+      aiModel: null,
+      usedCount: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND, secondBrand],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockImplementation(async (brandId) =>
+      brandId === DUAL_BRAND.id
+        ? { items: [SAMPLE_ARTICLE, articleB], total: 2 }
+        : { items: [], total: 0 },
+    );
+    vi.spyOn(briefsApi, 'fetchBriefs').mockImplementation(async (brandId) =>
+      brandId === DUAL_BRAND.id ? { items: [BRIEF_1, BRIEF_2], total: 2 } : { items: [], total: 0 },
+    );
+    vi.spyOn(brandsApi, 'listBrandMedia').mockResolvedValue({
+      items: [sampleMedia],
+      storage: {
+        used: '2048',
+        limit: '104857600',
+        usedText: '2 KB',
+        limitText: '100 MB',
+      },
+    });
+
+    let resolveStatusPatch!: (art: GeoArticleRecord) => void;
+    let resolveBatchCreate!: (job: GeoBatchJobRecord) => void;
+    const updateSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      // 1st call: deferred handleChangeStatus on Article A
+      .mockImplementationOnce(
+        () =>
+          new Promise<GeoArticleRecord>((resolve) => {
+            resolveStatusPatch = resolve;
+          }),
+      )
+      // 2nd call: handleBackfillMissingFact preserving edited draftTitle
+      .mockImplementationOnce(async (_id, patch) => ({
+        ...SAMPLE_ARTICLE,
+        title: patch.title ?? SAMPLE_ARTICLE.title,
+        contentMarkdown: patch.contentMarkdown ?? SAMPLE_ARTICLE.contentMarkdown,
+      }))
+      // 3rd call: handleInsertMedia fails -> popover must stay open
+      .mockRejectedValueOnce(new GatewayApiError(500, -1, '插图保存失败'));
+
+    vi.spyOn(studioApi, 'createBatchJob').mockImplementationOnce(
+      () =>
+        new Promise<GeoBatchJobRecord>((resolve) => {
+          resolveBatchCreate = resolve;
+        }),
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // 1) handleChangeStatus race across article switch (Article A -> Article B before PATCH resolves)
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    const statusSelect = (await screen.findByLabelText('成稿状态')) as HTMLSelectElement;
+    fireEvent.change(statusSelect, { target: { value: 'READY' } });
+    fireEvent.click(screen.getByText('第二篇独立文章'));
+    await waitFor(() => {
+      expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('第二篇独立文章');
+    });
+    await act(async () => {
+      resolveStatusPatch({ ...SAMPLE_ARTICLE, status: 'READY' });
+      await Promise.resolve();
+    });
+    expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('第二篇独立文章');
+    expect((screen.getByLabelText('成稿状态') as HTMLSelectElement).value).toBe('DRAFT');
+
+    // 2) handleBackfillMissingFact preserves edited draftTitle
+    fireEvent.click(screen.getByText('星辰存储 DXP4800 静音实测报告'));
+    const titleInput = (await screen.findByLabelText('文章标题')) as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: '手动编辑的新标题' } });
+    fireEvent.click(await screen.findByTestId('missing-fact-pill'));
+    const slotInput = await screen.findByPlaceholderText('输入真实实测数值或参数');
+    fireEvent.change(slotInput, { target: { value: '14W' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(updateSpy.mock.calls[1]?.[1]?.title).toBe('手动编辑的新标题');
+    expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('手动编辑的新标题');
+
+    // 3) handleInsertMedia rejection keeps media popover open for retry
+    fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
+    expect(await screen.findByTestId('studio-media-popover')).toBeTruthy();
+    fireEvent.click(await screen.findByText('产品实拍正面图'));
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(3);
+      expect(mockNotifyError).toHaveBeenCalled();
+    });
+    expect(screen.getByTestId('studio-media-popover')).toBeTruthy();
+
+    // 4) handleLaunchBatch across brand switch does not pollute Brand B
+    const checkboxes = document.querySelectorAll<HTMLInputElement>(
+      '[data-testid^="studio-brief-item-"] input[type="checkbox"]',
+    );
+    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(checkboxes[0]!);
+    fireEvent.click(checkboxes[1]!);
+    fireEvent.click(screen.getByTestId('studio-batch-btn'));
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand(secondBrand.id, 'CN', window.localStorage);
+    });
+    await act(async () => {
+      resolveBatchCreate({
+        id: 'bj_brand_a_stale',
+        brandId: DUAL_BRAND.id,
+        brandMarketId: 'bm_cn_1',
+        market: 'CN',
+        briefIds: ['brief_st_1', 'brief_st_2'],
+        total: 2,
+        doneCount: 0,
+        failCount: 0,
+        unitPrice: 10,
+        reservationId: 'res_bj_stale',
+        status: 'QUEUED',
+        lastError: null,
+        createdAt: '2026-11-20T00:00:00.000Z',
+        updatedAt: '2026-11-20T00:00:00.000Z',
+        finishedAt: null,
+      });
+      await Promise.resolve();
+    });
+    expect(new URLSearchParams(window.location.search).get('batchJobId')).toBeNull();
+  });
 });

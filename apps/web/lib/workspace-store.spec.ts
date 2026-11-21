@@ -310,4 +310,16 @@ describe('useWorkspaceStore', () => {
     expect(useWorkspaceStore.getState().contextEpoch).toBe(epochBefore);
     expect(useWorkspaceStore.getState().brands[0]?.truthAgreementSignedAt).toBe(signedAt);
   });
+
+  it('preserves existing window.history.state when syncing workspace query params (W-05)', () => {
+    const customState = { __NA: true, tree: ['home'] };
+    window.history.replaceState(customState, '', '/studio');
+    const b1 = makeBrand('b-state-1', '状态保留品牌', ['CN']);
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, market: 'CN', persistStorage: window.localStorage });
+
+    expect(window.location.search).toBe('?brandId=b-state-1&market=CN');
+    expect(window.history.state).toEqual(customState);
+  });
 });

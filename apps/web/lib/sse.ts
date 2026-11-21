@@ -157,7 +157,7 @@ export async function streamSsePost(
 
   const dispatchAvailable = (flushAll: boolean) => {
     let boundary = buffer.indexOf('\n\n');
-    while (boundary !== -1) {
+    while (boundary !== -1 && !options.signal?.aborted) {
       const rawFrame = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
       const parsed = parseSseFrame(rawFrame);
@@ -167,7 +167,7 @@ export async function streamSsePost(
       }
       boundary = buffer.indexOf('\n\n');
     }
-    if (flushAll && buffer.trim().length > 0) {
+    if (flushAll && !options.signal?.aborted && buffer.trim().length > 0) {
       const parsed = parseSseFrame(buffer);
       buffer = '';
       if (parsed) {
@@ -198,6 +198,9 @@ export async function streamSsePost(
         return { aborted: true, receivedEvents };
       }
       const step = await reader.read();
+      if (options.signal?.aborted) {
+        return { aborted: true, receivedEvents };
+      }
       if (step.done) break;
       appendText(decoder.decode(step.value, { stream: true }));
       dispatchAvailable(false);
