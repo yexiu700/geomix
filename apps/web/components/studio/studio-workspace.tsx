@@ -11,12 +11,15 @@ import {
   type GeoArticleStatus,
   type GeoBatchJobRecord,
   type GeoBriefRecord,
+  type GeoEvaluationResult,
   type GeoOutlineHeading,
+  type GeoPublishRecordDto,
   type GeoRecipe,
   type GeoRewriteAction,
   type GeoTargetFormat,
   type MissingFactSlot,
   type PromptPreferenceRecord,
+  type PublishRecordCreateInput,
 } from '@geomix/shared';
 import { Button, Skeleton } from 'antd';
 import type { JSX, ReactNode } from 'react';
@@ -27,10 +30,13 @@ import { GatewayApiError } from '../../lib/envelope';
 import {
   buildMarkdownImageToken,
   createBatchJob,
+  createPublishRecord,
   createStudioIdempotencyKey,
   deleteArticle,
+  evaluateArticleGeo,
   fetchArticles,
   fetchBatchJobs,
+  fetchPublishRecords,
   getArticle,
   getBatchJob,
   getPromptPreferences,
@@ -40,10 +46,12 @@ import {
   rewriteArticleSection,
   savePromptPreferences,
   streamGenerateArticle,
+  triggerPublishRetest,
   updateArticle,
 } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
+import { fetchVisibilityRunDetail } from '../../lib/visibility';
 import {
   selectActiveBrand,
   selectActiveBrandMarket,
@@ -53,10 +61,13 @@ import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { StudioDeliveryPack } from './studio-delivery-pack';
 import { StudioEditorCanvas } from './studio-editor-canvas';
+import { StudioGeoEvaluator } from './studio-geo-evaluator';
 import { StudioLeftPane } from './studio-left-pane';
 import { StudioMediaPopover } from './studio-media-popover';
 import { StudioPrewriteBar } from './studio-prewrite-bar';
+import { StudioPublishRetest } from './studio-publish-retest';
 import { StudioRightPane } from './studio-right-pane';
 
 export type StudioWorkspaceExtensionSlots = {
@@ -171,11 +182,34 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [streamError, setStreamError] = useState<string | null>(null);
   const [matchedFactIds, setMatchedFactIds] = useState<string[]>([]);
 
-  // Anti-race AbortControllers & monotonic context sequence
+  // M5 Delivery, Evaluator & Publish/Retest State
+  const [evaluation, setEvaluation] = useState<GeoEvaluationResult | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
+  const [supplementingTerm, setSupplementingTerm] = useState<string | null>(null);
+  const [publishRecords, setPublishRecords] = useState<GeoPublishRecordDto[]>([]);
+  const [publishRecordsLoading, setPublishRecordsLoading] = useState(false);
+  const [retestingRecordId, setRetestingRecordId] = useState<string | null>(null);
+  const [pendingRetest, setPendingRetest] = useState<{
+    recordId: string;
+    runId: string;
+    articleId: string;
+  } | null>(null);
+
+  // Anti-race AbortControllers & monotonic context/article sequences
   const contextSeqRef = useRef(0);
+  const articleSeqRef = useRef(0);
+  const activeArticleIdRef = useRef<string | null>(null);
   const loadCtrlRef = useRef<AbortController | null>(null);
   const streamCtrlRef = useRef<AbortController | null>(null);
   const mediaRefreshCtrlRef = useRef<AbortController | null>(null);
+  const pubRecordsCtrlRef = useRef<AbortController | null>(null);
+  const evalCtrlRef = useRef<AbortController | null>(null);
+  const supplementCtrlRef = useRef<AbortController | null>(null);
+  const publishCtrlRef = useRef<AbortController | null>(null);
+  const retestCtrlRef = useRef<AbortController | null>(null);
+  const evaluatingRef = useRef(false);
+  const supplementingTermRef = useRef<string | null>(null);
+  const retestingRecordsRef = useRef<Set<string>>(new Set());
   const insertingMediaRef = useRef(false);
   const hadActiveBatchRef = useRef(false);
   const editorCursorRef = useRef<number | null>(null);
@@ -213,13 +247,44 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     [activeMarket],
   );
 
-  const applyArticleToCanvas = useCallback((article: GeoArticleRecord) => {
-    setActiveArticle(article);
-    setDraftTitle(article.title);
-    setDraftMarkdown(article.contentMarkdown);
-    setStreamError(null);
-    replaceStudioUrlParam('articleId', article.id);
+  const clearArticleActionControllers = useCallback(() => {
+    evalCtrlRef.current?.abort();
+    evalCtrlRef.current = null;
+    supplementCtrlRef.current?.abort();
+    supplementCtrlRef.current = null;
+    publishCtrlRef.current?.abort();
+    publishCtrlRef.current = null;
+    retestCtrlRef.current?.abort();
+    retestCtrlRef.current = null;
+    evaluatingRef.current = false;
+    supplementingTermRef.current = null;
+    retestingRecordsRef.current.clear();
   }, []);
+
+  const resetActiveArticleContext = useCallback(
+    (nextArticleId: string | null) => {
+      if (activeArticleIdRef.current === nextArticleId) return;
+      activeArticleIdRef.current = nextArticleId;
+      articleSeqRef.current += 1;
+      clearArticleActionControllers();
+      setEvaluating(false);
+      setSupplementingTerm(null);
+      setRetestingRecordId(null);
+    },
+    [clearArticleActionControllers],
+  );
+
+  const applyArticleToCanvas = useCallback(
+    (article: GeoArticleRecord) => {
+      resetActiveArticleContext(article.id);
+      setActiveArticle(article);
+      setDraftTitle(article.title);
+      setDraftMarkdown(article.contentMarkdown);
+      setStreamError(null);
+      replaceStudioUrlParam('articleId', article.id);
+    },
+    [resetActiveArticleContext],
+  );
 
   const loadWorkspaceData = useCallback(
     async (
@@ -339,6 +404,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     streamCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current = null;
+    pubRecordsCtrlRef.current?.abort();
+    pubRecordsCtrlRef.current = null;
+    clearArticleActionControllers();
+    activeArticleIdRef.current = null;
+    articleSeqRef.current += 1;
     insertingMediaRef.current = false;
     const seq = ++contextSeqRef.current;
     const contextKey = `${activeBrandId ?? ''}::${activeBrandMarketId ?? ''}::${activeMarket}::${state.contextEpoch}`;
@@ -365,6 +435,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setStreamMarkdown('');
     setStreamError(null);
     setMatchedFactIds([]);
+    setEvaluation(null);
+    setEvaluating(false);
+    setSupplementingTerm(null);
+    setPublishRecords([]);
+    setPublishRecordsLoading(false);
+    setRetestingRecordId(null);
+    setPendingRetest(null);
     setCounterModalOpen(false);
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
@@ -389,9 +466,19 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       streamCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current = null;
+      pubRecordsCtrlRef.current?.abort();
+      pubRecordsCtrlRef.current = null;
+      clearArticleActionControllers();
       insertingMediaRef.current = false;
     };
-  }, [activeBrandId, activeBrandMarketId, activeMarket, state.contextEpoch, loadWorkspaceData]);
+  }, [
+    activeBrandId,
+    activeBrandMarketId,
+    activeMarket,
+    state.contextEpoch,
+    loadWorkspaceData,
+    clearArticleActionControllers,
+  ]);
 
   // Refetch articles ONLY when status/tag filters actually change (never wipes editor or aborts stream)
   useEffect(() => {
@@ -489,9 +576,104 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   }, [hasActiveBatchJob]);
 
+  // Load publish records whenever active article changes
+  const activeArticleId = activeArticle?.id ?? null;
+  useEffect(() => {
+    pubRecordsCtrlRef.current?.abort();
+    pubRecordsCtrlRef.current = null;
+    setEvaluation(null);
+    setPublishRecords([]);
+    setPendingRetest((prev) => (prev && prev.articleId === activeArticleId ? prev : null));
+
+    if (!activeArticleId || !activeBrandId || !activeBrandMarketId) {
+      setPublishRecordsLoading(false);
+      return;
+    }
+
+    const seq = contextSeqRef.current;
+    const ctrl = new AbortController();
+    pubRecordsCtrlRef.current = ctrl;
+    setPublishRecordsLoading(true);
+    void fetchPublishRecords(activeArticleId, { signal: ctrl.signal })
+      .then((res) => {
+        if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+        setPublishRecords(res.items);
+      })
+      .catch(() => {
+        // Silent fallback on empty/aborted fetch
+      })
+      .finally(() => {
+        if (seq === contextSeqRef.current && !ctrl.signal.aborted) {
+          setPublishRecordsLoading(false);
+        }
+      });
+
+    return () => ctrl.abort();
+  }, [activeArticleId, activeBrandId, activeBrandMarketId]);
+
+  // Poll pending retest run until afterMetrics writeback or terminal status
+  useTaskPolling({
+    enabled: Boolean(activeBrandId && activeBrandMarket && pendingRetest),
+    active: Boolean(pendingRetest),
+    intervalMs: 2_500,
+    onPoll: async () => {
+      if (!activeBrandId || !activeBrandMarket || !pendingRetest) return;
+      const seq = contextSeqRef.current;
+      const articleSeq = articleSeqRef.current;
+      const currentPending = pendingRetest;
+      try {
+        const res = await fetchPublishRecords(currentPending.articleId);
+        if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
+        setPublishRecords(res.items);
+        const matched = res.items.find((r) => r.id === currentPending.recordId);
+        if (matched?.afterMetrics && matched.latestRetestRunId === currentPending.runId) {
+          setPendingRetest(null);
+          void consoleCtx?.refreshWallet();
+          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
+          return;
+        }
+        const detail = await fetchVisibilityRunDetail(
+          activeBrandId,
+          currentPending.runId,
+          activeMarket,
+        );
+        if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
+        if (detail.status === 'FAILED' || detail.status === 'CANCELLED') {
+          setPendingRetest(null);
+          void consoleCtx?.refreshWallet();
+          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          feedback.notifyWarning('本次复测未成功完成，已按规则退还异常引擎点数');
+          return;
+        }
+        if (detail.status === 'COMPLETED' || detail.status === 'PARTIAL') {
+          const recheck = await fetchPublishRecords(currentPending.articleId);
+          if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
+          setPublishRecords(recheck.items);
+          const recheckMatched = recheck.items.find((r) => r.id === currentPending.recordId);
+          setPendingRetest(null);
+          void consoleCtx?.refreshWallet();
+          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          if (
+            recheckMatched?.afterMetrics &&
+            recheckMatched.latestRetestRunId === currentPending.runId
+          ) {
+            feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
+          } else if (detail.doneCount === 0) {
+            feedback.notifyWarning('复测已结束，本次无引擎返回有效观测结果');
+          } else {
+            feedback.notifyWarning('复测已结束，暂未生成对比指标');
+          }
+        }
+      } catch {
+        // Silent retry on next poll tick
+      }
+    },
+  });
+
   // Cross-tab freshness sync
   useTabFreshness({
-    domains: ['briefs', 'articles', 'brand-facts', 'brand-media'],
+    domains: ['briefs', 'articles', 'brand-facts', 'brand-media', 'publish-records'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     onRefresh: () => {
       if (!activeBrandId || !activeBrandMarket || streaming) return;
@@ -502,6 +684,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   });
 
   const handleStartFreeTopic = () => {
+    resetActiveArticleContext(null);
     setLinkedBrief(null);
     setActiveArticle(null);
     setDraftTitle('');
@@ -739,6 +922,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     await deleteArticle(article.id);
     setArticles((prev) => prev.filter((a) => a.id !== article.id));
     if (activeArticle?.id === article.id) {
+      resetActiveArticleContext(null);
       setActiveArticle(null);
       setDraftTitle('');
       setDraftMarkdown('');
@@ -901,6 +1085,208 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       feedback.notifyError(formatStudioError(err, '启动批量写作失败'));
     } finally {
       setBatchSubmitting(false);
+    }
+  };
+
+  // ==================== M5: Real-Time GEO Evaluate, Fan-Out Supplement & Publish/Retest ====================
+
+  const handleRefreshEvaluate = async () => {
+    if (!activeArticle || readOnly || streaming || evaluatingRef.current) return;
+    evaluatingRef.current = true;
+    setEvaluating(true);
+    evalCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    evalCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const articleSeq = articleSeqRef.current;
+    const targetArticle = activeArticle;
+    const isStale = () =>
+      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
+    try {
+      const res = await evaluateArticleGeo(targetArticle.id, { signal: ctrl.signal });
+      if (isStale()) return;
+      setEvaluation(res);
+      const merged: GeoArticleRecord = {
+        ...targetArticle,
+        geoScore: res.geoScore,
+        geoScoreDetail: res.geoScoreDetail as unknown as Record<string, unknown>,
+        schemaJsonLd: res.schemaJsonLd,
+        llmsTxtSnippet: res.llmsTxtSnippet,
+      };
+      setActiveArticle((prev) => (prev && prev.id === merged.id ? { ...prev, ...merged } : prev));
+      setArticles((prev) => prev.map((a) => (a.id === merged.id ? merged : a)));
+      feedback.notifySuccess(`GEO 引用就绪度评分已更新：${res.geoScore} / 100`);
+    } catch (err) {
+      if (isStale()) return;
+      feedback.notifyError(formatStudioError(err, '刷新 GEO 体检评分失败'));
+    } finally {
+      if (evalCtrlRef.current === ctrl) {
+        evalCtrlRef.current = null;
+      }
+      if (seq === contextSeqRef.current && articleSeq === articleSeqRef.current) {
+        evaluatingRef.current = false;
+        setEvaluating(false);
+      }
+    }
+  };
+
+  const handleSupplementFanOut = async (term: string) => {
+    if (!activeArticle || readOnly || streaming || supplementingTermRef.current) return;
+    supplementingTermRef.current = term;
+    setSupplementingTerm(term);
+    supplementCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    supplementCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const articleSeq = articleSeqRef.current;
+    const targetArticle = activeArticle;
+    const baseTitle = draftTitle.trim() || targetArticle.title;
+    const baseMarkdown = draftMarkdown;
+    const isStale = () =>
+      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
+    try {
+      const rewritten = await rewriteArticleSection(
+        targetArticle.id,
+        {
+          action: 'ADD_EVIDENCE',
+          selectedText:
+            activeMarket === 'GLOBAL'
+              ? `Add a verified benchmark section covering "${term}" with concrete brand specs.`
+              : `请围绕搜索拆解词「${term}」补充一段带实测参数的小节`,
+          instruction:
+            activeMarket === 'GLOBAL'
+              ? `Write a concise H2 section titled "## ${term}" with concrete brand specifications and objective comparisons.`
+              : `围绕「${term}」补写一个 ## ${term} 实测分析小节，包含品牌真实参数与量化数据，去广告味。`,
+          surroundingContext: baseMarkdown.slice(-1200),
+        },
+        { signal: ctrl.signal },
+      );
+      if (isStale()) return;
+
+      const rawSection = rewritten.rewrittenText.trim();
+      const hasHeading =
+        /^##\s+/m.test(rawSection) && rawSection.toLowerCase().includes(term.toLowerCase());
+      const sectionMarkdown = hasHeading
+        ? rawSection
+        : `## ${term}${activeMarket === 'GLOBAL' ? '' : ' 实测解析'}\n\n${rawSection}`;
+      const nextMarkdown = `${baseMarkdown.trimEnd()}\n\n${sectionMarkdown}`;
+
+      const updated = await updateArticle(
+        targetArticle.id,
+        {
+          title: baseTitle,
+          contentMarkdown: nextMarkdown,
+        },
+        { signal: ctrl.signal },
+      );
+      if (isStale()) return;
+
+      const evalRes = await evaluateArticleGeo(updated.id, { signal: ctrl.signal });
+      if (isStale()) return;
+
+      const merged: GeoArticleRecord = {
+        ...updated,
+        geoScore: evalRes.geoScore,
+        geoScoreDetail: evalRes.geoScoreDetail as unknown as Record<string, unknown>,
+        schemaJsonLd: evalRes.schemaJsonLd,
+        llmsTxtSnippet: evalRes.llmsTxtSnippet,
+      };
+      setEvaluation(evalRes);
+      applyArticleToCanvas(merged);
+      setArticles((prev) => prev.map((a) => (a.id === merged.id ? merged : a)));
+      feedback.notifySuccess(`已围绕「${term}」补写小节并更新 GEO 评分（${evalRes.geoScore} 分）`);
+      invalidateFreshness('articles');
+    } catch (err) {
+      if (isStale()) return;
+      feedback.notifyError(formatStudioError(err, `补写「${term}」小节失败`));
+    } finally {
+      if (supplementCtrlRef.current === ctrl) {
+        supplementCtrlRef.current = null;
+      }
+      if (seq === contextSeqRef.current && articleSeq === articleSeqRef.current) {
+        supplementingTermRef.current = null;
+        setSupplementingTerm(null);
+      }
+    }
+  };
+
+  const handleCreatePublishRecord = async (input: PublishRecordCreateInput): Promise<boolean> => {
+    if (!activeArticle || readOnly) return false;
+    publishCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    publishCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const articleSeq = articleSeqRef.current;
+    const targetArticle = activeArticle;
+    const isStale = () =>
+      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
+    try {
+      const created = await createPublishRecord(targetArticle.id, input, { signal: ctrl.signal });
+      if (isStale()) return false;
+      setPublishRecords((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+      const nextArticle: GeoArticleRecord = { ...targetArticle, status: 'PUBLISHED' };
+      setActiveArticle((prev) =>
+        prev && prev.id === nextArticle.id ? { ...prev, status: 'PUBLISHED' } : prev,
+      );
+      setArticles((prev) => prev.map((a) => (a.id === nextArticle.id ? nextArticle : a)));
+      feedback.notifySuccess('已登记发布链接并标记文章为「已发布」');
+      invalidateFreshness('publish-records', 'articles');
+      return true;
+    } catch (err) {
+      if (isStale()) return false;
+      feedback.notifyError(formatStudioError(err, '登记发布记录失败'));
+      return false;
+    } finally {
+      if (publishCtrlRef.current === ctrl) {
+        publishCtrlRef.current = null;
+      }
+    }
+  };
+
+  const handleTriggerRetest = async (record: GeoPublishRecordDto) => {
+    if (
+      !activeArticle ||
+      readOnly ||
+      retestingRecordsRef.current.size > 0 ||
+      retestingRecordsRef.current.has(record.id)
+    ) {
+      return;
+    }
+    retestingRecordsRef.current.add(record.id);
+    setRetestingRecordId(record.id);
+    retestCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    retestCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const articleSeq = articleSeqRef.current;
+    const isStale = () =>
+      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
+    try {
+      const run = await triggerPublishRetest(record.id, undefined, undefined, {
+        signal: ctrl.signal,
+      });
+      if (isStale()) return;
+      setPublishRecords((prev) =>
+        prev.map((r) =>
+          r.id === record.id ? { ...r, latestRetestRunId: run.id, afterMetrics: null } : r,
+        ),
+      );
+      setPendingRetest({ recordId: record.id, runId: run.id, articleId: record.articleId });
+      void consoleCtx?.refreshWallet();
+      invalidateFreshness('visibility-runs', 'points');
+      feedback.notifySuccess('已发起定向复测，完成后将自动展示发布前 / 发布后对比');
+    } catch (err) {
+      if (isStale()) return;
+      feedback.notifyError(formatStudioError(err, '发起排名复测失败'));
+      void consoleCtx?.refreshWallet();
+    } finally {
+      if (retestCtrlRef.current === ctrl) {
+        retestCtrlRef.current = null;
+      }
+      if (seq === contextSeqRef.current && articleSeq === articleSeqRef.current) {
+        retestingRecordsRef.current.delete(record.id);
+        setRetestingRecordId(null);
+      }
     }
   };
 
@@ -1077,9 +1463,49 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           onChangeStatus={handleChangeStatus}
           onChangeTags={handleChangeTags}
           readOnly={readOnly}
-          evaluatorSlot={slots?.evaluatorSlot}
-          deliveryPackSlot={slots?.deliveryPackSlot}
-          publishRetestSlot={slots?.publishRetestSlot}
+          evaluatorSlot={
+            slots?.evaluatorSlot ?? (
+              <StudioGeoEvaluator
+                article={activeArticle}
+                evaluation={evaluation}
+                evaluating={evaluating}
+                supplementingTerm={supplementingTerm}
+                readOnly={readOnly}
+                streaming={streaming}
+                onRefreshEvaluate={handleRefreshEvaluate}
+                onSupplementFanOut={handleSupplementFanOut}
+              />
+            )
+          }
+          deliveryPackSlot={
+            slots?.deliveryPackSlot ?? (
+              <StudioDeliveryPack
+                activeMarket={activeMarket}
+                localBrandName={activeBrandMarket.localBrandName}
+                category={activeBrand.category}
+                ownedDomains={activeBrandMarket.ownedDomains}
+                article={activeArticle}
+                evaluation={evaluation}
+                linkedBriefChannels={linkedBrief?.recommendedChannels}
+                streaming={streaming}
+              />
+            )
+          }
+          publishRetestSlot={
+            slots?.publishRetestSlot ?? (
+              <StudioPublishRetest
+                activeMarket={activeMarket}
+                article={activeArticle}
+                publishRecords={publishRecords}
+                recordsLoading={publishRecordsLoading}
+                retestingRecordId={retestingRecordId}
+                pollingRetestRecordId={pendingRetest?.recordId ?? null}
+                readOnly={readOnly}
+                onCreatePublishRecord={handleCreatePublishRecord}
+                onTriggerRetest={handleTriggerRetest}
+              />
+            )
+          }
         />
       </div>
 

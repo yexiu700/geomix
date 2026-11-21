@@ -1,6 +1,8 @@
 import {
+  API_ERROR,
   extractMissingFactSlots,
   replaceMissingFactSlot,
+  type ArticleArchiveFormat,
   type GeoArticleListResponse,
   type GeoArticleRecord,
   type GeoArticleStatus,
@@ -9,7 +11,9 @@ import {
   type GeoBatchCreateInput,
   type GeoBatchJobListResponse,
   type GeoBatchJobRecord,
+  type GeoEvaluationResult,
   type GeoMarket,
+  type GeoPublishRecordDto,
   type GeoRewriteSectionInput,
   type GeoRewriteSectionResponse,
   type GeoStreamCompleteEvent,
@@ -19,8 +23,12 @@ import {
   type MissingFactSlot,
   type PromptPreferenceInput,
   type PromptPreferenceRecord,
+  type PublishRecordCreateInput,
+  type VisibilityEngineKey,
+  type VisibilityRunDetailRecord,
 } from '@geomix/shared';
-import { authorizedV2Request } from './api';
+import { authorizedV2RawRequest, authorizedV2Request } from './api';
+import { GatewayApiError, unwrapEnvelope } from './envelope';
 import type { SessionStorageLike } from './session';
 import { streamSsePost, type StreamSsePostResult } from './sse';
 
@@ -32,7 +40,9 @@ export type StudioClientOptions = {
   signal?: AbortSignal;
 };
 
-export function createStudioIdempotencyKey(prefix: 'art' | 'batch' | 'img' = 'art'): string {
+export function createStudioIdempotencyKey(
+  prefix: 'art' | 'batch' | 'img' | 'retest' = 'art',
+): string {
   const rand =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID().replace(/-/g, '')
@@ -296,4 +306,151 @@ export function rewritePreviewRelativeMediaUrls(
     (_match, prefix: string, relPath: string, suffix: string) =>
       `${prefix}${escapeHtmlAttrUrl(resolveUrl(relPath))}${suffix}`,
   );
+}
+
+// ==================== M5: GEO 0-100 体检、导出、发布登记与一键复测 ====================
+
+const EXPORT_MIME_FALLBACK: Record<ArticleArchiveFormat, string> = {
+  md: 'text/markdown; charset=utf-8',
+  html: 'text/html; charset=utf-8',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+export function parseExportFilename(
+  contentDisposition: string | null,
+  fallbackFilename: string,
+): string {
+  if (!contentDisposition) return fallbackFilename;
+  const starMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (starMatch?.[1]) {
+    try {
+      const decoded = decodeURIComponent(starMatch[1].trim().replace(/^"|"$/g, ''));
+      if (decoded) return decoded;
+    } catch {
+      // ignore malformed percent encoding
+    }
+  }
+  const plainMatch = contentDisposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  const candidate = (plainMatch?.[1] ?? plainMatch?.[2] ?? '').trim();
+  return candidate || fallbackFilename;
+}
+
+export function evaluateArticleGeo(
+  articleId: string,
+  options?: StudioClientOptions,
+): Promise<GeoEvaluationResult> {
+  return authorizedV2Request<GeoEvaluationResult>(
+    `/articles/${encodeURIComponent(articleId)}/evaluate-geo`,
+    {
+      method: 'POST',
+      body: {},
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function exportArticleFile(
+  articleId: string,
+  format: ArticleArchiveFormat,
+  options?: StudioClientOptions,
+): Promise<{ blob: Blob; filename: string; mime: string }> {
+  const response = await authorizedV2RawRequest(
+    `/articles/${encodeURIComponent(articleId)}/export?format=${encodeURIComponent(format)}`,
+    {
+      method: 'GET',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      await unwrapEnvelope(response);
+    }
+    throw new GatewayApiError(response.status, API_ERROR.BAD_REQUEST, '导出文章失败');
+  }
+
+  const blob = await response.blob();
+  const mime = response.headers.get('content-type') || EXPORT_MIME_FALLBACK[format];
+  const fallbackName = `article-${articleId.slice(-6)}.${format}`;
+  const filename = parseExportFilename(response.headers.get('content-disposition'), fallbackName);
+  return { blob, filename, mime };
+}
+
+export function fetchPublishRecords(
+  articleId: string,
+  options?: StudioClientOptions,
+): Promise<{ items: GeoPublishRecordDto[] }> {
+  return authorizedV2Request<{ items: GeoPublishRecordDto[] }>(
+    `/articles/${encodeURIComponent(articleId)}/publish-records`,
+    {
+      method: 'GET',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function createPublishRecord(
+  articleId: string,
+  input: PublishRecordCreateInput,
+  options?: StudioClientOptions,
+): Promise<GeoPublishRecordDto> {
+  return authorizedV2Request<GeoPublishRecordDto>(
+    `/articles/${encodeURIComponent(articleId)}/publish-records`,
+    {
+      method: 'POST',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function triggerPublishRetest(
+  publishRecordId: string,
+  input?: { engines?: VisibilityEngineKey[] },
+  idempotencyKey?: string,
+  options?: StudioClientOptions,
+): Promise<VisibilityRunDetailRecord> {
+  return authorizedV2Request<VisibilityRunDetailRecord>(
+    `/publish-records/${encodeURIComponent(publishRecordId)}/retest`,
+    {
+      method: 'POST',
+      body: input ?? {},
+      headers: {
+        'Idempotency-Key': idempotencyKey ?? createStudioIdempotencyKey('retest'),
+      },
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fallback below for headless / non-HTTPS contexts
+    }
+  }
+  if (typeof document === 'undefined') return false;
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    textarea.style.pointerEvents = 'none';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const okCopy = document.execCommand('copy');
+    textarea.remove();
+    return okCopy;
+  } catch {
+    return false;
+  }
 }

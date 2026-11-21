@@ -9,6 +9,7 @@ import {
 import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.service';
 import { AdaptersModule } from '../infra/adapters.module';
 import { GEO_BATCH_ENQUEUER, GEO_BATCH_HANDLER, GeoBatchRunner } from '../studio/geo-batch.runner';
+import { RetestMetricsHookService } from '../studio/retest-metrics-hook.service';
 import { StudioGenerationService } from '../studio/studio-generation.service';
 import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
@@ -87,10 +88,14 @@ export class QueueModule {
         GeoBatchRunner,
         { provide: GEO_BATCH_HANDLER, useExisting: GeoBatchRunner },
         BriefsAutoGeneratorService,
+        RetestMetricsHookService,
         {
           provide: VISIBILITY_RUN_COMPLETE_HOOKS,
-          inject: [BriefsAutoGeneratorService],
-          useFactory: (autoGen: BriefsAutoGeneratorService) => [autoGen],
+          inject: [BriefsAutoGeneratorService, RetestMetricsHookService],
+          useFactory: (
+            autoGen: BriefsAutoGeneratorService,
+            retestHook: RetestMetricsHookService,
+          ) => [autoGen, retestHook],
         },
         VisibilityRunRunner,
         { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
@@ -109,6 +114,7 @@ export class QueueModule {
         StudioGenerationService,
         GeoBatchRunner,
         BriefsAutoGeneratorService,
+        RetestMetricsHookService,
         QueueRuntime,
       ],
     };

@@ -172,4 +172,74 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
     expect(globalProcessed.cleanedMarkdown).not.toContain('常见问题');
     expect(globalProcessed.cleanedMarkdown).toContain('Frequently Asked Questions (FAQ)');
   });
+
+  it('parses markdown links/images in linear O(N) time without ReDoS on incomplete links or pathological brackets', () => {
+    const baseUrl = 'https://example.com/guides/nas-2026-review/';
+    for (const len of [25, 100, 10_000]) {
+      const longUrl =
+        len <= baseUrl.length
+          ? baseUrl.slice(0, len)
+          : `${baseUrl}${'a'.repeat(len - baseUrl.length)}`;
+      const incomplete = `[Read Guide](${longUrl}`;
+      const t0 = performance.now();
+      const html = markdownToSanitizedHtml(incomplete);
+      const elapsed = performance.now() - t0;
+      expect(elapsed).toBeLessThan(100);
+      expect(html).toContain('[Read Guide](');
+      expect(html).not.toContain('<a ');
+    }
+
+    const pathological = '[[a]](('.repeat(15_000);
+    const t1 = performance.now();
+    const out = markdownToSanitizedHtml(pathological);
+    const elapsedPathological = performance.now() - t1;
+    expect(elapsedPathological).toBeLessThan(200);
+    expect(out).not.toContain('<a ');
+
+    const legit = markdownToSanitizedHtml(
+      [
+        '[wiki](https://en.wikipedia.org/wiki/NAS_(storage))',
+        '[good](https://example.com/ok "Guide")',
+        '[![CI](https://img.shields.io/badge.svg)](https://github.com/org/repo)',
+        '[Best [2026] Guide](/guides/nas-2026)',
+        '`[inline](javascript:alert(1))` **bold** *italic*',
+        '[evil](javascript:alert("hi there")) ![bad](vbscript:msgbox(1))',
+      ].join('\n'),
+    );
+    expect(legit).toContain('href="https://en.wikipedia.org/wiki/NAS_(storage)"');
+    expect(legit).toContain('href="https://example.com/ok"');
+    expect(legit).toContain('src="https://img.shields.io/badge.svg"');
+    expect(legit).toContain('href="https://github.com/org/repo"');
+    expect(legit).toContain('href="/guides/nas-2026"');
+    expect(legit).toContain('<code>[inline](javascript:alert(1))</code>');
+    expect(legit).toContain('<strong>bold</strong>');
+    expect(legit).toContain('<em>italic</em>');
+    expect(legit).not.toContain('href="javascript:');
+    expect(legit).not.toContain('vbscript:');
+  });
+
+  it('normalizes bare CR line endings (CommonMark §2.2) and strips HTML tags in linear O(N) time', async () => {
+    const { stripHtmlTagsLinear } = await import('./geo-studio');
+
+    // Bare \r line endings in markdownToSanitizedHtml
+    const crHtml = markdownToSanitizedHtml('```\na\n```\r<script>alert(1)</script>\n```');
+    expect(crHtml).toContain('<pre><code>a</code></pre>');
+    expect(crHtml).not.toContain('<script>');
+    expect(crHtml).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+
+    const crHeading = markdownToSanitizedHtml('## Specs\r- Noise 18.5dB');
+    expect(crHeading).toContain('<h2>Specs</h2>');
+    expect(crHeading).toContain('<li>Noise 18.5dB</li>');
+
+    // stripHtmlTagsLinear semantic parity & O(N) performance on 50k '<'
+    expect(stripHtmlTagsLinear('a <> <b > c')).toBe('a <>  c');
+    expect(stripHtmlTagsLinear('a <> <b > c', '', true)).toBe('a   c');
+    expect(stripHtmlTagsLinear('a <b>c</b> d', ' ')).toBe('a  c  d');
+
+    const lt50k = '<'.repeat(50_000);
+    const t0 = performance.now();
+    const text = stripHtmlToText(lt50k);
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(text).toBe(lt50k);
+  });
 });

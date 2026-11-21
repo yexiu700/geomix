@@ -53,6 +53,7 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'queue/active-work.ts': { category: 'worker', direct: 3, txOrRaw: 0 },
   'queue/work-driver.ts': { category: 'worker', direct: 28, txOrRaw: 2 },
   'studio/geo-batch.runner.ts': { category: 'worker', direct: 0, txOrRaw: 6 },
+  'studio/retest-metrics-hook.service.ts': { category: 'worker', direct: 0, txOrRaw: 1 },
   'studio/studio.service.ts': { category: 'billing', direct: 0, txOrRaw: 1 },
   'visibility/visibility-run-lifecycle.service.ts': {
     category: 'billing',

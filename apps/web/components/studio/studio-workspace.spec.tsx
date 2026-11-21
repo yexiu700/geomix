@@ -15,8 +15,12 @@ import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
+import * as uxFoundation from '../../lib/ux-foundation';
+import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
+import { StudioDeliveryPack } from './studio-delivery-pack';
+import { StudioPublishRetest } from './studio-publish-retest';
 import { StudioWorkspace } from './studio-workspace';
 
 const mockConfirm = vi.fn();
@@ -247,6 +251,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       total: 1,
     });
     vi.spyOn(studioApi, 'fetchBatchJobs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [] });
     vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
       brandId: 'brand_studio_1',
       truthAgreementSignedAt: null,
@@ -1227,5 +1232,664 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         sourceCitationUrl: 'https://competitor.example/nas-review',
       });
     });
+  });
+
+  it('supports M5 Right Pane Evaluator Fan-Out 一键补写小节 (0 pts) & CN vs GLOBAL Delivery Pack (.docx via triggerBlobDownload)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    const articleWithMissingFanOut: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      geoScore: 76,
+      geoScoreDetail: {
+        dimensions: {
+          directAnswer: {
+            key: 'directAnswer',
+            label: '首段直答',
+            score: 18,
+            maxScore: 20,
+            passed: true,
+            hints: [],
+          },
+          structuredExtractable: {
+            key: 'structuredExtractable',
+            label: '结构化可抽取',
+            score: 16,
+            maxScore: 20,
+            passed: true,
+            hints: [],
+          },
+          factDensity: {
+            key: 'factDensity',
+            label: '事实与量化密度',
+            score: 20,
+            maxScore: 25,
+            passed: true,
+            hints: [],
+          },
+          fanOutCoverage: {
+            key: 'fanOutCoverage',
+            label: 'Fan-Out 覆盖率',
+            score: 10,
+            maxScore: 20,
+            passed: false,
+            hints: ['尚有 1 个目标拆解词未覆盖'],
+          },
+          deAiCompliance: {
+            key: 'deAiCompliance',
+            label: '去 AI 味与合规',
+            score: 12,
+            maxScore: 15,
+            passed: true,
+            hints: [],
+          },
+        },
+        coveredFanOuts: ['18.5dB'],
+        missingFanOuts: ['待机功耗'],
+      },
+    };
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [articleWithMissingFanOut],
+      total: 1,
+    });
+    const rewriteSpy = vi.spyOn(studioApi, 'rewriteArticleSection').mockResolvedValueOnce({
+      action: 'ADD_EVIDENCE',
+      rewrittenText: '实测星辰存储 DXP4800 待机功耗仅 14W，24 小时持续运行省电。',
+      model: 'fake-quality',
+      tokensIn: 30,
+      tokensOut: 50,
+      complianceFlags: [],
+    });
+    const updateSpy = vi.spyOn(studioApi, 'updateArticle').mockResolvedValueOnce({
+      ...articleWithMissingFanOut,
+      contentMarkdown: `${articleWithMissingFanOut.contentMarkdown}\n\n## 待机功耗 实测解析\n\n实测待机功耗 14W`,
+    });
+    const evalSpy = vi.spyOn(studioApi, 'evaluateArticleGeo').mockResolvedValueOnce({
+      geoScore: 91,
+      geoScoreDetail: {
+        dimensions: {
+          directAnswer: {
+            key: 'directAnswer',
+            label: '首段直答',
+            score: 20,
+            maxScore: 20,
+            passed: true,
+            hints: [],
+          },
+          structuredExtractable: {
+            key: 'structuredExtractable',
+            label: '结构化可抽取',
+            score: 18,
+            maxScore: 20,
+            passed: true,
+            hints: [],
+          },
+          factDensity: {
+            key: 'factDensity',
+            label: '事实与量化密度',
+            score: 21,
+            maxScore: 25,
+            passed: true,
+            hints: [],
+          },
+          fanOutCoverage: {
+            key: 'fanOutCoverage',
+            label: 'Fan-Out 覆盖率',
+            score: 20,
+            maxScore: 20,
+            passed: true,
+            hints: [],
+          },
+          deAiCompliance: {
+            key: 'deAiCompliance',
+            label: '去 AI 味与合规',
+            score: 12,
+            maxScore: 15,
+            passed: true,
+            hints: [],
+          },
+        },
+        coveredFanOuts: ['18.5dB', '待机功耗'],
+        missingFanOuts: [],
+      },
+      uncoveredFanOuts: [],
+      schemaJsonLd: { '@context': 'https://schema.org', '@graph': [{ '@type': 'Article' }] },
+      llmsTxtSnippet: null,
+      crawlerChecklist: [{ bot: 'Bytespider', purpose: '豆包检索', recommended: true }],
+      recommendedChannels: [{ channel: '知乎', reason: '国内权重高' }],
+    });
+    const exportSpy = vi.spyOn(studioApi, 'exportArticleFile').mockResolvedValueOnce({
+      blob: new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])]),
+      filename: 'dxp4800.docx',
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    const downloadSpy = vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+
+    // CN track: delivery-copy-jsonld is ALWAYS visible, code preview collapsed by default, no llms.txt, no literal "0 点"
+    expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
+    expect(screen.queryByTestId('delivery-jsonld-preview')).toBeNull();
+    expect(screen.queryByTestId('delivery-copy-llmstxt')).toBeNull();
+    expect(screen.getByTestId('delivery-channel-guidance').textContent).toContain('知乎');
+    expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
+
+    // Click 一键补写小节 -> rewrite -> update -> evaluate -> lifts score 76 -> 91
+    fireEvent.click(await screen.findByTestId('fanout-supplement-btn'));
+    await waitFor(() => {
+      expect(rewriteSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(evalSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('geo-score-value').textContent).toBe('91');
+    });
+
+    // Download .docx strictly via triggerBlobDownload with AbortSignal
+    fireEvent.click(screen.getByTestId('delivery-download-docx'));
+    await waitFor(() => {
+      expect(exportSpy).toHaveBeenCalledWith(
+        'art_st_1',
+        'docx',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(downloadSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ filename: 'dxp4800.docx' }),
+      );
+    });
+  });
+
+  it('supports GLOBAL Delivery Pack (expanded JSON-LD, llms.txt, GPTBot/PerplexityBot) and Publish URL + Retest Before/After loop (M5 #333)', async () => {
+    const globalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_gl_1',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+      title: 'Best 4-Bay Quiet NAS 2026 Guide',
+      targetPrompt: 'Best quiet 4-bay NAS 2026',
+      contentMarkdown: 'AstraVault DXP4800 is a Top pick with 100% aluminum chassis.',
+      schemaJsonLd: {
+        '@context': 'https://schema.org',
+        '@graph': [{ '@type': 'Article', headline: 'Best 4-Bay Quiet NAS 2026 Guide' }],
+      },
+      llmsTxtSnippet:
+        '# AstraVault\n\n## Featured GEO Guides\n- [Guide](https://astravault.example.com/guides/nas): 18.5dB',
+      geoScore: 90,
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [globalArticle],
+      total: 1,
+    });
+    const createdPubRecord = {
+      id: 'pub_gl_1',
+      brandId: 'brand_studio_1',
+      brandMarketId: 'bm_gl_1',
+      articleId: 'art_gl_1',
+      publishedUrl: 'https://astravault.example.com/guides/nas-2026',
+      channel: 'Official Blog / Docs',
+      publishedAt: '2026-11-21T00:00:00.000Z',
+      baselineRunId: 'run_base_1',
+      latestRetestRunId: null,
+      beforeMetrics: { mentionRate: 0, avgPosition: null, sentiment: null, citationHit: false },
+      afterMetrics: null,
+    };
+    const createPubSpy = vi
+      .spyOn(studioApi, 'createPublishRecord')
+      .mockResolvedValueOnce(createdPubRecord);
+    const retestSpy = vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValueOnce({
+      id: 'run_retest_gl_1',
+      brandId: 'brand_studio_1',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_gl_1',
+      status: 'QUEUED',
+    } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
+
+    const refreshWallet = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ConsoleProvider value={makeConsoleContext({ refreshWallet })}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('Best 4-Bay Quiet NAS 2026 Guide'));
+
+    // GLOBAL track: expanded JSON-LD preview, llms.txt button, GPTBot & PerplexityBot checklist
+    expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
+    expect(screen.getByTestId('delivery-jsonld-preview')).toBeTruthy();
+    expect(screen.getByTestId('delivery-copy-llmstxt')).toBeTruthy();
+    const checklistText = screen.getByTestId('delivery-crawler-checklist').textContent ?? '';
+    expect(checklistText).toContain('GPTBot');
+    expect(checklistText).toContain('PerplexityBot');
+
+    // Register publish URL: rejects javascript: inline, then accepts valid https://
+    const form = screen.getByTestId('publish-record-form');
+    const urlInput = screen.getByLabelText('已发布文章 URL');
+    fireEvent.change(urlInput, { target: { value: 'javascript:alert(1)' } });
+    fireEvent.submit(form);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(createPubSpy).not.toHaveBeenCalled();
+
+    fireEvent.change(urlInput, {
+      target: { value: 'https://astravault.example.com/guides/nas-2026' },
+    });
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(createPubSpy).toHaveBeenCalledWith(
+        'art_gl_1',
+        {
+          publishedUrl: 'https://astravault.example.com/guides/nas-2026',
+          channel: 'Official Blog / Docs',
+        },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    // Before/After panel visible + trigger one-click retest
+    expect(await screen.findByTestId('publish-before-after')).toBeTruthy();
+    fireEvent.click(await screen.findByTestId('publish-retest-btn'));
+    await waitFor(() => {
+      expect(retestSpy).toHaveBeenCalledWith(
+        'pub_gl_1',
+        undefined,
+        undefined,
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(refreshWallet).toHaveBeenCalled();
+    });
+  });
+
+  it('guards same-tick double-click on evaluate, docx export, publish submit, and billable retest (D-1) and preserves URL on error (D-5)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    const existingRecord = {
+      id: 'pub_d1_1',
+      brandId: 'brand_studio_1',
+      brandMarketId: 'bm_cn_1',
+      articleId: 'art_st_1',
+      publishedUrl: 'https://star.example.com/guides/nas',
+      channel: '官网博客',
+      publishedAt: '2026-11-21T00:00:00.000Z',
+      baselineRunId: null,
+      latestRetestRunId: null,
+      beforeMetrics: null,
+      afterMetrics: null,
+    };
+    vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [existingRecord] });
+
+    let resolveEval!: (v: Awaited<ReturnType<typeof studioApi.evaluateArticleGeo>>) => void;
+    const evalSpy = vi.spyOn(studioApi, 'evaluateArticleGeo').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveEval = resolve;
+        }),
+    );
+
+    let resolveExport!: (v: Awaited<ReturnType<typeof studioApi.exportArticleFile>>) => void;
+    const exportSpy = vi.spyOn(studioApi, 'exportArticleFile').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveExport = resolve;
+        }),
+    );
+    vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
+
+    let resolveRetest!: (v: Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>) => void;
+    const retestSpy = vi.spyOn(studioApi, 'triggerPublishRetest').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRetest = resolve;
+        }),
+    );
+
+    let rejectCreatePub!: (err: Error) => void;
+    const createPubSpy = vi.spyOn(studioApi, 'createPublishRecord').mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectCreatePub = reject;
+        }),
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    const evalBtn = await screen.findByTestId('geo-evaluate-refresh-btn');
+    const docxBtn = screen.getByTestId('delivery-download-docx');
+    const retestBtn = await screen.findByTestId('publish-retest-btn');
+
+    // Same-tick double-clicks must each fire strictly 1 request
+    act(() => {
+      evalBtn.click();
+      evalBtn.click();
+      docxBtn.click();
+      docxBtn.click();
+      retestBtn.click();
+      retestBtn.click();
+    });
+    expect(evalSpy).toHaveBeenCalledTimes(1);
+    expect(exportSpy).toHaveBeenCalledTimes(1);
+    expect(retestSpy).toHaveBeenCalledTimes(1);
+
+    // Same-tick double-submit on publish form fires strictly 1 request & preserves URL on API error (D-5)
+    const urlInput = screen.getByLabelText('已发布文章 URL') as HTMLInputElement;
+    const form = screen.getByTestId('publish-record-form');
+    fireEvent.change(urlInput, { target: { value: 'https://star.example.com/keep-on-error' } });
+    act(() => {
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+    });
+    expect(createPubSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectCreatePub(new GatewayApiError(500, API_ERROR.UPSTREAM_UNAVAILABLE, '登记服务繁忙'));
+      resolveEval({
+        geoScore: 86,
+        geoScoreDetail: SAMPLE_ARTICLE.geoScoreDetail as unknown as Awaited<
+          ReturnType<typeof studioApi.evaluateArticleGeo>
+        >['geoScoreDetail'],
+        uncoveredFanOuts: [],
+        schemaJsonLd: SAMPLE_ARTICLE.schemaJsonLd,
+        llmsTxtSnippet: null,
+        crawlerChecklist: [],
+        recommendedChannels: [],
+      });
+      resolveExport({
+        blob: new Blob(['ok']),
+        filename: 'ok.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      resolveRetest({
+        id: 'run_d1_1',
+        triggerType: 'RETEST',
+        status: 'QUEUED',
+      } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
+    });
+
+    expect(urlInput.value).toBe('https://star.example.com/keep-on-error');
+    expect(mockNotifyError).toHaveBeenCalledWith('登记服务繁忙');
+
+    // Direct StudioPublishRetest test: rejecting onCreatePublishRecord preserves URL with zero unhandled rejection
+    cleanup();
+    const rejectingProp = vi.fn().mockRejectedValueOnce(new Error('网络超时'));
+    render(
+      <StudioPublishRetest
+        activeMarket="CN"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={rejectingProp}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+    const directInput = screen.getByLabelText('已发布文章 URL') as HTMLInputElement;
+    fireEvent.change(directInput, { target: { value: 'https://star.example.com/direct-keep' } });
+    fireEvent.submit(screen.getByTestId('publish-record-form'));
+    await waitFor(() => {
+      expect(rejectingProp).toHaveBeenCalledTimes(1);
+    });
+    expect(directInput.value).toBe('https://star.example.com/direct-keep');
+  });
+
+  it('aborts evaluate/export on CN->GLOBAL switch and prevents Article A -> Article B stale score clobber (D-2) + avoids duplicate H1 copy', async () => {
+    const articleA: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_race_a',
+      title: '文章 A 静音实测',
+      contentMarkdown: '# 文章 A 静音实测\n\n正文内容',
+      geoScore: 81,
+    };
+    const articleB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_race_b',
+      title: '文章 B 功耗实测',
+      geoScore: 76,
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [articleA, articleB],
+      total: 2,
+    });
+    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
+    const downloadSpy = vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
+
+    let evalSignalA: AbortSignal | undefined;
+    let resolveEvalA!: (v: Awaited<ReturnType<typeof studioApi.evaluateArticleGeo>>) => void;
+    vi.spyOn(studioApi, 'evaluateArticleGeo').mockImplementation((_id, opts) => {
+      evalSignalA = opts?.signal;
+      return new Promise((resolve) => {
+        resolveEvalA = resolve;
+      });
+    });
+
+    let exportSignal: AbortSignal | undefined;
+    let resolveExport!: (v: Awaited<ReturnType<typeof studioApi.exportArticleFile>>) => void;
+    vi.spyOn(studioApi, 'exportArticleFile').mockImplementation((_id, _fmt, opts) => {
+      exportSignal = opts?.signal;
+      return new Promise((resolve) => {
+        resolveExport = resolve;
+      });
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Select Article A -> verify copy Markdown does NOT prepend duplicate # H1
+    fireEvent.click(await screen.findByText('文章 A 静音实测'));
+    fireEvent.click(await screen.findByTestId('delivery-copy-md'));
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledWith('# 文章 A 静音实测\n\n正文内容\n');
+    });
+
+    // Trigger evaluate on Article A, then switch to Article B before it resolves
+    fireEvent.click(screen.getByTestId('geo-evaluate-refresh-btn'));
+    expect(evalSignalA).toBeDefined();
+    expect(evalSignalA?.aborted).toBe(false);
+
+    fireEvent.click(screen.getByText('文章 B 功耗实测'));
+    expect(evalSignalA?.aborted).toBe(true);
+    expect(screen.getByTestId('geo-score-value').textContent).toBe('76');
+
+    // Resolve stale Article A evaluation with score 99 -> MUST NOT clobber Article B (76)!
+    await act(async () => {
+      resolveEvalA({
+        geoScore: 99,
+        geoScoreDetail: SAMPLE_ARTICLE.geoScoreDetail as unknown as Awaited<
+          ReturnType<typeof studioApi.evaluateArticleGeo>
+        >['geoScoreDetail'],
+        uncoveredFanOuts: [],
+        schemaJsonLd: SAMPLE_ARTICLE.schemaJsonLd,
+        llmsTxtSnippet: null,
+        crawlerChecklist: [],
+        recommendedChannels: [],
+      });
+    });
+    expect(screen.getByTestId('geo-score-value').textContent).toBe('76');
+
+    // Trigger .docx export on Article B, then switch CN -> GLOBAL -> must abort & NOT download!
+    fireEvent.click(screen.getByTestId('delivery-download-docx'));
+    expect(exportSignal).toBeDefined();
+    expect(exportSignal?.aborted).toBe(false);
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL');
+    });
+    expect(exportSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveExport({
+        blob: new Blob(['stale']),
+        filename: 'stale.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+    });
+    expect(downloadSpy).not.toHaveBeenCalled();
+  });
+
+  it('terminates retest polling cleanly with warning when run reaches COMPLETED with afterMetrics === null (D-3)', async () => {
+    vi.useFakeTimers();
+    try {
+      useWorkspaceStore.setState({
+        brandsLoading: false,
+        brandsLoaded: true,
+        brands: [DUAL_BRAND],
+        activeBrandId: DUAL_BRAND.id,
+        activeMarket: 'CN',
+      });
+
+      const pubRecord = {
+        id: 'pub_poll_1',
+        brandId: 'brand_studio_1',
+        brandMarketId: 'bm_cn_1',
+        articleId: 'art_st_1',
+        publishedUrl: 'https://star.example.com/guides/poll',
+        channel: '官网博客',
+        publishedAt: '2026-11-21T00:00:00.000Z',
+        baselineRunId: null,
+        latestRetestRunId: 'run_term_1',
+        beforeMetrics: null,
+        afterMetrics: null,
+      };
+      vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [pubRecord] });
+      vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValueOnce({
+        id: 'run_term_1',
+        triggerType: 'RETEST',
+        status: 'QUEUED',
+      } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
+      const runDetailSpy = vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue({
+        id: 'run_term_1',
+        status: 'COMPLETED',
+        doneCount: 0,
+      } as unknown as Awaited<ReturnType<typeof visibilityApi.fetchVisibilityRunDetail>>);
+
+      render(
+        <ConsoleProvider value={makeConsoleContext()}>
+          <StudioWorkspace />
+        </ConsoleProvider>,
+      );
+
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      fireEvent.click(screen.getByText('星辰存储 DXP4800 静音实测报告'));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      fireEvent.click(screen.getByTestId('publish-retest-btn'));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // Advance across 4 poll intervals (10s) -> must stop after the first terminal check!
+      for (let i = 0; i < 4; i += 1) {
+        await act(async () => {
+          vi.advanceTimersByTime(2_600);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      }
+
+      expect(runDetailSpy).toHaveBeenCalledTimes(1);
+      expect(mockNotifyWarning).toHaveBeenCalledWith('复测已结束，本次无引擎返回有效观测结果');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sanitizes clipboard Markdown and HTML copies via @geomix/shared even when article.contentHtml is empty', async () => {
+    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
+    const unsafeArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_copy_parity',
+      title: '<script>alert(9)</script> Clean Title',
+      contentMarkdown: 'Safe body <script>alert(1)</script> [evil](javascript:alert(2))',
+      contentHtml: '',
+    };
+
+    render(
+      <StudioDeliveryPack
+        activeMarket="CN"
+        localBrandName="星辰存储"
+        article={unsafeArticle}
+        evaluation={null}
+        streaming={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('delivery-copy-md'));
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledTimes(1);
+    });
+    const copiedMd = copySpy.mock.calls[0]?.[0] ?? '';
+    expect(copiedMd).toContain('# Clean Title');
+    expect(copiedMd).toContain('Safe body');
+    expect(copiedMd).toContain('evil');
+    expect(copiedMd).not.toMatch(/<script/i);
+    expect(copiedMd).not.toContain('alert(1)');
+    expect(copiedMd).not.toContain('alert(2)');
+    expect(copiedMd).not.toContain('alert(9)');
+    expect(copiedMd).not.toContain('javascript:');
+
+    fireEvent.click(screen.getByTestId('delivery-copy-html'));
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledTimes(2);
+    });
+    const copiedHtml = copySpy.mock.calls[1]?.[0] ?? '';
+    expect(copiedHtml).toContain('<p>');
+    expect(copiedHtml).toContain('Safe body');
+    expect(copiedHtml).not.toMatch(/<script/i);
+    expect(copiedHtml).not.toContain('alert(1)');
+    expect(copiedHtml).not.toContain('alert(2)');
+    expect(copiedHtml).not.toContain('javascript:');
   });
 });

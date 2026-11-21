@@ -2,36 +2,44 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./api', () => ({
   authorizedV2Request: vi.fn(),
+  authorizedV2RawRequest: vi.fn(),
 }));
 
 vi.mock('./sse', () => ({
   streamSsePost: vi.fn(),
 }));
 
-import { authorizedV2Request } from './api';
+import { authorizedV2RawRequest, authorizedV2Request } from './api';
 import { streamSsePost } from './sse';
 import {
   buildMarkdownImageToken,
   createBatchJob,
+  createPublishRecord,
   createStudioIdempotencyKey,
   deleteArticle,
+  evaluateArticleGeo,
+  exportArticleFile,
   extractMissingFactSlots,
   fetchArticles,
   fetchBatchJobs,
+  fetchPublishRecords,
   getArticle,
   getBatchJob,
   getPromptPreferences,
   insertMarkdownAtCursor,
   mergeFactFeedbackContent,
+  parseExportFilename,
   replaceMissingFactSlot,
   rewriteArticleSection,
   rewritePreviewRelativeMediaUrls,
   savePromptPreferences,
   streamGenerateArticle,
+  triggerPublishRetest,
   updateArticle,
 } from './studio';
 
 const mockReq = vi.mocked(authorizedV2Request);
+const mockRawReq = vi.mocked(authorizedV2RawRequest);
 const mockSse = vi.mocked(streamSsePost);
 
 describe('Studio v2 client (studio.ts)', () => {
@@ -184,5 +192,76 @@ describe('Studio v2 client (studio.ts)', () => {
     expect(escaped).toContain(
       '<img src="https://cdn.example.com&quot;onerror=&quot;&lt;alert&gt;/api/v2/brands/b1/media/m1/file?tid=t1&amp;sig=abc"',
     );
+  });
+
+  it('calls M5 evaluate-geo, export, publish-records, and retest endpoints cleanly', async () => {
+    expect(createStudioIdempotencyKey('retest').startsWith('geo_retest_')).toBe(true);
+    expect(
+      parseExportFilename(
+        `attachment; filename="fallback.docx"; filename*=UTF-8''${encodeURIComponent('实测指南.docx')}`,
+        'default.docx',
+      ),
+    ).toBe('实测指南.docx');
+
+    mockReq.mockResolvedValue({ geoScore: 91 });
+    await evaluateArticleGeo('art_1');
+    expect(mockReq).toHaveBeenLastCalledWith(
+      '/articles/art_1/evaluate-geo',
+      expect.objectContaining({ method: 'POST', body: {} }),
+    );
+
+    mockReq.mockResolvedValue({ items: [] });
+    await fetchPublishRecords('art_1');
+    expect(mockReq).toHaveBeenLastCalledWith(
+      '/articles/art_1/publish-records',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    await createPublishRecord('art_1', {
+      publishedUrl: 'https://example.com/posts/1',
+      channel: '官网博客',
+    });
+    expect(mockReq).toHaveBeenLastCalledWith(
+      '/articles/art_1/publish-records',
+      expect.objectContaining({
+        method: 'POST',
+        body: { publishedUrl: 'https://example.com/posts/1', channel: '官网博客' },
+      }),
+    );
+
+    await triggerPublishRetest('pub_1', { engines: ['deepseek'] }, 'idem-retest-1');
+    expect(mockReq).toHaveBeenLastCalledWith(
+      '/publish-records/pub_1/retest',
+      expect.objectContaining({
+        method: 'POST',
+        body: { engines: ['deepseek'] },
+        headers: { 'Idempotency-Key': 'idem-retest-1' },
+      }),
+    );
+
+    mockRawReq.mockResolvedValueOnce(
+      new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+        status: 200,
+        headers: {
+          'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'content-disposition': 'attachment; filename="geo-guide.docx"',
+        },
+      }),
+    );
+    const exported = await exportArticleFile('art_1', 'docx');
+    expect(mockRawReq).toHaveBeenCalledWith(
+      '/articles/art_1/export?format=docx',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(exported.filename).toBe('geo-guide.docx');
+    expect(exported.mime).toContain('wordprocessingml');
+
+    mockRawReq.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 40001, msg: '格式不支持', data: null }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await expect(exportArticleFile('art_1', 'md')).rejects.toThrow(/格式不支持/);
   });
 });

@@ -23,6 +23,8 @@ const DEFAULT_BRIEF_GENERATE_MAX = 20;
 const DEFAULT_BRIEF_GENERATE_WINDOW_SECONDS = 60;
 const DEFAULT_REWRITE_SECTION_MAX = 20;
 const DEFAULT_REWRITE_SECTION_WINDOW_SECONDS = 60;
+const DEFAULT_GEO_EVALUATE_MAX = 60;
+const DEFAULT_GEO_EVALUATE_WINDOW_SECONDS = 60;
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
@@ -59,6 +61,17 @@ export function readRewriteSectionRateLimit(
   const windowSeconds = readPositiveInt(
     env.REWRITE_SECTION_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_REWRITE_SECTION_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readGeoEvaluateRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.GEO_EVALUATE_RATE_LIMIT_MAX, DEFAULT_GEO_EVALUATE_MAX);
+  const windowSeconds = readPositiveInt(
+    env.GEO_EVALUATE_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_GEO_EVALUATE_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }

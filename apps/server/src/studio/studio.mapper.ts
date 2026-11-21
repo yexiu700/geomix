@@ -7,9 +7,11 @@ import {
   type GeoComplianceFlag,
   type GeoMarket,
   type GeoOutlineHeading,
+  type GeoPublishRecordDto,
   type GeoRecipe,
   type GeoTargetFormat,
   type PromptPreferenceRecord,
+  type RetestMetricSnapshot,
   type TaskStatusName,
 } from '@geomix/shared';
 
@@ -236,4 +238,76 @@ export function presentPromptPreference(
     recipeOverrides: overrides,
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+export function normalizeRetestMetricSnapshot(
+  raw: Prisma.JsonValue | null | undefined,
+): RetestMetricSnapshot | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const mentionRate =
+    typeof obj.mentionRate === 'number' && Number.isFinite(obj.mentionRate)
+      ? obj.mentionRate
+      : null;
+  if (mentionRate === null) return null;
+  const avgPosition =
+    typeof obj.avgPosition === 'number' && Number.isFinite(obj.avgPosition)
+      ? obj.avgPosition
+      : null;
+  const sentiment =
+    typeof obj.sentiment === 'string' && obj.sentiment.trim() ? obj.sentiment : null;
+  const citationHit = Boolean(obj.citationHit);
+  return {
+    mentionRate,
+    avgPosition,
+    sentiment,
+    citationHit,
+  };
+}
+
+export type GeoPublishRecordRow = {
+  id: string;
+  brandId: string;
+  brandMarketId: string;
+  articleId: string;
+  publishedUrl: string;
+  channel: string;
+  publishedAt: Date;
+  baselineRunId: string | null;
+  latestRetestRunId: string | null;
+  beforeMetrics: Prisma.JsonValue | null;
+  afterMetrics: Prisma.JsonValue | null;
+};
+
+export function presentPublishRecord(row: GeoPublishRecordRow): GeoPublishRecordDto {
+  return {
+    id: row.id,
+    brandId: row.brandId,
+    brandMarketId: row.brandMarketId,
+    articleId: row.articleId,
+    publishedUrl: row.publishedUrl,
+    channel: row.channel,
+    publishedAt: row.publishedAt.toISOString(),
+    baselineRunId: row.baselineRunId,
+    latestRetestRunId: row.latestRetestRunId,
+    beforeMetrics: normalizeRetestMetricSnapshot(row.beforeMetrics),
+    afterMetrics: normalizeRetestMetricSnapshot(row.afterMetrics),
+  };
+}
+
+export function normalizeRecommendedChannels(
+  raw: Prisma.JsonValue | null | undefined,
+): Array<{ channel: string; reason: string }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ channel: string; reason: string }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const obj = item as Record<string, unknown>;
+    const channel = typeof obj.channel === 'string' ? obj.channel.trim() : '';
+    const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
+    if (channel) {
+      out.push({ channel, reason });
+    }
+  }
+  return out;
 }

@@ -1000,4 +1000,88 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
     expect(urls.some((u) => u.includes('xiaohongshu.com'))).toBe(true);
     expect(urls.some((u) => u.includes('item.jd.com'))).toBe(true);
   });
+
+  it('guarantees RETEST overrides gap/negative/low-rank in both CN and GLOBAL fake mode without leaking into real remote_scraper/llm_api', async () => {
+    const fakeCollector = VisibilityCollectorService.fromEnv({ VISIBILITY_COLLECTOR: 'fake' });
+    const triggers = ['[E2E_GAP]', '[E2E_NEGATIVE]', '[E2E_LOW_RANK]'];
+
+    for (const token of triggers) {
+      const cnRetest = await fakeCollector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'deepseek',
+        promptText: `${token} 家用静音四盘位NAS推荐`,
+        brandName: '极光NAS',
+        ownedDomains: ['jiguangnas.cn'],
+        competitors: [{ name: '群晖', domains: ['synology.com'] }],
+        market: 'CN',
+        triggerType: 'RETEST',
+      });
+      expect(cnRetest.rawMeta?.scenario).toBe('retest');
+      expect(cnRetest.answerText).toContain('1. 极光NAS');
+      expect(cnRetest.citations.some((c) => c.url.includes('jiguangnas.cn'))).toBe(true);
+
+      const globalRetest = await fakeCollector.collect({
+        tenantId: 'tenant_demo',
+        engine: 'perplexity',
+        promptText: `${token} Best quiet 4-bay NAS 2026`,
+        brandName: 'AuroraNAS',
+        ownedDomains: ['auroranas.example.com'],
+        competitors: [{ name: 'Synology', domains: ['synology.com'] }],
+        market: 'GLOBAL',
+        locale: 'en-US',
+        region: 'US',
+        triggerType: 'RETEST',
+      });
+      expect(globalRetest.rawMeta?.scenario).toBe('retest');
+      expect(globalRetest.answerText).toContain('1. AuroraNAS');
+      expect(globalRetest.citations.some((c) => c.url.includes('auroranas.example.com'))).toBe(
+        true,
+      );
+    }
+
+    // Security invariant: remote_scraper NEVER includes triggerType or alters real requests
+    const capturedBodies: Array<Record<string, unknown>> = [];
+    const remoteCollector = VisibilityCollectorService.fromEnv(
+      {
+        VISIBILITY_COLLECTOR: 'remote_scraper',
+        VISIBILITY_REMOTE_URL: 'https://scraper.example.com/v1/collect',
+      },
+      {
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        transport: async (req) => {
+          capturedBodies.push(JSON.parse(req.body ?? '{}') as Record<string, unknown>);
+          return {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+            body: Buffer.from(
+              JSON.stringify({
+                answerText: 'Remote answer without fake override.',
+                citations: [],
+                fanOutQueries: [],
+              }),
+              'utf8',
+            ),
+          };
+        },
+      },
+    );
+
+    const remoteRes = await remoteCollector.collect({
+      tenantId: 'tenant_demo',
+      engine: 'perplexity',
+      promptText: '[E2E_GAP] Best 4-bay NAS',
+      brandName: 'AuroraNAS',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      triggerType: 'RETEST',
+    });
+    expect(remoteRes.collectorKind).toBe('remote_scraper');
+    expect(remoteRes.answerText).toBe('Remote answer without fake override.');
+    expect(capturedBodies[0]).not.toHaveProperty('triggerType');
+  });
 });

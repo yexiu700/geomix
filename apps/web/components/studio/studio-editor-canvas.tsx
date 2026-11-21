@@ -209,7 +209,7 @@ export function StudioEditorCanvas({
       {article && !streaming ? (
         <div className="gm-studio-rewrite-bar" data-testid="studio-rewrite-toolbar">
           <span style={{ fontSize: 12, color: 'var(--gm-fg-2)', fontWeight: 500 }}>
-            行内局部改写（0 点）：
+            行内局部改写（免费）：
           </span>
           {GEO_REWRITE_ACTIONS.map((action) => (
             <Button

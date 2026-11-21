@@ -270,8 +270,9 @@ export function StudioLeftPane({
               disabled={!canBatch}
               onClick={onLaunchBatch}
             >
-              批量生成（{selectedBriefIds.length} 篇 ·{' '}
-              {selectedBriefIds.length * GEO_WRITE_DEFAULT_UNIT_POINTS} 点）
+              {selectedBriefIds.length > 0
+                ? `批量生成（${selectedBriefIds.length} 篇 · ${selectedBriefIds.length * GEO_WRITE_DEFAULT_UNIT_POINTS} 点）`
+                : '批量生成（请选 2–20 篇）'}
             </Button>
           </div>
         ) : (

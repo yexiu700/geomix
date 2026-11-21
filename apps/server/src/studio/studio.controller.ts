@@ -19,14 +19,17 @@ import {
   API_ERROR,
   AccountQueryError,
   BRAND_ID_PATTERN,
+  articleExportQuerySchema,
   geoArticleListQuerySchema,
   geoArticleStreamSchema,
   geoArticleUpdateSchema,
   geoBatchCreateSchema,
   geoBatchListQuerySchema,
+  geoEvaluateArticleInputSchema,
   geoRewriteSectionSchema,
   ok,
   promptPreferenceSchema,
+  publishRecordCreateSchema,
   readIdempotencyKey,
   type GeoMarket,
 } from '@geomix/shared';
@@ -35,9 +38,16 @@ import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { parseBrandId, parseMarket, requireAuth } from '../brands/brands.http-utils';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
+import { GeoDeliveryService } from './geo-delivery.service';
 import { StudioService, type SseRequestLike, type SseResponseLike } from './studio.service';
 
-function parseEntityId(raw: string, label: string): string {
+export type BinaryExportResponseLike = {
+  setHeader(name: string, value: string): void;
+  status(code: number): BinaryExportResponseLike;
+  send(body: Buffer): void;
+};
+
+export function parseEntityId(raw: string, label: string): string {
   const value = typeof raw === 'string' ? raw.trim() : '';
   if (!BRAND_ID_PATTERN.test(value)) {
     throw new ApiError(400, API_ERROR.BAD_REQUEST, `${label}不合法`);
@@ -45,7 +55,7 @@ function parseEntityId(raw: string, label: string): string {
   return value;
 }
 
-function flattenQuery(raw: Record<string, unknown>): Record<string, string | undefined> {
+export function flattenQuery(raw: Record<string, unknown>): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [key, val] of Object.entries(raw)) {
     if (val === undefined) {
@@ -59,12 +69,12 @@ function flattenQuery(raw: Record<string, unknown>): Record<string, string | und
   return out;
 }
 
-function parseOptionalMarket(raw?: string): GeoMarket | undefined {
+export function parseOptionalMarket(raw?: string): GeoMarket | undefined {
   if (!raw || !raw.trim()) return undefined;
   return parseMarket(raw.trim());
 }
 
-function resolveIdempotencyHeader(req: unknown): string {
+export function resolveIdempotencyHeader(req: unknown): string {
   const headers =
     req && typeof req === 'object' && 'headers' in req
       ? ((req as { headers?: Record<string, unknown> }).headers ?? {})
@@ -178,7 +188,10 @@ export class BrandStudioController {
 @Controller({ path: 'articles', version: '2' })
 @UseGuards(AuthGuard)
 export class ArticlesController {
-  constructor(@Inject(StudioService) private readonly studio: StudioService) {}
+  constructor(
+    @Inject(StudioService) private readonly studio: StudioService,
+    @Inject(GeoDeliveryService) private readonly delivery: GeoDeliveryService,
+  ) {}
 
   @Get(':id')
   async getArticle(@Param('id') idRaw: string) {
@@ -210,6 +223,55 @@ export class ArticlesController {
     const id = parseEntityId(idRaw, '文章编号');
     const parsed = parseBody(geoRewriteSectionSchema, body);
     return ok(await this.studio.rewriteSection(id, parsed, auth));
+  }
+
+  @Post(':id/evaluate-geo')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async evaluateGeo(@Req() req: unknown, @Param('id') idRaw: string, @Body() body: unknown) {
+    const auth = requireAuth(req);
+    const id = parseEntityId(idRaw, '文章编号');
+    const rawBody = body === undefined || body === null || body === '' ? {} : body;
+    const parsed = parseBody(geoEvaluateArticleInputSchema, rawBody);
+    return ok(await this.delivery.evaluateGeo(id, parsed, auth));
+  }
+
+  @Get(':id/export')
+  async exportArticle(
+    @Param('id') idRaw: string,
+    @Query() query: Record<string, unknown>,
+    @Res() res: BinaryExportResponseLike,
+  ) {
+    const id = parseEntityId(idRaw, '文章编号');
+    const flat = flattenQuery(query);
+    const parsed = parseBody(articleExportQuerySchema, flat);
+    const exported = await this.delivery.exportArticle(id, parsed.format);
+
+    res.setHeader('Content-Type', exported.contentType);
+    res.setHeader('Content-Disposition', exported.contentDisposition);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(exported.buffer);
+  }
+
+  @Get(':id/publish-records')
+  async listPublishRecords(@Param('id') idRaw: string) {
+    const id = parseEntityId(idRaw, '文章编号');
+    return ok(await this.delivery.listPublishRecords(id));
+  }
+
+  @Post(':id/publish-records')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async createPublishRecord(
+    @Req() req: unknown,
+    @Param('id') idRaw: string,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(req);
+    const id = parseEntityId(idRaw, '文章编号');
+    const parsed = parseBody(publishRecordCreateSchema, body);
+    return ok(await this.delivery.createPublishRecord(id, parsed, auth));
   }
 }
 

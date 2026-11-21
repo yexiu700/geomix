@@ -271,7 +271,7 @@ export function cleanTitleText(
 ): string {
   const firstLine =
     raw
-      .split(/\r?\n/)
+      .split(/\r\n?|\n/)
       .map((line) => line.trim())
       .find((line) => line.length > 0) ?? '';
   let cleaned = firstLine
@@ -330,38 +330,170 @@ function renderEmphasisOnEscaped(escaped: string): string {
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
 }
 
-function renderNonCodeInline(segment: string): string {
-  // Parse Markdown images ![alt](url) and links [label](url) safely BEFORE escaping the surrounding text.
-  const tokenRe =
-    /!\[([^\]]*)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)|\[([^\]]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g;
-  let out = '';
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = tokenRe.exec(segment)) !== null) {
-    if (match.index > lastIndex) {
-      out += renderEmphasisOnEscaped(escapeHtml(segment.slice(lastIndex, match.index)));
+function parseInlineMarkdownTarget(
+  rawDest: string,
+): { kind: 'safe'; url: string } | { kind: 'unsafe' } | { kind: 'literal' } {
+  const trimmed = rawDest.trim();
+  if (!trimmed) return { kind: 'literal' };
+
+  // Angle-bracket destination: <url> optionally followed by quoted title
+  if (trimmed.startsWith('<')) {
+    const closeAngle = trimmed.indexOf('>');
+    if (closeAngle < 0) return { kind: 'literal' };
+    const innerUrl = trimmed.slice(1, closeAngle).trim();
+    const trailing = trimmed.slice(closeAngle + 1).trim();
+    if (trailing && !/^(?:"[^"\r\n]*"|'[^'\r\n]*')$/.test(trailing)) {
+      return { kind: 'literal' };
     }
-    if (match[0].startsWith('![')) {
-      const alt = match[1] ?? '';
-      const url = match[2] ?? '';
-      if (isSafeMarkdownUrl(url)) {
-        out += `<img src="${escapeHtml(url.trim())}" alt="${escapeHtml(alt)}" style="max-width:100%" />`;
+    return isSafeMarkdownUrl(innerUrl) ? { kind: 'safe', url: innerUrl } : { kind: 'unsafe' };
+  }
+
+  // No whitespace inside destination: direct URL token
+  if (!/\s/.test(trimmed)) {
+    return isSafeMarkdownUrl(trimmed) ? { kind: 'safe', url: trimmed } : { kind: 'unsafe' };
+  }
+
+  // Optional quoted title after URL: url "title" or url 'title'
+  const titled = /^([^\s]+)[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*')$/.exec(trimmed);
+  if (titled) {
+    const urlPart = titled[1] ?? '';
+    return isSafeMarkdownUrl(urlPart) ? { kind: 'safe', url: urlPart } : { kind: 'unsafe' };
+  }
+
+  // Explicit unsafe scheme with embedded spaces/control chars (e.g. javascript:alert("hi there"))
+  const compact = trimmed.replace(/[\u0000-\u0020\u007f]+/g, '').toLowerCase();
+  if (
+    compact.startsWith('javascript:') ||
+    compact.startsWith('vbscript:') ||
+    compact.startsWith('data:')
+  ) {
+    return { kind: 'unsafe' };
+  }
+
+  return { kind: 'literal' };
+}
+
+function renderNonCodeInline(segment: string, recursionDepth = 0): string {
+  // Linear O(N) scanner for Markdown images ![alt](url) and links [label](url)
+  // with precomputed balanced bracket/parenthesis tables (zero backtracking / zero ReDoS).
+  if (!segment.includes('[')) {
+    return renderEmphasisOnEscaped(escapeHtml(segment));
+  }
+
+  const len = segment.length;
+  const matchBracket = new Int32Array(len).fill(-1);
+  const matchParen = new Int32Array(len).fill(-1);
+  const bracketStack: number[] = [];
+  const parenStack: number[] = [];
+
+  for (let p = 0; p < len; p += 1) {
+    const ch = segment[p];
+    if (ch === '\\' && p + 1 < len) {
+      p += 1;
+      continue;
+    }
+    if (ch === '[') {
+      bracketStack.push(p);
+    } else if (ch === ']') {
+      if (bracketStack.length > 0) {
+        matchBracket[bracketStack.pop()!] = p;
+      }
+    } else if (ch === '(') {
+      parenStack.push(p);
+    } else if (ch === ')') {
+      if (parenStack.length > 0) {
+        matchParen[parenStack.pop()!] = p;
+      }
+    }
+  }
+
+  let out = '';
+  let plainStart = 0;
+  let i = 0;
+
+  while (i < len) {
+    const isImage = segment[i] === '!' && i + 1 < len && segment[i + 1] === '[';
+    const isLink = !isImage && segment[i] === '[';
+    if (!isImage && !isLink) {
+      i += 1;
+      continue;
+    }
+
+    const bracketPos = isImage ? i + 1 : i;
+    const labelStart = bracketPos + 1;
+    const closeBracket = matchBracket[bracketPos]!;
+    if (closeBracket === -1 || (!isImage && closeBracket === labelStart)) {
+      i += 1;
+      continue;
+    }
+
+    const openParen = closeBracket + 1;
+    if (openParen >= len || segment[openParen] !== '(') {
+      i += 1;
+      continue;
+    }
+
+    const closeParen = matchParen[openParen]!;
+    if (closeParen === -1) {
+      i += 1;
+      continue;
+    }
+
+    const destStart = openParen + 1;
+    const destLen = closeParen - destStart;
+    let target: { kind: 'safe'; url: string } | { kind: 'unsafe' } | { kind: 'literal' };
+    if (destLen > 2560) {
+      const headCompact = segment
+        .slice(destStart, destStart + 64)
+        .replace(/[\u0000-\u0020\u007f]+/g, '')
+        .toLowerCase();
+      target =
+        headCompact.startsWith('javascript:') ||
+        headCompact.startsWith('vbscript:') ||
+        headCompact.startsWith('data:') ||
+        headCompact.startsWith('<javascript:') ||
+        headCompact.startsWith('<vbscript:') ||
+        headCompact.startsWith('<data:')
+          ? { kind: 'unsafe' }
+          : { kind: 'literal' };
+    } else {
+      target = parseInlineMarkdownTarget(segment.slice(destStart, closeParen));
+    }
+    if (target.kind === 'literal') {
+      i += 1;
+      continue;
+    }
+
+    const rawLabel = segment.slice(labelStart, closeBracket);
+
+    if (i > plainStart) {
+      out += renderEmphasisOnEscaped(escapeHtml(segment.slice(plainStart, i)));
+    }
+
+    if (isImage) {
+      if (target.kind === 'safe') {
+        out += `<img src="${escapeHtml(target.url)}" alt="${escapeHtml(rawLabel)}" style="max-width:100%" />`;
       } else {
-        out += escapeHtml(alt);
+        out += escapeHtml(rawLabel);
       }
     } else {
-      const label = match[3] ?? '';
-      const url = match[4] ?? '';
-      if (isSafeMarkdownUrl(url)) {
-        out += `<a href="${escapeHtml(url.trim())}" target="_blank" rel="noopener noreferrer">${renderEmphasisOnEscaped(escapeHtml(label))}</a>`;
+      const renderedLabel =
+        recursionDepth < 2 && rawLabel.includes('![')
+          ? renderNonCodeInline(rawLabel, recursionDepth + 1)
+          : renderEmphasisOnEscaped(escapeHtml(rawLabel));
+      if (target.kind === 'safe') {
+        out += `<a href="${escapeHtml(target.url)}" target="_blank" rel="noopener noreferrer">${renderedLabel}</a>`;
       } else {
-        out += renderEmphasisOnEscaped(escapeHtml(label));
+        out += renderedLabel;
       }
     }
-    lastIndex = match.index + match[0].length;
+
+    i = closeParen + 1;
+    plainStart = i;
   }
-  if (lastIndex < segment.length) {
-    out += renderEmphasisOnEscaped(escapeHtml(segment.slice(lastIndex)));
+
+  if (plainStart < len) {
+    out += renderEmphasisOnEscaped(escapeHtml(segment.slice(plainStart)));
   }
   return out;
 }
@@ -407,7 +539,7 @@ function isGfmTableHeaderPair(headerLine: string, delimiterLine: string | undefi
  * 将清洗后的 Markdown 转为严格白名单 XSS 安全 HTML（支持 GFM table、代码块、标题、列表、引用、安全图片/链接与行内强调）。
  */
 export function markdownToSanitizedHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   const blocks: string[] = [];
   let paragraphBuf: string[] = [];
   let listType: 'ul' | 'ol' | null = null;
@@ -553,12 +685,41 @@ export function markdownToSanitizedHtml(markdown: string): string {
   return blocks.join('\n');
 }
 
+/**
+ * Strictly linear O(N) replacement for `/<[^>]+>/g` (allowEmpty=false) and `/<[^>]*>/g` (allowEmpty=true).
+ * Immediately terminates in O(1) once no closing `>` remains, eliminating O(N^2) ReDoS on runs of `<`.
+ */
+export function stripHtmlTagsLinear(input: string, replacement = '', allowEmpty = false): string {
+  if (!input.includes('<')) return input;
+  const len = input.length;
+  let out = '';
+  let lastEmit = 0;
+  let i = 0;
+  while (i < len) {
+    const lt = input.indexOf('<', i);
+    if (lt === -1) break;
+    const gt = input.indexOf('>', lt + 1);
+    if (gt === -1) break;
+    if (!allowEmpty && gt === lt + 1) {
+      i = lt + 1;
+      continue;
+    }
+    out += input.slice(lastEmit, lt);
+    if (replacement) out += replacement;
+    i = gt + 1;
+    lastEmit = i;
+  }
+  if (lastEmit === 0) return input;
+  return out + input.slice(lastEmit);
+}
+
 export function stripHtmlToText(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(th|td)>/gi, ' ')
-    .replace(/<\/(p|h2|h3|h4|li|blockquote|tr|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
+  return stripHtmlTagsLinear(
+    html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(th|td)>/gi, ' ')
+      .replace(/<\/(p|h2|h3|h4|li|blockquote|tr|pre)>/gi, '\n'),
+  )
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -638,7 +799,7 @@ export function postProcessArticleMarkdown(
   charCount: number;
 } {
   const market: GeoMarket = context?.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
-  let md = rawMarkdown.replace(/\r\n/g, '\n').trim();
+  let md = rawMarkdown.replace(/\r\n?/g, '\n').trim();
   const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i.exec(md);
   if (fenced) {
     md = fenced[1]!.trim();
