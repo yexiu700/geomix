@@ -1716,6 +1716,25 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
     const walletA = await billing.wallet(tenantA);
     expect(walletA.points).toBe(94);
     expect(walletA.pointsReserved).toBe(0);
+    const ledgerA = await billing.ledger(tenantA, 1, 50);
+    const settledChecksA = ledgerA.items.filter(
+      (item) => item.action === 'visibility_check' && item.status === 'SETTLED',
+    );
+    expect(settledChecksA).toHaveLength(3);
+    expect(
+      settledChecksA.every(
+        (item) =>
+          item.delta === -2 && item.listPrice === 2 && item.unitKey.startsWith('visibility_obs:'),
+      ),
+    ).toBe(true);
+    expect(settledChecksA.reduce((sum, item) => sum + item.delta, 0)).toBe(-6);
+    const releasedRefundsA = ledgerA.items.filter(
+      (item) => item.action === 'refund' && item.status === 'RELEASED',
+    );
+    expect(releasedRefundsA).toHaveLength(1);
+    expect(releasedRefundsA[0]?.delta).toBe(0);
+    expect(releasedRefundsA[0]?.listPrice).toBe(2);
+    expect(releasedRefundsA[0]?.unitKey.startsWith('visibility_obs:')).toBe(true);
 
     const prismaSvc = app.get(PrismaService);
     expect(
@@ -1911,6 +1930,18 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
     expect(doneShadow.status).toBe(200);
     expect(doneShadow.data.status).toBe('COMPLETED');
     expect(doneShadow.data.observations[0]?.citations).toEqual([]);
+    const walletB = await billing.wallet(tenantB);
+    expect(walletB.points).toBe(500);
+    expect(walletB.pointsReserved).toBe(0);
+    const ledgerB = await billing.ledger(tenantB, 1, 50);
+    const settledShadowChecks = ledgerB.items.filter(
+      (item) => item.action === 'visibility_check' && item.status === 'SETTLED',
+    );
+    expect(settledShadowChecks).toHaveLength(1);
+    expect(settledShadowChecks[0]?.delta).toBe(0);
+    expect(settledShadowChecks[0]?.listPrice).toBe(2);
+    expect(settledShadowChecks[0]?.unitKey.startsWith('visibility_obs:')).toBe(true);
+    expect(settledShadowChecks[0]?.title.endsWith('（免费期）')).toBe(true);
 
     const deleted = await httpJson<{ deleted: number }>(
       base,

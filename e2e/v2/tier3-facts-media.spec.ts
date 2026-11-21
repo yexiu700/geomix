@@ -252,7 +252,8 @@ v2Describe(
 
             const popover = page
               .getByTestId('studio-media-popover')
-              .or(page.locator('.ant-popover:visible, .ant-modal-content:visible').last());
+              .or(page.locator('.ant-popover:visible, .ant-modal-content:visible').last())
+              .first();
             await expect(popover).toBeVisible();
             await expect(popover).toContainText(photoTitle);
 
@@ -261,6 +262,7 @@ v2Describe(
               .filter({ hasText: photoTitle })
               .first();
             await photoCard.click();
+            await expect(popover).toBeHidden({ timeout: 15_000 });
 
             const saveBtn = page.getByRole('button', { name: /保存/ }).first();
             if ((await saveBtn.count()) > 0 && (await saveBtn.isEnabled())) {

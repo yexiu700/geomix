@@ -244,19 +244,31 @@ v2Describe(
             cleanupMedia.push({ session: tenant.session, brandId: brand.id, mediaId: img.id });
           }
 
-          // STRICT wallet: 100 - 4 - 10 - 5 = 81
+          // STRICT wallet: 100 - (2 + 2) - 10 - 5 = 81 (visibility_check settles 2 pts per observation)
           const strictWallet = await getTenantWallet(strictTenant.session);
           expect(strictWallet.points).toBe(81);
+          expect(strictWallet.pointsReserved).toBe(0);
           const strictLogs = await getTenantPointLogs(strictTenant.session, 50);
-          const strictNegDeltas = strictLogs.items.filter((i) => i.delta < 0).map((i) => i.delta);
-          expect(strictNegDeltas).toEqual(expect.arrayContaining([-4, -10, -5]));
+          const strictNegEntries = strictLogs.items.filter((i) => i.delta < 0);
+          const strictNegDeltasSorted = strictNegEntries.map((i) => i.delta).sort((a, b) => a - b);
+          expect(strictNegDeltasSorted).toEqual([-10, -5, -2, -2]);
+          expect(strictNegDeltasSorted.reduce((sum, d) => sum + d, 0)).toBe(-19);
+          expect(
+            strictNegEntries.every((i) => i.status === 'SETTLED' && i.listPrice === -i.delta),
+          ).toBe(true);
 
-          // SHADOW wallet: unchanged 100 with delta === 0 listPrice records
+          // SHADOW wallet: unchanged 100 with delta === 0 listPrice records (2, 2, 10, 5)
           const shadowWallet = await getTenantWallet(shadowTenant.session);
           expect(shadowWallet.points).toBe(100);
+          expect(shadowWallet.pointsReserved).toBe(0);
           const shadowLogs = await getTenantPointLogs(shadowTenant.session, 50);
           const shadowEntries = shadowLogs.items.filter((i) => i.delta === 0 && i.listPrice > 0);
-          expect(shadowEntries.map((i) => i.listPrice)).toEqual(expect.arrayContaining([4, 10, 5]));
+          const shadowListPricesSorted = shadowEntries
+            .map((i) => i.listPrice)
+            .sort((a, b) => a - b);
+          expect(shadowListPricesSorted).toEqual([2, 2, 5, 10]);
+          expect(shadowListPricesSorted.reduce((sum, p) => sum + p, 0)).toBe(19);
+          expect(shadowEntries.every((i) => i.status === 'SETTLED')).toBe(true);
 
           // Open /account as STRICT merchant: verify points tab & complete absence of ¥0.00 / 余额明细
           const { context, page, errors } = await openAuthenticatedPage(
@@ -266,6 +278,7 @@ v2Describe(
           );
           try {
             await expect(page.locator('body')).toContainText('81');
+            await expect(page.getByRole('tab', { name: '点数明细' })).toBeVisible();
             await expect(page.getByRole('tab', { name: /余额明细/ })).toHaveCount(0);
             const bodyText = await page.locator('body').innerText();
             expect(bodyText).not.toContain('¥0.00');

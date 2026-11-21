@@ -278,7 +278,10 @@ export async function openBriefDrawerAndEdit(
   const drawer = page.getByTestId('geo-brief-drawer').or(page.locator('.ant-drawer-open')).first();
 
   if (opts.newTitle) {
-    const titleInput = drawer.getByTestId('brief-drawer-title').or(drawer.locator('input').first());
+    const titleInput = drawer
+      .getByTestId('brief-drawer-title')
+      .or(drawer.locator('input').first())
+      .first();
     await titleInput.fill(opts.newTitle);
   }
 

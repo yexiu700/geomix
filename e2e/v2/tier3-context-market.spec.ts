@@ -286,13 +286,12 @@ v2Describe(
         );
         try {
           await openVisibilityTab(page, 'runs');
+          await expect(page.getByTestId(`engine-option-${onlineCn[0].key}`)).toBeVisible();
           const cnOffline = cnEngines.find((e) => !e.available || e.status === 'offline');
-          if (cnOffline) {
-            const offlineNode = page.getByTestId(`engine-option-${cnOffline.key}`);
-            if ((await offlineNode.count()) > 0) {
-              await expect(offlineNode).toContainText('暂未上线');
-            }
-          }
+          expect(cnOffline, 'Expected at least one offline CN engine in E2E catalog').toBeTruthy();
+          const offlineNode = page.getByTestId(`engine-option-${cnOffline!.key}`);
+          await expect(offlineNode).toBeVisible();
+          await expect(offlineNode).toContainText('暂未上线');
           // Verify GLOBAL engine keys are absent while viewing CN market
           for (const gKey of GLOBAL_ENGINES) {
             await expect(page.getByTestId(`engine-option-${gKey}`)).toHaveCount(0);
@@ -300,6 +299,7 @@ v2Describe(
 
           await switchGlobalMarket(page, 'GLOBAL');
           await openVisibilityTab(page, 'runs');
+          await expect(page.getByTestId(`engine-option-${onlineGlobal[0].key}`)).toBeVisible();
           for (const cKey of CN_ENGINES) {
             await expect(page.getByTestId(`engine-option-${cKey}`)).toHaveCount(0);
           }
