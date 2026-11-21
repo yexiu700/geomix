@@ -19,6 +19,8 @@ export type FreeActionRateLimiterOptions = {
 
 const DEFAULT_FACT_EXTRACT_MAX = 10;
 const DEFAULT_FACT_EXTRACT_WINDOW_SECONDS = 60;
+const DEFAULT_BRIEF_GENERATE_MAX = 20;
+const DEFAULT_BRIEF_GENERATE_WINDOW_SECONDS = 60;
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
@@ -33,6 +35,17 @@ export function readFactExtractRateLimit(
   const windowSeconds = readPositiveInt(
     env.FACT_EXTRACT_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_FACT_EXTRACT_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readBriefGenerateRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.BRIEF_GENERATE_RATE_LIMIT_MAX, DEFAULT_BRIEF_GENERATE_MAX);
+  const windowSeconds = readPositiveInt(
+    env.BRIEF_GENERATE_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_BRIEF_GENERATE_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }

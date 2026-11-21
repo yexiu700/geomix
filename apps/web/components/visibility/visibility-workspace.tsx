@@ -1,12 +1,18 @@
 'use client';
 
 import type {
+  BrandFactRecord,
   CitationSourceKind,
+  GeoBriefGenerateInput,
+  GeoBriefRecord,
+  GeoBriefSource,
+  GeoBriefUpdateInput,
   GeoMarket,
   TaskStatusName,
   VisibilityCitationListResponse,
   VisibilityEngineAvailabilityItem,
   VisibilityEngineKey,
+  VisibilityObservationRecord,
   VisibilityOpportunitiesResponse,
   VisibilityOverviewResponse,
   VisibilityRunDetailRecord,
@@ -16,6 +22,15 @@ import { GEO_MARKET_LABELS, sanitizeEntityTitleSegment } from '@geomix/shared';
 import { Button, Skeleton, Tabs, Tag, Typography } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getBrandFacts } from '../../lib/brands';
+import {
+  deriveObservationBriefSource,
+  dismissBrief,
+  fetchBriefs,
+  generateBrief,
+  updateBrief,
+} from '../../lib/briefs';
+import { buildWorkspaceHref } from '../../lib/routes';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
@@ -30,6 +45,7 @@ import {
   fetchVisibilityRunDetail,
   fetchVisibilityRuns,
   filterEnginesForMarket,
+  isSafeHttpUrl,
   parsePromptLines,
   pauseVisibilityRun,
   resumeVisibilityRun,
@@ -39,10 +55,12 @@ import {
   selectActiveBrandMarket,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { BriefListPanel, type BriefStatusFilterValue } from '../briefs/brief-list-panel';
+import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
-import { VisibilityCitationsTab } from './visibility-citations-tab';
+import { VisibilityCitationsTab, type RankedCitationRow } from './visibility-citations-tab';
 import { VisibilityOverviewTab } from './visibility-overview-tab';
 import { VisibilityRunsTab } from './visibility-runs-tab';
 
@@ -171,6 +189,19 @@ export function VisibilityWorkspace(): JSX.Element {
   const [opportunitiesError, setOpportunitiesError] = useState<string | null>(null);
   const [selectedFanOuts, setSelectedFanOuts] = useState<string[]>([]);
 
+  // M3 GeoBrief list, drawer & BrandFact lookup state
+  const [briefs, setBriefs] = useState<GeoBriefRecord[]>([]);
+  const [briefsTotal, setBriefsTotal] = useState(0);
+  const [briefsLoading, setBriefsLoading] = useState(false);
+  const [briefsError, setBriefsError] = useState<string | null>(null);
+  const [briefSourceFilter, setBriefSourceFilter] = useState<GeoBriefSource | ''>('');
+  const [briefStatusFilter, setBriefStatusFilter] = useState<BriefStatusFilterValue>('OPEN');
+  const [selectedBriefIds, setSelectedBriefIds] = useState<string[]>([]);
+  const [activeBrief, setActiveBrief] = useState<GeoBriefRecord | null>(null);
+  const [generatingBriefKey, setGeneratingBriefKey] = useState<string | null>(null);
+  const [brandFacts, setBrandFacts] = useState<BrandFactRecord[]>([]);
+  const [brandFactsLoading, setBrandFactsLoading] = useState(false);
+
   // Anti-race AbortControllers + monotonic sequence counter
   const contextSeqRef = useRef(0);
   const prevContextKeyRef = useRef<string | null>(null);
@@ -180,9 +211,19 @@ export function VisibilityWorkspace(): JSX.Element {
   const runDetailCtrlRef = useRef<AbortController | null>(null);
   const citationsCtrlRef = useRef<AbortController | null>(null);
   const opportunitiesCtrlRef = useRef<AbortController | null>(null);
+  const briefsCtrlRef = useRef<AbortController | null>(null);
+  const briefGenCtrlRef = useRef<AbortController | null>(null);
+  const factsCtrlRef = useRef<AbortController | null>(null);
+  const brandFactsLoadedBrandIdRef = useRef<string | null>(null);
+  const postRunBriefTimerRef = useRef<number | null>(null);
   const hadLiveRunsRef = useRef(false);
   const daysRef = useRef(days);
   daysRef.current = days;
+  const briefFilterRef = useRef<{
+    status: BriefStatusFilterValue;
+    sourceType: GeoBriefSource | '';
+  }>({ status: briefStatusFilter, sourceType: briefSourceFilter });
+  briefFilterRef.current = { status: briefStatusFilter, sourceType: briefSourceFilter };
 
   const abortAllControllers = useCallback(() => {
     overviewCtrlRef.current?.abort();
@@ -191,6 +232,13 @@ export function VisibilityWorkspace(): JSX.Element {
     runDetailCtrlRef.current?.abort();
     citationsCtrlRef.current?.abort();
     opportunitiesCtrlRef.current?.abort();
+    briefsCtrlRef.current?.abort();
+    briefGenCtrlRef.current?.abort();
+    factsCtrlRef.current?.abort();
+    if (postRunBriefTimerRef.current !== null && typeof window !== 'undefined') {
+      window.clearTimeout(postRunBriefTimerRef.current);
+      postRunBriefTimerRef.current = null;
+    }
   }, []);
 
   // Cleanup on unmount
@@ -400,6 +448,54 @@ export function VisibilityWorkspace(): JSX.Element {
     [],
   );
 
+  const loadBriefs = useCallback(
+    async (
+      brandId: string,
+      market: GeoMarket,
+      seq: number,
+      filters: { status: BriefStatusFilterValue; sourceType: GeoBriefSource | '' },
+      silent = false,
+    ) => {
+      briefsCtrlRef.current?.abort();
+      const ctrl = new AbortController();
+      briefsCtrlRef.current = ctrl;
+      if (!silent) {
+        setBriefsLoading(true);
+        setBriefsError(null);
+      }
+      try {
+        const res = await fetchBriefs(
+          brandId,
+          market,
+          {
+            ...(filters.status !== 'ACTIVE' ? { status: filters.status } : {}),
+            ...(filters.sourceType ? { sourceType: filters.sourceType } : {}),
+            includeDismissed: filters.status === 'DISMISSED',
+            pageSize: 50,
+          },
+          { signal: ctrl.signal },
+        );
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+        setBriefs(res.items);
+        setBriefsTotal(res.total);
+        setBriefsError(null);
+        setSelectedBriefIds((prev) => {
+          const validIds = new Set(res.items.filter((b) => b.status === 'OPEN').map((b) => b.id));
+          const next = prev.filter((id) => validIds.has(id));
+          return next.length === prev.length ? prev : next;
+        });
+      } catch (err) {
+        if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
+        setBriefsError(extractErrorMessage(err, '加载写作建议列表失败'));
+      } finally {
+        if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+          setBriefsLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
   // Synchronous reset + fresh load on global brand/market/epoch switch
   useEffect(() => {
     abortAllControllers();
@@ -454,6 +550,19 @@ export function VisibilityWorkspace(): JSX.Element {
     setOpportunities(null);
     setOpportunitiesError(null);
     setSelectedFanOuts([]);
+
+    // Reset all M3 brief & drawer states synchronously to prevent stale cross-brand leakage
+    setBriefs([]);
+    setBriefsTotal(0);
+    setBriefsError(null);
+    setBriefSourceFilter('');
+    setBriefStatusFilter('OPEN');
+    setSelectedBriefIds([]);
+    setActiveBrief(null);
+    setGeneratingBriefKey(null);
+    setBrandFacts([]);
+    setBrandFactsLoading(false);
+    brandFactsLoadedBrandIdRef.current = null;
     hadLiveRunsRef.current = false;
 
     const activeBrandMarketId = activeBrandMarket?.id ?? null;
@@ -463,6 +572,7 @@ export function VisibilityWorkspace(): JSX.Element {
       setRunsLoading(false);
       setCitationsLoading(false);
       setOpportunitiesLoading(false);
+      setBriefsLoading(false);
       return;
     }
 
@@ -472,11 +582,13 @@ export function VisibilityWorkspace(): JSX.Element {
     void loadRuns(activeBrandId, activeMarket, seq, { page: 1, status: '', keyword: '' }, false);
     void loadCitations(activeBrandId, activeMarket, seq, windowDays, undefined);
     void loadOpportunities(activeBrandId, activeMarket, seq, windowDays);
+    void loadBriefs(activeBrandId, activeMarket, seq, { status: 'OPEN', sourceType: '' }, false);
   }, [
     abortAllControllers,
     activeBrandId,
     activeBrandMarket?.id,
     activeMarket,
+    loadBriefs,
     loadCitations,
     loadEngines,
     loadOpportunities,
@@ -484,6 +596,32 @@ export function VisibilityWorkspace(): JSX.Element {
     loadRuns,
     state.contextEpoch,
   ]);
+
+  // Lazily fetch BrandFacts when GeoBriefDrawer opens so matchedFactIds resolve to human-readable titles (never CUIDs)
+  useEffect(() => {
+    if (!activeBrief) return;
+    if (brandFactsLoadedBrandIdRef.current === activeBrief.brandId) return;
+    factsCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    factsCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const targetBrandId = activeBrief.brandId;
+    setBrandFactsLoading(true);
+    void getBrandFacts(targetBrandId, { signal: ctrl.signal })
+      .then((res) => {
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+        setBrandFacts(res.items);
+        brandFactsLoadedBrandIdRef.current = targetBrandId;
+      })
+      .catch(() => {
+        // Fallback count message handles failed fact lookup without exposing CUIDs
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+          setBrandFactsLoading(false);
+        }
+      });
+  }, [activeBrief]);
 
   // Load selected run detail whenever activeRunId changes within the active brand+market context
   useEffect(() => {
@@ -545,8 +683,18 @@ export function VisibilityWorkspace(): JSX.Element {
     const tab = (
       nextKey === 'runs' || nextKey === 'citations' ? nextKey : 'overview'
     ) as VisibilityTabKey;
+    const prevTab = activeTab;
     setActiveTab(tab);
     syncUrlParams({ tab });
+    if (tab === 'overview' && prevTab !== 'overview' && activeBrandId && activeBrandMarket?.id) {
+      void loadBriefs(
+        activeBrandId,
+        activeMarket,
+        contextSeqRef.current,
+        { status: briefStatusFilter, sourceType: briefSourceFilter },
+        true,
+      );
+    }
   };
 
   const handleSelectRun = (runId: string) => {
@@ -582,6 +730,17 @@ export function VisibilityWorkspace(): JSX.Element {
       void loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine);
       void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter);
       void loadOpportunities(activeBrandId, activeMarket, seq, days);
+      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      if (typeof window !== 'undefined') {
+        if (postRunBriefTimerRef.current !== null) {
+          window.clearTimeout(postRunBriefTimerRef.current);
+        }
+        postRunBriefTimerRef.current = window.setTimeout(() => {
+          postRunBriefTimerRef.current = null;
+          if (seq !== contextSeqRef.current) return;
+          void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+        }, 1500);
+      }
       void consoleCtx?.refreshWallet();
     }
   }, [
@@ -590,6 +749,7 @@ export function VisibilityWorkspace(): JSX.Element {
     consoleCtx,
     days,
     hasLiveRuns,
+    loadBriefs,
     loadCitations,
     loadOpportunities,
     loadOverview,
@@ -618,7 +778,7 @@ export function VisibilityWorkspace(): JSX.Element {
 
   useTabFreshness({
     active: true,
-    domains: ['visibility-runs', 'brands'],
+    domains: ['visibility-runs', 'brands', 'briefs'],
     onRefresh: async () => {
       if (!activeBrandId) return;
       const seq = contextSeqRef.current;
@@ -633,6 +793,7 @@ export function VisibilityWorkspace(): JSX.Element {
         ),
         loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter),
         loadOpportunities(activeBrandId, activeMarket, seq, days),
+        loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true),
       ]);
     },
   });
@@ -839,6 +1000,161 @@ export function VisibilityWorkspace(): JSX.Element {
     }
   };
 
+  // ==================== M3 GeoBrief Actions ====================
+
+  const handleBriefSourceFilterChange = (nextSource: GeoBriefSource | '') => {
+    setBriefSourceFilter(nextSource);
+    if (!activeBrandId) return;
+    void loadBriefs(
+      activeBrandId,
+      activeMarket,
+      contextSeqRef.current,
+      { status: briefStatusFilter, sourceType: nextSource },
+      false,
+    );
+  };
+
+  const handleBriefStatusFilterChange = (nextStatus: BriefStatusFilterValue) => {
+    setBriefStatusFilter(nextStatus);
+    setSelectedBriefIds([]);
+    if (!activeBrandId) return;
+    void loadBriefs(
+      activeBrandId,
+      activeMarket,
+      contextSeqRef.current,
+      { status: nextStatus, sourceType: briefSourceFilter },
+      false,
+    );
+  };
+
+  const handleGenerateBrief = async (
+    triggerKey: string,
+    input: GeoBriefGenerateInput,
+    options?: { clearFanOuts?: boolean },
+  ) => {
+    if (!activeBrandId || readOnly || generatingBriefKey !== null) return;
+    briefGenCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    briefGenCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setGeneratingBriefKey(triggerKey);
+    try {
+      const created = await generateBrief(activeBrandId, input, { signal: ctrl.signal });
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      setActiveBrief(created);
+      if (options?.clearFanOuts) {
+        setSelectedFanOuts([]);
+      }
+      feedback.notifySuccess('已生成 GEO 写作意见（0 点免费）');
+      invalidateFreshness('briefs');
+      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+    } catch (err) {
+      if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
+      feedback.notifyError(extractErrorMessage(err, '生成写作意见失败，请稍后重试'));
+    } finally {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setGeneratingBriefKey(null);
+      }
+    }
+  };
+
+  const handleGenerateFromGap = (gap: VisibilityOpportunitiesResponse['gaps'][number]) => {
+    void handleGenerateBrief(`gap:${gap.promptText}`, {
+      market: activeMarket,
+      sourceType: 'AUTO_GAP',
+      customPrompt: gap.promptText.slice(0, 300),
+    });
+  };
+
+  const handleGenerateFromObservation = (obs: VisibilityObservationRecord) => {
+    void handleGenerateBrief(`obs:${obs.id}`, {
+      market: activeMarket,
+      sourceType: deriveObservationBriefSource(obs),
+      observationIds: [obs.id],
+    });
+  };
+
+  const handleGenerateFromCitation = (row: RankedCitationRow) => {
+    if (!isSafeHttpUrl(row.url)) return;
+    void handleGenerateBrief(`cite:${row.key}`, {
+      market: activeMarket,
+      sourceType: 'CITATION_COUNTER',
+      citationUrl: row.url,
+      ...(row.title?.trim() ? { customPrompt: row.title.trim().slice(0, 300) } : {}),
+    });
+  };
+
+  const handleGenerateFromFanOuts = (queries: readonly string[]) => {
+    if (queries.length === 0) return;
+    void handleGenerateBrief(
+      'fanout:cluster',
+      {
+        market: activeMarket,
+        sourceType: 'FANOUT_CLUSTER',
+        fanOutQueries: queries.slice(0, 20),
+      },
+      { clearFanOuts: true },
+    );
+  };
+
+  const handleSaveBrief = async (
+    briefId: string,
+    patch: GeoBriefUpdateInput,
+  ): Promise<GeoBriefRecord> => {
+    const seq = contextSeqRef.current;
+    const updated = await updateBrief(briefId, patch);
+    if (seq === contextSeqRef.current) {
+      setActiveBrief((curr) => (curr?.id === updated.id ? updated : curr));
+      setBriefs((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      feedback.notifySuccess('写作意见已保存');
+      invalidateFreshness('briefs');
+    }
+    return updated;
+  };
+
+  const handleDismissBrief = async (brief: GeoBriefRecord): Promise<void> => {
+    const seq = contextSeqRef.current;
+    try {
+      await dismissBrief(brief.id);
+      if (seq !== contextSeqRef.current) return;
+      if (activeBrief?.id === brief.id) {
+        setActiveBrief(null);
+      }
+      setSelectedBriefIds((prev) => prev.filter((id) => id !== brief.id));
+      feedback.notifySuccess('已忽略该写作意见');
+      invalidateFreshness('briefs');
+      if (activeBrandId) {
+        void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      }
+    } catch (err) {
+      if (seq !== contextSeqRef.current) return;
+      feedback.notifyError(extractErrorMessage(err, '忽略写作意见失败'));
+    }
+  };
+
+  const handleNavigateToStudioWithBrief = (brief: GeoBriefRecord) => {
+    const href = buildWorkspaceHref('/studio', brief.brandId, brief.market, { briefId: brief.id });
+    setActiveBrief(null);
+    if (consoleCtx?.navigateWorkspace) {
+      consoleCtx.navigateWorkspace(href);
+    } else if (typeof window !== 'undefined') {
+      window.location.assign(href);
+    }
+  };
+
+  const handleBatchWriteBriefs = (briefIds: readonly string[]) => {
+    if (!activeBrandId || briefIds.length < 2) return;
+    const href = buildWorkspaceHref('/studio', activeBrandId, activeMarket, {
+      briefId: briefIds[0],
+    });
+    feedback.notifySuccess(`已选定 ${briefIds.length} 条意见，前往 GEO 写作台开启创作`);
+    if (consoleCtx?.navigateWorkspace) {
+      consoleCtx.navigateWorkspace(href);
+    } else if (typeof window !== 'undefined') {
+      window.location.assign(href);
+    }
+  };
+
   // Cold-load skeleton (ZERO 0% / 0 点 / 免费体验期 flash!)
   if (state.brandsLoading) {
     return (
@@ -908,6 +1224,52 @@ export function VisibilityWorkspace(): JSX.Element {
           }}
           onSwitchToRuns={handleJumpToRunsCreate}
           readOnly={readOnly}
+          briefsSlot={
+            <BriefListPanel
+              briefs={briefs}
+              total={briefsTotal}
+              loading={briefsLoading}
+              error={briefsError}
+              onRetry={() => {
+                if (!activeBrandId) return;
+                void loadBriefs(
+                  activeBrandId,
+                  activeMarket,
+                  contextSeqRef.current,
+                  briefFilterRef.current,
+                  false,
+                );
+              }}
+              sourceFilter={briefSourceFilter}
+              onSourceFilterChange={handleBriefSourceFilterChange}
+              statusFilter={briefStatusFilter}
+              onStatusFilterChange={handleBriefStatusFilterChange}
+              selectedBriefIds={selectedBriefIds}
+              onSelectedBriefIdsChange={setSelectedBriefIds}
+              gaps={opportunities?.gaps ?? []}
+              generatingGapPrompt={
+                generatingBriefKey?.startsWith('gap:') ? generatingBriefKey.slice(4) : null
+              }
+              onGenerateFromGap={handleGenerateFromGap}
+              readOnly={readOnly}
+              completedChecks={overview?.metrics?.completedChecks ?? 0}
+              onOpenBrief={(brief) => setActiveBrief(brief)}
+              onWriteBrief={handleNavigateToStudioWithBrief}
+              onDismissBrief={handleDismissBrief}
+              onBatchWrite={handleBatchWriteBriefs}
+              onSwitchToRuns={handleJumpToRunsCreate}
+              onRefresh={() => {
+                if (!activeBrandId) return;
+                void loadBriefs(
+                  activeBrandId,
+                  activeMarket,
+                  contextSeqRef.current,
+                  briefFilterRef.current,
+                  false,
+                );
+              }}
+            />
+          }
         />
       ),
     },
@@ -977,6 +1339,19 @@ export function VisibilityWorkspace(): JSX.Element {
             setObsMentionFilter('all');
             setObsSentimentFilter('');
           }}
+          renderObservationAction={(obs) => (
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              data-testid="answer-brief-btn"
+              disabled={readOnly || generatingBriefKey !== null}
+              loading={generatingBriefKey === `obs:${obs.id}`}
+              onClick={() => handleGenerateFromObservation(obs)}
+            >
+              针对此条提写作意见
+            </Button>
+          )}
         />
       ),
     },
@@ -1018,6 +1393,31 @@ export function VisibilityWorkspace(): JSX.Element {
           }}
           selectedFanOuts={selectedFanOuts}
           onSelectedFanOutsChange={setSelectedFanOuts}
+          renderCitationAction={(row) =>
+            row.sourceKind !== 'OWNED' && isSafeHttpUrl(row.url) ? (
+              <Button
+                size="small"
+                data-testid="citation-counter-btn"
+                disabled={readOnly || generatingBriefKey !== null}
+                loading={generatingBriefKey === `cite:${row.key}`}
+                onClick={() => handleGenerateFromCitation(row)}
+              >
+                反制重写此页
+              </Button>
+            ) : null
+          }
+          renderFanOutBatchAction={(selectedQueries) => (
+            <Button
+              size="small"
+              type="primary"
+              data-testid="fanout-cluster-btn"
+              disabled={readOnly || selectedQueries.length === 0 || generatingBriefKey !== null}
+              loading={generatingBriefKey === 'fanout:cluster'}
+              onClick={() => handleGenerateFromFanOuts(selectedQueries)}
+            >
+              合并生成专题意见（{selectedQueries.length}）
+            </Button>
+          )}
         />
       ),
     },
@@ -1074,6 +1474,19 @@ export function VisibilityWorkspace(): JSX.Element {
         onChange={handleTabChange}
         items={tabItems}
         className="gm-vis-tabs"
+      />
+
+      {/* M3 Diagnosis-to-Brief Drawer */}
+      <GeoBriefDrawer
+        open={Boolean(activeBrief)}
+        brief={activeBrief}
+        brandFacts={brandFacts}
+        brandFactsLoading={brandFactsLoading}
+        readOnly={readOnly}
+        onClose={() => setActiveBrief(null)}
+        onSave={handleSaveBrief}
+        onDismiss={handleDismissBrief}
+        onWrite={handleNavigateToStudioWithBrief}
       />
     </section>
   );

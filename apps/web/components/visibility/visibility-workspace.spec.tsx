@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type {
   BrandRecord,
+  GeoBriefRecord,
   VisibilityCitationListResponse,
   VisibilityEngineAvailabilityResponse,
   VisibilityOpportunitiesResponse,
@@ -11,6 +12,8 @@ import type {
 import { CITATION_SOURCE_KINDS } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as brandsApi from '../../lib/brands';
+import * as briefsApi from '../../lib/briefs';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
@@ -488,6 +491,15 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     mockNotifySuccess.mockReset();
     mockNotifyError.mockReset();
     window.history.replaceState(null, '', '/visibility');
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: 'brand_dual_1',
+      truthAgreementSignedAt: '2026-11-18T00:00:00.000Z',
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
   });
 
   afterEach(() => {
@@ -840,5 +852,199 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       expect(allVisTables.map((t) => t.style.tableLayout)).toEqual(['fixed', 'fixed', 'fixed']);
     });
     expect(document.body.textContent).not.toContain('NaN%');
+  });
+
+  it('integrates M3 BriefListPanel + GeoBriefDrawer across all 3 tabs and aborts/closes drawer on market switch', async () => {
+    const sampleBrief1: GeoBriefRecord = {
+      id: 'brief_m3_1',
+      brandId: 'brand_dual_1',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      sourceType: 'AUTO_GAP',
+      sourceRunId: 'vrun_sample_1',
+      sourceObservationIds: ['obs_1'],
+      sourceCitationUrl: null,
+      targetPrompt: '家用静音四盘位NAS推荐',
+      priorityScore: 95,
+      diagnosisSummary: '豆包与 DeepSeek 未提及本品牌，群晖占据主要推荐位。',
+      recommendedRecipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'CN_DEEP_REVIEW',
+      suggestedTitle: '2026 家用静音四盘位 NAS 权威选购指南',
+      outlineH2: [
+        { heading: '一、核心选购结论', intent: '首段直答' },
+        { heading: '二、四盘位参数对比表', intent: '横向对比' },
+        { heading: '三、常见痛点 FAQ', intent: '切片答疑' },
+      ],
+      targetFanOuts: ['安静NAS'],
+      competitorFocus: ['群晖'],
+      matchedFactIds: [],
+      missingFactHints: ['建议补充待机功耗实测'],
+      recommendedChannels: [{ channel: '知乎', reason: '高权重问答社区' }],
+      status: 'OPEN',
+      createdAt: '2026-11-20T06:00:00.000Z',
+      updatedAt: '2026-11-20T06:00:00.000Z',
+    };
+
+    const sampleBrief2: GeoBriefRecord = {
+      ...sampleBrief1,
+      id: 'brief_m3_2',
+      sourceType: 'LOW_RANK',
+      priorityScore: 76,
+      suggestedTitle: '2026 四盘位 NAS 性价比实测对比',
+    };
+
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+
+    const fetchBriefsSpy = vi
+      .spyOn(briefsApi, 'fetchBriefs')
+      .mockResolvedValue({ items: [sampleBrief1, sampleBrief2], total: 2 });
+    const generateBriefSpy = vi.spyOn(briefsApi, 'generateBrief').mockResolvedValue(sampleBrief1);
+    const updateBriefSpy = vi
+      .spyOn(briefsApi, 'updateBrief')
+      .mockImplementation(async (_id, patch) => ({
+        ...sampleBrief1,
+        ...patch,
+        updatedAt: '2026-11-20T07:00:00.000Z',
+      }));
+    const dismissBriefSpy = vi
+      .spyOn(briefsApi, 'dismissBrief')
+      .mockResolvedValue({ ...sampleBrief2, status: 'DISMISSED' });
+
+    const navigateWorkspace = vi.fn();
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Tab 1: BriefListPanel renders both cards, supports 2-item multi-select, filter, dismiss, and drawer handoff
+    await waitFor(() => {
+      expect(screen.getByTestId('brief-card-brief_m3_1')).toBeTruthy();
+      expect(screen.getByTestId('brief-card-brief_m3_2')).toBeTruthy();
+    });
+
+    const batchBtn = screen.getByTestId('briefs-batch-btn') as HTMLButtonElement;
+    expect(batchBtn.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText(`选择写作建议-${sampleBrief1.suggestedTitle}`));
+    fireEvent.click(screen.getByLabelText(`选择写作建议-${sampleBrief2.suggestedTitle}`));
+    expect(batchBtn.disabled).toBe(false);
+
+    // Dismiss card 2 via useUxFeedback().confirm
+    const card2 = screen.getByTestId('brief-card-brief_m3_2');
+    fireEvent.click(within(card2).getByRole('button', { name: '忽略' }));
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    const confirmArg = mockConfirm.mock.calls[0]?.[0] as { onOk: () => Promise<void> };
+    await act(async () => {
+      await confirmArg.onOk();
+    });
+    expect(dismissBriefSpy).toHaveBeenCalledWith('brief_m3_2');
+
+    // Open drawer from card 1, edit title, click write -> auto-saves PATCH & navigates to /studio?brandId=&market=&briefId=
+    const card1 = screen.getByTestId('brief-card-brief_m3_1');
+    fireEvent.click(within(card1).getByRole('button', { name: '查看详细意见' }));
+    const drawer = await screen.findByTestId('geo-brief-drawer');
+    fireEvent.change(within(drawer).getByTestId('brief-drawer-title'), {
+      target: { value: '2026 家用四盘位 NAS 终极选购指南' },
+    });
+    fireEvent.click(within(drawer).getByTestId('brief-drawer-write-btn'));
+
+    await waitFor(() => {
+      expect(updateBriefSpy).toHaveBeenCalledWith(
+        'brief_m3_1',
+        expect.objectContaining({ suggestedTitle: '2026 家用四盘位 NAS 终极选购指南' }),
+      );
+      expect(navigateWorkspace).toHaveBeenCalledWith(
+        '/studio?brandId=brand_dual_1&market=CN&briefId=brief_m3_1',
+      );
+    });
+
+    // Tab 2: answer-brief-btn generates brief from observationIds and opens drawer
+    fireEvent.click(screen.getByTestId('visibility-tab-runs'));
+    const answerBtn = await screen.findByTestId('answer-brief-btn');
+    fireEvent.click(answerBtn);
+    await waitFor(() => {
+      expect(generateBriefSpy).toHaveBeenCalledWith(
+        'brand_dual_1',
+        expect.objectContaining({
+          market: 'CN',
+          observationIds: ['obs_1'],
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(await screen.findByTestId('geo-brief-drawer')).toBeTruthy();
+
+    // Market switch closes stale drawer & resets selections synchronously
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL');
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('geo-brief-drawer')).toBeNull();
+    });
+    expect(fetchBriefsSpy).toHaveBeenCalledWith(
+      'brand_dual_1',
+      'GLOBAL',
+      expect.any(Object),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+
+    // Tab 3: citation-counter-btn rendered ONLY for safe https URL (NOT javascript:alert(1)), and fanout-cluster-btn works
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    await waitFor(() => {
+      const counterBtns = screen.getAllByTestId('citation-counter-btn');
+      expect(counterBtns).toHaveLength(1);
+    });
+    fireEvent.click(screen.getByTestId('citation-counter-btn'));
+    await waitFor(() => {
+      expect(generateBriefSpy).toHaveBeenCalledWith(
+        'brand_dual_1',
+        expect.objectContaining({
+          market: 'GLOBAL',
+          sourceType: 'CITATION_COUNTER',
+          citationUrl: 'https://synology.com/review',
+        }),
+        expect.any(Object),
+      );
+    });
+
+    // Close drawer, check 2 fan-outs, click fanout-cluster-btn
+    fireEvent.click(screen.getByLabelText('关闭写作意见抽屉'));
+    fireEvent.click(screen.getByLabelText('选择拆解词-安静NAS'));
+    fireEvent.click(screen.getByLabelText('选择拆解词-家用NAS功耗'));
+    fireEvent.click(screen.getByTestId('fanout-cluster-btn'));
+    await waitFor(() => {
+      expect(generateBriefSpy).toHaveBeenCalledWith(
+        'brand_dual_1',
+        expect.objectContaining({
+          market: 'GLOBAL',
+          sourceType: 'FANOUT_CLUSTER',
+          fanOutQueries: ['安静NAS', '家用NAS功耗'],
+        }),
+        expect.any(Object),
+      );
+    });
+
+    // Switching back to Tab 1 (overview) triggers an immediate silent brief refresh
+    const callsBeforeOverviewSwitch = fetchBriefsSpy.mock.calls.length;
+    fireEvent.click(screen.getByTestId('visibility-tab-overview'));
+    await waitFor(() => {
+      expect(fetchBriefsSpy.mock.calls.length).toBeGreaterThan(callsBeforeOverviewSwitch);
+    });
   });
 });

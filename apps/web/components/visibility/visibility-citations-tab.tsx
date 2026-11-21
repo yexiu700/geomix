@@ -193,13 +193,13 @@ export function VisibilityCitationsTab({
         title: '关联问题数',
         dataIndex: 'questionCount',
         key: 'questionCount',
-        width: 100,
+        width: 96,
         render: (qCount: number) => <span className="gm-num">{qCount}</span>,
       },
       {
         title: '操作',
         key: 'actions',
-        width: 132,
+        width: 192,
         render: (_v, row) => (
           <div className="gm-vis-cite-actions">
             {renderCitationAction && row.sourceKind !== 'OWNED' ? renderCitationAction(row) : null}

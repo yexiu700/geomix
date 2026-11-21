@@ -6,12 +6,14 @@ import {
   FACT_INDEX_ENQUEUER,
   FACT_INDEX_HANDLER,
 } from '../brands/brand-fact-index.runner';
+import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.service';
 import { AdaptersModule } from '../infra/adapters.module';
 import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
 import { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
 import { VisibilityJudgeService } from '../visibility/visibility-judge.service';
 import {
+  VISIBILITY_RUN_COMPLETE_HOOKS,
   VISIBILITY_RUN_ENQUEUER,
   VISIBILITY_RUN_HANDLER,
   VisibilityRunRunner,
@@ -74,10 +76,16 @@ export class QueueModule {
         VisibilityCollectorService,
         VisibilityEngineHealthService,
         VisibilityJudgeService,
-        VisibilityRunRunner,
-        { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
         BrandFactIndexRunner,
         { provide: FACT_INDEX_HANDLER, useExisting: BrandFactIndexRunner },
+        BriefsAutoGeneratorService,
+        {
+          provide: VISIBILITY_RUN_COMPLETE_HOOKS,
+          inject: [BriefsAutoGeneratorService],
+          useFactory: (autoGen: BriefsAutoGeneratorService) => [autoGen],
+        },
+        VisibilityRunRunner,
+        { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
         QueueRuntime,
       ],
       exports: [
@@ -89,6 +97,7 @@ export class QueueModule {
         FACT_INDEX_ENQUEUER,
         VisibilityRunRunner,
         BrandFactIndexRunner,
+        BriefsAutoGeneratorService,
         QueueRuntime,
       ],
     };

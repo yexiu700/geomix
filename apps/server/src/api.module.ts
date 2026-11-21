@@ -5,6 +5,7 @@ import { AuthContextMiddleware } from './auth/auth-context.middleware';
 import { AuthModule } from './auth/auth.module';
 import { BillingModule } from './billing/billing.module';
 import { BrandsModule } from './brands/brands.module';
+import { BriefsModule } from './briefs/briefs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
@@ -27,6 +28,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     BrandsModule,
     DashboardModule,
     VisibilityModule,
+    BriefsModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

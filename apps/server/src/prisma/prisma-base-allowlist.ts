@@ -45,6 +45,7 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'brands/brand-fact-index.runner.ts': { category: 'worker', direct: 3, txOrRaw: 3 },
   'brands/brand-media.service.ts': { category: 'billing', direct: 0, txOrRaw: 2 },
   'brands/brands.service.ts': { category: 'billing', direct: 0, txOrRaw: 1 },
+  'briefs/briefs-auto-generator.service.ts': { category: 'worker', direct: 1, txOrRaw: 1 },
   'common/test-db.ts': { category: 'test-support', direct: 5, txOrRaw: 0 },
   'dashboard/dashboard.service.ts': { category: 'merchant-debt', direct: 2, txOrRaw: 0 },
   'infra/adapters.module.ts': { category: 'infra', direct: 2, txOrRaw: 0 },

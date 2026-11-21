@@ -831,8 +831,303 @@ export function computeChar5GramJaccard(sourceText: string, candidateText: strin
 
 // ==================== Zod Schemas & DTOs ====================
 
+export const GEO_BRIEF_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+export const GEO_BRIEF_SOURCE_PRIORITY_RANK: Record<GeoBriefSource, number> = {
+  AUTO_GAP: 6,
+  SENTIMENT_RISK: 5,
+  LOW_RANK: 4,
+  CITATION_COUNTER: 3,
+  FANOUT_CLUSTER: 2,
+  MANUAL: 1,
+};
+
+export type GeoBriefPriorityInput = {
+  sourceType: GeoBriefSource;
+  competitorEngineHits?: number;
+  competitorCount?: number;
+  negativeCount?: number;
+  mixedCount?: number;
+  avgPosition?: number | null;
+  citationCount?: number;
+  ownedCitationCount?: number;
+  isCompetitorSource?: boolean;
+  fanOutCount?: number;
+};
+
+function clampInt(min: number, max: number, value: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+/**
+ * 按 PRD §4.3 规则计算写作诊断意见卡 0–100 优先级分数：
+ * - P1 AUTO_GAP: 90–100（多引擎竞品霸榜 >=2 → 95–100；单引擎竞品缺口 → 90–94；纯盲区 → 90）
+ * - P2 SENTIMENT_RISK: 80–89（negative → 85–89；mixed → 80–84）
+ * - P3 LOW_RANK: 70–79（avgPosition >= 3）
+ * - P5 CITATION_COUNTER: 60–75
+ * - P4 FANOUT_CLUSTER: 60–69
+ * - MANUAL: 50–65（默认 55）
+ */
+export function computeGeoBriefPriorityScore(input: GeoBriefPriorityInput): number {
+  const competitorEngineHits = Math.max(0, Math.floor(input.competitorEngineHits ?? 0));
+  const competitorCount = Math.max(0, Math.floor(input.competitorCount ?? 0));
+
+  switch (input.sourceType) {
+    case 'AUTO_GAP': {
+      if (competitorEngineHits >= 2) {
+        return clampInt(95, 100, 93 + competitorEngineHits * 2 + Math.min(3, competitorCount));
+      }
+      if (competitorEngineHits === 1) {
+        return clampInt(90, 94, 90 + Math.min(4, Math.max(1, competitorCount)));
+      }
+      return 90;
+    }
+    case 'SENTIMENT_RISK': {
+      const negativeCount = Math.max(0, Math.floor(input.negativeCount ?? 0));
+      const mixedCount = Math.max(0, Math.floor(input.mixedCount ?? 0));
+      if (negativeCount > 0) {
+        return clampInt(85, 89, 85 + Math.min(4, negativeCount * 2));
+      }
+      return clampInt(80, 84, 80 + Math.min(4, Math.max(1, mixedCount)));
+    }
+    case 'LOW_RANK': {
+      const avgPos =
+        typeof input.avgPosition === 'number' && Number.isFinite(input.avgPosition)
+          ? input.avgPosition
+          : 4;
+      return clampInt(
+        70,
+        79,
+        70 + Math.min(5, Math.max(1, Math.round(avgPos))) + Math.min(4, competitorEngineHits),
+      );
+    }
+    case 'CITATION_COUNTER': {
+      const citationCount = Math.max(1, Math.floor(input.citationCount ?? 1));
+      const ownedBonus = (input.ownedCitationCount ?? 0) === 0 ? 1 : 0;
+      const compBonus = input.isCompetitorSource ? 4 : 0;
+      return clampInt(60, 75, 62 + Math.min(8, citationCount * 3) + compBonus + ownedBonus);
+    }
+    case 'FANOUT_CLUSTER': {
+      const fanOutCount = Math.max(1, Math.floor(input.fanOutCount ?? 3));
+      return clampInt(60, 69, 60 + Math.min(9, fanOutCount));
+    }
+    case 'MANUAL':
+    default:
+      return 55;
+  }
+}
+
+export function compareGeoBriefPriority(
+  a: { priorityScore: number; sourceType?: GeoBriefSource; createdAt?: string | Date },
+  b: { priorityScore: number; sourceType?: GeoBriefSource; createdAt?: string | Date },
+): number {
+  if (b.priorityScore !== a.priorityScore) {
+    return b.priorityScore - a.priorityScore;
+  }
+  if (a.sourceType && b.sourceType && a.sourceType !== b.sourceType) {
+    return (
+      GEO_BRIEF_SOURCE_PRIORITY_RANK[b.sourceType] - GEO_BRIEF_SOURCE_PRIORITY_RANK[a.sourceType]
+    );
+  }
+  const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+  return timeB - timeA;
+}
+
+export function defaultRecipeForBriefSource(sourceType: GeoBriefSource): GeoRecipe {
+  switch (sourceType) {
+    case 'SENTIMENT_RISK':
+      return 'OBJECTION_FAQ';
+    case 'LOW_RANK':
+      return 'COMPARISON_MATRIX';
+    case 'CITATION_COUNTER':
+      return 'CITATION_COUNTER';
+    case 'AUTO_GAP':
+    case 'FANOUT_CLUSTER':
+    case 'MANUAL':
+    default:
+      return 'AUTHORITY_GUIDE';
+  }
+}
+
+export function recommendBriefTargetFormat(
+  market: GeoMarket,
+  sourceType: GeoBriefSource,
+  options?: { socialHeavy?: boolean },
+): GeoTargetFormat {
+  const preferCommunity = sourceType === 'SENTIMENT_RISK' || Boolean(options?.socialHeavy);
+  if (market === 'GLOBAL') {
+    return preferCommunity ? 'GLOBAL_COMMUNITY_DISCUSSION' : 'GLOBAL_AUTHORITY_GUIDE';
+  }
+  return preferCommunity ? 'CN_COMMUNITY_QA' : 'CN_DEEP_REVIEW';
+}
+
+export const CN_RECOMMENDED_CHANNELS = [
+  '字节头条/抖音图文',
+  '知乎',
+  '什么值得买',
+  '微信公众号',
+  '小红书',
+  '官网',
+] as const;
+
+export const GLOBAL_RECOMMENDED_CHANNELS = [
+  'Independent Blog/Docs (llms.txt + JSON-LD)',
+  'Reddit',
+  'Quora',
+  'Trustpilot/G2',
+  'Independent Review Media',
+] as const;
+
+export type ChannelRecommendationContext = {
+  sourceType?: GeoBriefSource;
+  socialCitations?: number;
+  authorityCitations?: number;
+  competitorCitations?: number;
+  ecommerceCitations?: number;
+  citationsEmpty?: boolean;
+};
+
+/**
+ * 严格按 CN / GLOBAL 双市场隔离推荐投放渠道（GLOBAL 绝不混入任何国内平台名称）。
+ */
+export function recommendChannelsForMarket(
+  market: GeoMarket,
+  ctx?: ChannelRecommendationContext,
+): GeoBriefChannelRecommendation[] {
+  const sourceType = ctx?.sourceType ?? 'AUTO_GAP';
+  const socialHeavy = (ctx?.socialCitations ?? 0) > 0 || sourceType === 'SENTIMENT_RISK';
+  const authorityHeavy = (ctx?.authorityCitations ?? 0) > 0 || sourceType === 'CITATION_COUNTER';
+  const emptyNoteCn = ctx?.citationsEmpty
+    ? '（本次引擎未返回外部引用链接，优先布局高权重检索阵地补齐信源覆盖）'
+    : '';
+  const emptyNoteGlobal = ctx?.citationsEmpty
+    ? ' (no external citations returned in this run; prioritize crawlable primary sources)'
+    : '';
+
+  if (market === 'GLOBAL') {
+    const channels: GeoBriefChannelRecommendation[] = [];
+    channels.push({
+      channel: 'Independent Blog/Docs (llms.txt + JSON-LD)',
+      reason: `Publish structured specs, comparison tables, and validated Article/FAQPage JSON-LD for ChatGPT, Perplexity, and Google AIO${emptyNoteGlobal}.`,
+    });
+    if (socialHeavy) {
+      channels.push({
+        channel: 'Reddit',
+        reason:
+          'Address buyer skepticism with transparent benchmarks and non-promotional community answers that AI engines frequently cite.',
+      });
+      channels.push({
+        channel: 'Trustpilot/G2',
+        reason:
+          'Reinforce verified customer sentiment and concrete resolution cases to offset mixed or negative AI summaries.',
+      });
+    } else if (authorityHeavy) {
+      channels.push({
+        channel: 'Independent Review Media',
+        reason:
+          'Counter high-citation third-party roundups with deeper hands-on test methodology and up-to-date benchmark tables.',
+      });
+      channels.push({
+        channel: 'Reddit',
+        reason:
+          'Capture high-intent comparison threads and long-tail follow-up questions surfaced in AI fan-out queries.',
+      });
+    } else {
+      channels.push({
+        channel: 'Reddit',
+        reason:
+          'Provide objective side-by-side discussions in category subreddits where Perplexity and ChatGPT harvest consensus.',
+      });
+      channels.push({
+        channel: 'Quora',
+        reason:
+          'Cover direct buyer questions and fan-out sub-queries with concise, quotable first-paragraph answers.',
+      });
+    }
+    return channels.slice(0, 3);
+  }
+
+  const channels: GeoBriefChannelRecommendation[] = [];
+  if (socialHeavy) {
+    channels.push({
+      channel: '知乎',
+      reason: `针对用户顾虑发布结构化实测答疑，覆盖豆包、DeepSeek 高频引用的问答语料${emptyNoteCn}。`,
+    });
+    channels.push({
+      channel: '小红书',
+      reason: '通过真实使用场景与细节实拍拆解，纠偏社区口碑并提升买前检索信任度。',
+    });
+    channels.push({
+      channel: '官网',
+      reason: '同步沉淀参数说明与权威背书页，为 AI 引擎提供可核验的一手事实信源。',
+    });
+  } else if (authorityHeavy) {
+    channels.push({
+      channel: '字节头条/抖音图文',
+      reason: `强化豆包及头条系搜索生态的高权深度评测供给，直接对标竞品高引用长文${emptyNoteCn}。`,
+    });
+    channels.push({
+      channel: '什么值得买',
+      reason: '以量化横向对比表与性价比结论切入消费决策阵地，承接高意图比价查询。',
+    });
+    channels.push({
+      channel: '微信公众号',
+      reason: '沉淀完整长文与专业评测报告，补充高质量中文语义索引。',
+    });
+  } else {
+    channels.push({
+      channel: '字节头条/抖音图文',
+      reason: `豆包与国内主流 AI 引擎高频抓取阵地，适合首段直答 + 参数对比表长文${emptyNoteCn}。`,
+    });
+    channels.push({
+      channel: '知乎',
+      reason: '高权重问答与专业测评社区，易被 DeepSeek 等模型直接引用推荐。',
+    });
+    channels.push({
+      channel: '什么值得买',
+      reason: '覆盖真实选购与横向横评场景，强化品牌在推荐清单中的顺位。',
+    });
+  }
+  return channels.slice(0, 3);
+}
+
+const optionalBooleanQuerySchema = z.preprocess((val) => {
+  if (val === undefined || val === null || val === '') return undefined;
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'string') {
+    const norm = val.trim().toLowerCase();
+    if (norm === 'true' || norm === '1') return true;
+    if (norm === 'false' || norm === '0') return false;
+  }
+  return val;
+}, z.boolean().optional());
+
+const optionalBoundedInt = (min: number, max: number, fallback: number) =>
+  z.preprocess((val) => {
+    if (val === undefined || val === null || val === '') return fallback;
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+      return Number(val.trim());
+    }
+    return val;
+  }, z.number().int().min(min).max(max));
+
+export const geoBriefListQuerySchema = z.object({
+  market: z.enum(GEO_MARKETS).optional(),
+  status: z.enum(GEO_BRIEF_STATUSES).optional(),
+  sourceType: z.enum(GEO_BRIEF_SOURCES).optional(),
+  sourceRunId: z.string().trim().regex(GEO_BRIEF_ID_PATTERN, '监测任务编号格式不正确').optional(),
+  runId: z.string().trim().regex(GEO_BRIEF_ID_PATTERN, '监测任务编号格式不正确').optional(),
+  includeDismissed: optionalBooleanQuerySchema,
+  page: optionalBoundedInt(1, 1000, 1),
+  pageSize: optionalBoundedInt(1, 100, 50),
+});
+
+export type GeoBriefListQuery = z.infer<typeof geoBriefListQuerySchema>;
+
 export const geoBriefGenerateSchema = z.object({
-  market: z.enum(GEO_MARKETS),
+  market: z.enum(GEO_MARKETS).optional(),
   sourceType: z.enum(GEO_BRIEF_SOURCES),
   observationIds: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   citationUrl: z.string().trim().url('参考引用链接格式不正确').max(2048).optional(),
@@ -865,6 +1160,7 @@ export const geoBriefUpdateSchema = z
     suggestedTitle: z.string().trim().min(1).max(120).optional(),
     outlineH2: z.array(geoOutlineHeadingSchema).max(15).optional(),
     targetFanOuts: z.array(z.string().trim().min(1).max(200)).max(20).optional(),
+    competitorFocus: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
     missingFactHints: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
   })
   .refine((val) => Object.keys(val).length > 0, '至少修改一项意见卡字段');
