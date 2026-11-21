@@ -26,6 +26,7 @@ const MAX_LITERAL_STRING_BYTES = 131_072;
 const MAX_HEX_STRING_CHARS = MAX_LITERAL_STRING_BYTES * 2;
 const SKIP_STREAM_DICT_RE =
   /\/Subtype\s*\/(?:Image|Type1C|OpenType|CIDFontType0C)\b|\/Type\s*\/XRef\b|\/Length1\b/;
+const LITERAL_DELIM_RE = /[()\\]/g;
 
 interface CMapBudget {
   ops: number;
@@ -518,24 +519,47 @@ function isPdfDelimiterOrWsCode(c: number): boolean {
   );
 }
 
-function skipPdfLiteralString(input: string, startIndex: number): number {
-  let i = startIndex + 1;
+function skipLiteralRemainder(input: string, startIndex: number, initialDepth: number): number {
   const len = input.length;
-  let depth = 1;
+  let i = startIndex;
+  let depth = initialDepth;
   while (i < len && depth > 0) {
-    const c = input.charCodeAt(i);
-    if (c === 92 /* '\\' */) {
+    const c0 = input.charCodeAt(i);
+    if (c0 === 92 /* '\\' */) {
       i = Math.min(i + 2, len);
       continue;
     }
-    if (c === 40 /* '(' */) {
+    if (c0 === 40 /* '(' */) {
       depth += 1;
-    } else if (c === 41 /* ')' */) {
-      depth -= 1;
+      i += 1;
+      continue;
     }
-    i += 1;
+    if (c0 === 41 /* ')' */) {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
+    LITERAL_DELIM_RE.lastIndex = i;
+    const match = LITERAL_DELIM_RE.exec(input);
+    if (!match) {
+      return len;
+    }
+    const code = input.charCodeAt(match.index);
+    if (code === 92 /* '\\' */) {
+      i = Math.min(match.index + 2, len);
+    } else if (code === 40 /* '(' */) {
+      depth += 1;
+      i = match.index + 1;
+    } else {
+      depth -= 1;
+      i = match.index + 1;
+    }
   }
   return i;
+}
+
+function skipPdfLiteralString(input: string, startIndex: number): number {
+  return skipLiteralRemainder(input, startIndex + 1, 1);
 }
 
 function extractBtBlocks(stream: string, maxBlocks: number): string[] {
@@ -545,6 +569,17 @@ function extractBtBlocks(stream: string, maxBlocks: number): string[] {
   let i = 0;
   let inBlock = false;
   let blockStart = -1;
+  let scannedTokens = 0;
+
+  const pushBlockIfNonWs = (endIndex: number): boolean => {
+    for (let p = blockStart; p < endIndex; p += 1) {
+      if (!isPdfWsCode(stream.charCodeAt(p))) {
+        blocks.push(stream.slice(blockStart, endIndex));
+        return true;
+      }
+    }
+    return false;
+  };
 
   while (i < len) {
     const c = stream.charCodeAt(i);
@@ -563,9 +598,16 @@ function extractBtBlocks(stream: string, maxBlocks: number): string[] {
     if (c === 40 /* '(' */) {
       if (i + 1 < len && stream.charCodeAt(i + 1) === 41 /* ')' */) {
         i += 2;
-        continue;
+      } else {
+        i = skipPdfLiteralString(stream, i);
       }
-      i = skipPdfLiteralString(stream, i);
+      if (inBlock) {
+        scannedTokens += 1;
+        if (scannedTokens >= maxBlocks) {
+          pushBlockIfNonWs(i);
+          break;
+        }
+      }
       continue;
     }
     if (c === 60 /* '<' */) {
@@ -576,6 +618,13 @@ function extractBtBlocks(stream: string, maxBlocks: number): string[] {
       const end = stream.indexOf('>', i + 1);
       if (end === -1) break;
       i = end + 1;
+      if (inBlock) {
+        scannedTokens += 1;
+        if (scannedTokens >= maxBlocks) {
+          pushBlockIfNonWs(i);
+          break;
+        }
+      }
       continue;
     }
     if (c === 62 /* '>' */) {
@@ -585,17 +634,27 @@ function extractBtBlocks(stream: string, maxBlocks: number): string[] {
     if (c === 47 /* '/' */) {
       i += 1;
       while (i < len && !isPdfDelimiterOrWsCode(stream.charCodeAt(i))) i += 1;
+      if (inBlock) {
+        scannedTokens += 1;
+        if (scannedTokens >= maxBlocks) {
+          pushBlockIfNonWs(i);
+          break;
+        }
+      }
       continue;
     }
-    if (
-      c === 91 /* '[' */ ||
-      c === 93 /* ']' */ ||
-      c === 123 /* '{' */ ||
-      c === 125 /* '}' */ ||
-      c === 41 /* ')' */ ||
-      c === 39 /* "'" */ ||
-      c === 34 /* '"' */
-    ) {
+    if (c === 91 /* '[' */ || c === 39 /* "'" */ || c === 34 /* '"' */) {
+      i += 1;
+      if (inBlock) {
+        scannedTokens += 1;
+        if (scannedTokens >= maxBlocks) {
+          pushBlockIfNonWs(i);
+          break;
+        }
+      }
+      continue;
+    }
+    if (c === 93 /* ']' */ || c === 123 /* '{' */ || c === 125 /* '}' */ || c === 41 /* ')' */) {
       i += 1;
       continue;
     }
@@ -609,23 +668,29 @@ function extractBtBlocks(stream: string, maxBlocks: number): string[] {
     if (i - tokenStart === 2) {
       const c0 = stream.charCodeAt(tokenStart);
       const c1 = stream.charCodeAt(tokenStart + 1);
-      if (c0 === 66 /* 'B' */ && c1 === 84 /* 'T' */ && !inBlock) {
-        inBlock = true;
-        blockStart = i;
-      } else if (c0 === 69 /* 'E' */ && c1 === 84 /* 'T' */ && inBlock) {
-        let hasNonWs = false;
-        for (let p = blockStart; p < tokenStart; p += 1) {
-          if (!isPdfWsCode(stream.charCodeAt(p))) {
-            hasNonWs = true;
+      if (c0 === 66 /* 'B' */ && c1 === 84 /* 'T' */) {
+        if (!inBlock) {
+          inBlock = true;
+          blockStart = i;
+        }
+        continue;
+      }
+      if (c0 === 69 /* 'E' */ && c1 === 84 /* 'T' */) {
+        if (inBlock) {
+          if (pushBlockIfNonWs(tokenStart) && blocks.length >= maxBlocks) {
             break;
           }
+          inBlock = false;
+          blockStart = -1;
         }
-        if (hasNonWs) {
-          blocks.push(stream.slice(blockStart, tokenStart));
-          if (blocks.length >= maxBlocks) break;
-        }
-        inBlock = false;
-        blockStart = -1;
+        continue;
+      }
+    }
+    if (inBlock) {
+      scannedTokens += 1;
+      if (scannedTokens >= maxBlocks) {
+        pushBlockIfNonWs(i);
+        break;
       }
     }
   }
@@ -741,33 +806,47 @@ function readHexString(
   return { hex: input.slice(startIndex + 1, maxEnd), nextIndex: end + 1 };
 }
 
+const EMPTY_STRING_TOKEN: { kind: 'string'; value: string } = { kind: 'string', value: '' };
+const OTHER_OP_TOKEN: { kind: 'op'; value: string } = { kind: 'op', value: '' };
+
 function tokenizePdfBlock(
   block: string,
   cmap: Map<string, string>,
   budget: PdfExtractBudget,
 ): PdfToken[] {
   const tokens: PdfToken[] = [];
+  const len = block.length;
   let i = 0;
 
-  while (i < block.length && budget.tokens < MAX_TOTAL_PDF_TOKENS) {
-    if (isPdfWsCode(block.charCodeAt(i))) {
+  while (i < len && budget.tokens < MAX_TOTAL_PDF_TOKENS) {
+    const code = block.charCodeAt(i);
+    if (isPdfWsCode(code)) {
       i += 1;
       continue;
     }
-    const ch = block[i]!;
-    if (ch === '%') {
-      while (i < block.length && block[i] !== '\n' && block[i] !== '\r') i += 1;
+    if (code === 37 /* '%' */) {
+      while (i < len) {
+        const cc = block.charCodeAt(i);
+        if (cc === 10 || cc === 13) break;
+        i += 1;
+      }
       continue;
     }
-    if (ch === '(') {
+    if (code === 40 /* '(' */) {
+      if (i + 1 < len && block.charCodeAt(i + 1) === 41 /* ')' */) {
+        tokens.push(EMPTY_STRING_TOKEN);
+        budget.tokens += 1;
+        i += 2;
+        continue;
+      }
       const parsed = readLiteralString(block, i);
       tokens.push({ kind: 'string', value: parsed.value });
       budget.tokens += 1 + Math.floor(parsed.value.length / 32);
       i = parsed.nextIndex;
       continue;
     }
-    if (ch === '<') {
-      if (block[i + 1] === '<') {
+    if (code === 60 /* '<' */) {
+      if (i + 1 < len && block.charCodeAt(i + 1) === 60) {
         budget.tokens += 1;
         i += 2;
         continue;
@@ -779,34 +858,48 @@ function tokenizePdfBlock(
       i = hexToken.nextIndex;
       continue;
     }
-    if (ch === '>' && block[i + 1] === '>') {
+    if (code === 62 /* '>' */ && i + 1 < len && block.charCodeAt(i + 1) === 62) {
       budget.tokens += 1;
       i += 2;
       continue;
     }
-    if (ch === '[') {
+    if (code === 91 /* '[' */) {
       const items: Array<{ kind: 'string'; value: string } | { kind: 'number'; value: number }> =
         [];
       i += 1;
       budget.tokens += 1;
-      while (i < block.length && block[i] !== ']' && budget.tokens < MAX_TOTAL_PDF_TOKENS) {
-        if (isPdfWsCode(block.charCodeAt(i))) {
+      while (
+        i < len &&
+        block.charCodeAt(i) !== 93 /* ']' */ &&
+        budget.tokens < MAX_TOTAL_PDF_TOKENS
+      ) {
+        const curCode = block.charCodeAt(i);
+        if (isPdfWsCode(curCode)) {
           i += 1;
           continue;
         }
-        const cur = block[i]!;
-        if (cur === '%') {
-          while (i < block.length && block[i] !== '\n' && block[i] !== '\r') i += 1;
+        if (curCode === 37 /* '%' */) {
+          while (i < len) {
+            const cc = block.charCodeAt(i);
+            if (cc === 10 || cc === 13) break;
+            i += 1;
+          }
           continue;
         }
-        if (cur === '(') {
+        if (curCode === 40 /* '(' */) {
+          if (i + 1 < len && block.charCodeAt(i + 1) === 41 /* ')' */) {
+            items.push(EMPTY_STRING_TOKEN);
+            budget.tokens += 1;
+            i += 2;
+            continue;
+          }
           const parsed = readLiteralString(block, i);
           items.push({ kind: 'string', value: parsed.value });
           budget.tokens += 1 + Math.floor(parsed.value.length / 32);
           i = parsed.nextIndex;
           continue;
         }
-        if (cur === '<' && block[i + 1] !== '<') {
+        if (curCode === 60 /* '<' */ && (i + 1 >= len || block.charCodeAt(i + 1) !== 60)) {
           const hexToken = readHexString(block, i);
           if (!hexToken) break;
           items.push({ kind: 'string', value: decodePdfHexString(hexToken.hex, cmap) });
@@ -824,24 +917,24 @@ function tokenizePdfBlock(
         budget.tokens += 1;
         i += 1;
       }
-      if (i < block.length && block[i] === ']') i += 1;
+      if (i < len && block.charCodeAt(i) === 93 /* ']' */) i += 1;
       tokens.push({ kind: 'array', items });
       continue;
     }
-    if (ch === "'" || ch === '"') {
-      tokens.push({ kind: 'op', value: ch });
+    if (code === 39 /* "'" */ || code === 34 /* '"' */) {
+      tokens.push({ kind: 'op', value: code === 39 ? "'" : '"' });
       budget.tokens += 1;
       i += 1;
       continue;
     }
-    if (ch === '/') {
+    if (code === 47 /* '/' */) {
       budget.tokens += 1;
       i += 1;
-      while (i < block.length && !isPdfDelimiterOrWsCode(block.charCodeAt(i))) i += 1;
+      while (i < len && !isPdfDelimiterOrWsCode(block.charCodeAt(i))) i += 1;
       continue;
     }
     const tokenStart = i;
-    while (i < block.length) {
+    while (i < len) {
       const tc = block.charCodeAt(i);
       if (isPdfDelimiterOrWsCode(tc) || tc === 39 || tc === 34) break;
       i += 1;
@@ -851,16 +944,40 @@ function tokenizePdfBlock(
       i += 1;
       continue;
     }
-    const rawToken = block.slice(tokenStart, i);
-    if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(rawToken)) {
-      tokens.push({ kind: 'number', value: Number(rawToken) });
+    const tokenLen = i - tokenStart;
+    if (scanPdfNumber(block, tokenStart) === tokenLen) {
+      tokens.push({ kind: 'number', value: Number(block.slice(tokenStart, i)) });
       budget.tokens += 1;
-    } else if (/^[A-Za-z*]+$/.test(rawToken)) {
-      tokens.push({ kind: 'op', value: rawToken });
-      budget.tokens += 1;
-    } else {
-      budget.tokens += 1;
+      continue;
     }
+    let isOp = true;
+    for (let p = tokenStart; p < i; p += 1) {
+      const oc = block.charCodeAt(p);
+      if (!((oc >= 65 && oc <= 90) || (oc >= 97 && oc <= 122) || oc === 42 /* '*' */)) {
+        isOp = false;
+        break;
+      }
+    }
+    if (isOp) {
+      if (tokenLen === 2 && block.charCodeAt(tokenStart) === 84 /* 'T' */) {
+        const rawOp = block.slice(tokenStart, i);
+        if (
+          rawOp === 'Tj' ||
+          rawOp === 'TJ' ||
+          rawOp === 'T*' ||
+          rawOp === 'Td' ||
+          rawOp === 'TD' ||
+          rawOp === 'Tm'
+        ) {
+          tokens.push({ kind: 'op', value: rawOp });
+        } else if (tokens.length === 0 || tokens[tokens.length - 1] !== OTHER_OP_TOKEN) {
+          tokens.push(OTHER_OP_TOKEN);
+        }
+      } else if (tokens.length === 0 || tokens[tokens.length - 1] !== OTHER_OP_TOKEN) {
+        tokens.push(OTHER_OP_TOKEN);
+      }
+    }
+    budget.tokens += 1;
   }
 
   return tokens;
@@ -924,19 +1041,7 @@ function readLiteralString(
   while (i < len && depth > 0) {
     if (bytes.length >= MAX_LITERAL_STRING_BYTES) {
       truncated = true;
-      while (i < len && depth > 0) {
-        const code = input.charCodeAt(i);
-        if (code === 92 /* '\\' */) {
-          i = Math.min(i + 2, len);
-          continue;
-        }
-        if (code === 40 /* '(' */) {
-          depth += 1;
-        } else if (code === 41 /* ')' */) {
-          depth -= 1;
-        }
-        i += 1;
-      }
+      i = skipLiteralRemainder(input, i, depth);
       break;
     }
 

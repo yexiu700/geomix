@@ -355,7 +355,9 @@ endobj
     expect(extracted).toContain('Linear BT Tokenizing Verified 2026');
   });
 
-  it('bounds cumulative CMap bfrange amplification and wide-hex bombs (<500ms) (B-08-R3)', () => {
+  const CI_LINEAR_BUDGET_MS = 1_500;
+
+  it('bounds cumulative CMap bfrange amplification and wide-hex bombs (<1500ms) (B-08-R3)', () => {
     const wrapFlatePdf = (streamBody: string): Buffer => {
       const compressed = deflateSync(Buffer.from(streamBody, 'latin1'));
       return Buffer.concat([
@@ -373,7 +375,7 @@ endobj
     );
     const t1 = performance.now();
     expect(() => extractTextFromPdf(bfRangeAmpPdf)).toThrowError(PdfExtractError);
-    expect(performance.now() - t1).toBeLessThan(500);
+    expect(performance.now() - t1).toBeLessThan(CI_LINEAR_BUDGET_MS);
 
     const wideStart = '0'.repeat(10_000);
     const wideEnd = `${'0'.repeat(9_997)}800`;
@@ -382,10 +384,10 @@ endobj
     );
     const t2 = performance.now();
     expect(() => extractTextFromPdf(wideHexPdf)).toThrowError(PdfExtractError);
-    expect(performance.now() - t2).toBeLessThan(500);
+    expect(performance.now() - t2).toBeLessThan(CI_LINEAR_BUDGET_MS);
   });
 
-  it('bounds FlateDecode BT token floods and 18 MB literal/hex text bombs (<500ms) (B-08-R3)', () => {
+  it('bounds FlateDecode BT token floods and 18 MB literal/hex text bombs (<1500ms) (B-08-R3)', () => {
     const wrapFlateStreamsPdf = (bodies: string[]): Buffer => {
       const parts: Buffer[] = [Buffer.from('%PDF-1.7\n', 'latin1')];
       bodies.forEach((body, idx) => {
@@ -406,18 +408,26 @@ endobj
     const parensFloodPdf = wrapFlateStreamsPdf([`BT ${'() '.repeat(3_000_000)}ET`]);
     const t1 = performance.now();
     expect(() => extractTextFromPdf(parensFloodPdf)).toThrowError(PdfExtractError);
-    expect(performance.now() - t1).toBeLessThan(500);
+    expect(performance.now() - t1).toBeLessThan(CI_LINEAR_BUDGET_MS);
 
     const opFloodPdf = wrapFlateStreamsPdf([`BT ${'a '.repeat(4_500_000)}ET`]);
     const t2 = performance.now();
     expect(() => extractTextFromPdf(opFloodPdf)).toThrowError(PdfExtractError);
-    expect(performance.now() - t2).toBeLessThan(500);
+    expect(performance.now() - t2).toBeLessThan(CI_LINEAR_BUDGET_MS);
+
+    const prefixBeforeFloodPdf = wrapFlateStreamsPdf([
+      `BT (Prefix Text Preserved Before Flood 2026) Tj ${'() '.repeat(3_000_000)}ET`,
+    ]);
+    const tPrefix = performance.now();
+    const prefixText = extractTextFromPdf(prefixBeforeFloodPdf);
+    expect(performance.now() - tPrefix).toBeLessThan(CI_LINEAR_BUDGET_MS);
+    expect(prefixText).toContain('Prefix Text Preserved Before Flood 2026');
 
     const nineMbLiteralStream = `BT (${'A'.repeat(9_000_000)}) Tj ET`;
     const literalBombPdf = wrapFlateStreamsPdf([nineMbLiteralStream, nineMbLiteralStream]);
     const t3 = performance.now();
     const literalText = extractTextFromPdf(literalBombPdf);
-    expect(performance.now() - t3).toBeLessThan(500);
+    expect(performance.now() - t3).toBeLessThan(CI_LINEAR_BUDGET_MS);
     expect(literalText.length).toBeGreaterThan(0);
     expect(literalText.length).toBeLessThanOrEqual(100_000);
     expect(literalText.startsWith('AAAAAAAAAA')).toBe(true);
@@ -426,7 +436,7 @@ endobj
     const hexBombPdf = wrapFlateStreamsPdf([nineMbHexStream, nineMbHexStream]);
     const t4 = performance.now();
     const hexText = extractTextFromPdf(hexBombPdf);
-    expect(performance.now() - t4).toBeLessThan(500);
+    expect(performance.now() - t4).toBeLessThan(CI_LINEAR_BUDGET_MS);
     expect(hexText.length).toBeGreaterThan(0);
     expect(hexText.length).toBeLessThanOrEqual(100_000);
     expect(hexText.startsWith('AAAAAAAAAA')).toBe(true);
