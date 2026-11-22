@@ -242,4 +242,74 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
     expect(performance.now() - t0).toBeLessThan(100);
     expect(text).toBe(lt50k);
   });
+
+  it('strips inline JSON-LD script/fenced blocks and link-wrapped [待补充：...](#faq) suffixes (#339)', async () => {
+    const {
+      extractMissingFactSlots,
+      replaceMissingFactSlot,
+      stripInlineJsonLdBlocks,
+      postProcessArticleMarkdown,
+    } = await import('./geo-studio');
+
+    // 1) Raw, HTML-escaped, fenced, and truncated JSON-LD blocks are stripped cleanly
+    const rawMd = [
+      '## Key Findings',
+      '',
+      'AstraVault delivers 14W idle power and 18.5dB acoustic noise.',
+      '',
+      '<script type="application/ld+json">',
+      '{"@context":"https://schema.org","@type":"Article","headline":"Test"}',
+      '</script>',
+      '',
+      '&lt;script type="application/ld+json"&gt;{"@context":"https://schema.org"}&lt;/script&gt;',
+      '',
+      '```json',
+      '{"normalCodeExample": true}',
+      '```',
+      '',
+      '## Structured Data (JSON-LD)',
+      '',
+      '```json-ld',
+      '{"@context":"https://schema.org","@type":"FAQPage"}',
+      '```',
+      '',
+      '```json',
+      '{"@context":"https://schema.org","@type":"Product","name":"AstraVault"}',
+      '```',
+      '',
+      '<script type="application/ld+json">{"@context":"https://schema.org","truncated":',
+    ].join('\n');
+
+    const stripped = stripInlineJsonLdBlocks(rawMd);
+    expect(stripped).not.toContain('application/ld+json');
+    expect(stripped).not.toContain('schema.org');
+    expect(stripped).not.toContain('Structured Data (JSON-LD)');
+    expect(stripped).toContain('{"normalCodeExample": true}');
+    expect(stripped).toContain('AstraVault delivers 14W idle power');
+
+    const processed = postProcessArticleMarkdown(rawMd, {
+      market: 'GLOBAL',
+      brand: 'AstraVault',
+      question: 'Best 4-bay NAS?',
+    });
+    expect(processed.cleanedMarkdown).not.toContain('application/ld+json');
+    expect(processed.cleanedMarkdown).not.toContain('schema.org');
+
+    // 2) Link-wrapped [待补充：...](#faq) and [待补充:...](https://...) leave zero trailing URL suffix
+    const linkedDraft =
+      '详情见 [待补充：待机功耗数值](#faq) 以及 [待补充:满载噪音分贝](https://example.com/specs)。';
+    const slots = extractMissingFactSlots(linkedDraft);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]?.hint).toBe('待机功耗数值');
+    expect(slots[0]?.raw).toBe('[待补充：待机功耗数值](#faq)');
+    expect(slots[1]?.hint).toBe('满载噪音分贝');
+    expect(slots[1]?.raw).toBe('[待补充:满载噪音分贝](https://example.com/specs)');
+
+    const afterFirst = replaceMissingFactSlot(linkedDraft, slots[0]!, '14W');
+    expect(afterFirst).not.toContain('(#faq)');
+    expect(afterFirst).toContain('详情见 14W 以及');
+    const slots2 = extractMissingFactSlots(afterFirst);
+    const afterSecond = replaceMissingFactSlot(afterFirst, slots2[0]!, '18.5dB');
+    expect(afterSecond).toBe('详情见 14W 以及 18.5dB。');
+  });
 });

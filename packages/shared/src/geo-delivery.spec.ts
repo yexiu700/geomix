@@ -202,6 +202,64 @@ describe('geo-delivery pure evaluator, JSON-LD, and llms.txt builders', () => {
     expect(llms).toContain('# AstraVault');
     expect(llms).toContain('astravault.example.com');
     expect(llms).toMatch(/-\s+\[[^\]]+\]\(https?:\/\/[^\s)]+\)/);
+
+    // #338: GLOBAL delivery uses localCategory and never leaks Chinese Brand.category
+    const globalWithLocal = buildGeoSchemaJsonLd({
+      market: 'GLOBAL',
+      localBrandName: 'UGREEN',
+      category: '智能充电配件',
+      localCategory: 'USB-C GaN Fast Charger',
+      title: 'Best 100W USB-C GaN Charger 2026',
+      targetPrompt: 'Best 100W GaN charger',
+      contentMarkdown: 'UGREEN delivers 100W PD 3.1 output.',
+    });
+    const productWithLocal = (globalWithLocal['@graph'] as Array<Record<string, unknown>>).find(
+      (n) => n['@type'] === 'Product',
+    );
+    expect(productWithLocal?.category).toBe('USB-C GaN Fast Charger');
+    expect(/[\u4e00-\u9fff]/.test(JSON.stringify(globalWithLocal))).toBe(false);
+
+    const globalUnmappedCn = buildGeoSchemaJsonLd({
+      market: 'GLOBAL',
+      localBrandName: 'NovaGear',
+      category: '小众手工非遗木作器皿',
+      title: 'Best Handcrafted Gear 2026',
+      targetPrompt: 'Best handcrafted gear',
+      contentMarkdown: 'NovaGear delivers durable craft.',
+    });
+    const productFallback = (globalUnmappedCn['@graph'] as Array<Record<string, unknown>>).find(
+      (n) => n['@type'] === 'Product',
+    );
+    expect(productFallback?.category).toBe('Consumer Product');
+    expect(/[\u4e00-\u9fff]/.test(JSON.stringify(globalUnmappedCn))).toBe(false);
+
+    const llmsNoCjk = buildLlmsTxtSnippet({
+      market: 'GLOBAL',
+      localBrandName: 'NovaGear',
+      category: '小众手工非遗木作器皿',
+      ownedDomains: ['novagear.example.com'],
+      title: 'Best Handcrafted Gear 2026',
+      targetPrompt: 'Best handcrafted gear',
+      contentMarkdown: 'NovaGear delivers durable craft.',
+    });
+    expect(llmsNoCjk).toBeTruthy();
+    expect(/[\u4e00-\u9fff]/.test(llmsNoCjk ?? '')).toBe(false);
+    expect(llmsNoCjk).toContain('# NovaGear');
+
+    const llmsWithLocal = buildLlmsTxtSnippet({
+      market: 'GLOBAL',
+      localBrandName: 'UGREEN',
+      category: '智能充电配件',
+      localCategory: 'USB-C GaN Fast Charger',
+      ownedDomains: ['ugreen.example.com'],
+      title: 'Best 100W GaN Charger 2026',
+      targetPrompt: 'Best 100W GaN charger',
+      contentMarkdown: 'UGREEN delivers 100W PD 3.1 output.',
+    });
+    expect(llmsWithLocal).toBeTruthy();
+    expect(llmsWithLocal).toContain('# UGREEN');
+    expect(llmsWithLocal).toContain('UGREEN (USB-C GaN Fast Charger)');
+    expect(/[\u4e00-\u9fff]/.test(llmsWithLocal ?? '')).toBe(false);
   });
 
   it('builds valid OOXML .docx with <w:tbl><w:tr><w:tc> tables, preserves GFM MD tables and HTML locale', () => {

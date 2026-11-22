@@ -336,9 +336,9 @@ export function PointsScreen({
       ) : (
         <Table<PointItem>
           rowKey="id"
+          tableLayout="fixed"
           loading={loading}
           dataSource={page?.items ?? []}
-          scroll={{ x: 'max-content' }}
           locale={{ emptyText: '没有找到匹配的记录' }}
           pagination={{
             current: page?.page ?? 1,
@@ -352,7 +352,7 @@ export function PointsScreen({
             {
               title: '序号',
               key: 'seq',
-              width: 72,
+              width: 58,
               render: (_value, _row, index) => (
                 <span className="gm-num">
                   {((page?.page ?? 1) - 1) * (page?.pageSize ?? 10) + index + 1}
@@ -368,7 +368,7 @@ export function PointsScreen({
                 <TableClampText
                   text={sanitizeLedgerTitle(value)}
                   lines={1}
-                  maxWidth={360}
+                  maxWidth={280}
                   tooltipThreshold={24}
                 />
               ),
@@ -376,13 +376,13 @@ export function PointsScreen({
             {
               title: '点数',
               key: 'points',
-              width: 160,
+              width: 124,
               render: (_value, row) => <span className="gm-num">{row.pointsText}</span>,
             },
             {
               title: '消耗时间',
               key: 'createdAt',
-              width: 180,
+              width: 156,
               render: (_value, row) => (
                 <span className="gm-num">
                   {formatShanghaiDateTime(row.createdAt, { seconds: true })}

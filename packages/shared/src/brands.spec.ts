@@ -272,6 +272,26 @@ describe('brands v2 contracts and extracted utilities', () => {
       competitors: [{ name: '大族激光' }],
     });
     expect(industrialCn.some((p) => p.includes('大族激光'))).toBe(true);
+
+    // #338: GLOBAL seedPrompts prefer localCategory and never leak unmapped Chinese category
+    const localizedGlobal = generateBrandSeedPrompts({
+      market: 'GLOBAL',
+      brandName: 'NovaCharge',
+      category: '智能充电配件',
+      localCategory: 'USB-C GaN Fast Charger',
+      competitors: [{ name: 'Anker' }],
+    });
+    expect(localizedGlobal.every((p) => !/[\u4e00-\u9fff]/.test(p))).toBe(true);
+    expect(localizedGlobal.some((p) => p.includes('USB-C GaN Fast Charger'))).toBe(true);
+
+    const unmappedGlobal = generateBrandSeedPrompts({
+      market: 'GLOBAL',
+      brandName: 'CraftCo',
+      category: '小众手工非遗木作器皿',
+      competitors: [{ name: 'RivalCo' }],
+    });
+    expect(unmappedGlobal.every((p) => !/[\u4e00-\u9fff]/.test(p))).toBe(true);
+    expect(unmappedGlobal.length).toBeGreaterThanOrEqual(5);
   });
 
   it('validates media uploads, formats storage, and resolves AI image ratios', () => {

@@ -2,6 +2,9 @@
 
 import {
   BRAND_FACT_SLOT_LABELS,
+  GEO_MARKET_LABELS,
+  GEO_WRITE_DEFAULT_UNIT_POINTS,
+  VISIBILITY_DEFAULT_UNIT_POINTS,
   defaultTargetFormatForMarket,
   targetFormatsForMarket,
   type BrandFactRecord,
@@ -20,8 +23,10 @@ import {
   type MissingFactSlot,
   type PromptPreferenceRecord,
   type PublishRecordCreateInput,
+  type VisibilityEngineAvailabilityItem,
+  type VisibilityEngineKey,
 } from '@geomix/shared';
-import { Button, Skeleton } from 'antd';
+import { Alert, Button, Checkbox, Modal, Skeleton, Space, Tooltip } from 'antd';
 import type { JSX, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts, listBrandMedia, saveBrandFacts } from '../../lib/brands';
@@ -29,6 +34,7 @@ import { fetchBriefs, getBrief } from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
 import {
   buildMarkdownImageToken,
+  copyTextToClipboard,
   createBatchJob,
   createPublishRecord,
   createStudioIdempotencyKey,
@@ -51,7 +57,11 @@ import {
 } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
-import { fetchVisibilityRunDetail } from '../../lib/visibility';
+import {
+  fetchVisibilityEngines,
+  fetchVisibilityRunDetail,
+  filterEnginesForMarket,
+} from '../../lib/visibility';
 import {
   selectActiveBrand,
   selectActiveBrandMarket,
@@ -62,7 +72,7 @@ import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioDeliveryPack } from './studio-delivery-pack';
-import { StudioEditorCanvas } from './studio-editor-canvas';
+import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
 import { StudioGeoEvaluator } from './studio-geo-evaluator';
 import { StudioLeftPane } from './studio-left-pane';
 import { StudioMediaPopover } from './studio-media-popover';
@@ -141,7 +151,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const readOnly = consoleCtx?.readOnly ?? false;
   const feedback = useUxFeedback();
 
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+    return window.matchMedia('(min-width: 900px) and (max-width: 1199px)').matches;
+  });
+  const leftCollapseManualRef = useRef(false);
 
   // Queue & History Data
   const [briefs, setBriefs] = useState<GeoBriefRecord[]>([]);
@@ -180,6 +194,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [streaming, setStreaming] = useState(false);
   const [streamMarkdown, setStreamMarkdown] = useState('');
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [partialDraft, setPartialDraft] = useState<PartialStreamDraft | null>(null);
   const [matchedFactIds, setMatchedFactIds] = useState<string[]>([]);
 
   // M5 Delivery, Evaluator & Publish/Retest State
@@ -194,6 +209,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     runId: string;
     articleId: string;
   } | null>(null);
+  const [retestModalRecord, setRetestModalRecord] = useState<GeoPublishRecordDto | null>(null);
+  const [retestEngines, setRetestEngines] = useState<VisibilityEngineAvailabilityItem[]>([]);
+  const [retestEnginesLoading, setRetestEnginesLoading] = useState(false);
+  const [retestEnginesError, setRetestEnginesError] = useState<string | null>(null);
+  const [retestCheckedEngines, setRetestCheckedEngines] = useState<VisibilityEngineKey[]>([]);
 
   // Anti-race AbortControllers & monotonic context/article sequences
   const contextSeqRef = useRef(0);
@@ -208,6 +228,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const supplementCtrlRef = useRef<AbortController | null>(null);
   const publishCtrlRef = useRef<AbortController | null>(null);
   const retestCtrlRef = useRef<AbortController | null>(null);
+  const retestEnginesCtrlRef = useRef<AbortController | null>(null);
   const evaluatingRef = useRef(false);
   const supplementingTermRef = useRef<string | null>(null);
   const retestingRecordsRef = useRef<Set<string>>(new Set());
@@ -259,9 +280,23 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     publishCtrlRef.current = null;
     retestCtrlRef.current?.abort();
     retestCtrlRef.current = null;
+    retestEnginesCtrlRef.current?.abort();
+    retestEnginesCtrlRef.current = null;
     evaluatingRef.current = false;
     supplementingTermRef.current = null;
     retestingRecordsRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(min-width: 900px) and (max-width: 1199px)');
+    const syncNarrowRail = () => {
+      if (!leftCollapseManualRef.current) {
+        setLeftCollapsed(mq.matches);
+      }
+    };
+    mq.addEventListener('change', syncNarrowRail);
+    return () => mq.removeEventListener('change', syncNarrowRail);
   }, []);
 
   const resetActiveArticleContext = useCallback(
@@ -276,6 +311,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setEvaluating(false);
       setSupplementingTerm(null);
       setRetestingRecordId(null);
+      setRetestModalRecord(null);
     },
     [clearArticleActionControllers],
   );
@@ -287,6 +323,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setDraftTitle(article.title);
       setDraftMarkdown(article.contentMarkdown);
       setStreamError(null);
+      setPartialDraft(null);
       replaceStudioUrlParam('articleId', article.id);
     },
     [resetActiveArticleContext],
@@ -484,6 +521,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setStreaming(false);
     setStreamMarkdown('');
     setStreamError(null);
+    setPartialDraft(null);
     setMatchedFactIds([]);
     setEvaluation(null);
     setEvaluating(false);
@@ -492,6 +530,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setPublishRecordsLoading(false);
     setRetestingRecordId(null);
     setPendingRetest(null);
+    setRetestModalRecord(null);
+    setRetestEngines([]);
+    setRetestCheckedEngines([]);
+    setRetestEnginesError(null);
     setCounterModalOpen(false);
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
@@ -748,8 +790,26 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setTargetFanOuts([]);
     setMatchedFactIds([]);
     setStreamError(null);
+    setPartialDraft(null);
     replaceStudioUrlParam('briefId', null);
     replaceStudioUrlParam('articleId', null);
+  };
+
+  const handleCopyPartialDraft = async () => {
+    if (!partialDraft?.markdown) return;
+    const copied = await copyTextToClipboard(partialDraft.markdown);
+    if (copied) {
+      feedback.notifySuccess('已复制已生成的正文片段');
+    } else {
+      feedback.notifyWarning('自动复制失败，请手动选中片段复制');
+    }
+  };
+
+  const handleDismissPartialDraft = () => {
+    setPartialDraft(null);
+    if (!activeArticle) {
+      setDraftMarkdown('');
+    }
   };
 
   const handleStartStream = async () => {
@@ -765,9 +825,21 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setStreaming(true);
     setStreamMarkdown('');
     setStreamError(null);
+    setPartialDraft(null);
 
     let completedArticle: GeoArticleRecord | null = null;
     let receivedErrorEvent = false;
+    let streamedText = '';
+    let failureReason: string | null = null;
+    let failureRefunded = false;
+
+    const preservePartialIfAny = (reason: string, refunded: boolean) => {
+      if (streamedText.trim().length === 0) return;
+      setPartialDraft({ markdown: streamedText, reason, refunded });
+      if (!activeArticleIdRef.current) {
+        setDraftMarkdown(streamedText);
+      }
+    };
 
     try {
       const safeTargetFormat = targetFormatsForMarket(activeMarket).includes(targetFormat)
@@ -797,11 +869,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           },
           onDelta: (delta) => {
             if (seq !== contextSeqRef.current) return;
-            setStreamMarkdown((prev) => prev + delta.text);
+            streamedText += delta.text;
+            setStreamMarkdown(streamedText);
           },
           onComplete: (complete) => {
             if (seq !== contextSeqRef.current) return;
             completedArticle = complete.article;
+            setPartialDraft(null);
             applyArticleToCanvas(complete.article);
             setArticles((prev) => [
               complete.article,
@@ -816,8 +890,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           onErrorEvent: (errEv) => {
             if (seq !== contextSeqRef.current) return;
             receivedErrorEvent = true;
+            failureRefunded = Boolean(errEv.refunded);
             const suffix = errEv.refunded ? '（已自动退还冻结的 10 点）' : '';
             const msg = `${errEv.msg || '生成失败'}${suffix}`;
+            failureReason = msg;
             setStreamError(msg);
             feedback.notifyError(msg);
           },
@@ -828,7 +904,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (seq !== contextSeqRef.current) return;
 
       if (result.aborted) {
-        feedback.notifyWarning('已中断本次生成并自动退还冻结点数');
+        const abortMsg = '已中断本次生成并自动退还冻结点数';
+        feedback.notifyWarning(abortMsg);
+        preservePartialIfAny(abortMsg, true);
         invalidateFreshness('points');
         if (abortWalletTimerRef.current) {
           clearTimeout(abortWalletTimerRef.current);
@@ -841,9 +919,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         feedback.notifySuccess('GEO 文章生成完成');
         invalidateFreshness('articles', 'briefs', 'points');
       } else if (receivedErrorEvent) {
+        preservePartialIfAny(failureReason ?? '流式生成中断', failureRefunded);
         invalidateFreshness('points');
       } else {
-        setStreamError('流式连接意外结束，请检查余额或重试');
+        const unexpectedMsg = '流式连接意外结束，请检查余额或重试';
+        setStreamError(unexpectedMsg);
+        preservePartialIfAny(unexpectedMsg, true);
         invalidateFreshness('points');
       }
       void consoleCtx?.refreshWallet();
@@ -852,6 +933,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       const msg = formatStudioError(err, '流式生成文章失败');
       setStreamError(msg);
       feedback.notifyError(msg);
+      preservePartialIfAny(msg, true);
       invalidateFreshness('points');
       void consoleCtx?.refreshWallet();
     } finally {
@@ -1193,9 +1275,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
-  const handleLaunchBatch = async () => {
+  const executeLaunchBatch = async (briefIds: readonly string[]) => {
     if (!activeBrandId || !activeBrandMarket || readOnly || batchSubmitting) return;
-    if (selectedBriefIds.length < 2 || selectedBriefIds.length > 20) return;
+    if (briefIds.length < 2 || briefIds.length > 20) return;
     const seq = contextSeqRef.current;
     setBatchSubmitting(true);
     try {
@@ -1204,7 +1286,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         activeBrandId,
         {
           market: activeMarket,
-          briefIds: [...selectedBriefIds],
+          briefIds: [...briefIds],
         },
         idemKey,
       );
@@ -1227,6 +1309,20 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         setBatchSubmitting(false);
       }
     }
+  };
+
+  const handleLaunchBatch = () => {
+    if (!activeBrandId || !activeBrandMarket || readOnly || batchSubmitting) return;
+    if (selectedBriefIds.length < 2 || selectedBriefIds.length > 20) return;
+    const ids = [...selectedBriefIds];
+    const totalPoints = ids.length * GEO_WRITE_DEFAULT_UNIT_POINTS;
+    feedback.confirm({
+      title: '确认启动批量 GEO 写作？',
+      content: `将在「${GEO_MARKET_LABELS[activeMarket]}」对已选 ${ids.length} 篇写作意见发起批量生成，预计预冻 ${totalPoints} 点（单篇失败自动退还该篇点数）。`,
+      okText: `确认生成（${totalPoints} 点）`,
+      cancelText: '取消',
+      onOk: () => executeLaunchBatch(ids),
+    });
   };
 
   // ==================== M5: Real-Time GEO Evaluate, Fan-Out Supplement & Publish/Retest ====================
@@ -1384,7 +1480,47 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
-  const handleTriggerRetest = async (record: GeoPublishRecordDto) => {
+  const loadRetestEngines = useCallback(async (brandId: string, market: typeof activeMarket) => {
+    retestEnginesCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    retestEnginesCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setRetestEnginesLoading(true);
+    setRetestEnginesError(null);
+    try {
+      const res = await fetchVisibilityEngines(brandId, market, { signal: ctrl.signal });
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      const scoped = filterEnginesForMarket(res.engines, market);
+      setRetestEngines(scoped);
+      setRetestCheckedEngines(scoped.filter((eng) => eng.available).map((eng) => eng.key));
+    } catch (err) {
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      setRetestEnginesError(formatStudioError(err, '加载 AI 引擎列表失败'));
+    } finally {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setRetestEnginesLoading(false);
+      }
+    }
+  }, []);
+
+  const handleOpenRetestModal = async (record: GeoPublishRecordDto) => {
+    if (
+      !activeArticle ||
+      !activeBrandId ||
+      readOnly ||
+      retestingRecordsRef.current.size > 0 ||
+      retestingRecordsRef.current.has(record.id)
+    ) {
+      return;
+    }
+    setRetestModalRecord(record);
+    await loadRetestEngines(activeBrandId, activeMarket);
+  };
+
+  const handleTriggerRetest = async (
+    record: GeoPublishRecordDto,
+    engines?: readonly VisibilityEngineKey[],
+  ) => {
     if (
       !activeArticle ||
       readOnly ||
@@ -1403,7 +1539,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     const isStale = () =>
       ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
     try {
-      const run = await triggerPublishRetest(record.id, undefined, undefined, {
+      const payload = engines && engines.length > 0 ? { engines: [...engines] } : undefined;
+      const run = await triggerPublishRetest(record.id, payload, undefined, {
         signal: ctrl.signal,
       });
       if (isStale()) return;
@@ -1498,13 +1635,22 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     (draftTitle !== activeArticle.title || draftMarkdown !== activeArticle.contentMarkdown),
   );
 
+  const onlineRetestEngineKeys = retestEngines.filter((eng) => eng.available).map((eng) => eng.key);
+  const validRetestCheckedEngines = retestCheckedEngines.filter((key) =>
+    onlineRetestEngineKeys.includes(key),
+  );
+  const retestEstimatedPoints = validRetestCheckedEngines.length * VISIBILITY_DEFAULT_UNIT_POINTS;
+
   return (
     <section className="gm-studio-page" aria-label="GEO 写作台" data-testid="studio-workspace">
       <div className={`gm-studio-grid${leftCollapsed ? ' gm-studio-grid-left-collapsed' : ''}`}>
         {/* Left Pane: Pending Briefs + Batch Queue + History Articles */}
         <StudioLeftPane
           collapsed={leftCollapsed}
-          onToggleCollapse={() => setLeftCollapsed((v) => !v)}
+          onToggleCollapse={() => {
+            leftCollapseManualRef.current = true;
+            setLeftCollapsed((v) => !v);
+          }}
           briefs={briefs}
           briefsLoading={briefsLoading}
           activeBriefId={linkedBrief?.id ?? null}
@@ -1512,7 +1658,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           onSelectedBriefIdsChange={setSelectedBriefIds}
           onSelectBrief={applyBriefToPrewrite}
           onStartFreeTopic={handleStartFreeTopic}
-          onLaunchBatch={() => void handleLaunchBatch()}
+          onLaunchBatch={handleLaunchBatch}
           batchSubmitting={batchSubmitting}
           batchJobs={batchJobs}
           highlightedBatchJobId={highlightedBatchJobId}
@@ -1577,6 +1723,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             article={activeArticle}
             streaming={streaming}
             streamMarkdown={streamMarkdown}
+            partialDraft={partialDraft}
+            onCopyPartialDraft={() => void handleCopyPartialDraft()}
+            onRetryPartialDraft={() => void handleStartStream()}
+            onDismissPartialDraft={handleDismissPartialDraft}
             draftTitle={draftTitle}
             draftMarkdown={draftMarkdown}
             dirty={isDirty}
@@ -1640,6 +1790,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 activeMarket={activeMarket}
                 localBrandName={activeBrandMarket.localBrandName}
                 category={activeBrand.category}
+                localCategory={activeBrandMarket.localCategory}
                 ownedDomains={activeBrandMarket.ownedDomains}
                 article={activeArticle}
                 evaluation={evaluation}
@@ -1659,7 +1810,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 pollingRetestRecordId={pendingRetest?.recordId ?? null}
                 readOnly={readOnly}
                 onCreatePublishRecord={handleCreatePublishRecord}
-                onTriggerRetest={handleTriggerRetest}
+                onTriggerRetest={handleOpenRetestModal}
               />
             )
           }
@@ -1675,6 +1826,154 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         onClose={() => setCounterModalOpen(false)}
         onCreated={handleCounterBriefCreated}
       />
+
+      <Modal
+        open={Boolean(retestModalRecord)}
+        title={`确认定向复测 · 选择 AI 引擎（${GEO_MARKET_LABELS[activeMarket]}）`}
+        width={560}
+        destroyOnHidden
+        onCancel={() => {
+          retestEnginesCtrlRef.current?.abort();
+          setRetestModalRecord(null);
+        }}
+        footer={
+          <Space>
+            <Button
+              onClick={() => {
+                retestEnginesCtrlRef.current?.abort();
+                setRetestModalRecord(null);
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              type="primary"
+              data-testid="publish-retest-confirm-btn"
+              disabled={
+                readOnly ||
+                retestEnginesLoading ||
+                validRetestCheckedEngines.length === 0 ||
+                !retestModalRecord
+              }
+              onClick={() => {
+                if (!retestModalRecord || validRetestCheckedEngines.length === 0) return;
+                const targetRecord = retestModalRecord;
+                const chosenEngines = [...validRetestCheckedEngines];
+                setRetestModalRecord(null);
+                void handleTriggerRetest(targetRecord, chosenEngines);
+              }}
+            >
+              确认发起复测（{retestEstimatedPoints} 点）
+            </Button>
+          </Space>
+        }
+      >
+        <div
+          data-testid="publish-retest-modal"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
+        >
+          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+            默认仅勾选当前市场已上线健康引擎，避免盲扣未上线引擎点数；异常项自动全额退还。
+          </div>
+
+          <div className="gm-vis-label-row">
+            <span className="gm-vis-field-label">
+              已选 <span className="gm-num">{validRetestCheckedEngines.length}</span> / 在线{' '}
+              <span className="gm-num">{onlineRetestEngineKeys.length}</span> / 共{' '}
+              <span className="gm-num">{retestEngines.length}</span>
+            </span>
+            <Space size={8}>
+              <Button
+                size="small"
+                type="link"
+                disabled={retestEnginesLoading || onlineRetestEngineKeys.length === 0}
+                onClick={() => setRetestCheckedEngines([...onlineRetestEngineKeys])}
+              >
+                全选在线引擎
+              </Button>
+              <Button
+                size="small"
+                type="link"
+                disabled={retestEnginesLoading || validRetestCheckedEngines.length === 0}
+                onClick={() => setRetestCheckedEngines([])}
+              >
+                清空
+              </Button>
+            </Space>
+          </div>
+
+          {retestEnginesError ? (
+            <Alert
+              type="error"
+              showIcon
+              message={retestEnginesError}
+              action={
+                <Button
+                  size="small"
+                  onClick={() => {
+                    if (activeBrandId) {
+                      void loadRetestEngines(activeBrandId, activeMarket);
+                    }
+                  }}
+                >
+                  重试
+                </Button>
+              }
+            />
+          ) : retestEnginesLoading && retestEngines.length === 0 ? (
+            <SignalSkeleton variant="block" height={92} />
+          ) : (
+            <div className="gm-vis-engine-grid">
+              {retestEngines.map((eng) => {
+                const isChecked = eng.available && validRetestCheckedEngines.includes(eng.key);
+                const cardClass = [
+                  'gm-engine-card',
+                  isChecked ? 'gm-engine-card-checked' : '',
+                  !eng.available ? 'gm-engine-card-offline' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+                const card = (
+                  <label
+                    key={eng.key}
+                    data-testid={`retest-engine-option-${eng.key}`}
+                    data-engine-status={eng.available ? 'online' : 'offline'}
+                    className={cardClass}
+                  >
+                    <Checkbox
+                      checked={isChecked}
+                      disabled={!eng.available || readOnly}
+                      onChange={() => {
+                        if (!eng.available) return;
+                        setRetestCheckedEngines((prev) =>
+                          prev.includes(eng.key)
+                            ? prev.filter((k) => k !== eng.key)
+                            : [...prev, eng.key],
+                        );
+                      }}
+                    />
+                    <span className="gm-vis-engine-label">{eng.label}</span>
+                    {!eng.available ? <span className="gm-vis-offline-badge">暂未上线</span> : null}
+                  </label>
+                );
+                return !eng.available ? (
+                  <Tooltip key={eng.key} title="该引擎暂未上线，不可勾选且不消耗点数">
+                    {card}
+                  </Tooltip>
+                ) : (
+                  card
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+            预计预冻 <strong className="gm-num">{retestEstimatedPoints}</strong> 点（
+            <span className="gm-num">{validRetestCheckedEngines.length}</span> 引擎 ×{' '}
+            <span className="gm-num">{VISIBILITY_DEFAULT_UNIT_POINTS}</span> 点/次）
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 }

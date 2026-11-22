@@ -253,6 +253,60 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
     vi.spyOn(studioApi, 'fetchBatchJobs').mockResolvedValue({ items: [], total: 0 });
     vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [] });
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockImplementation(
+      async (_brandId, market) => ({
+        collector: 'remote_scraper',
+        market: market ?? 'CN',
+        checkedAt: '2026-11-22T00:00:00.000Z',
+        refreshIntervalMs: 300_000,
+        engines:
+          market === 'GLOBAL'
+            ? [
+                {
+                  key: 'chatgpt',
+                  label: 'ChatGPT',
+                  market: 'GLOBAL',
+                  domestic: false,
+                  available: true,
+                  status: 'online',
+                  defaultChecked: true,
+                  unavailableReason: null,
+                },
+                {
+                  key: 'perplexity',
+                  label: 'Perplexity',
+                  market: 'GLOBAL',
+                  domestic: false,
+                  available: false,
+                  status: 'offline',
+                  defaultChecked: false,
+                  unavailableReason: '暂未上线',
+                },
+              ]
+            : [
+                {
+                  key: 'deepseek',
+                  label: 'DeepSeek',
+                  market: 'CN',
+                  domestic: true,
+                  available: true,
+                  status: 'online',
+                  defaultChecked: true,
+                  unavailableReason: null,
+                },
+                {
+                  key: 'doubao',
+                  label: '豆包',
+                  market: 'CN',
+                  domestic: true,
+                  available: false,
+                  status: 'offline',
+                  defaultChecked: false,
+                  unavailableReason: '暂未上线',
+                },
+              ],
+      }),
+    );
     vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
       brandId: 'brand_studio_1',
       truthAgreementSignedAt: null,
@@ -526,6 +580,11 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     const batchBtn = screen.getByTestId('studio-batch-btn');
     expect((batchBtn as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(batchBtn);
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    const batchOnOk = mockConfirm.mock.calls[0]?.[0]?.onOk as (() => Promise<void>) | undefined;
+    await act(async () => {
+      await batchOnOk?.();
+    });
     await waitFor(() => {
       expect(createBatchSpy).toHaveBeenCalledWith(
         'brand_studio_1',
@@ -546,8 +605,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(await screen.findByTestId('studio-rewrite-preview')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('删除文章-星辰存储 DXP4800 静音实测报告'));
-    expect(mockConfirm).toHaveBeenCalledTimes(1);
-    const onOk = mockConfirm.mock.calls[0]?.[0]?.onOk as (() => Promise<void>) | undefined;
+    expect(mockConfirm).toHaveBeenCalledTimes(2);
+    const onOk = mockConfirm.mock.calls[1]?.[0]?.onOk as (() => Promise<void>) | undefined;
     await act(async () => {
       await onOk?.();
     });
@@ -1507,13 +1566,21 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       );
     });
 
-    // Before/After panel visible + trigger one-click retest
+    // Before/After panel visible + open retest engine confirmation modal (#337)
     expect(await screen.findByTestId('publish-before-after')).toBeTruthy();
     fireEvent.click(await screen.findByTestId('publish-retest-btn'));
+    expect(await screen.findByTestId('publish-retest-modal')).toBeTruthy();
+    const confirmRetestBtn = (await screen.findByTestId(
+      'publish-retest-confirm-btn',
+    )) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(confirmRetestBtn.disabled).toBe(false);
+    });
+    fireEvent.click(confirmRetestBtn);
     await waitFor(() => {
       expect(retestSpy).toHaveBeenCalledWith(
         'pub_gl_1',
-        undefined,
+        { engines: ['chatgpt'] },
         undefined,
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
@@ -1589,14 +1656,23 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     const docxBtn = screen.getByTestId('delivery-download-docx');
     const retestBtn = await screen.findByTestId('publish-retest-btn');
 
+    // Open retest confirmation modal first and wait for online engines to load
+    fireEvent.click(retestBtn);
+    const confirmRetestBtn = (await screen.findByTestId(
+      'publish-retest-confirm-btn',
+    )) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(confirmRetestBtn.disabled).toBe(false);
+    });
+
     // Same-tick double-clicks must each fire strictly 1 request
     act(() => {
       evalBtn.click();
       evalBtn.click();
       docxBtn.click();
       docxBtn.click();
-      retestBtn.click();
-      retestBtn.click();
+      confirmRetestBtn.click();
+      confirmRetestBtn.click();
     });
     expect(evalSpy).toHaveBeenCalledTimes(1);
     expect(exportSpy).toHaveBeenCalledTimes(1);
@@ -1825,6 +1901,13 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       });
 
       fireEvent.click(screen.getByTestId('publish-retest-btn'));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      fireEvent.click(screen.getByTestId('publish-retest-confirm-btn'));
       await act(async () => {
         await Promise.resolve();
         await Promise.resolve();
@@ -2319,6 +2402,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     fireEvent.click(checkboxes[0]!);
     fireEvent.click(checkboxes[1]!);
     fireEvent.click(screen.getByTestId('studio-batch-btn'));
+    const w03BatchOnOk = mockConfirm.mock.calls.at(-1)?.[0]?.onOk as
+      (() => Promise<void>) | undefined;
+    expect(w03BatchOnOk).toBeTypeOf('function');
+    const batchPromise = w03BatchOnOk?.();
     act(() => {
       useWorkspaceStore.getState().setActiveBrand(secondBrand.id, 'CN', window.localStorage);
     });
@@ -2340,8 +2427,51 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         updatedAt: '2026-11-20T00:00:00.000Z',
         finishedAt: null,
       });
+      await batchPromise;
       await Promise.resolve();
     });
     expect(new URLSearchParams(window.location.search).get('batchJobId')).toBeNull();
+  });
+
+  it('retains streamed partial draft and shows recovery banner on SSE timeout/error (#336)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    const streamedPartial =
+      '## 核心结论\n\n星辰存储 DXP4800 在静音测试中实测 18.5dB，待机功耗 14W。';
+    vi.spyOn(studioApi, 'streamGenerateArticle').mockImplementationOnce(
+      async (_brandId, _input, handlers) => {
+        handlers.onDelta?.({ text: streamedPartial });
+        handlers.onErrorEvent?.({
+          code: 50401,
+          msg: '外部服务超时',
+          refunded: true,
+        });
+        return { aborted: false, receivedEvents: 2 };
+      },
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const promptBox = await screen.findByLabelText('目标问题');
+    fireEvent.change(promptBox, { target: { value: '四盘位静音家用 NAS 推荐' } });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // Partial draft recovery banner must be visible and retain the streamed content in the editor
+    const banner = await screen.findByTestId('studio-partial-draft-banner');
+    expect(banner.textContent).toContain('外部服务超时');
+    expect(banner.textContent).toContain('已自动退还');
+    expect(screen.getByTestId('studio-copy-partial-draft-btn')).toBeTruthy();
+    const previewBody = screen.getByTestId('studio-preview-body');
+    expect(previewBody.textContent).toContain('星辰存储 DXP4800');
   });
 });

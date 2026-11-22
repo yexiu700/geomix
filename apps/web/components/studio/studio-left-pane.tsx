@@ -288,7 +288,7 @@ export function StudioLeftPane({
           <select
             aria-label="按状态筛选历史成稿"
             className="gm-select"
-            style={{ width: 96, minWidth: 0 }}
+            style={{ width: 108, minWidth: 104, flexShrink: 0, whiteSpace: 'nowrap' }}
             value={articleStatusFilter}
             onChange={(e) => onArticleStatusFilterChange(e.target.value as GeoArticleStatus | '')}
           >

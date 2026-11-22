@@ -201,6 +201,7 @@ export class GeoBatchRunner implements GeoBatchHandler {
             locale: job.brandMarket.locale,
             region: job.brandMarket.region,
             localBrandName: job.brandMarket.localBrandName,
+            localCategory: job.brandMarket.localCategory,
             aliases: job.brandMarket.aliases,
             ownedDomains: job.brandMarket.ownedDomains,
             competitors,

@@ -420,6 +420,7 @@ model BrandMarket {
   locale         String    @default("zh-CN")
   region         String    @default("CN")
   localBrandName String
+  localCategory  String?
   aliases        String[]  @default([])
   ownedDomains   String[]  @default([])
   competitors    Json      @default("[]")

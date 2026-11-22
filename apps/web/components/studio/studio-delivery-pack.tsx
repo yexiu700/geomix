@@ -25,6 +25,7 @@ export type StudioDeliveryPackProps = {
   activeMarket: GeoMarket;
   localBrandName: string;
   category?: string;
+  localCategory?: string | null;
   ownedDomains?: readonly string[];
   article: GeoArticleRecord | null;
   evaluation: GeoEvaluationResult | null;
@@ -72,6 +73,7 @@ export function StudioDeliveryPack({
   activeMarket,
   localBrandName,
   category,
+  localCategory,
   ownedDomains,
   article,
   evaluation,
@@ -111,11 +113,12 @@ export function StudioDeliveryPack({
       market: activeMarket,
       localBrandName: localBrandName || 'Brand',
       category,
+      localCategory,
       title: article.title,
       targetPrompt: article.targetPrompt,
       contentMarkdown: article.contentMarkdown,
     });
-  }, [activeMarket, article, category, evaluation?.schemaJsonLd, localBrandName]);
+  }, [activeMarket, article, category, evaluation?.schemaJsonLd, localBrandName, localCategory]);
 
   const safeJsonLdText = useMemo(
     () => (schemaObj ? serializeJsonLdSafe(schemaObj) : ''),
@@ -135,12 +138,21 @@ export function StudioDeliveryPack({
       market: 'GLOBAL',
       localBrandName: localBrandName || 'Brand',
       category,
+      localCategory,
       ownedDomains,
       title: article.title,
       targetPrompt: article.targetPrompt,
       contentMarkdown: article.contentMarkdown,
     });
-  }, [activeMarket, article, category, evaluation?.llmsTxtSnippet, localBrandName, ownedDomains]);
+  }, [
+    activeMarket,
+    article,
+    category,
+    evaluation?.llmsTxtSnippet,
+    localBrandName,
+    localCategory,
+    ownedDomains,
+  ]);
 
   const crawlerChecklist = useMemo(
     () => evaluation?.crawlerChecklist ?? buildCrawlerChecklist(activeMarket),

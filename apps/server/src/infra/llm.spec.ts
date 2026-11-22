@@ -1066,6 +1066,134 @@ describe('llm routing', () => {
 
     expect(emittedDeltas).toEqual([]);
   });
+
+  it('allows long streaming responses past single-call timeoutMs while aborting stalled chunks on idleTimeoutMs (#336)', async () => {
+    const encoder = new TextEncoder();
+
+    // 1) Slow but steady stream: total ~180ms > single-call timeoutMs (80ms), each chunk 40ms < idleTimeoutMs (120ms)
+    const steadyTransport = async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const chunks = ['Hello ', 'long ', 'GEO ', 'article!'];
+          for (const piece of chunks) {
+            await new Promise((r) => setTimeout(r, 40));
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`,
+              ),
+            );
+          }
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      }),
+      close: async () => undefined,
+    });
+
+    const steadySvc = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_TIMEOUT_MS: '80',
+        LLM_STREAM_TIMEOUT_MS: '2000',
+        LLM_STREAM_IDLE_TIMEOUT_MS: '200',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: { geo_write: { primary: 'deepseek', backup: [] } },
+        }),
+      },
+      {
+        streamTransport: steadyTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        retryDelayMs: 0,
+      },
+    );
+
+    const deltas: string[] = [];
+    const res = await steadySvc.streamComplete({
+      tenantId: 'tenant_demo',
+      scene: 'geo_write',
+      idempotencyKey: 'geo_article:ga_long_stream_336',
+      messages: [{ role: 'user', content: 'Write long guide' }],
+      maxRetries: 0,
+      onDelta: (chunk) => {
+        deltas.push(chunk);
+      },
+    });
+    expect(res.text).toBe('Hello long GEO article!');
+    expect(deltas.join('')).toBe('Hello long GEO article!');
+
+    // 2) Stalled stream: emits 1 chunk then stalls beyond idleTimeoutMs (60ms) -> fails with timeout
+    const stalledTransport = async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ choices: [{ delta: { content: 'Part 1' } }] })}\n\n`,
+            ),
+          );
+          await new Promise((r) => setTimeout(r, 300));
+          controller.close();
+        },
+      }),
+      close: async () => undefined,
+    });
+
+    const stalledSvc = LlmService.fromEnv(
+      {
+        DEEPSEEK_API_KEY: 'test-key',
+        LLM_STREAM_TIMEOUT_MS: '5000',
+        LLM_STREAM_IDLE_TIMEOUT_MS: '60',
+        LLM_PROVIDERS: JSON.stringify({
+          providers: {
+            deepseek: {
+              kind: 'openai',
+              baseUrl: 'https://192.0.2.10/v1',
+              apiKeyEnv: 'DEEPSEEK_API_KEY',
+              cheapModel: 'deepseek-chat',
+              qualityModel: 'deepseek-chat',
+            },
+          },
+          route: { geo_write: { primary: 'deepseek', backup: [] } },
+        }),
+      },
+      {
+        streamTransport: stalledTransport,
+        resolver: {
+          async resolve() {
+            return [{ address: '192.0.2.10', family: 4 }];
+          },
+        },
+        retryDelayMs: 0,
+      },
+    );
+
+    await expect(
+      stalledSvc.streamComplete({
+        tenantId: 'tenant_demo',
+        scene: 'geo_write',
+        idempotencyKey: 'geo_article:ga_stalled_stream_336',
+        messages: [{ role: 'user', content: 'Write stalled guide' }],
+        maxRetries: 0,
+        onDelta: () => undefined,
+      }),
+    ).rejects.toMatchObject({ kind: 'timeout' });
+  });
 });
 
 function router(

@@ -19,10 +19,20 @@ import { resolveMediaUrl } from '../../lib/brands';
 import { rewritePreviewRelativeMediaUrls } from '../../lib/studio';
 import { SignalEmpty } from '../geo/primitives';
 
+export type PartialStreamDraft = {
+  markdown: string;
+  reason: string;
+  refunded: boolean;
+};
+
 export type StudioEditorCanvasProps = {
   article: GeoArticleRecord | null;
   streaming: boolean;
   streamMarkdown: string;
+  partialDraft?: PartialStreamDraft | null;
+  onCopyPartialDraft?: () => void;
+  onRetryPartialDraft?: () => void;
+  onDismissPartialDraft?: () => void;
   draftTitle: string;
   draftMarkdown: string;
   dirty: boolean;
@@ -51,6 +61,10 @@ export function StudioEditorCanvas({
   article,
   streaming,
   streamMarkdown,
+  partialDraft = null,
+  onCopyPartialDraft,
+  onRetryPartialDraft,
+  onDismissPartialDraft,
   draftTitle,
   draftMarkdown,
   dirty,
@@ -257,6 +271,68 @@ export function StudioEditorCanvas({
 
       {/* Main Canvas Body */}
       <div className="gm-studio-canvas-body">
+        {/* Preserved Partial Stream Draft Banner (#336) */}
+        {!streaming && partialDraft ? (
+          <Alert
+            type="warning"
+            showIcon
+            data-testid="studio-partial-draft-banner"
+            message={
+              partialDraft.refunded
+                ? '未完成草稿 · 已退还 10 点（已保留已流式输出的正文片段）'
+                : '未完成草稿 · 流式生成已中断（已保留已输出的正文片段）'
+            }
+            description={
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>{partialDraft.reason}</div>
+                {article ? (
+                  <pre
+                    data-testid="studio-partial-draft-text"
+                    style={{
+                      margin: 0,
+                      maxHeight: 200,
+                      overflow: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      fontSize: 12,
+                      background: 'var(--gm-bg-elevated)',
+                      padding: 8,
+                      borderRadius: 6,
+                    }}
+                  >
+                    {partialDraft.markdown}
+                  </pre>
+                ) : null}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {onCopyPartialDraft ? (
+                    <Button
+                      size="small"
+                      data-testid="studio-copy-partial-draft-btn"
+                      onClick={onCopyPartialDraft}
+                    >
+                      复制已生成片段
+                    </Button>
+                  ) : null}
+                  {onRetryPartialDraft && !readOnly ? (
+                    <Button
+                      size="small"
+                      type="primary"
+                      data-testid="studio-retry-partial-draft-btn"
+                      onClick={onRetryPartialDraft}
+                    >
+                      重新生成
+                    </Button>
+                  ) : null}
+                  {onDismissPartialDraft ? (
+                    <Button size="small" onClick={onDismissPartialDraft}>
+                      清除草稿提示
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            }
+          />
+        ) : null}
+
         {/* Clickable [待补充：...] Missing-Fact Pills Bar (ALWAYS visible in edit & preview modes!) */}
         {missingSlots.length > 0 ? (
           <div className="gm-studio-missing-bar" data-testid="studio-missing-fact-bar">
@@ -268,6 +344,7 @@ export function StudioEditorCanvas({
               {missingSlots.map((slot) => {
                 const key = `${slot.index}-${slot.raw}`;
                 const isOpen = openSlotKey === key;
+                const displayRaw = slot.raw.replace(/\([^)\n]{1,200}\)$/, '');
                 return (
                   <Popover
                     key={key}
@@ -346,7 +423,7 @@ export function StudioEditorCanvas({
                       className="gm-studio-missing-pill"
                       data-testid="missing-fact-pill"
                     >
-                      {slot.raw}
+                      {displayRaw}
                     </button>
                   </Popover>
                 );

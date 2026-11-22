@@ -45,6 +45,7 @@ const MOBILE_BREAKPOINT = 768;
 
 type EnableMarketFormValues = {
   localBrandName: string;
+  localCategory?: string;
   ownedDomainsText?: string;
   competitorsText?: string;
 };
@@ -269,6 +270,7 @@ export function ShellFrame({
     if (!enableTarget || !activeBrand) return;
     enableForm.setFieldsValue({
       localBrandName: activeBrand.name,
+      localCategory: '',
       ownedDomainsText: '',
       competitorsText: '',
     });
@@ -302,8 +304,10 @@ export function ShellFrame({
     setEnableSubmitting(true);
     setEnableError(null);
     try {
+      const trimmedLocalCategory = values.localCategory?.trim();
       const payload: UpsertBrandMarketInput = {
         localBrandName: values.localBrandName.trim() || activeBrand.name,
+        ...(trimmedLocalCategory ? { localCategory: trimmedLocalCategory } : {}),
         ownedDomains: parseDomainLines(values.ownedDomainsText),
         competitors: parseCompetitorLines(values.competitorsText),
       };
@@ -656,6 +660,20 @@ export function ShellFrame({
                 enableTarget === 'GLOBAL'
                   ? '例如：UGREEN（海外英文品牌名）'
                   : '例如：绿联（国内中文品牌名）'
+              }
+            />
+          </Form.Item>
+          <Form.Item
+            label="当地品类名称（选填）"
+            name="localCategory"
+            rules={[{ max: 80, message: '品类名称不超过 80 字' }]}
+          >
+            <Input
+              aria-label="当地品类名称"
+              placeholder={
+                enableTarget === 'GLOBAL'
+                  ? '例如：USB-C GaN Fast Charger / Outdoor Power Station'
+                  : '例如：氮化镓快充 / 户外电源'
               }
             />
           </Form.Item>

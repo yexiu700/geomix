@@ -223,20 +223,20 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 96,
+        width: 82,
         render: (status: TaskStatusName) => <StatusPill kind="task" status={status} />,
       },
       {
         title: '引擎',
         dataIndex: 'engines',
         key: 'engines',
-        width: 168,
+        width: 128,
         render: (engs: VisibilityEngineKey[]) => <EngineChipList engines={engs} max={2} />,
       },
       {
         title: '进度',
         key: 'progress',
-        width: 80,
+        width: 64,
         render: (_v, row) => (
           <span className="gm-num">
             {row.doneCount}/{row.totalChecks}
@@ -247,13 +247,13 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '提及率',
         dataIndex: 'visibilityPct',
         key: 'visibilityPct',
-        width: 78,
+        width: 68,
         render: (pct: number | null) => <span className="gm-num">{formatPct(pct)}</span>,
       },
       {
         title: '点数',
         key: 'points',
-        width: 92,
+        width: 78,
         render: (_v, row) => (
           <span className="gm-num">
             {row.settledPoints ?? 0}/{row.frozenPoints ?? row.totalChecks * row.unitPrice}
@@ -264,13 +264,13 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '创建时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
-        width: 132,
+        width: 118,
         render: (iso: string) => <span className="gm-num">{formatShanghaiDateTime(iso)}</span>,
       },
       {
         title: '操作',
         key: 'actions',
-        width: 124,
+        width: 116,
         render: (_v, row) => {
           const busy = actionLoadingRunId === row.id;
           const isActive =
@@ -414,7 +414,8 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
           <div className="gm-vis-label-row">
             <span className="gm-vis-field-label">
               选择 AI 引擎（已选 <span className="gm-num">{checkedCount}</span> / 在线{' '}
-              <span className="gm-num">{onlineEngineKeys.length}</span>）
+              <span className="gm-num">{onlineEngineKeys.length}</span> / 共{' '}
+              <span className="gm-num">{marketEngines.length}</span>）
             </span>
             <Space size={8}>
               <Button

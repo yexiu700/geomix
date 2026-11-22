@@ -164,10 +164,17 @@ const CN_TO_EN_CATEGORY_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/扫地机器人|扫拖机器人|洗地机/i, 'robot vacuum'],
   [/咖啡机/i, 'coffee maker'],
   [/洗碗机/i, 'dishwasher'],
-  [/蓝牙耳机|无线耳机|降噪耳机/i, 'wireless earbuds'],
+  [/蓝牙耳机|无线耳机|降噪耳机|耳机/i, 'wireless earbuds'],
   [/空气净化器/i, 'air purifier'],
   [/投影仪/i, 'home projector'],
-  [/护肤品|美妆/i, 'skincare'],
+  [/充电宝|移动电源/i, 'power bank'],
+  [/路由器/i, 'Wi-Fi router'],
+  [/扩展坞|拓展坞/i, 'USB-C hub'],
+  [/机械键盘|键盘/i, 'mechanical keyboard'],
+  [/无线鼠标|鼠标/i, 'wireless mouse'],
+  [/女鞋|男鞋|运动鞋|休闲鞋|平底鞋|鞋履/i, 'footwear'],
+  [/服装|服饰|穿搭/i, 'apparel'],
+  [/护肤品|美妆|化妆品/i, 'skincare'],
   [/宠物食品|猫粮|狗粮/i, 'pet food'],
   [/户外装备|露营装备/i, 'outdoor gear'],
   [/消费电子/i, 'consumer electronics'],
@@ -181,6 +188,12 @@ const CN_TO_EN_CATEGORY_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/工业设备/i, 'industrial equipment'],
 ];
 
+const CJK_CHAR_RE = /[\u3400-\u9fff\uf900-\ufaff]/;
+
+export function containsCjk(value: string): boolean {
+  return CJK_CHAR_RE.test(value);
+}
+
 /**
  * 识别品牌所属品类的受众分层，确保 C 端消费品类绝不误用 B2B 工厂/批发话术（#313）。
  */
@@ -192,13 +205,23 @@ export function classifyBrandCategorySegment(category: string): BrandCategorySeg
   return 'CONSUMER';
 }
 
-function resolveGlobalCategoryLabel(category: string): string {
-  const clean = category.trim();
-  if (!clean) return 'product';
-  for (const [pattern, label] of CN_TO_EN_CATEGORY_MAP) {
-    if (pattern.test(clean)) return label;
+export function resolveGlobalCategoryLabel(
+  category: string,
+  localCategory?: string | null,
+): string {
+  const candidates = [localCategory?.trim() ?? '', category.trim()].filter(Boolean);
+  for (const candidate of candidates) {
+    if (!containsCjk(candidate)) {
+      return candidate;
+    }
+    for (const [pattern, label] of CN_TO_EN_CATEGORY_MAP) {
+      if (pattern.test(candidate)) return label;
+    }
   }
-  return clean;
+  const segment = classifyBrandCategorySegment(candidates.join(' '));
+  if (segment === 'B2B_SAAS') return 'enterprise software';
+  if (segment === 'B2B_INDUSTRIAL') return 'industrial equipment';
+  return 'product';
 }
 
 /**
@@ -208,11 +231,12 @@ export function generateBrandSeedPrompts(input: {
   market: GeoMarket;
   brandName: string;
   category: string;
+  localCategory?: string | null;
   competitors?: ReadonlyArray<{ name: string }>;
 }): string[] {
-  const brand = input.brandName.trim() || '本品牌';
-  const cat = input.category.trim() || '产品';
-  const segment = classifyBrandCategorySegment(cat);
+  const brand = input.brandName.trim() || (input.market === 'GLOBAL' ? 'this brand' : '本品牌');
+  const cat = input.localCategory?.trim() || input.category.trim() || '产品';
+  const segment = classifyBrandCategorySegment(`${input.localCategory ?? ''} ${input.category}`);
   const compNames = Array.from(
     new Set(
       (input.competitors ?? [])
@@ -267,7 +291,7 @@ export function generateBrandSeedPrompts(input: {
       ];
     }
   } else {
-    const enCat = resolveGlobalCategoryLabel(cat);
+    const enCat = resolveGlobalCategoryLabel(input.category, input.localCategory);
     if (segment === 'B2B_SAAS') {
       candidates = [
         `What is the best ${enCat} for growing teams in 2026?`,
@@ -627,11 +651,22 @@ export const brandCompetitorSchema = z.object({
 
 export type BrandCompetitor = z.output<typeof brandCompetitorSchema>;
 
+const optionalLocalCategorySchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z
+    .string()
+    .trim()
+    .max(BRAND_CATEGORY_MAX, `当地品类不超过 ${BRAND_CATEGORY_MAX} 字`)
+    .nullable()
+    .optional(),
+);
+
 export const brandMarketConfigSchema = z.object({
   market: z.enum(GEO_MARKETS),
   locale: z.string().trim().min(2).max(16).optional(),
   region: z.string().trim().min(2).max(16).optional(),
   localBrandName: z.string().trim().min(1, '请填写当地品牌名称').max(BRAND_NAME_MAX).optional(),
+  localCategory: optionalLocalCategorySchema,
   aliases: brandAliasArraySchema().default([]),
   ownedDomains: brandDomainArraySchema(20).default([]),
   competitors: z
@@ -692,6 +727,7 @@ export const updateBrandMarketSchema = z
     locale: z.string().trim().min(2).max(16).optional(),
     region: z.string().trim().min(2).max(16).optional(),
     localBrandName: z.string().trim().min(1, '请填写当地品牌名称').max(BRAND_NAME_MAX).optional(),
+    localCategory: optionalLocalCategorySchema,
     aliases: brandAliasArraySchema().optional(),
     ownedDomains: brandDomainArraySchema(20).optional(),
     competitors: z
@@ -782,6 +818,7 @@ export type BrandMarketRecord = {
   locale: string;
   region: string;
   localBrandName: string;
+  localCategory?: string | null;
   aliases: string[];
   ownedDomains: string[];
   competitors: BrandCompetitor[];
