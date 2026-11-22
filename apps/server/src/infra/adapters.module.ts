@@ -62,21 +62,33 @@ export class PublicFetchService {
     {
       provide: ImageService,
       inject: [StorageService, ComplianceService],
-      useFactory: (storage: StorageService, compliance: ComplianceService) =>
-        ImageService.fromEnv(process.env, {
+      useFactory: (storage: StorageService, compliance: ComplianceService) => {
+        const resolver = {
+          async resolve(hostname: string) {
+            const { createDnsResolver } = await import('./guarded-request');
+            return createDnsResolver().resolve(hostname);
+          },
+        };
+        const transport = async (
+          request: Parameters<
+            ReturnType<typeof import('./undici-transport').createUndiciTransport>
+          >[0],
+        ) => {
+          const { createUndiciTransport } = await import('./undici-transport');
+          return createUndiciTransport()(request);
+        };
+        return ImageService.fromEnv(process.env, {
           storage,
           compliance,
-          resolver: {
-            async resolve(hostname: string) {
-              const { createDnsResolver } = await import('./guarded-request');
-              return createDnsResolver().resolve(hostname);
-            },
+          resolver,
+          transport,
+          fetchDeps: {
+            ...resolveFetchSettings(process.env),
+            resolver,
+            transport,
           },
-          transport: async (request) => {
-            const { createUndiciTransport } = await import('./undici-transport');
-            return createUndiciTransport()(request);
-          },
-        }),
+        });
+      },
     },
   ],
   exports: [

@@ -1,7 +1,5 @@
 import {
-  moneyListQueryString,
   pointListQueryString,
-  type MoneyListQuery,
   type PointListQuery,
   type RightsCard,
   type VerificationInput,
@@ -20,14 +18,6 @@ export type PointItem = {
   status: string;
 };
 
-export type MoneyItem = {
-  id: string;
-  title: string;
-  amount: string;
-  remark: string;
-  createdAt: string;
-};
-
 export type LedgerPage<T> = {
   page: number;
   pageSize: number;
@@ -35,11 +25,20 @@ export type LedgerPage<T> = {
   items: T[];
 };
 
+export type WalletSummary = {
+  points: number;
+  pointsReserved: number;
+  available: number;
+  money: string;
+  billingMode: string;
+  billingModeSource: 'tenant' | 'global';
+  tenantBillingMode: string | null;
+};
+
 export type RightsView = {
   points: number;
   pointsReserved?: number;
   available?: number;
-  money: string;
   billingMode: string;
   cards: RightsCard[];
   models: Array<{ key: string; label: string; count: number }>;
@@ -65,6 +64,10 @@ export class AccountApiError extends Error {
   }
 }
 
+export function httpWallet(storage: SessionStorageLike): Promise<WalletSummary> {
+  return readJson(storage, 'GET', '/billing/wallet');
+}
+
 export function httpPoints(
   storage: SessionStorageLike,
   query: PointListQuery,
@@ -81,25 +84,6 @@ export function httpDownloadPoints(
     storage,
     `/me/points?${pointListQueryString({ ...query, export: format })}`,
     `geomix-points.${format}`,
-  );
-}
-
-export function httpMoney(
-  storage: SessionStorageLike,
-  query: MoneyListQuery,
-): Promise<LedgerPage<MoneyItem>> {
-  return readJson(storage, 'GET', `/me/money?${moneyListQueryString(query)}`);
-}
-
-export function httpDownloadMoney(
-  storage: SessionStorageLike,
-  query: MoneyListQuery,
-  format: 'csv' | 'xlsx',
-): Promise<{ filename: string; mime: string; body: Uint8Array }> {
-  return downloadTable(
-    storage,
-    `/me/money?${moneyListQueryString({ ...query, export: format })}`,
-    `geomix-money.${format}`,
   );
 }
 

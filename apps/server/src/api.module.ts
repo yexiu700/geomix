@@ -3,20 +3,18 @@ import { AccountModule } from './account/account.module';
 import { AdminOfficeModule } from './admin/admin-office.module';
 import { AuthContextMiddleware } from './auth/auth-context.middleware';
 import { AuthModule } from './auth/auth.module';
-import { MeModule } from './me/me.module';
-import { AdaptersModule } from './infra/adapters.module';
 import { BillingModule } from './billing/billing.module';
-import { QueueModule } from './queue/queue.module';
-import { HealthController } from './health/health.controller';
+import { BrandsModule } from './brands/brands.module';
+import { BriefsModule } from './briefs/briefs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
-import { AiImagesModule } from './image/ai-images.module';
-import { KeywordsModule } from './material/keywords.module';
-import { RewriteModule } from './rewrite/rewrite.module';
-import { SamplesModule } from './samples/samples.module';
-import { VisibilityModule } from './visibility/visibility.module';
-import { WritingModule } from './writing/writing.module';
+import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
+import { AdaptersModule } from './infra/adapters.module';
+import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QueueModule } from './queue/queue.module';
+import { StudioModule } from './studio/studio.module';
+import { VisibilityModule } from './visibility/visibility.module';
 
 @Module({
   imports: [
@@ -28,13 +26,11 @@ import { PrismaModule } from './prisma/prisma.module';
     AdminOfficeModule,
     AdaptersModule,
     QueueModule.forApi(),
-    SamplesModule,
-    KeywordsModule,
-    WritingModule,
-    RewriteModule,
-    AiImagesModule,
+    BrandsModule,
     DashboardModule,
     VisibilityModule,
+    BriefsModule,
+    StudioModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

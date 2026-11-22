@@ -24,7 +24,6 @@ import {
   pricingUpdateSchema,
   quotaUpdateSchema,
   readIdempotencyKey,
-  templateWriteSchema,
   updateTenantSchema,
 } from '@geomix/shared';
 import { AuthGuard } from '../auth/auth.guard';
@@ -147,42 +146,6 @@ export class AdminOfficeController {
   async deleteAnnouncement(@Req() request: unknown, @Param('id') id: string) {
     return ok(
       await this.office.deleteAnnouncement(requireActor(request), readId(id), optionalKey(request)),
-    );
-  }
-
-  @Get('templates')
-  async templates() {
-    return ok(await this.office.listTemplates());
-  }
-
-  @Post('templates')
-  @HttpCode(200)
-  async createTemplate(@Req() request: unknown, @Body() body: unknown) {
-    return ok(
-      await this.office.createTemplate(
-        requireActor(request),
-        parseBody(templateWriteSchema, body),
-        optionalKey(request),
-      ),
-    );
-  }
-
-  @Patch('templates/:id')
-  async updateTemplate(@Req() request: unknown, @Param('id') id: string, @Body() body: unknown) {
-    return ok(
-      await this.office.updateTemplate(
-        requireActor(request),
-        readId(id),
-        parseBody(templateWriteSchema, body),
-        optionalKey(request),
-      ),
-    );
-  }
-
-  @Delete('templates/:id')
-  async deleteTemplate(@Req() request: unknown, @Param('id') id: string) {
-    return ok(
-      await this.office.deleteTemplate(requireActor(request), readId(id), optionalKey(request)),
     );
   }
 

@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 /**
  * 通用列表的查询、价格按钮文案和导出。
  * 筛选只接受关键字和启用状态，不接受租户、原始 SQL 或知识库切片条件。
@@ -9,8 +7,7 @@ import { z } from 'zod';
 export const CRUD_PAGE_SIZES = [10, 25, 50] as const;
 export const CRUD_EMPTY_TEXT = '没有找到匹配的记录';
 export const CRUD_EXPORT_LIMIT = 1000;
-export const SAMPLE_NAME_MAX = 40;
-export const SAMPLE_NOTE_MAX = 200;
+const CRUD_KEYWORD_MAX = 40;
 
 export const CRUD_SORTS = ['createdAt', 'name', 'updatedAt'] as const;
 export const CRUD_ORDERS = ['asc', 'desc'] as const;
@@ -73,15 +70,15 @@ export function escapeLikeLiteral(value: string): string {
 }
 
 export function priceUnit(action: string): string {
-  if (action === 'distill' || action === 'visibility_check') return '次';
-  if (action === 'image_gen') return '张';
+  if (action === 'visibility_check') return '次';
+  if (action === 'inline_image_gen') return '张';
   return '篇';
 }
 
-/** 约定文案：动作（X点数/篇）。蒸馏和生图换成次、张，数字仍来自价格表。 */
+/** 约定文案：动作（X点数/篇）。可见性监测和行内配图换成次、张，数字仍来自价格表。 */
 export function priceButtonText(label: string, points: number, unit = '篇'): string {
   const name = label.trim();
-  if (!name || name.length > SAMPLE_NAME_MAX || hasControl(name)) {
+  if (!name || name.length > CRUD_KEYWORD_MAX || hasControl(name)) {
     throw new CrudQueryError('价格不正确');
   }
   if (!Number.isSafeInteger(points) || points < 0 || points > 1_000_000) {
@@ -89,73 +86,6 @@ export function priceButtonText(label: string, points: number, unit = '篇'): st
   }
   if (!unit || unit.length > 8 || hasControl(unit)) throw new CrudQueryError('价格不正确');
   return `${name}（${points}点数/${unit}）`;
-}
-
-export const SAMPLE_ID = /^[a-z0-9]{20,32}$/;
-
-export const sampleInputSchema = z
-  .object({
-    name: z
-      .string()
-      .trim()
-      .min(1, '请填写名称')
-      .max(SAMPLE_NAME_MAX, '名称最多 40 字')
-      .refine((value) => !hasControl(value), '名称含有无法显示的字符'),
-    note: z
-      .string()
-      .trim()
-      .max(SAMPLE_NOTE_MAX, '备注最多 200 字')
-      .refine((value) => !hasControl(value), '备注含有无法显示的字符')
-      .optional()
-      .default(''),
-    enabled: z.boolean().optional().default(true),
-  })
-  .strict();
-
-export type SampleInput = z.infer<typeof sampleInputSchema>;
-
-export const sampleBulkSchema = z
-  .object({
-    action: z.enum(['delete', 'enable', 'disable'], { message: '操作不正确' }),
-    ids: z
-      .array(z.string().regex(SAMPLE_ID, '记录编号不正确'))
-      .min(1, '请选择记录')
-      .max(100, '一次最多 100 条'),
-  })
-  .strict();
-
-export type SampleBulkInput = z.infer<typeof sampleBulkSchema>;
-
-export type SampleRecord = {
-  id: string;
-  name: string;
-  note: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export function sampleExportFilename(format: CrudExportFormat): string {
-  return format === 'csv' ? 'geomix-samples.csv' : 'geomix-samples.xlsx';
-}
-
-export function sampleExportMime(format: CrudExportFormat): string {
-  return format === 'csv'
-    ? 'text/csv; charset=utf-8'
-    : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-}
-
-export function sampleExportTable(rows: SampleRecord[]): { headers: string[]; rows: string[][] } {
-  return {
-    headers: ['编号', '名称', '备注', '状态', '更新时间'],
-    rows: rows.map((row) => [
-      row.id,
-      row.name,
-      row.note,
-      row.enabled ? '启用' : '停用',
-      row.updatedAt,
-    ]),
-  };
 }
 
 export function toCsv(headers: string[], rows: string[][]): string {
@@ -230,7 +160,7 @@ function readFilter(value: unknown): { keyword: string; enabled: boolean | undef
   if ('keyword' in record) {
     if (typeof record.keyword !== 'string') throw new CrudQueryError('筛选不正确');
     keyword = record.keyword.trim();
-    if (keyword.length > SAMPLE_NAME_MAX || hasControl(keyword)) {
+    if (keyword.length > CRUD_KEYWORD_MAX || hasControl(keyword)) {
       throw new CrudQueryError('筛选不正确');
     }
   }

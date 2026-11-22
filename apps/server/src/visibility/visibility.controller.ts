@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Body,
   Controller,
@@ -6,7 +7,6 @@ import {
   HttpCode,
   Inject,
   Param,
-  Patch,
   Post,
   Query,
   Req,
@@ -14,29 +14,28 @@ import {
 } from '@nestjs/common';
 import {
   API_ERROR,
-  AUTH_ERROR,
   AccountQueryError,
   VISIBILITY_ID_PATTERN,
-  importQuestionsInputSchema,
   ok,
-  parseVisibilityRunListQuery,
   readIdempotencyKey,
-  visibilityCitationQuerySchema,
-  visibilityOpportunitiesQuerySchema,
-  visibilityOverviewQuerySchema,
-  visibilityProfileCreateWithPrefillSchema,
-  visibilityProfileUpdateSchema,
   visibilityRunBulkDeleteSchema,
-  visibilityRunCreateSchema,
+  visibilityRunV2CreateSchema,
+  visibilityV2CitationQuerySchema,
+  visibilityV2OpportunitiesQuerySchema,
+  visibilityV2OverviewQuerySchema,
+  visibilityV2RunListQuerySchema,
   type CitationSourceKind,
-  type VisibilityCitationQuery,
+  type GeoMarket,
   type VisibilityEngineKey,
-  type VisibilityOpportunitiesQuery,
-  type VisibilityOverviewQuery,
+  type VisibilityV2CitationQuery,
+  type VisibilityV2OpportunitiesQuery,
+  type VisibilityV2OverviewQuery,
+  type VisibilityV2RunListQuery,
 } from '@geomix/shared';
 import { AuthGuard } from '../auth/auth.guard';
 import { asHttpRequest } from '../auth/http-request';
 import { TenantActiveGuard } from '../auth/tenant-active.guard';
+import { parseBrandId, parseMarket, requireAuth } from '../brands/brands.http-utils';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
 import { VisibilityService } from './visibility.service';
@@ -49,17 +48,22 @@ function readVisibilityId(raw: string, label = '编号'): string {
   return value;
 }
 
-function requireUserId(req: unknown): string {
-  const auth = asHttpRequest(req).auth;
-  if (!auth?.userId) {
-    throw new ApiError(401, AUTH_ERROR.UNAUTHORIZED, '未登录或会话已失效');
+function parseOptionalMarket(raw?: unknown): GeoMarket | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string') {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '市场参数仅支持 CN 或 GLOBAL');
   }
-  return auth.userId;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return parseMarket(trimmed);
 }
 
-function requireIdempotencyHeader(req: unknown): string {
+function resolveIdempotencyHeader(req: unknown): string {
   const http = asHttpRequest(req);
   const raw = http.header('idempotency-key') ?? http.header('Idempotency-Key');
+  if (raw === undefined) {
+    return `auto_${randomUUID()}`;
+  }
   try {
     return readIdempotencyKey(raw);
   } catch (error) {
@@ -74,134 +78,179 @@ function requireIdempotencyHeader(req: unknown): string {
   }
 }
 
-function flattenQuery(
-  raw: Record<string, string | string[] | undefined>,
-): Record<string, string | undefined> {
+function flattenQuery(raw: Record<string, unknown>): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [key, val] of Object.entries(raw)) {
-    out[key] = Array.isArray(val) ? val[0] : val;
+    if (val === undefined) {
+      out[key] = undefined;
+    } else if (typeof val === 'string') {
+      out[key] = val;
+    } else if (
+      Array.isArray(val) &&
+      val.length > 0 &&
+      val.every((item) => typeof item === 'string')
+    ) {
+      out[key] = val[0];
+    } else {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, `查询参数 ${key} 格式不正确`);
+    }
   }
   return out;
 }
 
-@Controller('visibility')
-@UseGuards(AuthGuard, TenantActiveGuard)
+@Controller({ path: 'brands/:brandId/visibility', version: '2' })
+@UseGuards(AuthGuard)
 export class VisibilityController {
   constructor(@Inject(VisibilityService) private readonly visibility: VisibilityService) {}
 
   // ===================== Engines =====================
 
   @Get('engines')
-  async listEngines() {
-    return ok(await this.visibility.listEngines());
-  }
-
-  // ===================== Profiles =====================
-
-  @Get('profiles')
-  async listProfiles() {
-    return ok(await this.visibility.listProfiles());
-  }
-
-  @Get('profiles/:id')
-  async getProfile(@Param('id') id: string) {
-    return ok(await this.visibility.getProfile(readVisibilityId(id, '监测档案编号')));
-  }
-
-  @Post('profiles')
-  @HttpCode(200)
-  async createProfile(@Body() body: unknown, @Req() req: unknown) {
-    const userId = requireUserId(req);
-    const parsed = parseBody(visibilityProfileCreateWithPrefillSchema, body);
-    return ok(await this.visibility.createProfile(parsed, userId));
-  }
-
-  @Patch('profiles/:id')
-  async updateProfile(@Param('id') id: string, @Body() body: unknown, @Req() req: unknown) {
-    const userId = requireUserId(req);
-    const profileId = readVisibilityId(id, '监测档案编号');
-    const parsed = parseBody(visibilityProfileUpdateSchema, body);
-    return ok(await this.visibility.updateProfile(profileId, parsed, userId));
-  }
-
-  @Delete('profiles/:id')
-  async deleteProfile(@Param('id') id: string) {
-    return ok(await this.visibility.deleteProfile(readVisibilityId(id, '监测档案编号')));
+  async listEngines(@Param('brandId') brandIdRaw: string, @Query() query: Record<string, unknown>) {
+    const brandId = parseBrandId(brandIdRaw);
+    const flat = flattenQuery(query);
+    const market = parseOptionalMarket(flat.market);
+    return ok(await this.visibility.listEngines(brandId, market));
   }
 
   // ===================== Runs =====================
 
   @Get('runs')
-  async listRuns(@Query() query: Record<string, string | string[] | undefined>) {
-    const parsed = parseVisibilityRunListQuery(flattenQuery(query));
-    return ok(await this.visibility.listRuns(parsed));
+  async listRuns(@Param('brandId') brandIdRaw: string, @Query() query: Record<string, unknown>) {
+    const brandId = parseBrandId(brandIdRaw);
+    const parsed = parseBody(visibilityV2RunListQuerySchema, flattenQuery(query));
+    const normalized: VisibilityV2RunListQuery = {
+      ...(parsed.market !== undefined ? { market: parsed.market } : {}),
+      page: parsed.page,
+      pageSize: parsed.pageSize,
+      ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+      ...(parsed.keyword !== undefined ? { keyword: parsed.keyword } : {}),
+    };
+    return ok(await this.visibility.listRuns(brandId, normalized));
   }
 
-  @Get('runs/:id')
-  async getRunDetail(@Param('id') id: string) {
-    return ok(await this.visibility.getRunDetail(readVisibilityId(id, '监测任务编号')));
+  @Get('runs/:runId')
+  async getRunDetail(
+    @Param('brandId') brandIdRaw: string,
+    @Param('runId') runIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const runId = readVisibilityId(runIdRaw, '监测任务编号');
+    const market = parseOptionalMarket(flattenQuery(query).market);
+    return ok(await this.visibility.getRunDetail(brandId, runId, market));
   }
 
   @Post('runs')
   @HttpCode(200)
-  async createRun(@Body() body: unknown, @Req() req: unknown) {
-    const userId = requireUserId(req);
-    const idempotencyKey = requireIdempotencyHeader(req);
-    const parsed = parseBody(visibilityRunCreateSchema, body);
-    return ok(await this.visibility.createRun(parsed, idempotencyKey, userId));
+  @UseGuards(TenantActiveGuard)
+  async createRun(
+    @Param('brandId') brandIdRaw: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+    @Req() req: unknown,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const { userId } = requireAuth(req);
+    const idempotencyKey = resolveIdempotencyHeader(req);
+    const queryMarket = parseOptionalMarket(flattenQuery(query).market);
+    const parsed = parseBody(visibilityRunV2CreateSchema, body);
+    return ok(
+      await this.visibility.createRun(brandId, parsed, idempotencyKey, userId, queryMarket),
+    );
   }
 
   @Post('runs/bulk-delete')
   @HttpCode(200)
-  async bulkDeleteRuns(@Body() body: unknown) {
+  @UseGuards(TenantActiveGuard)
+  async bulkDeleteRuns(
+    @Param('brandId') brandIdRaw: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const market = parseOptionalMarket(flattenQuery(query).market);
     const parsed = parseBody(visibilityRunBulkDeleteSchema, body);
-    return ok(await this.visibility.bulkDeleteRuns(parsed.ids));
+    return ok(await this.visibility.bulkDeleteRuns(brandId, parsed.ids, market));
   }
 
-  @Post('runs/:id/pause')
+  @Post('runs/:runId/pause')
   @HttpCode(200)
-  async pauseRun(@Param('id') id: string) {
-    return ok(await this.visibility.pauseRun(readVisibilityId(id, '监测任务编号')));
+  @UseGuards(TenantActiveGuard)
+  async pauseRun(
+    @Param('brandId') brandIdRaw: string,
+    @Param('runId') runIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const runId = readVisibilityId(runIdRaw, '监测任务编号');
+    const market = parseOptionalMarket(flattenQuery(query).market);
+    return ok(await this.visibility.pauseRun(brandId, runId, market));
   }
 
-  @Post('runs/:id/resume')
+  @Post('runs/:runId/resume')
   @HttpCode(200)
-  async resumeRun(@Param('id') id: string) {
-    return ok(await this.visibility.resumeRun(readVisibilityId(id, '监测任务编号')));
+  @UseGuards(TenantActiveGuard)
+  async resumeRun(
+    @Param('brandId') brandIdRaw: string,
+    @Param('runId') runIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const runId = readVisibilityId(runIdRaw, '监测任务编号');
+    const market = parseOptionalMarket(flattenQuery(query).market);
+    return ok(await this.visibility.resumeRun(brandId, runId, market));
   }
 
-  @Post('runs/:id/cancel')
+  @Post('runs/:runId/cancel')
   @HttpCode(200)
-  async cancelRun(@Param('id') id: string) {
-    return ok(await this.visibility.cancelRun(readVisibilityId(id, '监测任务编号')));
+  @UseGuards(TenantActiveGuard)
+  async cancelRun(
+    @Param('brandId') brandIdRaw: string,
+    @Param('runId') runIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const runId = readVisibilityId(runIdRaw, '监测任务编号');
+    const market = parseOptionalMarket(flattenQuery(query).market);
+    return ok(await this.visibility.cancelRun(brandId, runId, market));
   }
 
-  @Delete('runs/:id')
-  async deleteRun(@Param('id') id: string) {
-    const runId = readVisibilityId(id, '监测任务编号');
-    return ok(await this.visibility.bulkDeleteRuns([runId]));
+  @Delete('runs/:runId')
+  @UseGuards(TenantActiveGuard)
+  async deleteRun(
+    @Param('brandId') brandIdRaw: string,
+    @Param('runId') runIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const runId = readVisibilityId(runIdRaw, '监测任务编号');
+    const market = parseOptionalMarket(flattenQuery(query).market);
+    return ok(await this.visibility.deleteRun(brandId, runId, market));
   }
 
   // ===================== Analytics =====================
 
   @Get('overview')
-  async overview(@Query() query: Record<string, string | string[] | undefined>) {
-    const parsed = parseBody(visibilityOverviewQuerySchema, flattenQuery(query));
-    const normalized: VisibilityOverviewQuery = {
-      profileId: parsed.profileId,
+  async overview(@Param('brandId') brandIdRaw: string, @Query() query: Record<string, unknown>) {
+    const brandId = parseBrandId(brandIdRaw);
+    const parsed = parseBody(visibilityV2OverviewQuerySchema, flattenQuery(query));
+    const normalized: VisibilityV2OverviewQuery = {
+      ...(parsed.market !== undefined ? { market: parsed.market } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       days: parsed.days,
-      from: parsed.from,
-      to: parsed.to,
+      ...(parsed.from !== undefined ? { from: parsed.from } : {}),
+      ...(parsed.to !== undefined ? { to: parsed.to } : {}),
     };
-    return ok(await this.visibility.overview(normalized));
+    return ok(await this.visibility.overview(brandId, normalized));
   }
 
   @Get('citations')
-  async citations(@Query() query: Record<string, string | string[] | undefined>) {
-    const parsed = parseBody(visibilityCitationQuerySchema, flattenQuery(query));
-    const normalized: VisibilityCitationQuery = {
-      profileId: parsed.profileId,
+  async citations(@Param('brandId') brandIdRaw: string, @Query() query: Record<string, unknown>) {
+    const brandId = parseBrandId(brandIdRaw);
+    const parsed = parseBody(visibilityV2CitationQuerySchema, flattenQuery(query));
+    const normalized: VisibilityV2CitationQuery = {
+      ...(parsed.market !== undefined ? { market: parsed.market } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       sourceKind: parsed.sourceKind as CitationSourceKind | undefined,
       days: parsed.days,
@@ -210,28 +259,24 @@ export class VisibilityController {
       page: parsed.page,
       pageSize: parsed.pageSize,
     };
-    return ok(await this.visibility.citations(normalized));
+    return ok(await this.visibility.citations(brandId, normalized));
   }
 
   @Get('opportunities')
-  async opportunities(@Query() query: Record<string, string | string[] | undefined>) {
-    const parsed = parseBody(visibilityOpportunitiesQuerySchema, flattenQuery(query));
-    const normalized: VisibilityOpportunitiesQuery = {
-      profileId: parsed.profileId,
+  async opportunities(
+    @Param('brandId') brandIdRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const brandId = parseBrandId(brandIdRaw);
+    const parsed = parseBody(visibilityV2OpportunitiesQuerySchema, flattenQuery(query));
+    const normalized: VisibilityV2OpportunitiesQuery = {
+      ...(parsed.market !== undefined ? { market: parsed.market } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       days: parsed.days,
       ...(parsed.from !== undefined ? { from: parsed.from } : {}),
       ...(parsed.to !== undefined ? { to: parsed.to } : {}),
       limit: parsed.limit,
     };
-    return ok(await this.visibility.opportunities(normalized));
-  }
-
-  @Post('opportunities/import-questions')
-  @HttpCode(200)
-  async importOpportunityQuestions(@Body() body: unknown, @Req() req: unknown) {
-    const userId = requireUserId(req);
-    const parsed = parseBody(importQuestionsInputSchema, body);
-    return ok(await this.visibility.importOpportunityQuestions(parsed, userId));
+    return ok(await this.visibility.opportunities(brandId, normalized));
   }
 }

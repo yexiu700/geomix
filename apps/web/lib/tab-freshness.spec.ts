@@ -38,14 +38,14 @@ describe('useTabFreshness (#215)', () => {
   it('does not trigger extra refresh on initial mount and refreshes on tab re-activation', async () => {
     const onRefresh = vi.fn();
     const { rerender } = render(
-      createElement(Probe, { active: true, domains: ['keywords'], onRefresh }),
+      createElement(Probe, { active: true, domains: ['brands'], onRefresh }),
     );
     expect(onRefresh).not.toHaveBeenCalled();
 
-    rerender(createElement(Probe, { active: false, domains: ['keywords'], onRefresh }));
+    rerender(createElement(Probe, { active: false, domains: ['brands'], onRefresh }));
     expect(onRefresh).not.toHaveBeenCalled();
 
-    rerender(createElement(Probe, { active: true, domains: ['keywords'], onRefresh }));
+    rerender(createElement(Probe, { active: true, domains: ['brands'], onRefresh }));
     await waitFor(() => {
       expect(onRefresh).toHaveBeenCalledTimes(1);
     });
@@ -57,18 +57,18 @@ describe('useTabFreshness (#215)', () => {
     const { rerender } = render(
       createElement(Probe, {
         active: false,
-        domains: ['keywords', 'knowledge'],
+        domains: ['brands', 'brand-facts'],
         refreshOnActivate: false,
         onRefresh,
       }),
     );
 
     // Unrelated domain should not trigger refresh
-    invalidateFreshness('prompts');
+    invalidateFreshness('briefs');
     rerender(
       createElement(Probe, {
         active: true,
-        domains: ['keywords', 'knowledge'],
+        domains: ['brands', 'brand-facts'],
         refreshOnActivate: false,
         onRefresh,
       }),
@@ -79,19 +79,19 @@ describe('useTabFreshness (#215)', () => {
     rerender(
       createElement(Probe, {
         active: false,
-        domains: ['keywords', 'knowledge'],
+        domains: ['brands', 'brand-facts'],
         refreshOnActivate: false,
         onRefresh,
       }),
     );
-    invalidateFreshness('knowledge');
+    invalidateFreshness('brand-facts');
     expect(onRefresh).not.toHaveBeenCalled();
 
     // Reactivate -> flushes dirty state
     rerender(
       createElement(Probe, {
         active: true,
-        domains: ['keywords', 'knowledge'],
+        domains: ['brands', 'brand-facts'],
         refreshOnActivate: false,
         onRefresh,
       }),
@@ -104,9 +104,9 @@ describe('useTabFreshness (#215)', () => {
 
   it('refreshes immediately when an invalidation arrives while tab is active', () => {
     const onRefresh = vi.fn();
-    render(createElement(Probe, { active: true, domains: ['gallery'], onRefresh }));
+    render(createElement(Probe, { active: true, domains: ['brand-media'], onRefresh }));
 
-    invalidateFreshness('gallery');
+    invalidateFreshness('brand-media');
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledWith('invalidated');
   });

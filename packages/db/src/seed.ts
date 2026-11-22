@@ -1,6 +1,5 @@
-import { PrismaClient, PromptKind, QuotaKey, UserRole } from '@prisma/client';
+import { PrismaClient, QuotaKey, UserRole } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
-import { SYSTEM_TEMPLATES } from '@geomix/prompts';
 import {
   DEMO_TENANT_POINTS,
   DEMO_TENANT_VALID_DAYS,
@@ -12,9 +11,10 @@ import { hashPassword } from './password';
 
 /**
  * 种子可重复执行。
- * 重复执行会把价格表和系统模板写回仓库里的默认值。
+ * 重复执行会把价格表同步为 GeoMix 2.0 的 3 项默认值并清理历史废弃计费项。
  * 点数、口令、有效期、配额上限、已用量、计费模式覆盖和停用状态只在第一次创建时写入。
  * 租户 billingMode 留空，运行时继承全局 BILLING_MODE，默认是 SHADOW。
+ * demo 租户保持 0 个品牌，以便首次登录直接体验 60 秒品牌建档流程。
  */
 
 export const PLATFORM_TENANT_ID = 'seed_tenant_platform';
@@ -56,14 +56,6 @@ export type SeedWrites = {
   pricing: readonly { action: string; unitPoints: number }[];
   accounts: readonly SeedAccount[];
   quotas: readonly SeedQuota[];
-  templates: readonly {
-    id: string;
-    kind: 'ARTICLE' | 'TITLE' | 'REWRITE';
-    name: string;
-    content: string;
-    randomPool: boolean;
-    sort: number;
-  }[];
 };
 
 export type SeedSummary = {
@@ -72,7 +64,6 @@ export type SeedSummary = {
   wallets: number;
   quotas: number;
   users: number;
-  templates: number;
 };
 
 export type SeedOptions = {
@@ -188,14 +179,6 @@ export function buildSeedWrites(input: {
     })),
     accounts,
     quotas,
-    templates: SYSTEM_TEMPLATES.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      name: item.name,
-      content: item.content,
-      randomPool: item.randomPool,
-      sort: item.sort,
-    })),
   };
 }
 
@@ -206,11 +189,14 @@ function summarize(writes: SeedWrites): SeedSummary {
     wallets: writes.accounts.length,
     quotas: writes.quotas.length,
     users: writes.accounts.length,
-    templates: writes.templates.length,
   };
 }
 
 async function writeAll(tx: Prisma.TransactionClient, writes: SeedWrites): Promise<void> {
+  const validActions = writes.pricing.map((item) => item.action);
+  await tx.pricingItem.deleteMany({
+    where: { action: { notIn: validActions } },
+  });
   for (const item of writes.pricing) {
     await tx.pricingItem.upsert({
       where: { action: item.action },
@@ -269,29 +255,6 @@ async function writeAll(tx: Prisma.TransactionClient, writes: SeedWrites): Promi
         used: 0n,
       },
       update: {},
-    });
-  }
-
-  for (const template of writes.templates) {
-    await tx.promptTemplate.upsert({
-      where: { id: template.id },
-      create: {
-        id: template.id,
-        tenantId: null,
-        kind: PromptKind[template.kind],
-        name: template.name,
-        content: template.content,
-        randomPool: template.randomPool,
-        sort: template.sort,
-      },
-      update: {
-        tenantId: null,
-        kind: PromptKind[template.kind],
-        name: template.name,
-        content: template.content,
-        randomPool: template.randomPool,
-        sort: template.sort,
-      },
     });
   }
 }

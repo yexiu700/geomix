@@ -2,18 +2,17 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
   BillingRuleError,
-  CHARGE_ACTIONS,
   evaluateLedger,
   isChargeAction,
   isPositivePoints,
   isReservationRefType,
   ledgerTitle,
   PRICING_DEFAULTS,
-  quoteAiWrite,
+  quoteGeoWrite,
   resolveTenantBillingMode,
-  type AiWriteQuote,
   type BillingMode,
   type ChargeAction,
+  type GeoWriteQuote,
   type LedgerSnapshot,
   type ReservationRefType,
 } from '@geomix/shared';
@@ -75,6 +74,7 @@ export type ReservationView = {
 export type LedgerLineView = {
   id: string;
   action: string;
+  reason: string;
   title: string;
   unitKey: string;
   delta: number;
@@ -116,23 +116,13 @@ export class BillingService {
     @Inject(BILLING_OPTIONS) private readonly options: BillingOptions,
   ) {}
 
-  async quoteAiWrite(input: {
-    count: number;
-    withKnowledgeBase: boolean;
-    taskName?: string;
-  }): Promise<AiWriteQuote> {
-    const prices = await this.priceMap();
-    const aiWrite = prices.get('ai_write');
-    const kbAddon = prices.get('kb_addon');
-    if (!aiWrite?.enabled) throw badRequest('AI写作价格未启用');
-    if (input.withKnowledgeBase && !kbAddon?.enabled) throw badRequest('知识库加价未启用');
+  async quoteGeoWrite(input: { count: number; taskName?: string }): Promise<GeoWriteQuote> {
+    const geoWritePoints = await this.unitPrice('geo_write');
     try {
-      return quoteAiWrite({
+      return quoteGeoWrite({
         count: input.count,
-        withKnowledgeBase: input.withKnowledgeBase,
-        aiWritePoints: aiWrite.unitPoints,
-        kbAddonPoints: kbAddon?.unitPoints ?? 0,
-        taskName: input.taskName,
+        geoWritePoints,
+        subject: input.taskName,
       });
     } catch (error) {
       if (error instanceof BillingRuleError) throw badRequest('报价参数不正确');
@@ -323,23 +313,19 @@ export class BillingService {
     }
   }
 
-  async settleAiWriteUnit(input: {
+  async settleGeoWriteUnit(input: {
     tenantId: string;
     reservationId: string;
     unitKey: string;
-    taskName: string;
-    aiWritePoints: number;
-    kbAddonPoints: number;
-    withKnowledgeBase: boolean;
+    subject: string;
+    geoWritePoints: number;
   }): Promise<SettleResult> {
-    let quote: AiWriteQuote;
+    let quote: GeoWriteQuote;
     try {
-      quote = quoteAiWrite({
+      quote = quoteGeoWrite({
         count: 1,
-        withKnowledgeBase: input.withKnowledgeBase,
-        aiWritePoints: input.aiWritePoints,
-        kbAddonPoints: input.kbAddonPoints,
-        taskName: input.taskName,
+        geoWritePoints: input.geoWritePoints,
+        subject: input.subject,
       });
     } catch (error) {
       if (error instanceof BillingRuleError) throw badRequest('结算单价不正确');
@@ -354,9 +340,7 @@ export class BillingService {
         listPrice: line.listPrice,
         title: line.title,
         detail: {
-          base: quote.unitAiWrite,
-          kbAddon: quote.unitKbAddon,
-          unitTotal: quote.unitTotal,
+          unitPrice: quote.unitPrice,
           part: line.action,
         },
       })),
@@ -910,29 +894,24 @@ export class BillingService {
     if (pending > 0) {
       const balanceAfter = await this.applyReleaseWallet(tx, reservation, pending);
       let sourceLabel = '';
-      if (reservation.refType === 'rewrite_batch') {
-        const batch = await tx.rewriteBatch.findFirst({
+      if (reservation.refType === 'geo_batch') {
+        const batch = await tx.geoBatchJob.findFirst({
           where: { id: reservation.refId, tenantId },
-          select: { name: true },
+          select: { id: true },
         });
-        sourceLabel = batch?.name
-          ? `批量复刻-${batch.name}`
-          : `批量复刻(${reservation.refId.slice(-8)})`;
-      } else if (reservation.refType === 'ai_task') {
-        const task = await tx.aiTask.findFirst({
+        sourceLabel = batch
+          ? `批量GEO写作(${batch.id.slice(-8)})`
+          : `批量GEO写作(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'geo_article') {
+        const article = await tx.geoArticle.findFirst({
           where: { id: reservation.refId, tenantId },
-          select: { name: true },
+          select: { title: true },
         });
-        sourceLabel = task?.name ? `AI写作-${task.name}` : `AI写作(${reservation.refId.slice(-8)})`;
-      } else if (reservation.refType === 'image_job') {
-        const job = await tx.aiImageJob.findFirst({
-          where: { id: reservation.refId, tenantId },
-          select: { prompt: true },
-        });
-        const shortPrompt = job?.prompt?.trim().slice(0, 18);
-        sourceLabel = shortPrompt
-          ? `AI生图-${shortPrompt}`
-          : `AI生图(${reservation.refId.slice(-8)})`;
+        sourceLabel = article?.title
+          ? `GEO写作-${article.title.slice(0, 18)}`
+          : `GEO写作(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'inline_image_gen') {
+        sourceLabel = `行内AI配图(${reservation.refId.slice(-8)})`;
       } else if (reservation.refType === 'visibility_run') {
         const run = await tx.visibilityRun.findFirst({
           where: { id: reservation.refId, tenantId },
@@ -1143,15 +1122,6 @@ export class BillingService {
     return value;
   }
 
-  private async priceMap(): Promise<Map<string, { unitPoints: number; enabled: boolean }>> {
-    const rows = await this.prisma.base.pricingItem.findMany({
-      where: { action: { in: [...CHARGE_ACTIONS] } },
-    });
-    return new Map(
-      rows.map((row) => [row.action, { unitPoints: row.unitPoints, enabled: row.enabled }]),
-    );
-  }
-
   private transaction<T>(fn: (tx: BillingTx) => Promise<T>): Promise<T> {
     return this.prisma.base.$transaction(fn, TX_OPTIONS);
   }
@@ -1196,6 +1166,7 @@ function presentLog(row: {
   return {
     id: row.id,
     action: row.action,
+    reason: row.action,
     title: row.title,
     unitKey: row.unitKey,
     delta: row.delta,

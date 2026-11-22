@@ -151,19 +151,15 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       });
       await database.base.pricingItem.createMany({
         data: [
-          { action: 'distill', unitPoints: 10, enabled: true },
-          { action: 'ai_write', unitPoints: 10, enabled: true },
+          { action: 'geo_write', unitPoints: 10, enabled: true },
+          { action: 'visibility_check', unitPoints: 2, enabled: true },
+          { action: 'inline_image_gen', unitPoints: 5, enabled: true },
         ],
+        skipDuplicates: true,
       });
       await database.base.quota.update({
         where: { tenantId_key: { tenantId: tenantA, key: 'STORAGE_BYTES' } },
         data: { used: 2048n },
-      });
-      const keyword = await database.base.keyword.create({
-        data: { tenantId: tenantA, main: '示例主词', brands: [] },
-      });
-      await database.base.question.create({
-        data: { tenantId: tenantA, keywordId: keyword.id, text: '已收录的问题', included: true },
       });
       await database.base.moneyLog.create({
         data: {
@@ -261,9 +257,9 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       }>(base, 'GET', '/api/v1/me/rights', { token: merchantToken });
       expect(rights.status).toBe(200);
       expect(rights.data.points).toBe(1500);
-      expect(rights.data.cards).toHaveLength(10);
+      expect(rights.data.cards).toHaveLength(9);
       expect(rights.data.cards.find((card) => card.key === 'POINTS')?.text).toBe('1500');
-      expect(rights.data.cards.find((card) => card.key === 'INCLUDED')?.text).toBe('1');
+      expect(rights.data.cards.find((card) => card.key === 'INCLUDED')?.text).toBe('0');
       expect(rights.data.cards.find((card) => card.key === 'MAIN_KEYWORD')?.text).toBe('0 / 100');
       const storage = rights.data.cards.find((card) => card.key === 'STORAGE_BYTES')?.text ?? '';
       expect(storage).toContain('2 KB');
@@ -273,8 +269,8 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
 
       const held = await billing.reserve({
         tenantId: tenantA,
-        refType: 'distill',
-        refId: `distill_${suffix}`,
+        refType: 'geo_article',
+        refId: `geo_${suffix}`,
         amount: 10,
       });
       expect(held.shadow).toBe(true);
@@ -292,10 +288,10 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const settled = await billing.settle({
         tenantId: tenantA,
         reservationId: held.id,
-        unitKey: `distillu${suffix}`,
-        action: 'distill',
+        unitKey: `geou${suffix}`,
+        action: 'geo_write',
         amount: 10,
-        title: 'AI蒸馏拓展-示例',
+        title: 'GEO写作-示例',
       });
       expect(settled.lines[0]).toMatchObject({ delta: 0, listPrice: 10 });
       expect(settled.lines[0]?.title.endsWith('（免费期）')).toBe(true);
@@ -303,18 +299,18 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
 
       const strictHold = await billing.reserve({
         tenantId: tenantA,
-        refType: 'rewrite_single',
-        refId: `rewrite_${suffix}`,
+        refType: 'inline_image_gen',
+        refId: `img_${suffix}`,
         amount: 10,
       });
       expect(strictHold.shadow).toBe(false);
       await billing.settle({
         tenantId: tenantA,
         reservationId: strictHold.id,
-        unitKey: `rewriteu${suffix}`,
-        action: 'rewrite_single',
+        unitKey: `imgu${suffix}`,
+        action: 'inline_image_gen',
         amount: 10,
-        title: '全网爆文复刻',
+        title: '行内AI配图',
       });
       expect((await billing.wallet(tenantA)).points).toBe(1490);
 
@@ -425,11 +421,11 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         '/api/v1/admin/pricing',
         {
           token: adminToken,
-          body: { action: 'ai_write', unitPoints: 12, enabled: true },
+          body: { action: 'geo_write', unitPoints: 12, enabled: true },
         },
       );
       expect(priced.status).toBe(200);
-      expect(priced.data.items.find((item) => item.action === 'ai_write')?.unitPoints).toBe(12);
+      expect(priced.data.items.find((item) => item.action === 'geo_write')?.unitPoints).toBe(12);
 
       const batchPriced = await call<{
         items: Array<{ action: string; unitPoints: number; enabled: boolean; label: string }>;
@@ -437,13 +433,15 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         token: adminToken,
         body: {
           items: [
-            { action: 'ai_write', unitPoints: 10, enabled: true },
-            { action: 'kb_addon', unitPoints: 6, enabled: true },
+            { action: 'geo_write', unitPoints: 10, enabled: true },
+            { action: 'inline_image_gen', unitPoints: 6, enabled: true },
           ],
         },
       });
       expect(batchPriced.status).toBe(200);
-      expect(batchPriced.data.items.find((item) => item.action === 'kb_addon')?.unitPoints).toBe(6);
+      expect(
+        batchPriced.data.items.find((item) => item.action === 'inline_image_gen')?.unitPoints,
+      ).toBe(6);
 
       const announcement = await call<{
         id: string;
@@ -499,60 +497,12 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
         id: announcement.data.id,
       });
 
-      const template = await call<{ id: string; name: string }>(
-        base,
-        'POST',
-        '/api/v1/admin/templates',
-        {
-          token: adminToken,
-          body: {
-            kind: 'ARTICLE',
-            name: '系统·占位说明',
-            content: '用自己的事实写一段说明，不要编造数据。',
-            randomPool: true,
-            sort: 9,
-          },
-        },
-      );
-      expect(template.status).toBe(200);
-      const edited = await call<{ name: string }>(
-        base,
-        'PATCH',
-        `/api/v1/admin/templates/${template.data.id}`,
-        {
-          token: adminToken,
-          body: {
-            kind: 'ARTICLE',
-            name: '系统·占位说明改',
-            content: '仍然使用 GeoMix 自写说明。',
-            randomPool: false,
-            sort: 9,
-          },
-        },
-      );
-      expect(edited.data.name).toBe('系统·占位说明改');
-      const merchantTemplate = await call(
-        base,
-        'PATCH',
-        `/api/v1/admin/templates/${template.data.id}`,
-        {
-          token: merchantToken,
-          body: {
-            kind: 'ARTICLE',
-            name: '不该改',
-            content: '不该改',
-            randomPool: true,
-            sort: 1,
-          },
-        },
-      );
-      expect(merchantTemplate.status).toBe(404);
       const audits = await database.base.auditLog.count({
         where: {
-          action: { in: ['quota_update', 'pricing_update', 'announcement_save', 'template_save'] },
+          action: { in: ['quota_update', 'pricing_update', 'announcement_save'] },
         },
       });
-      expect(audits).toBeGreaterThanOrEqual(4);
+      expect(audits).toBeGreaterThanOrEqual(3);
     });
 
     it('searches tenant names as literals for percent, underscore, and backslash', async () => {

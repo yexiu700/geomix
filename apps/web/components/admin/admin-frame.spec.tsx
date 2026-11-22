@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCachedAccount, writeCachedAccount } from '../../lib/account-cache';
 import type { AccountProfile } from '../../lib/api';
@@ -70,9 +70,12 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
     logoutSessionMock.mockReset().mockResolvedValue(undefined);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     clearCachedAccount();
     cleanup();
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
   });
 
   it('redirects unauthenticated /admin/tenants visits to /login?next=%2Fadmin%2Ftenants instead of rendering 404', async () => {
@@ -123,9 +126,11 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
       expect(screen.getByText('没有这个页面')).toBeTruthy();
     });
     expect(replaceMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '回首页' }));
+    expect(pushMock).toHaveBeenCalledWith('/home');
   });
 
-  it('renders admin children and updates document title when an ADMIN session is valid', async () => {
+  it('renders admin children without /admin/templates and links back to /home when an ADMIN session is valid', async () => {
     loadAccountMock.mockResolvedValue({ status: 'ok', account: adminAccount });
 
     render(
@@ -139,6 +144,8 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
     });
     expect(document.title).toContain('GeoMix 管理');
     expect(replaceMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link', { name: '系统模板' })).toBeNull();
+    expect(screen.getByRole('link', { name: '返回后台' }).getAttribute('href')).toBe('/home');
   });
 
   it('renders immediately from warm account cache without boot flash (#203)', () => {

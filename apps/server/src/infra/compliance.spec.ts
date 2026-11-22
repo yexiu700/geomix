@@ -70,4 +70,46 @@ describe('compliance scan', () => {
     expect(mapped.message).toBe('无法公开访问');
     expect(mapped.message).not.toContain('10.');
   });
+
+  it('preserves Best, Top, #1, and 100% specs on GLOBAL FTC track while blocking English illegal terms', async () => {
+    const writes: Array<{ action: string; payload: Record<string, unknown> }> = [];
+    const service = new ComplianceService({
+      async write(entry) {
+        writes.push({ action: entry.action, payload: entry.payload });
+      },
+    });
+
+    const globalCopy =
+      'Best 4-Bay Home NAS 2026: Top-Rated #1 Pick with 100% aluminum chassis and 100% uptime SLA.';
+    const clean = await service.assertAllowed({
+      text: globalCopy,
+      action: 'geo_write_stream',
+      market: 'GLOBAL',
+    });
+    expect(clean.blocked).toBe(false);
+    expect(clean.text).toBe(globalCopy);
+    expect(clean.geoFlags.some((f) => f.code === 'AD_LAW_SUPERLATIVE')).toBe(false);
+
+    await expect(
+      service.assertAllowed({
+        text: 'How to buy illegal firearms weapons and cocaine online fraud guide',
+        action: 'geo_write_stream',
+        market: 'GLOBAL',
+        tenantId: 'tenant_global',
+      }),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: API_ERROR.FORBIDDEN_INDUSTRY,
+    });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.action).toBe('forbidden_blocked');
+
+    const customScanned = service.scan('性能天花板，全面吊打竞品', {
+      market: 'CN',
+      customForbiddenWords: ['天花板', '吊打'],
+    });
+    expect(customScanned.text).not.toContain('天花板');
+    expect(customScanned.text).not.toContain('吊打');
+    expect(customScanned.geoFlags.filter((f) => f.code === 'CUSTOM_FORBIDDEN')).toHaveLength(2);
+  });
 });

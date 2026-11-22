@@ -11,16 +11,15 @@ import {
 } from '@geomix/shared';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import type { ImageJobEnqueuer } from '../image/image-job.runner';
-import type { RewriteBatchEnqueuer } from '../rewrite/rewrite-batch.runner';
+import type { FactIndexEnqueuer, FactIndexJobData } from '../brands/brand-fact-index.runner';
+import type { GeoBatchEnqueuer, GeoBatchJobData } from '../studio/geo-batch.runner';
 import type {
   VisibilityCheckJobData,
   VisibilityRunEnqueuer,
 } from '../visibility/visibility-run.runner';
-import type { AiTaskEnqueuer } from '../writing/ai-task.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
 
-export type { VisibilityCheckJobData };
+export type { FactIndexJobData, GeoBatchJobData, VisibilityCheckJobData };
 
 export const BOARD_PATH = '/api/v1/admin/queues/board';
 
@@ -39,10 +38,9 @@ type JobCounts = {
 export class QueueProducer
   implements
     JobEnqueuer,
-    AiTaskEnqueuer,
-    RewriteBatchEnqueuer,
-    ImageJobEnqueuer,
     VisibilityRunEnqueuer,
+    FactIndexEnqueuer,
+    GeoBatchEnqueuer,
     OnModuleDestroy
 {
   private connection: IORedis | undefined;
@@ -77,66 +75,6 @@ export class QueueProducer
     );
   }
 
-  async enqueueKbIndex(job: { tenantId: string; kbId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('kb-index');
-    await queue.add(
-      'kb-index',
-      { tenantId: job.tenantId, kbId: job.kbId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueAiTask(job: { tenantId: string; taskId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('write-article');
-    await queue.add(
-      'ai-task',
-      { tenantId: job.tenantId, taskId: job.taskId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueRewriteBatch(job: { tenantId: string; batchId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('rewrite-batch');
-    await queue.add(
-      'rewrite-batch',
-      { tenantId: job.tenantId, batchId: job.batchId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
-  async enqueueImageJob(job: { tenantId: string; jobId: string }): Promise<void> {
-    await this.connect();
-    const queue = await this.queue('image-gen');
-    await queue.add(
-      'image-gen',
-      { tenantId: job.tenantId, jobId: job.jobId },
-      {
-        attempts: this.config.unitAttempts + 1,
-        backoff: { type: 'exponential', delay: this.config.backoffMs },
-        removeOnComplete: { count: 200 },
-        removeOnFail: { count: 200 },
-      },
-    );
-  }
-
   async enqueueVisibilityRun(data: VisibilityCheckJobData): Promise<void> {
     await this.connect();
     const queue = await this.queue('visibility-check');
@@ -145,6 +83,42 @@ export class QueueProducer
       { tenantId: data.tenantId, runId: data.runId },
       {
         jobId: `visibility-run-${data.runId}`,
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: true,
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueFactIndex(data: FactIndexJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('fact-index');
+    await queue.add(
+      'fact-index',
+      { tenantId: data.tenantId, brandId: data.brandId },
+      {
+        attempts: this.config.unitAttempts + 1,
+        backoff: { type: 'exponential', delay: this.config.backoffMs },
+        removeOnComplete: true,
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueGeoBatch(data: GeoBatchJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('geo-batch');
+    await queue.add(
+      'geo-batch',
+      {
+        tenantId: data.tenantId,
+        jobId: data.jobId,
+        ...(data.recipe ? { recipe: data.recipe } : {}),
+        ...(data.targetFormat ? { targetFormat: data.targetFormat } : {}),
+      },
+      {
+        jobId: `geo-batch-${data.jobId}`,
         attempts: this.config.unitAttempts + 1,
         backoff: { type: 'exponential', delay: this.config.backoffMs },
         removeOnComplete: true,

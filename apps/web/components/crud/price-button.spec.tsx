@@ -13,20 +13,20 @@ describe('price button', () => {
     const onClick = vi.fn();
     render(
       <PriceButton
-        action="ai_write"
-        prices={[{ action: 'ai_write', unitPoints: 10, enabled: true, label: 'AI写作' }]}
+        action="geo_write"
+        prices={[{ action: 'geo_write', unitPoints: 10, enabled: true, label: 'GEO 靶向写作' }]}
         onClick={onClick}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'AI写作（10点数/篇）' }));
+    fireEvent.click(screen.getByRole('button', { name: 'GEO 靶向写作（10点数/篇）' }));
     expect(onClick).toHaveBeenCalledOnce();
   });
 
   it('stays inactive when the price is disabled', () => {
     render(
       <PriceButton
-        action="ai_write"
-        prices={[{ action: 'ai_write', unitPoints: 10, enabled: false, label: 'AI写作' }]}
+        action="geo_write"
+        prices={[{ action: 'geo_write', unitPoints: 10, enabled: false, label: 'GEO 靶向写作' }]}
         onClick={() => undefined}
       />,
     );

@@ -1,189 +1,79 @@
-/** 后台英文语义路由和分组菜单。旧地址不放在这里。 */
+/** GeoMix 2.0 极简 5 工作区路由与平面 4 项左侧业务导航。 */
 
-import { isOpaqueEntityId } from '@geomix/shared';
+import type { GeoMarket } from '@geomix/shared';
+
+export const HOME_ROUTE = '/home' as const;
+
+export type WorkspacePath = '/home' | '/brands' | '/visibility' | '/studio' | '/account';
 
 export type RouteMatch = {
   href: string;
-  path: string;
+  path: WorkspacePath;
   title: string;
-  parent: string | null;
-  pinned: boolean;
 };
 
 type StaticRoute = {
   title: string;
-  parent: string | null;
-  devOnly?: boolean;
+  businessWorkspace: boolean;
 };
 
-export const STATIC_ROUTES: Record<string, StaticRoute> = {
-  '/dashboard': { title: '首页', parent: null },
-  '/workbench/samples': { title: '列表示例', parent: null, devOnly: true },
-  '/material/keywords': { title: '关键词', parent: null },
-  '/material/questions': { title: '写作标题', parent: '/material/keywords' },
-  '/material/gallery': { title: '企业画像图库', parent: null },
-  '/material/knowledge': { title: '企业知识库', parent: null },
-  '/writing/prompts': { title: '写作指令', parent: null },
-  '/writing/categories': { title: '文章分类', parent: null },
-  '/writing/tasks': { title: 'AI写作任务', parent: null },
-  '/writing/articles': { title: '文章列表', parent: '/writing/categories' },
-  '/rewrite/single': { title: '全网爆文复刻', parent: null },
-  '/rewrite/batch': { title: '批量爆文复刻', parent: null },
-  '/image': { title: 'AI生图', parent: null },
-  '/visibility/overview': { title: 'AI数据看板', parent: null },
-  '/visibility/monitors': { title: 'AI可见度诊断', parent: null },
-  '/me/points': { title: '点数明细', parent: null },
-  '/me/money': { title: '余额明细', parent: null },
-  '/me/rights': { title: '账号权益', parent: null },
-  '/me/verify': { title: '实名认证', parent: null },
+export const STATIC_ROUTES: Record<WorkspacePath, StaticRoute> = {
+  '/home': { title: '行动首页', businessWorkspace: true },
+  '/brands': { title: '品牌资产', businessWorkspace: true },
+  '/visibility': { title: '可见度诊断', businessWorkspace: true },
+  '/studio': { title: 'GEO 写作台', businessWorkspace: true },
+  '/account': { title: '点数与权益', businessWorkspace: false },
 };
 
-const QUERY_KEYS: Record<string, readonly string[]> = {
-  '/material/questions': ['keywordId'],
-  '/writing/tasks': ['keywordId'],
-  '/writing/articles': ['categoryId', 'taskId'],
-  '/visibility/overview': ['profileId'],
-  '/visibility/monitors': ['profileId', 'runId'],
+const QUERY_KEYS: Record<WorkspacePath, readonly string[]> = {
+  '/home': ['brandId', 'market'],
+  '/brands': ['brandId', 'market'],
+  '/visibility': ['brandId', 'market', 'tab', 'runId'],
+  '/studio': ['brandId', 'market', 'briefId', 'articleId', 'batchJobId'],
+  '/account': ['brandId', 'market', 'tab'],
 };
 
-const GALLERY_DETAIL = /^\/material\/gallery\/([A-Za-z0-9_-]{1,64})$/;
+export type MenuItem = {
+  type: 'link';
+  href: Exclude<WorkspacePath, '/account'>;
+  title: string;
+};
 
-export type MenuBadge = 'new';
-
-export type MenuItem =
-  | { type: 'section'; key: string; title: string; children: MenuItem[] }
-  | { type: 'submenu'; key: string; title: string; badge?: MenuBadge; children: MenuItem[] }
-  | { type: 'link'; href: string; title: string }
-  | { type: 'soon'; key: string; title: string };
-
-function link(href: keyof typeof STATIC_ROUTES): MenuItem {
-  const route = STATIC_ROUTES[href];
-  if (!route) throw new Error(`missing route ${href}`);
-  return { type: 'link', href, title: route.title };
+function link(href: Exclude<WorkspacePath, '/account'>): MenuItem {
+  return { type: 'link', href, title: STATIC_ROUTES[href].title };
 }
 
 export const MENU: MenuItem[] = [
-  link('/dashboard'),
-  {
-    type: 'section',
-    key: 'creation',
-    title: 'AI创作-文章&素材',
-    children: [
-      {
-        type: 'submenu',
-        key: 'material',
-        title: '素材源力',
-        children: [
-          link('/material/keywords'),
-          link('/material/questions'),
-          link('/material/gallery'),
-          link('/material/knowledge'),
-        ],
-      },
-      {
-        type: 'submenu',
-        key: 'writing',
-        title: '文章写作',
-        children: [
-          link('/writing/prompts'),
-          link('/writing/categories'),
-          link('/writing/tasks'),
-          link('/writing/articles'),
-        ],
-      },
-      {
-        type: 'submenu',
-        key: 'rewrite',
-        title: '流量复刻',
-        children: [link('/rewrite/single'), link('/rewrite/batch')],
-      },
-      {
-        type: 'submenu',
-        key: 'image',
-        title: 'AI生图',
-        badge: 'new',
-        children: [link('/image')],
-      },
-    ],
-  },
-  link('/visibility/overview'),
-  link('/visibility/monitors'),
-  {
-    type: 'submenu',
-    key: 'me',
-    title: '个人中心',
-    children: [link('/me/points'), link('/me/money'), link('/me/rights'), link('/me/verify')],
-  },
+  link('/home'),
+  link('/brands'),
+  link('/visibility'),
+  link('/studio'),
 ];
 
-export function buildMenu(options?: {
-  aiImageEnabled?: boolean;
-  visibilityEnabled?: boolean;
-}): MenuItem[] {
-  if (options?.aiImageEnabled !== false && options?.visibilityEnabled !== false) {
+export const PRIMARY_NAV_ITEMS: readonly MenuItem[] = MENU;
+
+export function buildMenu(options?: { visibilityEnabled?: boolean }): MenuItem[] {
+  if (options?.visibilityEnabled !== false) {
     return MENU;
   }
-  return filterMenuItems(MENU, (item) => {
-    if (options?.aiImageEnabled === false && item.type === 'submenu' && item.key === 'image') {
-      return false;
-    }
-    if (
-      options?.visibilityEnabled === false &&
-      ((item.type === 'link' &&
-        (item.href === '/visibility/overview' || item.href === '/visibility/monitors')) ||
-        (item.type === 'section' && (item.key === 'aidata' || item.key === 'visibility')))
-    ) {
-      return false;
-    }
-    return true;
-  });
+  return MENU.filter((item) => item.href !== '/visibility');
 }
 
-export function isConsoleRouteAccessible(href: string, role?: string): boolean {
-  const matched = matchRoute(href);
-  if (!matched) return false;
-  const staticRoute = STATIC_ROUTES[matched.path];
-  if (staticRoute?.devOnly) {
-    if (process.env.NODE_ENV === 'production') return false;
-    return role === 'ADMIN';
-  }
-  return true;
+export function isConsoleRouteAccessible(href: string): boolean {
+  return matchRoute(href) !== null;
 }
 
 export function isCommandPaletteRoute(
   href: string,
-  role?: string,
-  options?: { aiImageEnabled?: boolean; visibilityEnabled?: boolean },
+  _role?: string,
+  options?: { visibilityEnabled?: boolean },
 ): boolean {
   const matched = matchRoute(href);
   if (!matched) return false;
-  const staticRoute = STATIC_ROUTES[matched.path];
-  if (staticRoute?.devOnly) return false;
-  if (options?.aiImageEnabled === false && matched.path === '/image') return false;
-  if (
-    options?.visibilityEnabled === false &&
-    (matched.path === '/visibility/overview' || matched.path === '/visibility/monitors')
-  ) {
+  if (options?.visibilityEnabled === false && matched.path === '/visibility') {
     return false;
   }
-  return isConsoleRouteAccessible(href, role);
-}
-
-function filterMenuItems(items: MenuItem[], predicate: (item: MenuItem) => boolean): MenuItem[] {
-  const next: MenuItem[] = [];
-  for (const item of items) {
-    if (!predicate(item)) continue;
-    if (item.type === 'section') {
-      next.push({ ...item, children: filterMenuItems(item.children, predicate) });
-      continue;
-    }
-    if (item.type === 'submenu') {
-      next.push({ ...item, children: filterMenuItems(item.children, predicate) });
-      continue;
-    }
-    next.push(item);
-  }
-  return next;
+  return true;
 }
 
 export function matchRoute(input: string): RouteMatch | null {
@@ -192,86 +82,63 @@ export function matchRoute(input: string): RouteMatch | null {
   let path = url.pathname;
   if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
 
-  let title = '';
-  let parent: string | null = null;
-  let pinned = false;
-  const staticRoute = STATIC_ROUTES[path];
-  if (staticRoute) {
-    title = staticRoute.title;
-    parent = staticRoute.parent;
-    pinned = path === '/dashboard';
-  } else {
-    const id = GALLERY_DETAIL.exec(path)?.[1];
-    if (!id) return null;
-    path = `/material/gallery/${id}`;
-    title = isOpaqueEntityId(id) ? '企业画像图库 · 图库详情' : `企业画像图库 · ${id}`;
-    parent = '/material/gallery';
-  }
+  if (!(path in STATIC_ROUTES)) return null;
+  const workspacePath = path as WorkspacePath;
+  const staticRoute = STATIC_ROUTES[workspacePath];
 
   const params = new URLSearchParams();
-  const suffixes: string[] = [];
-  for (const key of QUERY_KEYS[path] ?? []) {
+  for (const key of QUERY_KEYS[workspacePath]) {
     const value = cleanParam(url.searchParams.get(key));
     if (!value) continue;
     params.set(key, value);
-    suffixes.push(paramLabel(key, value));
   }
   const query = params.toString();
-  if (suffixes.length > 0) title = `${title} · ${suffixes.join(' · ')}`;
   return {
-    href: query ? `${path}?${query}` : path,
-    path,
-    title,
-    parent,
-    pinned,
+    href: query ? `${workspacePath}?${query}` : workspacePath,
+    path: workspacePath,
+    title: staticRoute.title,
   };
 }
 
-export function collectHrefs(items: MenuItem[] = MENU): string[] {
-  const hrefs: string[] = [];
-  const walk = (nodes: MenuItem[]) => {
-    for (const node of nodes) {
-      if (node.type === 'link') hrefs.push(node.href);
-      if (node.type === 'section' || node.type === 'submenu') walk(node.children);
+export function buildWorkspaceHref(
+  targetPath: WorkspacePath | string,
+  brandId: string | null,
+  market: GeoMarket | null,
+  extra?: Record<string, string | null | undefined>,
+): string {
+  const url = parseLocal(targetPath);
+  if (!url) return HOME_ROUTE;
+  let path = url.pathname;
+  if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  if (!(path in STATIC_ROUTES)) return HOME_ROUTE;
+
+  const workspacePath = path as WorkspacePath;
+  const params = new URLSearchParams(url.searchParams.toString());
+  if (STATIC_ROUTES[workspacePath].businessWorkspace) {
+    if (brandId) params.set('brandId', brandId);
+    else params.delete('brandId');
+    if (market) params.set('market', market);
+    else params.delete('market');
+  }
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
     }
-  };
-  walk(items);
-  return hrefs;
+  }
+  const matched = matchRoute(
+    params.toString() ? `${workspacePath}?${params.toString()}` : workspacePath,
+  );
+  return matched?.href ?? workspacePath;
 }
 
-export function allSubmenuKeys(items: MenuItem[] = MENU): string[] {
-  const keys: string[] = [];
-  const walk = (nodes: MenuItem[]) => {
-    for (const node of nodes) {
-      if (node.type === 'submenu') {
-        keys.push(node.key);
-        walk(node.children);
-      } else if (node.type === 'section') {
-        walk(node.children);
-      }
-    }
-  };
-  walk(items);
-  return keys;
+export function collectHrefs(items: readonly MenuItem[] = MENU): string[] {
+  return items.map((item) => item.href);
 }
 
 export function menuSelection(href: string): { selected: string; parents: string[] } {
-  const path = href.split('?')[0] ?? href;
-  const selected = path.startsWith('/material/gallery/') ? '/material/gallery' : path;
-  const parents: string[] = [];
-  const walk = (nodes: MenuItem[], chain: string[]): boolean => {
-    for (const node of nodes) {
-      if (node.type === 'link' && node.href === selected) {
-        parents.push(...chain);
-        return true;
-      }
-      if (node.type === 'submenu' && walk(node.children, [...chain, node.key])) return true;
-      if (node.type === 'section' && walk(node.children, chain)) return true;
-    }
-    return false;
-  };
-  walk(MENU, []);
-  return { selected, parents };
+  const path = (href.split('?')[0] ?? href).replace(/\/+$/, '') || HOME_ROUTE;
+  return { selected: path, parents: [] };
 }
 
 function parseLocal(input: string): URL | null {
@@ -297,14 +164,4 @@ function cleanParam(value: string | null): string {
     if (next.length >= 64) break;
   }
   return next;
-}
-
-function paramLabel(key: string, value: string): string {
-  const opaque = isOpaqueEntityId(value);
-  if (key === 'categoryId') return opaque ? '按分类筛选' : `分类 ${value}`;
-  if (key === 'taskId') return opaque ? '按任务筛选' : `任务 ${value}`;
-  if (key === 'profileId') return opaque ? '当前监测档案' : `档案 ${value}`;
-  if (key === 'runId') return opaque ? '当前诊断任务' : `任务 ${value}`;
-  if (key === 'keywordId') return opaque ? '按主词筛选' : value;
-  return opaque ? '已筛选' : value;
 }

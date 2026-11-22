@@ -11,9 +11,6 @@ import {
   parseCrudListQuery,
   priceButtonText,
   priceUnit,
-  sampleBulkSchema,
-  sampleExportTable,
-  sampleInputSchema,
   toCsv,
   toXlsx,
 } from './crud';
@@ -52,14 +49,15 @@ describe('crud list query', () => {
     );
   });
 
-  it('formats price buttons from the supplied amount', () => {
-    expect(priceButtonText('AI写作', 10, priceUnit('ai_write'))).toBe('AI写作（10点数/篇）');
-    expect(priceButtonText('AI蒸馏拓展', 10, priceUnit('distill'))).toBe('AI蒸馏拓展（10点数/次）');
-    expect(priceButtonText('AI生图', 5, priceUnit('image_gen'))).toBe('AI生图（5点数/张）');
+  it('formats price buttons from the supplied amount using v2 action units', () => {
+    expect(priceButtonText('GEO写作', 10, priceUnit('geo_write'))).toBe('GEO写作（10点数/篇）');
+    expect(priceButtonText('行内AI配图', 5, priceUnit('inline_image_gen'))).toBe(
+      '行内AI配图（5点数/张）',
+    );
     expect(priceButtonText('AI可见性监测', 2, priceUnit('visibility_check'))).toBe(
       'AI可见性监测（2点数/次）',
     );
-    expect(() => priceButtonText('AI写作', -1)).toThrow(CrudQueryError);
+    expect(() => priceButtonText('GEO写作', -1)).toThrow(CrudQueryError);
   });
 
   it('escapes like metacharacters so a keyword stays literal', () => {
@@ -72,41 +70,22 @@ describe('crud list query', () => {
     expect(escapeLikeLiteral('中文English')).toBe('中文English');
   });
 
-  it('rejects unknown sample fields and exports the visible columns only', () => {
-    expect(sampleInputSchema.parse({ name: ' 示例甲 ' })).toEqual({
-      name: '示例甲',
-      note: '',
-      enabled: true,
-    });
-    expect(sampleInputSchema.safeParse({ name: '甲', tenantId: 'other' }).success).toBe(false);
-    expect(sampleInputSchema.safeParse({ name: '' }).success).toBe(false);
-    expect(sampleBulkSchema.safeParse({ action: 'delete', ids: ['c'.repeat(24)] }).success).toBe(
-      true,
-    );
-
-    const table = sampleExportTable([
-      {
-        id: 'c'.repeat(24),
-        name: '=示例',
-        note: '备注,甲',
-        enabled: true,
-        createdAt: '2026-11-16T00:00:00.000Z',
-        updatedAt: '2026-11-16T01:00:00.000Z',
-      },
-    ]);
-    const csv = toCsv(table.headers, table.rows);
+  it('exports safe CSV and XLSX tables escaping spreadsheet formulas', () => {
+    const headers = ['编号', '名称', '备注'];
+    const rows = [['c'.repeat(24), '=示例', '备注,甲']];
+    const csv = toCsv(headers, rows);
     expect(csv.startsWith('\uFEFF编号,名称')).toBe(true);
     expect(csv).toContain("'=示例");
     expect(csv).toContain('"备注,甲"');
 
-    const bytes = toXlsx(table.headers, table.rows);
+    const bytes = toXlsx(headers, rows);
     const dir = mkdtempSync(join(tmpdir(), 'geomix-xlsx-'));
-    writeFileSync(join(dir, 'samples.xlsx'), bytes);
+    writeFileSync(join(dir, 'export.xlsx'), bytes);
     const opened = spawnSync(
       'python3',
       [
         '-c',
-        'import zipfile; xml = zipfile.ZipFile("samples.xlsx").read("xl/worksheets/sheet1.xml").decode(); assert "备注,甲" in xml',
+        'import zipfile; xml = zipfile.ZipFile("export.xlsx").read("xl/worksheets/sheet1.xml").decode(); assert "备注,甲" in xml',
       ],
       { cwd: dir, encoding: 'utf8' },
     );

@@ -261,7 +261,7 @@ export function LoginPanel() {
     return task;
   }, []);
 
-  const targetHref = nextHref ?? '/dashboard';
+  const targetHref = nextHref ?? '/home';
 
   useEffect(() => {
     if (checking) return;

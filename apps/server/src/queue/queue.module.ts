@@ -1,25 +1,27 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { BillingModule } from '../billing/billing.module';
-import { IMAGE_JOB_ENQUEUER, IMAGE_JOB_HANDLER, ImageJobRunner } from '../image/image-job.runner';
-import { AdaptersModule } from '../infra/adapters.module';
-import { KB_INDEX_HANDLER, KnowledgeIndexRunner } from '../material/knowledge-index.runner';
 import {
-  REWRITE_BATCH_ENQUEUER,
-  REWRITE_BATCH_HANDLER,
-  RewriteBatchRunner,
-} from '../rewrite/rewrite-batch.runner';
+  BrandFactIndexRunner,
+  FACT_INDEX_ENQUEUER,
+  FACT_INDEX_HANDLER,
+} from '../brands/brand-fact-index.runner';
+import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.service';
+import { AdaptersModule } from '../infra/adapters.module';
+import { GEO_BATCH_ENQUEUER, GEO_BATCH_HANDLER, GeoBatchRunner } from '../studio/geo-batch.runner';
+import { RetestMetricsHookService } from '../studio/retest-metrics-hook.service';
+import { StudioGenerationService } from '../studio/studio-generation.service';
 import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibility.config';
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
 import { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
 import { VisibilityJudgeService } from '../visibility/visibility-judge.service';
 import {
+  VISIBILITY_RUN_COMPLETE_HOOKS,
   VISIBILITY_RUN_ENQUEUER,
   VISIBILITY_RUN_HANDLER,
   VisibilityRunRunner,
 } from '../visibility/visibility-run.runner';
 import { WorkerRuntimeService } from '../worker/worker-runtime.service';
-import { AI_TASK_ENQUEUER, AI_TASK_HANDLER, AiTaskRunner } from '../writing/ai-task.runner';
 import { BullBoardMount } from './bull-board.mount';
 import { JOB_ENQUEUER } from './job-enqueuer';
 import { MaintenanceRunner } from './maintenance.runner';
@@ -41,20 +43,18 @@ export class QueueModule {
         StepGate,
         QueueProducer,
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
-        { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
-        { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
-        { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
+        { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
+        { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
       exports: [
         QueueProducer,
         JOB_ENQUEUER,
-        AI_TASK_ENQUEUER,
-        REWRITE_BATCH_ENQUEUER,
-        IMAGE_JOB_ENQUEUER,
         VISIBILITY_RUN_ENQUEUER,
+        FACT_INDEX_ENQUEUER,
+        GEO_BATCH_ENQUEUER,
         WorkDriver,
         StepGate,
       ],
@@ -69,21 +69,12 @@ export class QueueModule {
         StepGate,
         QueueProducer,
         { provide: JOB_ENQUEUER, useExisting: QueueProducer },
-        { provide: AI_TASK_ENQUEUER, useExisting: QueueProducer },
-        { provide: REWRITE_BATCH_ENQUEUER, useExisting: QueueProducer },
-        { provide: IMAGE_JOB_ENQUEUER, useExisting: QueueProducer },
         { provide: VISIBILITY_RUN_ENQUEUER, useExisting: QueueProducer },
+        { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
+        { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         MaintenanceRunner,
         WorkerRuntimeService,
-        KnowledgeIndexRunner,
-        { provide: KB_INDEX_HANDLER, useExisting: KnowledgeIndexRunner },
-        AiTaskRunner,
-        { provide: AI_TASK_HANDLER, useExisting: AiTaskRunner },
-        RewriteBatchRunner,
-        { provide: REWRITE_BATCH_HANDLER, useExisting: RewriteBatchRunner },
-        ImageJobRunner,
-        { provide: IMAGE_JOB_HANDLER, useExisting: ImageJobRunner },
         {
           provide: VISIBILITY_CONFIG,
           useFactory: () => readVisibilityConfig(process.env),
@@ -91,6 +82,21 @@ export class QueueModule {
         VisibilityCollectorService,
         VisibilityEngineHealthService,
         VisibilityJudgeService,
+        BrandFactIndexRunner,
+        { provide: FACT_INDEX_HANDLER, useExisting: BrandFactIndexRunner },
+        StudioGenerationService,
+        GeoBatchRunner,
+        { provide: GEO_BATCH_HANDLER, useExisting: GeoBatchRunner },
+        BriefsAutoGeneratorService,
+        RetestMetricsHookService,
+        {
+          provide: VISIBILITY_RUN_COMPLETE_HOOKS,
+          inject: [BriefsAutoGeneratorService, RetestMetricsHookService],
+          useFactory: (
+            autoGen: BriefsAutoGeneratorService,
+            retestHook: RetestMetricsHookService,
+          ) => [autoGen, retestHook],
+        },
         VisibilityRunRunner,
         { provide: VISIBILITY_RUN_HANDLER, useExisting: VisibilityRunRunner },
         QueueRuntime,
@@ -100,15 +106,15 @@ export class QueueModule {
         WorkDriver,
         StepGate,
         QueueProducer,
-        AI_TASK_ENQUEUER,
-        REWRITE_BATCH_ENQUEUER,
-        IMAGE_JOB_ENQUEUER,
         VISIBILITY_RUN_ENQUEUER,
-        KnowledgeIndexRunner,
-        AiTaskRunner,
-        RewriteBatchRunner,
-        ImageJobRunner,
+        FACT_INDEX_ENQUEUER,
+        GEO_BATCH_ENQUEUER,
         VisibilityRunRunner,
+        BrandFactIndexRunner,
+        StudioGenerationService,
+        GeoBatchRunner,
+        BriefsAutoGeneratorService,
+        RetestMetricsHookService,
         QueueRuntime,
       ],
     };

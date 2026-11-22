@@ -49,6 +49,7 @@ export const GM = {
     COMPETITOR: '#FF7A59',
     SOCIAL: '#6FA8FF',
     AUTHORITY: '#E9C46A',
+    ECOMMERCE: '#B692F6',
     OTHER: '#7C8683',
   } satisfies Record<CitationSourceKind, string>,
   taskStatus: {

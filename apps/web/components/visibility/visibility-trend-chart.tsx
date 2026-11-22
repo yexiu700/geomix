@@ -1,316 +1,249 @@
 'use client';
 
-import { Space } from 'antd';
-import type { CSSProperties } from 'react';
-import { useState } from 'react';
-import { GM } from '../../lib/design-tokens';
+import type { VisibilityEngineKey, VisibilityTrendPoint } from '@geomix/shared';
+import { VISIBILITY_ENGINE_LABELS } from '@geomix/shared';
+import type { JSX } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { formatPct, GM } from '../../lib/design-tokens';
 import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
-import {
-  formatShortDate,
-  getPointSovPct,
-  type TrendSeriesPoint,
-} from './visibility-overview-helpers';
 
-/**
- * 每日提及率（实线）/ 声量占比（虚线，0 样本日断开）/ 检测-提及量（柱状）组合 SVG 图。
- * 纯展示组件，悬停状态由调用方以 Props 驱动。
- */
-export function VisibilityTrendChartSvg({
+export type VisibilityTrendChartProps = {
+  points: readonly VisibilityTrendPoint[];
+  selectedEngine?: VisibilityEngineKey;
+  loading?: boolean;
+};
+
+const W = 640;
+const H = 200;
+const PAD_L = 42;
+const PAD_R = 16;
+const PAD_T = 18;
+const PAD_B = 30;
+const PLOT_W = W - PAD_L - PAD_R;
+const PLOT_H = H - PAD_T - PAD_B;
+const Y_TICKS = [0, 25, 50, 75, 100] as const;
+
+function shortDateLabel(dateKey: string): string {
+  const parts = dateKey.split('-');
+  if (parts.length === 3) {
+    return `${parts[1]}-${parts[2]}`;
+  }
+  return dateKey;
+}
+
+export function VisibilityTrendChart({
   points,
-  activeIndex,
-  onHoverIndex,
-}: {
-  points: TrendSeriesPoint[];
-  activeIndex: number | null;
-  onHoverIndex: (idx: number | null) => void;
-}) {
-  const width = 740;
-  const height = 248;
-  const padLeft = 44;
-  const padRight = 20;
-  const padTop = 24;
-  const padBottom = 38;
-  const plotW = width - padLeft - padRight;
-  const plotH = height - padTop - padBottom;
+  selectedEngine,
+  loading = false,
+}: VisibilityTrendChartProps): JSX.Element {
+  const gradId = useId();
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
-  const pctTicks = [0, 25, 50, 75, 100];
-  const maxObs = Math.max(4, ...points.map((p) => p.completedChecks));
-
-  const colW = plotW / Math.max(1, points.length);
-  const barW = Math.max(6, Math.min(22, Math.floor(colW * 0.42)));
-
-  const yPct = (pct: number) => {
-    const clamped = Math.max(0, Math.min(100, pct));
-    return padTop + plotH - (clamped / 100) * plotH;
-  };
-
-  const yObs = (count: number) => {
-    const ratio = Math.max(0, Math.min(1, count / maxObs));
-    return padTop + plotH - ratio * plotH * 0.78;
-  };
-
-  const visPolyline = points
-    .map((pt, idx) => {
-      const cx = padLeft + idx * colW + colW / 2;
-      return `${cx},${yPct(pt.visibilityPct)}`;
-    })
-    .join(' ');
-
-  const sovSegments: string[][] = [];
-  let currentSovSegment: string[] = [];
-  points.forEach((pt, idx) => {
-    const sov = getPointSovPct(pt);
-    if (sov === null) {
-      if (currentSovSegment.length > 0) {
-        sovSegments.push(currentSovSegment);
-        currentSovSegment = [];
-      }
-      return;
+  const seriesPoints = useMemo(() => {
+    const targetEngine = selectedEngine ?? 'all';
+    const exact = points.filter((pt) => pt.engine === targetEngine);
+    const source = exact.length > 0 || selectedEngine ? exact : points;
+    const seenDates = new Set<string>();
+    const deduped: VisibilityTrendPoint[] = [];
+    for (const pt of source) {
+      if (seenDates.has(pt.date)) continue;
+      seenDates.add(pt.date);
+      deduped.push(pt);
     }
-    const cx = padLeft + idx * colW + colW / 2;
-    currentSovSegment.push(`${cx},${yPct(sov)}`);
-  });
-  if (currentSovSegment.length > 0) {
-    sovSegments.push(currentSovSegment);
+    return deduped;
+  }, [points, selectedEngine]);
+
+  useEffect(() => {
+    setHoveredIdx(null);
+  }, [selectedEngine, seriesPoints.length]);
+
+  const hasData = useMemo(() => seriesPoints.some((pt) => pt.completedChecks > 0), [seriesPoints]);
+
+  const geometry = useMemo(() => {
+    const count = seriesPoints.length;
+    if (count === 0) {
+      return { coords: [], linePath: '', areaPath: '', xLabelIndices: new Set<number>() };
+    }
+    const coords = seriesPoints.map((pt, idx) => {
+      const x = count === 1 ? PAD_L + PLOT_W / 2 : PAD_L + (idx / (count - 1)) * PLOT_W;
+      const pct = Math.max(0, Math.min(100, pt.visibilityPct));
+      const y = PAD_T + PLOT_H - (pct / 100) * PLOT_H;
+      return { idx, x, y, pt };
+    });
+
+    const linePath = coords
+      .map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`)
+      .join(' ');
+    const baseY = PAD_T + PLOT_H;
+    const areaPath =
+      coords.length > 0
+        ? `${linePath} L ${coords[coords.length - 1]!.x.toFixed(1)} ${baseY} L ${coords[0]!.x.toFixed(1)} ${baseY} Z`
+        : '';
+
+    const xLabelIndices = new Set<number>();
+    if (count <= 7) {
+      for (let i = 0; i < count; i += 1) xLabelIndices.add(i);
+    } else {
+      const step = Math.max(1, Math.ceil((count - 1) / 5));
+      for (let i = 0; i < count; i += step) xLabelIndices.add(i);
+      xLabelIndices.add(count - 1);
+    }
+
+    return { coords, linePath, areaPath, xLabelIndices };
+  }, [seriesPoints]);
+
+  if (loading) {
+    return <SignalSkeleton variant="block" height={200} />;
   }
 
-  const labelStep = points.length > 16 ? 4 : points.length > 9 ? 2 : 1;
+  if (!hasData || geometry.coords.length === 0) {
+    return (
+      <div className="gm-vis-trend-empty">
+        <SignalEmpty
+          title="所选时间窗口暂无趋势数据"
+          description="发起并完成监测任务后，这里会按天展示品牌 AI 提及率变化曲线"
+        />
+      </div>
+    );
+  }
+
+  const hovered = hoveredIdx !== null ? (geometry.coords[hoveredIdx] ?? null) : null;
+  const engineSuffix = selectedEngine ? `（${VISIBILITY_ENGINE_LABELS[selectedEngine]}）` : '';
 
   return (
-    <svg
-      data-testid="visibility-trend-svg"
-      role="img"
-      aria-label="近 N 日品牌可见度与声量趋势图"
-      viewBox={`0 0 ${width} ${height}`}
-      style={{ width: '100%', height: 'auto', maxHeight: 265, display: 'block' }}
-      onMouseLeave={() => onHoverIndex(null)}
-    >
-      {/* Y-axis gridlines (0% - 100%) */}
-      {pctTicks.map((tick) => {
-        const y = yPct(tick);
-        return (
-          <g key={tick}>
-            <line
-              x1={padLeft}
-              y1={y}
-              x2={width - padRight}
-              y2={y}
-              stroke={GM.chart.grid}
-              strokeDasharray={tick === 0 ? undefined : '4 4'}
-            />
-            <text
-              x={padLeft - 8}
-              y={y + 4}
-              textAnchor="end"
-              fontSize="11"
-              className="gm-num"
-              fill={GM.chart.axis}
-            >
-              {tick}%
-            </text>
-          </g>
-        );
-      })}
-
-      {/* Daily observation & mention bars */}
-      {points.map((pt, idx) => {
-        const cx = padLeft + idx * colW + colW / 2;
-        const barX = cx - barW / 2;
-        const totalTop = yObs(pt.completedChecks);
-        const totalH = Math.max(2, padTop + plotH - totalTop);
-        const mentionTop = yObs(pt.mentionedChecks);
-        const mentionH = Math.max(0, padTop + plotH - mentionTop);
-        const isHovered = activeIndex === idx;
-
-        return (
-          <g key={pt.date} onMouseEnter={() => onHoverIndex(idx)} style={{ cursor: 'pointer' }}>
-            <rect
-              x={padLeft + idx * colW}
-              y={padTop}
-              width={colW}
-              height={plotH}
-              fill={isHovered ? GM.bg.hover : 'transparent'}
-            />
-            <rect
-              x={barX}
-              y={pt.completedChecks > 0 ? totalTop : padTop + plotH - 2}
-              width={barW}
-              height={pt.completedChecks > 0 ? totalH : 2}
-              rx={3}
-              fill="rgba(255,255,255,0.08)"
-            />
-            {pt.mentionedChecks > 0 ? (
-              <rect
-                x={barX}
-                y={mentionTop}
-                width={barW}
-                height={mentionH}
-                rx={3}
-                fill="rgba(61,224,200,0.32)"
-              />
-            ) : null}
-            {idx % labelStep === 0 || idx === points.length - 1 ? (
-              <text
-                x={cx}
-                y={height - 12}
-                textAnchor="middle"
-                fontSize="11"
-                className="gm-num"
-                fill={isHovered ? GM.fg.f1 : GM.chart.axis}
-                fontWeight={isHovered ? '600' : '400'}
-              >
-                {formatShortDate(pt.date)}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-
-      {/* Share of Voice % dashed polylines (gapped when sample count is 0) */}
-      {sovSegments.map((seg, segIdx) =>
-        seg.length > 1 ? (
-          <polyline
-            key={`sov-seg-${segIdx}`}
-            data-testid="visibility-sov-line"
-            fill="none"
-            stroke={GM.chart.c1}
-            strokeWidth="1.5"
-            strokeDasharray="4 3"
-            points={seg.join(' ')}
-          />
-        ) : null,
-      )}
-
-      {/* Visibility % solid polyline */}
-      {points.length > 1 ? (
-        <polyline fill="none" stroke={GM.sig.cited} strokeWidth="2" points={visPolyline} />
-      ) : null}
-
-      {/* Data nodes */}
-      {points.map((pt, idx) => {
-        const cx = padLeft + idx * colW + colW / 2;
-        const cy = yPct(pt.visibilityPct);
-        const sov = getPointSovPct(pt);
-        const isHovered = activeIndex === idx;
-        return (
-          <g key={`${pt.date}-nodes`} onMouseEnter={() => onHoverIndex(idx)}>
-            {sov !== null ? (
-              <circle
-                data-testid={`visibility-sov-node-${pt.date}`}
-                cx={cx}
-                cy={yPct(sov)}
-                r={isHovered ? 4.5 : 3}
-                fill={GM.bg.surface}
-                stroke={GM.chart.c1}
-                strokeWidth="1.5"
-                className="gm-trend-node"
-              />
-            ) : null}
-            <circle
-              cx={cx}
-              cy={cy}
-              r={isHovered ? 4.5 : 3}
-              fill={GM.bg.surface}
-              stroke={GM.sig.cited}
-              strokeWidth="2"
-              className="gm-trend-node"
-            />
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-function LegendSwatch({ style, label }: { style: CSSProperties; label: string }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-      <span style={{ display: 'inline-block', ...style }} />
-      {label}
-    </span>
-  );
-}
-
-function describeTrendPoint(pt: TrendSeriesPoint): string {
-  const sov = getPointSovPct(pt);
-  return `${pt.date}：检测 ${pt.completedChecks} 次 · 提及 ${pt.mentionedChecks} 次 · 提及率 ${pt.visibilityPct.toFixed(1)}% · 声量占比 ${
-    sov !== null ? `${sov.toFixed(1)}%` : '—'
-  }`;
-}
-
-/**
- * 「可见度与声量变化趋势」卡片：标题 / 悬停摘要 / 图例 + 加载、空态与 SVG 图。
- * 悬停索引与数据序列绑定，序列刷新后自动失效，无需额外 effect 重置。
- */
-export function VisibilityTrendPanel({
-  points,
-  loading,
-}: {
-  points: TrendSeriesPoint[];
-  loading: boolean;
-}) {
-  const [hover, setHover] = useState<{ points: TrendSeriesPoint[]; idx: number } | null>(null);
-  const activeIndex = hover && hover.points === points ? hover.idx : null;
-  const activeTrendPoint = activeIndex !== null ? (points[activeIndex] ?? null) : null;
-  const hasTrendActivity = points.length > 0 && points.some((pt) => pt.completedChecks > 0);
-
-  return (
-    <div className="gm-panel">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-          marginBottom: 10,
-        }}
+    <div className="gm-vis-trend-wrap">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        height="100%"
+        role="img"
+        aria-label={`品牌提及率趋势图${engineSuffix}`}
+        className="gm-vis-trend-svg"
       >
-        <div>
-          <div className="gm-panel-title">可见度与声量变化趋势</div>
-          <div className="gm-panel-sub gm-num">
-            {activeTrendPoint
-              ? describeTrendPoint(activeTrendPoint)
-              : '展示周期内每日品牌提及率（实线）、声量占比（虚线）与有效检测量（柱状）'}
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(61,224,200,0.28)" />
+            <stop offset="100%" stopColor="rgba(61,224,200,0.01)" />
+          </linearGradient>
+        </defs>
+
+        {Y_TICKS.map((tick) => {
+          const y = PAD_T + PLOT_H - (tick / 100) * PLOT_H;
+          return (
+            <g key={tick}>
+              <line
+                x1={PAD_L}
+                y1={y}
+                x2={W - PAD_R}
+                y2={y}
+                stroke={GM.chart.grid}
+                strokeDasharray={tick === 0 ? undefined : '3 3'}
+                strokeWidth={1}
+              />
+              <text
+                x={PAD_L - 8}
+                y={y + 4}
+                textAnchor="end"
+                fontSize={10}
+                fill={GM.chart.axis}
+                className="gm-num"
+              >
+                {`${tick}%`}
+              </text>
+            </g>
+          );
+        })}
+
+        {geometry.areaPath ? <path d={geometry.areaPath} fill={`url(#${gradId})`} /> : null}
+        {geometry.linePath ? (
+          <path
+            d={geometry.linePath}
+            fill="none"
+            stroke={GM.sig.cited}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ) : null}
+
+        {geometry.coords.map(({ idx, x, y, pt }) => {
+          const active = hoveredIdx === idx;
+          return (
+            <g key={`${pt.engine}-${pt.date}`}>
+              {geometry.xLabelIndices.has(idx) ? (
+                <text
+                  x={x}
+                  y={H - 8}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fill={GM.chart.axis}
+                  className="gm-num"
+                >
+                  {shortDateLabel(pt.date)}
+                </text>
+              ) : null}
+              <circle
+                cx={x}
+                cy={y}
+                r={active ? 4.5 : pt.completedChecks > 0 ? 3 : 2}
+                fill={pt.completedChecks > 0 ? GM.sig.cited : GM.bg.elevated}
+                stroke={active ? GM.phosphor : GM.sig.cited}
+                strokeWidth={active ? 2 : 1.5}
+                className="gm-trend-node"
+                tabIndex={0}
+                role="button"
+                aria-label={`${pt.date} 提及率 ${formatPct(pt.visibilityPct)}`}
+                onMouseEnter={() => setHoveredIdx(idx)}
+                onMouseLeave={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
+                onFocus={() => setHoveredIdx(idx)}
+                onBlur={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
+              />
+            </g>
+          );
+        })}
+      </svg>
+
+      {hovered ? (
+        <div
+          className="gm-vis-trend-tooltip"
+          role="tooltip"
+          style={{
+            left: `${((hovered.x / W) * 100).toFixed(2)}%`,
+            top: `${Math.max(8, (hovered.y / H) * 100 - 8).toFixed(2)}%`,
+            transform: hovered.x > W * 0.68 ? 'translate(-108%, -50%)' : 'translate(10%, -50%)',
+          }}
+        >
+          <div className="gm-sonar-tooltip-title gm-num">{hovered.pt.date}</div>
+          <div>
+            提及率：<span className="gm-num">{formatPct(hovered.pt.visibilityPct)}</span>
+          </div>
+          <div>
+            提及 <span className="gm-num">{hovered.pt.mentionedChecks}</span> / 观测{' '}
+            <span className="gm-num">{hovered.pt.completedChecks}</span>
           </div>
         </div>
-        <Space size={10} wrap style={{ fontSize: 12, color: GM.fg.f2 }}>
-          <LegendSwatch
-            style={{ width: 10, height: 2, background: GM.sig.cited }}
-            label="提及率 %"
-          />
-          <LegendSwatch
-            style={{ width: 10, height: 2, borderTop: `1.5px dashed ${GM.chart.c1}` }}
-            label="声量占比 %"
-          />
-          <LegendSwatch
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: 2,
-              background: 'rgba(61,224,200,0.32)',
-            }}
-            label="检测/提及量"
-          />
-        </Space>
-      </div>
+      ) : null}
 
-      {loading ? (
-        <SignalSkeleton variant="block" height={220} />
-      ) : !hasTrendActivity ? (
-        <div data-testid="visibility-trend-empty">
-          <SignalEmpty
-            title="当前筛选范围内暂无有效 AI 检测趋势记录"
-            description="切换时间窗口或前往「AI可见度诊断」发起新一轮多引擎监测后即可查看趋势曲线。"
-          />
-        </div>
-      ) : (
-        <VisibilityTrendChartSvg
-          points={points}
-          activeIndex={activeIndex}
-          onHoverIndex={(idx) => setHover(idx === null ? null : { points, idx })}
-        />
-      )}
+      <table className="gm-sr-only">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>提及率</th>
+            <th>提及次数</th>
+            <th>有效观测</th>
+          </tr>
+        </thead>
+        <tbody>
+          {seriesPoints.map((pt) => (
+            <tr key={`${pt.engine}-${pt.date}`}>
+              <td>{pt.date}</td>
+              <td>{formatPct(pt.visibilityPct)}</td>
+              <td>{pt.mentionedChecks}</td>
+              <td>{pt.completedChecks}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

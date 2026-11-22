@@ -86,23 +86,23 @@ describe('Issue #24: LLM daily cost report & ops deliverables', () => {
             },
           ]),
         },
-        aiTaskItem: {
+        geoArticle: {
           findMany: vi.fn().mockResolvedValue([
             {
               id: 'item-covered',
+              tenantId: 'tenant-1',
               model: 'deepseek-chat',
               tokensIn: 1000,
               tokensOut: 2000,
-              finishedAt: new Date('2026-11-17T02:00:05.000Z'),
-              task: { tenantId: 'tenant-1' },
+              createdAt: new Date('2026-11-17T02:00:05.000Z'),
             },
             {
               id: 'item-legacy',
+              tenantId: 'tenant-2',
               model: 'deepseek-chat',
               tokensIn: 500,
               tokensOut: 1500,
-              finishedAt: new Date('2026-11-16T10:00:00.000Z'),
-              task: { tenantId: 'tenant-2' },
+              createdAt: new Date('2026-11-16T10:00:00.000Z'),
             },
           ]),
         },
@@ -185,7 +185,7 @@ describe('Issue #24: LLM daily cost report & ops deliverables', () => {
             },
           ]),
         },
-        aiTaskItem: { findMany: vi.fn().mockResolvedValue([]) },
+        geoArticle: { findMany: vi.fn().mockResolvedValue([]) },
         visibilityObservation: { findMany: vi.fn().mockResolvedValue([]) },
         tenant: { findMany: vi.fn().mockResolvedValue([]) },
       },

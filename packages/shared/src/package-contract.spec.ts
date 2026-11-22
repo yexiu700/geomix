@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import * as rootBarrel from './index';
 import * as taskStatusModule from './task-status';
 import * as uxFoundationModule from './ux-foundation';
-import * as writingTasksModule from './writing-tasks';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(srcDir, '..');
@@ -336,29 +335,16 @@ describe('@geomix/shared package contract (#265)', () => {
     }
   });
 
-  it('preserves reference and type parity across ./task-status, ./writing-tasks, ./ux-foundation, and root ./index', () => {
-    const taskStatusTypeParity: AssertEqual<
-      taskStatusModule.TaskStatusName,
-      writingTasksModule.TaskStatusName
-    > = true;
+  it('preserves reference and type parity across ./task-status, ./ux-foundation, and root ./index', () => {
     const rootTaskStatusTypeParity: AssertEqual<
       taskStatusModule.TaskStatusName,
       rootBarrel.TaskStatusName
-    > = true;
-    const itemStatusTypeParity: AssertEqual<
-      taskStatusModule.ItemStatusName,
-      writingTasksModule.ItemStatusName
     > = true;
     const rootItemStatusTypeParity: AssertEqual<
       taskStatusModule.ItemStatusName,
       rootBarrel.ItemStatusName
     > = true;
-    expect(
-      taskStatusTypeParity &&
-        rootTaskStatusTypeParity &&
-        itemStatusTypeParity &&
-        rootItemStatusTypeParity,
-    ).toBe(true);
+    expect(rootTaskStatusTypeParity && rootItemStatusTypeParity).toBe(true);
 
     expect(taskStatusModule.TASK_STATUSES).toEqual([
       'QUEUED',
@@ -377,11 +363,10 @@ describe('@geomix/shared package contract (#265)', () => {
       'SKIPPED',
     ]);
 
-    expect(writingTasksModule.TASK_STATUSES).toBe(taskStatusModule.TASK_STATUSES);
     expect(rootBarrel.TASK_STATUSES).toBe(taskStatusModule.TASK_STATUSES);
-    expect(writingTasksModule.ITEM_STATUSES).toBe(taskStatusModule.ITEM_STATUSES);
     expect(rootBarrel.ITEM_STATUSES).toBe(taskStatusModule.ITEM_STATUSES);
-    expect(writingTasksModule.isTaskStatus).toBe(taskStatusModule.isTaskStatus);
+    expect(rootBarrel.TASK_STATUS_LABELS).toBe(taskStatusModule.TASK_STATUS_LABELS);
+    expect(rootBarrel.ITEM_STATUS_LABELS).toBe(taskStatusModule.ITEM_STATUS_LABELS);
     expect(rootBarrel.isTaskStatus).toBe(taskStatusModule.isTaskStatus);
 
     for (const status of taskStatusModule.TASK_STATUSES) {

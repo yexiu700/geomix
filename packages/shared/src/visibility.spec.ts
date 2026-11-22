@@ -4,10 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { MODEL_INCLUSION_CARDS } from './account';
 import {
   CITATION_SOURCE_KINDS,
+  CITATION_SOURCE_PRIORITY,
   DOMESTIC_VISIBILITY_ENGINE_KEYS,
+  GLOBAL_VISIBILITY_ENGINE_KEYS,
   VISIBILITY_COLLECTOR_KINDS,
   VISIBILITY_ENGINES,
+  VISIBILITY_ENGINES_BY_MARKET,
   VISIBILITY_SENTIMENTS,
+  enginesForMarket,
+  enginesMetaForMarket,
+  findDisallowedMarketEngines,
+  formatVisibilityEngineDisplayLabel,
+  isEngineAllowedForMarket,
   assessAnswerTopicRelevance,
   classifyCitationSource,
   computeAvgPosition,
@@ -15,7 +23,9 @@ import {
   computeShareOfVoice,
   computeVisibilityPct,
   extractEvidencePassages,
+  extractStructuredRecommendationItems,
   filterKeywordsForVisibilityProfile,
+  findQuestionEchoIntroEnd,
   findSubjectMentionOffsets,
   formatVisibilityRunSubmitLabel,
   hasMultipleDistinctProfileBrands,
@@ -32,14 +42,24 @@ import {
   parseVisibilityOpportunitiesQuery,
   parseVisibilityOverviewQuery,
   parseVisibilityRunListQuery,
+  parseVisibilityV2CitationQuery,
+  parseVisibilityV2OpportunitiesQuery,
+  parseVisibilityV2OverviewQuery,
+  parseVisibilityV2RunListQuery,
   quoteVisibilityRunPoints,
   rankTrackedSubjects,
   recomputeRunMetrics,
   resolveDefaultKeywordIdForProfile,
   resolveScopedOverviewKeywords,
+  resolveStructuredSubjectRanks,
   visibilityProfileCreateSchema,
   visibilityProfileUpdateSchema,
   visibilityRunCreateSchema,
+  visibilityRunV2CreateSchema,
+  visibilityV2CitationQuerySchema,
+  visibilityV2OpportunitiesQuerySchema,
+  visibilityV2OverviewQuerySchema,
+  visibilityV2RunListQuerySchema,
   wholeWordPattern,
 } from './visibility';
 
@@ -63,14 +83,45 @@ describe('visibility engines and constants', () => {
     expect(isVisibilityEngine('google_aio')).toBe(true);
     expect(isVisibilityEngine('unknown_engine')).toBe(false);
     expect(VISIBILITY_SENTIMENTS).toEqual(['positive', 'neutral', 'mixed', 'negative']);
-    expect(CITATION_SOURCE_KINDS).toEqual(['OWNED', 'COMPETITOR', 'SOCIAL', 'AUTHORITY', 'OTHER']);
+    expect(CITATION_SOURCE_KINDS).toEqual([
+      'OWNED',
+      'COMPETITOR',
+      'SOCIAL',
+      'AUTHORITY',
+      'ECOMMERCE',
+      'OTHER',
+    ]);
+    expect(GLOBAL_VISIBILITY_ENGINE_KEYS).toEqual([
+      'chatgpt',
+      'perplexity',
+      'claude',
+      'gemini',
+      'google_aio',
+    ]);
+    expect(enginesForMarket('CN')).toHaveLength(8);
+    expect(enginesForMarket('GLOBAL')).toHaveLength(5);
+    expect(isEngineAllowedForMarket('deepseek', 'CN')).toBe(true);
+    expect(isEngineAllowedForMarket('deepseek', 'GLOBAL')).toBe(false);
+    expect(isEngineAllowedForMarket('perplexity', 'GLOBAL')).toBe(true);
+    expect(isEngineAllowedForMarket('perplexity', 'CN')).toBe(false);
     expect(VISIBILITY_COLLECTOR_KINDS).toEqual(['fake', 'llm_api', 'remote_scraper']);
     expect(isVisibilitySentiment('positive')).toBe(true);
     expect(isVisibilitySentiment('neutral_bad')).toBe(false);
     expect(isCitationSourceKind('OWNED')).toBe(true);
+    expect(isCitationSourceKind('ECOMMERCE')).toBe(true);
     expect(isCitationSourceKind('UNKNOWN')).toBe(false);
     expect(isVisibilityCollectorKind('fake')).toBe(true);
     expect(isVisibilityCollectorKind('invalid_driver')).toBe(false);
+    expect(classifyCitationSource('https://item.jd.com/1001.html')).toBe('ECOMMERCE');
+    expect(classifyCitationSource('https://www.amazon.com/dp/B001')).toBe('ECOMMERCE');
+    expect(classifyCitationSource('https://m.weibo.cn/status/123')).toBe('SOCIAL');
+    expect(classifyCitationSource('https://post.smzdm.com/p/123')).toBe('SOCIAL');
+    expect(
+      normalizeFanOutQueries(
+        ['NAS 推荐; 家庭私有云对比；四盘位 NAS 静音\nNAS 推荐'],
+        '家用 NAS 怎么选',
+      ),
+    ).toEqual(['NAS 推荐', '家庭私有云对比', '四盘位 NAS 静音']);
   });
 });
 
@@ -396,7 +447,7 @@ describe('visibility metrics, fan-out normalization, and audit recomputation', (
     });
   });
 
-  it('normalizes fan-out queries by collapsing whitespace, removing prompt duplicates, and deduping', () => {
+  it('normalizes fan-out queries by collapsing whitespace, stripping bullets/numbers, removing prompt duplicates, and deduping', () => {
     const normalized = normalizeFanOutQueries(
       [
         '  GEO优化工具哪家好  ',
@@ -411,6 +462,22 @@ describe('visibility metrics, fan-out normalization, and audit recomputation', (
     );
 
     expect(normalized).toEqual(['2026 企业级 GEO 监测平台对比', 'DeepSeek 品牌提及率提升方法']);
+
+    const bulleted = normalizeFanOutQueries(
+      [
+        'NAS 噪音实测; - NAS 噪音实测；• NAS 散热测试\n1. NAS 售后保修\r\n2、NAS 功耗对比\n- 家用 NAS 怎么选\n2.5G 网口 NAS',
+        '* nas 噪音实测',
+        '3) NAS 售后保修',
+      ],
+      '家用 NAS 怎么选',
+    );
+    expect(bulleted).toEqual([
+      'NAS 噪音实测',
+      'NAS 散热测试',
+      'NAS 售后保修',
+      'NAS 功耗对比',
+      '2.5G 网口 NAS',
+    ]);
   });
 
   it('recomputes run metrics deterministically from raw observations and citations', () => {
@@ -879,5 +946,589 @@ describe('topic relevance guardrail and off-topic metric downgrading (#217)', ()
       { brandName: 'Anker' },
     );
     expect(onTopicRes.relevant).toBe(true);
+  });
+});
+
+describe('M2-B v2 dual-market engine registry & schemas', () => {
+  it('partitions engines strictly into CN (8, canonical tongyi) and GLOBAL (5) with display labels', () => {
+    expect(VISIBILITY_ENGINES_BY_MARKET.CN).toHaveLength(8);
+    expect(VISIBILITY_ENGINES_BY_MARKET.GLOBAL).toHaveLength(5);
+    expect(enginesMetaForMarket('CN').map((e) => e.key)).toContain('tongyi');
+    expect(enginesMetaForMarket('CN').map((e) => e.key)).not.toContain('qwen');
+    expect(enginesMetaForMarket('GLOBAL').map((e) => e.key)).toEqual([
+      'chatgpt',
+      'perplexity',
+      'claude',
+      'gemini',
+      'google_aio',
+    ]);
+    expect(findDisallowedMarketEngines(['deepseek', 'chatgpt'], 'CN')).toEqual(['chatgpt']);
+    expect(findDisallowedMarketEngines(['perplexity', 'doubao'], 'GLOBAL')).toEqual(['doubao']);
+    expect(formatVisibilityEngineDisplayLabel('DeepSeek', true)).toBe('DeepSeek');
+    expect(formatVisibilityEngineDisplayLabel('腾讯元宝', false)).toBe('腾讯元宝（暂未上线）');
+  });
+
+  it('validates visibilityRunV2CreateSchema with optional market and market-engine subset checks', () => {
+    // Omitted market allowed (single-market / query param flow)
+    const noMarket = visibilityRunV2CreateSchema.parse({
+      engines: ['deepseek', 'doubao', 'deepseek'],
+      prompts: ['家用 NAS 推荐', '家用 NAS 推荐'],
+    });
+    expect(noMarket.market).toBeUndefined();
+    expect(noMarket.engines).toEqual(['deepseek', 'doubao']);
+    expect(noMarket.prompts).toEqual(['家用 NAS 推荐']);
+    expect(noMarket.triggerType).toBe('MANUAL');
+
+    // Valid GLOBAL payload
+    const globalParsed = visibilityRunV2CreateSchema.parse({
+      market: 'GLOBAL',
+      engines: ['chatgpt', 'perplexity'],
+      prompts: ['Best quiet 4-bay NAS 2026'],
+      triggerType: 'RETEST',
+      retestArticleId: 'art_123',
+    });
+    expect(globalParsed.market).toBe('GLOBAL');
+    expect(globalParsed.triggerType).toBe('RETEST');
+
+    // Mismatched CN + GLOBAL engine rejected
+    const badCn = visibilityRunV2CreateSchema.safeParse({
+      market: 'CN',
+      engines: ['deepseek', 'chatgpt'],
+      prompts: ['家用 NAS 推荐'],
+    });
+    expect(badCn.success).toBe(false);
+
+    // Mismatched GLOBAL + CN engine rejected
+    const badGlobal = visibilityRunV2CreateSchema.safeParse({
+      market: 'GLOBAL',
+      engines: ['perplexity', 'doubao'],
+      prompts: ['Best quiet home NAS'],
+    });
+    expect(badGlobal.success).toBe(false);
+  });
+
+  it('parses v2 overview, run list, citation, and opportunity query schemas safely', () => {
+    expect(visibilityV2OverviewQuerySchema.safeParse({ market: 'cn', days: '7' }).success).toBe(
+      true,
+    );
+    expect(visibilityV2OverviewQuerySchema.safeParse({ market: 'JP' }).success).toBe(false);
+    expect(
+      parseVisibilityV2OverviewQuery({ market: 'global', days: '30', engine: 'claude' }),
+    ).toEqual({ market: 'GLOBAL', days: 30, engine: 'claude' });
+
+    expect(
+      visibilityV2RunListQuerySchema.safeParse({ market: 'CN', page: 2, pageSize: 50 }).success,
+    ).toBe(true);
+    expect(
+      parseVisibilityV2RunListQuery({ market: 'CN', status: 'RUNNING', keyword: 'NAS' }),
+    ).toEqual({ market: 'CN', page: 1, pageSize: 25, status: 'RUNNING', keyword: 'NAS' });
+
+    expect(
+      visibilityV2CitationQuerySchema.safeParse({
+        market: 'GLOBAL',
+        sourceKind: 'ECOMMERCE',
+        days: 14,
+      }).success,
+    ).toBe(true);
+    expect(
+      parseVisibilityV2CitationQuery({ market: 'CN', sourceKind: 'COMPETITOR', page: 2 }),
+    ).toEqual({
+      market: 'CN',
+      engine: undefined,
+      sourceKind: 'COMPETITOR',
+      days: 30,
+      page: 2,
+      pageSize: 25,
+    });
+
+    expect(
+      visibilityV2OpportunitiesQuerySchema.safeParse({ market: 'GLOBAL', limit: 20 }).success,
+    ).toBe(true);
+    expect(parseVisibilityV2OpportunitiesQuery({ market: 'CN', limit: 15 })).toEqual({
+      market: 'CN',
+      engine: undefined,
+      days: 30,
+      limit: 15,
+    });
+  });
+});
+
+describe('F10 Fix 1 — normalizeFanOutQueries precision & ReDoS safety', () => {
+  it('splits on semicolons and newlines, strips bullets/numbers without corrupting decimals, rejects punctuation-only tokens, and deduplicates case-insensitively', () => {
+    expect(
+      normalizeFanOutQueries(['安静NAS; 家用NAS功耗；安静NAS\n四盘位NAS'], '家用 NAS 推荐'),
+    ).toEqual(['安静NAS', '家用NAS功耗', '四盘位NAS']);
+
+    // Decimal & negative number safety
+    expect(
+      normalizeFanOutQueries([
+        '2.5G 网口 NAS',
+        '14.5W 满载功耗',
+        '3.5mm 音频口',
+        '-10℃ 低温电池',
+        '一步到位 NAS',
+      ]),
+    ).toEqual(['2.5G 网口 NAS', '14.5W 满载功耗', '3.5mm 音频口', '-10℃ 低温电池', '一步到位 NAS']);
+
+    // Leading markers & chained markers stripped cleanly
+    expect(
+      normalizeFanOutQueries([
+        '- 静音NAS',
+        '* 低功耗NAS',
+        '• 四盘位推荐',
+        '1. 家庭影音NAS',
+        '2) 远程访问NAS',
+        '3、双2.5G网口',
+        '(4) 硬盘休眠',
+        '（5）Docker支持',
+        '[6] 照片备份',
+        '一、性价比对比',
+        '- 1. NAS 噪音实测',
+      ]),
+    ).toEqual([
+      '静音NAS',
+      '低功耗NAS',
+      '四盘位推荐',
+      '家庭影音NAS',
+      '远程访问NAS',
+      '双2.5G网口',
+      '硬盘休眠',
+      'Docker支持',
+      '照片备份',
+      '性价比对比',
+      'NAS 噪音实测',
+    ]);
+
+    // Punctuation-only & empty tokens rejected
+    expect(
+      normalizeFanOutQueries(['', '   ', '---', '...', '•', '1.', '2)', '()', '？！', '；；']),
+    ).toEqual([]);
+
+    // Case-insensitive dedupe preserving first clean casing & optional promptText
+    expect(normalizeFanOutQueries(['Home NAS', 'home nas', 'HOME NAS'])).toEqual(['Home NAS']);
+  });
+
+  it('completes 50KB adversarial inputs in linear time (<200ms)', () => {
+    const start = performance.now();
+    const res1 = normalizeFanOutQueries([';'.repeat(50_000)]);
+    const res2 = normalizeFanOutQueries(['-'.repeat(50_000) + 'a']);
+    const elapsed = performance.now() - start;
+    expect(res1).toEqual([]);
+    expect(res2).toHaveLength(1);
+    expect(elapsed).toBeLessThan(200);
+  });
+});
+
+describe('F10 Fix 2 — structured list/heading rank judge, echo suppression & ReDoS safety', () => {
+  const brand = { name: '绿联', aliases: ['UGREEN'], domains: ['ugreen.com'] };
+  const comp1 = { name: '群晖', aliases: ['Synology'], domains: ['synology.com'] };
+  const comp2 = { name: '极空间', aliases: ['ZSpace'], domains: ['zspace.cn'] };
+
+  it('skips unframed CN & EN intro echoes on [E2E_ECHO_TRAP] and ranks brand at #3', () => {
+    const cnTrap = [
+      '想了解绿联家用 NAS 推荐，以下是 2026 年最值得关注的几款品牌：',
+      '1. 群晖（Synology）：生态成熟，适合进阶用户。',
+      '2. 极空间（ZSpace）：上手门槛低，家庭影音友好。',
+      '3. 绿联（UGREEN）：硬件配置扎实，静音性价比高。',
+    ].join('\n');
+
+    expect(findQuestionEchoIntroEnd(cnTrap, '绿联家用NAS推荐')).toBeGreaterThan(0);
+    const ranks = resolveStructuredSubjectRanks(
+      cnTrap,
+      [
+        { key: 'brand', subject: brand },
+        { key: 'c1', subject: comp1 },
+        { key: 'c2', subject: comp2 },
+      ],
+      { promptText: '绿联家用NAS推荐' },
+    );
+    expect(ranks.get('c1')?.structuredRank).toBe(1);
+    expect(ranks.get('c2')?.structuredRank).toBe(2);
+    expect(ranks.get('brand')?.structuredRank).toBe(3);
+
+    const enBrand = { name: 'AcmeCorp', aliases: [], domains: ['acmecorp.com'] };
+    const enTrap = [
+      'If you are comparing AcmeCorp home NAS options, here are the top recommendations:',
+      '1. Synology: Mature DSM ecosystem for home labs.',
+      '2. QNAP: Flexible PCIe expansion and multi-gig networking.',
+      '3. AcmeCorp: Quiet 4-bay hardware with strong value.',
+    ].join('\n');
+    expect(findQuestionEchoIntroEnd(enTrap, 'AcmeCorp home NAS recommendations')).toBeGreaterThan(
+      0,
+    );
+    const enOffsets = findSubjectMentionOffsets(enTrap, enBrand, undefined, {
+      promptText: 'AcmeCorp home NAS recommendations',
+    });
+    expect(enOffsets).toEqual([enTrap.lastIndexOf('AcmeCorp')]);
+  });
+
+  it('returns brandMentioned: false on [E2E_ECHO_ONLY] CN & EN unframed intros', () => {
+    const cnEchoOnly = [
+      '想了解绿联 NAS，以下为您盘点主流品牌：',
+      '1. 群晖：稳定可靠，企业与家用皆宜。',
+      '2. 极空间：操作直观，适合家庭照片备份。',
+    ].join('\n');
+    expect(
+      findSubjectMentionOffsets(cnEchoOnly, brand, undefined, { promptText: '绿联 NAS 怎么样' }),
+    ).toEqual([]);
+
+    const enBrand = { name: 'AcmeCorp', aliases: [], domains: ['acmecorp.com'] };
+    const enEchoOnly = [
+      'When comparing AcmeCorp home NAS, here are the top recommendations:',
+      '1. Synology: Leading DSM software and long-term reliability.',
+      '2. QNAP: Strong hardware specs and virtualization support.',
+    ].join('\n');
+    expect(
+      findSubjectMentionOffsets(enEchoOnly, enBrand, undefined, {
+        promptText: 'AcmeCorp home NAS review',
+      }),
+    ).toEqual([]);
+
+    const metrics = recomputeRunMetrics(
+      [
+        {
+          status: 'SUCCESS',
+          promptText: 'AcmeCorp home NAS review',
+          answerText: enEchoOnly,
+          citations: [],
+        },
+      ],
+      { brandName: 'AcmeCorp', ownedDomains: ['acmecorp.com'] },
+    );
+    expect(metrics.mentionedChecks).toBe(0);
+    expect(metrics.avgPosition).toBeNull();
+  });
+
+  it('supports Markdown headings, Chinese numerals, bold numbers, and avoids matching decimals like 2.5G', () => {
+    const headingAnswer = [
+      '### 1. 群晖',
+      '企业与家用生态成熟。',
+      '### 2. 极空间',
+      '操作简洁易用。',
+      '### 3. 绿联',
+      '双 2.5G 网口与静音风道设计。',
+    ].join('\n');
+    const hRanks = resolveStructuredSubjectRanks(headingAnswer, [
+      { key: 'brand', subject: brand },
+      { key: 'c1', subject: comp1 },
+      { key: 'c2', subject: comp2 },
+    ]);
+    expect(hRanks.get('brand')?.structuredRank).toBe(3);
+
+    const unnumberedHeadingAnswer = [
+      '### 群晖',
+      '企业与家用生态成熟。',
+      '### 极空间',
+      '操作简洁易用。',
+      '### 绿联',
+      '硬件参数亮眼。',
+    ].join('\n');
+    const uhRanks = resolveStructuredSubjectRanks(unnumberedHeadingAnswer, [
+      { key: 'brand', subject: brand },
+      { key: 'c1', subject: comp1 },
+      { key: 'c2', subject: comp2 },
+    ]);
+    expect(uhRanks.get('brand')?.structuredRank).toBe(3);
+
+    const cnNumeralAnswer = ['一、群晖：稳定', '二、极空间：易用', '三、绿联：静音'].join('\n');
+    expect(
+      resolveStructuredSubjectRanks(cnNumeralAnswer, [
+        { key: 'brand', subject: brand },
+        { key: 'c1', subject: comp1 },
+        { key: 'c2', subject: comp2 },
+      ]).get('brand')?.structuredRank,
+    ).toBe(3);
+
+    const boldNumberAnswer = ['**1. 群晖**：稳定', '**2. 极空间**：易用', '**3. 绿联**：静音'].join(
+      '\n',
+    );
+    expect(
+      resolveStructuredSubjectRanks(boldNumberAnswer, [
+        { key: 'brand', subject: brand },
+        { key: 'c1', subject: comp1 },
+        { key: 'c2', subject: comp2 },
+      ]).get('brand')?.structuredRank,
+    ).toBe(3);
+
+    // Decimals must never be extracted as numbered items
+    const decimalItems = extractStructuredRecommendationItems(
+      '2.5G 网口支持高速传输\n14.5W 满载功耗',
+    );
+    expect(decimalItems).toEqual([]);
+  });
+
+  it('preserves explicit slot #3 when competitors #1-#2 are unconfigured and lets header match beat item #1 body cross-reference', () => {
+    const unconfiguredAnswer = [
+      '1. Synology: Great ecosystem.',
+      '2. QNAP: Strong hardware.',
+      '3. 绿联：静音性价比高。',
+    ].join('\n');
+    const unconfRanks = resolveStructuredSubjectRanks(unconfiguredAnswer, [
+      { key: 'brand', subject: brand },
+    ]);
+    const ranked = rankTrackedSubjects([
+      {
+        name: '绿联',
+        mentioned: true,
+        firstMention: unconfiguredAnswer.indexOf('绿联'),
+        structuredRank: unconfRanks.get('brand')?.structuredRank ?? null,
+      },
+    ]);
+    expect(ranked[0]?.position).toBe(3);
+
+    // Cross-reference in item #1 body vs own header at item #3
+    const crossRefAnswer = [
+      '1. 群晖：软件生态比绿联更成熟。',
+      '2. 极空间：新手友好。',
+      '3. 绿联：硬件性价比与静音表现突出。',
+    ].join('\n');
+    const crRanks = resolveStructuredSubjectRanks(crossRefAnswer, [
+      { key: 'brand', subject: brand },
+      { key: 'c1', subject: comp1 },
+      { key: 'c2', subject: comp2 },
+    ]);
+    expect(crRanks.get('c1')?.structuredRank).toBe(1);
+    expect(crRanks.get('c2')?.structuredRank).toBe(2);
+    expect(crRanks.get('brand')?.structuredRank).toBe(3);
+  });
+
+  it('preserves single-brand anaphoric pros list and whole-word boundary matching for Arc', () => {
+    const anker = { name: 'Anker', aliases: ['安克'], domains: ['anker.com'] };
+    const prosList = '关于 Anker 氮化镓充电器，其主要优势如下：\n1. 散热好\n2. 体积小';
+    expect(
+      findSubjectMentionOffsets(prosList, anker, undefined, { promptText: 'Anker充电器怎么样' }),
+    ).toEqual([prosList.indexOf('Anker')]);
+
+    const arcPattern = wholeWordPattern('Arc');
+    expect('Great search architecture and research tools'.match(arcPattern)).toBeNull();
+    expect('Arc and ARC plus Arc浏览器 are mentioned'.match(arcPattern)).toHaveLength(3);
+  });
+
+  it('keeps unnumbered and numbered Markdown headings intact across intervening sub-bullets (B3)', () => {
+    const enHeadingBullets = [
+      'Here are the top NAS picks:',
+      '',
+      '### Synology',
+      '- Mature DSM ecosystem',
+      '- Quiet cooling',
+      '',
+      '### QNAP',
+      '- Fast 2.5GbE ports',
+      '- Flexible expansion',
+      '',
+      '### UGREEN',
+      '- Great hardware value',
+      '- Modern mobile app',
+    ].join('\n');
+
+    const enBrand = { name: 'UGREEN', aliases: [], domains: ['ugreen.com'] };
+    const enRanks = resolveStructuredSubjectRanks(
+      enHeadingBullets,
+      [{ key: 'brand', subject: enBrand }],
+      { promptText: 'Best home NAS picks' },
+    );
+    expect(enRanks.get('brand')?.structuredRank).toBe(3);
+    const enRanked = rankTrackedSubjects([
+      {
+        name: 'UGREEN',
+        mentioned: true,
+        firstMention: enHeadingBullets.indexOf('UGREEN'),
+        structuredRank: enRanks.get('brand')?.structuredRank ?? null,
+      },
+    ]);
+    expect(enRanked[0]?.position).toBe(3);
+
+    const cnNumberedHeadingBullets = [
+      '针对您询问的绿联NAS推荐，以下为热门品牌：',
+      '',
+      '### 1. 群晖',
+      '- 生态成熟',
+      '- 系统稳定',
+      '',
+      '### 2. 威联通',
+      '- 硬件配置高',
+      '',
+      '### 3. 绿联',
+      '- 静音体验好',
+    ].join('\n');
+    const cnRanks = resolveStructuredSubjectRanks(
+      cnNumberedHeadingBullets,
+      [
+        { key: 'brand', subject: brand },
+        { key: 'c1', subject: comp1 },
+      ],
+      { promptText: '绿联NAS推荐' },
+    );
+    expect(cnRanks.get('c1')?.structuredRank).toBe(1);
+    expect(cnRanks.get('brand')?.structuredRank).toBe(3);
+    const cnRanked = rankTrackedSubjects([
+      {
+        name: '绿联',
+        mentioned: true,
+        firstMention: cnNumberedHeadingBullets.lastIndexOf('绿联'),
+        structuredRank: cnRanks.get('brand')?.structuredRank ?? null,
+      },
+      {
+        name: '群晖',
+        mentioned: true,
+        firstMention: cnNumberedHeadingBullets.indexOf('群晖'),
+        structuredRank: cnRanks.get('c1')?.structuredRank ?? null,
+      },
+    ]);
+    expect(cnRanked[0]?.position).toBe(3);
+    expect(cnRanked[1]?.position).toBe(1);
+  });
+
+  it('does not suppress single-brand pros/attributes lists whose intro contains 热门产品 or best options (B5)', () => {
+    const cnPros =
+      '绿联NAS作为一款热门产品，其主要特点如下：\n1. 静音表现出色。\n2. 功耗控制优秀。';
+    expect(findQuestionEchoIntroEnd(cnPros, '绿联NAS特点')).toBe(0);
+    expect(
+      findSubjectMentionOffsets(cnPros, brand, undefined, { promptText: '绿联NAS特点' }),
+    ).toEqual([0]);
+
+    const enBrand = { name: 'UGREEN', aliases: [], domains: ['ugreen.com'] };
+    const enPros =
+      'UGREEN is one of the best options for home NAS. Its main pros are:\n1. Quiet operation.\n2. Low idle power.';
+    expect(findQuestionEchoIntroEnd(enPros, 'UGREEN NAS pros')).toBe(0);
+    expect(
+      findSubjectMentionOffsets(enPros, enBrand, undefined, { promptText: 'UGREEN NAS pros' }),
+    ).toEqual([0]);
+  });
+
+  it('strips generic bracketed metadata tags before extracting topic relevance tokens (B6)', () => {
+    const cnAnswer = [
+      '针对您询问的绿联推荐哪款好，以下为您整理热门品牌：',
+      '1. 群晖：生态成熟，适合长期稳定运行。',
+      '2. 极空间：新手易上手，影音管理方便。',
+      '3. 绿联：静音散热表现突出，适合家庭使用，综合性价比高。',
+    ].join('\n');
+    const cnRel = assessAnswerTopicRelevance('[E2E_ECHO_TRAP] 绿联推荐哪款好', cnAnswer, {
+      brandName: '绿联',
+    });
+    expect(cnRel.relevant).toBe(true);
+    expect(cnRel.expectedTokens).toEqual([]);
+
+    const enAnswer = [
+      'Regarding Best UGREEN review, here are the top brands:',
+      '1. Synology: Mature DSM ecosystem with reliable long-term software updates.',
+      '2. QNAP: Flexible multi-gigabit networking and hardware expansion.',
+      '3. UGREEN: Quiet hardware design with strong value for modern home users.',
+    ].join('\n');
+    const enRel = assessAnswerTopicRelevance('[E2E_ECHO_TRAP] Best UGREEN review', enAnswer, {
+      brandName: 'UGREEN',
+    });
+    expect(enRel.relevant).toBe(true);
+    expect(enRel.expectedTokens).toEqual([]);
+  });
+
+  it('handles 50KB adversarial list/heading/intro inputs in <200ms', () => {
+    const start = performance.now();
+    extractStructuredRecommendationItems('1.'.repeat(25_000));
+    extractStructuredRecommendationItems('#'.repeat(50_000));
+    findQuestionEchoIntroEnd('针对 '.repeat(15_000), '绿联 NAS 推荐');
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(200);
+  });
+});
+
+describe('F10 Fix 3 — expanded dual-market citation classifier & priority order', () => {
+  it('enforces OWNED > COMPETITOR > ECOMMERCE > SOCIAL > AUTHORITY > OTHER and subdomain-safe matching', () => {
+    expect(CITATION_SOURCE_PRIORITY).toEqual([
+      'OWNED',
+      'COMPETITOR',
+      'ECOMMERCE',
+      'SOCIAL',
+      'AUTHORITY',
+      'OTHER',
+    ]);
+
+    // Owned beats ECOMMERCE/SOCIAL/AUTHORITY
+    expect(
+      classifyCitationSource('https://shop.amazon.com/mybrand', { ownedDomains: ['amazon.com'] }),
+    ).toBe('OWNED');
+    expect(
+      classifyCitationSource('https://docs.example.com/guide', { ownedDomains: ['example.com'] }),
+    ).toBe('OWNED');
+    expect(
+      classifyCitationSource('https://notexample.com/guide', { ownedDomains: ['example.com'] }),
+    ).toBe('OTHER');
+
+    // Competitor beats ECOMMERCE/SOCIAL/AUTHORITY
+    expect(
+      classifyCitationSource('https://rival.jd.com/item', { competitorDomains: ['rival.jd.com'] }),
+    ).toBe('COMPETITOR');
+
+    // Spoofed suffix never matches ECOMMERCE
+    expect(classifyCitationSource('https://jd.com.evil.com/phish')).toBe('OTHER');
+
+    // CN social & UGC
+    for (const url of [
+      'https://m.weibo.cn/status/1',
+      'https://weibo.com/u/1',
+      'https://www.xiaohongshu.com/explore/1',
+      'https://zhuanlan.zhihu.com/p/1',
+      'https://www.bilibili.com/video/BV1',
+      'https://post.smzdm.com/p/1',
+      'https://www.douyin.com/note/1',
+      'https://www.toutiao.com/article/1',
+      'https://mp.weixin.qq.com/s/1',
+      'https://tieba.baidu.com/p/1',
+      'https://www.douban.com/note/1',
+    ]) {
+      expect(classifyCitationSource(url)).toBe('SOCIAL');
+    }
+
+    // CN & GLOBAL E-commerce
+    for (const url of [
+      'https://item.jd.com/1001.html',
+      'https://detail.tmall.com/item.htm',
+      'https://s.taobao.com/search',
+      'https://mobile.pinduoduo.com/goods',
+      'https://www.amazon.com/dp/B001',
+      'https://www.amazon.co.uk/dp/B001',
+      'https://www.ebay.com/itm/1',
+      'https://www.walmart.com/ip/1',
+      'https://www.bestbuy.com/site/1',
+      'https://www.newegg.com/p/1',
+    ]) {
+      expect(classifyCitationSource(url)).toBe('ECOMMERCE');
+    }
+
+    // GLOBAL review & community -> SOCIAL
+    for (const url of [
+      'https://www.reddit.com/r/homelab',
+      'https://www.quora.com/Best-NAS',
+      'https://www.trustpilot.com/review/example.com',
+      'https://www.g2.com/products/example/reviews',
+      'https://www.capterra.com/p/123/example',
+      'https://www.youtube.com/watch?v=123',
+      'https://medium.com/@author/nas',
+      'https://news.ycombinator.com/item?id=1',
+    ]) {
+      expect(classifyCitationSource(url)).toBe('SOCIAL');
+    }
+
+    // CN & GLOBAL authority/review media -> AUTHORITY
+    for (const url of [
+      'https://www.techradar.com/reviews/nas',
+      'https://www.nytimes.com/wirecutter/reviews/nas',
+      'https://www.wirecutter.com/reviews/nas',
+      'https://www.pcmag.com/picks/best-nas',
+      'https://www.theverge.com/2026/nas',
+      'https://www.rtings.com/nas/reviews',
+      'https://www.tomsguide.com/best-picks/nas',
+      'https://www.tomshardware.com/reviews/nas',
+      'https://www.cnet.com/tech/computing/nas',
+      'https://www.forbes.com/sites/tech/nas',
+      'https://36kr.com/p/123',
+      'https://sspai.com/post/123',
+      'https://www.ithome.com/0/123.htm',
+      'https://diy.pconline.com.cn/123.html',
+      'https://detail.zol.com.cn/123.html',
+      'https://www.chiphell.com/thread-123.html',
+    ]) {
+      expect(classifyCitationSource(url)).toBe('AUTHORITY');
+    }
   });
 });

@@ -3,16 +3,13 @@
 import { useEffect, useRef } from 'react';
 
 export type FreshnessDomain =
-  | 'keywords'
-  | 'questions'
-  | 'gallery'
-  | 'knowledge'
-  | 'prompts'
-  | 'categories'
-  | 'tasks'
-  | 'articles'
-  | 'visibility-profiles'
+  | 'brands'
+  | 'brand-facts'
+  | 'brand-media'
   | 'visibility-runs'
+  | 'briefs'
+  | 'articles'
+  | 'publish-records'
   | 'points';
 
 export type FreshnessRefreshReason = 'activated' | 'invalidated';

@@ -74,13 +74,42 @@ describe('url policy', () => {
       'http://2130706433/',
       'http://0177.0.0.1/',
       'http://localhost/',
+      'http://localhost./',
+      'http://localhost../',
+      'http://foo.localhost./',
       'http://metadata.google.internal/',
+      'http://metadata.google.internal./',
       'http://printer.local/',
+      'http://printer.local./',
+      'http://[::127.0.0.1]/',
+      'http://[::7f00:1]/',
+      'http://[::a9fe:a9fe]/',
+      'http://[::ffff:0:127.0.0.1]/',
+      'http://[::ffff:0:7f00:1]/',
+      'http://[2002:7f00::1]/',
+      'http://[2002:a00::1]/',
+      'http://[64:ff9b::1]/',
+      'http://[64:ff9b::7f00:1]/',
+      'http://[fec0::1]/',
+      'http://[100::1]/',
       'http://192.0.2.10:8443/',
       'http://user:pass@192.0.2.10/',
       'file:///etc/passwd',
     ]) {
       expect(() => assertPublicUrl(raw), raw).toThrow(UrlPolicyError);
+    }
+    for (const ipv6 of [
+      '::7f00:1',
+      '::a9fe:a9fe',
+      '::ffff:0:7f00:1',
+      '::ffff:0:127.0.0.1',
+      '2002:7f00::1',
+      '2002:a00::1',
+      '64:ff9b::1',
+      'fec0::1',
+      '100::1',
+    ]) {
+      expect(ipBlockReason(ipv6), ipv6).not.toBeNull();
     }
   });
 
@@ -89,6 +118,10 @@ describe('url policy', () => {
     expect(assertPublicUrl('https://public.example/a').protocol).toBe('https:');
     expect(assertPublicUrl('https://public.example:443/a').hostname).toBe('public.example');
     expect(assertPublicUrl('https://public.example/a#frag').hash).toBe('');
+    expect(assertPublicUrl('http://[2001:4860:4860::8888]/').hostname).toBe(
+      '[2001:4860:4860::8888]',
+    );
+    expect(assertPublicUrl('http://[::ffff:93.184.216.34]/').hostname).toBe('[::ffff:5db8:d822]');
   });
 });
 

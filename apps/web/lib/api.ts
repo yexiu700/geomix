@@ -1,6 +1,8 @@
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
+import { unwrapEnvelope } from './envelope';
 import {
   apiBase,
+  apiV2Base,
   clearSession,
   decodeJwtClaims,
   readAccessToken,
@@ -82,23 +84,30 @@ export async function postJson<T>(
   return readEnvelope<T>(response);
 }
 
-export async function authorizedRequest(
+async function authorizedFetch(
+  baseUrl: string,
   storage: SessionStorageLike,
   method: string,
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
+  options?: { signal?: AbortSignal },
 ): Promise<Response> {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   const send = (token: string) => {
     const headers: Record<string, string> = {
       authorization: `Bearer ${token}`,
       ...(extraHeaders ?? {}),
     };
-    if (body !== undefined) headers['content-type'] = 'application/json';
-    return fetch(`${apiBase()}${path}`, {
+    if (body !== undefined && !isFormData) {
+      headers['content-type'] = 'application/json';
+    }
+    return fetch(`${baseUrl}${normalizedPath}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isFormData ? body : JSON.stringify(body),
+      signal: options?.signal,
     });
   };
   let token = readAccessToken(storage);
@@ -129,6 +138,53 @@ export async function authorizedRequest(
     latestToken && latestToken !== token ? latestToken : await refreshAccessToken(storage);
   if (!nextToken) return response;
   return send(nextToken);
+}
+
+export async function authorizedRequest(
+  storage: SessionStorageLike,
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
+  return authorizedFetch(apiBase(), storage, method, path, body, extraHeaders);
+}
+
+export type AuthorizedV2RequestInit = {
+  method?: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  storage?: SessionStorageLike;
+  requireData?: boolean;
+};
+
+export async function authorizedV2RawRequest(
+  path: string,
+  init: AuthorizedV2RequestInit = {},
+): Promise<Response> {
+  const storage =
+    init.storage ?? (typeof window !== 'undefined' ? window.sessionStorage : undefined);
+  if (!storage) {
+    return unauthorizedSyntheticResponse();
+  }
+  return authorizedFetch(
+    apiV2Base(),
+    storage,
+    (init.method ?? 'GET').toUpperCase(),
+    path,
+    init.body,
+    init.headers,
+    { signal: init.signal },
+  );
+}
+
+export async function authorizedV2Request<T>(
+  path: string,
+  init: AuthorizedV2RequestInit = {},
+): Promise<T> {
+  const response = await authorizedV2RawRequest(path, init);
+  return unwrapEnvelope<T>(response, { requireData: init.requireData });
 }
 
 export async function getJson<T>(path: string, token: string): Promise<Envelope<T>> {

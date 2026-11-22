@@ -5,6 +5,7 @@ import {
   llmDailyReportToCsv,
   parseLlmCostQuery,
   parseLlmCostRates,
+  sceneDisplayLabel,
 } from './ops';
 
 describe('ops LLM daily cost report helpers (#24)', () => {
@@ -91,5 +92,10 @@ describe('ops LLM daily cost report helpers (#24)', () => {
     const csv = llmDailyReportToCsv(report);
     expect(csv).toContain('日期,总调用次数,真实模型调用');
     expect(csv).toContain('2026-11-17,2,1,1,2400,1600,4000,16500,0.0165');
+
+    expect(sceneDisplayLabel('geo_write')).toBe('GEO 靶向写作');
+    expect(sceneDisplayLabel('geo_brief')).toBe('GEO 写作意见');
+    expect(sceneDisplayLabel('fact_extract')).toBe('事实卡提炼');
+    expect(sceneDisplayLabel('geo_rewrite')).toBe('GEO 局部改写');
   });
 });

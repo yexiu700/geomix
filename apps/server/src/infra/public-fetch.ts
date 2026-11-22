@@ -6,8 +6,9 @@ import {
   type HttpTransport,
 } from './guarded-request';
 import { ProviderError, PROVIDER_KIND } from './provider-error';
-import { assertPublicUrl, UrlPolicyError } from './ssrf';
+import { assertPublicUrl, parseSsrfAllowlist, UrlPolicyError } from './ssrf';
 
+const PUBLIC_ONLY_ALLOWLIST = parseSsrfAllowlist('', { includeDefaults: false });
 const LOGIN_MARKERS = ['请完成验证', '请登录后', '登录后查看', '访问验证'];
 
 export type PublicPage = {
@@ -58,6 +59,7 @@ export async function fetchPublicPage(rawUrl: string, deps: FetchDeps): Promise<
       signal: deps.signal,
       resolver: deps.resolver,
       transport: deps.transport,
+      allowlist: PUBLIC_ONLY_ALLOWLIST,
     });
     if (isRedirect(response.status)) {
       if (hop === maxRedirects) {
@@ -92,6 +94,7 @@ export async function fetchBinary(
       signal: deps.signal,
       resolver: deps.resolver,
       transport: deps.transport,
+      allowlist: PUBLIC_ONLY_ALLOWLIST,
     });
     if (isRedirect(response.status)) {
       if (hop === maxRedirects) {
@@ -140,7 +143,7 @@ export function robotsAllow(body: string, path: string, agent = 'GeoMixBot'): bo
 
 function openUrl(raw: string): URL {
   try {
-    return assertPublicUrl(raw);
+    return assertPublicUrl(raw, { allowlist: PUBLIC_ONLY_ALLOWLIST });
   } catch (error) {
     if (error instanceof UrlPolicyError) {
       throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', error.reason);
@@ -227,6 +230,7 @@ async function fetchRobots(target: URL, deps: FetchDeps): Promise<GuardedRespons
       signal: deps.signal,
       resolver: deps.resolver,
       transport: deps.transport,
+      allowlist: PUBLIC_ONLY_ALLOWLIST,
     });
     if (!isRedirect(response.status)) return response;
     if (hop === maxRedirects) {

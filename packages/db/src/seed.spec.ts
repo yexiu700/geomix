@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_BILLING_MODE } from '@geomix/shared/infra';
-import { SYSTEM_TEMPLATES } from '@geomix/prompts';
 import { hashPassword, verifyPassword } from './password';
 import {
   DEMO_TENANT_ID,
@@ -29,24 +28,17 @@ describe('seed plan', () => {
     expect(() => readSeedConfig({ SEED_DEMO_POINTS: 'nope' })).toThrow(/positive integer/);
   });
 
-  it('plans prices, quotas, templates, and the two seed accounts', () => {
+  it('plans v2 prices, quotas, and the two seed accounts', () => {
     const writes = buildSeedWrites({
       config: readSeedConfig({}),
       now: NOW,
       hashPassword,
     });
     expect(writes.pricing.map((item) => [item.action, item.unitPoints])).toEqual([
-      ['distill', 10],
-      ['ai_write', 10],
-      ['kb_addon', 5],
-      ['rewrite_single', 5],
-      ['rewrite_batch', 5],
-      ['image_gen', 5],
+      ['geo_write', 10],
       ['visibility_check', 2],
+      ['inline_image_gen', 5],
     ]);
-    expect(writes.templates.map((item) => item.id)).toEqual(
-      SYSTEM_TEMPLATES.map((item) => item.id),
-    );
     expect(writes.quotas).toHaveLength(12);
     expect(writes.quotas.filter((item) => item.tenantId === DEMO_TENANT_ID)).toHaveLength(6);
 

@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
+  HOME_ROUTE,
   MENU,
   STATIC_ROUTES,
   buildMenu,
+  buildWorkspaceHref,
   collectHrefs,
   isCommandPaletteRoute,
   isConsoleRouteAccessible,
@@ -10,147 +12,84 @@ import {
   menuSelection,
 } from './routes';
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-describe('console routes', () => {
-  it('hides /workbench/samples from merchant menu and nests AI生图 inside AI创作-文章&素材', () => {
-    const menuHrefs = new Set(collectHrefs());
-    expect(menuHrefs.has('/workbench/samples')).toBe(false);
-    const expectedMerchantRoutes = Object.keys(STATIC_ROUTES).filter(
-      (route) => route !== '/workbench/samples',
-    );
-    expect(menuHrefs).toEqual(new Set(expectedMerchantRoutes));
-    expect(collectHrefs()).toContain('/visibility/overview');
-    expect(collectHrefs()).toContain('/visibility/monitors');
-
-    const creation = MENU.find((item) => item.type === 'section' && item.key === 'creation');
-    expect(creation?.type === 'section' ? creation.title : undefined).toBe('AI创作-文章&素材');
-    const creationKeys =
-      creation?.type === 'section'
-        ? creation.children.map((child) => (child.type === 'submenu' ? child.key : ''))
-        : [];
-    expect(creationKeys).toEqual(['material', 'writing', 'rewrite', 'image']);
-
-    const image =
-      creation?.type === 'section'
-        ? creation.children.find((child) => child.type === 'submenu' && child.key === 'image')
-        : undefined;
-    expect(image?.type === 'submenu' ? image.title : undefined).toBe('AI生图');
-    expect(image?.type === 'submenu' ? image.badge : undefined).toBe('new');
-
-    expect(collectHrefs(buildMenu({ aiImageEnabled: false })).includes('/image')).toBe(false);
-    expect(isConsoleRouteAccessible('/workbench/samples', 'MERCHANT')).toBe(false);
-    expect(isConsoleRouteAccessible('/workbench/samples', 'ADMIN')).toBe(true);
-
-    vi.stubEnv('NODE_ENV', 'production');
-    expect(isConsoleRouteAccessible('/workbench/samples', 'ADMIN')).toBe(false);
-    expect(isCommandPaletteRoute('/workbench/samples', 'ADMIN')).toBe(false);
-    expect(isCommandPaletteRoute('/workbench/samples', 'MERCHANT')).toBe(false);
+describe('GeoMix 2.0 minimalist 5-workspace routes', () => {
+  it('defines flat 4 left business workspaces and 5 total console routes', () => {
+    expect(HOME_ROUTE).toBe('/home');
+    expect(collectHrefs(MENU)).toEqual(['/home', '/brands', '/visibility', '/studio']);
+    expect(Object.keys(STATIC_ROUTES)).toEqual([
+      '/home',
+      '/brands',
+      '/visibility',
+      '/studio',
+      '/account',
+    ]);
   });
 
-  it('flattens single-child visibility sections and converges disabled soon items (#134)', () => {
-    // No disabled 'soon' items in main MENU
-    const hasSoon = (items: typeof MENU): boolean =>
-      items.some(
-        (item) =>
-          item.type === 'soon' ||
-          ((item.type === 'section' || item.type === 'submenu') && hasSoon(item.children)),
-      );
-    expect(hasSoon(MENU)).toBe(false);
-
-    // Visibility items are flattened to single-level links without duplicate group titles
-    expect(MENU.some((item) => item.type === 'link' && item.href === '/visibility/overview')).toBe(
-      true,
+  it('hides /visibility from menu and command palette when visibilityEnabled=false', () => {
+    expect(collectHrefs(buildMenu({ visibilityEnabled: false }))).toEqual([
+      '/home',
+      '/brands',
+      '/studio',
+    ]);
+    expect(isCommandPaletteRoute('/visibility', 'MERCHANT', { visibilityEnabled: false })).toBe(
+      false,
     );
-    expect(MENU.some((item) => item.type === 'link' && item.href === '/visibility/monitors')).toBe(
-      true,
-    );
-    expect(MENU.some((item) => item.type === 'section' && item.key === 'visibility')).toBe(false);
-    expect(MENU.some((item) => item.type === 'section' && item.key === 'aidata')).toBe(false);
+    expect(isCommandPaletteRoute('/home', 'MERCHANT', { visibilityEnabled: false })).toBe(true);
   });
 
-  it('hides visibility links and command palette entries when visibilityEnabled is false', () => {
-    const filtered = buildMenu({ visibilityEnabled: false });
-    const hrefs = collectHrefs(filtered);
-    expect(hrefs).not.toContain('/visibility/overview');
-    expect(hrefs).not.toContain('/visibility/monitors');
+  it('canonicalizes allowed workspace query parameters without leaking raw CUIDs into title', () => {
+    const cuid = 'cm8x9abc1234567890def1234';
+    const matched = matchRoute(`/studio/?brandId=${cuid}&market=GLOBAL&briefId=${cuid}&junk=1`);
+    expect(matched).toEqual({
+      href: `/studio?brandId=${cuid}&market=GLOBAL&briefId=${cuid}`,
+      path: '/studio',
+      title: 'GEO 写作台',
+    });
+    expect(matched?.title).not.toContain(cuid);
+  });
+
+  it('rejects removed v1 routes, external origins, and path traversal', () => {
+    for (const invalid of [
+      '/dashboard',
+      '/me/money',
+      '/material/keywords',
+      '/writing/tasks',
+      '/rewrite/single',
+      '/image',
+      '/visibility/overview',
+      '//evil.example/home',
+      'https://evil.example/home',
+      '/home/../admin',
+      '/home\\evil',
+    ]) {
+      expect(matchRoute(invalid)).toBeNull();
+      expect(isConsoleRouteAccessible(invalid)).toBe(false);
+    }
+  });
+
+  it('builds workspace hrefs preserving brandId & market on business routes', () => {
+    expect(buildWorkspaceHref('/visibility', 'brand-1', 'GLOBAL')).toBe(
+      '/visibility?brandId=brand-1&market=GLOBAL',
+    );
+    expect(buildWorkspaceHref('/studio', 'brand-1', 'CN', { briefId: 'brief-9' })).toBe(
+      '/studio?brandId=brand-1&market=CN&briefId=brief-9',
+    );
+    expect(buildWorkspaceHref('/studio', 'brand-1', 'CN', { batchJobId: 'gb_123456' })).toBe(
+      '/studio?brandId=brand-1&market=CN&batchJobId=gb_123456',
+    );
     expect(
-      isCommandPaletteRoute('/visibility/monitors', 'MERCHANT', { visibilityEnabled: false }),
-    ).toBe(false);
-    expect(isCommandPaletteRoute('/image', 'MERCHANT', { aiImageEnabled: false })).toBe(false);
-  });
-
-  it('canonicalizes query tabs and gallery detail', () => {
-    expect(matchRoute('/material/questions?keywordId=demo')).toMatchObject({
-      href: '/material/questions?keywordId=demo',
-      title: '写作标题 · demo',
-      parent: '/material/keywords',
+      matchRoute('/studio?brandId=brand-1&market=CN&batchJobId=gb_123456&extra=ignored'),
+    ).toEqual({
+      href: '/studio?brandId=brand-1&market=CN&batchJobId=gb_123456',
+      path: '/studio',
+      title: 'GEO 写作台',
     });
-    expect(matchRoute('/writing/tasks?keywordId=kw_1')).toMatchObject({
-      href: '/writing/tasks?keywordId=kw_1',
-      path: '/writing/tasks',
-      title: 'AI写作任务 · kw_1',
-      parent: null,
-    });
-    expect(matchRoute('/writing/articles?taskId=t2&categoryId=c1')).toMatchObject({
-      href: '/writing/articles?categoryId=c1&taskId=t2',
-      title: '文章列表 · 分类 c1 · 任务 t2',
-    });
-    expect(matchRoute('/visibility/overview?profileId=vprof_1&ignored=1')).toMatchObject({
-      href: '/visibility/overview?profileId=vprof_1',
-      path: '/visibility/overview',
-      title: 'AI数据看板 · 档案 vprof_1',
-      parent: null,
-    });
-    expect(matchRoute('/visibility/monitors?runId=vrun_9&profileId=vprof_1')).toMatchObject({
-      href: '/visibility/monitors?profileId=vprof_1&runId=vrun_9',
-      path: '/visibility/monitors',
-      title: 'AI可见度诊断 · 档案 vprof_1 · 任务 vrun_9',
-      parent: null,
-    });
-    expect(matchRoute('/material/gallery/pic_1')).toMatchObject({
-      href: '/material/gallery/pic_1',
-      title: '企业画像图库 · pic_1',
-      parent: '/material/gallery',
-    });
-    expect(matchRoute('/material/gallery/../keywords')).toBeNull();
-    expect(matchRoute('/workbench/samples')).toMatchObject({
-      href: '/workbench/samples',
-      title: '列表示例',
-      parent: null,
-      pinned: false,
-    });
-    expect(matchRoute('/not-a-page')).toBeNull();
-  });
-
-  it('highlights the list when a detail tab is open', () => {
-    expect(menuSelection('/material/gallery/pic_1')).toEqual({
-      selected: '/material/gallery',
-      parents: ['material'],
-    });
-    expect(menuSelection('/writing/prompts').parents).toEqual(['writing']);
-    expect(menuSelection('/visibility/monitors?runId=vrun_1')).toEqual({
-      selected: '/visibility/monitors',
+    expect(buildWorkspaceHref('/account', 'brand-1', 'CN', { tab: 'rights' })).toBe(
+      '/account?tab=rights',
+    );
+    expect(menuSelection('/brands?brandId=b1&market=CN')).toEqual({
+      selected: '/brands',
       parents: [],
     });
-  });
-
-  it('strips opaque CUIDs from detail and query tab titles', () => {
-    const cuidA = 'cm8x9abcde12345fghij67890';
-    const cuidB = 'cm9z1zyxwv98765utsrq43210';
-
-    const gallery = matchRoute(`/material/gallery/${cuidA}`);
-    expect(gallery?.title).toBe('企业画像图库 · 图库详情');
-    expect(gallery?.title).not.toContain(cuidA);
-
-    const articles = matchRoute(`/writing/articles?categoryId=${cuidA}&taskId=${cuidB}`);
-    expect(articles?.title).toBe('文章列表 · 按分类筛选 · 按任务筛选');
-    expect(articles?.title).not.toContain(cuidA);
-    expect(articles?.title).not.toContain(cuidB);
-
-    const monitors = matchRoute(`/visibility/monitors?profileId=${cuidA}&runId=${cuidB}`);
-    expect(monitors?.title).toBe('AI可见度诊断 · 当前监测档案 · 当前诊断任务');
   });
 });

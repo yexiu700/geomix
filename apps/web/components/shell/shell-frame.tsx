@@ -1,53 +1,216 @@
 'use client';
 
-import { SITE_NAME } from '@geomix/shared';
-import { Alert, Button, Dropdown, Layout, Modal, Tooltip } from 'antd';
+import {
+  GEO_MARKET_DEFAULTS,
+  SITE_NAME,
+  normalizeBrandDomain,
+  type BrandCompetitor,
+  type BrandFactsResponse,
+  type BrandRecord,
+  type CreateBrandInput,
+  type ExtractBrandFactsResponse,
+  type GeoMarket,
+  type UpsertBrandFactsInput,
+  type UpsertBrandMarketInput,
+} from '@geomix/shared';
+import {
+  Alert,
+  Button,
+  Divider,
+  Form,
+  Input,
+  Layout,
+  Modal,
+  Select,
+  Skeleton,
+  Tooltip,
+} from 'antd';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
-import { SHELL_ANNOUNCEMENT, displayName, formatExpiry } from '../../lib/shell-copy';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
-import type { ShellAction, ShellSnapshot } from '../../lib/tab-stack';
-import { ModuleScreen } from './module-screen';
-import { SideMenu } from './side-menu';
-import { TabBar } from './tab-bar';
+import type { ExtractBrandFactsRequest } from '../../lib/brands';
+import { HOME_ROUTE, matchRoute } from '../../lib/routes';
+import { useWorkspaceStore } from '../../lib/workspace-store';
+import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
+import { useUxFeedback } from '../crud/ux-feedback';
+import { BrandMark, SideMenu } from './side-menu';
 
 const PasswordForm = dynamic(() => import('../password-form').then((m) => m.PasswordForm));
 const CommandPalette = dynamic(() => import('./command-palette').then((m) => m.CommandPalette));
-const LayoutPanel = dynamic(() => import('./layout-panel').then((m) => m.LayoutPanel));
 
 const { Header, Sider, Content } = Layout;
 const MOBILE_BREAKPOINT = 768;
 
-export function ShellFrame({
-  account,
-  state,
-  onDispatch,
-  onToggleMenu,
-  onLogout,
-  onChangePassword,
-  announcement = SHELL_ANNOUNCEMENT,
-}: {
+type EnableMarketFormValues = {
+  localBrandName: string;
+  ownedDomainsText?: string;
+  competitorsText?: string;
+};
+
+function parseDomainLines(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const items = raw
+    .split(/[\n,，;；]+/)
+    .map((part) => normalizeBrandDomain(part))
+    .filter(Boolean);
+  return Array.from(new Set(items));
+}
+
+function parseCompetitorLines(raw: string | undefined): BrandCompetitor[] {
+  if (!raw) return [];
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const results: BrandCompetitor[] = [];
+  for (const line of lines.slice(0, 10)) {
+    const parts = line
+      .split(/[,，]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const name = parts[0];
+    if (!name) continue;
+    const domains = parts
+      .slice(1)
+      .map((domain) => normalizeBrandDomain(domain))
+      .filter(Boolean);
+    results.push({ name, aliases: [], domains: Array.from(new Set(domains)) });
+  }
+  return results;
+}
+
+export type ShellFrameProps = {
   account: AccountProfile;
-  state: ShellSnapshot;
-  onDispatch: (action: ShellAction) => void;
-  onToggleMenu?: () => void;
+  activePath: string;
+  brands: readonly BrandRecord[];
+  brandsLoading: boolean;
+  brandsLoaded: boolean;
+  brandsError: string | null;
+  activeBrandId: string | null;
+  activeMarket: GeoMarket;
+  menuCollapsed: boolean;
+  wallet: WalletSummary | null;
+  walletLoading: boolean;
+  announcement?: string | null;
+  createBrandModalOpen?: boolean;
+  enableMarketModalTarget?: GeoMarket | null;
+  onOpenCreateBrandModal?: () => void;
+  onCloseCreateBrandModal?: () => void;
+  onOpenEnableMarketModal?: (market: GeoMarket) => void;
+  onCloseEnableMarketModal?: () => void;
+  onNavigate: (href: string) => void;
+  onSelectBrand: (brandId: string) => void;
+  onSelectMarket: (market: GeoMarket) => void;
+  onRetryBrands?: () => void;
+  onCreateBrand: (input: CreateBrandInput) => Promise<BrandRecord>;
+  onExtractBrandFacts?: (
+    brandId: string,
+    input: ExtractBrandFactsRequest,
+  ) => Promise<ExtractBrandFactsResponse>;
+  onSaveBrandFacts?: (brandId: string, input: UpsertBrandFactsInput) => Promise<BrandFactsResponse>;
+  onBrandFactsSaved?: (brandId: string, signedAt: string | null) => void;
+  onEnableMarket: (
+    brandId: string,
+    market: GeoMarket,
+    input: UpsertBrandMarketInput,
+  ) => Promise<BrandRecord>;
+  onToggleMenu: () => void;
   onLogout: () => void;
   onChangePassword: (values: {
     currentPassword: string;
     newPassword: string;
   }) => Promise<string | null>;
-  announcement?: string;
-}) {
-  const [panelOpen, setPanelOpen] = useState(false);
+  children?: ReactNode;
+};
+
+export function ShellFrame({
+  account,
+  activePath,
+  brands,
+  brandsLoading,
+  brandsLoaded,
+  brandsError,
+  activeBrandId,
+  activeMarket,
+  menuCollapsed,
+  wallet,
+  walletLoading,
+  announcement = null,
+  createBrandModalOpen,
+  enableMarketModalTarget,
+  onOpenCreateBrandModal,
+  onCloseCreateBrandModal,
+  onOpenEnableMarketModal,
+  onCloseEnableMarketModal,
+  onNavigate,
+  onSelectBrand,
+  onSelectMarket,
+  onRetryBrands,
+  onCreateBrand,
+  onExtractBrandFacts,
+  onSaveBrandFacts,
+  onBrandFactsSaved,
+  onEnableMarket,
+  onToggleMenu,
+  onLogout,
+  onChangePassword,
+  children,
+}: ShellFrameProps) {
+  const feedback = useUxFeedback();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [internalCreateOpen, setInternalCreateOpen] = useState(false);
+  const [internalEnableMarket, setInternalEnableMarket] = useState<GeoMarket | null>(null);
+  const [enableSubmitting, setEnableSubmitting] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
   const [isWindows, setIsWindows] = useState(false);
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [enableForm] = Form.useForm<EnableMarketFormValues>();
+
+  const isCreateOpen = createBrandModalOpen ?? internalCreateOpen;
+  const enableTarget =
+    enableMarketModalTarget !== undefined ? enableMarketModalTarget : internalEnableMarket;
+
+  const openCreateModal = () => {
+    if (onOpenCreateBrandModal) {
+      onOpenCreateBrandModal();
+    } else {
+      setInternalCreateOpen(true);
+    }
+  };
+
+  const closeCreateModal = () => {
+    if (onCloseCreateBrandModal) {
+      onCloseCreateBrandModal();
+    } else {
+      setInternalCreateOpen(false);
+    }
+  };
+
+  const openEnableModal = (market: GeoMarket) => {
+    setEnableError(null);
+    if (onOpenEnableMarketModal) {
+      onOpenEnableMarketModal(market);
+    } else {
+      setInternalEnableMarket(market);
+    }
+  };
+
+  const closeEnableModal = () => {
+    if (enableSubmitting) return;
+    setEnableError(null);
+    if (onCloseEnableMarketModal) {
+      onCloseEnableMarketModal();
+    } else {
+      setInternalEnableMarket(null);
+    }
+  };
 
   useEffect(() => {
     if (typeof navigator !== 'undefined' && /win/i.test(navigator.platform)) {
@@ -95,152 +258,75 @@ export function ShellFrame({
     return () => window.removeEventListener('keydown', onEscape);
   }, [passwordOpen]);
 
-  const active = state.tabs.find((tab) => tab.id === state.activeId) ?? state.tabs[0];
-  const panes = state.prefs.multiTab
-    ? state.tabs
-    : state.tabs.filter((tab) => tab.id === state.activeId);
-  const name = displayName(account);
-  const aiImageEnabled = account.features?.aiImage !== false;
+  const activeBrand = brands.find((item) => item.id === activeBrandId) ?? null;
+  const hasCN = Boolean(activeBrand?.markets.some((item) => item.market === 'CN'));
+  const hasGlobal = Boolean(activeBrand?.markets.some((item) => item.market === 'GLOBAL'));
+  const hasBothMarkets = hasCN && hasGlobal;
+  const missingMarket: GeoMarket | null =
+    activeBrand && !hasBothMarkets ? (hasCN ? 'GLOBAL' : 'CN') : null;
+
+  useEffect(() => {
+    if (!enableTarget || !activeBrand) return;
+    enableForm.setFieldsValue({
+      localBrandName: activeBrand.name,
+      ownedDomainsText: '',
+      competitorsText: '',
+    });
+  }, [activeBrand, enableForm, enableTarget]);
+
   const visibilityEnabled = account.features?.visibility !== false;
-  const siderCollapsed = isMobile ? !mobileMenuOpen : state.prefs.menuCollapsed;
+  const siderCollapsed = isMobile ? !mobileMenuOpen : menuCollapsed;
   const menuToggleLabel = siderCollapsed ? '展开菜单' : '收起菜单';
-  const desktopCollapsedRef = useRef(state.prefs.menuCollapsed);
-  desktopCollapsedRef.current = state.prefs.menuCollapsed;
+  const matchedRoute = matchRoute(activePath);
+  const currentTitle = matchedRoute?.title ?? '行动首页';
+  const isAccountPath = matchedRoute?.path === '/account';
+  const trimmedAnnouncement = announcement?.trim() || '';
 
   const toggleMenu = () => {
     if (isMobile) {
       setMobileMenuOpen((open) => !open);
       return;
     }
-    if (onToggleMenu) {
-      onToggleMenu();
-      return;
-    }
-    const nextCollapsed = !desktopCollapsedRef.current;
-    desktopCollapsedRef.current = nextCollapsed;
-    onDispatch({
-      type: 'prefs',
-      patch: { menuCollapsed: nextCollapsed },
-    });
+    onToggleMenu();
   };
 
-  const handleDispatch = (action: ShellAction) => {
-    if (action.type === 'prefs' && action.patch.menuCollapsed !== undefined) {
-      desktopCollapsedRef.current = action.patch.menuCollapsed;
-      if (isMobile) {
-        setMobileMenuOpen(!action.patch.menuCollapsed);
-      }
+  const handleNavigate = (href: string) => {
+    if (isMobile) {
+      setMobileMenuOpen(false);
     }
-    onDispatch(action);
+    onNavigate(href);
   };
+
+  const handleEnableSubmit = async (values: EnableMarketFormValues) => {
+    if (!activeBrand || !enableTarget) return;
+    setEnableSubmitting(true);
+    setEnableError(null);
+    try {
+      const payload: UpsertBrandMarketInput = {
+        localBrandName: values.localBrandName.trim() || activeBrand.name,
+        ownedDomains: parseDomainLines(values.ownedDomainsText),
+        competitors: parseCompetitorLines(values.competitorsText),
+      };
+      await onEnableMarket(activeBrand.id, enableTarget, payload);
+      feedback.notifySuccess(
+        enableTarget === 'GLOBAL' ? '已开启海外市场（GLOBAL）' : '已开启国内市场（CN）',
+      );
+      if (onCloseEnableMarketModal) {
+        onCloseEnableMarketModal();
+      } else {
+        setInternalEnableMarket(null);
+      }
+    } catch (reason: unknown) {
+      setEnableError(reason instanceof Error && reason.message ? reason.message : '开启市场失败');
+    } finally {
+      setEnableSubmitting(false);
+    }
+  };
+
+  const enableDefaults = enableTarget ? GEO_MARKET_DEFAULTS[enableTarget] : null;
 
   return (
     <Layout style={{ minHeight: '100vh', overflowX: 'clip' }}>
-      <style>{`
-        .gm-sider {
-          overflow: hidden !important;
-          transition: none !important;
-        }
-        .gm-sider .ant-layout-sider-children {
-          overflow: hidden !important;
-        }
-        .gm-sider.gm-sider-collapsed {
-          width: 0 !important;
-          min-width: 0 !important;
-          max-width: 0 !important;
-          flex: 0 0 0px !important;
-          overflow: hidden !important;
-        }
-        .gm-sider:not(.gm-sider-collapsed) {
-          width: 232px !important;
-          min-width: 232px !important;
-          max-width: 232px !important;
-          flex: 0 0 232px !important;
-        }
-        .gm-sider .ant-menu-item-selected {
-          position: relative;
-        }
-        .gm-sider .ant-menu-item-selected::before {
-          content: '';
-          position: absolute;
-          left: -8px;
-          top: 8px;
-          bottom: 8px;
-          width: 2px;
-          border-radius: 2px;
-          background: var(--gm-phosphor);
-        }
-        .gm-sider .ant-menu-item-disabled {
-          color: var(--gm-fg-4) !important;
-          cursor: not-allowed !important;
-        }
-        .gm-marquee {
-          flex: 1 1 200px;
-          min-width: 140px;
-          display: flex;
-          align-items: center;
-          overflow: hidden;
-        }
-        .gm-marquee .gm-marquee-track {
-          display: block;
-          width: 100%;
-          max-width: 100%;
-          padding-left: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          animation: none;
-          background: transparent;
-          border: 0;
-          padding: 2px 4px;
-          border-radius: 4px;
-          color: var(--gm-fg-2);
-          font-size: 12px;
-          text-align: left;
-          cursor: pointer;
-          transition: color var(--gm-dur-fast) var(--gm-ease-out), background-color var(--gm-dur-fast) var(--gm-ease-out);
-        }
-        .gm-marquee .gm-marquee-track:hover {
-          color: var(--gm-fg-1);
-          background: var(--gm-bg-hover);
-        }
-        .gm-draft-note,
-        .gm-draft-note.ant-input {
-          background: var(--gm-bg-surface);
-          border: 1px dashed var(--gm-line-2);
-          border-radius: 8px;
-          min-height: 56px;
-          padding: 10px 12px;
-          color: var(--gm-fg-2);
-          font-size: 12px;
-        }
-        .gm-cmd-trigger:hover {
-          border-color: var(--gm-line-strong) !important;
-          color: var(--gm-fg-1) !important;
-        }
-        @media (max-width: 768px) {
-          .gm-sider:not(.gm-sider-collapsed) {
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
-          }
-          .gm-sider:not(.gm-sider-collapsed) .ant-layout-sider-children {
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
-          }
-          .gm-marquee {
-            flex: 1 1 100%;
-            min-width: 0;
-          }
-          .gm-cmd-trigger {
-            padding: 0 8px !important;
-            gap: 0 !important;
-          }
-          .gm-cmd-trigger-text,
-          .gm-cmd-trigger-kbd {
-            display: none !important;
-          }
-        }
-      `}</style>
       {isMobile && mobileMenuOpen ? (
         <div
           className="gm-sider-mask"
@@ -251,7 +337,7 @@ export function ShellFrame({
       <Sider
         id="gm-sider-nav"
         className={siderCollapsed ? 'gm-sider gm-sider-collapsed' : 'gm-sider'}
-        width={232}
+        width={220}
         collapsed={siderCollapsed}
         collapsedWidth={0}
         trigger={null}
@@ -263,156 +349,235 @@ export function ShellFrame({
         }}
       >
         <SideMenu
-          activeHref={active?.href ?? '/dashboard'}
-          prefs={state.prefs}
+          activePath={activePath}
           collapsed={siderCollapsed}
-          aiImageEnabled={aiImageEnabled}
+          account={account}
           visibilityEnabled={visibilityEnabled}
-          onDispatch={(action) => {
-            if (isMobile && action.type === 'open') {
-              setMobileMenuOpen(false);
-            }
-            handleDispatch(action);
-          }}
+          onNavigate={handleNavigate}
+          onChangePassword={() => setPasswordOpen(true)}
+          onLogout={onLogout}
         />
       </Sider>
       <Layout style={{ minWidth: 0, overflow: 'hidden' }}>
-        <Header
-          className="gm-header"
-          style={{
-            height: isMobile ? undefined : 48,
-            gap: 12,
-          }}
-        >
-          <div
-            className="gm-brand"
-            style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}
-          >
-            <BrandMark />
-            <span>{SITE_NAME}</span>
-          </div>
-          <div className="gm-marquee" aria-label="公告">
-            <Tooltip title={announcement}>
+        <Header className="gm-header">
+          <div className="gm-header-left">
+            {siderCollapsed ? (
               <button
                 type="button"
-                className="gm-marquee-track"
-                aria-label={`查看公告全文：${announcement}`}
-                onClick={() => setAnnouncementOpen(true)}
-                style={{ paddingLeft: 0, animation: 'none' }}
+                className="gm-header-brand"
+                aria-label={`返回${SITE_NAME}行动首页`}
+                onClick={() => handleNavigate(HOME_ROUTE)}
               >
-                {announcement}
+                <BrandMark />
+                <span>{SITE_NAME}</span>
               </button>
-            </Tooltip>
-          </div>
-          <button
-            type="button"
-            className="gm-cmd-trigger"
-            aria-label="打开指令面板"
-            onClick={() => setPaletteOpen(true)}
-            style={{
-              height: 28,
-              padding: '0 8px 0 10px',
-              border: '1px solid var(--gm-line-2)',
-              borderRadius: 6,
-              background: 'var(--gm-bg-surface)',
-              color: 'var(--gm-fg-3)',
-              fontSize: 12,
-              gap: 16,
-              display: 'inline-flex',
-              alignItems: 'center',
-              cursor: 'pointer',
-              flexShrink: 0,
-              transition:
-                'background-color var(--gm-dur-fast) var(--gm-ease-out), border-color var(--gm-dur-fast) var(--gm-ease-out), color var(--gm-dur-fast) var(--gm-ease-out)',
-            }}
-          >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <SearchIcon />
-              <span className="gm-cmd-trigger-text">搜索</span>
-            </span>
-            <kbd
-              className="gm-cmd-trigger-kbd"
-              style={{
-                fontFamily: 'var(--gm-font-mono)',
-                fontSize: 10,
-                padding: '1px 4px',
-                border: '1px solid var(--gm-line-2)',
-                borderRadius: 4,
-              }}
-            >
-              {isWindows ? 'Ctrl K' : '⌘K'}
-            </kbd>
-          </button>
-          {account.role === 'ADMIN' ? (
-            <Link className="gm-admin-link" href="/admin/tenants">
-              管理后台
-            </Link>
-          ) : null}
-          <span
-            className={account.tenant.readOnly ? 'gm-expiry warn' : 'gm-expiry'}
-            style={{
-              height: 20,
-              padding: '0 8px',
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 500,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              lineHeight: '18px',
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: account.tenant.readOnly ? 'var(--gm-danger)' : 'var(--gm-warning)',
-              }}
-            />
-            {formatExpiry(account.tenant.expiresAt, account.tenant.readOnly)}
-          </span>
-          <span className="gm-mode" data-multi-tab={state.prefs.multiTab ? 'on' : 'off'}>
-            {state.prefs.multiTab ? '多标签' : '单页'}
-          </span>
-          <Button aria-label="布局" onClick={() => setPanelOpen(true)}>
-            布局
-          </Button>
-          <Button
-            aria-label={menuToggleLabel}
-            aria-expanded={!siderCollapsed}
-            aria-controls="gm-sider-nav"
-            onClick={toggleMenu}
-            style={{ flexShrink: 0 }}
-          >
-            {menuToggleLabel}
-          </Button>
-          <Dropdown
-            trigger={['click', 'hover']}
-            placement="bottomRight"
-            menu={{
-              items: [
-                { key: 'password', label: '修改密码' },
-                { key: 'logout', label: '退出' },
-              ],
-              onClick: ({ key }) => {
-                if (key === 'password') setPasswordOpen(true);
-                if (key === 'logout') onLogout();
-              },
-            }}
-          >
-            <Button type="text" aria-label="账号菜单" style={{ flexShrink: 0 }}>
-              <span className="gm-avatar" aria-hidden="true">
-                {name.slice(0, 1)}
+            ) : null}
+
+            {brandsLoading ? (
+              <span
+                className="gm-header-switcher-skeleton"
+                data-testid="global-brand-switcher-loading"
+                aria-busy="true"
+              >
+                <Skeleton.Input active size="small" style={{ width: 148, height: 28 }} />
               </span>
-              {name}
+            ) : brandsError && brands.length === 0 ? (
+              <Button
+                size="small"
+                danger
+                data-testid="global-brand-switcher-retry"
+                onClick={() => {
+                  if (onRetryBrands) {
+                    onRetryBrands();
+                  } else {
+                    void useWorkspaceStore.getState().loadBrands({
+                      storage: window.sessionStorage,
+                      persistStorage: window.localStorage,
+                    });
+                  }
+                }}
+                style={{ flexShrink: 0 }}
+              >
+                重新加载品牌
+              </Button>
+            ) : brands.length === 0 ? (
+              <Button
+                type="primary"
+                size="small"
+                data-testid="global-brand-switcher"
+                disabled={account.tenant.readOnly}
+                onClick={openCreateModal}
+                style={{ flexShrink: 0 }}
+              >
+                + 创建首个品牌
+              </Button>
+            ) : (
+              <Select<string>
+                data-testid="global-brand-switcher"
+                aria-label="切换当前品牌"
+                size="small"
+                value={activeBrand?.id}
+                virtual={false}
+                onChange={onSelectBrand}
+                className="gm-brand-select"
+                popupMatchSelectWidth={240}
+                options={brands.map((brand) => ({
+                  value: brand.id,
+                  label: brand.name,
+                }))}
+                popupRender={(menu) => (
+                  <div>
+                    {menu}
+                    <Divider style={{ margin: '6px 0' }} />
+                    <div style={{ padding: '0 6px 6px' }}>
+                      <Button
+                        type="text"
+                        size="small"
+                        block
+                        disabled={account.tenant.readOnly}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={openCreateModal}
+                      >
+                        + 新建品牌
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              />
+            )}
+
+            {brandsLoading ? (
+              <span aria-busy="true" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <Skeleton.Button active size="small" style={{ width: 112, height: 28 }} />
+              </span>
+            ) : activeBrand ? (
+              <div
+                className="gm-market-toggle"
+                role="group"
+                aria-label="切换目标市场"
+                data-testid="global-market-switcher"
+              >
+                {hasBothMarkets ? (
+                  <>
+                    <button
+                      type="button"
+                      className={activeMarket === 'CN' ? 'gm-market-btn active' : 'gm-market-btn'}
+                      aria-pressed={activeMarket === 'CN'}
+                      onClick={() => onSelectMarket('CN')}
+                    >
+                      🇨🇳 国内
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        activeMarket === 'GLOBAL' ? 'gm-market-btn active' : 'gm-market-btn'
+                      }
+                      aria-pressed={activeMarket === 'GLOBAL'}
+                      onClick={() => onSelectMarket('GLOBAL')}
+                    >
+                      🌐 海外
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="gm-market-btn active"
+                      aria-pressed="true"
+                      onClick={() => onSelectMarket(activeMarket)}
+                    >
+                      {activeMarket === 'CN' ? '🇨🇳 国内' : '🌐 海外'}
+                    </button>
+                    {missingMarket ? (
+                      <button
+                        type="button"
+                        className="gm-market-enable-btn"
+                        data-testid="enable-other-market-btn"
+                        disabled={account.tenant.readOnly}
+                        onClick={() => openEnableModal(missingMarket)}
+                      >
+                        + 开启另一市场
+                      </button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            <nav aria-label="面包屑" className="gm-breadcrumb">
+              <span className="gm-breadcrumb-sep" aria-hidden="true">
+                /
+              </span>
+              <span className="gm-breadcrumb-current">{currentTitle}</span>
+            </nav>
+          </div>
+
+          <div className="gm-header-right">
+            {trimmedAnnouncement ? (
+              <Tooltip title={trimmedAnnouncement}>
+                <button
+                  type="button"
+                  className="gm-announce-btn"
+                  aria-label="查看公告全文"
+                  onClick={() => setAnnouncementOpen(true)}
+                >
+                  {trimmedAnnouncement}
+                </button>
+              </Tooltip>
+            ) : null}
+
+            <button
+              type="button"
+              className="gm-cmd-trigger"
+              aria-label="打开指令面板"
+              onClick={() => setPaletteOpen(true)}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <SearchIcon />
+                <span className="gm-cmd-trigger-text">搜索</span>
+              </span>
+              <kbd className="gm-cmd-trigger-kbd">{isWindows ? 'Ctrl K' : '⌘K'}</kbd>
+            </button>
+
+            {account.role === 'ADMIN' ? (
+              <Link className="gm-admin-link" href="/admin/tenants">
+                运营后台
+              </Link>
+            ) : null}
+
+            {walletLoading || wallet === null ? (
+              <span
+                className="gm-points-skeleton"
+                data-testid="header-points-loading"
+                aria-busy="true"
+              >
+                <Skeleton.Button active size="small" style={{ width: 72, height: 26 }} />
+              </span>
+            ) : (
+              <Link
+                href="/account"
+                className="gm-points-pill"
+                data-testid="header-points-pill"
+                aria-label={`可用点数 ${wallet.available} 点`}
+              >
+                <span className="gm-num">{wallet.available}</span>
+                <span>点</span>
+              </Link>
+            )}
+
+            <Button
+              size="small"
+              aria-label={menuToggleLabel}
+              aria-expanded={!siderCollapsed}
+              aria-controls="gm-sider-nav"
+              onClick={toggleMenu}
+              style={{ flexShrink: 0 }}
+            >
+              {menuToggleLabel}
             </Button>
-          </Dropdown>
+          </div>
         </Header>
-        {state.prefs.multiTab ? (
-          <TabBar tabs={state.tabs} activeId={state.activeId} onDispatch={handleDispatch} />
-        ) : null}
+
         <Content className="gm-content" style={{ padding: isMobile ? 12 : 20 }}>
           {account.tenant.readOnly ? (
             <Alert
@@ -422,44 +587,97 @@ export function ShellFrame({
               style={{ marginBottom: 12 }}
             />
           ) : null}
-          <p className="gm-tenant">{account.tenant.name}</p>
-          {panes.map((tab) => {
-            const inactive = state.prefs.multiTab && tab.id !== state.activeId;
-            return (
-              <div
-                key={`${tab.id}:${state.reloadNonce[tab.id] ?? 0}`}
-                className="gm-page"
-                data-tab-id={tab.id}
-                hidden={inactive}
-                style={{
-                  background: 'transparent',
-                  padding: 0,
-                  borderRadius: 0,
-                  ...(inactive ? { display: 'none' } : undefined),
-                }}
-              >
-                <ModuleScreen
-                  tab={tab}
-                  draft={state.drafts[tab.id] ?? ''}
-                  active={!inactive}
-                  readOnly={account.tenant.readOnly}
-                  aiImageEnabled={aiImageEnabled}
-                  visibilityEnabled={visibilityEnabled}
-                  onDispatch={handleDispatch}
-                />
+          {!brandsLoading &&
+          brandsLoaded &&
+          brands.length === 0 &&
+          !brandsError &&
+          !isAccountPath ? (
+            <section className="gm-onboarding-banner" aria-label="首次建档引导">
+              <div className="gm-onboarding-banner-copy">
+                <strong>60 秒创建首个品牌，开启双市场 AI 可见度与 GEO 写作闭环</strong>
+                <span>
+                  填写品牌名、品类与目标市场（🇨🇳 国内 / 🌐
+                  海外）后，全站看板、监测与写作台立即自动锁定该品牌上下文。
+                </span>
               </div>
-            );
-          })}
+              <Button type="primary" disabled={account.tenant.readOnly} onClick={openCreateModal}>
+                60 秒创建首个品牌
+              </Button>
+            </section>
+          ) : null}
+          <div className="gm-workspace-main">{children}</div>
         </Content>
       </Layout>
-      {panelOpen ? (
-        <LayoutPanel
-          open={panelOpen}
-          prefs={state.prefs}
-          onClose={() => setPanelOpen(false)}
-          onDispatch={handleDispatch}
-        />
-      ) : null}
+
+      <BrandQuickCreateModal
+        open={isCreateOpen}
+        readOnly={account.tenant.readOnly}
+        onClose={closeCreateModal}
+        onCreateBrand={onCreateBrand}
+        onExtractFacts={onExtractBrandFacts}
+        onSaveFacts={onSaveBrandFacts}
+        onBrandFactsSaved={onBrandFactsSaved}
+      />
+
+      <Modal
+        open={enableTarget !== null}
+        title={enableTarget === 'GLOBAL' ? '开启海外市场' : '开启国内市场'}
+        onCancel={closeEnableModal}
+        keyboard
+        maskClosable
+        destroyOnHidden
+        okText="确认开启"
+        cancelText="取消"
+        confirmLoading={enableSubmitting}
+        onOk={() => enableForm.submit()}
+      >
+        {enableDefaults ? (
+          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--gm-fg-2)', fontSize: 12 }}>
+            默认语种与区域：{enableDefaults.locale} / {enableDefaults.region}
+            。开启后将与现有市场共享核心品牌事实卡，但引擎组、可见度看板与成稿严格隔离。
+          </p>
+        ) : null}
+        <Form<EnableMarketFormValues>
+          form={enableForm}
+          layout="vertical"
+          onFinish={(values) => void handleEnableSubmit(values)}
+        >
+          <Form.Item
+            label="当地品牌名称"
+            name="localBrandName"
+            rules={[
+              { required: true, whitespace: true, message: '请填写当地品牌名称' },
+              { max: 80, message: '品牌名称不超过 80 字' },
+            ]}
+          >
+            <Input
+              aria-label="当地品牌名称"
+              placeholder={
+                enableTarget === 'GLOBAL'
+                  ? '例如：UGREEN（海外英文品牌名）'
+                  : '例如：绿联（国内中文品牌名）'
+              }
+            />
+          </Form.Item>
+          <Form.Item label="当地官网域名（选填）" name="ownedDomainsText">
+            <Input
+              aria-label="当地官网域名"
+              placeholder="例如：global.example.com（多个域名可用逗号分隔）"
+            />
+          </Form.Item>
+          <Form.Item label="当地主要竞品（选填）" name="competitorsText">
+            <Input.TextArea
+              aria-label="当地主要竞品"
+              rows={3}
+              placeholder="每行一个竞品，格式：竞品名, 竞品域名（域名选填）"
+            />
+          </Form.Item>
+          {enableError ? (
+            <Alert type="error" showIcon message={enableError} style={{ marginBottom: 8 }} />
+          ) : null}
+        </Form>
+      </Modal>
+
       <Modal
         open={announcementOpen}
         title="系统公告"
@@ -475,25 +693,31 @@ export function ShellFrame({
         <p
           style={{ margin: 0, color: 'var(--gm-fg-1)', lineHeight: '22px', whiteSpace: 'pre-wrap' }}
         >
-          {announcement}
+          {trimmedAnnouncement}
         </p>
       </Modal>
+
       {paletteOpen ? (
         <CommandPalette
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
           role={account.role}
-          tabs={state.tabs}
-          activeId={state.activeId}
-          aiImageEnabled={aiImageEnabled}
+          readOnly={account.tenant.readOnly}
           visibilityEnabled={visibilityEnabled}
-          onDispatch={onDispatch}
-          onOpenLayout={() => setPanelOpen(true)}
+          brands={brands}
+          activeBrandId={activeBrandId}
+          activeMarket={activeMarket}
+          onNavigate={handleNavigate}
+          onSelectBrand={onSelectBrand}
+          onSelectMarket={onSelectMarket}
+          onOpenCreateBrand={openCreateModal}
+          onOpenEnableMarket={openEnableModal}
           onToggleMenu={toggleMenu}
           onChangePassword={() => setPasswordOpen(true)}
           onLogout={onLogout}
         />
       ) : null}
+
       <Modal
         open={passwordOpen}
         title="修改密码"
@@ -508,16 +732,6 @@ export function ShellFrame({
         ) : null}
       </Modal>
     </Layout>
-  );
-}
-
-function BrandMark() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="9" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="6" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="3" fill="var(--gm-phosphor)" />
-    </svg>
   );
 }
 

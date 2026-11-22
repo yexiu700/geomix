@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
   QUEUE_TENANT_LIMIT,
   classifyCitationSource,
@@ -8,6 +8,7 @@ import {
   type CitationSourceKind,
   type TaskStatusName,
   type VisibilityCompetitor,
+  type VisibilityTriggerType,
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS } from '../billing/billing.sql';
@@ -20,11 +21,28 @@ import { VisibilityJudgeService } from './visibility-judge.service';
 
 export const VISIBILITY_RUN_HANDLER = Symbol('VISIBILITY_RUN_HANDLER');
 export const VISIBILITY_RUN_ENQUEUER = Symbol('VISIBILITY_RUN_ENQUEUER');
+export const VISIBILITY_RUN_COMPLETE_HOOKS = Symbol('VISIBILITY_RUN_COMPLETE_HOOKS');
 
 export type VisibilityCheckJobData = {
   tenantId: string;
   runId: string;
 };
+
+export type VisibilityRunCompleteEvent = {
+  tenantId: string;
+  brandId: string;
+  brandMarketId: string;
+  runId: string;
+  triggerType: VisibilityTriggerType;
+  retestArticleId: string | null;
+  status: 'COMPLETED' | 'PARTIAL';
+  successCount: number;
+};
+
+export interface OnVisibilityRunCompleteHook {
+  readonly name: string;
+  onVisibilityRunComplete(event: VisibilityRunCompleteEvent): Promise<void> | void;
+}
 
 export interface VisibilityRunHandler {
   process(payload: VisibilityCheckJobData): Promise<void>;
@@ -90,6 +108,7 @@ function safeVisibilityError(error: unknown): string {
 @Injectable()
 export class VisibilityRunRunner implements VisibilityRunHandler {
   private readonly logger = new Logger(VisibilityRunRunner.name);
+  private readonly completeHooks: OnVisibilityRunCompleteHook[];
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -100,7 +119,21 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     @Optional()
     @Inject(VisibilityEngineHealthService)
     private readonly engineHealth?: VisibilityEngineHealthService,
-  ) {}
+    @Optional()
+    @Inject(VISIBILITY_RUN_COMPLETE_HOOKS)
+    initialHooks?: readonly OnVisibilityRunCompleteHook[],
+  ) {
+    this.completeHooks = [...(initialHooks ?? [])];
+  }
+
+  registerCompleteHook(hook: OnVisibilityRunCompleteHook): void {
+    const existingIdx = this.completeHooks.findIndex((item) => item.name === hook.name);
+    if (existingIdx >= 0) {
+      this.completeHooks[existingIdx] = hook;
+    } else {
+      this.completeHooks.push(hook);
+    }
+  }
 
   async process(payload: VisibilityCheckJobData): Promise<void> {
     const { tenantId, runId } = payload;
@@ -229,14 +262,14 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     const [run, obs] = await Promise.all([
       this.prisma.base.visibilityRun.findFirst({
         where: { id: runId, tenantId },
-        include: { profile: true },
+        include: { brandMarket: true },
       }),
       this.prisma.base.visibilityObservation.findFirst({
         where: { id: observationId, runId, tenantId },
       }),
     ]);
 
-    if (!run || !run.profile || !obs) return;
+    if (!run || !run.brandMarket || !obs) return;
 
     if (run.status === 'CANCELLED') {
       await this.prisma.base.visibilityObservation.updateMany({
@@ -248,21 +281,26 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     }
 
     const reservationId = await this.resolveReservationId(tenantId, run.id, run.reservationId);
-    const competitors = parseProfileCompetitors(run.profile.competitors);
-    const ownedDomains = run.profile.ownedDomains
+    const competitors = parseProfileCompetitors(run.brandMarket.competitors);
+    const ownedDomains = run.brandMarket.ownedDomains
       .map((dom) => normalizeVisibilityDomain(dom))
       .filter(Boolean);
     const competitorDomains = competitors.flatMap((comp) => comp.domains);
 
+    let settleFailed = false;
     try {
       const collected = await this.collector.collect({
         tenantId,
         engine: obs.engine,
         promptText: obs.promptText,
-        brandName: run.profile.brandName,
-        brandAliases: run.profile.brandAliases,
+        brandName: run.brandMarket.localBrandName,
+        brandAliases: run.brandMarket.aliases,
         ownedDomains,
         competitors,
+        market: run.brandMarket.market,
+        locale: run.brandMarket.locale,
+        region: run.brandMarket.region,
+        triggerType: run.triggerType,
         idempotencyKey: `vis-col:${obs.id}`,
       });
       if (this.engineHealth) {
@@ -308,8 +346,8 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
           snippet: cite.snippet,
         })),
         profile: {
-          brandName: run.profile.brandName,
-          brandAliases: run.profile.brandAliases,
+          brandName: run.brandMarket.localBrandName,
+          brandAliases: run.brandMarket.aliases,
           ownedDomains,
           competitors,
         },
@@ -320,7 +358,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         tenantId,
         runId: run.id,
         observationId: obs.id,
-        questionId: obs.questionId,
         collectorKind: collected.collectorKind,
         answerText: collected.answerText,
         brandMentioned: judged.brandMentioned,
@@ -342,22 +379,27 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
 
       if (reservationId) {
         const settleTitle = `AI可见性监测-${run.name}`.slice(0, 80);
-        await this.billing.settle({
-          tenantId,
-          reservationId,
-          unitKey: `visibility_obs:${obs.id}`,
-          action: 'visibility_check',
-          amount: run.unitPrice,
-          title: settleTitle,
-          detail: {
-            runId: run.id,
-            observationId: obs.id,
-            engine: obs.engine,
-          },
-        });
+        try {
+          await this.billing.settle({
+            tenantId,
+            reservationId,
+            unitKey: `visibility_obs:${obs.id}`,
+            action: 'visibility_check',
+            amount: run.unitPrice,
+            title: settleTitle,
+            detail: {
+              runId: run.id,
+              observationId: obs.id,
+              engine: obs.engine,
+            },
+          });
+        } catch (settleErr) {
+          settleFailed = true;
+          throw settleErr;
+        }
       }
     } catch (error) {
-      if (this.engineHealth) {
+      if (this.engineHealth && !settleFailed) {
         await this.engineHealth.recordObservationFailure(obs.engine, error);
       }
       await this.handleObservationFailure({
@@ -368,6 +410,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         reservationId,
         observationId: obs.id,
         error,
+        rollbackSuccess: settleFailed,
       });
     }
   }
@@ -393,7 +436,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     tenantId: string;
     runId: string;
     observationId: string;
-    questionId: string | null;
     collectorKind: string;
     answerText: string;
     brandMentioned: boolean;
@@ -475,25 +517,6 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         },
       });
 
-      if (input.brandMentioned && input.questionId) {
-        const question = await tx.question.findFirst({
-          where: { id: input.questionId, tenantId: input.tenantId },
-          select: { id: true, keywordId: true, included: true },
-        });
-        if (question) {
-          if (!question.included) {
-            await tx.question.update({
-              where: { id: question.id },
-              data: { included: true },
-            });
-          }
-          await tx.keyword.updateMany({
-            where: { id: question.keywordId, tenantId: input.tenantId },
-            data: { optStatus: 'INCLUDED' },
-          });
-        }
-      }
-
       await tx.visibilityRun.update({
         where: { id: input.runId },
         data: {
@@ -513,6 +536,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     reservationId: string | null;
     observationId: string;
     error: unknown;
+    rollbackSuccess?: boolean;
   }): Promise<void> {
     const errMsg = safeVisibilityError(input.error);
 
@@ -536,7 +560,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     await this.prisma.base.$transaction(async (tx) => {
       const run = await tx.visibilityRun.findFirst({
         where: { id: input.runId, tenantId: input.tenantId },
-        select: { status: true },
+        select: { status: true, doneCount: true },
       });
       if (!run) return;
 
@@ -544,7 +568,44 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         where: { id: input.observationId, tenantId: input.tenantId },
         select: { status: true },
       });
-      if (!current || current.status === 'SUCCESS' || current.status === 'SKIPPED') {
+      if (!current || current.status === 'SKIPPED') {
+        return;
+      }
+      if (current.status === 'SUCCESS' && !input.rollbackSuccess) {
+        return;
+      }
+
+      if (current.status === 'SUCCESS' && input.rollbackSuccess) {
+        await tx.visibilityCitation.deleteMany({
+          where: { observationId: input.observationId, tenantId: input.tenantId },
+        });
+        await tx.visibilityObservation.update({
+          where: { id: input.observationId },
+          data: {
+            status: 'FAILED',
+            answerText: null,
+            brandMentioned: false,
+            brandPosition: null,
+            brandSentiment: null,
+            brandPassage: null,
+            competitorHits: Prisma.DbNull,
+            fanOutQueries: [],
+            judgeModel: null,
+            tokensIn: null,
+            tokensOut: null,
+            error: errMsg,
+            checkedAt: new Date(),
+          },
+        });
+
+        await tx.visibilityRun.update({
+          where: { id: input.runId },
+          data: {
+            ...(run.doneCount > 0 ? { doneCount: { decrement: 1 } } : {}),
+            failCount: { increment: 1 },
+            ...(run.status === 'PAUSED' ? {} : { lastError: errMsg }),
+          },
+        });
         return;
       }
 
@@ -575,10 +636,12 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         where: { id: runId, tenantId },
         select: {
           id: true,
+          brandId: true,
+          brandMarketId: true,
+          triggerType: true,
+          retestArticleId: true,
           status: true,
           totalChecks: true,
-          keywordId: true,
-          questionIds: true,
           reservationId: true,
           finishedAt: true,
         },
@@ -610,125 +673,96 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       }
 
       const now = new Date();
-      await tx.visibilityRun.update({
-        where: { id: runId },
-        data: {
-          status: nextStatus,
-          doneCount: success,
-          failCount: failed,
-          finishedAt: run.finishedAt ?? (running === 0 ? now : null),
-        },
-      });
+      let transitioned = false;
 
-      if (running === 0) {
-        await this.syncKeywordOptStatuses(tx, {
-          tenantId,
-          runId,
-          runKeywordId: run.keywordId,
-          questionIds: run.questionIds,
-          completedWithChecks: nextStatus !== 'CANCELLED' && success > 0,
+      if (run.status !== 'CANCELLED') {
+        const updated = await tx.visibilityRun.updateMany({
+          where: { id: runId, tenantId, status: { in: ['QUEUED', 'RUNNING'] } },
+          data: {
+            status: nextStatus,
+            doneCount: success,
+            failCount: failed,
+            finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+          },
+        });
+        transitioned = updated.count === 1;
+        if (!transitioned) {
+          await tx.visibilityRun.updateMany({
+            where: { id: runId, tenantId },
+            data: {
+              doneCount: success,
+              failCount: failed,
+              finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+            },
+          });
+        }
+      } else {
+        await tx.visibilityRun.update({
+          where: { id: runId },
+          data: {
+            status: nextStatus,
+            doneCount: success,
+            failCount: failed,
+            finishedAt: run.finishedAt ?? (running === 0 ? now : null),
+          },
         });
       }
 
       return {
         closeReservation: running === 0,
         reservationId: run.reservationId,
+        transitioned,
+        brandId: run.brandId,
+        brandMarketId: run.brandMarketId,
+        triggerType: run.triggerType,
+        retestArticleId: run.retestArticleId ?? null,
+        status: nextStatus,
+        successCount: success,
       };
     }, TX_OPTIONS);
 
-    if (!summary?.closeReservation) return;
+    if (!summary) return;
 
-    const reservationId = await this.resolveReservationId(tenantId, runId, summary.reservationId);
-    if (!reservationId) return;
-
-    const reservation = await this.prisma.base.pointReservation.findFirst({
-      where: { id: reservationId, tenantId },
-      select: { id: true, status: true },
-    });
-    if (reservation && reservation.status === 'OPEN') {
-      await this.billing.close({ tenantId, reservationId: reservation.id });
-    }
-  }
-
-  private async syncKeywordOptStatuses(
-    tx: Prisma.TransactionClient,
-    input: {
-      tenantId: string;
-      runId: string;
-      runKeywordId: string | null;
-      questionIds: string[];
-      completedWithChecks: boolean;
-    },
-  ): Promise<void> {
-    const keywordIds = new Set<string>();
-    if (input.runKeywordId) {
-      keywordIds.add(input.runKeywordId);
-    }
-
-    if (input.questionIds.length > 0) {
-      const questions = await tx.question.findMany({
-        where: {
-          tenantId: input.tenantId,
-          id: { in: input.questionIds },
-        },
-        select: { id: true, keywordId: true },
-      });
-      for (const q of questions) {
-        keywordIds.add(q.keywordId);
-      }
-    }
-
-    if (keywordIds.size === 0) return;
-
-    const succeededObs = await tx.visibilityObservation.findMany({
-      where: {
-        runId: input.runId,
-        tenantId: input.tenantId,
-        status: 'SUCCESS',
-        questionId: { not: null },
-      },
-      select: { questionId: true },
-    });
-    const checkedQuestionIdSet = new Set(
-      succeededObs.map((row) => row.questionId).filter((id): id is string => Boolean(id)),
-    );
-
-    for (const keywordId of keywordIds) {
-      const kw = await tx.keyword.findFirst({
-        where: { id: keywordId, tenantId: input.tenantId },
-        select: { id: true, optStatus: true },
-      });
-      if (!kw) continue;
-
-      const includedCount = await tx.question.count({
-        where: { tenantId: input.tenantId, keywordId, included: true },
-      });
-
-      if (includedCount > 0) {
-        if (kw.optStatus !== 'INCLUDED') {
-          await tx.keyword.update({
-            where: { id: kw.id },
-            data: { optStatus: 'INCLUDED' },
-          });
-        }
-        continue;
-      }
-
-      if (!input.completedWithChecks) continue;
-
-      const keywordQuestions = await tx.question.findMany({
-        where: { tenantId: input.tenantId, keywordId },
-        select: { id: true },
-      });
-      const testedAnyForKeyword =
-        keywordId === input.runKeywordId ||
-        keywordQuestions.some((q) => checkedQuestionIdSet.has(q.id));
-
-      if (testedAnyForKeyword && kw.optStatus !== 'INCLUDED' && kw.optStatus !== 'OPTIMIZING') {
-        await tx.keyword.update({
-          where: { id: kw.id },
-          data: { optStatus: 'OPTIMIZING' },
+    if (summary.closeReservation) {
+      const reservationId = await this.resolveReservationId(tenantId, runId, summary.reservationId);
+      if (reservationId) {
+        const reservation = await this.prisma.base.pointReservation.findFirst({
+          where: { id: reservationId, tenantId },
+          select: { id: true, status: true },
         });
+        if (reservation && reservation.status === 'OPEN') {
+          await this.billing.close({ tenantId, reservationId: reservation.id });
+        }
+      }
+    }
+
+    if (
+      summary.transitioned &&
+      (summary.status === 'COMPLETED' || summary.status === 'PARTIAL') &&
+      summary.successCount > 0 &&
+      this.completeHooks.length > 0
+    ) {
+      const event: VisibilityRunCompleteEvent = {
+        tenantId,
+        brandId: summary.brandId,
+        brandMarketId: summary.brandMarketId,
+        runId,
+        triggerType: summary.triggerType,
+        retestArticleId: summary.retestArticleId,
+        status: summary.status,
+        successCount: summary.successCount,
+      };
+
+      for (const hook of this.completeHooks) {
+        try {
+          await hook.onVisibilityRunComplete(event);
+        } catch (error) {
+          this.logger.error(
+            `visibility run complete hook "${hook.name}" failed for run ${runId}: ${
+              error instanceof Error ? error.message : 'unknown'
+            }`,
+          );
+        }
       }
     }
   }

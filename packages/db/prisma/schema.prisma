@@ -1,10 +1,9 @@
-// GeoMix phase-1 schema (路线 F03a–c).
+// GeoMix 2.0 domain schema (Brand + BrandMarket dual-market GEO architecture).
 // CHECK constraints and `CREATE EXTENSION IF NOT EXISTS vector` live in the
-// migration. Prisma 5.22's `extensions = [vector]` preview never settles:
-// migrate dev keeps asking for another extension migration, so the extension
-// stays in SQL where it is idempotent.
-// The HNSW index is declared here by name. The migration builds it with
-// hnsw / vector_cosine_ops, which the schema language cannot express.
+// initial migration (`20261116120000_init`). Prisma 5.22's `extensions = [vector]`
+// preview never settles, so the extension stays in SQL where it is idempotent.
+// The HNSW index on BrandFactChunk is declared here by name and built with
+// `USING hnsw (embedding vector_cosine_ops)` in migration `20261120100000_geomix_v2_domain_schema`.
 
 generator client {
   provider = "prisma-client-js"
@@ -46,49 +45,6 @@ enum QuotaKey {
   SOCIAL_AUTH
 }
 
-enum KeywordOptStatus {
-  NONE
-  OPTIMIZING
-  INCLUDED
-}
-
-enum QuestionSource {
-  AI
-  MANUAL
-  COMBO
-}
-
-enum KbMode {
-  DETAIL
-  SUMMARY
-}
-
-enum KbIndexStatus {
-  NONE
-  INDEXING
-  READY
-  FAILED
-}
-
-enum PromptKind {
-  ARTICLE
-  TITLE
-  REWRITE
-}
-
-enum ArticleStatus {
-  PENDING
-  NORMAL
-  DISABLED
-}
-
-enum ArticleSource {
-  AI_TASK
-  MANUAL
-  REWRITE_SINGLE
-  REWRITE_BATCH
-}
-
 enum TaskStatus {
   QUEUED
   RUNNING
@@ -107,10 +63,86 @@ enum ItemStatus {
   SKIPPED
 }
 
-enum MediaOrigin {
-  UPLOAD
-  AI_IMAGE
-  EDITOR
+enum GeoMarket {
+  CN
+  GLOBAL
+}
+
+enum BrandFactSlot {
+  PRODUCT_SPECS
+  DIFFERENTIATORS
+  CREDENTIALS
+  CASE_STUDIES
+  EXTRA_DOC
+}
+
+enum FactSourceType {
+  MANUAL
+  URL_EXTRACT
+  DOC_UPLOAD
+  STUDIO_FEEDBACK
+}
+
+enum FactIndexStatus {
+  NONE
+  INDEXING
+  READY
+  FAILED
+}
+
+enum BrandMediaOrigin {
+  PRODUCT_UPLOAD
+  AI_INLINE_GEN
+}
+
+enum VisibilityTriggerType {
+  MANUAL
+  RETEST
+}
+
+enum GeoBriefSource {
+  AUTO_GAP
+  LOW_RANK
+  SENTIMENT_RISK
+  FANOUT_CLUSTER
+  CITATION_COUNTER
+  MANUAL
+}
+
+enum GeoRecipe {
+  AUTHORITY_GUIDE
+  COMPARISON_MATRIX
+  OBJECTION_FAQ
+  CITATION_COUNTER
+}
+
+enum GeoTargetFormat {
+  CN_DEEP_REVIEW
+  CN_COMMUNITY_QA
+  GLOBAL_AUTHORITY_GUIDE
+  GLOBAL_COMMUNITY_DISCUSSION
+}
+
+enum GeoBriefStatus {
+  OPEN
+  WRITING
+  DONE
+  DISMISSED
+}
+
+enum GeoArticleStatus {
+  DRAFT
+  READY
+  PUBLISHED
+}
+
+enum CitationSourceKind {
+  OWNED
+  COMPETITOR
+  SOCIAL
+  AUTHORITY
+  ECOMMERCE
+  OTHER
 }
 
 // ===================== 底座 =====================
@@ -123,34 +155,29 @@ model Tenant {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  users             User[]
-  wallet            Wallet?
-  quotas            Quota[]
-  reservations      PointReservation[]
-  pointLogs         PointLog[]
-  moneyLogs         MoneyLog[]
-  verification      Verification?
-  agreements        AgreementSignature[]
-  keywords          Keyword[]
-  questions         Question[]
-  mediaCategories   MediaCategory[]
-  mediaAssets       MediaAsset[]
-  knowledgeBases    KnowledgeBase[]
-  prompts           PromptTemplate[]
-  articleCategories ArticleCategory[]
-  aiTasks           AiTask[]
-  articles          Article[]
-  rewriteBatches    RewriteBatch[]
-  rewriteRecords    RewriteRecord[]
-  aiImages          AiImageJob[]
-  workRuns          WorkRun[]
+  users                  User[]
+  wallet                 Wallet?
+  quotas                 Quota[]
+  reservations           PointReservation[]
+  pointLogs              PointLog[]
+  moneyLogs              MoneyLog[]
+  verification           Verification?
+  workRuns               WorkRun[]
   workUnits              WorkUnit[]
   activeWorks            ActiveWork[]
-  crudSamples            CrudSample[]
-  visibilityProfiles     VisibilityProfile[]
+  brands                 Brand[]
+  brandMarkets           BrandMarket[]
+  brandFacts             BrandFact[]
+  brandFactChunks        BrandFactChunk[]
+  brandMediaAssets       BrandMediaAsset[]
   visibilityRuns         VisibilityRun[]
   visibilityObservations VisibilityObservation[]
   visibilityCitations    VisibilityCitation[]
+  geoBriefs              GeoBrief[]
+  geoArticles            GeoArticle[]
+  geoPublishRecords      GeoPublishRecord[]
+  geoBatchJobs           GeoBatchJob[]
+  promptPreference       PromptPreference?
 }
 
 model User {
@@ -161,7 +188,7 @@ model User {
   passwordHash String
   nickname     String?
   role         UserRole  @default(MERCHANT)
-  uiPrefs      Json? // 多标签开关、菜单折叠等
+  uiPrefs      Json? // 菜单折叠等界面偏好
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
 
@@ -189,7 +216,7 @@ model Quota {
 }
 
 model PricingItem {
-  action     String   @id // distill | ai_write | kb_addon | rewrite_single | rewrite_batch | image_gen
+  action     String   @id // geo_write | visibility_check | inline_image_gen
   unitPoints Int
   enabled    Boolean  @default(true)
   updatedAt  DateTime @updatedAt
@@ -200,7 +227,7 @@ model PointReservation {
   id        String            @id @default(cuid())
   tenantId  String
   tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  refType   String // ai_task | rewrite_batch | image_job | distill | rewrite_single
+  refType   String // geo_article | geo_batch | visibility_run | inline_image_gen
   refId     String
   shadow    Boolean           @default(false)
   frozen    Int
@@ -223,11 +250,11 @@ model PointLog {
   reservationId String?
   reservation   PointReservation? @relation(fields: [reservationId], references: [id])
   action        String // 同 PricingItem.action，或 admin_topup / refund
-  title         String // 展示用「项目」，如「AI写作-任务名」
-  unitKey       String // 幂等键，如 ai_task_item:<id>
+  title         String // 展示用「项目」
+  unitKey       String // 幂等键，如 geo_article:<id> | vis_obs:<id>
   delta         Int // 实际变动（影子模式为 0）
   listPrice     Int // 原价（影子模式用于核算）
-  detail        Json? // {base:10, kbAddon:5}
+  detail        Json?
   balanceAfter  Int?
   status        LedgerStatus      @default(SETTLED)
   createdAt     DateTime          @default(now())
@@ -260,19 +287,6 @@ model Verification {
   updatedAt   DateTime @updatedAt
 }
 
-model AgreementSignature {
-  id       String   @id @default(cuid())
-  tenantId String
-  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId   String
-  kind     String   @default("kb_truthfulness")
-  version  String
-  ip       String?
-  signedAt DateTime @default(now())
-
-  @@index([tenantId, kind, version])
-}
-
 model Announcement {
   id           String   @id @default(cuid())
   content      String
@@ -288,322 +302,14 @@ model AuditLog {
   id        String   @id @default(cuid())
   tenantId  String?
   userId    String?
-  action    String // forbidden_blocked | admin_topup | billing_mode_change ...
+  action    String // forbidden_blocked | admin_topup | billing_mode_change | llm_cost ...
   payload   Json?
   createdAt DateTime @default(now())
 
   @@index([tenantId, createdAt])
 }
 
-// ===================== 模块一：素材源力 =====================
-model Keyword {
-  id             String           @id @default(cuid())
-  tenantId       String
-  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  main           String // 主关键词（训练主词）
-  brands         String[] // 公司(品牌)/转化词，逗号拆分
-  optStatus      KeywordOptStatus @default(NONE)
-  createdAt      DateTime         @default(now())
-  questions      Question[]
-  aiTasks        AiTask[]
-  visibilityRuns VisibilityRun[]
-
-  @@unique([tenantId, main]) // 物理删除，避免软删唯一冲突
-}
-
-model Question {
-  id                     String                  @id @default(cuid())
-  tenantId               String
-  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  keywordId              String
-  keyword                Keyword                 @relation(fields: [keywordId], references: [id], onDelete: Cascade)
-  text                   String
-  source                 QuestionSource          @default(MANUAL)
-  usedCount              Int                     @default(0)
-  lastUsedAt             DateTime?
-  included               Boolean                 @default(false) // 收录状态（二期回写）
-  createdAt              DateTime                @default(now())
-  aiTaskItems            AiTaskItem[]
-  visibilityObservations VisibilityObservation[]
-
-  @@unique([keywordId, text])
-  @@index([tenantId, keywordId, usedCount])
-}
-
-model MediaCategory {
-  id        String          @id @default(cuid())
-  tenantId  String
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  type      Int             @default(1) // 1=画像图库，2=视频素材(预留)
-  name      String
-  createdAt DateTime        @default(now())
-  assets    MediaAsset[]
-  aiTasks   AiTask[]
-  batches   RewriteBatch[]
-  records   RewriteRecord[]
-
-  @@unique([tenantId, type, name])
-}
-
-model MediaAsset {
-  id         String         @id @default(cuid())
-  tenantId   String
-  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  categoryId String? // 为空=未入库（如 AI 生图未存入）
-  category   MediaCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  origin     MediaOrigin    @default(UPLOAD)
-  aiImageId  String?
-  aiImage      AiImageJob?    @relation(fields: [aiImageId], references: [id], onDelete: SetNull)
-  objectKey    String         @unique
-  originalName String?
-  url          String
-  thumbUrl   String?
-  width      Int
-  height     Int
-  bytes      Int
-  mime       String
-  usedCount  Int            @default(0)
-  createdAt  DateTime       @default(now())
-
-  @@index([tenantId, categoryId, usedCount])
-}
-
-model KnowledgeBase {
-  id          String           @id @default(cuid())
-  tenantId    String
-  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  mode        KbMode           @default(DETAIL)
-  companyName String?
-  brandShort  String?
-  directions  String[] // 29 选 N
-  copyTypes   String[] // 15 选 M
-  fields      Json? // {productService, productFeature, brandStory, painPoint, trust, cases, other}
-  summaryText String?
-  indexStatus KbIndexStatus    @default(NONE)
-  signatureId String // 保存时引用的有效签署
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  chunks      KnowledgeChunk[]
-  aiTasks     AiTask[]
-
-  @@index([tenantId])
-}
-
-model KnowledgeChunk {
-  id        String                       @id @default(cuid())
-  kbId      String
-  kb        KnowledgeBase                @relation(fields: [kbId], references: [id], onDelete: Cascade)
-  idx       Int
-  content   String
-  embedding Unsupported("vector(1024)")?
-  // 迁移里用 HNSW（vector_cosine_ops）。这里声明同名索引，避免 migrate dev 把它当成多余对象删掉。
-
-  @@unique([kbId, idx])
-  @@index([embedding], map: "idx_kb_chunk_embedding")
-}
-
-// ===================== 模块二：文章写作 =====================
-model PromptTemplate {
-  id           String          @id @default(cuid())
-  tenantId     String? // null = 系统模板（只读）
-  tenant       Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  kind         PromptKind
-  name         String
-  content      String
-  randomPool   Boolean         @default(true) // 含【品牌N】槽位的系统模板置 false
-  sort         Int             @default(0)
-  clonedFrom   String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  contentTasks AiTask[]        @relation("ContentTpl")
-  titleTasks   AiTask[]        @relation("TitleTpl")
-  batches      RewriteBatch[]
-  records      RewriteRecord[]
-
-  @@index([tenantId, kind])
-}
-
-model ArticleCategory {
-  id        String          @id @default(cuid())
-  tenantId  String
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
-  createdAt DateTime        @default(now())
-  articles  Article[]
-  aiTasks   AiTask[]
-  batches   RewriteBatch[]
-  records   RewriteRecord[]
-
-  @@unique([tenantId, name])
-}
-
-model AiTask {
-  id              String          @id @default(cuid())
-  tenantId        String
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name            String
-  categoryId      String
-  category        ArticleCategory @relation(fields: [categoryId], references: [id])
-  keywordId       String
-  keyword         Keyword         @relation(fields: [keywordId], references: [id])
-  mediaCategoryId String?
-  mediaCategory   MediaCategory?  @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
-  imageCount      Int             @default(1) // 0..5
-  kbId            String?
-  kb              KnowledgeBase?  @relation(fields: [kbId], references: [id], onDelete: SetNull)
-  contentTplId    String? // null = 随机生成文章
-  contentTpl      PromptTemplate? @relation("ContentTpl", fields: [contentTplId], references: [id], onDelete: SetNull)
-  titleTplId      String? // null = 不重写标题
-  titleTpl        PromptTemplate? @relation("TitleTpl", fields: [titleTplId], references: [id], onDelete: SetNull)
-  resultStatus    ArticleStatus   @default(PENDING)
-  target          Int // 1..100
-  doneCount       Int             @default(0)
-  failCount       Int             @default(0)
-  unitPrice       Int // 提交时快照 10 / 15
-  seed            Int // 随机偏移（洗牌袋、方向组合）
-  status          TaskStatus      @default(QUEUED)
-  lastError       String?
-  lastWrittenAt   DateTime?
-  createdAt       DateTime        @default(now())
-  items           AiTaskItem[]
-  articles        Article[]
-
-  @@index([tenantId, createdAt])
-}
-
-model AiTaskItem {
-  id         String     @id @default(cuid())
-  taskId     String
-  task       AiTask     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  seq        Int
-  questionId String?
-  question   Question?  @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  templateId String?
-  direction  String?
-  copyType   String?
-  brand      String?
-  title      String?
-  status     ItemStatus @default(PENDING)
-  attempts   Int        @default(0)
-  model      String?
-  tokensIn   Int?
-  tokensOut  Int?
-  error      String?
-  articleId  String?    @unique
-  startedAt  DateTime?
-  finishedAt DateTime?
-
-  @@unique([taskId, seq])
-}
-
-model Article {
-  id               String           @id @default(cuid())
-  tenantId         String
-  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  categoryId       String?
-  category         ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  title            String
-  contentHtml      String
-  contentText      String
-  coverUrl         String?
-  status           ArticleStatus    @default(NORMAL)
-  source           ArticleSource
-  aiTaskId         String?
-  aiTask           AiTask?          @relation(fields: [aiTaskId], references: [id], onDelete: SetNull)
-  rewriteRecord    RewriteRecord?
-  sourceUrl        String?
-  complianceFlags  Json?
-  sendCount        Int              @default(0) // 发送次数（二期）
-  videoCount       Int              @default(0) // 转视频次数（预留）
-  firstPublishedAt DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-
-  @@index([tenantId, categoryId, status, sendCount])
-  @@index([tenantId, aiTaskId])
-}
-
-// ===================== 模块三：流量复刻 =====================
-model RewriteBatch {
-  id              String          @id @default(cuid())
-  tenantId        String
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name            String
-  keyword         String
-  brand           String?
-  resultStatus    ArticleStatus   @default(PENDING)
-  maxCount        Int // 1..50
-  doneCount       Int             @default(0)
-  sourceType      String          @default("link_list") // link_list | bocha | bing ...
-  linkList        String[]
-  categoryId      String
-  category        ArticleCategory @relation(fields: [categoryId], references: [id])
-  mediaCategoryId String?
-  mediaCategory   MediaCategory?  @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
-  templateId      String
-  template        PromptTemplate  @relation(fields: [templateId], references: [id])
-  status          TaskStatus      @default(QUEUED)
-  note            String? // 如「候选不足」
-  createdAt       DateTime        @default(now())
-  records         RewriteRecord[]
-
-  @@index([tenantId, createdAt])
-}
-
-model RewriteRecord {
-  id              String           @id @default(cuid())
-  tenantId        String
-  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  batchId         String?
-  batch           RewriteBatch?    @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  url             String
-  urlHash         String
-  pastedText      Boolean          @default(false) // 粘贴原文兜底
-  sourceTitle     String?
-  newTitle        String?
-  categoryId      String?
-  category        ArticleCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  mediaCategoryId String?
-  mediaCategory   MediaCategory?   @relation(fields: [mediaCategoryId], references: [id], onDelete: SetNull)
-  templateId      String
-  template        PromptTemplate   @relation(fields: [templateId], references: [id])
-  status          ItemStatus       @default(PENDING)
-  error           String?
-  similarity      Float?
-  articleId       String?          @unique
-  article         Article?         @relation(fields: [articleId], references: [id], onDelete: SetNull)
-  rewrittenAt     DateTime?
-  createdAt       DateTime         @default(now())
-
-  @@index([tenantId, urlHash])
-  @@index([tenantId, batchId, createdAt])
-}
-
-// ===================== 模块四：AI生图 =====================
-model AiImageJob {
-  id             String       @id @default(cuid())
-  tenantId       String
-  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  prompt         String
-  style          String?
-  ratio          String       @default("1:1")
-  count          Int          @default(1) // 1..4
-  refAssetId     String?
-  saveCategoryId String?
-  status         TaskStatus   @default(QUEUED)
-  successCount   Int          @default(0)
-  error          String?
-  model          String?
-  createdAt      DateTime     @default(now())
-  assets         MediaAsset[]
-
-  @@index([tenantId, createdAt])
-}
-
 // ===================== 队列框架 =====================
-// 假任务和以后的写作、复刻、生图共用这套运行记录。
-// 正文、原文和切片不放在这里。BullMQ 只存租户和运行编号。
 model WorkRun {
   id                String      @id @default(cuid())
   tenantId          String
@@ -677,65 +383,159 @@ model ActiveWork {
   @@index([tenantId, beatAt])
 }
 
-/// 通用列表示例。不是关键词、文章或知识库，后续业务不要把正式数据写到这里。
-model CrudSample {
-  id        String   @id @default(cuid())
+// ===================== 品牌与双市场资产 =====================
+model Brand {
+  id                     String                  @id @default(cuid())
+  tenantId               String
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                   String
+  category               String
+  truthAgreementSignedAt DateTime?
+  truthAgreementIp       String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  markets                BrandMarket[]
+  facts                  BrandFact[]
+  factChunks             BrandFactChunk[]
+  mediaAssets            BrandMediaAsset[]
+  visibilityRuns         VisibilityRun[]
+  visibilityObservations VisibilityObservation[]
+  geoBriefs              GeoBrief[]
+  geoArticles            GeoArticle[]
+  geoPublishRecords      GeoPublishRecord[]
+  geoBatchJobs           GeoBatchJob[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, createdAt])
+}
+
+model BrandMarket {
+  id             String    @id @default(cuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId        String
+  brand          Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  market         GeoMarket
+  locale         String    @default("zh-CN")
+  region         String    @default("CN")
+  localBrandName String
+  aliases        String[]  @default([])
+  ownedDomains   String[]  @default([])
+  competitors    Json      @default("[]")
+  seedPrompts    String[]  @default([])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  visibilityRuns         VisibilityRun[]
+  visibilityObservations VisibilityObservation[]
+  geoBriefs              GeoBrief[]
+  geoArticles            GeoArticle[]
+  geoPublishRecords      GeoPublishRecord[]
+  geoBatchJobs           GeoBatchJob[]
+
+  @@unique([brandId, market])
+  @@index([tenantId, brandId])
+  @@index([tenantId, market])
+}
+
+model BrandFact {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId     String
+  brand       Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  slot        BrandFactSlot
+  title       String
+  content     String
+  sourceType  FactSourceType  @default(MANUAL)
+  sourceUrl   String?
+  indexStatus FactIndexStatus @default(NONE)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  chunks BrandFactChunk[]
+
+  @@index([tenantId, brandId, slot])
+  @@index([brandId, indexStatus])
+}
+
+model BrandFactChunk {
+  id        String                       @id @default(cuid())
   tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
-  note      String   @default("")
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  tenant    Tenant                       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand                        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  factId    String
+  fact      BrandFact                    @relation(fields: [factId], references: [id], onDelete: Cascade)
+  seq       Int
+  content   String
+  embedding Unsupported("vector(1024)")?
+  // 迁移里用 HNSW（vector_cosine_ops）。这里声明同名索引，避免 migrate dev 把它当成多余对象删掉。
 
-  @@unique([tenantId, name])
-  @@index([tenantId, createdAt])
+  @@unique([factId, seq])
+  @@index([tenantId, brandId])
+  @@index([embedding], map: "idx_brand_fact_chunk_embedding")
 }
 
-// ===================== 模块五：AI可见性监测 =====================
-model VisibilityProfile {
-  id           String                  @id @default(cuid())
-  tenantId     String
-  tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name         String
-  brandName    String
-  brandAliases String[]                @default([])
-  ownedDomains String[]                @default([])
-  competitors  Json
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
-  runs         VisibilityRun[]
-  observations VisibilityObservation[]
+model BrandMediaAsset {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand            @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  origin    BrandMediaOrigin @default(PRODUCT_UPLOAD)
+  title     String
+  objectKey String           @unique
+  thumbKey  String?
+  url       String
+  thumbUrl  String?
+  mime      String
+  bytes     Int
+  width     Int
+  height    Int
+  aiPrompt  String?
+  aiModel   String?
+  usedCount Int              @default(0)
+  createdAt DateTime         @default(now())
 
-  @@unique([tenantId, name])
-  @@index([tenantId, createdAt])
+  @@index([tenantId, brandId, createdAt])
+  @@index([tenantId, brandId, origin])
 }
 
+// ===================== AI 可见度诊断 =====================
 model VisibilityRun {
-  id            String                  @id @default(cuid())
-  tenantId      String
-  tenant        Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  profileId     String
-  profile       VisibilityProfile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  keywordId     String?
-  keyword       Keyword?                @relation(fields: [keywordId], references: [id], onDelete: SetNull)
-  name          String
-  engines       String[]                @default([])
-  questionIds   String[]                @default([])
-  totalChecks   Int
-  doneCount     Int                     @default(0)
-  failCount     Int                     @default(0)
-  unitPrice     Int
-  reservationId String?
-  status        TaskStatus              @default(QUEUED)
-  lastError     String?
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
-  finishedAt    DateTime?
-  observations  VisibilityObservation[]
+  id                String                @id @default(cuid())
+  tenantId          String
+  tenant            Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId           String
+  brand             Brand                 @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId     String
+  brandMarket       BrandMarket           @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  name              String
+  engines           String[]              @default([])
+  prompts           String[]              @default([])
+  triggerType       VisibilityTriggerType @default(MANUAL)
+  retestArticleId   String?
+  briefsGeneratedAt DateTime?
+  totalChecks       Int
+  doneCount         Int                   @default(0)
+  failCount         Int                   @default(0)
+  unitPrice         Int
+  reservationId     String?
+  status            TaskStatus            @default(QUEUED)
+  lastError         String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  finishedAt        DateTime?
+
+  observations VisibilityObservation[]
+  geoBriefs    GeoBrief[]
 
   @@index([tenantId, status, createdAt])
-  @@index([tenantId, profileId, createdAt])
+  @@index([tenantId, brandMarketId, createdAt])
+  @@index([tenantId, brandId, createdAt])
+  @@index([retestArticleId])
 }
 
 model VisibilityObservation {
@@ -744,10 +544,10 @@ model VisibilityObservation {
   tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   runId          String
   run            VisibilityRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
-  profileId      String
-  profile        VisibilityProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  questionId     String?
-  question       Question?            @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  brandId        String
+  brand          Brand                @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId  String
+  brandMarket    BrandMarket          @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
   promptText     String
   engine         String
   status         ItemStatus           @default(PENDING)
@@ -765,12 +565,13 @@ model VisibilityObservation {
   error          String?
   checkedAt      DateTime?
   createdAt      DateTime             @default(now())
-  citations      VisibilityCitation[]
+
+  citations VisibilityCitation[]
 
   @@unique([runId, promptText, engine])
-  @@index([tenantId, profileId, checkedAt])
+  @@index([tenantId, brandMarketId, checkedAt])
+  @@index([tenantId, brandId, checkedAt])
   @@index([tenantId, engine, brandMentioned])
-  @@index([tenantId, questionId, brandMentioned])
 }
 
 model VisibilityCitation {
@@ -783,7 +584,7 @@ model VisibilityCitation {
   domain        String
   title         String?
   snippet       String?
-  sourceKind    String
+  sourceKind    CitationSourceKind    @default(OTHER)
   position      Int
   createdAt     DateTime              @default(now())
 
@@ -791,3 +592,141 @@ model VisibilityCitation {
   @@index([observationId, position])
 }
 
+// ===================== GEO 意见、写作台与复测闭环 =====================
+model GeoBrief {
+  id                   String          @id @default(cuid())
+  tenantId             String
+  tenant               Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId              String
+  brand                Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId        String
+  brandMarket          BrandMarket     @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  sourceType           GeoBriefSource
+  sourceRunId          String?
+  sourceRun            VisibilityRun?  @relation(fields: [sourceRunId], references: [id], onDelete: SetNull)
+  sourceObservationIds String[]        @default([])
+  sourceCitationUrl    String?
+  targetPrompt         String
+  priorityScore        Int             @default(50)
+  diagnosisSummary     String
+  recommendedRecipe    GeoRecipe
+  targetFormat         GeoTargetFormat
+  suggestedTitle       String
+  outlineH2            Json            @default("[]")
+  targetFanOuts        String[]        @default([])
+  competitorFocus      String[]        @default([])
+  matchedFactIds       String[]        @default([])
+  missingFactHints     String[]        @default([])
+  recommendedChannels  Json            @default("[]")
+  status               GeoBriefStatus  @default(OPEN)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  articles GeoArticle[]
+
+  @@index([tenantId, brandMarketId, status, priorityScore])
+  @@index([tenantId, brandId, createdAt])
+  @@index([sourceRunId])
+}
+
+model GeoArticle {
+  id              String           @id @default(cuid())
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId         String
+  brand           Brand            @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId   String
+  brandMarket     BrandMarket      @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  briefId         String?
+  brief           GeoBrief?        @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  batchJobId      String?
+  batchJob        GeoBatchJob?     @relation(fields: [batchJobId], references: [id], onDelete: SetNull)
+  recipe          GeoRecipe
+  targetFormat    GeoTargetFormat
+  title           String
+  targetPrompt    String
+  outlineJson     Json             @default("[]")
+  contentMarkdown String
+  contentHtml     String
+  schemaJsonLd    Json             @default("{}")
+  llmsTxtSnippet  String?
+  geoScore        Int              @default(0)
+  geoScoreDetail  Json             @default("{}")
+  tags            String[]         @default([])
+  status          GeoArticleStatus @default(DRAFT)
+  model           String?
+  tokensIn        Int?
+  tokensOut       Int?
+  complianceFlags Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  publishRecords GeoPublishRecord[]
+
+  @@index([tenantId, brandMarketId, status, createdAt])
+  @@index([tenantId, brandId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([briefId])
+  @@index([batchJobId])
+}
+
+model GeoPublishRecord {
+  id                String      @id @default(cuid())
+  tenantId          String
+  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId           String
+  brand             Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId     String
+  brandMarket       BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  articleId         String
+  article           GeoArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  publishedUrl      String
+  channel           String
+  publishedAt       DateTime    @default(now())
+  baselineRunId     String?
+  latestRetestRunId String?
+  beforeMetrics     Json?
+  afterMetrics      Json?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([tenantId, brandMarketId, publishedAt])
+  @@index([tenantId, articleId, createdAt])
+  @@index([latestRetestRunId])
+}
+
+model GeoBatchJob {
+  id            String      @id @default(cuid())
+  tenantId      String
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId       String
+  brand         Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId String
+  brandMarket   BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  briefIds      String[]    @default([])
+  total         Int
+  doneCount     Int         @default(0)
+  failCount     Int         @default(0)
+  unitPrice     Int
+  reservationId String?
+  status        TaskStatus  @default(QUEUED)
+  lastError     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  finishedAt    DateTime?
+
+  articles GeoArticle[]
+
+  @@index([tenantId, brandMarketId, createdAt])
+  @@index([tenantId, status, createdAt])
+}
+
+model PromptPreference {
+  tenantId             String   @id
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customToneNote       String?
+  customForbiddenWords String[] @default([])
+  recipeOverrides      Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}

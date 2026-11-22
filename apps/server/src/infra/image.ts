@@ -273,6 +273,13 @@ async function fakeImages(
   ratio: AiImageRatio,
   count: number,
 ): Promise<Array<{ body: Buffer; fake: true; model: string }>> {
+  if (prompt.includes('[E2E_IMAGE_FAIL]')) {
+    throw new ProviderError(
+      PROVIDER_KIND.UPSTREAM,
+      'AI 配图上游服务暂时不可用，已自动退还本次点数',
+      'e2e_image_fail',
+    );
+  }
   const { width, height } = resolveAiImageRatioDimensions(ratio);
   const images = [];
   for (let index = 0; index < count; index += 1) {

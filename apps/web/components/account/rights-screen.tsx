@@ -3,6 +3,7 @@
 import { Alert, Button, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccountApiError, httpRights, type RightsView } from '../../lib/account-client';
+import { SignalSkeleton } from '../geo/primitives';
 
 export function RightsScreen({
   title,
@@ -17,7 +18,7 @@ export function RightsScreen({
   const read = load ?? fallback;
   const [view, setView] = useState<RightsView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const wasActiveRef = useRef(active);
   const seqRef = useRef(0);
 
@@ -74,23 +75,41 @@ export function RightsScreen({
         展示当前账号的配额使用进度、存储用量、可用点数余额及各 AI 平台收录统计。
       </Typography.Paragraph>
       {error ? <Alert type="error" showIcon message={error} /> : null}
-      <div className="gm-rights">
-        {(view?.cards ?? []).map((card) => (
-          <article key={card.key} className="gm-right-card" aria-label={card.label}>
-            <div className="label">{card.label}</div>
-            <div className="value">{card.text}</div>
-          </article>
-        ))}
-      </div>
-      <h3 className="gm-models-title">模型收录</h3>
-      <div className="gm-rights">
-        {(view?.models ?? []).map((model) => (
-          <article key={model.key} className="gm-right-card" aria-label={model.label}>
-            <div className="label">{model.label}</div>
-            <div className="value">{model.count}</div>
-          </article>
-        ))}
-      </div>
+      {loading && !view ? (
+        <>
+          <div className="gm-rights" data-testid="rights-loading" aria-busy="true">
+            {Array.from({ length: 9 }, (_, idx) => (
+              <SignalSkeleton key={`right-sk-${idx}`} variant="kpi" />
+            ))}
+          </div>
+          <h3 className="gm-models-title">模型收录</h3>
+          <div className="gm-rights" aria-busy="true">
+            {Array.from({ length: 8 }, (_, idx) => (
+              <SignalSkeleton key={`model-sk-${idx}`} variant="kpi" />
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="gm-rights">
+            {(view?.cards ?? []).map((card) => (
+              <article key={card.key} className="gm-right-card" aria-label={card.label}>
+                <div className="label">{card.label}</div>
+                <div className="value">{card.text}</div>
+              </article>
+            ))}
+          </div>
+          <h3 className="gm-models-title">模型收录</h3>
+          <div className="gm-rights">
+            {(view?.models ?? []).map((model) => (
+              <article key={model.key} className="gm-right-card" aria-label={model.label}>
+                <div className="label">{model.label}</div>
+                <div className="value">{model.count}</div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   );
 }

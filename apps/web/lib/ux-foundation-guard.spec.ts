@@ -99,19 +99,8 @@ describe('UX Foundation static guardrails', () => {
     const legacyDefaultOrderViolations: string[] = [];
     const unstandardizedListScreens: string[] = [];
 
-    const requiredToolbarListScreens = new Set([
-      'components/material/keyword-screen.tsx',
-      'components/material/question-screen.tsx',
-      'components/material/gallery-screen.tsx',
-      'components/material/knowledge-screen.tsx',
-      'components/writing/prompt-screen.tsx',
-      'components/writing/category-screen.tsx',
-      'components/writing/ai-task-screen.tsx',
-      'components/writing/article-manage-screen.tsx',
-      'components/rewrite/rewrite-single-screen.tsx',
-      'components/rewrite/rewrite-batch-screen.tsx',
-      'components/image/ai-image-screen.tsx',
-    ]);
+    // M2–M5 v2 list screens will be registered here as they land.
+    const requiredToolbarListScreens = new Set<string>();
 
     for (const file of files) {
       const rel = relative(WEB_ROOT, file);

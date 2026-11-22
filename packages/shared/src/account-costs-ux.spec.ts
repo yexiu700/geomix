@@ -27,6 +27,12 @@ describe('account-costs-ux (#201, #202)', () => {
     expect(sanitizeLedgerTitle('AI生图-写实商业摄影浅色木桌（免费期）')).toBe(
       'AI生图-写实商业摄影浅色木桌（免费期）',
     );
+    expect(sanitizeLedgerTitle('GEO写作-2026 NAS选购指南（免费期）')).toBe(
+      'GEO写作-2026 NAS选购指南（免费期）',
+    );
+    expect(sanitizeLedgerTitle('行内AI配图-<think>思考过程</think>（免费期）')).toBe(
+      '行内AI配图（免费期）',
+    );
     expect(sanitizeLedgerTitle('管理员充值')).toBe('管理员充值');
     expect(containsLedgerReasoningLeak('用户需要把简短描述扩写成配图提示词')).toBe(true);
     expect(containsLedgerReasoningLeak('木质桌面极简工业产品实拍')).toBe(false);

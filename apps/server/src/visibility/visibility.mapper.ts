@@ -1,20 +1,23 @@
 import { createHash } from 'node:crypto';
 import {
-  CITATION_SOURCE_KINDS,
+  CITATION_SOURCE_PRIORITY,
   VISIBILITY_MAX_COMPETITORS,
   assessAnswerTopicRelevance,
+  classifyCitationSource,
   computeAvgPosition,
   computeSentimentSummary,
   computeVisibilityPct,
   isCitationSourceKind,
   isVisibilityEngine,
   isVisibilitySentiment,
+  normalizeFanOutQueries,
   normalizeVisibilityDomain,
   recomputeRunMetrics,
   toShanghaiDateKey,
   type CitationSourceKind,
   type CompetitorHit,
   type DomainMetricItem,
+  type GeoMarket,
   type ItemStatusName,
   type ProfileForMetrics,
   type RawObservationForMetrics,
@@ -27,7 +30,6 @@ import {
   type VisibilityEngineBreakdownItem,
   type VisibilityEngineKey,
   type VisibilityObservationRecord,
-  type VisibilityProfileRecord,
   type VisibilityRunRecord,
   type VisibilitySentiment,
   type VisibilityTrendPoint,
@@ -239,43 +241,18 @@ export function isEffectiveBrandMention(
   return evaluateObservationRelevance(obs, ctx).relevant;
 }
 
-export type ProfileRowForMapper = {
-  id: string;
-  name: string;
-  brandName: string;
-  brandAliases: string[];
-  ownedDomains: string[];
-  competitors: unknown;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export function presentProfile(
-  row: ProfileRowForMapper,
-  runCount?: number,
-): VisibilityProfileRecord {
-  return {
-    id: row.id,
-    name: row.name,
-    brandName: row.brandName,
-    brandAliases: row.brandAliases,
-    ownedDomains: row.ownedDomains,
-    competitors: parseProfileCompetitors(row.competitors),
-    ...(runCount !== undefined ? { runCount } : {}),
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
 export type ReservationPointsSnapshot = { frozen: number; settled: number; released: number };
 
 export type RunRowForMapper = {
   id: string;
-  profileId: string;
-  keywordId: string | null;
+  brandId: string;
+  brandMarketId: string;
   name: string;
   engines: string[];
-  questionIds: string[];
+  prompts: string[];
+  triggerType?: 'MANUAL' | 'RETEST';
+  retestArticleId?: string | null;
+  briefsGeneratedAt?: Date | null;
   totalChecks: number;
   doneCount: number;
   failCount: number;
@@ -286,14 +263,14 @@ export type RunRowForMapper = {
   createdAt: Date;
   updatedAt: Date;
   finishedAt: Date | null;
-  profile: {
+  brandMarket: {
     id: string;
-    name: string;
-    brandName: string;
-    brandAliases: string[];
+    market: 'CN' | 'GLOBAL';
+    localBrandName: string;
+    aliases: string[];
     competitors: unknown;
+    brand: { name: string };
   };
-  keyword: { id: string; main: string } | null;
   observations: ReadonlyArray<{
     status: string;
     brandMentioned: boolean;
@@ -306,10 +283,10 @@ export function presentRunRecord(
   row: RunRowForMapper,
   reservation?: ReservationPointsSnapshot,
 ): VisibilityRunRecord {
-  const competitorNames = parseProfileCompetitors(row.profile.competitors).map((c) => c.name);
+  const competitorNames = parseProfileCompetitors(row.brandMarket.competitors).map((c) => c.name);
   const relevanceCtx: RelevanceBrandContext = {
-    brandName: row.profile.brandName,
-    brandAliases: row.profile.brandAliases ?? [],
+    brandName: row.brandMarket.localBrandName,
+    brandAliases: row.brandMarket.aliases ?? [],
     competitorNames,
   };
   const completedObs = row.observations.filter((obs) => obs.status === 'SUCCESS');
@@ -318,14 +295,21 @@ export function presentRunRecord(
 
   return {
     id: row.id,
-    profileId: row.profileId,
-    profileName: row.profile.name,
-    brandName: row.profile.brandName,
-    keywordId: row.keywordId,
-    keywordMain: row.keyword?.main ?? null,
+    profileId: row.brandMarketId,
+    profileName: `${row.brandMarket.brand.name} (${row.brandMarket.market})`,
+    brandId: row.brandId,
+    brandMarketId: row.brandMarketId,
+    market: row.brandMarket.market,
+    brandName: row.brandMarket.localBrandName,
+    keywordId: null,
+    keywordMain: null,
     name: row.name,
     engines: row.engines.filter((e): e is VisibilityEngineKey => isVisibilityEngine(e)),
-    questionIds: row.questionIds,
+    prompts: row.prompts,
+    questionIds: [],
+    triggerType: row.triggerType,
+    retestArticleId: row.retestArticleId ?? null,
+    briefsGeneratedAt: row.briefsGeneratedAt ? row.briefsGeneratedAt.toISOString() : null,
     totalChecks: row.totalChecks,
     doneCount: row.doneCount,
     failCount: row.failCount,
@@ -358,8 +342,8 @@ export type CitationRowForMapper = {
 export type ObservationRowForMapper = {
   id: string;
   runId: string;
-  profileId: string;
-  questionId: string | null;
+  brandId: string;
+  brandMarketId: string;
   promptText: string;
   engine: string;
   status: ItemStatusName;
@@ -380,14 +364,28 @@ export type ObservationRowForMapper = {
   citations: readonly CitationRowForMapper[];
 };
 
-export function presentCitationRecord(cite: CitationRowForMapper): VisibilityCitationRecord {
+export type CitationClassificationContext = {
+  ownedDomains?: readonly string[];
+  competitorDomains?: readonly string[];
+};
+
+export function presentCitationRecord(
+  cite: CitationRowForMapper,
+  citationContext?: CitationClassificationContext,
+): VisibilityCitationRecord {
+  const sourceKind: CitationSourceKind = citationContext
+    ? classifyCitationSource(cite.url || cite.domain, citationContext)
+    : isCitationSourceKind(cite.sourceKind)
+      ? cite.sourceKind
+      : 'OTHER';
+
   return {
     id: cite.id,
     url: cite.url,
     domain: cite.domain,
     title: cite.title,
     snippet: cite.snippet,
-    sourceKind: isCitationSourceKind(cite.sourceKind) ? cite.sourceKind : 'OTHER',
+    sourceKind,
     position: cite.position,
     createdAt: cite.createdAt.toISOString(),
   };
@@ -396,6 +394,10 @@ export function presentCitationRecord(cite: CitationRowForMapper): VisibilityCit
 export function presentObservationRecord(
   obs: ObservationRowForMapper,
   ctx: RelevanceBrandContext,
+  options?: {
+    market?: GeoMarket;
+    citationContext?: CitationClassificationContext;
+  },
 ): VisibilityObservationRecord {
   const relevance = evaluateObservationRelevance(obs, ctx);
   const allowBrand = relevance.relevant;
@@ -403,8 +405,11 @@ export function presentObservationRecord(
   return {
     id: obs.id,
     runId: obs.runId,
-    profileId: obs.profileId,
-    questionId: obs.questionId,
+    profileId: obs.brandMarketId,
+    brandId: obs.brandId,
+    brandMarketId: obs.brandMarketId,
+    ...(options?.market ? { market: options.market } : {}),
+    questionId: null,
     promptText: obs.promptText,
     engine: isVisibilityEngine(obs.engine) ? obs.engine : obs.engine,
     status: obs.status,
@@ -420,14 +425,14 @@ export function presentObservationRecord(
     topicRelevant: relevance.relevant,
     relevanceReason: relevance.reason,
     competitorHits: parseStoredCompetitorHits(obs.competitorHits),
-    fanOutQueries: obs.fanOutQueries,
+    fanOutQueries: normalizeFanOutQueries(obs.fanOutQueries ?? [], obs.promptText),
     judgeModel: obs.judgeModel,
     tokensIn: obs.tokensIn,
     tokensOut: obs.tokensOut,
     error: obs.error,
     checkedAt: obs.checkedAt ? obs.checkedAt.toISOString() : null,
     createdAt: obs.createdAt.toISOString(),
-    citations: obs.citations.map(presentCitationRecord),
+    citations: obs.citations.map((cite) => presentCitationRecord(cite, options?.citationContext)),
   };
 }
 
@@ -451,7 +456,7 @@ export type OverviewProfileContext = {
 
 export type OverviewObservationRow = {
   id: string;
-  profileId: string;
+  brandMarketId: string;
   engine: string;
   status: string;
   promptText?: string | null;
@@ -483,7 +488,7 @@ export function higherPrioritySourceKind(
   left: CitationSourceKind,
   right: CitationSourceKind,
 ): CitationSourceKind {
-  const order: readonly CitationSourceKind[] = CITATION_SOURCE_KINDS;
+  const order: readonly CitationSourceKind[] = CITATION_SOURCE_PRIORITY;
   const leftIdx = order.indexOf(left);
   const rightIdx = order.indexOf(right);
   if (leftIdx < 0) return right;
@@ -536,10 +541,10 @@ export function computeOverviewMetricsAndGroups(
   const obsByProfileId = new Map<string, OverviewObservationRow[]>();
   const orphanObs: OverviewObservationRow[] = [];
   for (const obs of observations) {
-    if (ctx.profilesById.has(obs.profileId)) {
-      const list = obsByProfileId.get(obs.profileId);
+    if (ctx.profilesById.has(obs.brandMarketId)) {
+      const list = obsByProfileId.get(obs.brandMarketId);
       if (list) list.push(obs);
-      else obsByProfileId.set(obs.profileId, [obs]);
+      else obsByProfileId.set(obs.brandMarketId, [obs]);
     } else {
       orphanObs.push(obs);
     }
@@ -654,7 +659,7 @@ export function computeOverviewMetricsAndGroups(
   const positions: Array<number | null> = [];
   const sentiments: Array<VisibilitySentiment | null> = [];
   for (const obs of observations) {
-    const profCtx = ctx.profilesById.get(obs.profileId) ?? ctx.fallbackProfileForMetrics;
+    const profCtx = ctx.profilesById.get(obs.brandMarketId) ?? ctx.fallbackProfileForMetrics;
     const relevant = isEffectiveBrandMention(obs, {
       brandName: profCtx.brandName,
       brandAliases: profCtx.brandAliases,
@@ -809,7 +814,7 @@ export function buildEngineBreakdown(
     }
     cell.completed += 1;
     const profCtx =
-      overviewCtx.profilesById.get(obs.profileId) ?? overviewCtx.fallbackProfileForMetrics;
+      overviewCtx.profilesById.get(obs.brandMarketId) ?? overviewCtx.fallbackProfileForMetrics;
     const relevant = isEffectiveBrandMention(obs, {
       brandName: profCtx.brandName,
       brandAliases: profCtx.brandAliases,

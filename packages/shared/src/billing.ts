@@ -4,11 +4,10 @@ import { PRICING_DEFAULTS, QUOTA_MEASURE, type QuotaKeyName } from './catalog';
 export { PRICING_DEFAULTS, type QuotaKeyName };
 
 /**
- * 计费规则（issue #4）。
+ * GeoMix 2.0 统一计费规则（Issue #326 / D3）。
  * 租户 billingMode 为空时继承全局配置，全局默认 SHADOW。
- * 知识库写作的预扣总额是篇数 ×（写作单价 + 知识库加价），账本按项目分两条。
- * 无产出或失败释放剩余冻结，不把「创建即扣、没结果不退」写进实现。
- * 发布配额和自媒体授权的回退口径未确认，这里不猜测。
+ * 品牌事实卡默认免费标配，GEO 写作统一定价（默认 10 点/篇），取消 kb_addon 拆账。
+ * 无产出或失败释放剩余冻结，绝不静默扣费。
  */
 
 export const MAX_POINT_AMOUNT = 1_000_000_000;
@@ -19,24 +18,14 @@ export const BILLING_ERROR = {
 } as const;
 
 export const RESERVATION_REF_TYPES = [
-  'ai_task',
-  'rewrite_batch',
-  'image_job',
-  'distill',
-  'rewrite_single',
+  'geo_article',
+  'geo_batch',
+  'inline_image_gen',
   'visibility_run',
 ] as const;
 export type ReservationRefType = (typeof RESERVATION_REF_TYPES)[number];
 
-export const CHARGE_ACTIONS = [
-  'distill',
-  'ai_write',
-  'kb_addon',
-  'rewrite_single',
-  'rewrite_batch',
-  'image_gen',
-  'visibility_check',
-] as const;
+export const CHARGE_ACTIONS = ['geo_write', 'visibility_check', 'inline_image_gen'] as const;
 export type ChargeAction = (typeof CHARGE_ACTIONS)[number];
 
 const REF_TYPE_SET = new Set<string>(RESERVATION_REF_TYPES);
@@ -71,11 +60,21 @@ export function isPositivePoints(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0 && value <= MAX_POINT_AMOUNT;
 }
 
+const MAX_LEDGER_TITLE_LENGTH = 80;
+const GEO_WRITE_TITLE_PREFIX = 'GEO写作-';
+
+function sliceSafe(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value;
+  let end = maxLen;
+  const lastCode = value.charCodeAt(end - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function cleanSubject(value: string): string {
-  return value
-    .replace(/[\u0000-\u001f]/g, '')
-    .trim()
-    .slice(0, 80);
+  return sliceSafe(value.replace(/[\u0000-\u001f]/g, '').trim(), MAX_LEDGER_TITLE_LENGTH).trim();
 }
 
 export function ledgerTitle(base: string, shadow: boolean): string {
@@ -85,20 +84,17 @@ export function ledgerTitle(base: string, shadow: boolean): string {
   return `${trimmed}${SHADOW_TITLE_SUFFIX}`;
 }
 
-export type AiWriteLine = {
-  action: 'ai_write' | 'kb_addon';
+export type GeoWriteLine = {
+  action: 'geo_write';
   listPrice: number;
   title: string;
 };
 
-export type AiWriteQuote = {
+export type GeoWriteQuote = {
   count: number;
-  withKnowledgeBase: boolean;
-  unitAiWrite: number;
-  unitKbAddon: number;
-  unitTotal: number;
+  unitPrice: number;
   total: number;
-  lines: AiWriteLine[];
+  lines: GeoWriteLine[];
 };
 
 export class BillingRuleError extends Error {
@@ -109,50 +105,36 @@ export class BillingRuleError extends Error {
 }
 
 /**
- * 一条写作的账是两条：正文价和知识库加价。
- * 不挂知识库时只有正文一条。总额给预扣和界面共用。
+ * GeoMix 2.0 统一单篇写作报价：单条 geo_write 明细（免费标配品牌事实卡 + 体检 + Schema）。
  */
-export function quoteAiWrite(input: {
+export function quoteGeoWrite(input: {
   count: number;
-  withKnowledgeBase: boolean;
-  aiWritePoints: number;
-  kbAddonPoints: number;
-  taskName?: string;
-}): AiWriteQuote {
+  geoWritePoints: number;
+  subject?: string;
+}): GeoWriteQuote {
   if (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 10_000) {
     throw new BillingRuleError('count');
   }
-  if (!isPositivePoints(input.aiWritePoints)) throw new BillingRuleError('price');
-  if (input.withKnowledgeBase && !isPositivePoints(input.kbAddonPoints)) {
-    throw new BillingRuleError('price');
+  if (!isPositivePoints(input.geoWritePoints)) throw new BillingRuleError('price');
+  const total = input.count * input.geoWritePoints;
+  if (!Number.isSafeInteger(total) || total > MAX_POINT_AMOUNT) {
+    throw new BillingRuleError('total');
   }
-  const unitKbAddon = input.withKnowledgeBase ? input.kbAddonPoints : 0;
-  const unitTotal = input.aiWritePoints + unitKbAddon;
-  const total = input.count * unitTotal;
-  if (!Number.isSafeInteger(total) || total > MAX_POINT_AMOUNT) throw new BillingRuleError('total');
-  const subject = cleanSubject(input.taskName ?? '');
-  const lines: AiWriteLine[] = [
-    {
-      action: 'ai_write',
-      listPrice: input.aiWritePoints,
-      title: subject.length > 0 ? `AI写作-${subject}` : 'AI写作',
-    },
-  ];
-  if (input.withKnowledgeBase) {
-    lines.push({
-      action: 'kb_addon',
-      listPrice: input.kbAddonPoints,
-      title: subject.length > 0 ? `知识库加价-${subject}` : '知识库加价',
-    });
-  }
+  const subject = sliceSafe(
+    cleanSubject(input.subject ?? ''),
+    MAX_LEDGER_TITLE_LENGTH - GEO_WRITE_TITLE_PREFIX.length,
+  ).trim();
   return {
     count: input.count,
-    withKnowledgeBase: input.withKnowledgeBase,
-    unitAiWrite: input.aiWritePoints,
-    unitKbAddon,
-    unitTotal,
+    unitPrice: input.geoWritePoints,
     total,
-    lines,
+    lines: [
+      {
+        action: 'geo_write',
+        listPrice: input.geoWritePoints,
+        title: subject.length > 0 ? `${GEO_WRITE_TITLE_PREFIX}${subject}` : 'GEO写作',
+      },
+    ],
   };
 }
 
@@ -163,12 +145,12 @@ export function quotaReleasePolicy(key: QuotaKeyName): QuotaReleasePolicy {
   return QUOTA_MEASURE[key as keyof typeof QUOTA_MEASURE] === 'stock' ? 'stock' : 'cumulative';
 }
 
-export type ArticleQuotaSource = 'AI_TASK' | 'MANUAL' | 'REWRITE_SINGLE' | 'REWRITE_BATCH';
+export type ArticleQuotaSource = 'GEO_STREAM' | 'GEO_BATCH' | 'MANUAL';
 export type ArticleQuotaEvent = 'create' | 'status_change' | 'delete';
 
-/** 只有写作任务计入 AI 写作数量。复刻、手动文章、状态变更和删除都不计，也不动发布配额。 */
+/** 流式写作与轻量批量写作计入 GEO 写作累计配额；手动草稿、状态变更与删除不计。 */
 export function countsTowardAiWrite(source: ArticleQuotaSource): boolean {
-  return source === 'AI_TASK';
+  return source === 'GEO_STREAM' || source === 'GEO_BATCH';
 }
 
 export function articleQuotaEffect(

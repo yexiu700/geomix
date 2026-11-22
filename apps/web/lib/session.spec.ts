@@ -5,6 +5,7 @@ import {
   ACCESS_TOKEN_KEY,
   REFRESH_TOKEN_KEY,
   apiBase,
+  apiV2Base,
   clearSession,
   readAccessToken,
   readRefreshToken,
@@ -28,6 +29,8 @@ function memoryStorage(): SessionStorageLike {
 afterEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
+  delete process.env.NEXT_PUBLIC_API_BASE;
+  delete process.env.NEXT_PUBLIC_API_V2_BASE;
 });
 
 function makeJwt(claims: { iat?: number; exp?: number; sub?: string }): string {
@@ -86,5 +89,37 @@ describe('session storage', () => {
     const newerAt = makeJwt({ sub: 'u1', iat: 3000, exp: 3900 });
     window.sessionStorage.setItem(ACCESS_TOKEN_KEY, newerAt);
     expect(readAccessToken(window.sessionStorage)).toBe(newerAt);
+  });
+
+  it('derives apiV2Base() cleanly from NEXT_PUBLIC_API_V2_BASE or NEXT_PUBLIC_API_BASE', () => {
+    expect(apiV2Base()).toBe('http://localhost:3001/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'https://api.example.com/api/v1/';
+    expect(apiV2Base()).toBe('https://api.example.com/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = '/api/v1';
+    expect(apiV2Base()).toBe('/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'http://127.0.0.1:3001/v1';
+    expect(apiV2Base()).toBe('http://127.0.0.1:3001/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'http://127.0.0.1:3001/api';
+    expect(apiV2Base()).toBe('http://127.0.0.1:3001/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'http://127.0.0.1:3001';
+    expect(apiV2Base()).toBe('http://127.0.0.1:3001/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'http://127.0.0.1:3001/api/v1///';
+    expect(apiBase()).toBe('http://127.0.0.1:3001/api/v1');
+    expect(apiV2Base()).toBe('http://127.0.0.1:3001/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'https://api.example.com/api/v2/';
+    expect(apiV2Base()).toBe('https://api.example.com/api/v2');
+
+    process.env.NEXT_PUBLIC_API_BASE = 'https://api.example.com/API/V2///';
+    expect(apiV2Base()).toBe('https://api.example.com/API/V2');
+
+    process.env.NEXT_PUBLIC_API_V2_BASE = 'https://v2.example.com/api/v2/';
+    expect(apiV2Base()).toBe('https://v2.example.com/api/v2');
   });
 });

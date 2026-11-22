@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { ShellAction } from './tab-stack';
 
 export { CrudToolbar, type CrudToolbarProps } from '../components/crud/crud-toolbar';
 
@@ -106,21 +105,27 @@ export function hasOpenFloatingOverlay(excludedModalWrap?: Element): boolean {
   return false;
 }
 
+export type TabTitleAction = { type: 'retitle'; id: string; title: string };
+
 /**
- * 当详情页或带筛选参数的列表页加载出可读的业务实体名称后，
- * 自动同步更新多标签栏标题、`document.title` 与页内草稿便签标签，彻底消除 CUID 暴露。
+ * 当详情页或带筛选参数的页面加载出可读的业务实体名称后，
+ * 自动同步更新页面标题或回调，彻底消除 CUID 暴露。
  */
 export function useSyncTabTitle(
   tabId: string | undefined,
   currentTitle: string,
   resolvedTitle: string | null | undefined,
-  onDispatch?: (action: ShellAction) => void,
+  onDispatch?: (action: TabTitleAction) => void,
 ): void {
   useEffect(() => {
-    if (!tabId || !onDispatch) return;
-    if (!currentTitle.includes('·')) return;
     const next = resolvedTitle?.trim();
     if (!next || next === currentTitle) return;
-    onDispatch({ type: 'retitle', id: tabId, title: next });
+    if (tabId && onDispatch && currentTitle.includes('·')) {
+      onDispatch({ type: 'retitle', id: tabId, title: next });
+      return;
+    }
+    if (typeof document !== 'undefined' && !onDispatch) {
+      document.title = next;
+    }
   }, [tabId, currentTitle, resolvedTitle, onDispatch]);
 }

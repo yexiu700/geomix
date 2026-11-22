@@ -35,6 +35,7 @@ describe('design-tokens', () => {
 
   it('maps all shared enum keys cleanly', () => {
     expect(Object.keys(GM.sourceKind).sort()).toEqual([...CITATION_SOURCE_KINDS].sort());
+    expect(GM.sourceKind.ECOMMERCE).toBe('#B692F6');
     expect(Object.keys(GM.taskStatus).sort()).toEqual([...TASK_STATUSES].sort());
     expect(Object.keys(GM.itemStatus).sort()).toEqual([...ITEM_STATUSES].sort());
     expect(Object.keys(GM.sentiment).sort()).toEqual([...VISIBILITY_SENTIMENTS].sort());

@@ -1,58 +1,70 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { BrandRecord } from '@geomix/shared';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCachedAccount, writeCachedAccount } from '../../lib/account-cache';
-import { httpAnnouncements } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
 import { saveSession } from '../../lib/session';
-import { useShellStore } from '../../lib/shell-store';
-import { initialSnapshot } from '../../lib/tab-stack';
+import {
+  WORKSPACE_STORAGE_KEY,
+  WORKSPACE_USER_KEY,
+  useWorkspaceStore,
+} from '../../lib/workspace-store';
 import { ConsoleShell } from './console-shell';
 
 const pushMock = vi.fn();
 const replaceMock = vi.fn();
-let mockPathname = '/dashboard';
-const routerMock = { push: pushMock, replace: replaceMock };
-const searchParamsMock = new URLSearchParams();
+let mockPathname = '/home';
+let mockSearchParams = new URLSearchParams();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => routerMock,
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
   usePathname: () => mockPathname,
-  useSearchParams: () => searchParamsMock,
+  useSearchParams: () => mockSearchParams,
 }));
 
 const loadAccountMock = vi.fn();
+const logoutSessionMock = vi.fn();
 const saveAccountUiPrefsMock = vi.fn();
+const listBrandsMock = vi.fn();
+const httpWalletMock = vi.fn();
+const httpAnnouncementsMock = vi.fn();
 
 vi.mock('../../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/api')>();
   return {
     ...actual,
     loadAccount: (...args: unknown[]) => loadAccountMock(...args),
+    logoutSession: (...args: unknown[]) => logoutSessionMock(...args),
     saveAccountUiPrefs: (...args: unknown[]) => saveAccountUiPrefsMock(...args),
   };
 });
 
-vi.mock('../../lib/account-client', () => ({
-  httpAnnouncements: vi.fn().mockResolvedValue([]),
+vi.mock('../../lib/brands', () => ({
+  listBrands: (...args: unknown[]) => listBrandsMock(...args),
+  createBrand: vi.fn(),
+  enableBrandMarket: vi.fn(),
+  extractBrandFacts: vi.fn(),
+  saveBrandFacts: vi.fn(),
 }));
 
-vi.mock('./module-screen', () => ({
-  ModuleScreen: ({ tab }: { tab: { title: string } }) => <h1>{tab.title}</h1>,
-}));
+vi.mock('../../lib/account-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/account-client')>();
+  return {
+    ...actual,
+    httpWallet: (...args: unknown[]) => httpWalletMock(...args),
+    httpAnnouncements: (...args: unknown[]) => httpAnnouncementsMock(...args),
+  };
+});
 
 const merchantAccount: AccountProfile = {
-  id: 'u-merchant',
+  id: 'u-merchant-1',
   username: 'demo',
-  nickname: '演示商户',
+  nickname: '演示用户',
   role: 'MERCHANT',
-  uiPrefs: {
-    multiTab: false,
-    menuCollapsed: true,
-  },
   tenant: {
-    id: 't-merchant',
+    id: 't-1',
     name: '演示租户',
     expiresAt: '2027-12-31T00:00:00.000Z',
     isActive: true,
@@ -60,214 +72,223 @@ const merchantAccount: AccountProfile = {
   },
 };
 
-describe('ConsoleShell uiPrefs sync and sample route hiding (#66)', () => {
-  beforeEach(() => {
-    mockPathname = '/dashboard';
-    window.history.replaceState(null, '', '/dashboard');
-    clearCachedAccount();
-    window.localStorage.clear();
-    window.sessionStorage.clear();
-    useShellStore.setState({ ...initialSnapshot(), hydrated: false });
-    pushMock.mockReset();
-    replaceMock.mockReset();
-    loadAccountMock.mockReset();
-    saveAccountUiPrefsMock.mockReset().mockResolvedValue(true);
-    vi.mocked(httpAnnouncements).mockClear();
-  });
+const sampleBrand: BrandRecord = {
+  id: 'b-1',
+  name: '绿联',
+  category: '家用 NAS',
+  truthAgreementSignedAt: null,
+  createdAt: '2026-11-20T00:00:00.000Z',
+  updatedAt: '2026-11-20T00:00:00.000Z',
+  markets: [
+    {
+      id: 'm-1',
+      brandId: 'b-1',
+      market: 'CN',
+      locale: 'zh-CN',
+      region: 'CN',
+      localBrandName: '绿联',
+      aliases: [],
+      ownedDomains: [],
+      competitors: [],
+      seedPrompts: [],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    },
+  ],
+};
 
-  afterEach(() => {
-    clearCachedAccount();
-    cleanup();
+beforeEach(() => {
+  mockPathname = '/home';
+  mockSearchParams = new URLSearchParams();
+  window.history.replaceState(null, '', '/home');
+  window.sessionStorage.clear();
+  window.localStorage.clear();
+  clearCachedAccount();
+  useWorkspaceStore.getState().reset(window.localStorage);
+  pushMock.mockReset();
+  replaceMock.mockReset();
+  loadAccountMock.mockReset();
+  logoutSessionMock.mockReset().mockResolvedValue(undefined);
+  saveAccountUiPrefsMock.mockReset().mockResolvedValue(true);
+  listBrandsMock.mockReset().mockResolvedValue({ items: [sampleBrand] });
+  httpWalletMock.mockReset().mockResolvedValue({
+    points: 1000,
+    pointsReserved: 0,
+    available: 1000,
+    money: '0.00',
+    billingMode: 'SHADOW',
+    billingModeSource: 'global',
+    tenantBillingMode: null,
   });
+  httpAnnouncementsMock.mockReset().mockResolvedValue([]);
+});
 
-  it('restores uiPrefs from backend on fresh browser login and persists updates via saveAccountUiPrefs', async () => {
+afterEach(async () => {
+  clearCachedAccount();
+  cleanup();
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+});
+
+describe('ConsoleShell (GeoMix 2.0)', () => {
+  it('renders {children}, hydrates brands & wallet, and syncs menu collapse prefs', async () => {
     loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
 
-    render(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
-    });
-    expect(screen.queryByRole('tablist')).toBeNull();
-    expect(screen.queryByText('列表示例')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
-
-    await waitFor(() => {
-      expect(saveAccountUiPrefsMock).toHaveBeenCalledWith(
-        window.sessionStorage,
-        expect.objectContaining({
-          multiTab: false,
-          menuCollapsed: false,
-        }),
-      );
-    });
-  });
-
-  it('blocks direct /workbench/samples access for ordinary merchant accounts', async () => {
-    mockPathname = '/workbench/samples';
-    loadAccountMock.mockResolvedValue({
-      status: 'ok',
-      account: { ...merchantAccount, uiPrefs: null },
-    });
-
-    render(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(screen.getByText('没有这个页面')).toBeTruthy();
-    });
-  });
-
-  it('resets stale stored tabs to only 首页 when logging in as a different user (#132)', async () => {
-    window.localStorage.setItem('geomix.shell.user', 'other-user');
-    window.localStorage.setItem(
-      'geomix.shell.v2',
-      JSON.stringify({
-        tabs: [
-          { href: '/dashboard' },
-          { href: '/material/keywords' },
-          { href: '/material/questions' },
-        ],
-        activeId: '/dashboard',
-        prefs: { multiTab: true, menuCollapsed: false },
-      }),
+    render(
+      <ConsoleShell>
+        <div data-testid="workspace-child">行动首页子内容</div>
+      </ConsoleShell>,
     );
-    loadAccountMock.mockResolvedValue({
-      status: 'ok',
-      account: { ...merchantAccount, uiPrefs: null },
-    });
 
-    render(<ConsoleShell />);
-
+    expect(await screen.findByTestId('workspace-child')).toBeTruthy();
     await waitFor(() => {
-      expect(screen.getAllByRole('tab')).toHaveLength(1);
+      expect(listBrandsMock).toHaveBeenCalledTimes(1);
+      expect(httpWalletMock).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getAllByRole('tab')[0]?.textContent).toBe('首页');
-    expect(window.localStorage.getItem('geomix.shell.user')).toBe(merchantAccount.id);
-  });
-
-  it('re-applies active tab document.title when Next.js pathname commits after tab dispatch (#195)', async () => {
-    mockPathname = '/dashboard';
-    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
-
-    const rendered = render(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(document.title).toBe('首页 · GeoMix');
-    });
-
-    // Simulate clicking sidebar item -> dispatches open(/me/rights), then router.push commits /me/rights
-    useShellStore.getState().dispatch({ type: 'open', href: '/me/rights' });
-    await waitFor(() => {
-      expect(document.title).toBe('账号权益 · GeoMix');
-    });
-
-    // Simulate Next.js App Router resetting <title> to root metadata when pathname updates
-    document.title = 'GeoMix';
-    mockPathname = '/me/rights';
-    rendered.rerender(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(document.title).toBe('账号权益 · GeoMix');
-    });
-  });
-
-  it('toggles sidebar rapidly without re-fetching announcements or losing state (#133)', async () => {
-    loadAccountMock.mockResolvedValue({
-      status: 'ok',
-      account: {
-        ...merchantAccount,
-        uiPrefs: { multiTab: true, menuCollapsed: false },
-      },
-    });
-
-    render(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
-    });
-    expect(vi.mocked(httpAnnouncements)).toHaveBeenCalledTimes(1);
+    expect(await screen.findByTestId('header-points-pill')).toBeTruthy();
+    expect(document.title).toBe('行动首页 · GeoMix');
 
     fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
-    expect(screen.getByRole('button', { name: '展开菜单' })).toBeTruthy();
-    expect(useShellStore.getState().prefs.menuCollapsed).toBe(true);
-
-    fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
-    expect(screen.getByRole('button', { name: '收起菜单' })).toBeTruthy();
-    expect(useShellStore.getState().prefs.menuCollapsed).toBe(false);
-    expect(vi.mocked(httpAnnouncements)).toHaveBeenCalledTimes(1);
-  });
-
-  it('synchronizes browser URL immediately across tab/menu switches and popstate (#203)', async () => {
-    mockPathname = '/material/gallery/pic_1';
-    window.history.replaceState(null, '', '/material/gallery/pic_1');
-    loadAccountMock.mockResolvedValue({
-      status: 'ok',
-      account: {
-        ...merchantAccount,
-        uiPrefs: {
-          multiTab: true,
-          menuCollapsed: false,
-          submenusAlwaysVisible: true,
-          autoExpand: true,
-          multiLevel: true,
-        },
-      },
-    });
-
-    render(<ConsoleShell />);
-
-    await waitFor(() => {
-      expect(document.title).toBe('企业画像图库 · pic_1 · GeoMix');
-    });
-
-    // Open 企业知识库, then switch back to gallery detail, then click 企业知识库 again (existing tab!)
-    fireEvent.click(screen.getByRole('menuitem', { name: '企业知识库' }));
-    expect(window.location.pathname).toBe('/material/knowledge');
-    expect(document.title).toBe('企业知识库 · GeoMix');
-
-    fireEvent.click(screen.getByRole('tab', { name: '企业画像图库 · pic_1' }));
-    expect(window.location.pathname).toBe('/material/gallery/pic_1');
-
-    fireEvent.click(screen.getByRole('menuitem', { name: '企业知识库' }));
-    expect(window.location.pathname).toBe('/material/knowledge');
-    expect(document.title).toBe('企业知识库 · GeoMix');
-
-    // Also verify /me/money -> /me/verify and /rewrite/single <-> /rewrite/batch
-    fireEvent.click(screen.getByRole('menuitem', { name: '余额明细' }));
-    expect(window.location.pathname).toBe('/me/money');
-    fireEvent.click(screen.getByRole('menuitem', { name: '实名认证' }));
-    expect(window.location.pathname).toBe('/me/verify');
-    expect(document.title).toBe('实名认证 · GeoMix');
-
-    fireEvent.click(screen.getByRole('menuitem', { name: '全网爆文复刻' }));
-    expect(window.location.pathname).toBe('/rewrite/single');
-    fireEvent.click(screen.getByRole('menuitem', { name: '批量爆文复刻' }));
-    expect(window.location.pathname).toBe('/rewrite/batch');
-
-    // Browser popstate back to /me/verify restores active tab and title
-    window.history.replaceState(null, '', '/me/verify');
-    fireEvent(window, new PopStateEvent('popstate'));
-    await waitFor(() => {
-      expect(useShellStore.getState().activeId).toBe('/me/verify');
-      expect(document.title).toBe('实名认证 · GeoMix');
+    expect(saveAccountUiPrefsMock).toHaveBeenCalledWith(window.sessionStorage, {
+      menuCollapsed: true,
     });
   });
 
-  it('renders console immediately without 正在确认登录 boot flash when account cache is warm (#203)', async () => {
-    saveSession(window.sessionStorage, 'tok-warm', 'ref-warm');
-    writeCachedAccount(window.sessionStorage, {
-      ...merchantAccount,
-      role: 'ADMIN',
-      uiPrefs: { multiTab: true, menuCollapsed: false },
-    });
-    // Keep loadAccount unresolved to prove initial render doesn't block on network
+  it('renders immediately from warm account cache without boot flash (#203)', () => {
+    saveSession(window.sessionStorage, 'at-warm', 'rt-warm');
+    writeCachedAccount(window.sessionStorage, merchantAccount);
     loadAccountMock.mockReturnValue(new Promise(() => undefined));
 
-    render(<ConsoleShell />);
+    render(
+      <ConsoleShell>
+        <div>缓存直出内容</div>
+      </ConsoleShell>,
+    );
 
     expect(screen.queryByText('正在确认登录')).toBeNull();
-    expect(screen.getByRole('heading', { name: '首页' })).toBeTruthy();
-    expect(document.title).toBe('首页 · GeoMix');
+    expect(screen.getByText('缓存直出内容')).toBeTruthy();
+  });
+
+  it('renders boot skeleton and header skeletons without fake 0 点 / 免费体验期 / ¥0.00 during cold load', async () => {
+    let resolveAccount!: (value: { status: 'ok'; account: AccountProfile }) => void;
+    let resolveBrands!: (value: { items: BrandRecord[] }) => void;
+    let resolveWallet!: (value: {
+      points: number;
+      pointsReserved: number;
+      available: number;
+      money: string;
+      billingMode: 'SHADOW' | 'STRICT';
+      billingModeSource: 'global' | 'tenant';
+      tenantBillingMode: 'SHADOW' | 'STRICT' | null;
+    }) => void;
+
+    loadAccountMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveAccount = resolve;
+      }),
+    );
+    listBrandsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBrands = resolve;
+      }),
+    );
+    httpWalletMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveWallet = resolve;
+      }),
+    );
+
+    render(
+      <ConsoleShell>
+        <div>首页正文</div>
+      </ConsoleShell>,
+    );
+
+    const assertNoForbiddenFlicker = () => {
+      const text = document.body.textContent ?? '';
+      expect(text).not.toMatch(/(?:^|[^\d])0\s*点/);
+      expect(text).not.toContain('免费体验期');
+      expect(text).not.toContain('¥0.00');
+    };
+
+    const bootSkeleton = screen.getByTestId('console-boot-skeleton');
+    expect(bootSkeleton.getAttribute('aria-busy')).toBe('true');
+    expect(document.querySelector('.ant-skeleton')).toBeTruthy();
+    expect(screen.getByText('正在确认登录')).toBeTruthy();
+    assertNoForbiddenFlicker();
+
+    await act(async () => {
+      resolveAccount({ status: 'ok', account: merchantAccount });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('console-boot-skeleton')).toBeNull();
+    });
+    expect(screen.getByTestId('global-brand-switcher-loading').getAttribute('aria-busy')).toBe(
+      'true',
+    );
+    expect(screen.getByTestId('header-points-loading').getAttribute('aria-busy')).toBe('true');
+    assertNoForbiddenFlicker();
+
+    await act(async () => {
+      resolveBrands({ items: [sampleBrand] });
+      resolveWallet({
+        points: 888,
+        pointsReserved: 0,
+        available: 888,
+        money: '0.00',
+        billingMode: 'SHADOW',
+        billingModeSource: 'global',
+        tenantBillingMode: null,
+      });
+    });
+
+    const pointsPill = await screen.findByTestId('header-points-pill');
+    expect(pointsPill.textContent).toContain('888');
+  });
+
+  it('resets stored workspace state when a different user signs in', async () => {
+    window.localStorage.setItem(WORKSPACE_USER_KEY, 'u-previous');
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({ activeBrandId: 'stale-brand', activeMarket: 'GLOBAL', menuCollapsed: true }),
+    );
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+
+    render(
+      <ConsoleShell>
+        <div>切换用户后正文</div>
+      </ConsoleShell>,
+    );
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem(WORKSPACE_USER_KEY)).toBe(merchantAccount.id);
+      expect(useWorkspaceStore.getState().activeBrandId).toBe('b-1');
+    });
+  });
+
+  it('redirects unauthenticated requests to /login?next=%2Fhome and handles invalid paths with 回首页 -> /home', async () => {
+    loadAccountMock.mockResolvedValue({ status: 'anonymous' });
+    const { unmount } = render(
+      <ConsoleShell>
+        <div>protected</div>
+      </ConsoleShell>,
+    );
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/login?next=%2Fhome');
+    });
+    unmount();
+
+    mockPathname = '/nonexistent-v1-path';
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+    render(
+      <ConsoleShell>
+        <div>invalid</div>
+      </ConsoleShell>,
+    );
+    expect(await screen.findByText('没有这个页面')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '回首页' }));
+    expect(pushMock).toHaveBeenCalledWith('/home');
   });
 });

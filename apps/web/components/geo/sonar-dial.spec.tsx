@@ -215,4 +215,120 @@ describe('SonarDial', () => {
     expect(document.querySelector('polygon')).toBeNull();
     expect(screen.getAllByText('0.0%').length).toBeGreaterThan(0);
   });
+
+  it('renders exactly 8 CN spokes with valid viewBox clearance and zero GLOBAL engines when market="CN"', () => {
+    render(
+      <SonarDial
+        market="CN"
+        byEngine={[
+          {
+            engine: 'deepseek',
+            completedChecks: 4,
+            mentionedChecks: 3,
+            visibilityPct: 75,
+            avgPosition: 1.5,
+          },
+          {
+            engine: 'chatgpt',
+            completedChecks: 5,
+            mentionedChecks: 5,
+            visibilityPct: 100,
+            avgPosition: 1,
+          },
+        ]}
+        overallPct={75}
+        onSelectEngine={vi.fn()}
+      />,
+    );
+
+    const buttons = document.querySelectorAll('[aria-label^="筛选引擎-"]');
+    expect(buttons).toHaveLength(8);
+    const srRows = document.querySelectorAll('table.gm-sr-only tbody tr');
+    expect(srRows).toHaveLength(8);
+    expect(screen.queryByLabelText('筛选引擎-ChatGPT')).toBeNull();
+    expect(screen.queryByLabelText('筛选引擎-Perplexity')).toBeNull();
+    expect(screen.getByLabelText('筛选引擎-通义千问')).toBeTruthy();
+
+    const svg = screen.getByRole('img', { name: 'AI 引擎覆盖率声呐盘' });
+    const [vbX, vbY, vbW, vbH] = (svg.getAttribute('viewBox') ?? '')
+      .trim()
+      .split(/\s+/)
+      .map(Number) as [number, number, number, number];
+    const svgScope = within(svg as unknown as HTMLElement);
+    expect(Number(svgScope.getByText('DeepSeek').getAttribute('y')) - vbY).toBeGreaterThanOrEqual(
+      50,
+    );
+    expect(
+      vbY + vbH - Number(svgScope.getByText('文心一言').getAttribute('y')),
+    ).toBeGreaterThanOrEqual(50);
+    expect(
+      vbX + vbW - Number(svgScope.getByText('腾讯元宝').getAttribute('x')),
+    ).toBeGreaterThanOrEqual(65);
+    expect(Number(svgScope.getByText('Kimi').getAttribute('x')) - vbX).toBeGreaterThanOrEqual(65);
+  });
+
+  it('renders exactly 5 GLOBAL spokes with Google AIO short label and resets hover safely on CN -> GLOBAL switch', () => {
+    const byEngine = [
+      {
+        engine: 'zhipu' as const,
+        completedChecks: 4,
+        mentionedChecks: 2,
+        visibilityPct: 50,
+        avgPosition: 2,
+      },
+      {
+        engine: 'chatgpt' as const,
+        completedChecks: 6,
+        mentionedChecks: 4,
+        visibilityPct: 66.7,
+        avgPosition: 1.5,
+      },
+      {
+        engine: 'google_aio' as const,
+        completedChecks: 6,
+        mentionedChecks: 3,
+        visibilityPct: 50,
+        avgPosition: 2,
+      },
+    ];
+
+    const { rerender } = render(
+      <SonarDial market="CN" byEngine={byEngine} overallPct={50} onSelectEngine={vi.fn()} />,
+    );
+
+    const zhipuHit = screen.getByLabelText('筛选引擎-智谱');
+    fireEvent.mouseEnter(zhipuHit);
+    expect(screen.getByRole('tooltip').textContent).toContain('智谱');
+
+    // Switch to GLOBAL (5 spokes) while index 7 was hovered: must not throw and must clear tooltip
+    rerender(
+      <SonarDial market="GLOBAL" byEngine={byEngine} overallPct={58.3} onSelectEngine={vi.fn()} />,
+    );
+
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    const buttons = document.querySelectorAll('[aria-label^="筛选引擎-"]');
+    expect(buttons).toHaveLength(5);
+    expect(document.querySelectorAll('table.gm-sr-only tbody tr')).toHaveLength(5);
+    expect(screen.queryByLabelText('筛选引擎-豆包')).toBeNull();
+    expect(screen.queryByLabelText('筛选引擎-DeepSeek')).toBeNull();
+    expect(screen.getByLabelText('筛选引擎-Google AI Overviews')).toBeTruthy();
+
+    const svg = screen.getByRole('img', { name: 'AI 引擎覆盖率声呐盘' });
+    const [vbX, vbY, vbW] = (svg.getAttribute('viewBox') ?? '').trim().split(/\s+/).map(Number) as [
+      number,
+      number,
+      number,
+      number,
+    ];
+    const svgScope = within(svg as unknown as HTMLElement);
+    expect(Number(svgScope.getByText('ChatGPT').getAttribute('y')) - vbY).toBeGreaterThanOrEqual(
+      50,
+    );
+    expect(
+      vbX + vbW - Number(svgScope.getByText('Perplexity').getAttribute('x')),
+    ).toBeGreaterThanOrEqual(65);
+    expect(Number(svgScope.getByText('Google AIO').getAttribute('x')) - vbX).toBeGreaterThanOrEqual(
+      65,
+    );
+  });
 });

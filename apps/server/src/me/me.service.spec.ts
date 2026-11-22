@@ -31,19 +31,20 @@ describe('MeService.rights quota reconciliation (#195)', () => {
             { key: 'SOCIAL_AUTH', used: 0n, limit: 100n },
           ]),
         },
-        question: {
-          count: vi.fn().mockResolvedValue(3),
-        },
-        keyword: {
+        brand: {
           count: vi.fn().mockResolvedValue(2),
         },
-        article: {
+        geoBrief: {
+          count: vi.fn().mockResolvedValue(3),
+        },
+        geoArticle: {
           count: vi.fn().mockResolvedValue(1),
         },
-        mediaAsset: {
+        brandMediaAsset: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { bytes: 5120 } }),
         },
         visibilityObservation: {
+          count: vi.fn().mockResolvedValue(0),
           findMany: vi.fn().mockResolvedValue([]),
         },
       },
@@ -84,19 +85,20 @@ describe('MeService.rights quota reconciliation (#195)', () => {
             { key: 'SOCIAL_AUTH', used: 0n, limit: 100n },
           ]),
         },
-        question: {
+        brand: {
           count: vi.fn().mockResolvedValue(0),
         },
-        keyword: {
+        geoBrief: {
           count: vi.fn().mockResolvedValue(0),
         },
-        article: {
+        geoArticle: {
           count: vi.fn().mockResolvedValue(1),
         },
-        mediaAsset: {
+        brandMediaAsset: {
           aggregate: vi.fn().mockResolvedValue({ _sum: { bytes: null } }),
         },
         visibilityObservation: {
+          count: vi.fn().mockResolvedValue(0),
           findMany: vi.fn().mockResolvedValue([]),
         },
       },

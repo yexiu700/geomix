@@ -1,138 +1,164 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import type {
-  ImportQuestionsInput,
-  ImportQuestionsResult,
-  VisibilityCitationListResponse,
-  VisibilityCitationQuery,
-  VisibilityEngineAvailabilityResponse,
-  VisibilityOpportunitiesQuery,
-  VisibilityOpportunitiesResponse,
-  VisibilityOverviewQuery,
-  VisibilityOverviewResponse,
-  VisibilityProfileCreateWithPrefillInput,
-  VisibilityProfileListResponse,
-  VisibilityProfileRecord,
-  VisibilityProfileUpdateInput,
-  VisibilityRunCreateInput,
-  VisibilityRunDetailRecord,
-  VisibilityRunListQuery,
-  VisibilityRunListResponse,
+import {
+  AUTH_ERROR,
+  type GeoMarket,
+  type ParsedVisibilityRunV2CreateInput,
+  type VisibilityCitationListResponse,
+  type VisibilityEngineAvailabilityResponse,
+  type VisibilityOpportunitiesResponse,
+  type VisibilityOverviewResponse,
+  type VisibilityRunDetailRecord,
+  type VisibilityRunListResponse,
+  type VisibilityV2CitationQuery,
+  type VisibilityV2OpportunitiesQuery,
+  type VisibilityV2OverviewQuery,
+  type VisibilityV2RunListQuery,
 } from '@geomix/shared';
+import { BrandsService } from '../brands/brands.service';
+import { ApiError } from '../common/api-error';
+import {
+  VISIBILITY_CONFIG,
+  readVisibilityConfig,
+  type VisibilityConfig,
+} from './visibility.config';
 import { VisibilityAnalyticsService } from './visibility-analytics.service';
 import { VisibilityEngineHealthService } from './visibility-engine-health.service';
-import { VisibilityProfileService } from './visibility-profile.service';
 import { VisibilityRunLifecycleService } from './visibility-run-lifecycle.service';
 
 export { deriveVisibilityRunId } from './visibility.mapper';
 
 @Injectable()
 export class VisibilityService {
+  private readonly config: VisibilityConfig;
+
   constructor(
-    @Inject(VisibilityProfileService) private readonly profiles: VisibilityProfileService,
+    @Inject(BrandsService) private readonly brands: BrandsService,
     @Inject(VisibilityRunLifecycleService)
     private readonly runLifecycle: VisibilityRunLifecycleService,
     @Inject(VisibilityAnalyticsService) private readonly analytics: VisibilityAnalyticsService,
+    @Optional() @Inject(VISIBILITY_CONFIG) config?: VisibilityConfig,
     @Optional()
     @Inject(VisibilityEngineHealthService)
     private readonly engineHealth?: VisibilityEngineHealthService,
-  ) {}
+  ) {
+    this.config = config ?? readVisibilityConfig(process.env);
+  }
+
+  private assertFeatureEnabled(): void {
+    if (!this.config.featureEnabled) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, 'AI可见性监测功能未启用');
+    }
+  }
 
   // ===================== Engines Availability =====================
 
-  async listEngines(): Promise<VisibilityEngineAvailabilityResponse> {
+  async listEngines(
+    brandId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityEngineAvailabilityResponse> {
+    this.assertFeatureEnabled();
+    const resolved = await this.brands.resolveBrandMarket(brandId, market);
     if (!this.engineHealth) {
-      return new VisibilityEngineHealthService().getAvailability();
+      return new VisibilityEngineHealthService(this.config).getAvailability(resolved.market.market);
     }
-    return this.engineHealth.getAvailability();
-  }
-
-  // ===================== Profiles CRUD =====================
-
-  async listProfiles(): Promise<VisibilityProfileListResponse> {
-    return this.profiles.listProfiles();
-  }
-
-  async getProfile(id: string): Promise<VisibilityProfileRecord> {
-    return this.profiles.getProfile(id);
-  }
-
-  async createProfile(
-    input: VisibilityProfileCreateWithPrefillInput,
-    userId: string,
-  ): Promise<VisibilityProfileRecord> {
-    return this.profiles.createProfile(input, userId);
-  }
-
-  async updateProfile(
-    id: string,
-    input: VisibilityProfileUpdateInput,
-    userId: string,
-  ): Promise<VisibilityProfileRecord> {
-    return this.profiles.updateProfile(id, input, userId);
-  }
-
-  async deleteProfile(id: string): Promise<{ deleted: number }> {
-    return this.profiles.deleteProfile(id);
+    return this.engineHealth.getAvailability(resolved.market.market);
   }
 
   // ===================== Runs CRUD & Control =====================
 
-  async listRuns(query: VisibilityRunListQuery): Promise<VisibilityRunListResponse> {
-    return this.runLifecycle.listRuns(query);
+  async listRuns(
+    brandId: string,
+    query: VisibilityV2RunListQuery,
+  ): Promise<VisibilityRunListResponse> {
+    return this.runLifecycle.listRuns(brandId, query);
   }
 
-  async getRunDetail(id: string): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.getRunDetail(id);
+  async getRunDetail(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.runLifecycle.getRunDetail(brandId, runId, market);
   }
 
-  async detailForTenant(tenantId: string, id: string): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.detailForTenant(tenantId, id);
+  async detailForTenant(
+    tenantId: string,
+    runId: string,
+    scope?: { brandId?: string; brandMarketId?: string },
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.runLifecycle.detailForTenant(tenantId, runId, scope);
   }
 
   async createRun(
-    input: VisibilityRunCreateInput,
+    brandId: string,
+    input: ParsedVisibilityRunV2CreateInput,
     idempotencyKey: string,
     userId: string,
+    queryMarket?: GeoMarket,
   ): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.createRun(input, idempotencyKey, userId);
+    return this.runLifecycle.createRun(brandId, input, idempotencyKey, userId, queryMarket);
   }
 
-  async pauseRun(id: string): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.pauseRun(id);
+  async pauseRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.runLifecycle.pauseRun(brandId, runId, market);
   }
 
-  async resumeRun(id: string): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.resumeRun(id);
+  async resumeRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.runLifecycle.resumeRun(brandId, runId, market);
   }
 
-  async cancelRun(id: string): Promise<VisibilityRunDetailRecord> {
-    return this.runLifecycle.cancelRun(id);
+  async cancelRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.runLifecycle.cancelRun(brandId, runId, market);
   }
 
-  async bulkDeleteRuns(ids: string[]): Promise<{ deleted: number }> {
-    return this.runLifecycle.bulkDeleteRuns(ids);
+  async deleteRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<{ deleted: number }> {
+    return this.runLifecycle.deleteRun(brandId, runId, market);
   }
 
-  // ===================== Analytics & Opportunity Closure =====================
-
-  async overview(query: VisibilityOverviewQuery): Promise<VisibilityOverviewResponse> {
-    return this.analytics.overview(query);
+  async bulkDeleteRuns(
+    brandId: string,
+    ids: string[],
+    market?: GeoMarket,
+  ): Promise<{ deleted: number }> {
+    return this.runLifecycle.bulkDeleteRuns(brandId, ids, market);
   }
 
-  async citations(query: VisibilityCitationQuery): Promise<VisibilityCitationListResponse> {
-    return this.analytics.listCitations(query);
+  // ===================== Analytics =====================
+
+  async overview(
+    brandId: string,
+    query: VisibilityV2OverviewQuery,
+  ): Promise<VisibilityOverviewResponse> {
+    return this.analytics.overview(brandId, query);
+  }
+
+  async citations(
+    brandId: string,
+    query: VisibilityV2CitationQuery,
+  ): Promise<VisibilityCitationListResponse> {
+    return this.analytics.listCitations(brandId, query);
   }
 
   async opportunities(
-    query: VisibilityOpportunitiesQuery,
+    brandId: string,
+    query: VisibilityV2OpportunitiesQuery,
   ): Promise<VisibilityOpportunitiesResponse> {
-    return this.analytics.opportunities(query);
-  }
-
-  async importOpportunityQuestions(
-    input: ImportQuestionsInput,
-    userId: string,
-  ): Promise<ImportQuestionsResult> {
-    return this.analytics.importOpportunityQuestions(input, userId);
+    return this.analytics.opportunities(brandId, query);
   }
 }

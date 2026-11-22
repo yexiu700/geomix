@@ -24,7 +24,6 @@ import {
   parseStoredCompetitorHits,
   presentCitationRecord,
   presentObservationRecord,
-  presentProfile,
   presentRunRecord,
   shanghaiWindowFromQuery,
   type ObservationRowForMapper,
@@ -131,7 +130,7 @@ describe('visibility.mapper', () => {
       });
     });
 
-    it('parseProfileCompetitors safely handles malformed JSON and presentProfile maps runCount conditionally', () => {
+    it('parseProfileCompetitors safely handles malformed JSON and normalizes domains', () => {
       expect(parseProfileCompetitors(null)).toEqual([]);
       expect(parseProfileCompetitors(undefined)).toEqual([]);
       expect(parseProfileCompetitors('not-an-array')).toEqual([]);
@@ -154,35 +153,6 @@ describe('visibility.mapper', () => {
           domains: ['rivala.com'],
         },
       ]);
-
-      const now = new Date('2026-11-18T08:00:00.000Z');
-      const withoutRunCount = presentProfile({
-        id: 'prof_1',
-        name: '默认档案',
-        brandName: 'GeoMix',
-        brandAliases: ['GM'],
-        ownedDomains: ['geomix.cn'],
-        competitors: parsed,
-        createdAt: now,
-        updatedAt: now,
-      });
-      expect(withoutRunCount).not.toHaveProperty('runCount');
-      expect(withoutRunCount.createdAt).toBe('2026-11-18T08:00:00.000Z');
-
-      const withZeroRuns = presentProfile(
-        {
-          id: 'prof_1',
-          name: '默认档案',
-          brandName: 'GeoMix',
-          brandAliases: ['GM'],
-          ownedDomains: ['geomix.cn'],
-          competitors: parsed,
-          createdAt: now,
-          updatedAt: now,
-        },
-        0,
-      );
-      expect(withZeroRuns.runCount).toBe(0);
     });
   });
 
@@ -238,8 +208,8 @@ describe('visibility.mapper', () => {
       return {
         id: 'obs_1',
         runId: 'vrun_1',
-        profileId: 'prof_1',
-        questionId: 'q_1',
+        brandId: 'brand_1',
+        brandMarketId: 'prof_1',
         promptText: '人体工学椅护腰推荐哪家？',
         engine: 'deepseek',
         status: 'SUCCESS',
@@ -352,11 +322,11 @@ describe('visibility.mapper', () => {
     it('presentRunRecord excludes off-topic mentions from visibilityPct, counts SKIPPED, and falls back frozenPoints', () => {
       const runRow: RunRowForMapper = {
         id: 'vrun_abc',
-        profileId: 'prof_1',
-        keywordId: 'kw_1',
+        brandId: 'brand_1',
+        brandMarketId: 'prof_1',
         name: '椅类可见度诊断',
         engines: ['deepseek', 'unknown_engine', 'doubao'],
-        questionIds: ['q_1'],
+        prompts: ['人体工学椅护腰推荐哪家？'],
         totalChecks: 4,
         doneCount: 2,
         failCount: 1,
@@ -367,14 +337,14 @@ describe('visibility.mapper', () => {
         createdAt: baseTimestamp,
         updatedAt: baseTimestamp,
         finishedAt: baseTimestamp,
-        profile: {
+        brandMarket: {
           id: 'prof_1',
-          name: '默认档案',
-          brandName: 'GeoMix',
-          brandAliases: ['吉奥米克斯'],
+          market: 'CN',
+          localBrandName: 'GeoMix',
+          aliases: ['吉奥米克斯'],
           competitors: [{ name: '竞品椅A', aliases: [], domains: [] }],
+          brand: { name: '默认档案' },
         },
-        keyword: { id: 'kw_1', main: '人体工学椅' },
         observations: [
           {
             status: 'SUCCESS',
@@ -506,18 +476,71 @@ describe('visibility.mapper', () => {
   });
 
   describe('overview, SoV, source priority, engine breakdown, and daily trend math', () => {
-    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > SOCIAL > AUTHORITY > OTHER', () => {
+    it('higherPrioritySourceKind enforces OWNED > COMPETITOR > ECOMMERCE > SOCIAL > AUTHORITY > OTHER and presentObservationRecord normalizes fanOut + reclassifies citations', () => {
       expect(CITATION_SOURCE_KINDS).toEqual([
         'OWNED',
         'COMPETITOR',
         'SOCIAL',
         'AUTHORITY',
+        'ECOMMERCE',
         'OTHER',
       ]);
       expect(higherPrioritySourceKind('AUTHORITY', 'SOCIAL')).toBe('SOCIAL');
       expect(higherPrioritySourceKind('SOCIAL', 'AUTHORITY')).toBe('SOCIAL');
       expect(higherPrioritySourceKind('OTHER', 'OWNED')).toBe('OWNED');
       expect(higherPrioritySourceKind('COMPETITOR', 'SOCIAL')).toBe('COMPETITOR');
+      expect(higherPrioritySourceKind('ECOMMERCE', 'AUTHORITY')).toBe('ECOMMERCE');
+      expect(higherPrioritySourceKind('ECOMMERCE', 'SOCIAL')).toBe('ECOMMERCE');
+
+      const now = new Date('2026-11-18T08:00:00.000Z');
+      const presented = presentObservationRecord(
+        {
+          id: 'obs_norm',
+          runId: 'run_1',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_1',
+          promptText: '静音家用NAS推荐',
+          engine: 'deepseek',
+          status: 'SUCCESS',
+          collectorKind: 'fake',
+          answerText: '静音家用NAS推荐绿联。',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          brandPassage: '静音家用NAS推荐绿联。',
+          competitorHits: [],
+          fanOutQueries: ['安静NAS; 家用NAS功耗；安静NAS\n四盘位NAS'],
+          judgeModel: 'fake',
+          tokensIn: 10,
+          tokensOut: 10,
+          error: null,
+          checkedAt: now,
+          createdAt: now,
+          citations: [
+            {
+              id: 'cite_1',
+              url: 'https://newrival.example.com/review',
+              domain: 'newrival.example.com',
+              title: 'Rival Review',
+              snippet: null,
+              sourceKind: 'OTHER',
+              position: 1,
+              createdAt: now,
+            },
+          ],
+        },
+        { brandName: '绿联' },
+        {
+          market: 'CN',
+          citationContext: {
+            ownedDomains: ['ugreen.com'],
+            competitorDomains: ['newrival.example.com'],
+          },
+        },
+      );
+      expect(presented.market).toBe('CN');
+      expect(presented.fanOutQueries).toEqual(['安静NAS', '家用NAS功耗', '四盘位NAS']);
+      expect(presented.citations[0]?.sourceKind).toBe('COMPETITOR');
     });
 
     it('computeOverviewMetricsAndGroups supports 0-brand, 1-brand, and >=2-brand isolated SoV tracks with domain priority merge', () => {
@@ -530,7 +553,7 @@ describe('visibility.mapper', () => {
 
       const obsA: OverviewObservationRow = {
         id: 'obs_a',
-        profileId: 'prof_a',
+        brandMarketId: 'prof_a',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '便携显示器推荐哪家？',
@@ -548,7 +571,7 @@ describe('visibility.mapper', () => {
 
       const obsB1: OverviewObservationRow = {
         id: 'obs_b1',
-        profileId: 'prof_b',
+        brandMarketId: 'prof_b',
         engine: 'doubao',
         status: 'SUCCESS',
         promptText: '氮化镓充电器哪款好？',
@@ -566,7 +589,7 @@ describe('visibility.mapper', () => {
 
       const obsB2: OverviewObservationRow = {
         id: 'obs_b2',
-        profileId: 'prof_b',
+        brandMarketId: 'prof_b',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '氮化镓充电器横评推荐？',
@@ -582,7 +605,7 @@ describe('visibility.mapper', () => {
 
       const orphanObs: OverviewObservationRow = {
         id: 'obs_orphan',
-        profileId: 'prof_deleted',
+        brandMarketId: 'prof_deleted',
         engine: 'deepseek',
         status: 'SUCCESS',
         promptText: '便携显示器选购技巧？',

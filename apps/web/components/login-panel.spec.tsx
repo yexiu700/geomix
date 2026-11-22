@@ -129,7 +129,7 @@ describe('LoginPanel captcha readiness (#64)', () => {
       },
       { timeout: 5000 },
     );
-    expect(replaceMock).toHaveBeenCalledWith('/dashboard');
+    expect(replaceMock).toHaveBeenCalledWith('/home');
   });
 
   it('redirects back to /admin/tenants when ?next=%2Fadmin%2Ftenants is present (#194)', async () => {
@@ -586,7 +586,7 @@ describe('LoginPanel redirect performance optimizations (P0)', () => {
     render(<LoginPanel />);
 
     await waitFor(() => {
-      expect(prefetchMock).toHaveBeenCalledWith('/dashboard');
+      expect(prefetchMock).toHaveBeenCalledWith('/home');
       expect((screen.getByRole('button', { name: /登\s*录/ }) as HTMLButtonElement).disabled).toBe(
         false,
       );
@@ -600,7 +600,7 @@ describe('LoginPanel redirect performance optimizations (P0)', () => {
     fireEvent.click(screen.getByRole('button', { name: /登\s*录/ }));
 
     await waitFor(() => {
-      expect(replaceMock).toHaveBeenCalledWith('/dashboard');
+      expect(replaceMock).toHaveBeenCalledWith('/home');
     });
     expect(readCachedAccount(window.sessionStorage)).toEqual(accountPayload);
   });

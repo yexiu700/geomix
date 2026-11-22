@@ -14,7 +14,7 @@ export function HomePanel() {
         </Typography.Title>
         <Typography.Paragraph>{HOME_LEAD}</Typography.Paragraph>
         <Typography.Paragraph type="secondary">
-          请使用管理员开通的账号登录控制台，管理关键词、素材图库、AI 写作任务与账号权益。
+          请使用管理员开通的账号登录工作台，管理品牌资产、AI 可见度诊断、GEO 写作台与账号权益。
         </Typography.Paragraph>
         <Button type="primary" onClick={() => router.push('/login')}>
           登录

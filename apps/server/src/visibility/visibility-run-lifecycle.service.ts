@@ -6,18 +6,21 @@ import {
   BILLING_ERROR,
   VISIBILITY_ENGINE_LABELS,
   escapeLikeLiteral,
-  matchesVisibilityProfileKeyword,
+  findDisallowedMarketEngines,
   recomputeRunMetrics,
   toShanghaiDateKey,
+  type GeoMarket,
+  type ParsedVisibilityRunV2CreateInput,
   type VisibilityObservationRecord,
-  type VisibilityRunCreateInput,
   type VisibilityRunDetailRecord,
-  type VisibilityRunListQuery,
   type VisibilityRunListResponse,
   type VisibilityRunRecord,
+  type VisibilityTriggerType,
+  type VisibilityV2RunListQuery,
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
 import { TX_OPTIONS, isUniqueViolation } from '../billing/billing.sql';
+import { BrandsService } from '../brands/brands.service';
 import { ApiError } from '../common/api-error';
 import { ComplianceService } from '../infra/compliance';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,10 +50,16 @@ function requireTenant(): string {
 
 export type LoadedRunRow = Prisma.VisibilityRunGetPayload<{
   include: {
-    profile: {
-      select: { id: true; name: true; brandName: true; brandAliases: true; competitors: true };
+    brandMarket: {
+      select: {
+        id: true;
+        market: true;
+        localBrandName: true;
+        aliases: true;
+        competitors: true;
+        brand: { select: { name: true } };
+      };
     };
-    keyword: { select: { id: true; main: true } };
     observations: {
       select: { status: true; brandMentioned: true; promptText: true; answerText: true };
     };
@@ -63,6 +72,7 @@ export class VisibilityRunLifecycleService {
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(BrandsService) private readonly brands: BrandsService,
     @Inject(BillingService) private readonly billing: BillingService,
     @Inject(ComplianceService) private readonly compliance: ComplianceService,
     @Inject(VISIBILITY_RUN_ENQUEUER) private readonly enqueuer: VisibilityRunEnqueuer,
@@ -80,54 +90,60 @@ export class VisibilityRunLifecycleService {
     }
   }
 
-  async listRuns(query: VisibilityRunListQuery): Promise<VisibilityRunListResponse> {
-    this.assertFeatureEnabled();
-    const tenantId = requireTenant();
-
-    if (query.profileId) {
-      const prof = await this.prisma.base.visibilityProfile.findFirst({
-        where: { id: query.profileId, tenantId },
-        select: { id: true },
-      });
-      if (!prof) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测档案不存在');
-      }
+  private async resolveRunScope(
+    brandId: string,
+    market?: GeoMarket,
+  ): Promise<{ brandId: string; brandMarketId?: string }> {
+    if (market) {
+      const resolved = await this.brands.resolveBrandMarket(brandId, market);
+      return { brandId: resolved.brand.id, brandMarketId: resolved.market.id };
     }
+    const brand = await this.brands.getById(brandId);
+    return { brandId: brand.id };
+  }
+
+  async listRuns(
+    brandId: string,
+    query: VisibilityV2RunListQuery,
+  ): Promise<VisibilityRunListResponse> {
+    this.assertFeatureEnabled();
+    requireTenant();
+
+    const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
 
     const where: Prisma.VisibilityRunWhereInput = {
-      tenantId,
-      ...(query.profileId ? { profileId: query.profileId } : {}),
+      brandId: brand.id,
+      brandMarketId: market.id,
       ...(query.status ? { status: query.status } : {}),
     };
     if (query.keyword) {
       const pattern = escapeLikeLiteral(query.keyword);
       where.OR = [
         { name: { contains: pattern, mode: 'insensitive' } },
-        { profile: { name: { contains: pattern, mode: 'insensitive' } } },
-        { profile: { brandName: { contains: pattern, mode: 'insensitive' } } },
-        { keyword: { main: { contains: pattern, mode: 'insensitive' } } },
+        { brand: { name: { contains: pattern, mode: 'insensitive' } } },
+        { brandMarket: { localBrandName: { contains: pattern, mode: 'insensitive' } } },
       ];
     }
 
     const skip = (query.page - 1) * query.pageSize;
     const [total, rows] = await Promise.all([
-      this.prisma.base.visibilityRun.count({ where }),
-      this.prisma.base.visibilityRun.findMany({
+      this.prisma.scoped.visibilityRun.count({ where }),
+      this.prisma.scoped.visibilityRun.findMany({
         where,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: query.pageSize,
         include: {
-          profile: {
+          brandMarket: {
             select: {
               id: true,
-              name: true,
-              brandName: true,
-              brandAliases: true,
+              market: true,
+              localBrandName: true,
+              aliases: true,
               competitors: true,
+              brand: { select: { name: true } },
             },
           },
-          keyword: { select: { id: true, main: true } },
           observations: {
             select: { status: true, brandMentioned: true, promptText: true, answerText: true },
           },
@@ -135,7 +151,7 @@ export class VisibilityRunLifecycleService {
       }),
     ]);
 
-    const items = await this.presentRuns(tenantId, rows);
+    const items = await this.presentRuns(rows);
     return {
       page: query.page,
       pageSize: query.pageSize,
@@ -144,18 +160,41 @@ export class VisibilityRunLifecycleService {
     };
   }
 
-  async getRunDetail(id: string): Promise<VisibilityRunDetailRecord> {
+  async getRunDetail(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
-    return this.detailForTenant(tenantId, id);
+    requireTenant();
+    const scope = await this.resolveRunScope(brandId, market);
+    return this.detailInScope(runId, scope);
   }
 
-  async detailForTenant(tenantId: string, id: string): Promise<VisibilityRunDetailRecord> {
-    const row = await this.prisma.base.visibilityRun.findFirst({
-      where: { id, tenantId },
+  async detailForTenant(
+    _tenantId: string,
+    runId: string,
+    scope?: { brandId?: string; brandMarketId?: string },
+  ): Promise<VisibilityRunDetailRecord> {
+    return this.detailInScope(runId, scope);
+  }
+
+  private async detailInScope(
+    runId: string,
+    scope?: { brandId?: string; brandMarketId?: string },
+  ): Promise<VisibilityRunDetailRecord> {
+    const row = await this.prisma.scoped.visibilityRun.findFirst({
+      where: {
+        id: runId,
+        ...(scope?.brandId ? { brandId: scope.brandId } : {}),
+        ...(scope?.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
       include: {
-        profile: true,
-        keyword: { select: { id: true, main: true } },
+        brandMarket: {
+          include: {
+            brand: { select: { name: true } },
+          },
+        },
         observations: {
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           include: {
@@ -170,20 +209,12 @@ export class VisibilityRunLifecycleService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
     }
 
-    const [baseRecord] = await this.presentRuns(tenantId, [
-      {
-        ...row,
-        profile: {
-          id: row.profile.id,
-          name: row.profile.name,
-          brandName: row.profile.brandName,
-          brandAliases: row.profile.brandAliases,
-          competitors: row.profile.competitors,
-        },
-      },
-    ]);
+    const [baseRecord] = await this.presentRuns([row]);
 
-    const competitors = parseProfileCompetitors(row.profile.competitors);
+    const competitors = parseProfileCompetitors(row.brandMarket.competitors);
+    const ownedDomains = row.brandMarket.ownedDomains;
+    const competitorDomains = competitors.flatMap((comp) => comp.domains);
+
     const metrics = recomputeRunMetrics(
       row.observations.map((obs) => ({
         id: obs.id,
@@ -201,20 +232,24 @@ export class VisibilityRunLifecycleService {
         })),
       })),
       {
-        brandName: row.profile.brandName,
-        brandAliases: row.profile.brandAliases,
-        ownedDomains: row.profile.ownedDomains,
+        brandName: row.brandMarket.localBrandName,
+        brandAliases: row.brandMarket.aliases,
+        ownedDomains,
         competitors,
       },
     );
 
     const relevanceCtx = {
-      brandName: row.profile.brandName,
-      brandAliases: row.profile.brandAliases,
+      brandName: row.brandMarket.localBrandName,
+      brandAliases: row.brandMarket.aliases,
       competitorNames: competitors.map((comp) => comp.name),
     };
+    const citationContext = { ownedDomains, competitorDomains };
     const observations: VisibilityObservationRecord[] = row.observations.map((obs) =>
-      presentObservationRecord(obs, relevanceCtx),
+      presentObservationRecord(obs, relevanceCtx, {
+        market: row.brandMarket.market,
+        citationContext,
+      }),
     );
 
     return {
@@ -226,31 +261,86 @@ export class VisibilityRunLifecycleService {
   }
 
   async createRun(
-    input: VisibilityRunCreateInput,
+    brandId: string,
+    input: ParsedVisibilityRunV2CreateInput,
     idempotencyKey: string,
     userId: string,
+    queryMarket?: GeoMarket,
   ): Promise<VisibilityRunDetailRecord> {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
     const runId = deriveVisibilityRunId(tenantId, idempotencyKey);
 
-    const engines = [...new Set(input.engines)];
-    const requestedQuestionIds = [...new Set(input.questionIds ?? [])];
-    const customPrompts = dedupeStringsCaseInsensitive(input.customPrompts ?? []);
+    if (queryMarket && input.market && queryMarket !== input.market) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '查询参数 market 与请求体 market 不一致');
+    }
+    const effectiveMarket = input.market ?? queryMarket;
+    const { brand, market } = await this.brands.resolveBrandMarket(brandId, effectiveMarket);
 
-    const existing = await this.prisma.base.visibilityRun.findFirst({
-      where: { id: runId, tenantId },
-      select: { id: true, profileId: true, engines: true, questionIds: true },
-    });
-    if (existing) {
+    const engines = [...new Set(input.engines)];
+    const disallowedEngines = findDisallowedMarketEngines(engines, market.market);
+    if (disallowedEngines.length > 0) {
+      const labels = disallowedEngines.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key);
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `所选 AI 引擎不属于当前市场（${market.market}）：${labels.join('、')}`,
+      );
+    }
+
+    const promptList = dedupeStringsCaseInsensitive(input.prompts);
+    if (promptList.length === 0) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少提供一条有效的监测问题');
+    }
+
+    const triggerType: VisibilityTriggerType = input.triggerType ?? 'MANUAL';
+    const retestArticleId = input.retestArticleId ?? null;
+
+    const assertMatchingReplay = (row: {
+      brandId: string;
+      brandMarketId: string;
+      engines: string[];
+      prompts: string[];
+      triggerType: VisibilityTriggerType;
+      retestArticleId: string | null;
+    }) => {
       if (
-        existing.profileId !== input.profileId ||
-        existing.engines.join(',') !== engines.join(',') ||
-        existing.questionIds.join(',') !== requestedQuestionIds.join(',')
+        row.brandId !== brand.id ||
+        row.brandMarketId !== market.id ||
+        row.engines.join(',') !== engines.join(',') ||
+        row.prompts.join('\n') !== promptList.join('\n') ||
+        row.triggerType !== triggerType ||
+        (row.retestArticleId ?? null) !== retestArticleId
       ) {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
       }
-      return this.detailForTenant(tenantId, existing.id);
+    };
+
+    const existing = await this.prisma.scoped.visibilityRun.findFirst({
+      where: { id: runId },
+      select: {
+        id: true,
+        brandId: true,
+        brandMarketId: true,
+        engines: true,
+        prompts: true,
+        triggerType: true,
+        retestArticleId: true,
+      },
+    });
+    if (existing) {
+      assertMatchingReplay(existing);
+      return this.detailInScope(existing.id, { brandId: brand.id, brandMarketId: market.id });
+    }
+
+    if (retestArticleId) {
+      const retestArticle = await this.prisma.scoped.geoArticle.findFirst({
+        where: { id: retestArticleId, brandId: brand.id, brandMarketId: market.id },
+        select: { id: true },
+      });
+      if (!retestArticle) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或不属于当前品牌市场');
+      }
     }
 
     if (this.engineHealth) {
@@ -265,131 +355,19 @@ export class VisibilityRunLifecycleService {
       }
     }
 
-    const profile = await this.prisma.base.visibilityProfile.findFirst({
-      where: { id: input.profileId, tenantId },
-      select: {
-        id: true,
-        name: true,
-        brandName: true,
-        brandAliases: true,
-        ownedDomains: true,
-        competitors: true,
-      },
-    });
-    if (!profile) {
-      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选监测档案不存在');
-    }
-
-    const profileKeywordTarget = {
-      id: profile.id,
-      name: profile.name,
-      brandName: profile.brandName,
-      brandAliases: profile.brandAliases,
-      ownedDomains: profile.ownedDomains,
-      competitors: parseProfileCompetitors(profile.competitors),
-    };
-
-    if (input.keywordId) {
-      const keyword = await this.prisma.base.keyword.findFirst({
-        where: { id: input.keywordId, tenantId },
-        select: { id: true, main: true, brands: true },
-      });
-      if (!keyword) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所选训练主词不存在');
-      }
-      if (
-        keyword.brands.some((b) => b.trim().length > 0) &&
-        !matchesVisibilityProfileKeyword(keyword, profileKeywordTarget)
-      ) {
-        throw new ApiError(
-          400,
-          API_ERROR.BAD_REQUEST,
-          '所选训练主词不属于当前监测档案品牌，请重新选择或改填自定义问题',
-        );
-      }
-    }
-
-    const promptEntries: Array<{ questionId: string | null; promptText: string }> = [];
-    const seenPrompts = new Set<string>();
-
-    if (requestedQuestionIds.length > 0) {
-      const questions = await this.prisma.base.question.findMany({
-        where: { id: { in: requestedQuestionIds }, tenantId },
-        select: { id: true, text: true, keywordId: true },
-      });
-      if (questions.length !== requestedQuestionIds.length) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分所选问题不存在或无权访问');
-      }
-      if (input.keywordId && questions.some((q) => q.keywordId !== input.keywordId)) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '所选监测问题不属于当前关联训练主词');
-      }
-      if (!input.keywordId) {
-        const distinctKeywordIds = [
-          ...new Set(
-            questions.map((q) => q.keywordId).filter((kid): kid is string => Boolean(kid)),
-          ),
-        ];
-        const questionKeywords = await Promise.all(
-          distinctKeywordIds.map((kid) =>
-            this.prisma.base.keyword.findFirst({
-              where: { id: kid, tenantId },
-              select: { id: true, main: true, brands: true },
-            }),
-          ),
-        );
-        for (const qKw of questionKeywords) {
-          if (
-            qKw &&
-            qKw.brands.some((b) => b.trim().length > 0) &&
-            !matchesVisibilityProfileKeyword(qKw, profileKeywordTarget)
-          ) {
-            throw new ApiError(
-              400,
-              API_ERROR.BAD_REQUEST,
-              '所选监测问题所属主词与当前监测档案品牌不匹配',
-            );
-          }
-        }
-      }
-      const qById = new Map(questions.map((q) => [q.id, q]));
-      for (const qId of requestedQuestionIds) {
-        const q = qById.get(qId);
-        if (!q) continue;
-        const cleaned = q.text.replace(/\s+/g, ' ').trim();
-        if (!cleaned) continue;
-        const lower = cleaned.toLowerCase();
-        if (seenPrompts.has(lower)) continue;
-        seenPrompts.add(lower);
-        promptEntries.push({ questionId: q.id, promptText: cleaned });
-      }
-    }
-
-    for (const custom of customPrompts) {
-      const cleaned = custom.replace(/\s+/g, ' ').trim();
-      if (!cleaned) continue;
-      const lower = cleaned.toLowerCase();
-      if (seenPrompts.has(lower)) continue;
-      seenPrompts.add(lower);
-      promptEntries.push({ questionId: null, promptText: cleaned });
-    }
-
-    if (promptEntries.length === 0) {
-      throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少提供一条有效的监测问题');
-    }
-
     const runName = (
-      input.name?.trim() || `${profile.brandName}-可见性监测-${toShanghaiDateKey(new Date())}`
+      input.name?.trim() || `${market.localBrandName}-可见性监测-${toShanghaiDateKey(new Date())}`
     ).slice(0, 80);
 
     await this.compliance.assertAllowed({
-      text: [runName, ...customPrompts].join('\n'),
+      text: [runName, ...promptList].join('\n'),
       action: 'visibility_run_create',
       tenantId,
       userId,
     });
 
     const unitPrice = await this.billing.unitPrice('visibility_check');
-    const totalChecks = promptEntries.length * engines.length;
+    const totalChecks = promptList.length * engines.length;
     const totalPoints = totalChecks * unitPrice;
 
     const reservation = await this.billing.reserve({
@@ -399,17 +377,46 @@ export class VisibilityRunLifecycleService {
       amount: totalPoints,
     });
 
+    const replayedByReservation = await this.prisma.scoped.visibilityRun.findFirst({
+      where: { id: runId },
+      select: {
+        id: true,
+        brandId: true,
+        brandMarketId: true,
+        engines: true,
+        prompts: true,
+        triggerType: true,
+        retestArticleId: true,
+      },
+    });
+    if (replayedByReservation) {
+      assertMatchingReplay(replayedByReservation);
+      return this.detailInScope(replayedByReservation.id, {
+        brandId: brand.id,
+        brandMarketId: market.id,
+      });
+    }
+    if (reservation.status === 'CLOSED') {
+      throw new ApiError(
+        409,
+        BILLING_ERROR.CONFLICT,
+        '该幂等键对应的监测任务已结束，请更换新的 Idempotency-Key 重试',
+      );
+    }
+
     try {
       await this.prisma.base.$transaction(async (tx) => {
         await tx.visibilityRun.create({
           data: {
             id: runId,
             tenantId,
-            profileId: profile.id,
-            keywordId: input.keywordId ?? null,
+            brandId: brand.id,
+            brandMarketId: market.id,
             name: runName,
             engines,
-            questionIds: requestedQuestionIds,
+            prompts: promptList,
+            triggerType,
+            retestArticleId,
             totalChecks,
             doneCount: 0,
             failCount: 0,
@@ -420,13 +427,13 @@ export class VisibilityRunLifecycleService {
         });
 
         await tx.visibilityObservation.createMany({
-          data: promptEntries.flatMap((prompt) =>
+          data: promptList.flatMap((promptText) =>
             engines.map((engine) => ({
               tenantId,
               runId,
-              profileId: profile.id,
-              questionId: prompt.questionId,
-              promptText: prompt.promptText,
+              brandId: brand.id,
+              brandMarketId: market.id,
+              promptText,
               engine,
               status: 'PENDING' as const,
               collectorKind: this.config.collector,
@@ -438,80 +445,133 @@ export class VisibilityRunLifecycleService {
       await this.enqueuer.enqueueVisibilityRun({ tenantId, runId });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        return this.detailForTenant(tenantId, runId);
+        const winner = await this.prisma.scoped.visibilityRun.findFirst({
+          where: { id: runId },
+          select: {
+            id: true,
+            brandId: true,
+            brandMarketId: true,
+            engines: true,
+            prompts: true,
+            triggerType: true,
+            retestArticleId: true,
+          },
+        });
+        if (!winner) {
+          throw error;
+        }
+        assertMatchingReplay(winner);
+        return this.detailInScope(winner.id, { brandId: brand.id, brandMarketId: market.id });
       }
-      await this.prisma.base.visibilityRun.deleteMany({ where: { id: runId, tenantId } });
+      await this.prisma.scoped.visibilityRun.deleteMany({ where: { id: runId } });
       await this.billing.close({ tenantId, reservationId: reservation.id });
       throw error;
     }
 
-    return this.detailForTenant(tenantId, runId);
+    return this.detailInScope(runId, { brandId: brand.id, brandMarketId: market.id });
   }
 
-  async pauseRun(id: string): Promise<VisibilityRunDetailRecord> {
+  async pauseRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
+    requireTenant();
+    const scope = await this.resolveRunScope(brandId, market);
 
-    const run = await this.prisma.base.visibilityRun.findFirst({
-      where: { id, tenantId },
+    const run = await this.prisma.scoped.visibilityRun.findFirst({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
       select: { id: true, status: true },
     });
     if (!run) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
     }
     if (run.status === 'PAUSED') {
-      return this.detailForTenant(tenantId, id);
+      return this.detailInScope(runId, scope);
     }
     if (run.status !== 'QUEUED' && run.status !== 'RUNNING') {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '当前任务状态不支持暂停');
     }
 
-    await this.prisma.base.visibilityRun.updateMany({
-      where: { id, tenantId, status: { in: ['QUEUED', 'RUNNING'] } },
+    await this.prisma.scoped.visibilityRun.updateMany({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+        status: { in: ['QUEUED', 'RUNNING'] },
+      },
       data: { status: 'PAUSED' },
     });
-    return this.detailForTenant(tenantId, id);
+    return this.detailInScope(runId, scope);
   }
 
-  async resumeRun(id: string): Promise<VisibilityRunDetailRecord> {
+  async resumeRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
+    const scope = await this.resolveRunScope(brandId, market);
 
-    const run = await this.prisma.base.visibilityRun.findFirst({
-      where: { id, tenantId },
+    const run = await this.prisma.scoped.visibilityRun.findFirst({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
       select: { id: true, status: true },
     });
     if (!run) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
     }
     if (run.status === 'QUEUED' || run.status === 'RUNNING') {
-      return this.detailForTenant(tenantId, id);
+      return this.detailInScope(runId, scope);
     }
     if (run.status !== 'PAUSED') {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '仅已暂停的监测任务支持继续运行');
     }
 
-    await this.prisma.base.visibilityRun.updateMany({
-      where: { id, tenantId, status: 'PAUSED' },
+    await this.prisma.scoped.visibilityRun.updateMany({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+        status: 'PAUSED',
+      },
       data: { status: 'QUEUED' },
     });
-    await this.enqueuer.enqueueVisibilityRun({ tenantId, runId: id });
-    return this.detailForTenant(tenantId, id);
+    await this.enqueuer.enqueueVisibilityRun({ tenantId, runId });
+    return this.detailInScope(runId, scope);
   }
 
-  async cancelRun(id: string): Promise<VisibilityRunDetailRecord> {
+  async cancelRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<VisibilityRunDetailRecord> {
     this.assertFeatureEnabled();
     const tenantId = requireTenant();
+    const scope = await this.resolveRunScope(brandId, market);
 
-    const run = await this.prisma.base.visibilityRun.findFirst({
-      where: { id, tenantId },
+    const run = await this.prisma.scoped.visibilityRun.findFirst({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
       select: { id: true, status: true, reservationId: true },
     });
     if (!run) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
     }
     if (run.status === 'CANCELLED') {
-      return this.detailForTenant(tenantId, id);
+      return this.detailInScope(runId, scope);
     }
     if (run.status === 'COMPLETED' || run.status === 'PARTIAL' || run.status === 'FAILED') {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '监测任务已结束，无需终止');
@@ -520,26 +580,26 @@ export class VisibilityRunLifecycleService {
     const now = new Date();
     const runningLeft = await this.prisma.base.$transaction(async (tx) => {
       await tx.visibilityRun.updateMany({
-        where: { id, tenantId, status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] } },
+        where: { id: runId, tenantId, status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] } },
         data: { status: 'CANCELLED', finishedAt: now },
       });
       await tx.visibilityObservation.updateMany({
-        where: { runId: id, tenantId, status: 'PENDING' },
+        where: { runId, tenantId, status: 'PENDING' },
         data: { status: 'SKIPPED', checkedAt: now },
       });
       return tx.visibilityObservation.count({
-        where: { runId: id, tenantId, status: 'RUNNING' },
+        where: { runId, tenantId, status: 'RUNNING' },
       });
     }, TX_OPTIONS);
 
     if (runningLeft === 0) {
       const reservation = run.reservationId
-        ? await this.prisma.base.pointReservation.findFirst({
-            where: { id: run.reservationId, tenantId },
+        ? await this.prisma.scoped.pointReservation.findFirst({
+            where: { id: run.reservationId },
             select: { id: true, status: true },
           })
-        : await this.prisma.base.pointReservation.findFirst({
-            where: { tenantId, refType: 'visibility_run', refId: id },
+        : await this.prisma.scoped.pointReservation.findFirst({
+            where: { refType: 'visibility_run', refId: runId },
             select: { id: true, status: true },
           });
       if (reservation && reservation.status === 'OPEN') {
@@ -547,16 +607,78 @@ export class VisibilityRunLifecycleService {
       }
     }
 
-    return this.detailForTenant(tenantId, id);
+    return this.detailInScope(runId, scope);
   }
 
-  async bulkDeleteRuns(ids: string[]): Promise<{ deleted: number }> {
+  async deleteRun(
+    brandId: string,
+    runId: string,
+    market?: GeoMarket,
+  ): Promise<{ deleted: number }> {
     this.assertFeatureEnabled();
-    const tenantId = requireTenant();
+    requireTenant();
+    const scope = await this.resolveRunScope(brandId, market);
 
-    const activeCount = await this.prisma.base.visibilityRun.count({
+    const existing = await this.prisma.scoped.visibilityRun.findFirst({
       where: {
-        tenantId,
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
+      select: { id: true, status: true },
+    });
+    if (!existing) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '监测任务不存在');
+    }
+    if (
+      existing.status === 'QUEUED' ||
+      existing.status === 'RUNNING' ||
+      existing.status === 'PAUSED'
+    ) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '所选任务中包含排队中、运行中或已暂停的任务，请先终止后再删除',
+      );
+    }
+
+    const runningObsCount = await this.prisma.scoped.visibilityObservation.count({
+      where: {
+        runId: existing.id,
+        status: 'RUNNING',
+      },
+    });
+    if (runningObsCount > 0) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '存在仍在执行中的监测请求，请等待数秒收尾后再删除',
+      );
+    }
+
+    const result = await this.prisma.scoped.visibilityRun.deleteMany({
+      where: {
+        id: runId,
+        brandId: scope.brandId,
+        ...(scope.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
+      },
+    });
+    return { deleted: result.count };
+  }
+
+  async bulkDeleteRuns(
+    brandId: string,
+    ids: string[],
+    market?: GeoMarket,
+  ): Promise<{ deleted: number }> {
+    this.assertFeatureEnabled();
+    requireTenant();
+    const { brand, market: bm } = await this.brands.resolveBrandMarket(brandId, market);
+
+    const activeCount = await this.prisma.scoped.visibilityRun.count({
+      where: {
+        brandId: brand.id,
+        brandMarketId: bm.id,
         id: { in: ids },
         status: { in: ['QUEUED', 'RUNNING', 'PAUSED'] },
       },
@@ -569,13 +691,29 @@ export class VisibilityRunLifecycleService {
       );
     }
 
-    const result = await this.prisma.base.visibilityRun.deleteMany({
-      where: { tenantId, id: { in: ids } },
+    const runningObsCount = await this.prisma.scoped.visibilityObservation.count({
+      where: {
+        brandId: brand.id,
+        brandMarketId: bm.id,
+        runId: { in: ids },
+        status: 'RUNNING',
+      },
+    });
+    if (runningObsCount > 0) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        '存在仍在执行中的监测请求，请等待数秒收尾后再删除',
+      );
+    }
+
+    const result = await this.prisma.scoped.visibilityRun.deleteMany({
+      where: { brandId: brand.id, brandMarketId: bm.id, id: { in: ids } },
     });
     return { deleted: result.count };
   }
 
-  async presentRuns(tenantId: string, rows: LoadedRunRow[]): Promise<VisibilityRunRecord[]> {
+  async presentRuns(rows: LoadedRunRow[]): Promise<VisibilityRunRecord[]> {
     if (rows.length === 0) return [];
 
     const reservationIds = rows
@@ -584,8 +722,8 @@ export class VisibilityRunLifecycleService {
 
     const reservations =
       reservationIds.length > 0
-        ? await this.prisma.base.pointReservation.findMany({
-            where: { tenantId, id: { in: reservationIds } },
+        ? await this.prisma.scoped.pointReservation.findMany({
+            where: { id: { in: reservationIds } },
             select: { id: true, frozen: true, settled: true, released: true },
           })
         : [];

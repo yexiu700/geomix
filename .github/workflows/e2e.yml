@@ -8,7 +8,7 @@ jobs:
   e2e:
     name: playwright e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -52,6 +52,8 @@ jobs:
       E2E_BASE_URL: http://127.0.0.1:3000
       E2E_API_BASE: http://127.0.0.1:3001/api/v1
       E2E_PUBLIC_FIXTURE_HOST: public.e2e.example
+      E2E_V2: '1'
+      AUTH_CAPTCHA_MAX: '100'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

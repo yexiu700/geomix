@@ -44,14 +44,14 @@ describe('NotFoundPanel (#247)', () => {
     render(<NotFoundPanel />);
 
     const workspaceLink = screen.getByRole('link', { name: '返回工作台' }) as HTMLAnchorElement;
-    expect(workspaceLink.getAttribute('href')).toBe('/dashboard');
+    expect(workspaceLink.getAttribute('href')).toBe('/home');
 
     const backBtn = screen.getByRole('button', { name: '返回上一页' });
     fireEvent.click(backBtn);
     expect(backMock.mock.calls.length + pushMock.mock.calls.length).toBe(1);
   });
 
-  it('recognizes mirrored localStorage session and falls back to /dashboard when history length <= 1', () => {
+  it('recognizes mirrored localStorage session and falls back to /home when history length <= 1', () => {
     window.localStorage.setItem('geomix.accessToken', 'at_mirrored');
     const originalLength = window.history.length;
     Object.defineProperty(window.history, 'length', {
@@ -62,11 +62,9 @@ describe('NotFoundPanel (#247)', () => {
     try {
       render(<NotFoundPanel />);
 
-      expect(screen.getByRole('link', { name: '返回工作台' }).getAttribute('href')).toBe(
-        '/dashboard',
-      );
+      expect(screen.getByRole('link', { name: '返回工作台' }).getAttribute('href')).toBe('/home');
       fireEvent.click(screen.getByRole('button', { name: '返回上一页' }));
-      expect(pushMock).toHaveBeenCalledWith('/dashboard');
+      expect(pushMock).toHaveBeenCalledWith('/home');
       expect(backMock).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(window.history, 'length', {
