@@ -318,6 +318,10 @@ v2Describe(
           const retestBtn = page.getByTestId('publish-retest-btn');
           await expect(retestBtn).toBeVisible({ timeout: 15_000 });
           await retestBtn.click();
+          const retestConfirmBtn = page.getByTestId('publish-retest-confirm-btn');
+          await expect(retestConfirmBtn).toBeVisible({ timeout: 10_000 });
+          await expect(retestConfirmBtn).toBeEnabled({ timeout: 10_000 });
+          await retestConfirmBtn.click();
 
           const retestedRecord = await pollUntil(
             async () => {

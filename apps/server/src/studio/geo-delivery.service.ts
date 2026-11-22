@@ -154,6 +154,7 @@ export class GeoDeliveryService {
       locale: article.brandMarket.locale,
       localBrandName: article.brandMarket.localBrandName,
       category: article.brand.category,
+      localCategory: article.brandMarket.localCategory,
       ownedDomains: article.brandMarket.ownedDomains,
       title: evalTitle,
       targetPrompt: article.targetPrompt,

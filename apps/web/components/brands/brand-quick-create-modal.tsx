@@ -36,6 +36,9 @@ type Step1FormValues = {
   category: string;
   markets: GeoMarket[];
   ownedDomainsText: string;
+  globalLocalBrandName?: string;
+  globalLocalCategory?: string;
+  globalOwnedDomainsText?: string;
 };
 
 type ExtractSourceMode = 'URL_EXTRACT' | 'MANUAL' | 'DOC_UPLOAD';
@@ -70,6 +73,8 @@ export function BrandQuickCreateModal({
 }: BrandQuickCreateModalProps) {
   const feedback = useUxFeedback();
   const [form] = Form.useForm<Step1FormValues>();
+  const watchedMarkets = Form.useWatch('markets', form);
+  const hasGlobalSelected = Array.isArray(watchedMarkets) && watchedMarkets.includes('GLOBAL');
   const [step, setStep] = useState<'create' | 'extract'>('create');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +124,9 @@ export function BrandQuickCreateModal({
       category: '',
       markets: ['CN'],
       ownedDomainsText: '',
+      globalLocalBrandName: '',
+      globalLocalCategory: '',
+      globalOwnedDomainsText: '',
     });
   }, [form, open]);
 
@@ -155,25 +163,53 @@ export function BrandQuickCreateModal({
       return;
     }
 
+    let globalDomains: string[] = [];
+    if (values.markets.includes('GLOBAL') && values.globalOwnedDomainsText?.trim()) {
+      const checkedGlobal = validateDomainListInput(values.globalOwnedDomainsText);
+      if (checkedGlobal.invalidTokens.length > 0) {
+        setError(`以下海外官网域名格式不正确：${checkedGlobal.invalidTokens.join('、')}`);
+        return;
+      }
+      globalDomains = checkedGlobal.domains;
+    }
+
     const { competitors, invalidDomainRows } = serializeCompetitorRows(competitorRows);
     if (invalidDomainRows.length > 0) {
       setError(`请检查竞品域名格式：${invalidDomainRows.join('；')}`);
       return;
     }
 
+    const globalLocalBrandName = values.globalLocalBrandName?.trim() || undefined;
+    const globalLocalCategory = values.globalLocalCategory?.trim() || undefined;
+    const hasGlobalOverrides = Boolean(
+      values.markets.includes('GLOBAL') &&
+      (globalLocalBrandName || globalLocalCategory || globalDomains.length > 0),
+    );
+
     setSubmitting(true);
     try {
       const payload: CreateBrandInput =
-        aliases.length > 0
+        aliases.length > 0 || hasGlobalOverrides
           ? {
               name: values.name.trim(),
               category: values.category.trim(),
-              markets: values.markets.map((market) => ({
-                market,
-                aliases,
-                ownedDomains,
-                competitors,
-              })),
+              markets: values.markets.map((market) =>
+                market === 'GLOBAL'
+                  ? {
+                      market,
+                      ...(globalLocalBrandName ? { localBrandName: globalLocalBrandName } : {}),
+                      ...(globalLocalCategory ? { localCategory: globalLocalCategory } : {}),
+                      aliases,
+                      ownedDomains: globalDomains.length > 0 ? globalDomains : ownedDomains,
+                      competitors,
+                    }
+                  : {
+                      market,
+                      aliases,
+                      ownedDomains,
+                      competitors,
+                    },
+              ),
               aliases,
               ownedDomains,
               competitors,
@@ -451,6 +487,74 @@ export function BrandQuickCreateModal({
                   placeholder="例如：example.com（多个域名可用逗号分隔）"
                 />
               </Form.Item>
+
+              {hasGlobalSelected ? (
+                <div
+                  data-testid="brand-quick-create-global-fields"
+                  style={{
+                    padding: 12,
+                    marginBottom: 16,
+                    borderRadius: 'var(--gm-radius-sm)',
+                    border: '1px solid var(--gm-line-2)',
+                    background: 'var(--gm-bg-elevated)',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: 'var(--gm-fg-1)',
+                      marginBottom: 8,
+                    }}
+                  >
+                    🌐 海外市场本地化身份（选填 · 建议填写纯英文避免英文种子问句与 Schema 混入中文）
+                  </div>
+                  <Form.Item
+                    label="海外英文品牌名（选填）"
+                    name="globalLocalBrandName"
+                    rules={[
+                      { max: BRAND_NAME_MAX, message: `品牌名称不超过 ${BRAND_NAME_MAX} 字` },
+                    ]}
+                    style={{ marginBottom: 10 }}
+                  >
+                    <Input
+                      aria-label="海外英文品牌名"
+                      maxLength={BRAND_NAME_MAX}
+                      disabled={readOnly || submitting}
+                      placeholder="例如：ExampleBrand（留空默认继承主品牌名）"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="海外英文品类（选填）"
+                    name="globalLocalCategory"
+                    rules={[
+                      {
+                        max: BRAND_CATEGORY_MAX,
+                        message: `所属品类不超过 ${BRAND_CATEGORY_MAX} 字`,
+                      },
+                    ]}
+                    style={{ marginBottom: 10 }}
+                  >
+                    <Input
+                      aria-label="海外英文品类"
+                      maxLength={BRAND_CATEGORY_MAX}
+                      disabled={readOnly || submitting}
+                      placeholder="例如：Portable Power Station / Wireless Earbuds"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    label="海外官网域名（选填）"
+                    name="globalOwnedDomainsText"
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Input
+                      aria-label="海外官网域名"
+                      disabled={readOnly || submitting}
+                      placeholder="例如：example.com（留空默认继承上方官网域名）"
+                    />
+                  </Form.Item>
+                </div>
+              ) : null}
 
               <Form.Item
                 label={`主要竞品（选填，最多 ${BRAND_MAX_COMPETITORS} 家 · ${competitorRows.length} / ${BRAND_MAX_COMPETITORS}）`}

@@ -53,16 +53,18 @@ export function createUndiciStreamTransport(): HttpStreamTransport {
     const pinned = request.pinned[0];
     if (!pinned) throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'unpinned');
     const timeoutMs = Math.max(1_000, request.timeoutMs ?? 60_000);
+    const headersTimeoutMs = Math.max(1_000, request.headersTimeoutMs ?? timeoutMs);
+    const bodyTimeoutMs = Math.max(1_000, request.bodyTimeoutMs ?? timeoutMs);
     const agent = new Agent({
       connect: {
-        timeout: Math.min(10_000, timeoutMs),
+        timeout: Math.min(10_000, headersTimeoutMs),
         servername: isIP(request.url.hostname.replace(/^\[|\]$/g, ''))
           ? undefined
           : request.url.hostname,
         lookup: (_hostname, options, callback) => pinLookup(pinned, options, callback),
       },
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs,
+      headersTimeout: headersTimeoutMs,
+      bodyTimeout: bodyTimeoutMs,
     });
     let closed = false;
     const closeOnce = async (): Promise<void> => {

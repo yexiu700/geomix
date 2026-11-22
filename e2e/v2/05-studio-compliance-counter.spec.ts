@@ -1018,13 +1018,16 @@ v2Describe(
           await checkboxes.nth(1).check();
           const batchBtn = page.getByRole('button', { name: /批量生成|20\s*点/ }).first();
           await expect(batchBtn).toBeEnabled();
+          await batchBtn.click();
+          const confirmBtn = page.getByRole('button', { name: '确认生成' });
+          await expect(confirmBtn).toBeVisible({ timeout: 10_000 });
           const [batchResp] = await Promise.all([
             page.waitForResponse(
               (resp) =>
                 resp.url().includes('/articles/batch') && resp.request().method() === 'POST',
               { timeout: 15_000 },
             ),
-            batchBtn.click(),
+            confirmBtn.click(),
           ]);
           expect([200, 201]).toContain(batchResp.status());
         } finally {

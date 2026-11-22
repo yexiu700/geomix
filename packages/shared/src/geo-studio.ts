@@ -762,7 +762,7 @@ export function stripHtmlToText(html: string): string {
 
 // ==================== 缺失事实显式留槽解析与回填（F14） ====================
 
-export const MISSING_FACT_CAPSULE_RE = /\[待补充[:：]([^\]\n]{1,120})\]/g;
+export const MISSING_FACT_CAPSULE_RE = /\[待补充[:：]([^\]\n]{1,120})\](?:\([^)\n]{1,200}\))?/g;
 
 export type MissingFactSlot = {
   raw: string;
@@ -815,8 +815,118 @@ export function replaceMissingFactSlot(
   return markdown.slice(0, chosen.start) + cleanReplacement + markdown.slice(chosen.end);
 }
 
+function isJsonLdScriptMarker(snippet: string): boolean {
+  const lower = snippet.toLowerCase();
+  return lower.includes('application/ld+json') || lower.includes('ld+json');
+}
+
+function stripDelimitedJsonLdScripts(
+  input: string,
+  openToken: string,
+  closeToken: string,
+  closeTagEnd: string,
+): string {
+  let out = input;
+  for (;;) {
+    const lower = out.toLowerCase();
+    const start = lower.indexOf(openToken);
+    if (start === -1) break;
+    const tagEnd = lower.indexOf(closeTagEnd, start + openToken.length);
+    if (tagEnd === -1) {
+      // Truncated unclosed <script ...application/ld+json... at tail
+      if (isJsonLdScriptMarker(lower.slice(start))) {
+        out = out.slice(0, start);
+      }
+      break;
+    }
+    const openTag = lower.slice(start, tagEnd + closeTagEnd.length);
+    const closeStart = lower.indexOf(closeToken, tagEnd + closeTagEnd.length);
+    if (!isJsonLdScriptMarker(openTag)) {
+      // Check if body inside script is JSON-LD even when type attribute was omitted/malformed
+      const bodyPreview =
+        closeStart === -1
+          ? lower.slice(tagEnd + closeTagEnd.length, tagEnd + closeTagEnd.length + 240)
+          : lower.slice(tagEnd + closeTagEnd.length, closeStart);
+      if (!(bodyPreview.includes('"@context"') && bodyPreview.includes('"@type"'))) {
+        // Not a JSON-LD script block: advance past this occurrence by scanning suffix recursively
+        const head = out.slice(0, tagEnd + closeTagEnd.length);
+        const tail = stripDelimitedJsonLdScripts(
+          out.slice(tagEnd + closeTagEnd.length),
+          openToken,
+          closeToken,
+          closeTagEnd,
+        );
+        return head + tail;
+      }
+    }
+    if (closeStart === -1) {
+      out = out.slice(0, start);
+      break;
+    }
+    const closeEnd = lower.indexOf(closeTagEnd, closeStart + closeToken.length);
+    if (closeEnd === -1) {
+      out = out.slice(0, start);
+      break;
+    }
+    out = out.slice(0, start) + out.slice(closeEnd + closeTagEnd.length);
+  }
+  return out;
+}
+
 /**
- * 正文后处理：去开头客套话与重复一级标题、去手机号/固话/微信号/外部裸网址（保留 Markdown 图片链接）、
+ * 线性 O(N) 剥离模型在 Markdown 正文中误输出的 `<script type="application/ld+json">`、
+ * HTML 实体转义脚本块，以及被 fenced code block 包裹的 JSON-LD 代码块（Issue #339）。
+ */
+export function stripInlineJsonLdBlocks(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const keptLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? '';
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      const info = trimmed.slice(3).trim().toLowerCase();
+      const bodyLines: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !(lines[j] ?? '').trim().startsWith('```')) {
+        bodyLines.push(lines[j] ?? '');
+        j += 1;
+      }
+      const bodyJoined = bodyLines.join('\n');
+      const bodyLower = bodyJoined.toLowerCase();
+      const isJsonLdFence =
+        info === 'json-ld' ||
+        info === 'jsonld' ||
+        info === 'ld+json' ||
+        isJsonLdScriptMarker(bodyLower) ||
+        ((info === 'json' || info === 'html' || info === '') &&
+          bodyLower.includes('"@context"') &&
+          (bodyLower.includes('"@type"') || bodyLower.includes('"@graph"')));
+
+      if (isJsonLdFence) {
+        i = j < lines.length ? j : lines.length - 1;
+        continue;
+      }
+      keptLines.push(line);
+      for (const bLine of bodyLines) keptLines.push(bLine);
+      if (j < lines.length) keptLines.push(lines[j]!);
+      i = j < lines.length ? j : lines.length - 1;
+      continue;
+    }
+    keptLines.push(line);
+  }
+
+  let out = keptLines.join('\n');
+  out = stripDelimitedJsonLdScripts(out, '<script', '</script', '>');
+  out = stripDelimitedJsonLdScripts(out, '&lt;script', '&lt;/script', '&gt;');
+  // Remove standalone orphaned heading right before stripped trailing JSON-LD block
+  out = out.replace(/\n+(?:#{2,4}\s*(?:JSON-LD|Schema\.org|Structured Data)[^\n]*)\s*$/i, '');
+  return out;
+}
+
+/**
+ * 正文后处理：去开头客套话与重复一级标题、去正文内联误输出的 JSON-LD 脚本块、
+ * 去手机号/固话/微信号/外部裸网址（保留 Markdown 图片链接）、
  * 按市场补齐二级标题与 FAQ、转白名单 HTML。
  */
 export function postProcessArticleMarkdown(
@@ -834,6 +944,7 @@ export function postProcessArticleMarkdown(
   if (fenced) {
     md = fenced[1]!.trim();
   }
+  md = stripInlineJsonLdBlocks(md).trim();
   for (let i = 0; i < 3; i += 1) {
     const next = md.replace(PLEASANTRY_LINE, '').replace(LEADING_H1, '').trim();
     if (next === md) break;

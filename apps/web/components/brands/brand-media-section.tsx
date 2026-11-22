@@ -200,7 +200,7 @@ export function BrandMediaSection({
             <Tag>双市场共享（CN / GLOBAL）</Tag>
             {storage ? (
               <SignalPill tone="neutral">
-                已用 {storage.usedText} / {storage.limitText}
+                租户共享存储配额：已用 {storage.usedText} / {storage.limitText}
               </SignalPill>
             ) : null}
           </div>

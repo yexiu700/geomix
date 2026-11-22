@@ -5,6 +5,7 @@ import {
   BRAND_MAX_COMPETITORS,
   BRAND_NAME_MAX,
   GEO_MARKET_LABELS,
+  containsCjk,
   normalizeBrandDomain,
   type BrandMarketRecord,
   type BrandRecord,
@@ -60,6 +61,7 @@ export function BrandIdentitySection({
   const [localBrandName, setLocalBrandName] = useState(
     activeBrandMarket?.localBrandName ?? brand.name,
   );
+  const [localCategory, setLocalCategory] = useState(activeBrandMarket?.localCategory ?? '');
   const [aliases, setAliases] = useState<string[]>(activeBrandMarket?.aliases ?? []);
   const [aliasInput, setAliasInput] = useState('');
   const [ownedDomains, setOwnedDomains] = useState<string[]>(activeBrandMarket?.ownedDomains ?? []);
@@ -80,6 +82,7 @@ export function BrandIdentitySection({
 
   useEffect(() => {
     setLocalBrandName(activeBrandMarket?.localBrandName ?? brand.name);
+    setLocalCategory(activeBrandMarket?.localCategory ?? '');
     setAliases(activeBrandMarket?.aliases ?? []);
     setAliasInput('');
     setOwnedDomains(activeBrandMarket?.ownedDomains ?? []);
@@ -198,6 +201,7 @@ export function BrandIdentitySection({
         activeMarket,
         {
           localBrandName: trimmedLocal,
+          localCategory: localCategory.trim() || null,
           aliases,
           ownedDomains,
           competitors,
@@ -344,6 +348,20 @@ export function BrandIdentitySection({
 
           {activeBrandMarket ? (
             <>
+              {activeMarket === 'GLOBAL' &&
+              (containsCjk(localBrandName) ||
+                (!localCategory.trim() && containsCjk(brand.category)) ||
+                ownedDomains.some((d) => d.endsWith('.cn'))) ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  data-testid="global-localization-guide"
+                  style={{ marginBottom: 12 }}
+                  message="建议完善海外市场英文身份"
+                  description="检测到海外市场仍包含中文品牌名、未设置英文品类或使用 .cn 域名，建议补全纯英文当地品牌名、当地品类与海外官网域名，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。"
+                />
+              ) : null}
+
               <div className="gm-brand-field">
                 <label htmlFor="gm-market-local-name">当地品牌名</label>
                 <Input
@@ -352,7 +370,27 @@ export function BrandIdentitySection({
                   maxLength={BRAND_NAME_MAX}
                   value={localBrandName}
                   disabled={readOnly || savingMarket}
+                  placeholder={activeMarket === 'GLOBAL' ? '例如：ExampleBrand' : '例如：绿联'}
                   onChange={(event) => setLocalBrandName(event.target.value)}
+                />
+              </div>
+
+              <div className="gm-brand-field">
+                <label htmlFor="gm-market-local-category">
+                  当地品类名称（用于该市场种子问句、Schema 与 llms.txt）
+                </label>
+                <Input
+                  id="gm-market-local-category"
+                  aria-label="当地品类名称"
+                  maxLength={BRAND_CATEGORY_MAX}
+                  value={localCategory}
+                  disabled={readOnly || savingMarket}
+                  placeholder={
+                    activeMarket === 'GLOBAL'
+                      ? '例如：Home NAS / Portable Power Station（留空将自动回退英文品类）'
+                      : `留空默认继承主档案品类（${brand.category}）`
+                  }
+                  onChange={(event) => setLocalCategory(event.target.value)}
                 />
               </div>
 

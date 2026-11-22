@@ -392,8 +392,11 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
     const timeoutMs = Math.min(this.config.timeoutMs, DEFAULT_VISIBILITY_HEALTH_TIMEOUT_MS);
 
     let lastOutcome: ParsedRemoteHealth = { kind: 'down' };
+    let sawServiceOk = false;
 
-    for (const url of urls) {
+    for (let index = 0; index < urls.length; index += 1) {
+      const url = urls[index]!;
+      const hasMore = index + 1 < urls.length;
       try {
         const response = await requestOnce({
           url,
@@ -406,7 +409,10 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
           allowlist: this.config.ssrfAllowlist,
         });
 
-        if (response.status === 404 && urls.length > 1) {
+        if (
+          (response.status === 404 || response.status === 401 || response.status === 403) &&
+          hasMore
+        ) {
           continue;
         }
         if (response.status >= 200 && response.status < 300) {
@@ -419,17 +425,37 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
               payload = { status: 'ok' };
             }
           }
-          lastOutcome = parseRemoteHealthPayload(payload);
-          break;
+          const parsed = parseRemoteHealthPayload(payload);
+          if (parsed.kind === 'engines') {
+            lastOutcome = parsed;
+            break;
+          }
+          if (parsed.kind === 'down') {
+            lastOutcome = parsed;
+            break;
+          }
+          // Service-level ok_all without per-engine details: keep probing if more specific endpoints remain.
+          sawServiceOk = true;
+          lastOutcome = parsed;
+          if (!hasMore) {
+            break;
+          }
+          continue;
         }
         lastOutcome = { kind: 'down' };
-        break;
+        if (!hasMore) {
+          break;
+        }
       } catch (error) {
         this.logger.warn(
           `remote visibility health probe failed (${url}): ${error instanceof Error ? error.message : 'unknown'}`,
         );
         lastOutcome = { kind: 'down' };
       }
+    }
+
+    if (lastOutcome.kind === 'down' && sawServiceOk) {
+      lastOutcome = { kind: 'ok_all' };
     }
 
     let next: PersistedEngineHealth;
@@ -535,9 +561,12 @@ export function resolveRemoteHealthUrls(config: VisibilityConfig): string[] {
     return [];
   }
   try {
-    const healthUrl = new URL('/health', config.remoteUrl).toString();
-    const enginesUrl = new URL('/v1/engines', config.remoteUrl).toString();
-    return healthUrl === enginesUrl ? [healthUrl] : [healthUrl, enginesUrl];
+    const candidates = [
+      new URL('/v1/engines', config.remoteUrl).toString(),
+      new URL('/ready', config.remoteUrl).toString(),
+      new URL('/health', config.remoteUrl).toString(),
+    ];
+    return Array.from(new Set(candidates));
   } catch {
     return [];
   }
@@ -570,11 +599,31 @@ export function parseRemoteHealthPayload(payload: unknown): ParsedRemoteHealth {
     dataNode?.channels,
   ];
 
+  let parsedPrimary: Partial<Record<VisibilityEngineKey, boolean>> | null = null;
   for (const field of candidateFields) {
     const parsed = parseEngineCollection(field);
     if (parsed) {
-      return { kind: 'engines', availability: parsed };
+      parsedPrimary = parsed;
+      break;
     }
+  }
+
+  const plannedFields = [root.plannedEngines, dataNode?.plannedEngines];
+  const plannedKeys = new Set<VisibilityEngineKey>();
+  for (const field of plannedFields) {
+    for (const key of parseEngineKeyList(field)) {
+      plannedKeys.add(key);
+    }
+  }
+
+  if (parsedPrimary || plannedKeys.size > 0) {
+    const merged: Partial<Record<VisibilityEngineKey, boolean>> = { ...(parsedPrimary ?? {}) };
+    for (const key of plannedKeys) {
+      if (merged[key] !== true) {
+        merged[key] = false;
+      }
+    }
+    return { kind: 'engines', availability: merged };
   }
 
   return { kind: 'ok_all' };
@@ -593,6 +642,33 @@ function isExplicitlyUnhealthy(obj: Record<string, unknown>): boolean {
     status === 'fail' ||
     status === 'failed'
   );
+}
+
+function parseEngineKeyList(raw: unknown): VisibilityEngineKey[] {
+  const keys: VisibilityEngineKey[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const key = item.trim().toLowerCase();
+        if (isVisibilityEngine(key)) keys.push(key);
+        continue;
+      }
+      if (item && typeof item === 'object') {
+        const rec = item as Record<string, unknown>;
+        const rawKey = rec.key ?? rec.engine ?? rec.name ?? rec.id;
+        if (typeof rawKey === 'string') {
+          const key = rawKey.trim().toLowerCase();
+          if (isVisibilityEngine(key)) keys.push(key);
+        }
+      }
+    }
+  } else if (raw && typeof raw === 'object') {
+    for (const rawKey of Object.keys(raw as Record<string, unknown>)) {
+      const key = rawKey.trim().toLowerCase();
+      if (isVisibilityEngine(key)) keys.push(key);
+    }
+  }
+  return keys;
 }
 
 function parseEngineCollection(raw: unknown): Partial<Record<VisibilityEngineKey, boolean>> | null {
@@ -664,6 +740,11 @@ function interpretEngineValue(value: unknown): boolean {
     if (typeof rec.healthy === 'boolean') return rec.healthy;
     if (typeof rec.enabled === 'boolean') return rec.enabled;
     if (typeof rec.ok === 'boolean') return rec.ok;
+    if (typeof rec.configured === 'boolean') {
+      if (!rec.configured) return false;
+      if (typeof rec.status === 'string') return interpretEngineValue(rec.status);
+      return true;
+    }
     if (typeof rec.status === 'string') return interpretEngineValue(rec.status);
   }
   return false;

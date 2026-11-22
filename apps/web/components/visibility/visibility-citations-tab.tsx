@@ -238,7 +238,7 @@ export function VisibilityCitationsTab({
       {
         title: '',
         key: 'select',
-        width: 44,
+        width: 40,
         render: (_v, item) => (
           <Checkbox
             aria-label={`选择拆解词-${item.query}`}
@@ -257,14 +257,14 @@ export function VisibilityCitationsTab({
         title: '频次',
         dataIndex: 'frequency',
         key: 'frequency',
-        width: 88,
+        width: 60,
         render: (freq: number) => <span className="gm-num">{freq}</span>,
       },
       {
         title: '品牌提及覆盖率',
         dataIndex: 'brandMentionedPct',
         key: 'brandMentionedPct',
-        width: 132,
+        width: 112,
         render: (pct: number | undefined) => {
           const safePct = typeof pct === 'number' && Number.isFinite(pct) ? pct : 0;
           return (
@@ -284,14 +284,14 @@ export function VisibilityCitationsTab({
         title: '涉及引擎',
         dataIndex: 'engines',
         key: 'engines',
-        width: 160,
+        width: 126,
         render: (engines) => <EngineChipList engines={engines} max={2} />,
       },
       {
         title: '来源监测问题',
         dataIndex: 'sourcePrompts',
         key: 'sourcePrompts',
-        width: 220,
+        width: 162,
         render: (prompts: string[]) => <TruncText text={prompts[0] ?? '—'} lines={1} />,
       },
     ],

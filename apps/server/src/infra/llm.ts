@@ -3,6 +3,8 @@ import { Logger } from '@nestjs/common';
 import {
   FAKE_MARK,
   LLM_MAX_RETRIES,
+  LLM_STREAM_IDLE_TIMEOUT_MS,
+  LLM_STREAM_TIMEOUT_MS,
   LLM_TIMEOUT_MS,
   QUALITY_LLM_SCENES,
   estimateLlmCallCostMicro,
@@ -87,6 +89,8 @@ export type LlmStreamCallbacks = {
 export type LlmStreamCompleteInput = LlmCompleteInput &
   LlmStreamCallbacks & {
     allowFakeFallback?: boolean;
+    /** 建连/首字节超时与流式分片间空闲超时（毫秒）；与整条流上限 timeoutMs 独立。 */
+    idleTimeoutMs?: number;
   };
 
 type ProviderCall = {
@@ -96,6 +100,7 @@ type ProviderCall = {
   temperature: number;
   maxTokens: number;
   timeoutMs?: number;
+  idleTimeoutMs?: number;
   signal: AbortSignal;
   disableThinking?: boolean;
 };
@@ -359,205 +364,266 @@ export class OpenAiLlm implements LlmProvider {
     onDelta: (chunk: string) => Promise<void>,
   ): Promise<LlmCompletion> {
     const requestTimeoutMs = input.timeoutMs ?? this.timeoutMs;
-    const maxBytes = 2_000_000;
-    const send = (payload: Record<string, unknown>) =>
-      requestStream({
-        url,
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          'content-type': 'application/json',
-          accept: 'text/event-stream',
-        },
-        body: JSON.stringify(payload),
-        timeoutMs: requestTimeoutMs,
-        maxBytes,
-        signal: input.signal,
-        resolver: this.resolver,
-        streamTransport: this.streamTransport,
-      });
-
-    const isReasoner = /reasoner|thinking|qwq|\br1\b/i.test(input.model);
-    const effectiveMaxTokens = isReasoner
-      ? Math.max(input.maxTokens, requestTimeoutMs <= 25_000 ? 3000 : 4096)
-      : input.maxTokens;
-    const basePayload: Record<string, unknown> = {
-      model: input.model,
-      messages: input.messages,
-      temperature: input.temperature,
-      max_tokens: effectiveMaxTokens,
-      stream: true,
-    };
-    const streamOptionsPayload: Record<string, unknown> = {
-      ...basePayload,
-      stream_options: { include_usage: true },
-    };
-    const thinkingHint = input.disableThinking
-      ? resolveDisableThinkingPayload(this.name, this.config.baseUrl, input.model)
-      : undefined;
-
-    let response = await send(
-      thinkingHint ? { ...streamOptionsPayload, ...thinkingHint } : streamOptionsPayload,
+    const idleTimeoutMs = Math.min(
+      requestTimeoutMs,
+      Math.max(1, input.idleTimeoutMs ?? requestTimeoutMs),
     );
+    const maxBytes = 2_000_000;
+    const streamCtrl = new AbortController();
+    let timedOutByIdleOrTtfb = false;
 
-    if (response.status === 400 || response.status === 422) {
-      await response.close();
-      response = await send(basePayload);
+    const onParentAbort = () => {
+      streamCtrl.abort(input.signal.reason);
+    };
+    if (input.signal.aborted) {
+      streamCtrl.abort(input.signal.reason);
+    } else {
+      input.signal.addEventListener('abort', onParentAbort, { once: true });
     }
 
-    if (response.status === 400 || response.status === 422) {
-      let errText = '';
+    const withIdleGuard = async <T>(work: () => Promise<T>, budgetMs: number): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        errText = await readStreamTextBounded(response, 64_000);
+        return await Promise.race([
+          work(),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => {
+              timedOutByIdleOrTtfb = true;
+              const timeoutErr = new ProviderError(
+                PROVIDER_KIND.TIMEOUT,
+                '外部服务超时',
+                'timeout',
+              );
+              streamCtrl.abort(timeoutErr);
+              reject(timeoutErr);
+            }, budgetMs);
+          }),
+        ]);
       } finally {
-        await response.close();
+        if (timer !== undefined) clearTimeout(timer);
       }
-      if (isUnsupportedParamError(errText)) {
-        response = await send({
-          model: input.model,
-          messages: input.messages,
-          stream: true,
-        });
-      } else {
-        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
-      }
-    }
+    };
+
+    const send = (payload: Record<string, unknown>) =>
+      withIdleGuard(
+        () =>
+          requestStream({
+            url,
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              'content-type': 'application/json',
+              accept: 'text/event-stream',
+            },
+            body: JSON.stringify(payload),
+            timeoutMs: requestTimeoutMs,
+            idleTimeoutMs,
+            maxBytes,
+            signal: streamCtrl.signal,
+            resolver: this.resolver,
+            streamTransport: this.streamTransport,
+          }),
+        idleTimeoutMs,
+      );
 
     try {
-      if (response.status >= 300 && response.status < 400) {
-        throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'redirect_refused');
-      }
-      if (response.status === 401 || response.status === 403) {
-        throw new ProviderError(PROVIDER_KIND.AUTH, '外部服务拒绝了密钥', 'upstream_auth');
-      }
-      if (response.status === 429) {
-        throw new ProviderError(PROVIDER_KIND.RATE_LIMIT, '外部服务繁忙', 'rate_limit');
-      }
-      if (response.status === 408) {
-        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
-      }
-      if (response.status >= 500) {
-        throw new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'upstream_5xx');
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
+      const isReasoner = /reasoner|thinking|qwq|\br1\b/i.test(input.model);
+      const effectiveMaxTokens = isReasoner
+        ? Math.max(input.maxTokens, requestTimeoutMs <= 25_000 ? 3000 : 4096)
+        : input.maxTokens;
+      const basePayload: Record<string, unknown> = {
+        model: input.model,
+        messages: input.messages,
+        temperature: input.temperature,
+        max_tokens: effectiveMaxTokens,
+        stream: true,
+      };
+      const streamOptionsPayload: Record<string, unknown> = {
+        ...basePayload,
+        stream_options: { include_usage: true },
+      };
+      const thinkingHint = input.disableThinking
+        ? resolveDisableThinkingPayload(this.name, this.config.baseUrl, input.model)
+        : undefined;
+
+      let response = await send(
+        thinkingHint ? { ...streamOptionsPayload, ...thinkingHint } : streamOptionsPayload,
+      );
+
+      if (response.status === 400 || response.status === 422) {
+        await response.close();
+        response = await send(basePayload);
       }
 
-      const contentType = Object.entries(response.headers)
-        .find(([k]) => k.toLowerCase() === 'content-type')?.[1]
-        ?.toLowerCase();
+      if (response.status === 400 || response.status === 422) {
+        let errText = '';
+        try {
+          errText = await readStreamTextBounded(response, 64_000);
+        } finally {
+          await response.close();
+        }
+        if (isUnsupportedParamError(errText)) {
+          response = await send({
+            model: input.model,
+            messages: input.messages,
+            stream: true,
+          });
+        } else {
+          throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
+        }
+      }
 
-      if (contentType && contentType.includes('application/json')) {
-        const rawBody = await readStreamTextBounded(response, maxBytes);
-        const parsed = parseUpstreamCompletion(rawBody, promptText, {
-          allowReasoningFallback: !input.disableThinking,
-          stripAllThinking: Boolean(input.disableThinking),
+      try {
+        if (response.status >= 300 && response.status < 400) {
+          throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'redirect_refused');
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new ProviderError(PROVIDER_KIND.AUTH, '外部服务拒绝了密钥', 'upstream_auth');
+        }
+        if (response.status === 429) {
+          throw new ProviderError(PROVIDER_KIND.RATE_LIMIT, '外部服务繁忙', 'rate_limit');
+        }
+        if (response.status === 408) {
+          throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+        }
+        if (response.status >= 500) {
+          throw new ProviderError(PROVIDER_KIND.UPSTREAM, '外部服务暂时不可用', 'upstream_5xx');
+        }
+        if (response.status < 200 || response.status >= 300) {
+          throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'status');
+        }
+
+        const contentType = Object.entries(response.headers)
+          .find(([k]) => k.toLowerCase() === 'content-type')?.[1]
+          ?.toLowerCase();
+
+        if (contentType && contentType.includes('application/json')) {
+          const rawBody = await withIdleGuard(
+            () => readStreamTextBounded(response, maxBytes),
+            idleTimeoutMs,
+          );
+          const parsed = parseUpstreamCompletion(rawBody, promptText, {
+            allowReasoningFallback: !input.disableThinking,
+            stripAllThinking: Boolean(input.disableThinking),
+          });
+          if (!input.signal.aborted && !streamCtrl.signal.aborted) {
+            await onDelta(parsed.text);
+          }
+          return {
+            provider: this.name,
+            model: input.model,
+            fake: false,
+            text: parsed.text,
+            tokensIn: parsed.tokensIn,
+            tokensOut: parsed.tokensOut,
+          };
+        }
+
+        if (!response.body) {
+          throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了空响应流', 'empty_stream');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let lineBuffer = '';
+        let totalBytes = 0;
+        const contentChunks: string[] = [];
+        let promptTokens: number | undefined;
+        let completionTokens: number | undefined;
+
+        const processLine = async (rawLine: string) => {
+          const trimmed = rawLine.trim();
+          if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') return;
+          let frame: unknown;
+          try {
+            frame = JSON.parse(payload) as unknown;
+          } catch {
+            return;
+          }
+          const parsed = upstreamEnvelopeSchema.safeParse(frame);
+          if (!parsed.success) return;
+          const choice = parsed.data.choices[0];
+          if (choice) {
+            const deltaText =
+              flattenContent(choice.delta?.content) ||
+              flattenContent(choice.message?.content) ||
+              (choice.text ?? '');
+            if (deltaText.length > 0) {
+              contentChunks.push(deltaText);
+              await onDelta(deltaText);
+            }
+          }
+          if (parsed.data.usage) {
+            promptTokens =
+              nonNegativeInt(parsed.data.usage.prompt_tokens ?? parsed.data.usage.input_tokens) ??
+              promptTokens;
+            completionTokens =
+              nonNegativeInt(
+                parsed.data.usage.completion_tokens ?? parsed.data.usage.output_tokens,
+              ) ?? completionTokens;
+          }
+        };
+
+        try {
+          for (;;) {
+            if (timedOutByIdleOrTtfb) {
+              throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+            }
+            if (input.signal.aborted) {
+              throw isSignalTimeoutReason(input.signal.reason)
+                ? new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout')
+                : new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
+            }
+            const step = await withIdleGuard(() => reader.read(), idleTimeoutMs);
+            if (step.done) break;
+            totalBytes += step.value.byteLength;
+            if (totalBytes > maxBytes) {
+              throw new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body');
+            }
+            lineBuffer += decoder.decode(step.value, { stream: true });
+            const lines = lineBuffer.split(/\r?\n/);
+            lineBuffer = lines.pop() ?? '';
+            for (const line of lines) {
+              await processLine(line);
+            }
+          }
+          lineBuffer += decoder.decode();
+          if (lineBuffer.trim()) {
+            for (const line of lineBuffer.split(/\r?\n/)) {
+              await processLine(line);
+            }
+          }
+        } catch (err) {
+          if (timedOutByIdleOrTtfb) {
+            throw new ProviderError(PROVIDER_KIND.TIMEOUT, '外部服务超时', 'timeout');
+          }
+          throw err;
+        } finally {
+          await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
+        }
+
+        const text = stripThinkingTags(contentChunks.join('').trim(), {
+          stripAll: Boolean(input.disableThinking),
         });
-        if (!input.signal.aborted) {
-          await onDelta(parsed.text);
+        if (!text) {
+          throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
         }
         return {
           provider: this.name,
           model: input.model,
           fake: false,
-          text: parsed.text,
-          tokensIn: parsed.tokensIn,
-          tokensOut: parsed.tokensOut,
+          text,
+          tokensIn: promptTokens ?? countTokens(promptText),
+          tokensOut: completionTokens ?? countTokens(text),
         };
-      }
-
-      if (!response.body) {
-        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了空响应流', 'empty_stream');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let lineBuffer = '';
-      let totalBytes = 0;
-      const contentChunks: string[] = [];
-      let promptTokens: number | undefined;
-      let completionTokens: number | undefined;
-
-      const processLine = async (rawLine: string) => {
-        const trimmed = rawLine.trim();
-        if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return;
-        const payload = trimmed.slice(5).trim();
-        if (!payload || payload === '[DONE]') return;
-        let frame: unknown;
-        try {
-          frame = JSON.parse(payload) as unknown;
-        } catch {
-          return;
-        }
-        const parsed = upstreamEnvelopeSchema.safeParse(frame);
-        if (!parsed.success) return;
-        const choice = parsed.data.choices[0];
-        if (choice) {
-          const deltaText =
-            flattenContent(choice.delta?.content) ||
-            flattenContent(choice.message?.content) ||
-            (choice.text ?? '');
-          if (deltaText.length > 0) {
-            contentChunks.push(deltaText);
-            await onDelta(deltaText);
-          }
-        }
-        if (parsed.data.usage) {
-          promptTokens =
-            nonNegativeInt(parsed.data.usage.prompt_tokens ?? parsed.data.usage.input_tokens) ??
-            promptTokens;
-          completionTokens =
-            nonNegativeInt(
-              parsed.data.usage.completion_tokens ?? parsed.data.usage.output_tokens,
-            ) ?? completionTokens;
-        }
-      };
-
-      try {
-        for (;;) {
-          if (input.signal.aborted) {
-            throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
-          }
-          const step = await reader.read();
-          if (step.done) break;
-          totalBytes += step.value.byteLength;
-          if (totalBytes > maxBytes) {
-            throw new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body');
-          }
-          lineBuffer += decoder.decode(step.value, { stream: true });
-          const lines = lineBuffer.split(/\r?\n/);
-          lineBuffer = lines.pop() ?? '';
-          for (const line of lines) {
-            await processLine(line);
-          }
-        }
-        lineBuffer += decoder.decode();
-        if (lineBuffer.trim()) {
-          for (const line of lineBuffer.split(/\r?\n/)) {
-            await processLine(line);
-          }
-        }
       } finally {
-        await reader.cancel().catch(() => undefined);
-        reader.releaseLock();
+        await response.close();
       }
-
-      const text = stripThinkingTags(contentChunks.join('').trim(), {
-        stripAll: Boolean(input.disableThinking),
-      });
-      if (!text) {
-        throw new ProviderError(PROVIDER_KIND.CONTRACT, '外部服务返回了无法识别的结果', 'schema');
-      }
-      return {
-        provider: this.name,
-        model: input.model,
-        fake: false,
-        text,
-        tokensIn: promptTokens ?? countTokens(promptText),
-        tokensOut: completionTokens ?? countTokens(text),
-      };
     } finally {
-      await response.close();
+      input.signal.removeEventListener('abort', onParentAbort);
     }
   }
 }
@@ -568,7 +634,13 @@ export class LlmRouter {
   constructor(
     private readonly route: LlmRouteConfig,
     private readonly providers: Record<string, LlmProvider>,
-    private readonly options: { maxRetries: number; timeoutMs: number; retryDelayMs: number },
+    private readonly options: {
+      maxRetries: number;
+      timeoutMs: number;
+      retryDelayMs: number;
+      streamTimeoutMs?: number;
+      streamIdleTimeoutMs?: number;
+    },
   ) {}
 
   usesFakePrimary(scene: LlmScene): boolean {
@@ -745,7 +817,10 @@ export class LlmRouter {
     if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192) {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, 'maxTokens 超出范围', 'max_tokens');
     }
-    const effectiveTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const effectiveTimeoutMs =
+      input.timeoutMs ?? this.options.streamTimeoutMs ?? this.options.timeoutMs;
+    const effectiveIdleTimeoutMs =
+      input.idleTimeoutMs ?? this.options.streamIdleTimeoutMs ?? effectiveTimeoutMs;
     const effectiveMaxRetries = input.maxRetries ?? this.options.maxRetries;
     const providerConfig = this.route.route[input.scene];
     const baseChain = [providerConfig.primary, ...providerConfig.backup];
@@ -806,6 +881,7 @@ export class LlmRouter {
               temperature,
               maxTokens,
               timeoutMs: effectiveTimeoutMs,
+              idleTimeoutMs: effectiveIdleTimeoutMs,
               signal: input.signal,
               disableThinking: input.disableThinking,
               onDelta: wrappedOnDelta,
@@ -855,13 +931,20 @@ export class LlmRouter {
     if (input.signal?.aborted) {
       throw new ProviderError(PROVIDER_KIND.CANCELLED, '请求已取消', 'cancelled');
     }
-    const callTimeoutMs = input.timeoutMs ?? this.options.timeoutMs;
+    const callTimeoutMs = input.timeoutMs ?? this.options.streamTimeoutMs ?? this.options.timeoutMs;
+    const callIdleTimeoutMs =
+      input.idleTimeoutMs ?? this.options.streamIdleTimeoutMs ?? callTimeoutMs;
     const timeout = AbortSignal.timeout(callTimeoutMs);
     const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
     try {
       if (provider.streamComplete) {
         const result = completionSchema.parse(
-          await provider.streamComplete({ ...input, timeoutMs: callTimeoutMs, signal }),
+          await provider.streamComplete({
+            ...input,
+            timeoutMs: callTimeoutMs,
+            idleTimeoutMs: callIdleTimeoutMs,
+            signal,
+          }),
         );
         return result;
       }
@@ -949,11 +1032,26 @@ export class LlmService {
       resolver?: DnsResolver;
       retryDelayMs?: number;
       timeoutMs?: number;
+      streamTimeoutMs?: number;
+      streamIdleTimeoutMs?: number;
       costSink?: LlmCostSink;
     },
   ): LlmService {
     const route = readLlmDocument(env);
     const timeoutMs = overrides?.timeoutMs ?? positive(env.LLM_TIMEOUT_MS, LLM_TIMEOUT_MS);
+    const streamTimeoutMs =
+      overrides?.streamTimeoutMs ??
+      (overrides?.timeoutMs !== undefined
+        ? overrides.timeoutMs
+        : positive(env.LLM_STREAM_TIMEOUT_MS, Math.max(timeoutMs, LLM_STREAM_TIMEOUT_MS)));
+    const streamIdleTimeoutMs =
+      overrides?.streamIdleTimeoutMs ??
+      (overrides?.timeoutMs !== undefined
+        ? overrides.timeoutMs
+        : positive(
+            env.LLM_STREAM_IDLE_TIMEOUT_MS,
+            Math.max(timeoutMs, LLM_STREAM_IDLE_TIMEOUT_MS),
+          ));
     const rates = parseLlmCostRates(env.LLM_COST_RATES_JSON);
     const providers: Record<string, LlmProvider> = {};
     for (const [name, config] of Object.entries(route.providers)) {
@@ -997,6 +1095,8 @@ export class LlmService {
       new LlmRouter(route, providers, {
         maxRetries: LLM_MAX_RETRIES,
         timeoutMs,
+        streamTimeoutMs,
+        streamIdleTimeoutMs,
         retryDelayMs: overrides?.retryDelayMs ?? 50,
       }),
       new MemoryCostLedger(),
@@ -1536,6 +1636,18 @@ function flattenContent(
 function nonNegativeInt(value: number | null | undefined): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return Math.floor(value);
+}
+
+function isSignalTimeoutReason(reason: unknown): boolean {
+  if (reason instanceof ProviderError) {
+    return reason.kind === PROVIDER_KIND.TIMEOUT;
+  }
+  return (
+    typeof reason === 'object' &&
+    reason !== null &&
+    'name' in reason &&
+    reason.name === 'TimeoutError'
+  );
 }
 
 function positive(raw: string | undefined, fallback: number): number {

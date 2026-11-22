@@ -54,6 +54,7 @@ describe('schema migrations contract', () => {
       '20261118130000_rewrite_optional_gallery',
       '20261118150000_rewrite_batch_brand',
       '20261120100000_geomix_v2_domain_schema',
+      '20261122090000_brand_market_local_category',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),

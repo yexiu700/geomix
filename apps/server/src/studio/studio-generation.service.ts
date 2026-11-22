@@ -5,10 +5,13 @@ import {
   GEO_RECIPE_LABELS,
   GEO_REWRITE_ACTION_LABELS,
   GEO_TARGET_FORMAT_LABELS,
+  LLM_STREAM_IDLE_TIMEOUT_MS,
+  LLM_STREAM_TIMEOUT_MS,
   cleanTitleText,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
   postProcessArticleMarkdown,
+  resolveGlobalCategoryLabel,
   type GeoComplianceFlag,
   type GeoEvaluationResult,
   type GeoMarket,
@@ -31,6 +34,12 @@ import {
 import { ProviderError, PROVIDER_KIND } from '../infra/provider-error';
 import { buildFakeRewriteSection, streamFakeGeoArticle } from './studio-fake-draft';
 
+function readPositiveEnvMs(raw: string | undefined, fallback: number): number {
+  if (!raw || raw.trim() === '') return fallback;
+  const parsed = Number(raw.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export type StudioBrandContext = {
   id: string;
   name: string;
@@ -43,6 +52,7 @@ export type StudioMarketContext = {
   locale: string;
   region: string;
   localBrandName: string;
+  localCategory?: string | null;
   aliases: readonly string[];
   ownedDomains: readonly string[];
   competitors: readonly string[];
@@ -158,7 +168,10 @@ export class StudioGenerationService {
         recipe: params.recipe,
         targetFormat: params.targetFormat,
         localBrandName: params.market.localBrandName,
-        category: params.brand.category,
+        category:
+          params.market.market === 'GLOBAL'
+            ? resolveGlobalCategoryLabel(params.brand.category, params.market.localCategory)
+            : params.market.localCategory?.trim() || params.brand.category,
         competitors: params.market.competitors,
         targetPrompt: params.targetPrompt,
         title: params.title,
@@ -193,11 +206,21 @@ export class StudioGenerationService {
       });
     } else {
       const messages = buildGeoWriteMessages(params);
+      const streamTimeoutMs = readPositiveEnvMs(
+        process.env.LLM_STREAM_TIMEOUT_MS,
+        LLM_STREAM_TIMEOUT_MS,
+      );
+      const streamIdleTimeoutMs = readPositiveEnvMs(
+        process.env.LLM_STREAM_IDLE_TIMEOUT_MS,
+        LLM_STREAM_IDLE_TIMEOUT_MS,
+      );
       const result = await this.llm.streamComplete({
         tenantId: params.tenantId,
         scene: 'geo_write',
         messages,
         idempotencyKey: `geo_article:${params.articleId}`,
+        timeoutMs: streamTimeoutMs,
+        idleTimeoutMs: streamIdleTimeoutMs,
         signal: params.signal,
         allowFakeFallback: isFakeOutputAllowed({
           llm: this.llm,
@@ -260,6 +283,7 @@ export class StudioGenerationService {
       locale: params.market.locale,
       localBrandName: params.market.localBrandName,
       category: params.brand.category,
+      localCategory: params.market.localCategory,
       ownedDomains: params.market.ownedDomains,
       title: finalTitle,
       targetPrompt: params.targetPrompt,
@@ -396,6 +420,9 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
 
   const formatDesc = GEO_TARGET_FORMAT_LABELS[params.targetFormat];
   const recipeDesc = GEO_RECIPE_LABELS[params.recipe];
+  const effectiveCategory = isGlobal
+    ? resolveGlobalCategoryLabel(params.brand.category, params.market.localCategory)
+    : params.market.localCategory?.trim() || params.brand.category;
 
   const systemParts = [
     'You are an expert GEO (Generative Engine Optimization) technical editor.',
@@ -404,8 +431,9 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
     'Structure requirements:',
     '1. Start with a concise direct-answer opening paragraph (60-120 chars/words) before the first H2.',
     '2. Include at least 3 clear Markdown H2 (##) sections, a GFM comparison table (| col | ... |), bullet lists, and a closing FAQ section.',
-    '3. Ground all specifications in the provided Brand Facts. Never fabricate numbers; if a critical spec is absent from Brand Facts, insert a clickable slot like [待补充：如待机功耗 W].',
+    '3. Ground all specifications in the provided Brand Facts. Never fabricate numbers; if a critical spec is absent from Brand Facts, insert a plain placeholder like [待补充：如待机功耗 W] — NEVER wrap it in a Markdown link such as [待补充：...](#faq).',
     '4. Never output legacy template variables such as {训练词占位符} or 【品牌1】.',
+    '5. Do NOT output <script type="application/ld+json">, raw JSON-LD blocks, or HTML <script> tags inside the Markdown article body; structured JSON-LD Schema is generated separately by the delivery panel.',
   ];
 
   if (params.customToneNote?.trim()) {
@@ -428,7 +456,7 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
       : '(No structured brand facts provided yet; keep claims conservative and mark missing specs with [待补充：...].)';
 
   const userParts = [
-    `Brand: ${params.market.localBrandName} (Category: ${params.brand.category})`,
+    `Brand: ${params.market.localBrandName} (Category: ${effectiveCategory})`,
     `Competitors: ${params.market.competitors.join(', ') || 'Mainstream competitors'}`,
     `Target Prompt: ${params.targetPrompt}`,
   ];

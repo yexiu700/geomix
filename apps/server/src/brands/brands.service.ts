@@ -45,6 +45,7 @@ type BrandMarketRow = {
   locale: string;
   region: string;
   localBrandName: string;
+  localCategory?: string | null;
   aliases: string[];
   ownedDomains: string[];
   competitors: Prisma.JsonValue;
@@ -118,6 +119,7 @@ export class BrandsService {
         locale?: string;
         region?: string;
         localBrandName?: string;
+        localCategory?: string | null;
         aliases: string[];
         ownedDomains: string[];
         competitors: BrandCompetitor[];
@@ -125,6 +127,7 @@ export class BrandsService {
       };
       const defaults = GEO_MARKET_DEFAULTS[entry.market];
       const localBrandName = entry.localBrandName?.trim() || name;
+      const localCategory = entry.localCategory?.trim() || null;
       const aliases = dedupeStrings(entry.aliases.length > 0 ? entry.aliases : fallbackAliases);
       const ownedDomains = normalizeDomains(
         entry.ownedDomains.length > 0 ? entry.ownedDomains : fallbackDomains,
@@ -140,6 +143,7 @@ export class BrandsService {
               market: entry.market,
               brandName: localBrandName,
               category,
+              localCategory,
               competitors,
             });
 
@@ -148,6 +152,7 @@ export class BrandsService {
         locale: entry.locale?.trim() || defaults.locale,
         region: entry.region?.trim() || defaults.region,
         localBrandName,
+        localCategory,
         aliases,
         ownedDomains,
         competitors,
@@ -160,6 +165,7 @@ export class BrandsService {
       category,
       ...normalizedMarkets.flatMap((m) => [
         m.localBrandName,
+        m.localCategory ?? '',
         ...m.aliases,
         ...m.competitors.flatMap((c) => [c.name, ...c.aliases]),
         ...m.seedPrompts,
@@ -191,6 +197,7 @@ export class BrandsService {
               locale: m.locale,
               region: m.region,
               localBrandName: m.localBrandName,
+              localCategory: m.localCategory,
               aliases: m.aliases,
               ownedDomains: m.ownedDomains,
               competitors: m.competitors as unknown as Prisma.InputJsonValue,
@@ -365,6 +372,7 @@ export class BrandsService {
 
     const defaults = GEO_MARKET_DEFAULTS[market];
     const localBrandName = input.localBrandName?.trim() || brand.name;
+    const localCategory = input.localCategory?.trim() || null;
     const aliases = dedupeStrings(input.aliases);
     const ownedDomains = normalizeDomains(input.ownedDomains);
     const competitors = normalizeCompetitors(input.competitors);
@@ -376,11 +384,13 @@ export class BrandsService {
             market,
             brandName: localBrandName,
             category: brand.category,
+            localCategory,
             competitors,
           });
 
     const complianceText = [
       localBrandName,
+      localCategory ?? '',
       ...aliases,
       ...competitors.flatMap((c) => [c.name, ...c.aliases]),
       ...seedPrompts,
@@ -402,6 +412,7 @@ export class BrandsService {
           locale: input.locale?.trim() || defaults.locale,
           region: input.region?.trim() || defaults.region,
           localBrandName,
+          localCategory,
           aliases,
           ownedDomains,
           competitors: competitors as unknown as Prisma.InputJsonValue,
@@ -445,6 +456,10 @@ export class BrandsService {
       input.localBrandName !== undefined
         ? input.localBrandName.trim()
         : existingMarket.localBrandName;
+    const nextLocalCategory =
+      input.localCategory !== undefined
+        ? input.localCategory?.trim() || null
+        : (existingMarket.localCategory ?? null);
     const nextLocale = input.locale !== undefined ? input.locale.trim() : existingMarket.locale;
     const nextRegion = input.region !== undefined ? input.region.trim() : existingMarket.region;
     const nextAliases =
@@ -466,6 +481,7 @@ export class BrandsService {
       brand.name,
       brand.category,
       nextLocalBrandName,
+      nextLocalCategory ?? '',
       ...nextAliases,
       ...nextCompetitors.flatMap((c) => [c.name, ...c.aliases]),
       ...nextSeedPrompts,
@@ -484,6 +500,7 @@ export class BrandsService {
         locale: nextLocale,
         region: nextRegion,
         localBrandName: nextLocalBrandName,
+        localCategory: nextLocalCategory,
         aliases: nextAliases,
         ownedDomains: nextOwnedDomains,
         competitors: nextCompetitors as unknown as Prisma.InputJsonValue,
@@ -592,6 +609,7 @@ function presentMarket(row: BrandMarketRow): BrandMarketRecord {
     locale: row.locale,
     region: row.region,
     localBrandName: row.localBrandName,
+    localCategory: row.localCategory ?? null,
     aliases: row.aliases,
     ownedDomains: row.ownedDomains,
     competitors: parseStoredCompetitors(row.competitors),

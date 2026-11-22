@@ -46,6 +46,8 @@ export const STORAGE_MAX_OBJECT_BYTES = 100 * 1024 * 1024;
 
 export const LLM_MAX_RETRIES = 2;
 export const LLM_TIMEOUT_MS = 30_000;
+export const LLM_STREAM_TIMEOUT_MS = 240_000;
+export const LLM_STREAM_IDLE_TIMEOUT_MS = 45_000;
 export const EMBEDDING_TIMEOUT_MS = 15_000;
 export const EMBEDDING_MAX_BATCH = 32;
 export const EMBEDDING_MAX_CHARS = 8_000;

@@ -27,6 +27,8 @@ export type TransportRequest = {
   signal: AbortSignal;
   maxBytes: number;
   timeoutMs?: number;
+  headersTimeoutMs?: number;
+  bodyTimeoutMs?: number;
 };
 
 export type TransportResponse = {
@@ -153,6 +155,7 @@ export async function requestStream(input: {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs: number;
+  idleTimeoutMs?: number;
   maxBytes: number;
   signal?: AbortSignal;
   resolver: DnsResolver;
@@ -176,6 +179,10 @@ export async function requestStream(input: {
   }
   const headers = publicHeaders(input.headers);
   const signal = combineSignal(input.signal, input.timeoutMs);
+  const effectiveIdleMs =
+    input.idleTimeoutMs !== undefined
+      ? Math.min(input.timeoutMs, input.idleTimeoutMs)
+      : input.timeoutMs;
   let response: TransportStreamResponse;
   try {
     response = await input.streamTransport({
@@ -187,6 +194,8 @@ export async function requestStream(input: {
       signal,
       maxBytes: input.maxBytes,
       timeoutMs: input.timeoutMs,
+      headersTimeoutMs: effectiveIdleMs,
+      bodyTimeoutMs: effectiveIdleMs,
     });
   } catch (error) {
     throw normalizeTransportError(error, signal, input.signal);

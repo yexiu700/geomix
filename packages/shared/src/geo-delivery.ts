@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GEO_MARKETS, type GeoMarket } from './brands';
+import { GEO_MARKETS, containsCjk, resolveGlobalCategoryLabel, type GeoMarket } from './brands';
 import type { GeoComplianceFlag } from './compliance';
 import {
   extractMissingFactSlots,
@@ -3203,6 +3203,7 @@ export type EvaluateGeoArticleInput = {
   locale?: string;
   localBrandName: string;
   category?: string;
+  localCategory?: string | null;
   ownedDomains?: readonly string[];
   title: string;
   targetPrompt: string;
@@ -3448,11 +3449,36 @@ function extractFaqPairs(
   return pairs;
 }
 
+function resolveDeliveryCategory(
+  market: GeoMarket,
+  category?: string,
+  localCategory?: string | null,
+): string | null {
+  const localTrimmed = localCategory?.trim() ?? '';
+  const baseTrimmed = category?.trim() ?? '';
+  if (market !== 'GLOBAL') {
+    return localTrimmed || baseTrimmed || null;
+  }
+  if (localTrimmed && !containsCjk(localTrimmed)) {
+    return localTrimmed;
+  }
+  if (baseTrimmed && !containsCjk(baseTrimmed)) {
+    return baseTrimmed;
+  }
+  const mapped = resolveGlobalCategoryLabel(baseTrimmed, localTrimmed);
+  // If raw input was unmapped CJK and fell back to generic 'product', let callers decide fallback/omission
+  if (mapped === 'product') {
+    return null;
+  }
+  return containsCjk(mapped) ? null : mapped;
+}
+
 export function buildGeoSchemaJsonLd(input: {
   market: GeoMarket;
   locale?: string;
   localBrandName: string;
   category?: string;
+  localCategory?: string | null;
   title: string;
   targetPrompt: string;
   contentMarkdown: string;
@@ -3465,6 +3491,11 @@ export function buildGeoSchemaJsonLd(input: {
     input.locale || (input.market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
   );
   const qaPairs = extractFaqPairs(input.contentMarkdown, input.targetPrompt, description);
+  const resolvedCategory = resolveDeliveryCategory(
+    input.market,
+    input.category,
+    input.localCategory,
+  );
 
   const graph: Array<Record<string, unknown>> = [
     {
@@ -3495,11 +3526,13 @@ export function buildGeoSchemaJsonLd(input: {
     },
   ];
 
-  if (input.market === 'GLOBAL' || input.category) {
+  if (input.market === 'GLOBAL' || resolvedCategory) {
     graph.push({
       '@type': 'Product',
       name: brandName,
-      category: sanitizeJsonLdText(input.category || 'Consumer Hardware'),
+      category: sanitizeJsonLdText(
+        resolvedCategory || (input.market === 'GLOBAL' ? 'Consumer Product' : 'Consumer Hardware'),
+      ),
       description,
       brand: {
         '@type': 'Brand',
@@ -3528,6 +3561,7 @@ export function buildLlmsTxtSnippet(input: {
   market: GeoMarket;
   localBrandName: string;
   category?: string;
+  localCategory?: string | null;
   ownedDomains?: readonly string[];
   title: string;
   targetPrompt: string;
@@ -3552,11 +3586,15 @@ export function buildLlmsTxtSnippet(input: {
       .replace(/[\r\n]+/g, ' ')
       .slice(0, 160) || `Verified product comparison and specifications for ${brandName}.`;
   const slug = slugifyPathSegment(title);
+  const resolvedCategory = resolveDeliveryCategory('GLOBAL', input.category, input.localCategory);
+  const categorySuffix = resolvedCategory
+    ? ` (${resolvedCategory.replace(/[\r\n]+/g, ' ').trim()})`
+    : '';
 
   return [
     `# ${brandName}`,
     '',
-    `> Authoritative product specifications, independent benchmarks, and buying guides for ${brandName}${input.category ? ` (${input.category.replace(/[\r\n]+/g, ' ').trim()})` : ''}.`,
+    `> Authoritative product specifications, independent benchmarks, and buying guides for ${brandName}${categorySuffix}.`,
     '',
     '## Featured GEO Guides',
     `- [${title}](https://${cleanDomain}/guides/${slug}): ${summary}`,
@@ -3860,6 +3898,7 @@ export function evaluateGeoArticle(input: EvaluateGeoArticleInput): GeoEvaluatio
       locale: input.locale,
       localBrandName: input.localBrandName,
       category: input.category,
+      localCategory: input.localCategory,
       title: input.title,
       targetPrompt: input.targetPrompt,
       contentMarkdown: md,
@@ -3868,6 +3907,7 @@ export function evaluateGeoArticle(input: EvaluateGeoArticleInput): GeoEvaluatio
       market,
       localBrandName: input.localBrandName,
       category: input.category,
+      localCategory: input.localCategory,
       ownedDomains: input.ownedDomains,
       title: input.title,
       targetPrompt: input.targetPrompt,

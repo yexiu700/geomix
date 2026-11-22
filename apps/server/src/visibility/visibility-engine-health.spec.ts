@@ -72,18 +72,41 @@ describe('parseRemoteHealthPayload', () => {
     expect(parseRemoteHealthPayload({ status: 'ok' })).toEqual({ kind: 'ok_all' });
     expect(parseRemoteHealthPayload({ status: 'unhealthy' })).toEqual({ kind: 'down' });
     expect(parseRemoteHealthPayload({ ok: false })).toEqual({ kind: 'down' });
+
+    // #337: configured boolean & plannedEngines array
+    expect(
+      parseRemoteHealthPayload({
+        engines: [
+          { key: 'deepseek', configured: true, status: 'ready' },
+          { key: 'doubao', configured: false, status: 'ready' },
+          { key: 'kimi', configured: true, status: 'offline' },
+        ],
+        plannedEngines: ['yuanbao', 'tongyi', 'wenxin'],
+      }),
+    ).toEqual({
+      kind: 'engines',
+      availability: {
+        deepseek: true,
+        doubao: false,
+        kimi: false,
+        yuanbao: false,
+        tongyi: false,
+        wenxin: false,
+      },
+    });
   });
 });
 
 describe('VisibilityEngineHealthService', () => {
-  it('resolves health URLs from explicit override or VISIBILITY_REMOTE_URL', () => {
+  it('resolves health URLs with /v1/engines prioritized before /ready and /health (#337)', () => {
     const derived = readVisibilityConfig({
       VISIBILITY_COLLECTOR: 'remote_scraper',
       VISIBILITY_REMOTE_URL: 'http://sonargate:8080/v1/collect',
     });
     expect(resolveRemoteHealthUrls(derived)).toEqual([
-      'http://sonargate:8080/health',
       'http://sonargate:8080/v1/engines',
+      'http://sonargate:8080/ready',
+      'http://sonargate:8080/health',
     ]);
 
     const explicit = readVisibilityConfig({
@@ -108,13 +131,18 @@ describe('VisibilityEngineHealthService', () => {
     expect(await svc.getUnavailableEngines(['deepseek', 'doubao'])).toEqual(['doubao']);
   });
 
-  it('probes remote /health and marks unlisted or unhealthy engines offline', async () => {
+  it('probes remote /v1/engines first and marks unlisted, planned, or unhealthy engines offline (#337)', async () => {
     const calls: string[] = [];
     const transport: HttpTransport = async (req) => {
       calls.push(req.url.toString());
       return makeJsonResponse(200, {
         status: 'ok',
-        engines: { deepseek: true, kimi: true, doubao: false },
+        engines: [
+          { key: 'deepseek', configured: true, status: 'ready' },
+          { key: 'kimi', configured: true, status: 'ready' },
+          { key: 'doubao', configured: false, status: 'ready' },
+        ],
+        plannedEngines: ['yuanbao', 'tongyi'],
       });
     };
 
@@ -128,24 +156,42 @@ describe('VisibilityEngineHealthService', () => {
       { resolver: publicResolver, transport, store },
     );
 
-    const res = await svc.getAvailability();
-    expect(calls).toEqual(['https://scraper.example.com/health']);
+    const res = await svc.getAvailability('CN');
+    expect(calls).toEqual(['https://scraper.example.com/v1/engines']);
     expect(res.refreshIntervalMs).toBe(300_000);
     expect(res.checkedAt).toBeTruthy();
-    expect(res.engines.find((e) => e.key === 'deepseek')?.available).toBe(true);
-    expect(res.engines.find((e) => e.key === 'kimi')?.available).toBe(true);
-    expect(res.engines.find((e) => e.key === 'doubao')?.available).toBe(false);
-    expect(res.engines.find((e) => e.key === 'chatgpt')?.available).toBe(false);
+    expect(res.engines.find((e) => e.key === 'deepseek')).toMatchObject({
+      available: true,
+      defaultChecked: true,
+      unavailableReason: null,
+    });
+    expect(res.engines.find((e) => e.key === 'kimi')).toMatchObject({
+      available: true,
+      defaultChecked: true,
+    });
+    expect(res.engines.find((e) => e.key === 'doubao')).toMatchObject({
+      available: false,
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    });
+    expect(res.engines.find((e) => e.key === 'yuanbao')).toMatchObject({
+      available: false,
+      defaultChecked: false,
+      unavailableReason: '暂未上线',
+    });
     expect(store.value?.serviceReachable).toBe(true);
   });
 
-  it('falls back to /v1/engines when /health returns 404', async () => {
+  it('falls back to /ready and /health when /v1/engines returns 404 or 401 (#337)', async () => {
     const calls: string[] = [];
     const transport: HttpTransport = async (req) => {
       const urlStr = req.url.toString();
       calls.push(urlStr);
-      if (urlStr.endsWith('/health')) {
+      if (urlStr.endsWith('/v1/engines')) {
         return makeJsonResponse(404, { error: 'not found' });
+      }
+      if (urlStr.endsWith('/ready')) {
+        return makeJsonResponse(200, { status: 'ok' });
       }
       return makeJsonResponse(200, { engines: ['deepseek', 'tongyi'] });
     };
@@ -159,9 +205,11 @@ describe('VisibilityEngineHealthService', () => {
     );
 
     const res = await svc.refreshHealth();
+    // /ready returned service-level ok_all without engine list, so probe continues to /health
     expect(calls).toEqual([
-      'https://scraper.example.com/health',
       'https://scraper.example.com/v1/engines',
+      'https://scraper.example.com/ready',
+      'https://scraper.example.com/health',
     ]);
     expect(res.engines.filter((e) => e.available).map((e) => e.key)).toEqual([
       'deepseek',
