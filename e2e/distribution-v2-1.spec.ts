@@ -85,95 +85,116 @@ async function assertLayoutErgonomics(
     await assertNoHorizontalOverflow(page, { viewports: [vp] });
 
     if (opts.checkDrawer) {
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => {
+              const body = document.querySelector<HTMLElement>('.ant-drawer-open .ant-drawer-body');
+              return body
+                ? Math.round(body.getBoundingClientRect().right)
+                : Number.POSITIVE_INFINITY;
+            }),
+          {
+            timeout: 5_000,
+            message: `Drawer did not finish sliding into viewport at ${vp.width}x${vp.height}`,
+          },
+        )
+        .toBeLessThanOrEqual(vp.width + 2);
+
       const drawerOverflow = await page.evaluate(() => {
-        const body = document.querySelector<HTMLElement>('.ant-drawer-body');
+        const body = document.querySelector<HTMLElement>('.ant-drawer-open .ant-drawer-body');
         if (!body) return null;
         return { scrollWidth: body.scrollWidth, clientWidth: body.clientWidth };
       });
       if (drawerOverflow) {
         expect(
           drawerOverflow.scrollWidth,
-          `.ant-drawer-body horizontal overflow at ${vp.width}x${vp.height}`,
+          `.ant-drawer-open .ant-drawer-body horizontal overflow at ${vp.width}x${vp.height}`,
         ).toBeLessThanOrEqual(drawerOverflow.clientWidth + 2);
       }
     }
 
     // Guard against right-edge clipping on visible buttons inside main content (and open Drawer)
-    const clippedButtons = await page.evaluate(
-      ({ checkDrawer }) => {
-        const clipped: string[] = [];
-        const isElementVisible = (el: HTMLElement): boolean => {
-          if (el.closest('.ant-drawer:not(.ant-drawer-open), [aria-hidden="true"]')) {
-            return false;
-          }
-          const rect = el.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) return false;
-          let cur: HTMLElement | null = el;
-          while (cur) {
-            const style = window.getComputedStyle(cur);
-            if (
-              style.display === 'none' ||
-              style.visibility === 'hidden' ||
-              Number.parseFloat(style.opacity || '1') === 0
-            ) {
-              return false;
-            }
-            cur = cur.parentElement;
-          }
-          return true;
-        };
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            ({ checkDrawer }) => {
+              const clipped: string[] = [];
+              const isElementVisible = (el: HTMLElement): boolean => {
+                if (el.closest('.ant-drawer:not(.ant-drawer-open), [aria-hidden="true"]')) {
+                  return false;
+                }
+                const rect = el.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return false;
+                let cur: HTMLElement | null = el;
+                while (cur) {
+                  const style = window.getComputedStyle(cur);
+                  if (
+                    style.display === 'none' ||
+                    style.visibility === 'hidden' ||
+                    Number.parseFloat(style.opacity || '1') === 0
+                  ) {
+                    return false;
+                  }
+                  cur = cur.parentElement;
+                }
+                return true;
+              };
 
-        const checkRoot = (
-          root: ParentNode,
-          limit: number,
-          scopeLabel: string,
-          skipOffscreenRight: boolean,
-        ) => {
-          const buttons = Array.from(root.querySelectorAll<HTMLElement>('button, .ant-btn'));
-          for (const el of buttons) {
-            if (!isElementVisible(el)) continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.right <= 0) continue;
-            if (skipOffscreenRight && rect.left >= window.innerWidth) continue;
-            if (rect.right > limit + 2) {
-              const label = (el.textContent || el.getAttribute('aria-label') || '')
-                .replace(/\s+/g, ' ')
-                .trim()
-                .slice(0, 24);
-              clipped.push(
-                `${scopeLabel}:${el.tagName}(${label}): right=${Math.round(rect.right)} > ${Math.round(limit)}`,
-              );
-            }
-          }
-        };
+              const checkRoot = (
+                root: ParentNode,
+                limit: number,
+                scopeLabel: string,
+                skipOffscreenRight: boolean,
+              ) => {
+                const buttons = Array.from(root.querySelectorAll<HTMLElement>('button, .ant-btn'));
+                for (const el of buttons) {
+                  if (!isElementVisible(el)) continue;
+                  const rect = el.getBoundingClientRect();
+                  if (rect.right <= 0) continue;
+                  if (skipOffscreenRight && rect.left >= window.innerWidth) continue;
+                  if (rect.right > limit + 2) {
+                    const label = (el.textContent || el.getAttribute('aria-label') || '')
+                      .replace(/\s+/g, ' ')
+                      .trim()
+                      .slice(0, 24);
+                    clipped.push(
+                      `${scopeLabel}:${el.tagName}(${label}): right=${Math.round(rect.right)} > ${Math.round(limit)}`,
+                    );
+                  }
+                }
+              };
 
-        const mainContainer =
-          document.querySelector<HTMLElement>(
-            'main, .ant-layout-content, [data-testid="pr-share-page"]',
-          ) ?? document.body;
-        checkRoot(mainContainer, window.innerWidth, 'main', true);
+              const mainContainer =
+                document.querySelector<HTMLElement>(
+                  'main, .ant-layout-content, [data-testid="pr-share-page"]',
+                ) ?? document.body;
+              checkRoot(mainContainer, window.innerWidth, 'main', true);
 
-        if (checkDrawer) {
-          const drawerBody = document.querySelector<HTMLElement>(
-            '.ant-drawer-open .ant-drawer-body',
-          );
-          if (drawerBody) {
-            const drawerRight = Math.min(
-              window.innerWidth,
-              drawerBody.getBoundingClientRect().right,
-            );
-            checkRoot(drawerBody, drawerRight, 'drawer', false);
-          }
-        }
+              if (checkDrawer) {
+                const drawerBody = document.querySelector<HTMLElement>(
+                  '.ant-drawer-open .ant-drawer-body',
+                );
+                if (drawerBody) {
+                  const drawerRight = Math.min(
+                    window.innerWidth,
+                    drawerBody.getBoundingClientRect().right,
+                  );
+                  checkRoot(drawerBody, drawerRight, 'drawer', false);
+                }
+              }
 
-        return clipped;
-      },
-      { checkDrawer: Boolean(opts.checkDrawer) },
-    );
-    expect(
-      clippedButtons,
-      `Right-edge clipped visible buttons at ${vp.width}x${vp.height}`,
-    ).toEqual([]);
+              return clipped;
+            },
+            { checkDrawer: Boolean(opts.checkDrawer) },
+          ),
+        {
+          timeout: 3_000,
+          message: `Right-edge clipped visible buttons at ${vp.width}x${vp.height}`,
+        },
+      )
+      .toEqual([]);
 
     // Guard against single-character vertical CJK wrapping on buttons, tabs & headings
     const verticalWrapOffenders = await page.evaluate(() => {
