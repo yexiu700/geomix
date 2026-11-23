@@ -13,6 +13,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
+import * as distributionApi from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
 import { invalidateFreshness } from '../../lib/tab-freshness';
@@ -2473,5 +2474,104 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(screen.getByTestId('studio-copy-partial-draft-btn')).toBeTruthy();
     const previewBody = screen.getByTestId('studio-preview-body');
     expect(previewBody.textContent).toContain('星辰存储 DXP4800');
+  });
+
+  it('opens Distribution Drawer from Delivery Pack CTA, returns to editor on missing-fact jump, and auto-closes on market context switch (M6A #354)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(distributionApi, 'runArticlePreflight').mockResolvedValue({
+      ok: false,
+      blockers: [
+        {
+          code: 'MISSING_FACT_SLOTS',
+          severity: 'blocker',
+          message: '检测到 1 处未补全的待补充事实占位符',
+          details: ['[待补充：如待机功耗 W]'],
+        },
+      ],
+      warnings: [],
+    });
+    vi.spyOn(distributionApi, 'listArticleDistributions').mockResolvedValue({ items: [] });
+    vi.spyOn(distributionApi, 'listChannelConnections').mockResolvedValue({ items: [] });
+    vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_1);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Select article so CTA becomes enabled
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    const openBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    expect(openBtn.disabled).toBe(false);
+
+    // Open drawer
+    fireEvent.click(openBtn);
+    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
+    expect(await screen.findByTestId('distribution-preflight-blockers')).toBeTruthy();
+
+    // Return to editor closes drawer and notifies user
+    fireEvent.click(screen.getByTestId('distribution-back-to-editor-btn'));
+    await waitFor(() => {
+      expect(mockNotifyWarning).toHaveBeenCalledWith('已定位到待补充事实胶囊，点击即可行内补填');
+    });
+
+    // Re-open drawer, then switch market CN -> GLOBAL -> drawer auto-closes immediately
+    fireEvent.click(screen.getByTestId('studio-open-distribution-btn'));
+    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    await waitFor(() => {
+      const openDrawer = document.querySelector('.ant-drawer-open');
+      expect(openDrawer).toBeNull();
+    });
+  });
+
+  it('guards GLOBAL copy/export in StudioDeliveryPack using unified evaluateDistributionPreflight (GLOBAL_CJK_LEAK blocker confirm)', async () => {
+    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
+    const leakedGlobalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_gl_leak',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      title: 'Best 4-Bay Quiet NAS 2026',
+      contentMarkdown: 'AstraVault DXP4800 runs at 18.5dB with 静音散热设计.',
+      contentHtml: '<p>AstraVault DXP4800 runs at 18.5dB with 静音散热设计.</p>',
+      geoScore: 86,
+      complianceFlags: [],
+    };
+
+    render(
+      <StudioDeliveryPack
+        activeMarket="GLOBAL"
+        localBrandName="AstraVault"
+        brandNames={['AstraVault']}
+        matchedFactCount={1}
+        article={leakedGlobalArticle}
+        evaluation={null}
+        streaming={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('delivery-copy-md'));
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    expect(copySpy).not.toHaveBeenCalled();
+
+    // Confirming override proceeds with copy
+    const onOk = mockConfirm.mock.calls[0]?.[0]?.onOk as (() => void) | undefined;
+    act(() => {
+      onOk?.();
+    });
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

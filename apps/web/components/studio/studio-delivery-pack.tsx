@@ -5,12 +5,14 @@ import {
   buildGeoSchemaJsonLd,
   buildLlmsTxtSnippet,
   buildRecommendedChannelsForMarket,
-  extractMissingFactSlots,
+  evaluateDistributionPreflight,
   htmlToExportMarkdown,
+  isSafeDistributionHttpUrl,
   markdownToSanitizedHtml,
   sanitizeRichArticleHtml,
   serializeJsonLdSafe,
   type GeoArticleRecord,
+  type GeoBriefChannelRecommendation,
   type GeoEvaluationResult,
   type GeoMarket,
 } from '@geomix/shared';
@@ -28,10 +30,14 @@ export type StudioDeliveryPackProps = {
   category?: string;
   localCategory?: string | null;
   ownedDomains?: readonly string[];
+  brandNames?: readonly string[];
+  matchedFactCount?: number;
+  readOnly?: boolean;
   article: GeoArticleRecord | null;
   evaluation: GeoEvaluationResult | null;
-  linkedBriefChannels?: ReadonlyArray<{ channel: string; reason: string }>;
+  linkedBriefChannels?: readonly GeoBriefChannelRecommendation[];
   streaming: boolean;
+  onOpenDistributionDrawer?: () => void;
 };
 
 const JSON_TOKEN_RE =
@@ -76,10 +82,13 @@ export function StudioDeliveryPack({
   category,
   localCategory,
   ownedDomains,
+  brandNames,
+  matchedFactCount,
   article,
   evaluation,
   linkedBriefChannels,
   streaming,
+  onOpenDistributionDrawer,
 }: StudioDeliveryPackProps): JSX.Element {
   const feedback = useUxFeedback();
   const [downloadingDocx, setDownloadingDocx] = useState(false);
@@ -160,7 +169,7 @@ export function StudioDeliveryPack({
     [activeMarket, evaluation?.crawlerChecklist],
   );
 
-  const recommendedChannels = useMemo(() => {
+  const recommendedChannels = useMemo<readonly GeoBriefChannelRecommendation[]>(() => {
     if (linkedBriefChannels && linkedBriefChannels.length > 0) return linkedBriefChannels;
     if (evaluation?.recommendedChannels && evaluation.recommendedChannels.length > 0) {
       return evaluation.recommendedChannels;
@@ -168,30 +177,48 @@ export function StudioDeliveryPack({
     return buildRecommendedChannelsForMarket(activeMarket);
   }, [activeMarket, evaluation?.recommendedChannels, linkedBriefChannels]);
 
-  const unresolvedSlotCount = useMemo(
-    () => (article ? extractMissingFactSlots(article.contentMarkdown).length : 0),
-    [article],
+  const preflight = useMemo(
+    () =>
+      article
+        ? evaluateDistributionPreflight({
+            market: activeMarket,
+            title: article.title,
+            contentMarkdown: article.contentMarkdown,
+            brandNames,
+            complianceFlags: article.complianceFlags,
+            geoScore: evaluation?.geoScore ?? article.geoScore,
+            matchedFactCount,
+          })
+        : null,
+    [activeMarket, article, brandNames, evaluation?.geoScore, matchedFactCount],
   );
 
   const runWithPlaceholderGuard = (actionLabel: string, proceed: () => void): void => {
-    if (unresolvedSlotCount <= 0) {
+    if (!preflight) {
       proceed();
       return;
     }
-    if (activeMarket === 'GLOBAL') {
-      feedback.confirm({
-        title: '成稿仍有未回填的缺失事实',
-        content: `当前英文成稿仍包含 ${unresolvedSlotCount} 处未回填占位符（[TBD: ...]）。建议先在中栏点击黄色胶囊补填真实数据；确定仍要继续${actionLabel}吗？`,
-        okText: `仍然${actionLabel}`,
-        cancelText: '返回补填',
-        okButtonProps: { danger: true },
-        onOk: () => proceed(),
-      });
+    if (!preflight.ok) {
+      const summary = preflight.blockers.map((item) => item.message).join('；');
+      if (activeMarket === 'GLOBAL') {
+        feedback.confirm({
+          title: '发布前体检存在阻断项',
+          content: `${summary}。建议先在中栏补填真实数据或清理异常字符；确定仍要继续${actionLabel}吗？`,
+          okText: `仍然${actionLabel}`,
+          cancelText: '返回补填',
+          okButtonProps: { danger: true },
+          onOk: () => proceed(),
+        });
+        return;
+      }
+      feedback.notifyWarning(`发布前体检提示：${summary}`);
+      proceed();
       return;
     }
-    feedback.notifyWarning(
-      `提示：当前成稿仍有 ${unresolvedSlotCount} 处 [待补充] 未回填，发布前建议补全真实数据`,
-    );
+    if (preflight.warnings.length > 0) {
+      const warningSummary = preflight.warnings.map((item) => item.message).join('；');
+      feedback.notifyWarning(`发布前优化提示：${warningSummary}`);
+    }
     proceed();
   };
 
@@ -289,14 +316,47 @@ export function StudioDeliveryPack({
         {activeMarket === 'GLOBAL' ? '海外高权阵地投放建议' : '国内高权平台发布指引'}
       </span>
       <div className="gm-studio-channel-list">
-        {recommendedChannels.map((item) => (
-          <div key={item.channel} className="gm-studio-channel-item">
-            <Tag color="geekblue" style={{ margin: 0, alignSelf: 'flex-start' }}>
-              {item.channel}
-            </Tag>
-            <span className="gm-studio-channel-reason">{item.reason}</span>
-          </div>
-        ))}
+        {recommendedChannels.map((item) => {
+          const safeCitedUrls = (item.citedExampleUrls ?? [])
+            .filter((u) => isSafeDistributionHttpUrl(u))
+            .slice(0, 3);
+          return (
+            <div key={item.channel} className="gm-studio-channel-item">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <Tag color="geekblue" style={{ margin: 0, alignSelf: 'flex-start' }}>
+                  {item.channel}
+                </Tag>
+                {item.priority === 'HIGH' ? (
+                  <Tag color="gold" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    高频被引
+                  </Tag>
+                ) : null}
+              </div>
+              <span className="gm-studio-channel-reason">{item.reason}</span>
+              {safeCitedUrls.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {safeCitedUrls.map((url, idx) => (
+                    <a
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="gm-mono"
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--gm-info)',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      被引原帖 #{idx + 1}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -389,6 +449,17 @@ export function StudioDeliveryPack({
           {activeMarket === 'GLOBAL' ? '🌐 海外交付轨' : '🇨🇳 国内交付轨'}
         </Tag>
       </div>
+
+      <Button
+        block
+        type="primary"
+        data-testid="studio-open-distribution-btn"
+        disabled={!article || streaming}
+        style={{ whiteSpace: 'nowrap' }}
+        onClick={() => onOpenDistributionDrawer?.()}
+      >
+        进入分发工作台
+      </Button>
 
       {!article ? (
         <div className="gm-studio-item-meta">

@@ -21,6 +21,7 @@ import {
   type GeoRewriteAction,
   type GeoTargetFormat,
   type MissingFactSlot,
+  type PreflightItemCode,
   type PromptPreferenceRecord,
   type PublishRecordCreateInput,
   type VisibilityEngineAvailabilityItem,
@@ -72,6 +73,7 @@ import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioDeliveryPack } from './studio-delivery-pack';
+import { StudioDistributionDrawer } from './studio-distribution-drawer';
 import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
 import { StudioGeoEvaluator } from './studio-geo-evaluator';
 import { StudioLeftPane } from './studio-left-pane';
@@ -214,8 +216,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [retestEnginesLoading, setRetestEnginesLoading] = useState(false);
   const [retestEnginesError, setRetestEnginesError] = useState<string | null>(null);
   const [retestCheckedEngines, setRetestCheckedEngines] = useState<VisibilityEngineKey[]>([]);
+  const [distributionDrawerOpen, setDistributionDrawerOpen] = useState(false);
 
   // Anti-race AbortControllers & monotonic context/article sequences
+  const centerPaneRef = useRef<HTMLElement | null>(null);
+  const returnFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextSeqRef = useRef(0);
   const urlHydratedSeqRef = useRef(0);
   const articleSeqRef = useRef(0);
@@ -312,6 +317,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setSupplementingTerm(null);
       setRetestingRecordId(null);
       setRetestModalRecord(null);
+      if (nextArticleId === null) {
+        setDistributionDrawerOpen(false);
+      }
     },
     [clearArticleActionControllers],
   );
@@ -538,6 +546,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setRetestCheckedEngines([]);
     setRetestEnginesError(null);
     setCounterModalOpen(false);
+    setDistributionDrawerOpen(false);
+    if (returnFocusTimerRef.current) {
+      clearTimeout(returnFocusTimerRef.current);
+      returnFocusTimerRef.current = null;
+    }
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
     editorCursorRef.current = null;
@@ -566,6 +579,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (abortWalletTimerRef.current) {
         clearTimeout(abortWalletTimerRef.current);
         abortWalletTimerRef.current = null;
+      }
+      if (returnFocusTimerRef.current) {
+        clearTimeout(returnFocusTimerRef.current);
+        returnFocusTimerRef.current = null;
       }
       clearArticleActionControllers();
       insertingMediaRef.current = false;
@@ -675,6 +692,38 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   }, [hasActiveBatchJob]);
 
+  // Reusable publish records loader (also called by StudioDistributionDrawer after L1 publish / L3 register)
+  const reloadPublishRecords = useCallback(async (articleId: string) => {
+    pubRecordsCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    pubRecordsCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
+    setPublishRecordsLoading(true);
+    try {
+      const res = await fetchPublishRecords(articleId, { signal: ctrl.signal });
+      if (
+        ctrl.signal.aborted ||
+        seq !== contextSeqRef.current ||
+        artSeq !== articleSeqRef.current
+      ) {
+        return;
+      }
+      setPublishRecords(res.items);
+    } catch {
+      // Silent fallback on empty/aborted fetch
+    } finally {
+      if (
+        pubRecordsCtrlRef.current === ctrl &&
+        !ctrl.signal.aborted &&
+        seq === contextSeqRef.current &&
+        artSeq === articleSeqRef.current
+      ) {
+        setPublishRecordsLoading(false);
+      }
+    }
+  }, []);
+
   // Load publish records whenever active article changes
   const activeArticleId = activeArticle?.id ?? null;
   useEffect(() => {
@@ -689,26 +738,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       return;
     }
 
-    const seq = contextSeqRef.current;
-    const ctrl = new AbortController();
-    pubRecordsCtrlRef.current = ctrl;
-    setPublishRecordsLoading(true);
-    void fetchPublishRecords(activeArticleId, { signal: ctrl.signal })
-      .then((res) => {
-        if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-        setPublishRecords(res.items);
-      })
-      .catch(() => {
-        // Silent fallback on empty/aborted fetch
-      })
-      .finally(() => {
-        if (seq === contextSeqRef.current && !ctrl.signal.aborted) {
-          setPublishRecordsLoading(false);
-        }
-      });
+    void reloadPublishRecords(activeArticleId);
 
-    return () => ctrl.abort();
-  }, [activeArticleId, activeBrandId, activeBrandMarketId]);
+    return () => {
+      pubRecordsCtrlRef.current?.abort();
+    };
+  }, [activeArticleId, activeBrandId, activeBrandMarketId, reloadPublishRecords]);
 
   // Poll pending retest run until afterMetrics writeback or terminal status
   useTaskPolling({
@@ -1483,6 +1518,79 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
+  const handleDistributionPublishRecordsSynced = useCallback(
+    async (articleId: string) => {
+      if (activeArticleIdRef.current !== articleId) return;
+      await reloadPublishRecords(articleId);
+      setActiveArticle((prev) =>
+        prev && prev.id === articleId ? { ...prev, status: 'PUBLISHED' } : prev,
+      );
+      setArticles((prev) =>
+        prev.map((a) => (a.id === articleId ? { ...a, status: 'PUBLISHED' } : a)),
+      );
+      invalidateFreshness('publish-records', 'articles', 'distributions');
+      void consoleCtx?.refreshWallet();
+    },
+    [consoleCtx, reloadPublishRecords],
+  );
+
+  const handleReturnToEditorForFix = useCallback(
+    (code?: PreflightItemCode) => {
+      setDistributionDrawerOpen(false);
+      if (returnFocusTimerRef.current) {
+        clearTimeout(returnFocusTimerRef.current);
+      }
+      returnFocusTimerRef.current = setTimeout(() => {
+        returnFocusTimerRef.current = null;
+        const pane = centerPaneRef.current;
+        if (!pane) return;
+        const missingPill = pane.querySelector<HTMLElement>('[data-testid="missing-fact-pill"]');
+        const missingBar = pane.querySelector<HTMLElement>(
+          '[data-testid="studio-missing-fact-bar"]',
+        );
+        if ((code === 'MISSING_FACT_SLOTS' || !code) && missingPill) {
+          if (missingBar && typeof missingBar.scrollIntoView === 'function') {
+            missingBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          missingPill.focus();
+          feedback.notifyWarning('已定位到待补充事实胶囊，点击即可行内补填');
+          return;
+        }
+        let textarea = pane.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="文章 Markdown 正文"]',
+        );
+        if (!textarea) {
+          const editLabel = Array.from(
+            pane.querySelectorAll<HTMLElement>('.ant-segmented-item'),
+          ).find((el) => el.textContent?.includes('编辑 Markdown'));
+          editLabel?.click();
+          textarea = pane.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="文章 Markdown 正文"]',
+          );
+        }
+        const target =
+          textarea ?? pane.querySelector<HTMLInputElement>('input[aria-label="文章标题"]');
+        if (target) {
+          if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          target.focus();
+        }
+        feedback.notifyWarning('已返回编辑器，请修正发布前体检阻断项后再推送');
+      }, 50);
+    },
+    [feedback],
+  );
+
+  const brandNames = useMemo(() => {
+    const names = [
+      activeBrand?.name,
+      activeBrandMarket?.localBrandName,
+      ...(activeBrandMarket?.aliases ?? []),
+    ].filter((v): v is string => Boolean(v && v.trim()));
+    return [...new Set(names)];
+  }, [activeBrand?.name, activeBrandMarket?.aliases, activeBrandMarket?.localBrandName]);
+
   const loadRetestEngines = useCallback(async (brandId: string, market: typeof activeMarket) => {
     retestEnginesCtrlRef.current?.abort();
     const ctrl = new AbortController();
@@ -1691,6 +1799,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
         {/* Center Pane: 3-Item Prewrite Bar + Live SSE Editor & Preview */}
         <main
+          ref={centerPaneRef}
           className="gm-studio-pane"
           aria-label="GEO 流式精写画布"
           data-testid="studio-center-pane"
@@ -1795,10 +1904,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 category={activeBrand.category}
                 localCategory={activeBrandMarket.localCategory}
                 ownedDomains={activeBrandMarket.ownedDomains}
+                brandNames={brandNames}
+                matchedFactCount={
+                  matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length
+                }
+                readOnly={readOnly}
                 article={activeArticle}
                 evaluation={evaluation}
                 linkedBriefChannels={linkedBrief?.recommendedChannels}
                 streaming={streaming}
+                onOpenDistributionDrawer={() => setDistributionDrawerOpen(true)}
               />
             )
           }
@@ -1819,6 +1934,29 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           }
         />
       </div>
+
+      <StudioDistributionDrawer
+        open={distributionDrawerOpen}
+        brandId={activeBrand.id}
+        brandMarketId={activeBrandMarket.id}
+        market={activeMarket}
+        contextEpoch={state.contextEpoch}
+        article={activeArticle}
+        draftTitle={draftTitle}
+        draftMarkdown={draftMarkdown}
+        brandNames={brandNames}
+        matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
+        evaluation={evaluation}
+        linkedBrief={linkedBrief}
+        readOnly={readOnly}
+        walletAvailable={consoleCtx?.wallet?.available ?? null}
+        onClose={() => setDistributionDrawerOpen(false)}
+        onReturnToEditor={handleReturnToEditorForFix}
+        onNavigateBrands={() => consoleCtx?.navigateWorkspace('/brands')}
+        onRefreshWallet={() => consoleCtx?.refreshWallet()}
+        onPublishRecordsSynced={handleDistributionPublishRecordsSynced}
+        onCreatePublishRecord={handleCreatePublishRecord}
+      />
 
       <CitationCounterModal
         open={counterModalOpen}
