@@ -1276,4 +1276,69 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     expect(enqueuedJobs).toHaveLength(enqueuedBefore);
     expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
   });
+
+  it('R3-S-01: blocks literal `<` technical copy and HTML5 uppercase/leading-zero/named entities in variantHtml on PATCH and POST /publish with 422 and 0 enqueued jobs', async () => {
+    const enqueuedBefore = enqueuedJobs.length;
+
+    // 1. Literal `< 100` followed by [TBD], GLOBAL CJK leak, and prohibited compliance term
+    const ltPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      {
+        variantHtml: '<p>Price < 100 [TBD: official price] 中文泄漏 在线赌博</p>',
+      },
+    );
+    expect(ltPatch.status).toBe(200);
+    expect(ltPatch.body.data.preflightJson?.ok).toBe(false);
+    expect(ltPatch.body.data.preflightJson?.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+
+    const ltPub = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_wp_clean/publish', tokenA, {
+      publishAsDraft: false,
+      connectionId: 'conn_wp_ok',
+    });
+    expect(ltPub.status).toBe(422);
+    expect(ltPub.body.data.ok).toBe(false);
+    expect(ltPub.body.data.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+    expect(enqueuedJobs).toHaveLength(enqueuedBefore);
+    expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
+
+    // 2. HTML5 uppercase hex, leading-zero numeric entities, and &lsqb;/&rsqb; aliases
+    const entityPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      {
+        variantHtml:
+          '<p>&#X5B;TBD: price&#X5D; &#x000005b;TBD&#x000005d; &lsqb;TBD&rsqb; &#X5728;&#X7EBF;&#X8D4C;&#X535A;</p>',
+      },
+    );
+    expect(entityPatch.status).toBe(200);
+    expect(entityPatch.body.data.preflightJson?.ok).toBe(false);
+    expect(entityPatch.body.data.preflightJson?.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+
+    const entityPub = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_wp_clean/publish', tokenA, {
+      publishAsDraft: false,
+      connectionId: 'conn_wp_ok',
+    });
+    expect(entityPub.status).toBe(422);
+    expect(entityPub.body.data.ok).toBe(false);
+    expect(entityPub.body.data.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+    expect(enqueuedJobs).toHaveLength(enqueuedBefore);
+    expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
+  });
 });

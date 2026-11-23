@@ -637,7 +637,7 @@ export type EvaluateDistributionPreflightInput = {
 };
 
 const CJK_RUN_RE = /[\u3400-\u9fff\uf900-\ufaff]+/g;
-const HTML_ENTITY_RE = /&(?:#x([0-9a-fA-F]{1,6})|#(\d{1,7})|([a-zA-Z]{2,12}));/g;
+const HTML_ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+)|#(\d+)|([a-zA-Z]{2,12}));/g;
 
 const HTML_BLOCK_TAGS = new Set([
   'p',
@@ -683,7 +683,9 @@ const NAMED_HTML_ENTITIES: Record<string, string> = {
   gt: '>',
   quot: '"',
   apos: "'",
+  lsqb: '[',
   lbrack: '[',
+  rsqb: ']',
   rbrack: ']',
   colon: ':',
   lsquo: "'",
@@ -692,10 +694,19 @@ const NAMED_HTML_ENTITIES: Record<string, string> = {
   rdquo: '"',
 };
 
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiTagNameChar(code: number): boolean {
+  return isAsciiLetter(code) || (code >= 48 && code <= 57) || code === 45;
+}
+
 function stripHtmlTagsLinear(html: string): string {
   const out: string[] = [];
   const len = html.length;
   let i = 0;
+  let cachedGt = -1;
   while (i < len) {
     const lt = html.indexOf('<', i);
     if (lt === -1) {
@@ -713,30 +724,45 @@ function stripHtmlTagsLinear(html: string): string {
       i = endComment + 3;
       continue;
     }
-    const gt = html.indexOf('>', lt + 1);
-    if (gt === -1) {
+    if (cachedGt <= lt) {
+      cachedGt = html.indexOf('>', lt + 1);
+    }
+    if (cachedGt === -1) {
       out.push(html.slice(lt));
       break;
     }
-    let nameStart = lt + 1;
-    if (html.charCodeAt(nameStart) === 47) {
-      nameStart += 1;
+
+    // HTML5 §13.2.5.6 (Tag open state), aligned with sanitizeRichArticleHtml's replaceHtmlTagsLinear:
+    // `<` only opens a tag when immediately followed by an ASCII letter (or `/` + ASCII letter),
+    // with an ASCII tag name terminated by `>`, `/`, or whitespace.
+    let p = lt + 1;
+    if (p < cachedGt && html.charCodeAt(p) === 47) {
+      p += 1;
     }
-    let nameEnd = nameStart;
-    while (nameEnd < gt) {
-      const ch = html.charCodeAt(nameEnd);
-      const isAlphaNum =
-        (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57);
-      if (!isAlphaNum) break;
-      nameEnd += 1;
+    if (p >= cachedGt || !isAsciiLetter(html.charCodeAt(p))) {
+      out.push('<');
+      i = lt + 1;
+      continue;
     }
-    if (nameEnd > nameStart) {
-      const tagName = html.slice(nameStart, nameEnd).toLowerCase();
-      if (HTML_BLOCK_TAGS.has(tagName)) {
-        out.push('\n');
-      }
+
+    const nameStart = p;
+    p += 1;
+    while (p < cachedGt && isAsciiTagNameChar(html.charCodeAt(p))) {
+      p += 1;
     }
-    i = gt + 1;
+
+    const validBoundary = p === cachedGt || html.charCodeAt(p) === 47 || html.charCodeAt(p) <= 32;
+    if (!validBoundary) {
+      out.push('<');
+      i = lt + 1;
+      continue;
+    }
+
+    const tagName = html.slice(nameStart, p).toLowerCase();
+    if (HTML_BLOCK_TAGS.has(tagName)) {
+      out.push('\n');
+    }
+    i = cachedGt + 1;
   }
   return out.join('');
 }
@@ -746,16 +772,22 @@ function decodeHtmlEntities(text: string): string {
     HTML_ENTITY_RE,
     (match, hex: string | undefined, dec: string | undefined, named: string | undefined) => {
       if (hex) {
-        const code = Number.parseInt(hex, 16);
-        if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
-          return String.fromCodePoint(code);
+        const trimmed = hex.replace(/^0+/, '') || '0';
+        if (trimmed.length <= 6) {
+          const code = Number.parseInt(trimmed, 16);
+          if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
+            return String.fromCodePoint(code);
+          }
         }
         return match;
       }
       if (dec) {
-        const code = Number.parseInt(dec, 10);
-        if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
-          return String.fromCodePoint(code);
+        const trimmed = dec.replace(/^0+/, '') || '0';
+        if (trimmed.length <= 7) {
+          const code = Number.parseInt(trimmed, 10);
+          if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
+            return String.fromCodePoint(code);
+          }
         }
         return match;
       }

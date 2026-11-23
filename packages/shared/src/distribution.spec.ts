@@ -19,6 +19,7 @@ import {
   defaultTemplateKeyForProvider,
   distributionPreflightResultSchema,
   evaluateDistributionPreflight,
+  extractPlainTextFromHtml,
   isL1ChannelProvider,
   isSafeDistributionHttpUrl,
   publicPrPacketSubmitSchema,
@@ -612,5 +613,80 @@ describe('evaluateDistributionPreflight()', () => {
     });
     expect(cleanHtml.ok).toBe(true);
     expect(cleanHtml.blockers).toEqual([]);
+  });
+
+  it('R3-S-01: preserves literal `<` per HTML5 §13.2.5.6, decodes uppercase/leading-zero/named HTML5 entities, and stays strictly linear O(N) on pathological inputs', () => {
+    // 1. Literal `< 100` must NOT swallow the remainder of the paragraph into a fake tag
+    const ltSpaceHtml = '<p>Price < 100 [TBD: official price] 中文泄漏 在线赌博</p>';
+    expect(extractPlainTextFromHtml(ltSpaceHtml)).toBe(
+      'Price < 100 [TBD: official price] 中文泄漏 在线赌博',
+    );
+    const ltSpacePreflight = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Clean English Power Station Guide',
+      contentMarkdown: 'Verified 1200Wh LiFePO4 battery benchmark.',
+      variantMetaDesc: 'Independent lab test of 1200Wh portable power stations.',
+      variantHtml: ltSpaceHtml,
+      geoScore: 88,
+      matchedFactCount: 2,
+      provider: 'SHOPIFY',
+      variantSlug: 'clean-english-guide',
+    });
+    expect(ltSpacePreflight.ok).toBe(false);
+    expect(ltSpacePreflight.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK']),
+    );
+    expect(
+      ltSpacePreflight.blockers.find((b) => b.code === 'MISSING_FACT_SLOTS')?.details,
+    ).toContain('[TBD: official price]');
+
+    // 2. Literal `<20ms`, `<中文`, and non-tag boundary `<a.b` preserve all text & paragraphs intact
+    const ltDigitHtml = '<p>Latency <20ms [TBD: latency]</p><p>Second para</p>';
+    expect(extractPlainTextFromHtml(ltDigitHtml)).toBe(
+      'Latency <20ms [TBD: latency]\n\nSecond para',
+    );
+    expect(extractPlainTextFromHtml('<p>Tag <中文 [TBD: spec] and <a.b [TBD: ratio]</p>')).toBe(
+      'Tag <中文 [TBD: spec] and <a.b [TBD: ratio]',
+    );
+
+    // 3. HTML5 uppercase hex, leading-zero hex/decimal, and named bracket/colon aliases
+    const html5Entities =
+      '<p>&#X5B;TBD: price&#X5D; &#x000005b;TBD&#x000005d; &lsqb;TBD&rsqb; &lbrack;TBD&colon; x&rbrack; &#X5728;&#X7EBF;&#X8D4C;&#X535A; &#00000022312;&#00000032447;&#00000036172;&#00000021338;</p>';
+    expect(extractPlainTextFromHtml(html5Entities)).toBe(
+      '[TBD: price] [TBD] [TBD] [TBD: x] 在线赌博 在线赌博',
+    );
+    const entityPreflight = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Clean English Power Station Guide',
+      contentMarkdown: 'Verified 1200Wh LiFePO4 battery benchmark.',
+      variantMetaDesc: 'Independent lab test.',
+      variantHtml: html5Entities,
+      geoScore: 88,
+      matchedFactCount: 2,
+      provider: 'WORDPRESS',
+      variantSlug: 'clean-english-guide',
+    });
+    expect(entityPreflight.ok).toBe(false);
+    expect(entityPreflight.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK']),
+    );
+    expect(entityPreflight.blockers.find((b) => b.code === 'MISSING_FACT_SLOTS')?.details).toEqual(
+      expect.arrayContaining(['[TBD: price]', '[TBD]', '[TBD: x]']),
+    );
+
+    // 4. Out-of-range numeric entities remain safely undecoded without throwing
+    expect(extractPlainTextFromHtml('<p>&#x110000; &#999999999999; &#x000000;</p>')).toBe(
+      '&#x110000; &#999999999999; &#x000000;',
+    );
+
+    // 5. ReDoS / quadratic-scan linear-time guard (< 500ms even on slow CI runners)
+    const startMs = Date.now();
+    const repeatLtSpace = `${'< 1 '.repeat(30_000)}>`;
+    const repeatLtOnly = '<'.repeat(60_000);
+    const repeatZeroEntity = `&#x${'0'.repeat(60_000)};`;
+    expect(extractPlainTextFromHtml(repeatLtSpace)).toContain('< 1 >');
+    expect(extractPlainTextFromHtml(repeatLtOnly)).toHaveLength(60_000);
+    expect(extractPlainTextFromHtml(repeatZeroEntity)).toBe(repeatZeroEntity);
+    expect(Date.now() - startMs).toBeLessThan(500);
   });
 });
