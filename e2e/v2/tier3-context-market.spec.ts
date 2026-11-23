@@ -193,7 +193,9 @@ v2Describe(
             market: 'GLOBAL',
             pathname: '/visibility',
           });
-          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandA.name);
+          const brandAGlobalLabel =
+            brandA.markets.find((m) => m.market === 'GLOBAL')?.localBrandName ?? brandA.name;
+          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandAGlobalLabel);
 
           await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
           await selectGlobalBrand(page, brandB.name);
