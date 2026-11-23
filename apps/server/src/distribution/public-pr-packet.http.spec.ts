@@ -499,4 +499,50 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
     publicPrService.resetRateLimits();
     expect((await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}`)).status).toBe(200);
   });
+
+  it('serializes concurrent duplicate POST /submit requests so strictly one GeoPublishRecord is created', async () => {
+    const targetUrl = 'https://media.public-press.example/concurrent-race-article';
+    const origImpl = createPublishRecordSpy.getMockImplementation();
+    expect(origImpl).toBeDefined();
+
+    // Introduce an async write delay inside createPublishRecord to widen the race window
+    createPublishRecordSpy.mockImplementation(async (articleId, input, auth) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return origImpl!(articleId, input, auth);
+    });
+
+    try {
+      const submitOnce = async () => {
+        const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}/submit`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ publishedUrl: targetUrl }),
+        });
+        const body = (await res.json()) as Envelope<PublicPrPacketSubmitResultDto>;
+        return { status: res.status, data: body.data };
+      };
+
+      const [r1, r2, r3] = await Promise.all([submitOnce(), submitOnce(), submitOnce()]);
+
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+      expect(r3.status).toBe(200);
+      expect(r1.data.accepted).toBe(true);
+      expect(r2.data.accepted).toBe(true);
+      expect(r3.data.accepted).toBe(true);
+      expect(r1.data.publishedUrl).toBe(targetUrl);
+      expect(r2.data.publishedUrl).toBe(targetUrl);
+      expect(r3.data.publishedUrl).toBe(targetUrl);
+
+      const flags = [r1.data.alreadyRecorded, r2.data.alreadyRecorded, r3.data.alreadyRecorded];
+      expect(flags.filter((f) => f === false)).toHaveLength(1);
+      expect(flags.filter((f) => f === true)).toHaveLength(2);
+      expect(createPublishRecordSpy).toHaveBeenCalledTimes(1);
+      expect(publishRecords).toHaveLength(1);
+    } finally {
+      if (origImpl) {
+        createPublishRecordSpy.mockImplementation(origImpl);
+      }
+    }
+  });
 });

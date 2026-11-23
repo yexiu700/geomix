@@ -97,37 +97,7 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       const worker = new Worker(
         name,
         async (job) => {
-          if (name === 'visibility-check' && job.name === 'visibility-check') {
-            const visData = readPayload(job.data);
-            if (visData && this.visibilityRunner) {
-              await this.visibilityRunner.process(visData);
-            }
-            return;
-          }
-          if (name === 'fact-index' && job.name === 'fact-index') {
-            const factData = readFactIndexPayload(job.data);
-            if (factData && this.factIndexer) {
-              await this.factIndexer.process(factData);
-            }
-            return;
-          }
-          if (name === 'geo-batch' && job.name === 'geo-batch') {
-            const batchData = readGeoBatchPayload(job.data);
-            if (batchData && this.geoBatchRunner) {
-              await this.geoBatchRunner.process(batchData);
-            }
-            return;
-          }
-          if (name === 'distribution' && job.name === 'distribution') {
-            const distData = readDistributionPayload(job.data);
-            if (distData && this.distributionRunner) {
-              await this.distributionRunner.process(distData);
-            }
-            return;
-          }
-          const data = readPayload(job.data);
-          if (!data) return;
-          await this.driver.handle(data);
+          await this.dispatchJob(name, job);
         },
         {
           connection: this.producer.duplicate(),
@@ -169,6 +139,41 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
         `initial visibility engine health refresh skipped: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     });
+  }
+
+  async dispatchJob(name: string, job: { name: string; data: unknown }): Promise<void> {
+    if (name === 'visibility-check' && job.name === 'visibility-check') {
+      const visData = readPayload(job.data);
+      if (visData && this.visibilityRunner) {
+        await this.visibilityRunner.process(visData);
+      }
+      return;
+    }
+    if (name === 'fact-index' && job.name === 'fact-index') {
+      const factData = readFactIndexPayload(job.data);
+      if (factData && this.factIndexer) {
+        await this.factIndexer.process(factData);
+      }
+      return;
+    }
+    if (name === 'geo-batch' && job.name === 'geo-batch') {
+      const batchData = readGeoBatchPayload(job.data);
+      if (batchData && this.geoBatchRunner) {
+        await this.geoBatchRunner.process(batchData);
+      }
+      return;
+    }
+    if (name === 'distribution') {
+      if (job.name !== 'distribution') return;
+      const distData = readDistributionPayload(job.data);
+      if (distData && this.distributionRunner) {
+        await this.distributionRunner.process(distData);
+      }
+      return;
+    }
+    const data = readPayload(job.data);
+    if (!data) return;
+    await this.driver.handle(data);
   }
 
   async stop(): Promise<void> {

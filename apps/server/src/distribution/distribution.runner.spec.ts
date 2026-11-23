@@ -1,13 +1,20 @@
 import 'reflect-metadata';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GeoPublishRecordDto } from '@geomix/shared';
+import type { QuotaService } from '../billing/quota.service';
+import { SecretBox } from '../common/secret-box';
+import type { OutboundHttpClient } from '../infra/outbound-http';
 import { PrismaService } from '../prisma/prisma.service';
+import type { MaintenanceRunner } from '../queue/maintenance.runner';
 import { QueueProducer } from '../queue/queue.producer';
 import { QueueRuntime } from '../queue/queue.runtime';
+import type { WorkDriver } from '../queue/work-driver';
 import { GeoDeliveryService } from '../studio/geo-delivery.service';
 import { currentTenantId } from '../tenant/tenant-context';
 import { WorkerModule } from '../worker.module';
+import type { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { ConnectionsService } from './connections.service';
 import { CmsConnectorRegistry } from './connectors';
 import {
@@ -54,6 +61,8 @@ type TaskRow = {
 type ConnectionRow = {
   id: string;
   tenantId: string;
+  brandId: string;
+  brandMarketId: string;
   provider: string;
   displayName: string;
   siteBaseUrl: string;
@@ -80,6 +89,7 @@ function makeRunnerHarness(initial?: {
   task?: Partial<TaskRow>;
   connection?: Partial<ConnectionRow> | null;
   existingRecords?: PublishRecordRow[];
+  connectionsOverride?: ConnectionsService;
 }) {
   const tenantId = 'tenant_a';
   const connection: ConnectionRow | null =
@@ -88,6 +98,8 @@ function makeRunnerHarness(initial?: {
       : {
           id: 'conn_wp_1',
           tenantId,
+          brandId: 'brand_1',
+          brandMarketId: 'bm_1',
           provider: 'WORDPRESS',
           displayName: 'Global WP Blog',
           siteBaseUrl: 'https://blog.acme.example',
@@ -304,7 +316,14 @@ function makeRunnerHarness(initial?: {
     ),
   } as unknown as GeoDeliveryService;
 
-  const runner = new DistributionRunner(prisma, connections, connectors, indexNow, geoDelivery);
+  const resolvedConnections = initial?.connectionsOverride ?? connections;
+  const runner = new DistributionRunner(
+    prisma,
+    resolvedConnections,
+    connectors,
+    indexNow,
+    geoDelivery,
+  );
 
   return {
     tenantId,
@@ -313,10 +332,11 @@ function makeRunnerHarness(initial?: {
     seenTenantIds,
     runner,
     publishMock,
-    connections,
+    connections: resolvedConnections,
     connectors,
     indexNow,
     geoDelivery,
+    prisma,
   };
 }
 
@@ -452,7 +472,7 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
     expect(h.geoDelivery.createPublishRecord).not.toHaveBeenCalled();
   });
 
-  it('skips tasks not in PUBLISHING state and fails disabled/non-L1 tasks safely', async () => {
+  it('skips tasks not in PUBLISHING state and fails disabled/invalid/mismatched/non-L1 tasks safely without decrypting or publishing', async () => {
     const hSkipped = makeRunnerHarness({ task: { status: 'PUBLISHED' } });
     await hSkipped.runner.process({ tenantId: hSkipped.tenantId, taskId: 'task_1' });
     expect(hSkipped.publishMock).not.toHaveBeenCalled();
@@ -460,11 +480,202 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
     const hDisabled = makeRunnerHarness({ connection: { status: 'DISABLED' } });
     await hDisabled.runner.process({ tenantId: hDisabled.tenantId, taskId: 'task_1' });
     expect(hDisabled.task.status).toBe('FAILED');
+    expect(hDisabled.connections.decryptCredentials).not.toHaveBeenCalled();
     expect(hDisabled.publishMock).not.toHaveBeenCalled();
+
+    const hInvalid = makeRunnerHarness({ connection: { status: 'INVALID' } });
+    await hInvalid.runner.process({ tenantId: hInvalid.tenantId, taskId: 'task_1' });
+    expect(hInvalid.task.status).toBe('FAILED');
+    expect(hInvalid.connections.decryptCredentials).not.toHaveBeenCalled();
+    expect(hInvalid.publishMock).not.toHaveBeenCalled();
+
+    const hWrongBrand = makeRunnerHarness({ connection: { brandId: 'brand_other' } });
+    await hWrongBrand.runner.process({ tenantId: hWrongBrand.tenantId, taskId: 'task_1' });
+    expect(hWrongBrand.task.status).toBe('FAILED');
+    expect(hWrongBrand.connections.decryptCredentials).not.toHaveBeenCalled();
+    expect(hWrongBrand.publishMock).not.toHaveBeenCalled();
+
+    const hWrongMarket = makeRunnerHarness({ connection: { brandMarketId: 'bm_other' } });
+    await hWrongMarket.runner.process({ tenantId: hWrongMarket.tenantId, taskId: 'task_1' });
+    expect(hWrongMarket.task.status).toBe('FAILED');
+    expect(hWrongMarket.connections.decryptCredentials).not.toHaveBeenCalled();
+    expect(hWrongMarket.publishMock).not.toHaveBeenCalled();
 
     const hNonL1 = makeRunnerHarness({ task: { provider: 'PR_PACKET' } });
     await hNonL1.runner.process({ tenantId: hNonL1.tenantId, taskId: 'task_1' });
     expect(hNonL1.task.status).toBe('FAILED');
+  });
+
+  it('redacts Shopify, WP Basic Base64, Webflow Bearer, Webhook HMAC, upper/lower/mixed URL-encoded, form-urlencoded +, and connConfig.indexNowKey/Location via real ConnectionsService + SecretBox', async () => {
+    process.env.CREDENTIAL_ENCRYPTION_KEY = Buffer.alloc(32, 0x37).toString('base64');
+    const secretBox = new SecretBox();
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const shopifyToken = 'shpat_live_secret_987654321';
+    const webflowToken = 'wf_secret_tok_999';
+    const webhookSecret = 'whsec_very_secret_hmac_key';
+    const hmacSig = 'sha256=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+    const encodedToken = 'tok+live/987=abc';
+    const wpUser = 'wp-admin';
+    const wpAppPassword = 'abcd efgh ijkl mnop';
+    const wpBase64 = Buffer.from(`${wpUser}:${wpAppPassword}`, 'utf8').toString('base64');
+    const wpBase64LowerEncoded = encodeURIComponent(wpBase64).replace(/%[0-9A-F]{2}/g, (m) =>
+      m.toLowerCase(),
+    );
+    const indexNowKey = 'my_indexnow_secret_key_998877';
+    const indexNowKeyLocation = `https://blog.acme.example/${indexNowKey}.txt`;
+    const indexNowKeyLocationLowerEncoded = encodeURIComponent(indexNowKeyLocation).replace(
+      /%[0-9A-F]{2}/g,
+      (m) => m.toLowerCase(),
+    );
+
+    const encrypted = secretBox.encryptJson({
+      accessToken: shopifyToken,
+      apiToken: webflowToken,
+      signingSecret: webhookSecret,
+      extraToken: encodedToken,
+      username: wpUser,
+      appPassword: wpAppPassword,
+    });
+
+    const realConnections = new ConnectionsService(
+      {} as PrismaService,
+      {} as QuotaService,
+      secretBox,
+      {} as OutboundHttpClient,
+      {} as CmsConnectorRegistry,
+    );
+
+    const vectors: Array<{
+      label: string;
+      message: string;
+      sentinel: string;
+      forbidden: string[];
+    }> = [
+      {
+        label: 'shopify-and-webflow-bearer',
+        message: `Shopify X-Shopify-Access-Token: ${shopifyToken} | Authorization: Bearer ${webflowToken} | END_V1`,
+        sentinel: 'END_V1',
+        forbidden: [shopifyToken, webflowToken],
+      },
+      {
+        label: 'webhook-hmac',
+        message: `Webhook secret=${webhookSecret} X-GeoMix-Signature: ${hmacSig} | END_V2`,
+        sentinel: 'END_V2',
+        forbidden: [webhookSecret, hmacSig],
+      },
+      {
+        label: 'wp-basic-base64-and-form-plus',
+        message: `Authorization: Basic ${wpBase64} bare=${wpBase64} enc=${wpBase64LowerEncoded} app_password=abcd+efgh+ijkl+mnop | END_V3`,
+        sentinel: 'END_V3',
+        forbidden: [wpAppPassword, 'abcd+efgh+ijkl+mnop', wpBase64, wpBase64LowerEncoded],
+      },
+      {
+        label: 'url-encoded-upper-lower-mixed',
+        message: `upper=tok%2Blive%2F987%3Dabc lower=tok%2blive%2f987%3dabc mixed=tok%2Blive%2f987%3Dabc | END_V4`,
+        sentinel: 'END_V4',
+        forbidden: [
+          encodedToken,
+          'tok%2Blive%2F987%3Dabc',
+          'tok%2blive%2f987%3dabc',
+          'tok%2Blive%2f987%3Dabc',
+        ],
+      },
+      {
+        label: 'indexnow-key-and-location',
+        message: `key=${indexNowKey} loc=${indexNowKeyLocation} enc=${indexNowKeyLocationLowerEncoded} | END_V5`,
+        sentinel: 'END_V5',
+        forbidden: [indexNowKey, indexNowKeyLocation, indexNowKeyLocationLowerEncoded],
+      },
+    ];
+
+    for (const vec of vectors) {
+      warnSpy.mockClear();
+      const h = makeRunnerHarness({
+        task: { publishAsDraft: false },
+        connection: {
+          credentialsCiphertext: encrypted.ciphertext,
+          credentialsIv: encrypted.iv,
+          credentialsTag: encrypted.tag,
+          keyVersion: encrypted.keyVersion,
+          configJson: {
+            indexNowKey,
+            indexNowKeyLocation,
+          },
+        },
+        connectionsOverride: realConnections,
+      });
+
+      h.publishMock.mockRejectedValueOnce(new Error(vec.message));
+      await h.runner.process({ tenantId: h.tenantId, taskId: 'task_1' });
+
+      expect(h.task.status, vec.label).toBe('FAILED');
+      const persisted = h.task.lastError ?? '';
+      const logged = warnSpy.mock.calls.map((c) => String(c[0] ?? '')).join('\n');
+
+      for (const output of [persisted, logged]) {
+        expect(output, `${vec.label} must retain sentinel (no truncation)`).toContain(vec.sentinel);
+        expect(output, `${vec.label} must contain [REDACTED]`).toContain('[REDACTED]');
+        for (const secret of vec.forbidden) {
+          expect(output, `${vec.label} leaked ${secret}`).not.toContain(secret);
+        }
+      }
+    }
+  });
+
+  it('isolates QueueRuntime distribution queue so wrong job.name never falls through to WorkDriver.handle()', async () => {
+    const producer = {} as QueueProducer;
+    const driver = {
+      handle: vi.fn(async () => undefined),
+    } as unknown as WorkDriver;
+    const maintenance = {
+      run: vi.fn(async () => undefined),
+    } as unknown as MaintenanceRunner;
+    const runtimeState = {
+      markConnected: vi.fn(),
+    } as unknown as WorkerRuntimeService;
+    const distributionHandler = {
+      process: vi.fn(async () => undefined),
+    };
+
+    const queueRuntime = new QueueRuntime(
+      producer,
+      driver,
+      maintenance,
+      runtimeState,
+      undefined,
+      undefined,
+      undefined,
+      distributionHandler,
+    );
+
+    // Wrong job.name carrying a legacy WorkDriver payload MUST NOT fall through to driver.handle()
+    await queueRuntime.dispatchJob('distribution', {
+      name: 'unexpected-job-name',
+      data: { tenantId: 'tenant_a', runId: 'run_1' },
+    });
+    expect(driver.handle).not.toHaveBeenCalled();
+    expect(distributionHandler.process).not.toHaveBeenCalled();
+
+    // Reserved 'system' tenantId on valid job.name MUST be ignored without fallthrough
+    await queueRuntime.dispatchJob('distribution', {
+      name: 'distribution',
+      data: { tenantId: 'system', taskId: 'task_99' },
+    });
+    expect(driver.handle).not.toHaveBeenCalled();
+    expect(distributionHandler.process).not.toHaveBeenCalled();
+
+    // Valid job.name + valid payload dispatches strictly to distributionHandler
+    await queueRuntime.dispatchJob('distribution', {
+      name: 'distribution',
+      data: { tenantId: 'tenant_a', taskId: 'task_99' },
+    });
+    expect(distributionHandler.process).toHaveBeenCalledTimes(1);
+    expect(distributionHandler.process).toHaveBeenCalledWith({
+      tenantId: 'tenant_a',
+      taskId: 'task_99',
+    });
+    expect(driver.handle).not.toHaveBeenCalled();
   });
 
   it('enqueues distribution jobs with attempts=1 and no fixed jobId via QueueProducer', async () => {

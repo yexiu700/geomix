@@ -396,6 +396,23 @@ export class DistributionService {
     if (existing.status === 'PUBLISHING') {
       throw new ApiError(409, BILLING_ERROR.CONFLICT, '任务正在推送中，暂不支持修改');
     }
+    if (existing.status === 'ARCHIVED') {
+      throw new ApiError(409, BILLING_ERROR.CONFLICT, '已归档的分发任务不支持修改或重新激活');
+    }
+    if (existing.status === 'PUBLISHED') {
+      const definedKeys = Object.entries(input)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key);
+      const isPureArchive =
+        input.status === 'ARCHIVED' && definedKeys.length === 1 && definedKeys[0] === 'status';
+      if (!isPureArchive) {
+        throw new ApiError(
+          409,
+          BILLING_ERROR.CONFLICT,
+          '已正式发布的分发任务仅支持归档，不支持修改内容或回退状态',
+        );
+      }
+    }
 
     if (input.connectionId !== undefined && input.connectionId !== null) {
       if (!isL1ChannelProvider(existing.provider)) {
@@ -413,8 +430,12 @@ export class DistributionService {
       if (conn.provider !== existing.provider) {
         throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与分发任务渠道不一致');
       }
-      if (conn.status === 'DISABLED') {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该渠道连接已停用，请先启用或更换连接');
+      if (conn.status !== 'ACTIVE') {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '该渠道连接当前不可用，请先在品牌管理中测试并启用连接',
+        );
       }
     }
 
@@ -475,6 +496,9 @@ export class DistributionService {
     if (input.publishAsDraft !== undefined) data.publishAsDraft = input.publishAsDraft;
     if (input.connectionId !== undefined) data.connectionId = input.connectionId;
     if (input.status !== undefined) data.status = input.status;
+    if (input.status === 'ARCHIVED' && existing.shareTokenHash && existing.shareRevokedAt == null) {
+      data.shareRevokedAt = new Date();
+    }
 
     const updated = await this.prisma.scoped.geoDistributionTask.update({
       where: { id: existing.id },

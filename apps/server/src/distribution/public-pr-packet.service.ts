@@ -166,6 +166,7 @@ function sha256Hex(raw: string): string {
 @Injectable()
 export class PublicPrPacketService {
   private readonly rateLimiter: FreeActionRateLimiter;
+  private readonly inFlightSubmits = new Map<string, Promise<void>>();
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -332,60 +333,85 @@ export class PublicPrPacketService {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, UNIFORM_NOT_FOUND_MESSAGE);
       }
 
-      const existing = await this.prisma.scoped.geoPublishRecord.findFirst({
-        where: {
-          articleId: task.articleId,
-          publishedUrl,
-        },
+      const lockKey = `${located.tenantId}\0${task.articleId}\0${publishedUrl}`;
+      while (this.inFlightSubmits.has(lockKey)) {
+        await this.inFlightSubmits.get(lockKey);
+      }
+      let releaseLock!: () => void;
+      const lockPromise = new Promise<void>((resolve) => {
+        releaseLock = resolve;
       });
+      this.inFlightSubmits.set(lockKey, lockPromise);
 
-      if (existing) {
-        if (task.status !== 'PUBLISHED' || !task.remotePublishedUrl) {
-          await this.prisma.scoped.geoDistributionTask.update({
+      try {
+        const existing = await this.prisma.scoped.geoPublishRecord.findFirst({
+          where: {
+            articleId: task.articleId,
+            publishedUrl,
+          },
+        });
+
+        if (existing) {
+          const latestTask = await this.prisma.scoped.geoDistributionTask.findFirst({
             where: { id: task.id },
-            data: {
-              status: 'PUBLISHED',
-              remotePublishedUrl: existing.publishedUrl,
-              publishedAt: existing.publishedAt,
-              lastError: null,
+            select: {
+              id: true,
+              status: true,
+              remotePublishedUrl: true,
             },
           });
+          if (latestTask && (latestTask.status !== 'PUBLISHED' || !latestTask.remotePublishedUrl)) {
+            await this.prisma.scoped.geoDistributionTask.update({
+              where: { id: task.id },
+              data: {
+                status: 'PUBLISHED',
+                remotePublishedUrl: existing.publishedUrl,
+                publishedAt: existing.publishedAt,
+                lastError: null,
+              },
+            });
+          }
+          return {
+            accepted: true,
+            publishedUrl: existing.publishedUrl,
+            submittedAt: existing.publishedAt.toISOString(),
+            alreadyRecorded: true,
+          };
         }
+
+        const record = await this.geoDelivery.createPublishRecord(
+          task.articleId,
+          {
+            publishedUrl,
+            channel: task.channelLabel.trim() || 'Tech Review Media',
+            distributionTaskId: task.id,
+            autoRetest: { enabled: true },
+          },
+          { tenantId: located.tenantId, userId: 'public-pr-submit' },
+        );
+
+        await this.prisma.scoped.geoDistributionTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'PUBLISHED',
+            remotePublishedUrl: record.publishedUrl,
+            publishedAt: new Date(record.publishedAt),
+            lastError: null,
+          },
+        });
+
         return {
           accepted: true,
-          publishedUrl: existing.publishedUrl,
-          submittedAt: existing.publishedAt.toISOString(),
-          alreadyRecorded: true,
+          publishedUrl: record.publishedUrl,
+          submittedAt: record.publishedAt,
+          alreadyRecorded: false,
         };
+      } finally {
+        if (this.inFlightSubmits.get(lockKey) === lockPromise) {
+          this.inFlightSubmits.delete(lockKey);
+        }
+        releaseLock();
       }
-
-      const record = await this.geoDelivery.createPublishRecord(
-        task.articleId,
-        {
-          publishedUrl,
-          channel: task.channelLabel.trim() || 'Tech Review Media',
-          distributionTaskId: task.id,
-          autoRetest: { enabled: true },
-        },
-        { tenantId: located.tenantId, userId: 'public-pr-submit' },
-      );
-
-      await this.prisma.scoped.geoDistributionTask.update({
-        where: { id: task.id },
-        data: {
-          status: 'PUBLISHED',
-          remotePublishedUrl: record.publishedUrl,
-          publishedAt: new Date(record.publishedAt),
-          lastError: null,
-        },
-      });
-
-      return {
-        accepted: true,
-        publishedUrl: record.publishedUrl,
-        submittedAt: record.publishedAt,
-        alreadyRecorded: false,
-      };
     });
   }
 

@@ -321,6 +321,16 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
       siteBaseUrl: 'https://old.acme.example',
       status: 'DISABLED',
     });
+    connections.set('conn_wp_invalid', {
+      id: 'conn_wp_invalid',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_global',
+      provider: 'WORDPRESS',
+      displayName: 'Invalid WP',
+      siteBaseUrl: 'https://broken.acme.example',
+      status: 'INVALID',
+    });
     connections.set('conn_shopify', {
       id: 'conn_shopify',
       tenantId: 'tenant_a',
@@ -918,6 +928,13 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     });
     expect(disabledConn.status).toBe(400);
 
+    // INVALID connection -> 400 (consistent with publishTask)
+    const invalidConn = await req('PATCH', '/api/v2/distributions/task_wp_blocked', tokenA, {
+      connectionId: 'conn_wp_invalid',
+    });
+    expect(invalidConn.status).toBe(400);
+    expect(invalidConn.body.code).toBe(API_ERROR.BAD_REQUEST);
+
     // PUBLISHING task -> 409
     tasks.get('task_wp_blocked')!.status = 'PUBLISHING';
     const publishingPatch = await req('PATCH', '/api/v2/distributions/task_wp_blocked', tokenA, {
@@ -925,6 +942,101 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     });
     expect(publishingPatch.status).toBe(409);
     expect(publishingPatch.body.code).toBe(BILLING_ERROR.CONFLICT);
+  });
+
+  it('enforces PUBLISHED/ARCHIVED terminal state guards and stamps shareRevokedAt on PR task archive', async () => {
+    // 1. PUBLISHED task rejects status downgrade, content edit, and mixed archive+edit with 409
+    const wpTask = tasks.get('task_wp_clean')!;
+    wpTask.status = 'PUBLISHED';
+    wpTask.remotePostId = 'wp_900';
+    wpTask.remotePublishedUrl = 'https://blog.acme.example/acme-power-station-review';
+    wpTask.publishedAt = new Date();
+
+    const revertPublished = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      status: 'READY_TO_PUBLISH',
+    });
+    expect(revertPublished.status).toBe(409);
+    expect(revertPublished.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    const revertPublishedDraft = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      status: 'DRAFT_VARIANT',
+    });
+    expect(revertPublishedDraft.status).toBe(409);
+    expect(revertPublishedDraft.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    const editPublished = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      variantTitle: 'Tampered Title After Publish',
+    });
+    expect(editPublished.status).toBe(409);
+    expect(editPublished.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    const mixedArchivePublished = await req(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      { status: 'ARCHIVED', variantTitle: 'Tampered While Archiving' },
+    );
+    expect(mixedArchivePublished.status).toBe(409);
+    expect(mixedArchivePublished.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    const mixedArchiveConn = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      status: 'ARCHIVED',
+      connectionId: 'conn_wp',
+    });
+    expect(mixedArchiveConn.status).toBe(409);
+    expect(mixedArchiveConn.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    // 2. Pure PUBLISHED -> ARCHIVED transition succeeds (200)
+    const pureArchivePublished = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      { status: 'ARCHIVED' },
+    );
+    expect(pureArchivePublished.status).toBe(200);
+    expect(pureArchivePublished.body.data.status).toBe('ARCHIVED');
+
+    // 3. ARCHIVED task is immutable: rejects un-archiving and content edits with 409
+    const reviveArchived = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      status: 'DRAFT_VARIANT',
+    });
+    expect(reviveArchived.status).toBe(409);
+    expect(reviveArchived.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    const editArchived = await req('PATCH', '/api/v2/distributions/task_wp_clean', tokenA, {
+      variantTitle: 'Edit Archived',
+    });
+    expect(editArchived.status).toBe(409);
+    expect(editArchived.body.code).toBe(BILLING_ERROR.CONFLICT);
+
+    // 4. Archiving a PR task with an active share link permanently stamps shareRevokedAt
+    const issued = await req<PrShareLinkResultDto>(
+      'POST',
+      '/api/v2/distributions/task_pr_1/pr-share',
+      tokenA,
+      { ttlDays: 7 },
+    );
+    expect(issued.status).toBe(200);
+    expect(tasks.get('task_pr_1')?.shareTokenHash).toBeTruthy();
+    expect(tasks.get('task_pr_1')?.shareRevokedAt).toBeNull();
+
+    const archivePr = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_pr_1',
+      tokenA,
+      { status: 'ARCHIVED' },
+    );
+    expect(archivePr.status).toBe(200);
+    expect(archivePr.body.data.status).toBe('ARCHIVED');
+    expect(archivePr.body.data.shareLinkActive).toBe(false);
+    expect(tasks.get('task_pr_1')?.shareRevokedAt).toBeInstanceOf(Date);
+
+    // Attempting to un-archive PR task to revive dead share token is blocked with 409
+    const revivePr = await req('PATCH', '/api/v2/distributions/task_pr_1', tokenA, {
+      status: 'DRAFT_VARIANT',
+    });
+    expect(revivePr.status).toBe(409);
+    expect(revivePr.body.code).toBe(BILLING_ERROR.CONFLICT);
   });
 
   it('enforces 422 structured preflight blockers on publish, supports ack override, Idempotency-Key replay/conflict, PUBLISH quota, and 503 enqueue rollback', async () => {

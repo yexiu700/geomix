@@ -53,6 +53,160 @@ function stripInternalExtras(raw: Record<string, unknown>): Record<string, unkno
   return out;
 }
 
+const CONFIG_SECRET_KEY_PATTERN = /token|secret|password|key|auth/i;
+const EXPLICIT_CONFIG_SECRET_KEYS = new Set(['indexNowKey', 'indexNowKeyLocation']);
+const PERCENT_HEX_PATTERN = /%[0-9A-Fa-f]{2}/g;
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildPercentInsensitiveRegex(encoded: string): RegExp | null {
+  PERCENT_HEX_PATTERN.lastIndex = 0;
+  if (!PERCENT_HEX_PATTERN.test(encoded)) {
+    return null;
+  }
+  PERCENT_HEX_PATTERN.lastIndex = 0;
+  const parts: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PERCENT_HEX_PATTERN.exec(encoded)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(escapeRegExpLiteral(encoded.slice(lastIndex, match.index)));
+    }
+    const hex = match[0].slice(1);
+    const hexPattern = hex
+      .split('')
+      .map((ch) => (/[A-Fa-f]/.test(ch) ? `[${ch.toLowerCase()}${ch.toUpperCase()}]` : ch))
+      .join('');
+    parts.push(`%${hexPattern}`);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < encoded.length) {
+    parts.push(escapeRegExpLiteral(encoded.slice(lastIndex)));
+  }
+  return new RegExp(parts.join(''), 'g');
+}
+
+function collectRunnerRedactionInputs(
+  credentials?: ConnectorSecrets,
+  connConfig?: Record<string, unknown>,
+): { redactInputs: Record<string, string>; secretValues: string[] } {
+  const redactInputs: Record<string, string> = {};
+  const rawSecrets = new Set<string>();
+
+  const addSecretValue = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed.length < 4) return;
+    rawSecrets.add(trimmed);
+    const compact = trimmed.replace(/\s+/g, '');
+    if (compact.length >= 4 && compact !== trimmed) {
+      rawSecrets.add(compact);
+    }
+  };
+
+  if (credentials) {
+    for (const [key, value] of Object.entries(credentials)) {
+      if (typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      redactInputs[key] = value;
+      if (key.toLowerCase() !== 'username' || trimmed.length >= 8) {
+        addSecretValue(trimmed);
+      }
+    }
+
+    const username = credentials.username?.trim();
+    const appPassword = (
+      credentials.appPassword ??
+      credentials.applicationPassword ??
+      credentials.password
+    )?.trim();
+    if (username && appPassword) {
+      addSecretValue(Buffer.from(`${username}:${appPassword}`, 'utf8').toString('base64'));
+      const compactPassword = appPassword.replace(/\s+/g, '');
+      if (compactPassword !== appPassword) {
+        addSecretValue(Buffer.from(`${username}:${compactPassword}`, 'utf8').toString('base64'));
+      }
+    }
+  }
+
+  if (connConfig) {
+    for (const [key, value] of Object.entries(connConfig)) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        if (EXPLICIT_CONFIG_SECRET_KEYS.has(key) || CONFIG_SECRET_KEY_PATTERN.test(key)) {
+          redactInputs[`cfg_${key}`] = trimmed;
+          addSecretValue(trimmed);
+        }
+      } else if (
+        key === 'extraHeaders' &&
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value)
+      ) {
+        for (const [hdrKey, hdrVal] of Object.entries(value as Record<string, unknown>)) {
+          if (typeof hdrVal !== 'string') continue;
+          const trimmed = hdrVal.trim();
+          if (!trimmed) continue;
+          if (CONFIG_SECRET_KEY_PATTERN.test(hdrKey)) {
+            redactInputs[`cfg_hdr_${hdrKey}`] = trimmed;
+            addSecretValue(trimmed);
+          }
+        }
+      }
+    }
+  }
+
+  const secretValues = [...rawSecrets].sort((a, b) => b.length - a.length);
+  return { redactInputs, secretValues };
+}
+
+function redactEncodedSecretVariants(input: string, secretValues: readonly string[]): string {
+  let text = input;
+  const applyEncoded = (encoded: string) => {
+    if (encoded.length < 4) return;
+    const lowerEncoded = encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase());
+    text = text.split(encoded).join('[REDACTED]');
+    if (lowerEncoded !== encoded) {
+      text = text.split(lowerEncoded).join('[REDACTED]');
+    }
+    const mixedEncodedRe = buildPercentInsensitiveRegex(encoded);
+    if (mixedEncodedRe) {
+      text = text.replace(mixedEncodedRe, '[REDACTED]');
+    }
+  };
+
+  for (const trimmed of secretValues) {
+    if (trimmed.length < 4) continue;
+    text = text.split(trimmed).join('[REDACTED]');
+
+    let encoded: string;
+    try {
+      encoded = encodeURIComponent(trimmed);
+    } catch {
+      continue;
+    }
+
+    applyEncoded(encoded);
+
+    if (encoded.includes('%20')) {
+      applyEncoded(encoded.replace(/%20/g, '+'));
+    }
+
+    try {
+      const formUrlEncoded = new URLSearchParams([['v', trimmed]]).toString().slice(2);
+      if (formUrlEncoded !== encoded) {
+        applyEncoded(formUrlEncoded);
+      }
+    } catch {
+      // Ignore malformed surrogate pairs
+    }
+  }
+  return text;
+}
+
 /**
  * BullMQ `'distribution'` 队列消费者：
  * - 100% 在 `runInTenant(tenantId, ...)` 内使用 `prisma.scoped`，零 `prisma.base`
@@ -113,18 +267,21 @@ export class DistributionRunner implements DistributionHandler {
 
       if (
         !task.connection ||
-        task.connection.status === 'DISABLED' ||
-        task.connection.provider !== task.provider
+        task.connection.status !== 'ACTIVE' ||
+        task.connection.provider !== task.provider ||
+        task.connection.brandId !== task.brandId ||
+        task.connection.brandMarketId !== task.brandMarketId
       ) {
-        await this.markFailed(task.id, '未绑定有效的站点渠道连接或连接已停用');
+        await this.markFailed(task.id, '未绑定有效的站点渠道连接或连接当前不可用');
         return;
       }
 
+      const connConfigForRedaction = asPlainObject(task.connection.configJson);
       let credentials: ConnectorSecrets | undefined;
       try {
         credentials = this.connections.decryptCredentials(task.connection);
 
-        const connConfig = asPlainObject(task.connection.configJson) as ChannelConnectionConfig;
+        const connConfig = connConfigForRedaction as ChannelConnectionConfig;
         const connContext: ConnectorConnectionContext = {
           id: task.connection.id,
           provider: task.provider,
@@ -260,11 +417,30 @@ export class DistributionRunner implements DistributionHandler {
           error instanceof Error && error.message.trim()
             ? error.message
             : '渠道推送失败，请稍后重试';
-        const safeMessage = this.connections.sanitizeConnectionError(rawMessage, credentials);
+        const safeMessage = this.sanitizeRunnerError(
+          rawMessage,
+          credentials,
+          connConfigForRedaction,
+        );
         await this.markFailed(task.id, safeMessage);
         this.logger.warn(`distribution failed task=${task.id}: ${safeMessage}`);
       }
     });
+  }
+
+  private sanitizeRunnerError(
+    rawMessage: string,
+    credentials?: ConnectorSecrets,
+    connConfig?: Record<string, unknown>,
+  ): string {
+    const { redactInputs, secretValues } = collectRunnerRedactionInputs(credentials, connConfig);
+    const hasInputs = Object.keys(redactInputs).length > 0;
+    const preRedacted = redactEncodedSecretVariants(rawMessage, secretValues);
+    const sanitized = this.connections.sanitizeConnectionError(
+      preRedacted,
+      hasInputs ? redactInputs : undefined,
+    );
+    return redactEncodedSecretVariants(sanitized, secretValues);
   }
 
   private async markFailed(taskId: string, safeMessage: string): Promise<void> {
