@@ -228,6 +228,7 @@ export function BrandChannelConnections({
   );
   const [remoteTargets, setRemoteTargets] = useState<ChannelRemoteTargetDto[]>([]);
 
+  const contextSeqRef = useRef(0);
   const loadSeqRef = useRef(0);
   const loadCtrlRef = useRef<AbortController | null>(null);
   const modalActionCtrlRef = useRef<AbortController | null>(null);
@@ -324,6 +325,7 @@ export function BrandChannelConnections({
   );
 
   useEffect(() => {
+    contextSeqRef.current += 1;
     resetModalState();
     abortCardActions();
     setConnections([]);
@@ -337,6 +339,7 @@ export function BrandChannelConnections({
       void loadConnections();
     }
     return () => {
+      contextSeqRef.current += 1;
       loadSeqRef.current += 1;
       loadCtrlRef.current?.abort();
       modalActionCtrlRef.current?.abort();
@@ -550,7 +553,7 @@ export function BrandChannelConnections({
       modalActionCtrlRef.current?.abort();
       const ctrl = new AbortController();
       modalActionCtrlRef.current = ctrl;
-      const seq = loadSeqRef.current;
+      const seq = contextSeqRef.current;
       setModalTesting(true);
       setModalError(null);
       try {
@@ -571,7 +574,7 @@ export function BrandChannelConnections({
           storage: window.sessionStorage,
           signal: ctrl.signal,
         });
-        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
         setModalTestResult(res);
         if (res.targets && res.targets.length > 0) {
           applyDiscoveredTargets(targetProvider, res.targets, overrides);
@@ -595,12 +598,12 @@ export function BrandChannelConnections({
           feedback.notifyWarning(res.message || '连接测试未通过，请检查凭据或站点地址');
         }
       } catch (err) {
-        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
         const msg = formatConnError(err, '测试连接失败');
         setModalError(msg);
         feedback.notifyError(msg);
       } finally {
-        if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
+        if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
           setModalTesting(false);
         }
       }
@@ -638,7 +641,7 @@ export function BrandChannelConnections({
     modalActionCtrlRef.current?.abort();
     const ctrl = new AbortController();
     modalActionCtrlRef.current = ctrl;
-    const seq = loadSeqRef.current;
+    const seq = contextSeqRef.current;
     setSubmitting(true);
 
     try {
@@ -659,7 +662,7 @@ export function BrandChannelConnections({
           storage: window.sessionStorage,
           signal: ctrl.signal,
         });
-        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
         setConnections((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
         broadcastConnectionsChanged();
         feedback.notifySuccess(`已保存渠道连接「${updated.displayName}」`);
@@ -686,7 +689,7 @@ export function BrandChannelConnections({
             signal: ctrl.signal,
           },
         );
-        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
         setConnections((prev) => [created, ...prev.filter((c) => c.id !== created.id)]);
         broadcastConnectionsChanged();
 
@@ -704,12 +707,12 @@ export function BrandChannelConnections({
         resetModalState();
       }
     } catch (err) {
-      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
       const msg = formatConnError(err, editingConn ? '保存渠道连接失败' : '添加渠道连接失败');
       setModalError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
         setSubmitting(false);
       }
     }
@@ -717,7 +720,7 @@ export function BrandChannelConnections({
 
   const handleTestCard = async (conn: ChannelConnectionDto) => {
     if (readOnly) return;
-    const seq = loadSeqRef.current;
+    const seq = contextSeqRef.current;
     const ctrl = new AbortController();
     cardActionCtrlsRef.current.add(ctrl);
     setTestingCardId(conn.id);
@@ -736,7 +739,7 @@ export function BrandChannelConnections({
         storage: window.sessionStorage,
         signal: ctrl.signal,
       });
-      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
       setConnections((prev) =>
         prev.map((item) =>
           item.id === conn.id
@@ -756,11 +759,11 @@ export function BrandChannelConnections({
         feedback.notifyError(res.message || `「${conn.displayName}」连接测试失败`);
       }
     } catch (err) {
-      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
       feedback.notifyError(formatConnError(err, '测试渠道连接失败'));
     } finally {
       cardActionCtrlsRef.current.delete(ctrl);
-      if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
         setTestingCardId((prev) => (prev === conn.id ? null : prev));
       }
     }
@@ -768,7 +771,7 @@ export function BrandChannelConnections({
 
   const handleDeleteCard = (conn: ChannelConnectionDto) => {
     if (readOnly) return;
-    const seq = loadSeqRef.current;
+    const seq = contextSeqRef.current;
     feedback.confirm({
       title: `确认删除渠道连接「${conn.displayName}」？`,
       content:
@@ -777,7 +780,7 @@ export function BrandChannelConnections({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        if (seq !== loadSeqRef.current) return;
+        if (seq !== contextSeqRef.current) return;
         const ctrl = new AbortController();
         cardActionCtrlsRef.current.add(ctrl);
         try {
@@ -785,12 +788,12 @@ export function BrandChannelConnections({
             storage: window.sessionStorage,
             signal: ctrl.signal,
           });
-          if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+          if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
           setConnections((prev) => prev.filter((item) => item.id !== conn.id));
           broadcastConnectionsChanged();
           feedback.notifySuccess(`已删除渠道连接「${conn.displayName}」`);
         } catch (err) {
-          if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
+          if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
           feedback.notifyError(formatConnError(err, '删除渠道连接失败'));
         } finally {
           cardActionCtrlsRef.current.delete(ctrl);

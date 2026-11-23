@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioLib from '../../lib/studio';
+import { invalidateFreshness, resetFreshnessForTests } from '../../lib/tab-freshness';
 import { BrandChannelConnections } from './brand-channel-connections';
 
 const listChannelConnectionsMock = vi.fn();
@@ -73,11 +74,13 @@ async function selectAntdOption(selectWrapper: HTMLElement, optionLabel: string)
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetFreshnessForTests();
   listChannelConnectionsMock.mockResolvedValue({ items: [] });
 });
 
 afterEach(async () => {
   cleanup();
+  resetFreshnessForTests();
   await act(async () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
@@ -758,5 +761,234 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     });
     expect(notifySuccessMock).not.toHaveBeenCalled();
     expect(notifyErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('completes handleTestCard and handleDeleteCard cleanly when same-brand invalidateFreshness refreshes the list', async () => {
+    const connTest = makeConn({
+      id: 'conn_fresh_1',
+      brandId: 'brand_a',
+      displayName: 'Freshness Test Store',
+    });
+    const connDel = makeConn({
+      id: 'conn_fresh_del',
+      brandId: 'brand_a',
+      displayName: 'Freshness Delete Store',
+    });
+    listChannelConnectionsMock.mockResolvedValue({ items: [connTest, connDel] });
+
+    let resolveTest!: (v: ChannelConnectionTestResultDto) => void;
+    testChannelConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise<ChannelConnectionTestResultDto>((resolve) => {
+          resolveTest = resolve;
+        }),
+    );
+
+    let capturedDeleteOnOk: (() => Promise<void> | void) | undefined;
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      capturedDeleteOnOk = onOk;
+    });
+    deleteChannelConnectionMock.mockResolvedValueOnce({ deleted: 1, id: 'conn_fresh_del' });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_a"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('channel-connection-card-conn_fresh_1');
+    expect(listChannelConnectionsMock).toHaveBeenCalledTimes(1);
+
+    // 1. Start handleTestCard and open handleDeleteCard confirm modal
+    const testBtn = screen.getByTestId('channel-connection-test-btn-conn_fresh_1');
+    fireEvent.click(testBtn);
+    expect(testBtn.classList.contains('ant-btn-loading')).toBe(true);
+
+    fireEvent.click(screen.getByTestId('channel-connection-delete-btn-conn_fresh_del'));
+    expect(capturedDeleteOnOk).toBeTypeOf('function');
+
+    // 2. Trigger same-brand silent freshness refresh while both are active (bumps loadSeqRef)
+    await act(async () => {
+      invalidateFreshness('channel-connections');
+    });
+    await waitFor(() => {
+      expect(listChannelConnectionsMock).toHaveBeenCalledTimes(2);
+    });
+
+    // 3. Resolve in-flight handleTestCard -> loading spinner MUST reset and success toast MUST fire
+    await act(async () => {
+      resolveTest({
+        ok: true,
+        status: 'ACTIVE',
+        message: 'SAME_BRAND_TEST_OK',
+        testedAt: '2026-11-23T06:40:00.000Z',
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId('channel-connection-test-btn-conn_fresh_1')
+          .classList.contains('ant-btn-loading'),
+      ).toBe(false);
+    });
+    expect(notifySuccessMock).toHaveBeenCalledWith('SAME_BRAND_TEST_OK');
+
+    // 4. Invoke open confirm onOk() -> deleteChannelConnection MUST still execute cleanly
+    await act(async () => {
+      await capturedDeleteOnOk?.();
+    });
+
+    await waitFor(() => {
+      expect(deleteChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_a',
+        'conn_fresh_del',
+        expect.anything(),
+      );
+      expect(screen.queryByTestId('channel-connection-card-conn_fresh_del')).toBeNull();
+    });
+    expect(notifySuccessMock).toHaveBeenCalledWith('已删除渠道连接「Freshness Delete Store」');
+  });
+
+  it('completes runModalTest and handleModalSubmit cleanly without deadlocking buttons when same-brand invalidateFreshness fires', async () => {
+    const conn = makeConn({
+      id: 'conn_modal_fresh',
+      brandId: 'brand_a',
+      provider: 'SHOPIFY',
+      displayName: 'Modal Freshness Store',
+      configJson: {
+        defaultPublishAsDraft: true,
+        inlineJsonLd: true,
+      },
+    });
+    listChannelConnectionsMock.mockResolvedValue({ items: [conn] });
+
+    let resolveModalTest!: (v: ChannelConnectionTestResultDto) => void;
+    testChannelConnectionMock.mockImplementationOnce(
+      () =>
+        new Promise<ChannelConnectionTestResultDto>((resolve) => {
+          resolveModalTest = resolve;
+        }),
+    );
+
+    let rejectSubmit!: (err: Error) => void;
+    let resolveSubmit!: (v: ChannelConnectionDto) => void;
+    updateChannelConnectionMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<ChannelConnectionDto>((_resolve, reject) => {
+            rejectSubmit = reject;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<ChannelConnectionDto>((resolve) => {
+            resolveSubmit = resolve;
+          }),
+      );
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_a"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('channel-connection-card-conn_modal_fresh');
+    fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_modal_fresh'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+
+    // 1. Trigger runModalTest -> submit button becomes disabled while testing
+    fireEvent.click(screen.getByTestId('channel-connection-modal-test-btn'));
+    const submitBtn = screen.getByTestId('channel-connection-submit-btn') as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(true);
+
+    // 2. Fire same-brand freshness refresh while runModalTest is pending
+    await act(async () => {
+      invalidateFreshness('channel-connections');
+    });
+    await waitFor(() => {
+      expect(listChannelConnectionsMock).toHaveBeenCalledTimes(2);
+    });
+
+    // 3. Resolve runModalTest -> submit button re-enables AND discovered target populates
+    await act(async () => {
+      resolveModalTest({
+        ok: true,
+        status: 'ACTIVE',
+        message: 'MODAL_TEST_OK_AFTER_REFRESH',
+        testedAt: '2026-11-23T06:45:00.000Z',
+        targets: [{ id: 'gid://shopify/Blog/777', name: 'Fresh Blog', handle: 'fresh' }],
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        (screen.getByTestId('channel-connection-submit-btn') as HTMLButtonElement).disabled,
+      ).toBe(false);
+      expect((within(modal).getByLabelText('Shopify Blog ID') as HTMLInputElement).value).toBe(
+        'gid://shopify/Blog/777',
+      );
+    });
+    expect(notifySuccessMock).toHaveBeenCalledWith('MODAL_TEST_OK_AFTER_REFRESH');
+
+    // 4. Trigger handleModalSubmit, fire same-brand freshness refresh while pending, then reject -> submitting resets cleanly
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    expect(
+      screen.getByTestId('channel-connection-submit-btn').classList.contains('ant-btn-loading'),
+    ).toBe(true);
+
+    await act(async () => {
+      invalidateFreshness('channel-connections');
+    });
+    await waitFor(() => {
+      expect(listChannelConnectionsMock).toHaveBeenCalledTimes(3);
+    });
+
+    await act(async () => {
+      rejectSubmit(new Error('临时网络波动'));
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('channel-connection-submit-btn').classList.contains('ant-btn-loading'),
+      ).toBe(false);
+      expect(within(modal).getByText('临时网络波动')).toBeTruthy();
+      expect(notifyErrorMock).toHaveBeenCalledWith('临时网络波动');
+    });
+
+    // 5. Retry handleModalSubmit, fire same-brand freshness refresh while pending, then resolve -> saves & closes modal
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await act(async () => {
+      invalidateFreshness('channel-connections');
+    });
+    await waitFor(() => {
+      expect(listChannelConnectionsMock).toHaveBeenCalledTimes(4);
+    });
+
+    await act(async () => {
+      resolveSubmit({
+        ...conn,
+        displayName: 'Modal Freshness Store',
+        configJson: {
+          blogId: 'gid://shopify/Blog/777',
+          blogHandle: 'fresh',
+          defaultPublishAsDraft: true,
+          inlineJsonLd: true,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(notifySuccessMock).toHaveBeenCalledWith('已保存渠道连接「Modal Freshness Store」');
+      expect(screen.queryByTestId('channel-connection-modal')).toBeNull();
+    });
   });
 });
