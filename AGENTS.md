@@ -11,6 +11,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的 GEO 内容创作与 AI 可见度�
 - [开发约定与迭代手册（docs/AGENTS.md）](./docs/AGENTS.md)：**编码前必读**，涵盖分支/PR/CI 流水线、机器强制契约、高频变更配方、重构规范与测试调试。
 - [架构与模块索引（docs/架构与模块索引.md）](./docs/架构与模块索引.md)：当前代码库实时地图（真实技术栈、34 个数据模型与租户隔离表、API 前缀、7 个队列与 Runner、前端路由与复用底座）。
 - [已确认决策（docs/decisions.md）](./docs/decisions.md)：产品与合规决策及后续演进补充。
+- [v2.1 分发与写作打通需求与架构设计（docs/v2.1分发与写作打通需求与架构设计.md）](./docs/v2.1分发与写作打通需求与架构设计.md)：Global-First v2.1 PRD、领域模型与 Batch 0–3 拆分规范（对应 Epic #357 / Issues #349–#356）。
 - [运维与部署手册（docs/运维与部署手册.md）](./docs/运维与部署手册.md) & [CD 部署指南（docs/CD部署指南.md）](./docs/CD部署指南.md)：生产/预发 Compose、备份恢复、LLM 成本日报与 Runner 部署。
 
 ### 基线与归档文档（按需查阅，日常开发无需通读）
