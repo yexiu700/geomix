@@ -1,10 +1,12 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 
 const AES_GCM_ALGORITHM = 'aes-256-gcm';
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
+
+export const SECRET_BOX_OPTIONS = Symbol('SECRET_BOX_OPTIONS');
 
 export type SecretBoxErrorCode =
   'MISSING_KEY' | 'INVALID_KEY' | 'INVALID_ENVELOPE' | 'DECRYPT_FAILED';
@@ -32,16 +34,25 @@ export type SecretBoxOptions = {
   env?: Record<string, string | undefined>;
 };
 
-function decodeStrictBase64(raw: string): Buffer | null {
+function decodeStrictBase64(raw: string, expectedBytes?: number): Buffer | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
-  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(raw)) return null;
-  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
+  if (/[+/]/.test(raw) && /[-_]/.test(raw)) return null;
+  const isStandard = /^[A-Za-z0-9+/]+={0,2}$/.test(raw);
+  const isUrlSafe = !isStandard && /^[A-Za-z0-9_-]+={0,2}$/.test(raw);
+  if (!isStandard && !isUrlSafe) return null;
+  const normalized = isUrlSafe ? raw.replace(/-/g, '+').replace(/_/g, '/') : raw;
   const stripped = normalized.replace(/=+$/, '');
-  if (stripped.length === 0 || stripped.length % 4 === 1) return null;
-  const padLen = (4 - (stripped.length % 4)) % 4;
+  const mod = stripped.length % 4;
+  if (stripped.length === 0 || mod === 1) return null;
+  const padLen = mod === 0 ? 0 : 4 - mod;
+  const rawPad = raw.length - stripped.length;
+  if (rawPad !== 0 && rawPad !== padLen) return null;
   const padded = `${stripped}${'='.repeat(padLen)}`;
   const buf = Buffer.from(padded, 'base64');
   if (buf.toString('base64').replace(/=+$/, '') !== stripped) {
+    return null;
+  }
+  if (expectedBytes !== undefined && buf.length !== expectedBytes) {
     return null;
   }
   return buf;
@@ -64,14 +75,10 @@ export function parseEncryptionKey(raw?: string): Buffer {
     return Buffer.from(trimmed, 'hex');
   }
 
-  if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed)) {
-    const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/');
-    const stripped = normalized.replace(/=+$/, '');
-    if (stripped.length === 43) {
-      const buf = Buffer.from(`${stripped}=`, 'base64');
-      if (buf.length === KEY_BYTES && buf.toString('base64').replace(/=+$/, '') === stripped) {
-        return buf;
-      }
+  if (/^[A-Za-z0-9+/]{43}=?$/.test(trimmed) || /^[A-Za-z0-9_-]{43}=?$/.test(trimmed)) {
+    const buf = decodeStrictBase64(trimmed, KEY_BYTES);
+    if (buf) {
+      return buf;
     }
   }
 
@@ -125,17 +132,11 @@ export function decryptJson<T = unknown>(
     throw new SecretBoxError('INVALID_ENVELOPE', '渠道凭据密文结构无效');
   }
 
-  const ivBuf = decodeStrictBase64(envelope.iv);
-  const tagBuf = decodeStrictBase64(envelope.tag);
+  const ivBuf = decodeStrictBase64(envelope.iv, IV_BYTES);
+  const tagBuf = decodeStrictBase64(envelope.tag, AUTH_TAG_BYTES);
   const ctBuf = decodeStrictBase64(envelope.ciphertext);
 
-  if (
-    !ivBuf ||
-    ivBuf.length !== IV_BYTES ||
-    !tagBuf ||
-    tagBuf.length !== AUTH_TAG_BYTES ||
-    !ctBuf
-  ) {
+  if (!ivBuf || !tagBuf || !ctBuf) {
     throw new SecretBoxError('INVALID_ENVELOPE', '渠道凭据密文格式损坏或长度不合法');
   }
 
@@ -177,7 +178,7 @@ export function maskSecret(raw: string): string {
 export class SecretBox {
   private readonly options?: SecretBoxOptions;
 
-  constructor(options?: SecretBoxOptions) {
+  constructor(@Optional() @Inject(SECRET_BOX_OPTIONS) options?: SecretBoxOptions) {
     // 故意不在构造函数中校验 CREDENTIAL_ENCRYPTION_KEY，避免本地仅写作/测试启动报错。
     this.options = options;
   }

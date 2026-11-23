@@ -11,7 +11,6 @@ import {
   assertPublicUrl,
   isHostAllowlisted,
   parseSsrfAllowlist,
-  resolveSsrfAllowlist,
   UrlPolicyError,
   type SsrfAllowlist,
 } from './ssrf';
@@ -66,15 +65,27 @@ const CROSS_ORIGIN_STRIPPED_HEADERS = new Set([
 ]);
 
 /**
+ * 规范化外发白名单：字符串输入始终以 `includeDefaults: false` 解析，绝不隐式继承 `sonargate` 或环境变量。
+ */
+export function normalizeOutboundAllowlist(allowlist?: SsrfAllowlist | string): SsrfAllowlist {
+  if (!allowlist) return PUBLIC_ONLY_ALLOWLIST;
+  if (typeof allowlist === 'string') {
+    return parseSsrfAllowlist(allowlist, { includeDefaults: false });
+  }
+  return allowlist;
+}
+
+/**
  * 同步 URL 合法性与公网策略校验（将 UrlPolicyError 统一映射为 ProviderError(SSRF)）。
  */
 export function assertSafeOutboundUrl(
   raw: string | URL,
   allowlist: SsrfAllowlist | string = PUBLIC_ONLY_ALLOWLIST,
 ): URL {
+  const parsedAllowlist = normalizeOutboundAllowlist(allowlist);
   let parsed: URL;
   try {
-    parsed = assertPublicUrl(raw, { allowlist });
+    parsed = assertPublicUrl(raw, { allowlist: parsedAllowlist });
   } catch (error) {
     if (error instanceof UrlPolicyError) {
       throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', error.reason);
@@ -82,13 +93,12 @@ export function assertSafeOutboundUrl(
     throw error;
   }
 
-  const resolvedAllowlist = resolveSsrfAllowlist(allowlist);
   const effectivePort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
   const host = parsed.hostname.replace(/\.+$/, '');
   if (
     !host.includes('.') &&
     !host.includes(':') &&
-    !isHostAllowlisted(parsed.hostname, effectivePort, resolvedAllowlist)
+    !isHostAllowlisted(parsed.hostname, effectivePort, parsedAllowlist)
   ) {
     throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'internal_hostname');
   }
@@ -145,7 +155,7 @@ export class OutboundHttpClient {
   private readonly defaultTimeoutMs: number;
   private readonly defaultMaxBytes: number;
   private readonly defaultMaxRedirects: number;
-  private readonly defaultAllowlist: SsrfAllowlist | string;
+  private readonly defaultAllowlist: SsrfAllowlist;
 
   constructor(@Optional() @Inject(OUTBOUND_HTTP_DEPS) deps?: OutboundHttpDeps) {
     const settings = resolveFetchSettings(process.env);
@@ -154,7 +164,7 @@ export class OutboundHttpClient {
     this.defaultTimeoutMs = deps?.defaultTimeoutMs ?? settings.timeoutMs;
     this.defaultMaxBytes = deps?.defaultMaxBytes ?? settings.maxBytes;
     this.defaultMaxRedirects = deps?.defaultMaxRedirects ?? settings.maxRedirects;
-    this.defaultAllowlist = deps?.defaultAllowlist ?? PUBLIC_ONLY_ALLOWLIST;
+    this.defaultAllowlist = normalizeOutboundAllowlist(deps?.defaultAllowlist);
   }
 
   /**
@@ -165,14 +175,20 @@ export class OutboundHttpClient {
     url: string | URL,
     opts?: { allowlistOverride?: SsrfAllowlist | string },
   ): Promise<URL> {
-    const allowlist = opts?.allowlistOverride ?? this.defaultAllowlist;
+    const allowlist =
+      opts?.allowlistOverride !== undefined
+        ? normalizeOutboundAllowlist(opts.allowlistOverride)
+        : this.defaultAllowlist;
     const parsed = assertSafeOutboundUrl(url, allowlist);
     await resolvePinned(parsed, this.resolver, { allowlist });
     return parsed;
   }
 
   async request(opts: OutboundHttpRequest): Promise<OutboundHttpResponse> {
-    const allowlist = opts.allowlistOverride ?? this.defaultAllowlist;
+    const allowlist =
+      opts.allowlistOverride !== undefined
+        ? normalizeOutboundAllowlist(opts.allowlistOverride)
+        : this.defaultAllowlist;
     let current = assertSafeOutboundUrl(opts.url, allowlist);
     let currentMethod: OutboundHttpMethod = opts.method;
     let currentHeaders: Record<string, string> = { ...(opts.headers ?? {}) };

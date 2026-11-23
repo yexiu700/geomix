@@ -265,4 +265,76 @@ describe('OutboundHttpClient', () => {
     });
     expect((await testClient.assertAllowedUrl('http://127.0.0.1:4100/wp-json')).port).toBe('4100');
   });
+
+  it('never re-enables internal sonargate when string allowlists are provided and respects empty string override', async () => {
+    const transport = vi.fn<HttpTransport>(async () => ({
+      status: 200,
+      headers: { 'content-type': 'text/plain' },
+      body: Buffer.from('ok'),
+    }));
+
+    const resolver = makeResolver({
+      sonargate: [{ address: '172.18.0.5', family: 4 }],
+    });
+
+    const client = new OutboundHttpClient({ resolver, transport });
+
+    expect(() => assertSafeOutboundUrl('http://sonargate/api', '')).toThrow(ProviderError);
+    try {
+      assertSafeOutboundUrl('http://sonargate/api', '');
+    } catch (err) {
+      expect(err).toMatchObject({ kind: PROVIDER_KIND.SSRF });
+    }
+
+    await expect(
+      client.request({ url: 'http://sonargate/api', method: 'GET', allowlistOverride: '' }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    await expect(
+      client.request({
+        url: 'http://sonargate/api',
+        method: 'GET',
+        allowlistOverride: '127.0.0.1:4100',
+      }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    await expect(
+      client.assertAllowedUrl('http://sonargate/api', { allowlistOverride: '127.0.0.1:4100' }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    const stringDefaultClient = new OutboundHttpClient({
+      resolver,
+      transport,
+      defaultAllowlist: '127.0.0.1:4100',
+    });
+
+    await expect(
+      stringDefaultClient.request({ url: 'http://sonargate/api', method: 'GET' }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    // Empty allowlistOverride resets a non-empty defaultAllowlist back to PUBLIC_ONLY_ALLOWLIST
+    await expect(
+      stringDefaultClient.request({
+        url: 'http://127.0.0.1:4100/webhook',
+        method: 'GET',
+        allowlistOverride: '',
+      }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    await expect(
+      stringDefaultClient.assertAllowedUrl('http://127.0.0.1:4100/webhook', {
+        allowlistOverride: '',
+      }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    expect(transport).not.toHaveBeenCalled();
+
+    // Explicit string defaultAllowlist still allows the specifically listed host:port
+    const allowedRes = await stringDefaultClient.request({
+      url: 'http://127.0.0.1:4100/webhook',
+      method: 'GET',
+    });
+    expect(allowedRes.status).toBe(200);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
 });

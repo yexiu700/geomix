@@ -1,6 +1,10 @@
+import 'reflect-metadata';
 import { randomBytes } from 'node:crypto';
+import { Module } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
 import { describe, expect, it } from 'vitest';
 import {
+  SECRET_BOX_OPTIONS,
   SecretBox,
   SecretBoxError,
   decryptJson,
@@ -61,6 +65,13 @@ describe('SecretBox (AES-256-GCM)', () => {
   });
 
   it('rejects missing or malformed encryption keys without leaking the raw key in error messages', () => {
+    const mixedAlphabetSource = Buffer.from(`${'fbffff'.repeat(10)}fbff`, 'hex')
+      .toString('base64')
+      .replace(/=+$/, '');
+    const mixedAlphabetKey = mixedAlphabetSource.replace('/', '_');
+    expect(mixedAlphabetKey).toContain('+');
+    expect(mixedAlphabetKey).toContain('_');
+
     const badKeys = [
       '',
       '   ',
@@ -69,6 +80,8 @@ describe('SecretBox (AES-256-GCM)', () => {
       randomBytes(31).toString('base64'), // 31 bytes
       randomBytes(33).toString('base64'), // 33 bytes
       `${BASE64_KEY_UNPADDED.slice(0, 42)}B`, // non-canonical trailing bits
+      `${BASE64_KEY_UNPADDED}==`, // illegal 45-char double-padded base64 key
+      mixedAlphabetKey, // mixed standard (+/) and URL-safe (-_) alphabet
       'not!valid@base64#key$string',
     ];
 
@@ -154,6 +167,24 @@ describe('SecretBox (AES-256-GCM)', () => {
         ),
       'INVALID_ENVELOPE',
     );
+
+    // Bogus padding on 12-byte IV (16 chars + '==') and 16-byte tag
+    assertFailsSafely(
+      () => decryptJson({ ...envelope, iv: `${envelope.iv}==` }, { key: HEX_KEY_A }),
+      'INVALID_ENVELOPE',
+    );
+    assertFailsSafely(
+      () => decryptJson({ ...envelope, tag: `${envelope.tag}==` }, { key: HEX_KEY_A }),
+      'INVALID_ENVELOPE',
+    );
+    assertFailsSafely(
+      () =>
+        decryptJson(
+          { ...envelope, tag: `${envelope.tag.replace(/=+$/, '')}=` },
+          { key: HEX_KEY_A },
+        ),
+      'INVALID_ENVELOPE',
+    );
   });
 
   it('masks secrets safely across all length and prefix edge cases', () => {
@@ -172,6 +203,48 @@ describe('SecretBox (AES-256-GCM)', () => {
       const masked = maskSecret(sample);
       expect(masked).toContain('****');
       expect(masked).not.toBe(sample);
+    }
+  });
+
+  it('resolves cleanly via NestJS DI with and without SECRET_BOX_OPTIONS', async () => {
+    @Module({
+      providers: [SecretBox],
+    })
+    class DefaultSecretBoxModule {}
+
+    const prevKey = process.env.CREDENTIAL_ENCRYPTION_KEY;
+    delete process.env.CREDENTIAL_ENCRYPTION_KEY;
+
+    const defaultApp = await NestFactory.createApplicationContext(DefaultSecretBoxModule, {
+      logger: false,
+      abortOnError: false,
+    });
+    try {
+      const box = defaultApp.get(SecretBox);
+      expect(box.maskSecret('shpat_1234567890abcdef9a2f')).toBe('shpat_****9a2f');
+      expect(() => box.encryptJson({ token: 'secret' })).toThrow(SecretBoxError);
+    } finally {
+      await defaultApp.close();
+      if (prevKey !== undefined) {
+        process.env.CREDENTIAL_ENCRYPTION_KEY = prevKey;
+      }
+    }
+
+    @Module({
+      providers: [{ provide: SECRET_BOX_OPTIONS, useValue: { key: HEX_KEY_A } }, SecretBox],
+    })
+    class ConfiguredSecretBoxModule {}
+
+    const configuredApp = await NestFactory.createApplicationContext(ConfiguredSecretBoxModule, {
+      logger: false,
+      abortOnError: false,
+    });
+    try {
+      const box = configuredApp.get(SecretBox);
+      const envelope = box.encryptJson({ token: 'di_injected_secret' });
+      expect(box.decryptJson(envelope)).toEqual({ token: 'di_injected_secret' });
+    } finally {
+      await configuredApp.close();
     }
   });
 });
