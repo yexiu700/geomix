@@ -82,7 +82,10 @@ export class WebhookConnector implements CmsConnector {
     _input?: TestChannelConnectionInput,
   ): Promise<ConnectorTestResult> {
     const signingSecret = this.resolveSigningSecret(secrets);
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     const deliveryId = randomUUID();
     const event = 'geomix.connection.test';
     const rawBody = JSON.stringify({
@@ -133,7 +136,10 @@ export class WebhookConnector implements CmsConnector {
     payload: ConnectorPublishPayload,
   ): Promise<ConnectorPublishResult> {
     const signingSecret = this.resolveSigningSecret(secrets);
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     const deliveryId = payload.deliveryId?.trim() || randomUUID();
     const event = 'geomix.article.publish';
     const rawBody = JSON.stringify({

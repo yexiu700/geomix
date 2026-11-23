@@ -1043,5 +1043,136 @@ describe('L1 CMS Connectors (Shopify, WordPress, Webflow, Webhook)', () => {
       expect(jsonSlashLeak).not.toContain(idxKey);
       expect(jsonSlashLeak).not.toContain(hdrSecret);
     });
+
+    it('R2-S-01: redacts configJson secrets straddling the 220-char truncation boundary across all 4 L1 connectors', async () => {
+      const hdrSecret = 'wh_live_secret_header_998877665544';
+      const idxSecret = 'idx_live_secret_config_887766554433';
+      const pad = 'a'.repeat(160);
+      const webhookBoundaryBody = `Validation failed on custom payload field: ${pad} key=${hdrSecret}`;
+      const idxBoundaryBody = `Validation failed on custom payload field: ${pad} key=${idxSecret}`;
+
+      // 1. WebhookConnector.testConnection & publish
+      const webhook = new WebhookConnector(positiveClient);
+      const webhookConn: ConnectorConnectionContext = {
+        id: 'conn_wh_r2s01',
+        provider: 'WEBHOOK',
+        displayName: 'Webhook Boundary',
+        siteBaseUrl: `${mockBaseUrl}/webhook`,
+        configJson: {
+          extraHeaders: { 'X-Api-Key': hdrSecret },
+        },
+      };
+      routeHandler = () => ({ status: 400, body: webhookBoundaryBody });
+
+      for (const action of [
+        () => webhook.testConnection(webhookConn, { signingSecret: 'whsec_boundary_123456' }),
+        () =>
+          webhook.publish(
+            webhookConn,
+            { signingSecret: 'whsec_boundary_123456' },
+            makePublishPayload(),
+          ),
+      ]) {
+        await expect(action()).rejects.toSatisfy((err: unknown) => {
+          expect(err).toBeInstanceOf(ConnectorError);
+          const msg = (err as ConnectorError).message;
+          expect(msg).toContain('[REDACTED]');
+          expect(msg).not.toContain(hdrSecret);
+          expect(msg).not.toContain('wh_live_secr');
+          return true;
+        });
+      }
+
+      // 2. ShopifyConnector.testConnection & publish
+      const shopify = new ShopifyConnector(positiveClient);
+      const shopifyConn: ConnectorConnectionContext = {
+        id: 'conn_sh_r2s01',
+        provider: 'SHOPIFY',
+        displayName: 'Shopify Boundary',
+        siteBaseUrl: `${mockBaseUrl}/shopify`,
+        configJson: { blogId: 'gid://shopify/Blog/1', indexNowKey: idxSecret },
+      };
+      routeHandler = () => ({ status: 400, body: idxBoundaryBody });
+      for (const action of [
+        () => shopify.testConnection(shopifyConn, { accessToken: 'shpat_boundary_123456' }),
+        () =>
+          shopify.publish(
+            shopifyConn,
+            { accessToken: 'shpat_boundary_123456' },
+            makePublishPayload(),
+          ),
+      ]) {
+        await expect(action()).rejects.toSatisfy((err: unknown) => {
+          expect(err).toBeInstanceOf(ConnectorError);
+          const msg = (err as ConnectorError).message;
+          expect(msg).toContain('[REDACTED]');
+          expect(msg).not.toContain(idxSecret);
+          expect(msg).not.toContain('idx_live_secr');
+          return true;
+        });
+      }
+
+      // 3. WordPressConnector.testConnection & publish
+      const wp = new WordPressConnector(positiveClient);
+      const wpConn: ConnectorConnectionContext = {
+        id: 'conn_wp_r2s01',
+        provider: 'WORDPRESS',
+        displayName: 'WP Boundary',
+        siteBaseUrl: `${mockBaseUrl}/wp`,
+        configJson: { indexNowKey: idxSecret },
+      };
+      routeHandler = () => ({ status: 400, body: idxBoundaryBody });
+      for (const action of [
+        () =>
+          wp.testConnection(wpConn, {
+            username: 'wpadmin',
+            appPassword: 'abcd efgh ijkl mnop',
+          }),
+        () =>
+          wp.publish(
+            wpConn,
+            { username: 'wpadmin', appPassword: 'abcd efgh ijkl mnop' },
+            makePublishPayload(),
+          ),
+      ]) {
+        await expect(action()).rejects.toSatisfy((err: unknown) => {
+          expect(err).toBeInstanceOf(ConnectorError);
+          const msg = (err as ConnectorError).message;
+          expect(msg).toContain('[REDACTED]');
+          expect(msg).not.toContain(idxSecret);
+          expect(msg).not.toContain('idx_live_secr');
+          return true;
+        });
+      }
+
+      // 4. WebflowConnector.testConnection & publish
+      const webflow = new WebflowConnector(positiveClient);
+      const wfConn: ConnectorConnectionContext = {
+        id: 'conn_wf_r2s01',
+        provider: 'WEBFLOW',
+        displayName: 'Webflow Boundary',
+        siteBaseUrl: `${mockBaseUrl}/webflow`,
+        configJson: {
+          siteId: 'site_1',
+          collectionId: 'col_blog',
+          indexNowKey: idxSecret,
+        },
+      };
+      routeHandler = () => ({ status: 400, body: idxBoundaryBody });
+      for (const action of [
+        () => webflow.testConnection(wfConn, { apiToken: 'wf_boundary_token_123456' }),
+        () =>
+          webflow.publish(wfConn, { apiToken: 'wf_boundary_token_123456' }, makePublishPayload()),
+      ]) {
+        await expect(action()).rejects.toSatisfy((err: unknown) => {
+          expect(err).toBeInstanceOf(ConnectorError);
+          const msg = (err as ConnectorError).message;
+          expect(msg).toContain('[REDACTED]');
+          expect(msg).not.toContain(idxSecret);
+          expect(msg).not.toContain('idx_live_secr');
+          return true;
+        });
+      }
+    });
   });
 });

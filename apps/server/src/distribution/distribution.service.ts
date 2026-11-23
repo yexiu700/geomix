@@ -7,6 +7,7 @@ import {
   BILLING_ERROR,
   DEFAULT_PR_SHARE_TTL_DAYS,
   evaluateDistributionPreflight,
+  extractPlainTextFromHtml,
   isL1ChannelProvider,
   markdownToSanitizedHtml,
   parseEnv,
@@ -468,16 +469,21 @@ export class DistributionService {
         ? existing.article.brief.matchedFactIds.length
         : existing.brand.facts.length;
 
+    const effectiveHtml = nextHtml !== undefined ? nextHtml : existing.variantHtml;
+    const htmlPlainText = extractPlainTextFromHtml(effectiveHtml);
+
     const liveFlags = dedupeComplianceFlags([
       ...this.compliance.scan(nextTitle, { market }).geoFlags,
       ...this.compliance.scan(nextMarkdown, { market }).geoFlags,
       ...(nextMetaDesc?.trim() ? this.compliance.scan(nextMetaDesc, { market }).geoFlags : []),
+      ...(htmlPlainText ? this.compliance.scan(htmlPlainText, { market }).geoFlags : []),
     ]);
 
     const preflight = evaluateDistributionPreflight({
       market,
       title: nextTitle,
       contentMarkdown: nextMarkdown,
+      variantHtml: effectiveHtml,
       brandNames,
       complianceFlags: liveFlags,
       geoScore: existing.article.geoScore,
@@ -629,18 +635,22 @@ export class DistributionService {
         ? task.article.brief.matchedFactIds.length
         : task.brand.facts.length;
 
+    const htmlPlainText = extractPlainTextFromHtml(task.variantHtml);
+
     const liveFlags = dedupeComplianceFlags([
       ...this.compliance.scan(task.variantTitle, { market }).geoFlags,
       ...this.compliance.scan(task.variantMarkdown, { market }).geoFlags,
       ...(task.variantMetaDesc?.trim()
         ? this.compliance.scan(task.variantMetaDesc, { market }).geoFlags
         : []),
+      ...(htmlPlainText ? this.compliance.scan(htmlPlainText, { market }).geoFlags : []),
     ]);
 
     const preflight = evaluateDistributionPreflight({
       market,
       title: task.variantTitle,
       contentMarkdown: task.variantMarkdown,
+      variantHtml: task.variantHtml,
       brandNames,
       complianceFlags: liveFlags,
       geoScore: task.article.geoScore,

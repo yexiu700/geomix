@@ -1240,4 +1240,40 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
       expect.arrayContaining(['MISSING_FACT_SLOTS', 'COMPLIANCE_BLOCKED']),
     );
   });
+
+  it('R2-S-02: blocks variantHtml-only placeholders, GLOBAL CJK leaks, entity-encoded placeholders, and prohibited compliance terms on PATCH and POST /publish with 422 and 0 enqueued jobs', async () => {
+    const enqueuedBefore = enqueuedJobs.length;
+
+    // 1. PATCH task_wp_clean with clean variantMarkdown left untouched, injecting blockers ONLY into variantHtml
+    const patchRes = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      {
+        variantHtml:
+          '<p>Verified? &#91;TBD&#58; official price&#93; 【待补充：续航】 中文未翻译内容 在线赌博 博彩网站</p>',
+      },
+    );
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.data.preflightJson?.ok).toBe(false);
+    expect(patchRes.body.data.preflightJson?.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+
+    // 2. POST /publish MUST reject with HTTP 422 and enqueue 0 distribution jobs
+    const pubRes = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_wp_clean/publish', tokenA, {
+      publishAsDraft: false,
+      connectionId: 'conn_wp_ok',
+    });
+    expect(pubRes.status).toBe(422);
+    expect(pubRes.body.data.ok).toBe(false);
+    expect(pubRes.body.data.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+    expect(enqueuedJobs).toHaveLength(enqueuedBefore);
+    expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
+  });
 });

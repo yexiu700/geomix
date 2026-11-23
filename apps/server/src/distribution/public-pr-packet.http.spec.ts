@@ -343,6 +343,18 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
             ) ?? null
           );
         },
+        deleteMany: async (args: { where: { id?: string } }) => {
+          const tid = currentTenantId();
+          let count = 0;
+          for (let i = publishRecords.length - 1; i >= 0; i -= 1) {
+            const rec = publishRecords[i]!;
+            if (rec.tenantId !== tid) continue;
+            if (args.where.id && rec.id !== args.where.id) continue;
+            publishRecords.splice(i, 1);
+            count += 1;
+          }
+          return { count };
+        },
       },
     };
 
@@ -734,5 +746,7 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
     expect(res.status).toBe(404);
     expect(body.code).toBe(AUTH_ERROR.NOT_FOUND);
     expect(tasks.get('task_valid')?.status).toBe('ARCHIVED');
+    // R2-S-03: compensating deleteMany cleans up the orphaned publish record (and cascaded retest schedules)
+    expect(publishRecords).toHaveLength(0);
   });
 });

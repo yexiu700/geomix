@@ -13,6 +13,13 @@ import {
 import { BillingService } from '../billing/billing.service';
 import { ApiError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  RetestMetricsHookService,
+  computeRetestMetricSnapshot,
+  computeScheduleMetricsSnapshot,
+  type RetestBrandMarketLike,
+  type RetestObservationLike,
+} from '../studio/retest-metrics-hook.service';
 import { presentRetestSchedule, type GeoRetestScheduleRow } from '../studio/studio.mapper';
 import { runInTenant } from '../tenant/tenant-context';
 import {
@@ -31,6 +38,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_BATCH_SIZE = 20;
 const MAX_SWEEP_BATCH_SIZE = 100;
 const STALE_RUNNING_ORPHAN_MS = 10 * 60 * 1000;
+const STALE_COMPLETED_RECONCILE_GRACE_MS = 2 * 60 * 1000;
 
 export type RetestScheduleTargetRecord = {
   id: string;
@@ -182,6 +190,9 @@ export class RetestSchedulerService {
     @Optional()
     @Inject(VISIBILITY_CONFIG)
     visibilityConfig?: VisibilityConfig,
+    @Optional()
+    @Inject(RetestMetricsHookService)
+    private readonly retestMetricsHook?: RetestMetricsHookService,
   ) {
     this.visibilityConfig = visibilityConfig ?? readVisibilityConfig(process.env);
   }
@@ -574,8 +585,8 @@ export class RetestSchedulerService {
   }
 
   /**
-   * 自愈巡检：回收关联 VisibilityRun 已终态（FAILED / CANCELLED）或缺失超时的卡死 RUNNING 日程，
-   * 防止 Worker 异常退出或历史数据导致日程永久滞留在「复测中」。
+   * 自愈巡检：回收关联 VisibilityRun 已终态（COMPLETED / PARTIAL / FAILED / CANCELLED）
+   * 或缺失超时的卡死 RUNNING 日程，防止 Worker 异常退出、瞬时事务失败或历史数据导致日程永久滞留在「复测中」。
    */
   private async reconcileStaleRunningSchedules(now: Date, batchSize: number): Promise<void> {
     const runningSchedules = await this.prisma.base.geoRetestSchedule.findMany({
@@ -597,6 +608,8 @@ export class RetestSchedulerService {
                 select: {
                   id: true,
                   status: true,
+                  triggerType: true,
+                  retestArticleId: true,
                   lastError: true,
                   finishedAt: true,
                 },
@@ -616,6 +629,123 @@ export class RetestSchedulerService {
               where: { id: schedule.id, status: 'RUNNING' },
               data: {
                 status: nextStatus,
+                executedAt: run.finishedAt ?? now,
+                skipReason: reason,
+              },
+            });
+            return;
+          }
+
+          if (run && (run.status === 'COMPLETED' || run.status === 'PARTIAL')) {
+            const completedAt = run.finishedAt ?? schedule.updatedAt;
+            if (now.getTime() - completedAt.getTime() < STALE_COMPLETED_RECONCILE_GRACE_MS) {
+              return;
+            }
+
+            const detailedRun = await this.prisma.scoped.visibilityRun.findFirst({
+              where: {
+                id: run.id,
+                brandId: schedule.brandId,
+                brandMarketId: schedule.brandMarketId,
+              },
+              include: {
+                brandMarket: true,
+                observations: {
+                  where: { status: 'SUCCESS' },
+                  include: {
+                    citations: {
+                      orderBy: { position: 'asc' },
+                    },
+                  },
+                  orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                },
+              },
+            });
+
+            const successObservations = (detailedRun?.observations ??
+              []) as RetestObservationLike[];
+
+            if (this.retestMetricsHook && run.triggerType === 'RETEST') {
+              try {
+                await this.retestMetricsHook.onVisibilityRunComplete({
+                  tenantId: schedule.tenantId,
+                  brandId: schedule.brandId,
+                  brandMarketId: schedule.brandMarketId,
+                  runId: run.id,
+                  triggerType: 'RETEST',
+                  retestArticleId: run.retestArticleId ?? null,
+                  status: run.status,
+                  successCount: successObservations.length,
+                });
+              } catch (hookErr: unknown) {
+                this.logger.warn(
+                  `retest-schedule-sweep hook replay failed for schedule=${schedule.id}: ${
+                    hookErr instanceof Error ? hookErr.message : String(hookErr)
+                  }`,
+                );
+              }
+
+              const afterHook = await this.prisma.scoped.geoRetestSchedule.findFirst({
+                where: { id: schedule.id },
+                select: { status: true },
+              });
+              if (afterHook && afterHook.status !== 'RUNNING') {
+                return;
+              }
+            }
+
+            if (successObservations.length > 0 && detailedRun?.brandMarket) {
+              const publishRecord = await this.prisma.scoped.geoPublishRecord.findFirst({
+                where: { id: schedule.publishRecordId },
+                select: { id: true, publishedUrl: true },
+              });
+              const brandMarketLike = detailedRun.brandMarket as RetestBrandMarketLike;
+              const publishedUrl = publishRecord?.publishedUrl ?? null;
+              const scheduleSnapshot = computeScheduleMetricsSnapshot(
+                successObservations,
+                brandMarketLike,
+                publishedUrl,
+              );
+              const recordSnapshot = computeRetestMetricSnapshot(
+                successObservations,
+                brandMarketLike,
+                publishedUrl,
+              );
+
+              if (publishRecord && recordSnapshot) {
+                await this.prisma.scoped.geoPublishRecord.updateMany({
+                  where: { id: publishRecord.id },
+                  data: {
+                    latestRetestRunId: run.id,
+                    afterMetrics: recordSnapshot as unknown as Prisma.InputJsonValue,
+                  },
+                });
+              }
+
+              await this.prisma.scoped.geoRetestSchedule.updateMany({
+                where: { id: schedule.id, status: 'RUNNING' },
+                data: {
+                  status: 'COMPLETED',
+                  executedAt: run.finishedAt ?? now,
+                  skipReason: null,
+                  ...(scheduleSnapshot
+                    ? {
+                        metricsSnapshotJson: scheduleSnapshot as unknown as Prisma.InputJsonValue,
+                      }
+                    : {}),
+                },
+              });
+              return;
+            }
+
+            const reason =
+              typeof run.lastError === 'string' && run.lastError.trim()
+                ? run.lastError.trim().slice(0, 240)
+                : '关联复测任务未产生有效观测结果';
+            await this.prisma.scoped.geoRetestSchedule.updateMany({
+              where: { id: schedule.id, status: 'RUNNING' },
+              data: {
+                status: 'FAILED',
                 executedAt: run.finishedAt ?? now,
                 skipReason: reason,
               },

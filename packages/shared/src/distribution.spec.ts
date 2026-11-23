@@ -555,4 +555,62 @@ describe('evaluateDistributionPreflight()', () => {
     expect(mixedCaseBrand.ok).toBe(true);
     expect(mixedCaseBrand.blockers).toEqual([]);
   });
+
+  it('R2-S-02: scans variantHtml for missing-fact slots, GLOBAL CJK leaks, inline-tag-split placeholders, and HTML-entity-encoded payloads', () => {
+    // 1. variantHtml-only placeholders & CJK leak while title/markdown/metaDesc are clean
+    const htmlBlocked = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Clean English Power Station Guide',
+      contentMarkdown: 'Verified 1200Wh LiFePO4 battery benchmark.',
+      variantMetaDesc: 'Independent lab test of 1200Wh portable power stations.',
+      variantHtml: '<p>Verified specs? [TBD: official price] 【待补充：续航】 中文未翻译内容</p>',
+      geoScore: 88,
+      matchedFactCount: 2,
+      provider: 'SHOPIFY',
+      variantSlug: 'clean-english-guide',
+    });
+    expect(htmlBlocked.ok).toBe(false);
+    expect(htmlBlocked.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK']),
+    );
+    const slotDetails =
+      htmlBlocked.blockers.find((b) => b.code === 'MISSING_FACT_SLOTS')?.details ?? [];
+    expect(slotDetails).toEqual(
+      expect.arrayContaining(['[TBD: official price]', '【待补充：续航】']),
+    );
+
+    // 2. HTML-entity-encoded placeholders & numeric hex CJK & inline-tag-split placeholders
+    const encodedHtmlBlocked = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Clean English Power Station Guide',
+      contentMarkdown: 'Verified 1200Wh LiFePO4 battery benchmark.',
+      variantMetaDesc: 'Independent lab test.',
+      variantHtml:
+        '<p>Price:&nbsp;&#91;TBD&#58; price&#93; and <span>[To be </span><span>verified: warranty]</span> &#x4E2D;&#x6587;</p>',
+      geoScore: 88,
+      matchedFactCount: 2,
+      provider: 'WORDPRESS',
+      variantSlug: 'clean-english-guide',
+    });
+    expect(encodedHtmlBlocked.ok).toBe(false);
+    expect(encodedHtmlBlocked.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK']),
+    );
+
+    // 3. Clean variantHtml with allowed CJK brand proper noun passes cleanly
+    const cleanHtml = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'XGIMI Projector Benchmark',
+      contentMarkdown: 'Verified specs without placeholders.',
+      variantMetaDesc: 'Independent XGIMI review.',
+      variantHtml: '<p>Also sold as <strong>极米Pro</strong>&nbsp;&amp;&nbsp;XGIMI.</p>',
+      brandNames: ['极米Pro', 'XGIMI'],
+      geoScore: 88,
+      matchedFactCount: 2,
+      provider: 'SHOPIFY',
+      variantSlug: 'xgimi-benchmark',
+    });
+    expect(cleanHtml.ok).toBe(true);
+    expect(cleanHtml.blockers).toEqual([]);
+  });
 });

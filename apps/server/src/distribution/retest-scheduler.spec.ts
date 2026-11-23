@@ -1,8 +1,14 @@
+import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
 import type { BillingService } from '../billing/billing.service';
 import { ApiError } from '../common/api-error';
 import type { PrismaService } from '../prisma/prisma.service';
+import type {
+  RetestBrandMarketLike,
+  RetestMetricsHookService,
+  RetestObservationLike,
+} from '../studio/retest-metrics-hook.service';
 import { currentTenantId, runInTenant } from '../tenant/tenant-context';
 import { readVisibilityConfig } from '../visibility/visibility.config';
 import { deriveVisibilityRunId } from '../visibility/visibility.mapper';
@@ -47,6 +53,7 @@ function createHarness(opts?: {
   unitPrice?: number;
   featureEnabled?: boolean;
   createRunImpl?: RetestRunCreator['createRun'];
+  retestMetricsHook?: RetestMetricsHookService;
 }) {
   const schedules = new Map<string, ScheduleRow>();
   const publishRecords = new Map<
@@ -57,6 +64,7 @@ function createHarness(opts?: {
       brandId: string;
       brandMarketId: string;
       articleId: string;
+      publishedUrl: string;
       publishedAt: Date;
       latestRetestRunId: string | null;
       afterMetrics: unknown;
@@ -85,8 +93,12 @@ function createHarness(opts?: {
       brandId: string;
       brandMarketId: string;
       status: string;
+      triggerType?: string;
+      retestArticleId?: string | null;
       lastError: string | null;
       finishedAt: Date | null;
+      brandMarket?: RetestBrandMarketLike | null;
+      observations?: RetestObservationLike[];
     }
   >();
 
@@ -166,7 +178,8 @@ function createHarness(opts?: {
                 rec.latestRetestRunId = args.data.latestRetestRunId;
               }
               if (args.data.afterMetrics !== undefined) {
-                rec.afterMetrics = null;
+                rec.afterMetrics =
+                  args.data.afterMetrics === Prisma.JsonNull ? null : args.data.afterMetrics;
               }
               count += 1;
             }
@@ -224,6 +237,12 @@ function createHarness(opts?: {
             return { count };
           },
         ),
+        findFirst: vi.fn(async (args: { where: { id?: string } }) => {
+          const tid = currentTenantId();
+          const row = args.where.id ? schedules.get(args.where.id) : undefined;
+          if (!row || row.tenantId !== tid) return null;
+          return row;
+        }),
         findMany: vi.fn(async (args: { where: { publishRecordId?: string } }) => {
           const tid = currentTenantId();
           return [...schedules.values()]
@@ -334,6 +353,7 @@ function createHarness(opts?: {
       VISIBILITY_ENABLED: opts?.featureEnabled === false ? 'false' : 'true',
       VISIBILITY_COLLECTOR: 'fake',
     }),
+    opts?.retestMetricsHook,
   );
 
   function seedPublishRecord(overrides?: {
@@ -341,6 +361,7 @@ function createHarness(opts?: {
     tenantId?: string;
     market?: 'CN' | 'GLOBAL';
     publishedAt?: Date;
+    publishedUrl?: string;
     targetPrompt?: string;
   }) {
     const id = overrides?.id ?? 'pub_1';
@@ -353,6 +374,7 @@ function createHarness(opts?: {
       brandId: 'brand_1',
       brandMarketId: market === 'GLOBAL' ? 'bm_global' : 'bm_cn',
       articleId: 'art_1',
+      publishedUrl: overrides?.publishedUrl ?? 'https://blog.acme.example/retest-post',
       publishedAt,
       latestRetestRunId: null,
       afterMetrics: null,
@@ -858,5 +880,192 @@ describe('RetestSchedulerService.runDueSweep', () => {
     expect(h.schedules.get('sched_orphan')?.skipReason).toContain('缺失');
 
     expect(h.schedules.get('sched_active')?.status).toBe('RUNNING');
+  });
+
+  it('R2-S-04: reconciles RUNNING schedules on COMPLETED/PARTIAL runs past 2m grace window (with metrics writeback or FAILED on 0 successes) while respecting the 2m grace window', async () => {
+    const hookMock = {
+      name: 'geo-retest-metrics-writeback',
+      onVisibilityRunComplete: vi.fn(async () => {
+        // Simulate hook transiently swallowing an error and leaving schedule in RUNNING,
+        // proving the guaranteed prisma.scoped fallback completes reconciliation cleanly.
+      }),
+    } as unknown as RetestMetricsHookService;
+
+    const h = createHarness({ retestMetricsHook: hookMock });
+    const now = new Date('2026-10-15T12:00:00Z');
+    const oldFinishedAt = new Date('2026-10-15T11:50:00Z'); // 10m ago (> 2m grace)
+    const recentFinishedAt = new Date('2026-10-15T11:59:00Z'); // 1m ago (< 2m grace)
+    const oldTime = new Date('2026-10-15T11:30:00Z');
+
+    h.seedPublishRecord({
+      id: 'pub_completed',
+      publishedUrl: 'https://blog.acme.example/power-station-guide',
+    });
+    h.seedPublishRecord({
+      id: 'pub_zero_success',
+      publishedUrl: 'https://blog.acme.example/zero-success',
+    });
+    h.seedPublishRecord({
+      id: 'pub_grace',
+      publishedUrl: 'https://blog.acme.example/in-grace',
+    });
+
+    const bm: RetestBrandMarketLike = {
+      localBrandName: 'Acme Energy',
+      aliases: ['Acme'],
+      ownedDomains: ['blog.acme.example'],
+      competitors: [],
+    };
+
+    // (a) COMPLETED run >2m old with SUCCESS observations -> RUNNING -> COMPLETED with metrics writeback
+    h.schedules.set('sched_completed_ok', {
+      id: 'sched_completed_ok',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      publishRecordId: 'pub_completed',
+      milestoneDay: 7,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_completed_ok',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+    h.visibilityRuns.set('run_completed_ok', {
+      id: 'run_completed_ok',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      status: 'COMPLETED',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_1',
+      lastError: null,
+      finishedAt: oldFinishedAt,
+      brandMarket: bm,
+      observations: [
+        {
+          id: 'obs_1',
+          status: 'SUCCESS',
+          promptText: 'best power station',
+          answerText: 'Acme Energy is #1.',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [
+            {
+              url: 'https://blog.acme.example/power-station-guide',
+              domain: 'blog.acme.example',
+              sourceKind: 'OWNED',
+            },
+          ],
+        },
+      ],
+    });
+
+    // (b) PARTIAL run >2m old with 0 SUCCESS observations -> RUNNING -> FAILED
+    h.schedules.set('sched_partial_empty', {
+      id: 'sched_partial_empty',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      publishRecordId: 'pub_zero_success',
+      milestoneDay: 14,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_partial_empty',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+    h.visibilityRuns.set('run_partial_empty', {
+      id: 'run_partial_empty',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      status: 'PARTIAL',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_1',
+      lastError: 'Upstream partial failure with zero valid samples',
+      finishedAt: oldFinishedAt,
+      brandMarket: bm,
+      observations: [],
+    });
+
+    // (c) COMPLETED run within the 2-minute grace window -> NOT prematurely reconciled
+    h.schedules.set('sched_in_grace', {
+      id: 'sched_in_grace',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      publishRecordId: 'pub_grace',
+      milestoneDay: 30,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_in_grace',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: recentFinishedAt,
+    });
+    h.visibilityRuns.set('run_in_grace', {
+      id: 'run_in_grace',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      status: 'COMPLETED',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_1',
+      lastError: null,
+      finishedAt: recentFinishedAt,
+      brandMarket: bm,
+      observations: [],
+    });
+
+    await h.service.runDueSweep({ now });
+
+    // (a) Transitioned RUNNING -> COMPLETED with metrics snapshot & publishRecord.afterMetrics
+    const completedSched = h.schedules.get('sched_completed_ok');
+    expect(completedSched?.status).toBe('COMPLETED');
+    expect(completedSched?.skipReason).toBeNull();
+    expect(completedSched?.executedAt).toEqual(oldFinishedAt);
+    expect(completedSched?.metricsSnapshotJson).toMatchObject({
+      mentionRate: 100,
+      avgPosition: 1,
+      sentiment: 'positive',
+      citationHit: true,
+      sampleCount: 1,
+      hitCount: 1,
+    });
+    expect(h.publishRecords.get('pub_completed')?.latestRetestRunId).toBe('run_completed_ok');
+    expect(h.publishRecords.get('pub_completed')?.afterMetrics).toMatchObject({
+      mentionRate: 100,
+      citationHit: true,
+    });
+    expect(hookMock.onVisibilityRunComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_completed_ok',
+        status: 'COMPLETED',
+        successCount: 1,
+      }),
+    );
+
+    // (b) Transitioned RUNNING -> FAILED when 0 SUCCESS observations exist
+    const failedSched = h.schedules.get('sched_partial_empty');
+    expect(failedSched?.status).toBe('FAILED');
+    expect(failedSched?.skipReason).toContain('Upstream partial failure');
+    expect(failedSched?.executedAt).toEqual(oldFinishedAt);
+
+    // (c) Within 2-minute grace window -> untouched (stays RUNNING)
+    expect(h.schedules.get('sched_in_grace')?.status).toBe('RUNNING');
   });
 });

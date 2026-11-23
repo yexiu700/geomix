@@ -1073,4 +1073,43 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
     }
     cmsMode = 'ok';
   });
+
+  it('R2-S-01: redacts Webhook configJson extraHeaders X-Api-Key straddling the 220-char truncation boundary in HTTP response and stored lastError', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+    const headerSecret = 'wh_live_secret_header_998877665544';
+    const createdWh = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'WEBHOOK',
+        displayName: 'Webhook Boundary Redaction',
+        siteBaseUrl: `${mockCmsBaseUrl}/webhook`,
+        credentials: { signingSecret: 'whsec_boundary_test_key_1234' },
+        configJson: {
+          extraHeaders: { 'X-Api-Key': headerSecret },
+        },
+      },
+    });
+    expect(createdWh.status).toBe(200);
+    const whConnId = createdWh.json.data.id;
+
+    cmsMode = 'custom_400';
+    custom400Body = `Validation failed on custom payload field: ${'a'.repeat(160)} key=${headerSecret}`;
+    const testRes = await apiFetch<ChannelConnectionTestResultDto>(
+      `/api/v2/brands/brand_a/connections/${whConnId}/test`,
+      { method: 'POST', token: tokenA, body: {} },
+    );
+    cmsMode = 'ok';
+
+    expect(testRes.status).toBe(200);
+    expect(testRes.json.data.ok).toBe(false);
+    expect(testRes.json.data.message).toContain('[REDACTED]');
+    const storedErr = db.connections.find((c) => c.id === whConnId)?.lastError ?? '';
+    for (const out of [testRes.rawText, testRes.json.data.message, storedErr]) {
+      expect(out).not.toContain(headerSecret);
+      expect(out).not.toContain('wh_live_secr');
+      expect(out).toContain('[REDACTED]');
+    }
+  });
 });

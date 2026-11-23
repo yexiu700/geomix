@@ -412,6 +412,9 @@ export class PublicPrPacketService {
           },
         });
         if (updated.count === 0) {
+          await this.prisma.scoped.geoPublishRecord
+            .deleteMany({ where: { id: record.id } })
+            .catch(() => undefined);
           throw new ApiError(404, AUTH_ERROR.NOT_FOUND, UNIFORM_NOT_FOUND_MESSAGE);
         }
 

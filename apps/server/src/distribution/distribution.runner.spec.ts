@@ -16,7 +16,7 @@ import { currentTenantId } from '../tenant/tenant-context';
 import { WorkerModule } from '../worker.module';
 import type { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { ConnectionsService } from './connections.service';
-import { CmsConnectorRegistry } from './connectors';
+import { CmsConnectorRegistry, WebhookConnector } from './connectors';
 import {
   ConnectorError,
   type CmsConnector,
@@ -90,6 +90,7 @@ function makeRunnerHarness(initial?: {
   connection?: Partial<ConnectionRow> | null;
   existingRecords?: PublishRecordRow[];
   connectionsOverride?: ConnectionsService;
+  connectorsOverride?: CmsConnectorRegistry;
 }) {
   const tenantId = 'tenant_a';
   const connection: ConnectionRow | null =
@@ -317,10 +318,11 @@ function makeRunnerHarness(initial?: {
   } as unknown as GeoDeliveryService;
 
   const resolvedConnections = initial?.connectionsOverride ?? connections;
+  const resolvedConnectors = initial?.connectorsOverride ?? connectors;
   const runner = new DistributionRunner(
     prisma,
     resolvedConnections,
-    connectors,
+    resolvedConnectors,
     indexNow,
     geoDelivery,
   );
@@ -632,6 +634,70 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
           expect(output, `${vec.label} leaked ${secret}`).not.toContain(secret);
         }
       }
+    }
+  });
+
+  it('R2-S-01: redacts Webhook configJson extraHeaders secret straddling mapHttpStatusError 220-char boundary in GeoDistributionTask.lastError and warn logs', async () => {
+    process.env.CREDENTIAL_ENCRYPTION_KEY = Buffer.alloc(32, 0x39).toString('base64');
+    const secretBox = new SecretBox();
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const signingSecret = 'whsec_runner_boundary_123456';
+    const headerSecret = 'wh_live_secret_header_998877665544';
+    const encrypted = secretBox.encryptJson({ signingSecret });
+
+    const fakeHttp = {
+      request: vi.fn(async () => ({
+        status: 400,
+        headers: { 'content-type': 'text/plain' },
+        body: `Validation failed on custom payload field: ${'a'.repeat(160)} key=${headerSecret}`,
+        finalUrl: 'https://hooks.acme.example/publish',
+      })),
+      assertAllowedUrl: vi.fn(async (url: string) => new URL(url)),
+    } as unknown as OutboundHttpClient;
+
+    const realWebhook = new WebhookConnector(fakeHttp);
+    const realConnections = new ConnectionsService(
+      {} as PrismaService,
+      {} as QuotaService,
+      secretBox,
+      fakeHttp,
+      {} as CmsConnectorRegistry,
+    );
+    const registry = {
+      get: vi.fn(() => realWebhook),
+    } as unknown as CmsConnectorRegistry;
+
+    const h = makeRunnerHarness({
+      task: { provider: 'WEBHOOK', publishAsDraft: false },
+      connection: {
+        id: 'conn_wh_1',
+        provider: 'WEBHOOK',
+        displayName: 'Webhook Boundary',
+        siteBaseUrl: 'https://hooks.acme.example/publish',
+        credentialsCiphertext: encrypted.ciphertext,
+        credentialsIv: encrypted.iv,
+        credentialsTag: encrypted.tag,
+        keyVersion: encrypted.keyVersion,
+        configJson: {
+          extraHeaders: { 'X-Api-Key': headerSecret },
+        },
+      },
+      connectionsOverride: realConnections,
+      connectorsOverride: registry,
+    });
+    h.task.connectionId = 'conn_wh_1';
+
+    await h.runner.process({ tenantId: h.tenantId, taskId: 'task_1' });
+
+    expect(h.task.status).toBe('FAILED');
+    const persisted = h.task.lastError ?? '';
+    const logged = warnSpy.mock.calls.map((c) => String(c[0] ?? '')).join('\n');
+    for (const out of [persisted, logged]) {
+      expect(out).toContain('[REDACTED]');
+      expect(out).not.toContain(headerSecret);
+      expect(out).not.toContain('wh_live_secr');
+      expect(out).not.toContain(signingSecret);
     }
   });
 

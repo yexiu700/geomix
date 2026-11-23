@@ -146,7 +146,10 @@ export class ShopifyConnector implements CmsConnector {
     secrets: ConnectorSecrets,
     payload: ConnectorPublishPayload,
   ): Promise<ConnectorPublishResult> {
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     let blogId = payload.targetId?.trim() || conn.configJson.blogId?.trim() || '';
     let blogHandle = conn.configJson.blogHandle?.trim() || '';
     let primaryDomain = conn.configJson.primaryDomain?.trim() || '';
@@ -287,7 +290,10 @@ export class ShopifyConnector implements CmsConnector {
     primaryDomainUrl?: string;
     targets: ChannelRemoteTargetDto[];
   }> {
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     const parsed = await this.graphqlRequest<ShopifyListBlogsResponse>(
       conn,
       secrets,

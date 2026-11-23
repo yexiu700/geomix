@@ -626,6 +626,7 @@ export type EvaluateDistributionPreflightInput = {
   market: GeoMarket;
   title: string;
   contentMarkdown: string;
+  variantHtml?: string | null;
   brandNames?: readonly string[];
   complianceFlags?: readonly GeoComplianceFlag[];
   geoScore?: number | null;
@@ -636,6 +637,154 @@ export type EvaluateDistributionPreflightInput = {
 };
 
 const CJK_RUN_RE = /[\u3400-\u9fff\uf900-\ufaff]+/g;
+const HTML_ENTITY_RE = /&(?:#x([0-9a-fA-F]{1,6})|#(\d{1,7})|([a-zA-Z]{2,12}));/g;
+
+const HTML_BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'br',
+  'hr',
+  'li',
+  'ul',
+  'ol',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'tr',
+  'td',
+  'th',
+  'blockquote',
+  'pre',
+  'section',
+  'article',
+  'header',
+  'footer',
+  'aside',
+  'main',
+  'nav',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'dd',
+  'dt',
+  'dl',
+  'figure',
+  'figcaption',
+]);
+
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  lbrack: '[',
+  rbrack: ']',
+  colon: ':',
+  lsquo: "'",
+  rsquo: "'",
+  ldquo: '"',
+  rdquo: '"',
+};
+
+function stripHtmlTagsLinear(html: string): string {
+  const out: string[] = [];
+  const len = html.length;
+  let i = 0;
+  while (i < len) {
+    const lt = html.indexOf('<', i);
+    if (lt === -1) {
+      out.push(html.slice(i));
+      break;
+    }
+    if (lt > i) {
+      out.push(html.slice(i, lt));
+    }
+    if (html.startsWith('<!--', lt)) {
+      const endComment = html.indexOf('-->', lt + 4);
+      if (endComment === -1) {
+        break;
+      }
+      i = endComment + 3;
+      continue;
+    }
+    const gt = html.indexOf('>', lt + 1);
+    if (gt === -1) {
+      out.push(html.slice(lt));
+      break;
+    }
+    let nameStart = lt + 1;
+    if (html.charCodeAt(nameStart) === 47) {
+      nameStart += 1;
+    }
+    let nameEnd = nameStart;
+    while (nameEnd < gt) {
+      const ch = html.charCodeAt(nameEnd);
+      const isAlphaNum =
+        (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57);
+      if (!isAlphaNum) break;
+      nameEnd += 1;
+    }
+    if (nameEnd > nameStart) {
+      const tagName = html.slice(nameStart, nameEnd).toLowerCase();
+      if (HTML_BLOCK_TAGS.has(tagName)) {
+        out.push('\n');
+      }
+    }
+    i = gt + 1;
+  }
+  return out.join('');
+}
+
+function decodeHtmlEntities(text: string): string {
+  return text.replace(
+    HTML_ENTITY_RE,
+    (match, hex: string | undefined, dec: string | undefined, named: string | undefined) => {
+      if (hex) {
+        const code = Number.parseInt(hex, 16);
+        if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
+          return String.fromCodePoint(code);
+        }
+        return match;
+      }
+      if (dec) {
+        const code = Number.parseInt(dec, 10);
+        if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
+          return String.fromCodePoint(code);
+        }
+        return match;
+      }
+      if (named) {
+        const mapped = NAMED_HTML_ENTITIES[named.toLowerCase()];
+        if (mapped !== undefined) {
+          return mapped;
+        }
+      }
+      return match;
+    },
+  );
+}
+
+/**
+ * 将富文本 HTML 提取为纯文本，用于发前硬校验（未补全事实槽位、GLOBAL 中文泄漏、合规违禁词扫描）。
+ * - 线性 O(N) 单遍扫描（零正则回溯风险）：块级标签转换行，内联标签无缝剥离（防止通过 `<span>` 拆字绕过扫描）
+ * - 单遍解码标准命名与数字 HTML 实体（防止 `&#91;TBD&#93;` 等实体编码绕过）
+ */
+export function extractPlainTextFromHtml(html: string | null | undefined): string {
+  if (!html || !html.trim()) return '';
+  const strippedTags = stripHtmlTagsLinear(html);
+  const decoded = decodeHtmlEntities(strippedTags);
+  return decoded
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -672,10 +821,12 @@ export function evaluateDistributionPreflight(
   const blockers: DistributionPreflightItem[] = [];
   const warnings: DistributionPreflightItem[] = [];
 
+  const variantHtmlText = extractPlainTextFromHtml(input.variantHtml);
   const combinedText = [
     input.title ?? '',
     input.variantMetaDesc ?? '',
     input.contentMarkdown ?? '',
+    ...(variantHtmlText ? [variantHtmlText] : []),
   ].join('\n');
 
   // 1. Hard Blocker: Missing fact placeholder slots

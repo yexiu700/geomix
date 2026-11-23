@@ -108,7 +108,10 @@ export class WebflowConnector implements CmsConnector {
     payload: ConnectorPublishPayload,
   ): Promise<ConnectorPublishResult> {
     const apiToken = this.resolveApiToken(secrets);
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     await this.assertSafeSiteBaseUrl(conn.siteBaseUrl, secretCandidates);
     const collectionId = payload.targetId?.trim() || conn.configJson.collectionId?.trim() || '';
     if (!collectionId) {
@@ -233,7 +236,10 @@ export class WebflowConnector implements CmsConnector {
     collectionsCount: number;
   }> {
     const apiToken = this.resolveApiToken(secrets);
-    const secretCandidates = collectSecretCandidates(secrets);
+    const secretCandidates = collectSecretCandidates(
+      secrets,
+      conn.configJson as Record<string, unknown>,
+    );
     await this.assertSafeSiteBaseUrl(conn.siteBaseUrl, secretCandidates);
     const apiBase = this.resolveApiBaseUrl(conn);
 

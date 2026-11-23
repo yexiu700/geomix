@@ -53,7 +53,7 @@ export class WordPressConnector implements CmsConnector {
     secrets: ConnectorSecrets,
     _input?: TestChannelConnectionInput,
   ): Promise<ConnectorTestResult> {
-    const { authHeader, secretCandidates } = this.buildAuth(secrets);
+    const { authHeader, secretCandidates } = this.buildAuth(secrets, conn.configJson);
     const endpoint = joinBasePath(conn.siteBaseUrl, '/wp-json/wp/v2/users/me');
 
     let response;
@@ -116,7 +116,7 @@ export class WordPressConnector implements CmsConnector {
     secrets: ConnectorSecrets,
     _input?: TestChannelConnectionInput,
   ): Promise<ChannelRemoteTargetDto[]> {
-    const { authHeader, secretCandidates } = this.buildAuth(secrets);
+    const { authHeader, secretCandidates } = this.buildAuth(secrets, conn.configJson);
     const endpoint = joinBasePath(conn.siteBaseUrl, '/wp-json/wp/v2/categories', {
       per_page: 100,
     });
@@ -171,7 +171,7 @@ export class WordPressConnector implements CmsConnector {
     secrets: ConnectorSecrets,
     payload: ConnectorPublishPayload,
   ): Promise<ConnectorPublishResult> {
-    const { authHeader, secretCandidates } = this.buildAuth(secrets);
+    const { authHeader, secretCandidates } = this.buildAuth(secrets, conn.configJson);
     const endpoint = joinBasePath(conn.siteBaseUrl, '/wp-json/wp/v2/posts');
 
     const baseContent = payload.html || payload.markdown;
@@ -272,7 +272,10 @@ export class WordPressConnector implements CmsConnector {
     return [];
   }
 
-  private buildAuth(secrets: ConnectorSecrets): {
+  private buildAuth(
+    secrets: ConnectorSecrets,
+    configJson?: ConnectorConnectionContext['configJson'],
+  ): {
     authHeader: string;
     secretCandidates: string[];
   } {
@@ -291,7 +294,7 @@ export class WordPressConnector implements CmsConnector {
       basicToken,
       appPassword,
       ...(compactPassword ? [compactPassword] : []),
-      ...collectSecretCandidates(secrets),
+      ...collectSecretCandidates(secrets, configJson as Record<string, unknown> | undefined),
     ]);
     return {
       authHeader: `Basic ${basicToken}`,

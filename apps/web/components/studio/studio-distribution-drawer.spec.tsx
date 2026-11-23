@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as apiLib from '../../lib/api';
 import * as briefsApi from '../../lib/briefs';
 import { PreflightBlockedError, type ArticleDistributionTaskItem } from '../../lib/distribution';
+import { GatewayApiError } from '../../lib/envelope';
 import * as studioLib from '../../lib/studio';
 import { StudioDistributionDrawer } from './studio-distribution-drawer';
 
@@ -1236,5 +1237,128 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       expect(drawer.textContent).toContain('原绑定连接已删除，请重新选择可用连接');
     });
     expect(drawer.textContent).not.toContain('cm9999999999deleted');
+  });
+
+  it('W-01-R2: rotates Idempotency-Key after definitive 502 error inside open modal, preserves key on 504 gateway timeout, and rotates on cancel+reopen', async () => {
+    const conn: ChannelConnectionDto = {
+      ...SHOPIFY_CONN,
+      id: 'conn_sh_idem_r2',
+      displayName: 'Idempotency Retry Blog',
+    };
+    const generatedTask = makeTask({
+      id: 'task_idem_ok',
+      provider: 'SHOPIFY',
+      channelLabel: 'Idempotency Retry Blog',
+      connectionId: conn.id,
+    });
+    listChannelConnectionsMock.mockResolvedValue({ items: [conn] });
+    listArticleDistributionsMock.mockResolvedValue({ items: [] });
+
+    const seenKeys: Array<string | undefined> = [];
+    generateDistributionVariantsMock
+      // Attempt 1: definitive 502 from server -> must rotate key on immediate retry
+      .mockImplementationOnce(
+        (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
+          seenKeys.push(opts?.idempotencyKey);
+          return Promise.reject(new GatewayApiError(502, 50002, '渠道变体生成失败，请稍后重试'));
+        },
+      )
+      // Attempt 2: ambiguous 504 gateway timeout -> must preserve key2 on immediate retry
+      .mockImplementationOnce(
+        (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
+          seenKeys.push(opts?.idempotencyKey);
+          return Promise.reject(new GatewayApiError(504, -1, '服务响应超时，请稍后重试'));
+        },
+      )
+      // Attempt 3: immediate retry after 504 -> preserves key2; then we cancel & reopen to verify rotation
+      .mockImplementationOnce(
+        (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
+          seenKeys.push(opts?.idempotencyKey);
+          return Promise.reject(new GatewayApiError(504, -1, '服务响应超时，请稍后重试'));
+        },
+      )
+      // Attempt 4: after cancel + reopen -> must rotate to a brand-new key and succeed
+      .mockImplementationOnce(
+        (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
+          seenKeys.push(opts?.idempotencyKey);
+          return Promise.resolve({
+            articleId: GLOBAL_ARTICLE.id,
+            unitPrice: 2,
+            totalChargedPoints: 2,
+            refundedCount: 0,
+            refundedPoints: 0,
+            reservationId: 'res_r2_ok',
+            billingMode: 'SHADOW',
+            replayed: false,
+            tasks: [generatedTask],
+            failures: [],
+          });
+        },
+      );
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    // Select target & open Points Confirmation Modal
+    fireEvent.click(await screen.findByTestId('distribution-target-l1:conn_sh_idem_r2'));
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    const confirmBtn = await screen.findByTestId('distribution-points-confirm-submit-btn');
+
+    // Attempt 1 -> 502 error (modal stays open, pending key cleared)
+    fireEvent.click(confirmBtn);
+    await waitFor(() => {
+      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(1);
+      expect(notifyErrorMock).toHaveBeenCalledWith('渠道变体生成失败，请稍后重试');
+    });
+
+    // Attempt 2 -> immediate retry inside still-open modal MUST rotate key (key2 !== key1), fails with 504
+    fireEvent.click(screen.getByTestId('distribution-points-confirm-submit-btn'));
+    await waitFor(() => {
+      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(2);
+    });
+
+    // Attempt 3 -> immediate retry after 504 MUST preserve key2 (key3 === key2)
+    fireEvent.click(screen.getByTestId('distribution-points-confirm-submit-btn'));
+    await waitFor(() => {
+      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(3);
+    });
+
+    // Cancel modal & reopen -> MUST rotate key (key4 !== key3) and succeed
+    const modal = screen.getByTestId('distribution-points-confirm-modal');
+    const modalContent = modal.closest('.ant-modal-content') as HTMLElement;
+    expect(modalContent).toBeTruthy();
+    fireEvent.click(within(modalContent).getByRole('button', { name: /取\s*消/ }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
+    });
+
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    fireEvent.click(await screen.findByTestId('distribution-points-confirm-submit-btn'));
+    await waitFor(() => {
+      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(4);
+      expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
+    });
+
+    expect(seenKeys).toHaveLength(4);
+    expect(seenKeys[0]).toMatch(/^dist_var_/);
+    expect(seenKeys[1]).toMatch(/^dist_var_/);
+    expect(seenKeys[1]).not.toBe(seenKeys[0]); // 502 rotated key!
+    expect(seenKeys[2]).toBe(seenKeys[1]); // 504 preserved key!
+    expect(seenKeys[3]).toMatch(/^dist_var_/);
+    expect(seenKeys[3]).not.toBe(seenKeys[2]); // cancel + reopen rotated key!
   });
 });

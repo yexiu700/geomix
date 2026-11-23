@@ -842,6 +842,9 @@ export function StudioDistributionDrawer({
       }
     } catch (err) {
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+      if (err instanceof GatewayApiError && err.status >= 400 && err.status !== 504) {
+        pendingVariantIdemKeyRef.current = null;
+      }
       const msg = formatDrawerError(err, '生成渠道变体失败');
       setDrawerError(msg);
       feedback.notifyError(msg);
