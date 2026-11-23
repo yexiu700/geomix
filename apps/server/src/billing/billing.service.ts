@@ -6,6 +6,7 @@ import {
   isChargeAction,
   isPositivePoints,
   isReservationRefType,
+  isValidUnitPoints,
   ledgerTitle,
   PRICING_DEFAULTS,
   quoteGeoWrite,
@@ -175,10 +176,10 @@ export class BillingService {
     const row = await this.prisma.base.pricingItem.findUnique({ where: { action } });
     if (row) {
       if (!row.enabled) throw badRequest(`${label}价格未启用`);
-      if (!isPositivePoints(row.unitPoints)) throw badRequest(`${label}单价配置不正确`);
+      if (!isValidUnitPoints(action, row.unitPoints)) throw badRequest(`${label}单价配置不正确`);
       return row.unitPoints;
     }
-    if (def && isPositivePoints(def.unitPoints)) {
+    if (def && isValidUnitPoints(action, def.unitPoints)) {
       return def.unitPoints;
     }
     throw badRequest(`${label}价格未配置`);
@@ -912,6 +913,8 @@ export class BillingService {
           : `GEO写作(${reservation.refId.slice(-8)})`;
       } else if (reservation.refType === 'inline_image_gen') {
         sourceLabel = `行内AI配图(${reservation.refId.slice(-8)})`;
+      } else if (reservation.refType === 'geo_variant') {
+        sourceLabel = `渠道变体改写(${reservation.refId.slice(-8)})`;
       } else if (reservation.refType === 'visibility_run') {
         const run = await tx.visibilityRun.findFirst({
           where: { id: reservation.refId, tenantId },

@@ -1,6 +1,11 @@
 'use client';
 
-import { formatAdminDateTime, getPricingActionMeta, type PricingUpdateInput } from '@geomix/shared';
+import {
+  formatAdminDateTime,
+  getPricingActionMeta,
+  isZeroAllowedPricingAction,
+  type PricingUpdateInput,
+} from '@geomix/shared';
 import { Alert, Button, Form, Input, Modal, Space, Switch, Table, Tag, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import {
@@ -64,12 +69,16 @@ export function PricingAdmin({
   const dirtyRows = rows.filter(isRowDirty);
   const hasUnsaved = dirtyRows.length > 0;
 
+  const allowsZero = (action: string): boolean => isZeroAllowedPricingAction(action);
+
   const parseDraftPoints = (row: PriceRow): number | null => {
     const raw = drafts[row.action]?.unitPoints ?? '';
     const trimmed = raw.trim();
-    if (!/^[1-9][0-9]*$/.test(trimmed)) return null;
+    const pattern = allowsZero(row.action) ? /^(?:0|[1-9][0-9]*)$/ : /^[1-9][0-9]*$/;
+    if (!pattern.test(trimmed)) return null;
     const num = Number(trimmed);
-    if (!Number.isSafeInteger(num) || num < 1 || num > 1_000_000) return null;
+    const min = allowsZero(row.action) ? 0 : 1;
+    if (!Number.isSafeInteger(num) || num < min || num > 1_000_000) return null;
     return num;
   };
 
@@ -82,7 +91,9 @@ export function PricingAdmin({
       const unitPoints = parseDraftPoints(row);
       if (unitPoints === null) {
         setNotice(null);
-        setError(`${label} 价格不正确（请填写 1 ~ 1000000 的整数）`);
+        setError(
+          `${label} 价格不正确（请填写 ${allowsZero(row.action) ? '0 ~ 1000000' : '1 ~ 1000000'} 的整数）`,
+        );
         return;
       }
       updates.push({
@@ -122,7 +133,9 @@ export function PricingAdmin({
     const unitPoints = parseDraftPoints(row);
     if (unitPoints === null) {
       setNotice(null);
-      setError(`${label} 价格不正确（请填写 1 ~ 1000000 的整数）`);
+      setError(
+        `${label} 价格不正确（请填写 ${allowsZero(row.action) ? '0 ~ 1000000' : '1 ~ 1000000'} 的整数）`,
+      );
       return;
     }
     const enabled = drafts[row.action]?.enabled ?? row.enabled;
@@ -260,7 +273,9 @@ export function PricingAdmin({
                       type="danger"
                       style={{ display: 'block', fontSize: 12, marginTop: 2 }}
                     >
-                      价格不正确（请填写 1~1000000 的正整数）
+                      {allowsZero(row.action)
+                        ? '价格不正确（请填写 0~1000000 的非负整数）'
+                        : '价格不正确（请填写 1~1000000 的正整数）'}
                     </Typography.Text>
                   ) : null}
                 </div>

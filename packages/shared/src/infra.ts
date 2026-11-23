@@ -62,6 +62,15 @@ function blankToUndefined(value: unknown): unknown {
   return value;
 }
 
+function blankOrWhitespaceToUndefined(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }
+  return value;
+}
+
 function envString(defaultValue: string) {
   return z.preprocess(blankToUndefined, z.string().default(defaultValue));
 }
@@ -121,6 +130,16 @@ export const envSchema = z.object({
   }, billingModeSchema),
   FEATURE_AI_IMAGE: envBoolean(true),
   ARTICLE_RETENTION_DAYS: envNumber(30),
+  CREDENTIAL_ENCRYPTION_KEY: z.preprocess(blankOrWhitespaceToUndefined, z.string().optional()),
+  PUBLIC_APP_URL: z.preprocess(
+    blankOrWhitespaceToUndefined,
+    z
+      .string()
+      .url('PUBLIC_APP_URL must be a valid URL')
+      .refine((value) => /^https?:\/\//i.test(value), 'PUBLIC_APP_URL must use http:// or https://')
+      .transform((value) => value.replace(/\/+$/, ''))
+      .optional(),
+  ),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

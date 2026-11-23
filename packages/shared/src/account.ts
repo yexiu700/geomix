@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { PRICING_DEFAULTS, QUOTA_DEFAULTS, type PricingAction, type QuotaKeyName } from './catalog';
+import {
+  PRICING_DEFAULTS,
+  QUOTA_DEFAULTS,
+  isZeroAllowedPricingAction,
+  type PricingAction,
+  type QuotaKeyName,
+} from './catalog';
 
 export { QUOTA_DEFAULTS };
 import {
@@ -459,10 +465,22 @@ export const pricingUpdateSchema = z
     action: z.enum(PRICING_ACTION_NAMES, {
       errorMap: () => ({ message: '价格项不正确' }),
     }),
-    unitPoints: z.number().int().positive().max(1_000_000),
+    unitPoints: z.number().int().min(0).max(1_000_000),
     enabled: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.unitPoints === 0 && !isZeroAllowedPricingAction(value.action)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_small,
+        minimum: 1,
+        type: 'number',
+        inclusive: true,
+        path: ['unitPoints'],
+        message: '单价必须为正整数',
+      });
+    }
+  });
 
 export type PricingUpdateInput = z.infer<typeof pricingUpdateSchema>;
 
@@ -496,6 +514,13 @@ export const PRICING_ACTION_META: Record<PricingAction, PricingActionMeta> = {
     unit: '点/张',
     unitSuffix: '张',
     description: '在 GEO 写作台编辑器内按需生成配图并归档至品牌产品图库（按张计费）',
+  },
+  geo_variant: {
+    action: 'geo_variant',
+    label: '渠道变体改写',
+    unit: '点/渠道',
+    unitSuffix: '渠道',
+    description: '基于母稿与品牌事实卡按目标渠道派生适配变体（支持设为 0 点免费，按租户限流防刷）',
   },
 };
 

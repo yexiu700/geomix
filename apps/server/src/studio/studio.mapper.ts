@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
+  CHANNEL_PROVIDERS,
+  type ChannelProvider,
   type GeoArticleRecord,
   type GeoArticleStatus,
   type GeoBatchJobRecord,
+  type GeoBriefChannelRecommendation,
   type GeoComplianceFlag,
   type GeoMarket,
   type GeoOutlineHeading,
@@ -295,19 +298,37 @@ export function presentPublishRecord(row: GeoPublishRecordRow): GeoPublishRecord
   };
 }
 
+const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
+
 export function normalizeRecommendedChannels(
   raw: Prisma.JsonValue | null | undefined,
-): Array<{ channel: string; reason: string }> {
+): GeoBriefChannelRecommendation[] {
   if (!Array.isArray(raw)) return [];
-  const out: Array<{ channel: string; reason: string }> = [];
+  const out: GeoBriefChannelRecommendation[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const obj = item as Record<string, unknown>;
     const channel = typeof obj.channel === 'string' ? obj.channel.trim() : '';
     const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
-    if (channel) {
-      out.push({ channel, reason });
+    if (!channel) continue;
+
+    const entry: GeoBriefChannelRecommendation = { channel, reason };
+    if (typeof obj.providerHint === 'string' && CHANNEL_PROVIDER_SET.has(obj.providerHint)) {
+      entry.providerHint = obj.providerHint as ChannelProvider;
     }
+    if (obj.priority === 'HIGH' || obj.priority === 'MEDIUM') {
+      entry.priority = obj.priority;
+    }
+    if (Array.isArray(obj.citedExampleUrls)) {
+      const urls = obj.citedExampleUrls
+        .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+        .map((u) => u.trim())
+        .slice(0, 3);
+      if (urls.length > 0) {
+        entry.citedExampleUrls = urls;
+      }
+    }
+    out.push(entry);
   }
   return out;
 }

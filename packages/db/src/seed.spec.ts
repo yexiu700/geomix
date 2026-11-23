@@ -38,6 +38,7 @@ describe('seed plan', () => {
       ['geo_write', 10],
       ['visibility_check', 2],
       ['inline_image_gen', 5],
+      ['geo_variant', 2],
     ]);
     expect(writes.quotas).toHaveLength(12);
     expect(writes.quotas.filter((item) => item.tenantId === DEMO_TENANT_ID)).toHaveLength(6);

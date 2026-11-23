@@ -6,7 +6,13 @@ import { z } from 'zod';
  * 计费仍走已有的冻结单；这里只约定队列名、并发和状态怎么变。
  */
 
-export const QUEUE_NAMES = ['fact-index', 'geo-batch', 'visibility-check', 'maintenance'] as const;
+export const QUEUE_NAMES = [
+  'fact-index',
+  'geo-batch',
+  'visibility-check',
+  'distribution',
+  'maintenance',
+] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
@@ -21,6 +27,7 @@ export const QUEUE_TENANT_LIMIT: Record<QueueName, number> = {
   'fact-index': 2,
   'geo-batch': 2,
   'visibility-check': 2,
+  distribution: 2,
   maintenance: 1,
 };
 
@@ -190,6 +197,13 @@ export function readQueueConfig(
         env.QUEUE_VISIBILITY_CONCURRENCY,
         2,
         'QUEUE_VISIBILITY_CONCURRENCY',
+        1,
+        32,
+      ),
+      distribution: integerEnv(
+        env.QUEUE_DISTRIBUTION_CONCURRENCY,
+        2,
+        'QUEUE_DISTRIBUTION_CONCURRENCY',
         1,
         32,
       ),

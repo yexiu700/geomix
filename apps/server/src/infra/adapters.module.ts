@@ -5,6 +5,7 @@ import { ComplianceService, type AuditWriter } from './compliance';
 import { EmbeddingService } from './embedding';
 import { ImageService } from './image';
 import { LlmService, type LlmCostSink } from './llm';
+import { OutboundHttpClient } from './outbound-http';
 import { fetchPublicPage, type FetchDeps } from './public-fetch';
 import { SearchService } from './search';
 import { StorageService } from './storage';
@@ -90,6 +91,10 @@ export class PublicFetchService {
         });
       },
     },
+    {
+      provide: OutboundHttpClient,
+      useFactory: () => new OutboundHttpClient(),
+    },
   ],
   exports: [
     ComplianceService,
@@ -99,6 +104,7 @@ export class PublicFetchService {
     SearchService,
     PublicFetchService,
     ImageService,
+    OutboundHttpClient,
   ],
 })
 export class AdaptersModule {}

@@ -11,6 +11,13 @@ import {
   type GeoTargetFormat,
 } from './geo-studio';
 import { VISIBILITY_ENGINE_KEYS } from './visibility';
+import type {
+  ChannelProvider,
+  CrawlProbeReport,
+  CrawlProbeStatus,
+  DistributionSummaryDto,
+  GeoRetestScheduleDto,
+} from './distribution';
 
 /**
  * GeoMix 2.0 交付包、GEO 0–100 体检、发布登记与复测闭环、行动首页契约（Issue #326 / #333）。
@@ -3097,6 +3104,13 @@ export const publishRecordCreateSchema = z.object({
     .refine(isSafeHttpPublishedUrl, '请输入有效的 http:// 或 https:// 已发布文章链接'),
   channel: z.string().trim().min(1, '请选择或填写发布渠道').max(60),
   publishedAt: z.string().datetime({ offset: true }).optional(),
+  autoRetest: z
+    .object({
+      enabled: z.boolean().default(true),
+      milestones: z.array(z.number().int().min(1).max(365)).min(1).max(6).optional(),
+      sampleCount: z.union([z.literal(1), z.literal(3)]).optional(),
+    })
+    .optional(),
 });
 
 export type PublishRecordCreateInput = z.infer<typeof publishRecordCreateSchema>;
@@ -3160,6 +3174,12 @@ export type GeoPublishRecordDto = {
   latestRetestRunId: string | null;
   beforeMetrics: RetestMetricSnapshot | null;
   afterMetrics: RetestMetricSnapshot | null;
+  distributionTaskId?: string | null;
+  crawlStatus?: CrawlProbeStatus;
+  crawlCheckedAt?: string | null;
+  crawlReportJson?: CrawlProbeReport | null;
+  indexNowSubmitted?: boolean;
+  retestSchedules?: GeoRetestScheduleDto[];
 };
 
 export type ActionHomeResponse = {
@@ -3183,7 +3203,13 @@ export type ActionHomeResponse = {
     targetPrompt: string;
     recommendedRecipe: GeoRecipe;
     targetFormat: GeoTargetFormat;
-    recommendedChannels: Array<{ channel: string; reason: string }>;
+    recommendedChannels: Array<{
+      channel: string;
+      reason: string;
+      providerHint?: ChannelProvider;
+      priority?: 'HIGH' | 'MEDIUM';
+      citedExampleUrls?: string[];
+    }>;
   }>;
   recentArticles: Array<{
     id: string;
@@ -3194,6 +3220,7 @@ export type ActionHomeResponse = {
     updatedAt: string;
     publishRecord?: GeoPublishRecordDto | null;
   }>;
+  distributionSummary?: DistributionSummaryDto;
 };
 
 // ==================== GEO 0–100 实时体检、JSON-LD 与 llms.txt 纯函数 ====================

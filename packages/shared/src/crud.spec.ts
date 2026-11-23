@@ -57,6 +57,12 @@ describe('crud list query', () => {
     expect(priceButtonText('AI可见性监测', 2, priceUnit('visibility_check'))).toBe(
       'AI可见性监测（2点数/次）',
     );
+    expect(priceButtonText('渠道变体改写', 2, priceUnit('geo_variant'))).toBe(
+      '渠道变体改写（2点数/渠道）',
+    );
+    expect(priceButtonText('渠道变体改写', 0, priceUnit('geo_variant'))).toBe(
+      '渠道变体改写（0点数/渠道）',
+    );
     expect(() => priceButtonText('GEO写作', -1)).toThrow(CrudQueryError);
   });
 
