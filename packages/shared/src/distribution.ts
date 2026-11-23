@@ -637,7 +637,7 @@ export type EvaluateDistributionPreflightInput = {
 };
 
 const CJK_RUN_RE = /[\u3400-\u9fff\uf900-\ufaff]+/g;
-const HTML_ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+)|#(\d+)|([a-zA-Z]{2,12}));/g;
+const HTML_ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+);?|#(\d+);?|([a-zA-Z]{2,12});)/g;
 
 const HTML_BLOCK_TAGS = new Set([
   'p',
@@ -767,6 +767,16 @@ function stripHtmlTagsLinear(html: string): string {
   return out.join('');
 }
 
+function decodeNumericCodePoint(code: number, match: string): string {
+  if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) {
+    return match;
+  }
+  if (code >= 0xd800 && code <= 0xdfff) {
+    return '\uFFFD';
+  }
+  return String.fromCodePoint(code);
+}
+
 function decodeHtmlEntities(text: string): string {
   return text.replace(
     HTML_ENTITY_RE,
@@ -774,27 +784,24 @@ function decodeHtmlEntities(text: string): string {
       if (hex) {
         const trimmed = hex.replace(/^0+/, '') || '0';
         if (trimmed.length <= 6) {
-          const code = Number.parseInt(trimmed, 16);
-          if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
-            return String.fromCodePoint(code);
-          }
+          return decodeNumericCodePoint(Number.parseInt(trimmed, 16), match);
         }
         return match;
       }
       if (dec) {
         const trimmed = dec.replace(/^0+/, '') || '0';
         if (trimmed.length <= 7) {
-          const code = Number.parseInt(trimmed, 10);
-          if (Number.isInteger(code) && code > 0 && code <= 0x10ffff) {
-            return String.fromCodePoint(code);
-          }
+          return decodeNumericCodePoint(Number.parseInt(trimmed, 10), match);
         }
         return match;
       }
       if (named) {
-        const mapped = NAMED_HTML_ENTITIES[named.toLowerCase()];
-        if (mapped !== undefined) {
-          return mapped;
+        const key = named.toLowerCase();
+        if (Object.hasOwn(NAMED_HTML_ENTITIES, key)) {
+          const mapped = NAMED_HTML_ENTITIES[key];
+          if (mapped !== undefined) {
+            return mapped;
+          }
         }
       }
       return match;

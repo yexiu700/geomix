@@ -689,4 +689,60 @@ describe('evaluateDistributionPreflight()', () => {
     expect(extractPlainTextFromHtml(repeatZeroEntity)).toBe(repeatZeroEntity);
     expect(Date.now() - startMs).toBeLessThan(500);
   });
+
+  it('W3-S-01 & N-01: decodes semicolon-less HTML5 numeric entities, blocks smuggling in preflight, guards Object.prototype names, and stays O(N) without trailing semicolons', () => {
+    const decHtml = '<p>&#91TBD: official price&#93 &#22312&#32447&#36172&#21338</p>';
+    const hexLowerHtml = '<p>&#x5bTBD: hex&#x5d &#x5728&#x7ebf&#x8d4c&#x535a</p>';
+    const hexUpperPaddedHtml = '<p>&#X00005BTBD: upper&#X00005D</p>';
+
+    expect(extractPlainTextFromHtml(decHtml)).toBe('[TBD: official price] 在线赌博');
+    expect(extractPlainTextFromHtml(hexLowerHtml)).toBe('[TBD: hex] 在线赌博');
+    expect(extractPlainTextFromHtml(hexUpperPaddedHtml)).toBe('[TBD: upper]');
+
+    for (const [variantHtml, expectedSlot, expectCjk] of [
+      [decHtml, '[TBD: official price]', true],
+      [hexLowerHtml, '[TBD: hex]', true],
+      [hexUpperPaddedHtml, '[TBD: upper]', false],
+    ] as const) {
+      const pf = evaluateDistributionPreflight({
+        market: 'GLOBAL',
+        title: 'Clean English Power Station Guide',
+        contentMarkdown: 'Verified 1200Wh LiFePO4 battery benchmark.',
+        variantMetaDesc: 'Independent lab test.',
+        variantHtml,
+        geoScore: 88,
+        matchedFactCount: 2,
+        provider: 'WORDPRESS',
+        variantSlug: 'clean-english-guide',
+      });
+      expect(pf.ok).toBe(false);
+      expect(pf.blockers.map((b) => b.code)).toContain('MISSING_FACT_SLOTS');
+      expect(pf.blockers.find((b) => b.code === 'MISSING_FACT_SLOTS')?.details).toContain(
+        expectedSlot,
+      );
+      if (expectCjk) {
+        expect(pf.blockers.map((b) => b.code)).toContain('GLOBAL_CJK_LEAK');
+        expect(pf.blockers.find((b) => b.code === 'GLOBAL_CJK_LEAK')?.details).toContain(
+          '在线赌博',
+        );
+      }
+    }
+
+    // Normal ampersands & URLs remain untouched; surrogates map cleanly to U+FFFD
+    expect(extractPlainTextFromHtml('<p>AT&T R&D ?a=1&b=2 &#xD800; &#55296</p>')).toBe(
+      'AT&T R&D ?a=1&b=2 \uFFFD \uFFFD',
+    );
+
+    // N-01: Object.prototype property names remain literal and never resolve prototype functions
+    const protoPlain = extractPlainTextFromHtml('<p>&constructor; &toString; &__proto__;</p>');
+    expect(protoPlain).toBe('&constructor; &toString; &__proto__;');
+    expect(protoPlain).not.toContain('function Object');
+    expect(protoPlain).not.toContain('[native code]');
+
+    // Linear-time guard for semicolon-less leading-zero hex entity (< 500ms, no throw)
+    const startMs = Date.now();
+    const repeatZeroNoSemi = `&#x${'0'.repeat(60_000)}`;
+    expect(extractPlainTextFromHtml(repeatZeroNoSemi)).toBe(repeatZeroNoSemi);
+    expect(Date.now() - startMs).toBeLessThan(500);
+  });
 });

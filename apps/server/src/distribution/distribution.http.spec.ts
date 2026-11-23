@@ -1341,4 +1341,37 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     expect(enqueuedJobs).toHaveLength(enqueuedBefore);
     expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
   });
+
+  it('W3-S-01: blocks semicolon-less HTML5 numeric entities in variantHtml on PATCH and POST /publish with 422 and 0 enqueued jobs', async () => {
+    const enqueuedBefore = enqueuedJobs.length;
+
+    const patchRes = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      {
+        variantHtml: '<p>&#91TBD: official price&#93 &#22312&#32447&#36172&#21338</p>',
+      },
+    );
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.data.preflightJson?.ok).toBe(false);
+    expect(patchRes.body.data.preflightJson?.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+
+    const pubRes = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_wp_clean/publish', tokenA, {
+      publishAsDraft: false,
+      connectionId: 'conn_wp_ok',
+    });
+    expect(pubRes.status).toBe(422);
+    expect(pubRes.body.data.ok).toBe(false);
+    expect(pubRes.body.data.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'GLOBAL_CJK_LEAK', 'COMPLIANCE_BLOCKED']),
+    );
+    expect(enqueuedJobs).toHaveLength(enqueuedBefore);
+    expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
+  });
 });
