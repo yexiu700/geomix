@@ -262,7 +262,17 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     const [run, obs] = await Promise.all([
       this.prisma.base.visibilityRun.findFirst({
         where: { id: runId, tenantId },
-        include: { brandMarket: true },
+        include: {
+          brandMarket: {
+            include: {
+              brand: {
+                include: {
+                  markets: { select: { ownedDomains: true } },
+                },
+              },
+            },
+          },
+        },
       }),
       this.prisma.base.visibilityObservation.findFirst({
         where: { id: observationId, runId, tenantId },
@@ -282,9 +292,16 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
 
     const reservationId = await this.resolveReservationId(tenantId, run.id, run.reservationId);
     const competitors = parseProfileCompetitors(run.brandMarket.competitors);
-    const ownedDomains = run.brandMarket.ownedDomains
-      .map((dom) => normalizeVisibilityDomain(dom))
-      .filter(Boolean);
+    const siblingMarkets =
+      (run.brandMarket as { brand?: { markets?: Array<{ ownedDomains?: string[] }> } }).brand
+        ?.markets ?? [];
+    const rawOwnedDomains = [
+      ...run.brandMarket.ownedDomains,
+      ...siblingMarkets.flatMap((m) => m.ownedDomains ?? []),
+    ];
+    const ownedDomains = Array.from(
+      new Set(rawOwnedDomains.map((dom) => normalizeVisibilityDomain(dom)).filter(Boolean)),
+    );
     const competitorDomains = competitors.flatMap((comp) => comp.domains);
 
     let settleFailed = false;

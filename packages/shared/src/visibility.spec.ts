@@ -116,6 +116,12 @@ describe('visibility engines and constants', () => {
     expect(classifyCitationSource('https://www.amazon.com/dp/B001')).toBe('ECOMMERCE');
     expect(classifyCitationSource('https://m.weibo.cn/status/123')).toBe('SOCIAL');
     expect(classifyCitationSource('https://post.smzdm.com/p/123')).toBe('SOCIAL');
+    // #345: cross-market union of ownedDomains classifies sibling market official subdomains as OWNED
+    expect(
+      classifyCitationSource('https://jp.examplebrand.com/products/x1', {
+        ownedDomains: ['examplebrand.com.cn', 'examplebrand.com'],
+      }),
+    ).toBe('OWNED');
     expect(
       normalizeFanOutQueries(
         ['NAS 推荐; 家庭私有云对比；四盘位 NAS 静音\nNAS 推荐'],

@@ -10,6 +10,7 @@ import {
   cleanTitleText,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
+  normalizeMissingFactPlaceholdersForMarket,
   postProcessArticleMarkdown,
   resolveGlobalCategoryLabel,
   type GeoComplianceFlag,
@@ -274,7 +275,10 @@ export class StudioGenerationService {
       120,
     );
 
-    const finalMarkdown = bodyScan.text;
+    const finalMarkdown = normalizeMissingFactPlaceholdersForMarket(
+      bodyScan.text,
+      params.market.market,
+    );
     const finalHtml = markdownToSanitizedHtml(finalMarkdown);
     const mergedFlags = mergeComplianceFlags(titleScan.geoFlags, bodyScan.geoFlags);
 
@@ -424,6 +428,12 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
     ? resolveGlobalCategoryLabel(params.brand.category, params.market.localCategory)
     : params.market.localCategory?.trim() || params.brand.category;
 
+  const placeholderExample =
+    params.market.market === 'GLOBAL'
+      ? '[TBD: e.g., Standby Power Draw W]'
+      : '[待补充：如待机功耗 W]';
+  const placeholderShort = params.market.market === 'GLOBAL' ? '[TBD: ...]' : '[待补充：...]';
+
   const systemParts = [
     'You are an expert GEO (Generative Engine Optimization) technical editor.',
     languageRule,
@@ -431,7 +441,7 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
     'Structure requirements:',
     '1. Start with a concise direct-answer opening paragraph (60-120 chars/words) before the first H2.',
     '2. Include at least 3 clear Markdown H2 (##) sections, a GFM comparison table (| col | ... |), bullet lists, and a closing FAQ section.',
-    '3. Ground all specifications in the provided Brand Facts. Never fabricate numbers; if a critical spec is absent from Brand Facts, insert a plain placeholder like [待补充：如待机功耗 W] — NEVER wrap it in a Markdown link such as [待补充：...](#faq).',
+    `3. Ground all specifications in the provided Brand Facts. Never fabricate numbers; if a critical spec is absent from Brand Facts, insert a plain placeholder like ${placeholderExample} — NEVER wrap it in a Markdown link such as ${placeholderShort}(#faq).`,
     '4. Never output legacy template variables such as {训练词占位符} or 【品牌1】.',
     '5. Do NOT output <script type="application/ld+json">, raw JSON-LD blocks, or HTML <script> tags inside the Markdown article body; structured JSON-LD Schema is generated separately by the delivery panel.',
   ];
@@ -453,7 +463,7 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
       ? params.factSnippets
           .map((f, idx) => `[Fact ${idx + 1} · ${f.slot} · ${f.title}]\n${f.content}`)
           .join('\n\n')
-      : '(No structured brand facts provided yet; keep claims conservative and mark missing specs with [待补充：...].)';
+      : `(No structured brand facts provided yet; keep claims conservative and mark missing specs with ${placeholderShort}.)`;
 
   const userParts = [
     `Brand: ${params.market.localBrandName} (Category: ${effectiveCategory})`,

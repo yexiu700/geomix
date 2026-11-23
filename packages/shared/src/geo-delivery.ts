@@ -3813,7 +3813,8 @@ export function evaluateGeoArticle(input: EvaluateGeoArticleInput): GeoEvaluatio
   let deAiScore = 15;
   if (missingSlots.length > 0) {
     deAiScore -= Math.min(8, missingSlots.length * 5);
-    deAiHints.push(`正文包含 ${missingSlots.length} 处 [待补充] 缺失事实槽位，补填后可立即提分`);
+    const token = input.market === 'GLOBAL' ? '[TBD]' : '[待补充]';
+    deAiHints.push(`正文包含 ${missingSlots.length} 处 ${token} 缺失事实槽位，补填后可立即提分`);
   }
   if (LEGACY_PLACEHOLDER_RE.test(md)) {
     deAiScore -= 6;

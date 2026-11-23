@@ -112,13 +112,28 @@ export function StudioPrewriteBar({
     <div className="gm-studio-prewrite" data-testid="studio-prewrite-bar">
       {/* Item 1: Target Prompt + Linked Brief Badge */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <div className="gm-studio-section-label">
-          <span>1. 目标问题与大纲上下文</span>
+        <div className="gm-studio-section-label" style={{ flexWrap: 'wrap', gap: 6 }}>
+          <span style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>1. 目标问题与大纲上下文</span>
           {linkedBrief ? (
             <span
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+                minWidth: 0,
+                maxWidth: '100%',
+              }}
             >
-              <Tag color="cyan" style={{ margin: 0 }}>
+              <Tag
+                color="cyan"
+                style={{
+                  margin: 0,
+                  maxWidth: '100%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 来自意见卡 · {linkedBrief.suggestedTitle.slice(0, 28)}
               </Tag>
               {linkedBrief.sourceCitationUrl &&

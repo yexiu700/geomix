@@ -760,9 +760,33 @@ export function stripHtmlToText(html: string): string {
     .trim();
 }
 
-// ==================== 缺失事实显式留槽解析与回填（F14） ====================
+// ==================== 缺失事实显式留槽解析与回填（F14 / #343） ====================
 
-export const MISSING_FACT_CAPSULE_RE = /\[待补充[:：]([^\]\n]{1,120})\](?:\([^)\n]{1,200}\))?/g;
+export const MISSING_FACT_CAPSULE_RE =
+  /\[(?:待补充|TBD|To be verified)[:：]\s*([^\]\n]{1,120})\](?:\([^)\n]{1,200}\))?/gi;
+
+export function formatMissingFactPlaceholder(label: string, market: GeoMarket): string {
+  const clean = label.trim() || (market === 'GLOBAL' ? 'verify specification' : '请补充真实参数');
+  return market === 'GLOBAL' ? `[TBD: ${clean}]` : `[待补充：${clean}]`;
+}
+
+export function normalizeMissingFactPlaceholdersForMarket(
+  markdown: string,
+  market: GeoMarket,
+): string {
+  if (market !== 'GLOBAL') return markdown;
+  return markdown.replace(
+    /\[待补充[:：]\s*([^\]\n]{1,120})\](?:\([^)\n]{1,200}\))?/g,
+    (_full, rawHint: string) => {
+      const hint = rawHint.trim();
+      const hasCjk = /[\u4e00-\u9fff]/.test(hint);
+      if (!hint || hasCjk) {
+        return '[TBD: verify specification]';
+      }
+      return `[TBD: ${hint}]`;
+    },
+  );
+}
 
 export type MissingFactSlot = {
   raw: string;
@@ -774,7 +798,7 @@ export type MissingFactSlot = {
 
 export function extractMissingFactSlots(markdown: string): MissingFactSlot[] {
   const slots: MissingFactSlot[] = [];
-  const re = new RegExp(MISSING_FACT_CAPSULE_RE.source, 'g');
+  const re = new RegExp(MISSING_FACT_CAPSULE_RE.source, 'gi');
   let match: RegExpExecArray | null;
   let idx = 0;
   while ((match = re.exec(markdown)) !== null) {

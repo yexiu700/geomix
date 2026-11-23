@@ -201,6 +201,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '任务名称',
         dataIndex: 'name',
         key: 'name',
+        width: 148,
         ellipsis: true,
         render: (_val, row) => {
           const safeTitle = sanitizeEntityTitleSegment(row.name, '监测任务');
@@ -223,20 +224,20 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 82,
+        width: 76,
         render: (status: TaskStatusName) => <StatusPill kind="task" status={status} />,
       },
       {
         title: '引擎',
         dataIndex: 'engines',
         key: 'engines',
-        width: 128,
+        width: 108,
         render: (engs: VisibilityEngineKey[]) => <EngineChipList engines={engs} max={2} />,
       },
       {
         title: '进度',
         key: 'progress',
-        width: 64,
+        width: 58,
         render: (_v, row) => (
           <span className="gm-num">
             {row.doneCount}/{row.totalChecks}
@@ -247,13 +248,13 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '提及率',
         dataIndex: 'visibilityPct',
         key: 'visibilityPct',
-        width: 68,
+        width: 64,
         render: (pct: number | null) => <span className="gm-num">{formatPct(pct)}</span>,
       },
       {
         title: '点数',
         key: 'points',
-        width: 78,
+        width: 68,
         render: (_v, row) => (
           <span className="gm-num">
             {row.settledPoints ?? 0}/{row.frozenPoints ?? row.totalChecks * row.unitPrice}
@@ -264,29 +265,50 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '创建时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
-        width: 118,
-        render: (iso: string) => <span className="gm-num">{formatShanghaiDateTime(iso)}</span>,
+        width: 96,
+        render: (iso: string) => (
+          <span className="gm-num" style={{ whiteSpace: 'normal', lineHeight: 1.3 }}>
+            {formatShanghaiDateTime(iso)}
+          </span>
+        ),
       },
       {
         title: '操作',
         key: 'actions',
-        width: 116,
+        width: 118,
         render: (_v, row) => {
           const busy = actionLoadingRunId === row.id;
           const isActive =
             row.status === 'QUEUED' || row.status === 'RUNNING' || row.status === 'PAUSED';
           return (
-            <Space size={4}>
-              <Button type="link" size="small" onClick={() => onSelectRun(row.id)}>
+            <Space size={2} wrap>
+              <Button
+                type="link"
+                size="small"
+                style={{ paddingInline: 4 }}
+                onClick={() => onSelectRun(row.id)}
+              >
                 查看
               </Button>
               {!readOnly && (row.status === 'QUEUED' || row.status === 'RUNNING') ? (
-                <Button type="link" size="small" loading={busy} onClick={() => onPauseRun(row)}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ paddingInline: 4 }}
+                  loading={busy}
+                  onClick={() => onPauseRun(row)}
+                >
                   暂停
                 </Button>
               ) : null}
               {!readOnly && row.status === 'PAUSED' ? (
-                <Button type="link" size="small" loading={busy} onClick={() => onResumeRun(row)}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ paddingInline: 4 }}
+                  loading={busy}
+                  onClick={() => onResumeRun(row)}
+                >
                   继续
                 </Button>
               ) : null}
@@ -295,6 +317,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
                   type="link"
                   size="small"
                   danger
+                  style={{ paddingInline: 4 }}
                   loading={busy}
                   onClick={() => onCancelRun(row)}
                 >
@@ -306,6 +329,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
                   type="link"
                   size="small"
                   danger
+                  style={{ paddingInline: 4 }}
                   loading={busy}
                   onClick={() => onDeleteRun(row)}
                 >

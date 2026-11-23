@@ -6,6 +6,7 @@ import {
   BRAND_NAME_MAX,
   GEO_MARKET_LABELS,
   containsCjk,
+  generateBrandSeedPrompts,
   normalizeBrandDomain,
   type BrandMarketRecord,
   type BrandRecord,
@@ -568,9 +569,40 @@ export function BrandIdentitySection({
               </div>
 
               <div className="gm-brand-field">
-                <span className="gm-brand-field-label">
-                  高频监控问句种子（{seedPrompts.length} / 50）
-                </span>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span className="gm-brand-field-label">
+                    高频监控问句种子（{seedPrompts.length} / 50）
+                  </span>
+                  {!readOnly ? (
+                    <Button
+                      size="small"
+                      aria-label="按当前品类重新生成种子问句"
+                      disabled={savingMarket}
+                      onClick={() => {
+                        const regenerated = generateBrandSeedPrompts({
+                          market: activeMarket,
+                          brandName: localBrandName.trim() || brand.name,
+                          category: brand.category,
+                          localCategory: localCategory.trim() || null,
+                          competitors: competitorRows
+                            .map((row) => ({ name: row.name.trim(), aliases: [], domains: [] }))
+                            .filter((c) => c.name.length > 0),
+                        });
+                        setSeedPrompts(regenerated);
+                      }}
+                    >
+                      按当前品类重新生成种子问句
+                    </Button>
+                  ) : null}
+                </div>
                 <div className="gm-brand-chip-input-row">
                   <Input
                     aria-label="添加监控问句种子"

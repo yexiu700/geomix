@@ -192,7 +192,12 @@ export class VisibilityRunLifecycleService {
       include: {
         brandMarket: {
           include: {
-            brand: { select: { name: true } },
+            brand: {
+              select: {
+                name: true,
+                markets: { select: { ownedDomains: true } },
+              },
+            },
           },
         },
         observations: {
@@ -212,7 +217,15 @@ export class VisibilityRunLifecycleService {
     const [baseRecord] = await this.presentRuns([row]);
 
     const competitors = parseProfileCompetitors(row.brandMarket.competitors);
-    const ownedDomains = row.brandMarket.ownedDomains;
+    const siblingMarkets =
+      (row.brandMarket.brand as { markets?: Array<{ ownedDomains?: string[] }> } | null)?.markets ??
+      [];
+    const ownedDomains = Array.from(
+      new Set([
+        ...row.brandMarket.ownedDomains,
+        ...siblingMarkets.flatMap((m) => m.ownedDomains ?? []),
+      ]),
+    );
     const competitorDomains = competitors.flatMap((comp) => comp.domains);
 
     const metrics = recomputeRunMetrics(

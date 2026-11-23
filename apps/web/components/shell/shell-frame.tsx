@@ -425,10 +425,13 @@ export function ShellFrame({
                 onChange={onSelectBrand}
                 className="gm-brand-select"
                 popupMatchSelectWidth={240}
-                options={brands.map((brand) => ({
-                  value: brand.id,
-                  label: brand.name,
-                }))}
+                options={brands.map((brand) => {
+                  const marketEntry = brand.markets.find((m) => m.market === activeMarket);
+                  return {
+                    value: brand.id,
+                    label: marketEntry?.localBrandName?.trim() || brand.name,
+                  };
+                })}
                 popupRender={(menu) => (
                   <div>
                     {menu}

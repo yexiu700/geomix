@@ -515,6 +515,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setBatchJobs([]);
     setSelectedBriefIds([]);
     setLinkedBrief(null);
+    setTargetPrompt('');
+    setOutlineH2([]);
+    setTargetFanOuts([]);
     setActiveArticle(null);
     setDraftTitle('');
     setDraftMarkdown('');
