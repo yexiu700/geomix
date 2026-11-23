@@ -412,4 +412,306 @@ describe('StudioPublishRetest (M6B #355)', () => {
     fireEvent.click(instantBtn);
     expect(onTriggerRetest).toHaveBeenCalledWith(expect.objectContaining({ id: 'pub_1' }));
   });
+
+  it('preserves live onlineEngineCount on same-brand article switch both while fetch is in flight and after settle (Fix 1)', async () => {
+    let resolveEngines!: (
+      val: Awaited<ReturnType<typeof visibilityApi.fetchVisibilityEngines>>,
+    ) => void;
+    const deferredEngines = new Promise<
+      Awaited<ReturnType<typeof visibilityApi.fetchVisibilityEngines>>
+    >((resolve) => {
+      resolveEngines = resolve;
+    });
+
+    const enginesSpy = vi
+      .spyOn(visibilityApi, 'fetchVisibilityEngines')
+      .mockReturnValueOnce(deferredEngines);
+
+    const article2: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_2',
+      title: 'AstraVault X4 RAID5 Benchmarks',
+    };
+    const article3: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_3',
+      title: 'AstraVault X4 Power Draw Guide',
+    };
+
+    const { rerender } = render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    // Case A: Switch art_1 -> art_2 (same brand_1 & GLOBAL) WHILE fetchVisibilityEngines is still in flight
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={article2}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    resolveEngines({
+      brandId: 'brand_1',
+      market: 'GLOBAL',
+      engines: [
+        { key: 'chatgpt', label: 'ChatGPT', market: 'GLOBAL', available: true },
+        { key: 'perplexity', label: 'Perplexity', market: 'GLOBAL', available: false },
+      ],
+    } as unknown as Awaited<ReturnType<typeof visibilityApi.fetchVisibilityEngines>>);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain(
+        '3 节点 × 1 活跃引擎 × 1 次采样 × 2 点 = 上限 6 点',
+      );
+    });
+    expect(enginesSpy).toHaveBeenCalledTimes(1);
+
+    // Case B: Switch art_2 -> art_3 AFTER live engines settled -> must preserve 1 online engine instead of reverting to static fallback 5
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={article3}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain(
+      '3 节点 × 1 活跃引擎 × 1 次采样 × 2 点 = 上限 6 点',
+    );
+    expect(screen.getByTestId('publish-form-budget-ceiling').textContent).not.toContain(
+      '5 活跃引擎',
+    );
+  });
+
+  it('yields stale local crawlOverrides & scheduleOverrides to fresher server publishRecords props while preserving overrides on prepend (Fix 4)', async () => {
+    const initialRec = makeRecord({ crawlStatus: 'PENDING' });
+    vi.spyOn(distributionApi, 'triggerCrawlProbe').mockResolvedValueOnce(
+      makeRecord({
+        crawlStatus: 'BLOCKED',
+        crawlCheckedAt: '2026-11-23T10:00:00.000Z',
+        crawlReportJson: {
+          ...initialRec.crawlReportJson!,
+          robotsMatrix: [
+            { bot: 'GPTBot', allowed: false, matchedRule: 'Disallow: /en/articles/2026/' },
+          ],
+          issues: ['robots.txt 拦截了 GPTBot'],
+        },
+      }),
+    );
+    vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValueOnce({
+      publishRecordId: 'pub_1',
+      items: initialRec.retestSchedules!.map((s) =>
+        s.milestoneDay === 14 ? { ...s, status: 'CANCELLED' } : s,
+      ),
+    });
+
+    const { rerender } = render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[initialRec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    // Trigger local crawl override (PENDING -> BLOCKED) and local schedule override (T+14 -> CANCELLED)
+    fireEvent.click(screen.getByTestId('publish-crawl-recheck-btn-pub_1'));
+    await waitFor(() => {
+      expect(screen.getByTestId('publish-crawl-badges-pub_1').textContent).toContain('抓取受阻');
+    });
+
+    // Verify robotsMatrix diagnostic pill allows wrapping (Fix 3)
+    const diagBox = screen.getByTestId('publish-crawl-diagnostics-pub_1');
+    const blockedPill = within(diagBox).getByText(
+      /GPTBot: 拦截 \(Disallow: \/en\/articles\/2026\/\)/,
+    );
+    expect(blockedPill.style.whiteSpace).toBe('normal');
+    expect(blockedPill.style.maxWidth).toBe('100%');
+    expect(blockedPill.style.overflowWrap).toBe('anywhere');
+
+    const t14Before = screen.getByTestId('publish-retest-node-pub_1-T14');
+    fireEvent.click(within(t14Before).getByRole('button', { name: '取消' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('publish-retest-node-pub_1-T14').textContent).toContain('已取消');
+    });
+
+    // Prepending a new record while keeping initialRec reference preserves local overrides
+    const prependedRec = makeRecord({ id: 'pub_2', publishedUrl: 'https://example.com/post-2' });
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[prependedRec, initialRec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('publish-crawl-badges-pub_1').textContent).toContain('抓取受阻');
+    expect(screen.getByTestId('publish-retest-node-pub_1-T14').textContent).toContain('已取消');
+
+    // Rerender with a FRESH server publishRecords array (new object reference for pub_1)
+    const freshServerRec = makeRecord({
+      crawlStatus: 'OK',
+      retestSchedules: initialRec.retestSchedules!.map((s) =>
+        s.milestoneDay === 14
+          ? {
+              ...s,
+              status: 'COMPLETED',
+              metricsSnapshot: {
+                mentionRate: 75,
+                avgPosition: 1.2,
+                sentiment: 'positive',
+                citationHit: true,
+                sampleCount: 1,
+                hitCount: 1,
+              },
+              executedAt: '2026-12-04T08:15:00.000Z',
+            }
+          : s,
+      ),
+    });
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[freshServerRec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('publish-crawl-badges-pub_1').textContent).toContain('可抓取');
+    expect(screen.getByTestId('publish-crawl-badges-pub_1').textContent).not.toContain('抓取受阻');
+    expect(screen.getByTestId('publish-retest-node-pub_1-T14').textContent).toContain('已完成');
+    expect(screen.getByTestId('publish-retest-node-pub_1-T14').textContent).not.toContain('已取消');
+  });
+
+  it('disables record-level sampling switcher when 0 PENDING schedules exist and fires 0 API calls (Fix 5)', () => {
+    const updateSchedSpy = vi.spyOn(distributionApi, 'updateRetestSchedules');
+    const noPendingRec = makeRecord({
+      retestSchedules: makeRecord().retestSchedules!.map((s) =>
+        s.status === 'PENDING' ? { ...s, status: 'CANCELLED' } : s,
+      ),
+    });
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[noPendingRec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    const toggle = screen.getByTestId('publish-retest-sample-toggle-pub_1');
+    const btn1 = within(toggle).getByRole('button', { name: '1 次' }) as HTMLButtonElement;
+    const btn3 = within(toggle).getByRole('button', { name: '3 次高置信' }) as HTMLButtonElement;
+    expect(btn1.disabled).toBe(true);
+    expect(btn3.disabled).toBe(true);
+    expect(btn1.title).toBe('当前无待执行复测节点，请先开启至少一个节点后再切换采样模式');
+    expect(btn3.title).toBe('当前无待执行复测节点，请先开启至少一个节点后再切换采样模式');
+
+    fireEvent.click(btn1);
+    fireEvent.click(btn3);
+    expect(updateSchedSpy).not.toHaveBeenCalled();
+  });
+
+  it('prevents duplicate API requests on same-tick double-click for crawl probe and schedule updates (Fix 6)', async () => {
+    const rec = makeRecord();
+    let resolveProbe!: (val: GeoPublishRecordDto) => void;
+    const probeSpy = vi.spyOn(distributionApi, 'triggerCrawlProbe').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+
+    let resolveSchedule!: (val: {
+      publishRecordId: string;
+      items: NonNullable<GeoPublishRecordDto['retestSchedules']>;
+    }) => void;
+    const scheduleSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSchedule = resolve;
+        }),
+    );
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[rec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    // Two synchronous clicks in the same tick on crawl recheck button
+    const probeBtn = screen.getByTestId('publish-crawl-recheck-btn-pub_1');
+    fireEvent.click(probeBtn);
+    fireEvent.click(probeBtn);
+    expect(probeSpy).toHaveBeenCalledTimes(1);
+
+    // Two synchronous clicks in the same tick on schedule cancel button
+    const t14CancelBtn = within(screen.getByTestId('publish-retest-node-pub_1-T14')).getByRole(
+      'button',
+      { name: '取消' },
+    );
+    fireEvent.click(t14CancelBtn);
+    fireEvent.click(t14CancelBtn);
+    expect(scheduleSpy).toHaveBeenCalledTimes(1);
+
+    // Settle promises cleanly
+    resolveProbe(rec);
+    resolveSchedule({ publishRecordId: 'pub_1', items: rec.retestSchedules! });
+    await waitFor(() => {
+      expect((probeBtn as HTMLButtonElement).disabled).toBe(false);
+    });
+  });
 });

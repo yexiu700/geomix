@@ -263,4 +263,96 @@ describe('PrSharePacketView (M6B #355)', () => {
       expect(screen.getByTestId('pr-share-fact-table')).toBeTruthy();
     });
   });
+
+  it('aborts in-flight submit on token switch, unlocks new token submit button, and blocks stale resolve/reject corruption (Fix 2)', async () => {
+    const packetA = makePacket({ brandName: 'BrandA_OLD', category: 'NAS' });
+    const packetB = makePacket({ brandName: 'BrandB_NEW', category: '' });
+    const packetC = makePacket({ brandName: 'BrandC_THIRD', category: 'Storage' });
+
+    vi.spyOn(distributionApi, 'fetchPublicPrPacket')
+      .mockResolvedValueOnce(packetA)
+      .mockResolvedValueOnce(packetB)
+      .mockResolvedValueOnce(packetC);
+
+    let signalA: AbortSignal | undefined;
+    let resolveSubmitA!: (val: {
+      accepted: true;
+      publishedUrl: string;
+      submittedAt: string;
+      alreadyRecorded: boolean;
+    }) => void;
+
+    let signalB: AbortSignal | undefined;
+    let rejectSubmitB!: (err: unknown) => void;
+
+    vi.spyOn(distributionApi, 'submitPublicPrPacket')
+      .mockImplementationOnce((_tok, _payload, opts) => {
+        signalA = opts?.signal;
+        return new Promise((resolve) => {
+          resolveSubmitA = resolve;
+        });
+      })
+      .mockImplementationOnce((_tok, _payload, opts) => {
+        signalB = opts?.signal;
+        return new Promise((_resolve, reject) => {
+          rejectSubmitB = reject;
+        });
+      });
+
+    const { rerender } = render(<PrSharePacketView token="tok_A" />);
+    await screen.findByText('BrandA_OLD');
+
+    // Start submitting on tok_A (remains pending)
+    fireEvent.change(screen.getByTestId('pr-share-url-input'), {
+      target: { value: 'https://brand-a.example.com/post-1' },
+    });
+    fireEvent.click(screen.getByTestId('pr-share-submit-btn'));
+    expect(signalA).toBeDefined();
+    expect(signalA?.aborted).toBe(false);
+
+    // Switch token prop to tok_B while tok_A submit is still in flight
+    rerender(<PrSharePacketView token="tok_B" />);
+    expect(signalA?.aborted).toBe(true);
+
+    await screen.findByText('BrandB_NEW');
+
+    // Empty category must omit orphan "•" separator
+    const header = document.querySelector('header');
+    expect(header?.textContent).not.toContain('•');
+
+    // tok_B's submit button must NOT be stuck disabled
+    const submitBtnB = screen.getByTestId('pr-share-submit-btn') as HTMLButtonElement;
+    expect(submitBtnB.disabled).toBe(false);
+
+    // Resolving tok_A's stale promise must NOT inject tok_A's receipt onto tok_B
+    resolveSubmitA({
+      accepted: true,
+      publishedUrl: 'https://brand-a.example.com/post-1',
+      submittedAt: '2026-11-23T12:00:00.000Z',
+      alreadyRecorded: false,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByTestId('pr-share-receipt')).toBeNull();
+    expect(screen.getByText('BrandB_NEW')).toBeTruthy();
+
+    // Now start submitting on tok_B, switch to tok_C, and reject tok_B -> must NOT inject error onto tok_C
+    fireEvent.change(screen.getByTestId('pr-share-url-input'), {
+      target: { value: 'https://brand-b.example.com/post-2' },
+    });
+    fireEvent.click(screen.getByTestId('pr-share-submit-btn'));
+    expect(signalB?.aborted).toBe(false);
+
+    rerender(<PrSharePacketView token="tok_C" />);
+    expect(signalB?.aborted).toBe(true);
+    await screen.findByText('BrandC_THIRD');
+
+    rejectSubmitB(new GatewayApiError(400, 40001, 'Stale error from tok_B'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByTestId('pr-share-submit-btn') as HTMLButtonElement).disabled).toBe(false);
+  });
 });

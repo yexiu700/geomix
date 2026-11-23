@@ -47,10 +47,20 @@ export type StudioPublishRetestProps = {
   onPublishRecordUpdated?: (record: GeoPublishRecordDto) => void;
 };
 
-type CrawlOverride = Pick<
+type CrawlOverridePatch = Pick<
   GeoPublishRecordDto,
   'crawlStatus' | 'crawlCheckedAt' | 'crawlReportJson'
 >;
+
+type CrawlOverrideEntry = {
+  baseRecord: GeoPublishRecordDto;
+  patch: CrawlOverridePatch;
+};
+
+type ScheduleOverrideEntry = {
+  baseRecord: GeoPublishRecordDto;
+  items: GeoRetestScheduleDto[];
+};
 
 const CN_CHANNELS = [
   '官网博客',
@@ -227,16 +237,19 @@ export function StudioPublishRetest({
     () => enginesForMarket(activeMarket).length,
   );
 
-  // Local reconciled overrides so crawl probes & schedule toggles update UI immediately
-  const [crawlOverrides, setCrawlOverrides] = useState<Record<string, CrawlOverride>>({});
-  const [scheduleOverrides, setScheduleOverrides] = useState<
-    Record<string, GeoRetestScheduleDto[]>
-  >({});
+  // Local reconciled overrides so crawl probes & schedule toggles update UI immediately,
+  // keyed by the original publishRecords prop object reference so fresher server props win automatically.
+  const [crawlOverrides, setCrawlOverrides] = useState<Record<string, CrawlOverrideEntry>>({});
+  const [scheduleOverrides, setScheduleOverrides] = useState<Record<string, ScheduleOverrideEntry>>(
+    {},
+  );
   const [probingRecordId, setProbingRecordId] = useState<string | null>(null);
   const [updatingScheduleRecordId, setUpdatingScheduleRecordId] = useState<string | null>(null);
   const [expandedCrawlIds, setExpandedCrawlIds] = useState<Record<string, boolean>>({});
 
   const submittingRef = useRef(false);
+  const probingRef = useRef(false);
+  const updatingScheduleRef = useRef(false);
   const contextKeyRef = useRef(0);
   const crawlCtrlRef = useRef<AbortController | null>(null);
   const scheduleCtrlRef = useRef<AbortController | null>(null);
@@ -244,6 +257,8 @@ export function StudioPublishRetest({
   useEffect(() => {
     contextKeyRef.current += 1;
     submittingRef.current = false;
+    probingRef.current = false;
+    updatingScheduleRef.current = false;
     crawlCtrlRef.current?.abort();
     crawlCtrlRef.current = null;
     scheduleCtrlRef.current?.abort();
@@ -258,30 +273,30 @@ export function StudioPublishRetest({
     setProbingRecordId(null);
     setUpdatingScheduleRecordId(null);
     setExpandedCrawlIds({});
-    setOnlineEngineCount(enginesForMarket(activeMarket).length);
     return () => {
       submittingRef.current = false;
+      probingRef.current = false;
+      updatingScheduleRef.current = false;
       crawlCtrlRef.current?.abort();
       scheduleCtrlRef.current?.abort();
     };
   }, [activeMarket, article?.id]);
 
-  // Fetch live visibility_check price & online engine count for current brand + market
+  // Fetch live visibility_check price & online engine count strictly scoped to [articleBrandId, activeMarket]
   const articleBrandId = article?.brandId ?? null;
   useEffect(() => {
+    setOnlineEngineCount(enginesForMarket(activeMarket).length);
     if (!articleBrandId) {
-      setOnlineEngineCount(enginesForMarket(activeMarket).length);
       return;
     }
     const ctrl = new AbortController();
-    const seq = contextKeyRef.current;
 
     void (async () => {
       const [priceRes, enginesRes] = await Promise.allSettled([
         fetchLiveVisibilityUnitPrice(ctrl.signal),
         fetchVisibilityEngines(articleBrandId, activeMarket, { signal: ctrl.signal }),
       ]);
-      if (ctrl.signal.aborted || seq !== contextKeyRef.current) return;
+      if (ctrl.signal.aborted) return;
 
       if (priceRes.status === 'fulfilled') {
         setVisibilityUnitPrice(priceRes.value);
@@ -300,15 +315,23 @@ export function StudioPublishRetest({
     };
   }, [articleBrandId, activeMarket]);
 
-  const effectiveRecords = useMemo(() => {
-    return publishRecords.map((rec) => {
-      const crawlPatch = crawlOverrides[rec.id];
-      const schedulePatch = scheduleOverrides[rec.id];
-      if (!crawlPatch && !schedulePatch) return rec;
+  const effectiveEntries = useMemo(() => {
+    return publishRecords.map((raw) => {
+      const crawlEntry = crawlOverrides[raw.id];
+      const scheduleEntry = scheduleOverrides[raw.id];
+      const crawlPatch = crawlEntry && crawlEntry.baseRecord === raw ? crawlEntry.patch : undefined;
+      const schedulePatch =
+        scheduleEntry && scheduleEntry.baseRecord === raw ? scheduleEntry.items : undefined;
+      if (!crawlPatch && !schedulePatch) {
+        return { raw, rec: raw };
+      }
       return {
-        ...rec,
-        ...(crawlPatch ?? {}),
-        ...(schedulePatch ? { retestSchedules: schedulePatch } : {}),
+        raw,
+        rec: {
+          ...raw,
+          ...(crawlPatch ?? {}),
+          ...(schedulePatch ? { retestSchedules: schedulePatch } : {}),
+        },
       };
     });
   }, [publishRecords, crawlOverrides, scheduleOverrides]);
@@ -366,29 +389,36 @@ export function StudioPublishRetest({
   };
 
   const handleCrawlRecheck = useCallback(
-    async (record: GeoPublishRecordDto) => {
-      if (readOnly || probingRecordId) return;
+    async (rawRecord: GeoPublishRecordDto) => {
+      if (readOnly || probingRef.current) return;
+      probingRef.current = true;
       const seq = contextKeyRef.current;
       crawlCtrlRef.current?.abort();
       const ctrl = new AbortController();
       crawlCtrlRef.current = ctrl;
-      setProbingRecordId(record.id);
+      setProbingRecordId(rawRecord.id);
 
       try {
-        const updated = await triggerCrawlProbe(record.id, { signal: ctrl.signal });
+        const updated = await triggerCrawlProbe(rawRecord.id, { signal: ctrl.signal });
         if (ctrl.signal.aborted || seq !== contextKeyRef.current) return;
         setCrawlOverrides((prev) => ({
           ...prev,
-          [record.id]: {
-            crawlStatus: updated.crawlStatus,
-            crawlCheckedAt: updated.crawlCheckedAt,
-            crawlReportJson: updated.crawlReportJson,
+          [rawRecord.id]: {
+            baseRecord: rawRecord,
+            patch: {
+              crawlStatus: updated.crawlStatus,
+              crawlCheckedAt: updated.crawlCheckedAt,
+              crawlReportJson: updated.crawlReportJson,
+            },
           },
         }));
         if (updated.retestSchedules) {
           setScheduleOverrides((prev) => ({
             ...prev,
-            [record.id]: updated.retestSchedules ?? [],
+            [rawRecord.id]: {
+              baseRecord: rawRecord,
+              items: updated.retestSchedules ?? [],
+            },
           }));
         }
         if (
@@ -396,7 +426,7 @@ export function StudioPublishRetest({
           updated.crawlStatus === 'FAILED' ||
           updated.crawlStatus === 'WARNING'
         ) {
-          setExpandedCrawlIds((prev) => ({ ...prev, [record.id]: true }));
+          setExpandedCrawlIds((prev) => ({ ...prev, [rawRecord.id]: true }));
         }
         onPublishRecordUpdated?.(updated);
         invalidateFreshness('publish-records');
@@ -411,31 +441,41 @@ export function StudioPublishRetest({
           crawlCtrlRef.current = null;
         }
         if (seq === contextKeyRef.current) {
+          probingRef.current = false;
           setProbingRecordId(null);
         }
       }
     },
-    [readOnly, probingRecordId, onPublishRecordUpdated, feedback],
+    [readOnly, onPublishRecordUpdated, feedback],
   );
 
   const handleUpdateSchedules = useCallback(
-    async (record: GeoPublishRecordDto, input: RetestScheduleConfigInput, successText: string) => {
-      if (readOnly || updatingScheduleRecordId) return;
+    async (
+      rawRecord: GeoPublishRecordDto,
+      effectiveRecord: GeoPublishRecordDto,
+      input: RetestScheduleConfigInput,
+      successText: string,
+    ) => {
+      if (readOnly || updatingScheduleRef.current) return;
+      updatingScheduleRef.current = true;
       const seq = contextKeyRef.current;
       scheduleCtrlRef.current?.abort();
       const ctrl = new AbortController();
       scheduleCtrlRef.current = ctrl;
-      setUpdatingScheduleRecordId(record.id);
+      setUpdatingScheduleRecordId(rawRecord.id);
 
       try {
-        const res = await updateRetestSchedules(record.id, input, { signal: ctrl.signal });
+        const res = await updateRetestSchedules(rawRecord.id, input, { signal: ctrl.signal });
         if (ctrl.signal.aborted || seq !== contextKeyRef.current) return;
         setScheduleOverrides((prev) => ({
           ...prev,
-          [record.id]: res.items,
+          [rawRecord.id]: {
+            baseRecord: rawRecord,
+            items: res.items,
+          },
         }));
         onPublishRecordUpdated?.({
-          ...record,
+          ...effectiveRecord,
           retestSchedules: res.items,
         });
         invalidateFreshness('publish-records');
@@ -448,11 +488,12 @@ export function StudioPublishRetest({
           scheduleCtrlRef.current = null;
         }
         if (seq === contextKeyRef.current) {
+          updatingScheduleRef.current = false;
           setUpdatingScheduleRecordId(null);
         }
       }
     },
-    [readOnly, updatingScheduleRecordId, onPublishRecordUpdated, feedback],
+    [readOnly, onPublishRecordUpdated, feedback],
   );
 
   const formBudgetText = useMemo(
@@ -470,9 +511,9 @@ export function StudioPublishRetest({
     <div className="gm-studio-publish-box" data-testid="studio-publish-retest">
       <div className="gm-studio-delivery-subhead">
         <span className="gm-studio-section-label">发布登记与效果追踪</span>
-        {effectiveRecords.length > 0 ? (
+        {effectiveEntries.length > 0 ? (
           <Tag color="green" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-            已登记 {effectiveRecords.length} 条
+            已登记 {effectiveEntries.length} 条
           </Tag>
         ) : null}
       </div>
@@ -603,15 +644,15 @@ export function StudioPublishRetest({
             </div>
           </form>
 
-          {recordsLoading && effectiveRecords.length === 0 ? (
+          {recordsLoading && effectiveEntries.length === 0 ? (
             <div className="gm-studio-item-meta">
               <Spin size="small" /> 正在加载发布记录…
             </div>
           ) : null}
 
-          {effectiveRecords.length > 0 ? (
+          {effectiveEntries.length > 0 ? (
             <div className="gm-studio-publish-list">
-              {effectiveRecords.map((rec, idx) => {
+              {effectiveEntries.map(({ raw, rec }, idx) => {
                 const isPollingThis = pollingRetestRecordId === rec.id;
                 const isSubmittingThis = retestingRecordId === rec.id;
                 const isProbingThis = probingRecordId === rec.id;
@@ -641,6 +682,7 @@ export function StudioPublishRetest({
                 ).sort((a, b) => a - b);
 
                 const activePendingSchedules = schedules.filter((s) => s.status === 'PENDING');
+                const hasPendingSchedules = activePendingSchedules.length > 0;
                 const currentSampleCount: RetestSampleCount =
                   activePendingSchedules[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
                 const cardBudgetText = formatBudgetCeilingText({
@@ -659,9 +701,18 @@ export function StudioPublishRetest({
                   >
                     <div
                       className="gm-studio-delivery-subhead"
-                      style={{ flexWrap: 'wrap', gap: 6 }}
+                      style={{ flexWrap: 'wrap', gap: 6, minWidth: 0 }}
                     >
-                      <Tag color="blue" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                      <Tag
+                        color="blue"
+                        style={{
+                          margin: 0,
+                          maxWidth: '100%',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                        }}
+                      >
                         {rec.channel}
                       </Tag>
                       <span className="gm-studio-item-meta">
@@ -738,7 +789,7 @@ export function StudioPublishRetest({
                             data-testid={`publish-crawl-recheck-btn-${rec.id}`}
                             loading={isProbingThis}
                             disabled={readOnly || Boolean(probingRecordId)}
-                            onClick={() => void handleCrawlRecheck(rec)}
+                            onClick={() => void handleCrawlRecheck(raw)}
                             style={{
                               fontSize: 11,
                               height: 22,
@@ -816,7 +867,14 @@ export function StudioPublishRetest({
                               <Tag
                                 key={schemaType}
                                 color="cyan"
-                                style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
+                                style={{
+                                  margin: 0,
+                                  fontSize: 11,
+                                  maxWidth: '100%',
+                                  whiteSpace: 'normal',
+                                  overflowWrap: 'anywhere',
+                                  wordBreak: 'break-word',
+                                }}
                               >
                                 JSON-LD: {schemaType}
                               </Tag>
@@ -908,7 +966,7 @@ export function StudioPublishRetest({
                           ) : null}
 
                           {report.robotsMatrix.length > 0 ? (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 0 }}>
                               {report.robotsMatrix.map((botRow) => (
                                 <span
                                   key={botRow.bot}
@@ -920,7 +978,11 @@ export function StudioPublishRetest({
                                       ? 'rgba(61,224,200,0.12)'
                                       : 'rgba(240,96,93,0.14)',
                                     color: botRow.allowed ? GM.sig.cited : GM.status.danger,
-                                    whiteSpace: 'nowrap',
+                                    whiteSpace: 'normal',
+                                    maxWidth: '100%',
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                    boxSizing: 'border-box',
                                   }}
                                 >
                                   {botRow.bot}: {botRow.allowed ? '允许' : '拦截'}
@@ -971,10 +1033,20 @@ export function StudioPublishRetest({
                               size="small"
                               type={currentSampleCount === cnt ? 'primary' : 'default'}
                               loading={isUpdatingSchedThis && currentSampleCount !== cnt}
-                              disabled={readOnly || Boolean(updatingScheduleRecordId)}
+                              disabled={
+                                readOnly ||
+                                Boolean(updatingScheduleRecordId) ||
+                                !hasPendingSchedules
+                              }
+                              title={
+                                !hasPendingSchedules
+                                  ? '当前无待执行复测节点，请先开启至少一个节点后再切换采样模式'
+                                  : undefined
+                              }
                               onClick={() => {
-                                if (cnt === currentSampleCount) return;
+                                if (!hasPendingSchedules || cnt === currentSampleCount) return;
                                 void handleUpdateSchedules(
+                                  raw,
                                   rec,
                                   { sampleCount: cnt },
                                   `已切换为 ${cnt === 1 ? '1 次标准采样' : '3 次高置信采样'}`,
@@ -1111,6 +1183,7 @@ export function StudioPublishRetest({
                                     disabled={readOnly || Boolean(updatingScheduleRecordId)}
                                     onClick={() =>
                                       void handleUpdateSchedules(
+                                        raw,
                                         rec,
                                         { cancelMilestoneDays: [day] },
                                         `已取消 T+${day} 自动复测节点`,
@@ -1132,6 +1205,7 @@ export function StudioPublishRetest({
                                     disabled={readOnly || Boolean(updatingScheduleRecordId)}
                                     onClick={() =>
                                       void handleUpdateSchedules(
+                                        raw,
                                         rec,
                                         {
                                           enabled: true,

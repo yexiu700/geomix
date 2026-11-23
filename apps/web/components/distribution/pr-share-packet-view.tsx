@@ -208,6 +208,7 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
   const [submitting, setSubmitting] = useState(false);
   const [submitReceipt, setSubmitReceipt] = useState<PublicPrPacketSubmitResultDto | null>(null);
 
+  const tokenEpochRef = useRef(0);
   const submittingRef = useRef(false);
   const submitCtrlRef = useRef<AbortController | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -216,13 +217,26 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
   const copy = isGlobal ? EN_COPY : CN_COPY;
 
   useEffect(() => {
+    tokenEpochRef.current += 1;
+    submitCtrlRef.current?.abort();
+    submitCtrlRef.current = null;
+    submittingRef.current = false;
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+
     const ctrl = new AbortController();
     setLoading(true);
     setLoadError(null);
     setSubmitReceipt(null);
     setSubmitError(null);
+    setSubmitting(false);
     setPublishedUrl('');
     setNote('');
+    setViewMode('preview');
+    setCopiedTarget(null);
+    setCopyFeedbackError(null);
 
     void (async () => {
       try {
@@ -242,18 +256,17 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
     })();
 
     return () => {
+      tokenEpochRef.current += 1;
       ctrl.abort();
-    };
-  }, [token, reloadNonce]);
-
-  useEffect(() => {
-    return () => {
       submitCtrlRef.current?.abort();
+      submitCtrlRef.current = null;
+      submittingRef.current = false;
       if (copyTimerRef.current) {
         clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = null;
       }
     };
-  }, []);
+  }, [token, reloadNonce]);
 
   // Update document title and lang attribute dynamically based on packet market, restoring on unmount
   useEffect(() => {
@@ -284,9 +297,11 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
   const handleCopy = useCallback(
     async (target: 'markdown' | 'html') => {
       if (!packet) return;
+      const epoch = tokenEpochRef.current;
       const text = target === 'markdown' ? packet.draftMarkdown : safeDraftHtml;
       setCopyFeedbackError(null);
       const ok = await copyTextToClipboard(text);
+      if (epoch !== tokenEpochRef.current) return;
       if (!ok) {
         setCopyFeedbackError(copy.copyFailed);
         return;
@@ -296,7 +311,9 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
         clearTimeout(copyTimerRef.current);
       }
       copyTimerRef.current = setTimeout(() => {
-        setCopiedTarget(null);
+        if (epoch === tokenEpochRef.current) {
+          setCopiedTarget(null);
+        }
       }, 2200);
     },
     [packet, safeDraftHtml, copy.copyFailed],
@@ -313,6 +330,7 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
       return;
     }
 
+    const epoch = tokenEpochRef.current;
     submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -328,7 +346,7 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
           : { publishedUrl: trimmedUrl },
         { signal: ctrl.signal },
       );
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted || epoch !== tokenEpochRef.current) return;
       setSubmitReceipt(result);
       setPacket((prev) =>
         prev
@@ -342,7 +360,7 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
       setPublishedUrl('');
       setNote('');
     } catch (err) {
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted || epoch !== tokenEpochRef.current) return;
       if (err instanceof GatewayApiError) {
         if (err.status === 400) {
           setSubmitError(copy.errBadRequestUrl);
@@ -360,8 +378,10 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
       if (submitCtrlRef.current === ctrl) {
         submitCtrlRef.current = null;
       }
-      submittingRef.current = false;
-      setSubmitting(false);
+      if (epoch === tokenEpochRef.current) {
+        submittingRef.current = false;
+        setSubmitting(false);
+      }
     }
   };
 
@@ -607,8 +627,12 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                           alignItems: 'center',
                         }}
                       >
-                        {packet.category ? <span>{packet.category}</span> : null}
-                        <span style={{ color: GM.fg.f4 }}>•</span>
+                        {packet.category ? (
+                          <>
+                            <span>{packet.category}</span>
+                            <span style={{ color: GM.fg.f4 }}>•</span>
+                          </>
+                        ) : null}
                         <span style={{ color: GM.fg.f3 }}>{copy.readOnlyNotice}</span>
                       </div>
                     </div>
