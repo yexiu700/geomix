@@ -472,10 +472,29 @@ export class BrandsService {
       input.competitors !== undefined
         ? normalizeCompetitors(input.competitors)
         : parseStoredCompetitors(existingMarket.competitors);
-    const nextSeedPrompts =
+    const rawSeedPrompts =
       input.seedPrompts !== undefined
         ? dedupeStrings(input.seedPrompts)
         : existingMarket.seedPrompts;
+    const identityChanged =
+      nextLocalBrandName !== existingMarket.localBrandName ||
+      nextLocalCategory !== (existingMarket.localCategory ?? null);
+    const hasCjkInGlobalSeeds =
+      market === 'GLOBAL' && rawSeedPrompts.some((prompt) => /[\u4e00-\u9fff]/.test(prompt));
+    const seedPromptsUnchanged =
+      input.seedPrompts === undefined ||
+      (rawSeedPrompts.length === existingMarket.seedPrompts.length &&
+        rawSeedPrompts.every((prompt, idx) => prompt === existingMarket.seedPrompts[idx]));
+    const nextSeedPrompts =
+      market === 'GLOBAL' && hasCjkInGlobalSeeds && (identityChanged || seedPromptsUnchanged)
+        ? generateBrandSeedPrompts({
+            market: 'GLOBAL',
+            brandName: nextLocalBrandName,
+            category: brand.category,
+            localCategory: nextLocalCategory,
+            competitors: nextCompetitors,
+          })
+        : rawSeedPrompts;
 
     const complianceText = [
       brand.name,

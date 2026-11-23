@@ -360,12 +360,14 @@ export function BrandQuickCreateModal({
             <Form<Step1FormValues>
               form={form}
               layout="vertical"
+              scrollToFirstError
               initialValues={{ markets: ['CN'] }}
               onFinish={(values) => void handleCreateSubmit(values)}
             >
               <Form.Item
                 label="品牌名称"
                 name="name"
+                validateFirst
                 rules={[
                   { required: true, whitespace: true, message: '请填写品牌名称' },
                   { max: BRAND_NAME_MAX, message: `品牌名称不超过 ${BRAND_NAME_MAX} 字` },
@@ -388,9 +390,12 @@ export function BrandQuickCreateModal({
                     disabled={readOnly || submitting || aliases.length >= 20}
                     placeholder="输入别名或 SKU 系列词后回车添加"
                     onChange={(event) => setAliasInput(event.target.value)}
-                    onPressEnter={(event) => {
-                      event.preventDefault();
-                      handleAddAlias();
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleAddAlias();
+                      }
                     }}
                   />
                   <Button
@@ -420,6 +425,7 @@ export function BrandQuickCreateModal({
               <Form.Item
                 label="所属品类"
                 name="category"
+                validateFirst
                 rules={[
                   { required: true, whitespace: true, message: '请填写所属品类' },
                   { max: BRAND_CATEGORY_MAX, message: `所属品类不超过 ${BRAND_CATEGORY_MAX} 字` },
@@ -457,6 +463,7 @@ export function BrandQuickCreateModal({
               <Form.Item
                 label="自有官网域名"
                 name="ownedDomainsText"
+                validateFirst
                 rules={[
                   {
                     required: true,
@@ -465,6 +472,7 @@ export function BrandQuickCreateModal({
                   },
                   {
                     validator: (_, value: string | undefined) => {
+                      if (!value || !value.trim()) return Promise.resolve();
                       const { domains, invalidTokens } = validateDomainListInput(value);
                       if (invalidTokens.length > 0) {
                         return Promise.reject(

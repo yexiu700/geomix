@@ -5,6 +5,7 @@ import {
   buildGeoSchemaJsonLd,
   buildLlmsTxtSnippet,
   buildRecommendedChannelsForMarket,
+  extractMissingFactSlots,
   htmlToExportMarkdown,
   markdownToSanitizedHtml,
   sanitizeRichArticleHtml,
@@ -167,40 +168,73 @@ export function StudioDeliveryPack({
     return buildRecommendedChannelsForMarket(activeMarket);
   }, [activeMarket, evaluation?.recommendedChannels, linkedBriefChannels]);
 
-  const handleCopyMarkdown = async () => {
+  const unresolvedSlotCount = useMemo(
+    () => (article ? extractMissingFactSlots(article.contentMarkdown).length : 0),
+    [article],
+  );
+
+  const runWithPlaceholderGuard = (actionLabel: string, proceed: () => void): void => {
+    if (unresolvedSlotCount <= 0) {
+      proceed();
+      return;
+    }
+    if (activeMarket === 'GLOBAL') {
+      feedback.confirm({
+        title: '成稿仍有未回填的缺失事实',
+        content: `当前英文成稿仍包含 ${unresolvedSlotCount} 处未回填占位符（[TBD: ...]）。建议先在中栏点击黄色胶囊补填真实数据；确定仍要继续${actionLabel}吗？`,
+        okText: `仍然${actionLabel}`,
+        cancelText: '返回补填',
+        okButtonProps: { danger: true },
+        onOk: () => proceed(),
+      });
+      return;
+    }
+    feedback.notifyWarning(
+      `提示：当前成稿仍有 ${unresolvedSlotCount} 处 [待补充] 未回填，发布前建议补全真实数据`,
+    );
+    proceed();
+  };
+
+  const handleCopyMarkdown = () => {
     if (!article) return;
-    const text = htmlToExportMarkdown({
-      id: article.id,
-      title: article.title,
-      contentHtml: article.contentHtml,
-      contentText: '',
-      contentMarkdown: article.contentMarkdown,
+    runWithPlaceholderGuard('复制 Markdown', () => {
+      const text = htmlToExportMarkdown({
+        id: article.id,
+        title: article.title,
+        contentHtml: article.contentHtml,
+        contentText: '',
+        contentMarkdown: article.contentMarkdown,
+      });
+      void copyTextToClipboard(text).then((okCopy) => {
+        if (okCopy) feedback.notifySuccess('已复制纯净 Markdown');
+        else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+      });
     });
-    const okCopy = await copyTextToClipboard(text);
-    if (okCopy) feedback.notifySuccess('已复制纯净 Markdown');
-    else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
   };
 
-  const handleCopyHtml = async () => {
+  const handleCopyHtml = () => {
     if (!article) return;
-    const rawHtmlSource = article.contentHtml.trim()
-      ? article.contentHtml
-      : markdownToSanitizedHtml(
-          htmlToExportMarkdown({
-            id: article.id,
-            title: '',
-            contentHtml: '',
-            contentText: '',
-            contentMarkdown: article.contentMarkdown,
-          }),
-        );
-    const safeHtml = sanitizeRichArticleHtml(rawHtmlSource).contentHtml;
-    const okCopy = await copyTextToClipboard(safeHtml);
-    if (okCopy) feedback.notifySuccess('已复制富文本 HTML');
-    else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+    runWithPlaceholderGuard('复制 HTML', () => {
+      const rawHtmlSource = article.contentHtml.trim()
+        ? article.contentHtml
+        : markdownToSanitizedHtml(
+            htmlToExportMarkdown({
+              id: article.id,
+              title: '',
+              contentHtml: '',
+              contentText: '',
+              contentMarkdown: article.contentMarkdown,
+            }),
+          );
+      const safeHtml = sanitizeRichArticleHtml(rawHtmlSource).contentHtml;
+      void copyTextToClipboard(safeHtml).then((okCopy) => {
+        if (okCopy) feedback.notifySuccess('已复制富文本 HTML');
+        else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+      });
+    });
   };
 
-  const handleDownloadDocx = async () => {
+  const executeDownloadDocx = async () => {
     if (!article || downloadingDocxRef.current) return;
     downloadingDocxRef.current = true;
     const seq = contextKeyRef.current;
@@ -226,6 +260,13 @@ export function StudioDeliveryPack({
         setDownloadingDocx(false);
       }
     }
+  };
+
+  const handleDownloadDocx = () => {
+    if (!article || downloadingDocxRef.current) return;
+    runWithPlaceholderGuard('下载 .docx', () => {
+      void executeDownloadDocx();
+    });
   };
 
   const handleCopyJsonLd = async () => {
