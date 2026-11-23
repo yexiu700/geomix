@@ -14,6 +14,12 @@ import {
   type FactIndexHandler,
 } from '../brands/brand-fact-index.runner';
 import {
+  DISTRIBUTION_ENQUEUER,
+  DISTRIBUTION_HANDLER,
+  type DistributionHandler,
+  type DistributionJobData,
+} from '../distribution/distribution.runner';
+import {
   GEO_BATCH_ENQUEUER,
   GEO_BATCH_HANDLER,
   type GeoBatchHandler,
@@ -34,6 +40,8 @@ import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
 
 export {
+  DISTRIBUTION_ENQUEUER,
+  DISTRIBUTION_HANDLER,
   FACT_INDEX_ENQUEUER,
   FACT_INDEX_HANDLER,
   GEO_BATCH_ENQUEUER,
@@ -68,6 +76,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(GEO_BATCH_HANDLER)
     private readonly geoBatchRunner?: GeoBatchHandler,
+    @Optional()
+    @Inject(DISTRIBUTION_HANDLER)
+    private readonly distributionRunner?: DistributionHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -104,6 +115,13 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
             const batchData = readGeoBatchPayload(job.data);
             if (batchData && this.geoBatchRunner) {
               await this.geoBatchRunner.process(batchData);
+            }
+            return;
+          }
+          if (name === 'distribution' && job.name === 'distribution') {
+            const distData = readDistributionPayload(job.data);
+            if (distData && this.distributionRunner) {
+              await this.distributionRunner.process(distData);
             }
             return;
           }
@@ -256,6 +274,16 @@ function readGeoBatchPayload(data: unknown): GeoBatchJobData | null {
       ? { targetFormat: raw.targetFormat as GeoBatchJobData['targetFormat'] }
       : {}),
   };
+}
+
+function readDistributionPayload(data: unknown): DistributionJobData | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const taskId = (data as { taskId?: unknown }).taskId;
+  if (typeof tenantId !== 'string' || typeof taskId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(taskId)) return null;
+  if (tenantId === 'system' || taskId === 'system') return null;
+  return { tenantId, taskId };
 }
 
 function readKind(name: string, data: unknown): string {

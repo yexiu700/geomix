@@ -110,4 +110,36 @@ describe('useTabFreshness (#215)', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledWith('invalidated');
   });
+
+  it('supports v2.1 channel-connections and distributions freshness domains', async () => {
+    const onRefresh = vi.fn();
+    const { rerender } = render(
+      createElement(Probe, {
+        active: false,
+        domains: ['channel-connections', 'distributions'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+
+    invalidateFreshness('channel-connections');
+    expect(onRefresh).not.toHaveBeenCalled();
+
+    rerender(
+      createElement(Probe, {
+        active: true,
+        domains: ['channel-connections', 'distributions'],
+        refreshOnActivate: false,
+        onRefresh,
+      }),
+    );
+    await waitFor(() => {
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+    expect(onRefresh).toHaveBeenLastCalledWith('activated');
+
+    invalidateFreshness('distributions');
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(onRefresh).toHaveBeenLastCalledWith('invalidated');
+  });
 });

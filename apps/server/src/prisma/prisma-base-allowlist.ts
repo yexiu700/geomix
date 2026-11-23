@@ -21,12 +21,13 @@
  * - `worker`：BullMQ / WorkDriver 后台消费，无请求级租户上下文，查询需显式带 tenantId。
  * - `billing`：计费账本，需要与业务事务共享 base 事务句柄。
  * - `infra`：全局数据（AuditLog 等）。
+ * - `public`：无登录公开协作链路（如 PR 外部协作包，通过 SHA-256 哈希令牌定位任务后立即切入 `runInTenant`）。
  * - `test-support`：测试数据库辅助。
  * - `merchant-debt`：**历史技术债**——普通商户请求链路仍在用 base + 手写 tenantId，
  *   应逐步迁到 `prisma.scoped` 并下调 `direct`，目标是只剩 `txOrRaw`。
  */
 export type PrismaBaseCategory =
-  'auth' | 'admin' | 'worker' | 'billing' | 'infra' | 'test-support' | 'merchant-debt';
+  'auth' | 'admin' | 'worker' | 'billing' | 'infra' | 'public' | 'test-support' | 'merchant-debt';
 
 export type PrismaBaseAllowance = {
   category: PrismaBaseCategory;
@@ -49,6 +50,7 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'common/test-db.ts': { category: 'test-support', direct: 5, txOrRaw: 0 },
   'dashboard/dashboard.service.ts': { category: 'merchant-debt', direct: 2, txOrRaw: 0 },
   'distribution/crawl-probe.service.ts': { category: 'worker', direct: 1, txOrRaw: 0 },
+  'distribution/public-pr-packet.service.ts': { category: 'public', direct: 1, txOrRaw: 0 },
   'distribution/retest-scheduler.service.ts': { category: 'worker', direct: 1, txOrRaw: 0 },
   'infra/adapters.module.ts': { category: 'infra', direct: 2, txOrRaw: 0 },
   'me/me.service.ts': { category: 'merchant-debt', direct: 16, txOrRaw: 0 },
