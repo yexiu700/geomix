@@ -22,6 +22,7 @@ const { fetchPublicPage, resetRobotsCache } = require(
 const { createDnsResolver } = require(path.join(serverDist, 'infra/guarded-request.js'));
 const { createUndiciTransport } = require(path.join(serverDist, 'infra/undici-transport.js'));
 const { OutboundHttpClient } = require(path.join(serverDist, 'infra/outbound-http.js'));
+const { ProviderError, PROVIDER_KIND } = require(path.join(serverDist, 'infra/provider-error.js'));
 const { StorageService } = require(path.join(serverDist, 'infra/storage.js'));
 const { MaintenanceRunner } = require(path.join(serverDist, 'queue/maintenance.runner.js'));
 
@@ -132,6 +133,30 @@ function forwardToLocalFixture(localPort, req) {
       reject(new Error('aborted'));
       return;
     }
+    let settled = false;
+    let activeRes = null;
+    let onAbort = null;
+
+    const cleanup = () => {
+      if (req.signal && onAbort) {
+        req.signal.removeEventListener('abort', onAbort);
+      }
+    };
+
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const rejectOnce = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
     const filteredHeaders = {};
     for (const [k, v] of Object.entries(req.headers || {})) {
       if (k.toLowerCase() === 'content-length') continue;
@@ -153,36 +178,55 @@ function forwardToLocalFixture(localPort, req) {
         },
       },
       (res) => {
+        activeRes = res;
+        res.on('error', rejectOnce);
+        if (settled) {
+          if (!res.destroyed) res.destroy();
+          return;
+        }
         const chunks = [];
         let bytes = 0;
         res.on('data', (chunk) => {
+          if (settled) return;
           bytes += chunk.length;
-          if (bytes > req.maxBytes) {
-            outgoing.destroy(new Error('max_bytes'));
+          if (typeof req.maxBytes === 'number' && bytes > req.maxBytes) {
+            rejectOnce(new ProviderError(PROVIDER_KIND.TOO_LARGE, '响应超过大小限制', 'body'));
+            if (!res.destroyed) res.destroy();
+            if (!outgoing.destroyed) outgoing.destroy();
             return;
           }
           chunks.push(chunk);
         });
         res.on('end', () => {
+          if (settled) return;
           const headers = {};
           for (const [k, v] of Object.entries(res.headers)) {
             if (typeof v === 'string') headers[k] = v;
             else if (Array.isArray(v)) headers[k] = v.join(', ');
           }
-          resolve({
+          resolveOnce({
             status: res.statusCode || 500,
             headers,
             body: Buffer.concat(chunks),
           });
         });
+        res.on('close', () => {
+          if (!settled && !res.complete) {
+            rejectOnce(new Error('aborted'));
+          }
+        });
       },
     );
-    const onAbort = () => outgoing.destroy(new Error('aborted'));
+    outgoing.on('error', rejectOnce);
+    onAbort = () => {
+      rejectOnce(new Error('aborted'));
+      if (activeRes && !activeRes.destroyed) activeRes.destroy();
+      if (!outgoing.destroyed) outgoing.destroy();
+    };
     if (req.signal) {
       req.signal.addEventListener('abort', onAbort, { once: true });
-      outgoing.on('close', () => req.signal.removeEventListener('abort', onAbort));
+      outgoing.on('close', cleanup);
     }
-    outgoing.on('error', reject);
     if (bodyBuf !== undefined) {
       outgoing.end(bodyBuf);
     } else {

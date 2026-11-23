@@ -24,7 +24,12 @@ const V2_1_VIEWPORTS = [
   { width: 1015, height: 909 },
 ] as const;
 
+const WEB_BASE = (process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const FIXTURE_BASE = `http://127.0.0.1:${process.env.E2E_FIXTURE_PORT || '3099'}`;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 type FixtureCaptureItem = {
   id: string;
@@ -92,6 +97,83 @@ async function assertLayoutErgonomics(
         ).toBeLessThanOrEqual(drawerOverflow.clientWidth + 2);
       }
     }
+
+    // Guard against right-edge clipping on visible buttons inside main content (and open Drawer)
+    const clippedButtons = await page.evaluate(
+      ({ checkDrawer }) => {
+        const clipped: string[] = [];
+        const isElementVisible = (el: HTMLElement): boolean => {
+          if (el.closest('.ant-drawer:not(.ant-drawer-open), [aria-hidden="true"]')) {
+            return false;
+          }
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          let cur: HTMLElement | null = el;
+          while (cur) {
+            const style = window.getComputedStyle(cur);
+            if (
+              style.display === 'none' ||
+              style.visibility === 'hidden' ||
+              Number.parseFloat(style.opacity || '1') === 0
+            ) {
+              return false;
+            }
+            cur = cur.parentElement;
+          }
+          return true;
+        };
+
+        const checkRoot = (
+          root: ParentNode,
+          limit: number,
+          scopeLabel: string,
+          skipOffscreenRight: boolean,
+        ) => {
+          const buttons = Array.from(root.querySelectorAll<HTMLElement>('button, .ant-btn'));
+          for (const el of buttons) {
+            if (!isElementVisible(el)) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.right <= 0) continue;
+            if (skipOffscreenRight && rect.left >= window.innerWidth) continue;
+            if (rect.right > limit + 2) {
+              const label = (el.textContent || el.getAttribute('aria-label') || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 24);
+              clipped.push(
+                `${scopeLabel}:${el.tagName}(${label}): right=${Math.round(rect.right)} > ${Math.round(limit)}`,
+              );
+            }
+          }
+        };
+
+        const mainContainer =
+          document.querySelector<HTMLElement>(
+            'main, .ant-layout-content, [data-testid="pr-share-page"]',
+          ) ?? document.body;
+        checkRoot(mainContainer, window.innerWidth, 'main', true);
+
+        if (checkDrawer) {
+          const drawerBody = document.querySelector<HTMLElement>(
+            '.ant-drawer-open .ant-drawer-body',
+          );
+          if (drawerBody) {
+            const drawerRight = Math.min(
+              window.innerWidth,
+              drawerBody.getBoundingClientRect().right,
+            );
+            checkRoot(drawerBody, drawerRight, 'drawer', false);
+          }
+        }
+
+        return clipped;
+      },
+      { checkDrawer: Boolean(opts.checkDrawer) },
+    );
+    expect(
+      clippedButtons,
+      `Right-edge clipped visible buttons at ${vp.width}x${vp.height}`,
+    ).toEqual([]);
 
     // Guard against single-character vertical CJK wrapping on buttons, tabs & headings
     const verticalWrapOffenders = await page.evaluate(() => {
@@ -237,10 +319,15 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       expect(brandsBodyText).not.toContain(webhookSecret);
       expect(brandsBodyText).not.toContain(wpAppPassword);
 
-      // Test both connections via UI buttons
+      // Test both connections via UI buttons (verify transition from 尚未测试 -> tested & 已连接)
+      await expect(webhookCard).toContainText('尚未测试');
       await page.getByTestId(`channel-connection-test-btn-${webhookConn!.id}`).click();
+      await expect(webhookCard).not.toContainText('尚未测试', { timeout: 15_000 });
       await expect(webhookCard).toContainText('已连接');
+
+      await expect(wpCard).toContainText('尚未测试');
       await page.getByTestId(`channel-connection-test-btn-${wpConn!.id}`).click();
+      await expect(wpCard).not.toContainText('尚未测试', { timeout: 15_000 });
       await expect(wpCard).toContainText('已连接');
 
       // Assert 0 errors before intentional SSRF 400 negative test
@@ -262,7 +349,10 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(
         page.getByTestId('channel-connection-modal').locator('.ant-alert-error'),
       ).toContainText('站点地址不允许访问');
-      await page.locator('.ant-modal-footer').getByRole('button', { name: '取消' }).click();
+      await page
+        .locator('.ant-modal-content:visible .ant-modal-footer')
+        .getByRole('button', { name: '取消' })
+        .click();
       await expect(page.getByTestId('channel-connection-modal')).toBeHidden();
       // Chromium logs expected `Failed to load resource: ... status of 400` on intentional 400 SSRF test
       const unexpectedSsrfErrors = errorCollector.errors.filter(
@@ -300,21 +390,11 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(page.getByTestId('studio-distribution-drawer')).toBeHidden();
 
       const missingPill = page.getByTestId('missing-fact-pill').first();
-      if (await missingPill.isVisible({ timeout: 5_000 }).catch(() => false)) {
-        await missingPill.click();
-        await page.locator('textarea[placeholder="输入真实实测数值或参数"]').fill('$599 MSRP');
-        await page.getByRole('button', { name: '确认填入' }).click();
-        await expect(page.getByTestId('missing-fact-pill')).toHaveCount(0, { timeout: 15_000 });
-      } else {
-        await page.getByText('编辑 Markdown').click();
-        const editorArea = page.getByLabel('文章 Markdown 正文');
-        const currentMd = await editorArea.inputValue();
-        await editorArea.fill(currentMd.replace(/\[TBD:\s*launch price\]/gi, '$599 MSRP'));
-        await page.getByTestId('studio-save-article-btn').click();
-        await expect(page.getByTestId('studio-save-article-btn')).toBeDisabled({
-          timeout: 15_000,
-        });
-      }
+      await expect(missingPill).toBeVisible({ timeout: 10_000 });
+      await missingPill.click();
+      await page.locator('textarea[placeholder="输入真实实测数值或参数"]').fill('$599 MSRP');
+      await page.getByRole('button', { name: '确认填入' }).click();
+      await expect(page.getByTestId('missing-fact-pill')).toHaveCount(0, { timeout: 15_000 });
 
       // Re-open Drawer -> Preflight blockers gone!
       await page.getByTestId('studio-open-distribution-btn').click();
@@ -407,7 +487,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       const shareUrlEl = page.getByTestId('distribution-pr-share-url');
       await expect(shareUrlEl).toBeVisible({ timeout: 15_000 });
       const shareUrl = (await shareUrlEl.innerText()).trim();
-      expect(shareUrl).toMatch(/^http:\/\/127\.0\.0\.1:3000\/share\/pr\/[A-Za-z0-9_-]+$/);
+      expect(shareUrl).toMatch(new RegExp(`^${escapeRegExp(WEB_BASE)}/share/pr/[A-Za-z0-9_-]+$`));
 
       // Close drawer on authenticated page before incognito check
       await page.getByRole('button', { name: '关闭分发工作台' }).click();
@@ -458,7 +538,9 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         );
         expect(incognitoPage.url()).toContain('/share/pr/');
         expect(incognitoPage.url()).not.toContain('/login');
-        expect(await incognitoPage.evaluate(() => document.documentElement.lang)).toBe('en');
+        await expect
+          .poll(() => incognitoPage.evaluate(() => document.documentElement.lang))
+          .toBe('en');
         await expect(incognitoPage.getByTestId('global-brand-switcher')).toHaveCount(0);
         await expect(incognitoPage.getByTestId('header-points-pill')).toHaveCount(0);
 
@@ -499,7 +581,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
 
         // Verify nonexistent token renders friendly error state with zero /login redirect
         const invalidPage = await incognitoCtx.newPage();
-        await invalidPage.goto('http://127.0.0.1:3000/share/pr/nonexistent_token_12345678', {
+        await invalidPage.goto(`${WEB_BASE}/share/pr/nonexistent_token_12345678`, {
           waitUntil: 'domcontentloaded',
         });
         await expect(invalidPage.getByTestId('pr-share-error-state')).toBeVisible({
@@ -515,6 +597,102 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         await incognitoCtx.close();
       }
 
+      // ── Step 4b (T2-13): CN (zh-CN) /share/pr/[token] Incognito Locale Verification ──
+      const cnSse = await consumeSsePost(`/brands/${brand.id}/articles/stream`, {
+        token,
+        idempotencyKey: uniqueIdemKey('dist-v21-cn-art'),
+        body: {
+          market: 'CN',
+          targetPrompt: '静音四盘位家用私有云 NAS 实测选购指南',
+          recipe: 'AUTHORITY_GUIDE',
+          targetFormat: 'CN_DEEP_REVIEW',
+        },
+        timeoutMs: 45_000,
+      });
+      const cnArticle = cnSse.complete?.article as { id: string } | undefined;
+      expect(cnArticle?.id, 'Seeded CN article id must exist').toBeTruthy();
+
+      const cnVarRes = await requestV2<{ tasks: Array<{ id: string }> }>(
+        `/articles/${cnArticle!.id}/distributions/variants`,
+        {
+          method: 'POST',
+          token,
+          headers: { 'Idempotency-Key': uniqueIdemKey('dist-v21-cn-pr') },
+          body: {
+            targets: [
+              {
+                provider: 'PR_PACKET',
+                channelLabel: '国内科技媒体协作包',
+              },
+            ],
+          },
+        },
+      );
+      const cnPrTaskId = unwrapOk(cnVarRes, 'POST CN PR_PACKET variant').tasks[0]?.id;
+      expect(cnPrTaskId, 'CN PR_PACKET task id must exist').toBeTruthy();
+
+      const cnShareRes = await requestV2<{ shareUrl: string; token: string }>(
+        `/distributions/${cnPrTaskId}/pr-share`,
+        {
+          method: 'POST',
+          token,
+          body: { ttlDays: 30 },
+        },
+      );
+      const cnShareUrl = unwrapOk(cnShareRes, 'POST CN pr-share').shareUrl;
+      expect(cnShareUrl).toMatch(new RegExp(`^${escapeRegExp(WEB_BASE)}/share/pr/[A-Za-z0-9_-]+$`));
+
+      const cnIncognitoCtx = await browser.newContext({ viewport: V2_1_VIEWPORTS[0] });
+      const cnPage = await cnIncognitoCtx.newPage();
+      const cnErrors = attachErrorCollector(cnPage);
+      const cnForbiddenApiHits: string[] = [];
+      const cnAuthStatusHits: string[] = [];
+      const cnServerErrorHits: string[] = [];
+
+      cnPage.on('request', (req) => {
+        const url = req.url();
+        if (
+          /\/api\/v1\/(account|billing|announcements|auth\/refresh)/.test(url) ||
+          /\/api\/v2\/brands/.test(url)
+        ) {
+          cnForbiddenApiHits.push(`${req.method()} ${url}`);
+        }
+      });
+      cnPage.on('response', (res) => {
+        const url = res.url();
+        const st = res.status();
+        if (st === 401 || st === 403) cnAuthStatusHits.push(`${st} ${url}`);
+        if (st >= 500) cnServerErrorHits.push(`${st} ${url}`);
+      });
+
+      try {
+        await cnPage.goto(cnShareUrl, { waitUntil: 'domcontentloaded' });
+        await expect(cnPage.getByTestId('pr-share-page')).toBeVisible({ timeout: 20_000 });
+        await expect(cnPage.getByTestId('pr-share-fact-table')).toBeVisible();
+        await expect(cnPage.getByTestId('pr-share-submit-form')).toBeVisible();
+
+        // Assert CN (zh-CN) UI copy, lang attribute, zero ConsoleShell chrome, no /login redirect
+        await expect(cnPage.getByTestId('pr-share-page')).toContainText('PR / KOL 外部协作包');
+        await expect(cnPage.getByTestId('pr-share-page')).toContainText(
+          '品牌概览与已验证核心事实参数表',
+        );
+        await expect(cnPage.getByTestId('pr-share-page')).toContainText('国内市场（CN）');
+        await expect.poll(() => cnPage.evaluate(() => document.documentElement.lang)).toBe('zh-CN');
+        expect(cnPage.url()).toContain('/share/pr/');
+        expect(cnPage.url()).not.toContain('/login');
+        await expect(cnPage.getByTestId('global-brand-switcher')).toHaveCount(0);
+        await expect(cnPage.getByTestId('header-points-pill')).toHaveCount(0);
+
+        expect(cnAuthStatusHits).toEqual([]);
+        expect(cnServerErrorHits).toEqual([]);
+        expect(cnForbiddenApiHits).toEqual([]);
+
+        await assertLayoutErgonomics(cnPage);
+        assertNoConsoleOrPageErrors(cnErrors);
+      } finally {
+        await cnIncognitoCtx.close();
+      }
+
       // ── Step 5: /studio Retest Timeline, PRD D3 Budget Ceiling, Crawl Badges & /home Attribution (PRD D5) ──
       await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
         waitUntil: 'domcontentloaded',
@@ -526,39 +704,42 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(page.getByTestId('publish-form-budget-ceiling')).toContainText('预计预算上限');
 
       // Fetch synced GeoPublishRecords (should include both Webhook live publish & PR submit)
-      const artDetailRes = await requestV2<{ publishRecords?: PublishRecordSummary[] }>(
-        `/articles/${articleId}`,
+      const pubListRes = await requestV2<{ items: PublishRecordSummary[] }>(
+        `/articles/${articleId}/publish-records`,
         { token },
       );
-      const records = unwrapOk(artDetailRes, 'GET article detail').publishRecords ?? [];
+      const records = unwrapOk(pubListRes, 'GET article publish-records').items;
       expect(records.length).toBeGreaterThanOrEqual(2);
-      const webhookRec = records.find((r) => r.indexNowSubmitted) ?? records[0]!;
+      const webhookRec = records.find((r) => r.indexNowSubmitted === true);
+      expect(
+        webhookRec,
+        'Webhook live publish record with indexNowSubmitted=true must exist',
+      ).toBeTruthy();
+      expect(webhookRec!.indexNowSubmitted).toBe(true);
 
       // Trigger 0-pt manual CrawlProbe via UI -> assert badges (200, GPTBot, JSON-LD, IndexNow)
-      const badges = page.getByTestId(`publish-crawl-badges-${webhookRec.id}`);
+      const badges = page.getByTestId(`publish-crawl-badges-${webhookRec!.id}`);
       await expect(badges).toBeVisible();
-      await page.getByTestId(`publish-crawl-recheck-btn-${webhookRec.id}`).click();
+      await page.getByTestId(`publish-crawl-recheck-btn-${webhookRec!.id}`).click();
       await expect(badges).toContainText('可抓取', { timeout: 15_000 });
       await expect(badges).toContainText('HTTP 200');
       await expect(badges).toContainText('GPTBot 允许');
       await expect(badges).toContainText('JSON-LD: Article');
       await expect(badges).toContainText('JSON-LD: FAQPage');
-      if (webhookRec.indexNowSubmitted) {
-        await expect(badges).toContainText('IndexNow 已提交');
-      }
+      await expect(badges).toContainText('IndexNow 已提交');
 
       // Verify T+0 -> T+7 -> T+14 -> T+30 timeline & PRD D3 per-record budget ceiling toggling 1 vs 3 samples
-      const timeline = page.getByTestId(`publish-retest-timeline-${webhookRec.id}`);
+      const timeline = page.getByTestId(`publish-retest-timeline-${webhookRec!.id}`);
       await expect(timeline).toBeVisible();
       await expect(timeline).toContainText('T+0 基准');
-      await expect(page.getByTestId(`publish-retest-node-${webhookRec.id}-T7`)).toBeVisible();
-      await expect(page.getByTestId(`publish-retest-node-${webhookRec.id}-T14`)).toBeVisible();
-      await expect(page.getByTestId(`publish-retest-node-${webhookRec.id}-T30`)).toBeVisible();
+      await expect(page.getByTestId(`publish-retest-node-${webhookRec!.id}-T7`)).toBeVisible();
+      await expect(page.getByTestId(`publish-retest-node-${webhookRec!.id}-T14`)).toBeVisible();
+      await expect(page.getByTestId(`publish-retest-node-${webhookRec!.id}-T30`)).toBeVisible();
 
-      const budgetBox = page.getByTestId(`publish-retest-budget-${webhookRec.id}`);
+      const budgetBox = page.getByTestId(`publish-retest-budget-${webhookRec!.id}`);
       await expect(budgetBox).toContainText('1 次采样');
       await page
-        .getByTestId(`publish-retest-sample-toggle-${webhookRec.id}`)
+        .getByTestId(`publish-retest-sample-toggle-${webhookRec!.id}`)
         .getByRole('button', { name: '3 次高置信' })
         .click();
       await expect(budgetBox).toContainText('3 次采样', { timeout: 15_000 });
@@ -568,6 +749,9 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(page.getByTestId('studio-publish-retest')).toContainText(
         '新发内容通常需 7–14 天进入 AI 检索',
       );
+
+      // Verify /studio Retest Timeline & Crawl Badges ergonomics at BOTH 1440×900 and 1015×909
+      await assertLayoutErgonomics(page);
 
       // Register a GPTBot-blocked URL & probe it so /home displays a real Crawl Alert!
       const blockedPubRes = await requestV2<PublishRecordSummary>(
