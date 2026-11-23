@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import type {
-  ChannelConnectionDto,
-  DistributionPreflightResult,
-  GeoArticleRecord,
-  GeoBriefRecord,
+import {
+  publishRecordCreateSchema,
+  type ChannelConnectionDto,
+  type DistributionPreflightResult,
+  type GeoArticleRecord,
+  type GeoBriefRecord,
 } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -607,5 +608,431 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       expect(screen.queryByText('18.5dB Ultra-Quiet Acoustics')).toBeNull();
       expect(screen.getByText('尚未生成渠道变体')).toBeTruthy();
     });
+  });
+
+  it('skips remote runArticlePreflight on drawer open and rerun when readOnly is true', async () => {
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={true}
+        walletAvailable={0}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('distribution-preflight-card');
+    expect(runArticlePreflightMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新体检' }));
+    await waitFor(() => {
+      expect(notifySuccessMock).toHaveBeenCalledWith('发布前体检已通过');
+    });
+    expect(runArticlePreflightMock).not.toHaveBeenCalled();
+  });
+
+  it('prevents Brand A post-generate catch leakage, stale PR revoke confirm after switch, and post-unmount createPrShareLink side effects', async () => {
+    const leakedTask = makeTask({
+      id: 'task_leaked_a',
+      provider: 'REDDIT_ASSIST',
+      mode: 'L3_COMMUNITY_ASSIST',
+      channelLabel: 'LEAKED_BRAND_A_REDDIT',
+      connectionId: null,
+    });
+    const prTaskA = makeTask({
+      id: 'task_pr_a',
+      provider: 'PR_PACKET',
+      mode: 'L3_PR_PACKET',
+      channelLabel: 'PR Packet A',
+      connectionId: null,
+      shareLinkActive: true,
+      shareExpiresAt: '2026-12-23T06:00:00.000Z',
+    });
+
+    let rejectPostGenRefresh!: (reason?: unknown) => void;
+    let postGenSignal: AbortSignal | undefined;
+    listArticleDistributionsMock
+      .mockResolvedValueOnce({ items: [prTaskA] }) // Brand A initial hydrate
+      .mockImplementationOnce((_articleId: string, opts?: { signal?: AbortSignal }) => {
+        postGenSignal = opts?.signal;
+        return new Promise((_resolve, reject) => {
+          rejectPostGenRefresh = reject;
+        });
+      })
+      .mockResolvedValueOnce({ items: [] }); // Brand B initial hydrate
+
+    generateDistributionVariantsMock.mockResolvedValueOnce({
+      articleId: GLOBAL_ARTICLE.id,
+      unitPrice: 2,
+      totalChargedPoints: 2,
+      refundedCount: 0,
+      refundedPoints: 0,
+      reservationId: 'res_race',
+      billingMode: 'SHADOW',
+      replayed: false,
+      tasks: [leakedTask],
+      failures: [],
+    });
+
+    let capturedRevokeOnOk: (() => Promise<void> | void) | undefined;
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      capturedRevokeOnOk = onOk;
+    });
+
+    const { rerender, unmount } = render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_a"
+        brandMarketId="bm_a"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    // PR button displays regenerate label when shareLinkActive is true
+    const prShareBtn = await screen.findByTestId('distribution-pr-share-btn');
+    expect(prShareBtn.textContent).toContain('重新生成 30 天免登录供稿链接');
+
+    // Open revoke confirm modal on Brand A (do not resolve yet)
+    fireEvent.click(screen.getByTestId('distribution-pr-revoke-btn'));
+    expect(capturedRevokeOnOk).toBeTypeOf('function');
+
+    // Trigger variant generation; wait until post-generate refresh is in-flight
+    fireEvent.click(screen.getByTestId('distribution-target-REDDIT_ASSIST'));
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    fireEvent.click(await screen.findByTestId('distribution-points-confirm-submit-btn'));
+    await waitFor(() => {
+      expect(postGenSignal).toBeInstanceOf(AbortSignal);
+    });
+
+    // Switch context to Brand B while post-generate refresh is pending
+    rerender(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_b"
+        brandMarketId="bm_b"
+        market="GLOBAL"
+        contextEpoch={2}
+        article={{ ...GLOBAL_ARTICLE, id: 'art_b', brandId: 'brand_b', briefId: null }}
+        draftTitle="Brand B Article"
+        draftMarkdown="Brand B body"
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('尚未生成渠道变体')).toBeTruthy();
+    });
+    expect(postGenSignal?.aborted).toBe(true);
+
+    // Reject aborted post-generate refresh AND invoke stale Brand A revoke confirm onOk
+    await act(async () => {
+      rejectPostGenRefresh(new DOMException('The operation was aborted.', 'AbortError'));
+      await capturedRevokeOnOk?.();
+    });
+
+    expect(screen.queryByText('LEAKED_BRAND_A_REDDIT')).toBeNull();
+    expect(notifySuccessMock).not.toHaveBeenCalled();
+    expect(revokePrShareLinkMock).not.toHaveBeenCalled();
+
+    // Verify unmount aborts & suppresses in-flight createPrShareLink
+    const prTaskB = makeTask({
+      id: 'task_pr_unmount',
+      articleId: 'art_b_2',
+      provider: 'PR_PACKET',
+      mode: 'L3_PR_PACKET',
+      channelLabel: 'PR Packet B',
+      connectionId: null,
+    });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [prTaskB] });
+    rerender(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_b"
+        brandMarketId="bm_b"
+        market="GLOBAL"
+        contextEpoch={3}
+        article={{ ...GLOBAL_ARTICLE, id: 'art_b_2', brandId: 'brand_b', briefId: null }}
+        draftTitle="Brand B Article 2"
+        draftMarkdown="Brand B body 2"
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    let resolveCreatePr!: (v: {
+      taskId: string;
+      shareUrl: string;
+      token: string;
+      expiresAt: string;
+      ttlDays: number;
+    }) => void;
+    let createPrSignal: AbortSignal | undefined;
+    createPrShareLinkMock.mockImplementationOnce(
+      (_taskId: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        createPrSignal = opts?.signal;
+        return new Promise((resolve) => {
+          resolveCreatePr = resolve;
+        });
+      },
+    );
+
+    fireEvent.click(await screen.findByTestId('distribution-pr-share-btn'));
+    expect(createPrSignal?.aborted).toBe(false);
+
+    unmount();
+    expect(createPrSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveCreatePr({
+        taskId: 'task_pr_unmount',
+        shareUrl: 'https://app.geomix.example/share/pr/tok_unmount',
+        token: 'tok_unmount',
+        expiresAt: '2026-12-23T06:00:00.000Z',
+        ttlDays: 30,
+      });
+    });
+    expect(notifySuccessMock).not.toHaveBeenCalled();
+  });
+
+  it('enforces Tabs destroyOnHidden (strictly 1 publish button in DOM), isolates 422 alert per task, and preserves unsaved draft edits across tab switches', async () => {
+    const taskA = makeTask({
+      id: 'task_l1_a',
+      channelLabel: 'Shopify Primary Blog',
+      variantTitle: 'Original Title A',
+    });
+    const taskB = makeTask({
+      id: 'task_l1_b',
+      provider: 'WORDPRESS',
+      channelLabel: 'WordPress Tech Blog',
+      variantTitle: 'Original Title B',
+    });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [taskA, taskB] });
+    publishDistributionTaskMock.mockRejectedValueOnce(
+      new PreflightBlockedError(40001, 'Task A 存在硬拦截项', {
+        preflight: { ok: false, blockers: [], warnings: [] },
+      }),
+    );
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    const titleInputA = (await screen.findByLabelText('变体标题')) as HTMLInputElement;
+    expect(titleInputA.value).toBe('Original Title A');
+    fireEvent.change(titleInputA, { target: { value: 'Unsaved Draft A' } });
+
+    // Trigger 422 alert on Task A
+    fireEvent.click(screen.getByTestId('distribution-publish-draft-btn'));
+    await waitFor(() => {
+      expect(screen.getByText('Task A 存在硬拦截项')).toBeTruthy();
+    });
+
+    // Switch to Tab B -> strictly 1 set of L1 testids in DOM AND Task A's 422 alert is not shown on Tab B
+    const tabsRoot = screen.getByTestId('distribution-variant-tabs');
+    fireEvent.click(within(tabsRoot).getByText('WordPress Tech Blog'));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('变体标题') as HTMLInputElement).value).toBe(
+        'Original Title B',
+      );
+    });
+    expect(screen.getAllByTestId('distribution-publish-live-btn')).toHaveLength(1);
+    expect(screen.getAllByTestId('distribution-publish-draft-btn')).toHaveLength(1);
+    expect(screen.getAllByTestId('distribution-save-variant-btn')).toHaveLength(1);
+    expect(screen.queryByText('Task A 存在硬拦截项')).toBeNull();
+
+    // Switch back to Tab A -> unsaved draft edit & Task A alert are preserved
+    fireEvent.click(within(tabsRoot).getByText('Shopify Primary Blog'));
+    await waitFor(() => {
+      expect((screen.getByLabelText('变体标题') as HTMLInputElement).value).toBe('Unsaved Draft A');
+      expect(screen.getByText('Task A 存在硬拦截项')).toBeTruthy();
+    });
+  });
+
+  it('ignores stale in-flight poll resolved after Task 2 publish and fires independent notifications for simultaneous PUBLISHED + FAILED completions', async () => {
+    const t1Publishing = makeTask({
+      id: 'task_poll_1',
+      channelLabel: 'Shopify Blog 1',
+      status: 'PUBLISHING',
+    });
+    const t2Draft = makeTask({
+      id: 'task_poll_2',
+      provider: 'WORDPRESS',
+      channelLabel: 'WordPress Blog 2',
+      status: 'DRAFT_VARIANT',
+    });
+    const t2Publishing = { ...t2Draft, status: 'PUBLISHING' as const };
+    const t1Published = {
+      ...t1Publishing,
+      status: 'PUBLISHED' as const,
+      remotePublishedUrl: 'https://store.example.com/blogs/news/post-1',
+    };
+    const t2Failed = {
+      ...t2Publishing,
+      status: 'FAILED' as const,
+      lastError: 'HTTP 401 Invalid WordPress App Password',
+    };
+
+    let resolveStalePoll!: (v: { items: ArticleDistributionTaskItem[] }) => void;
+    let stalePollSignal: AbortSignal | undefined;
+    listArticleDistributionsMock
+      .mockResolvedValueOnce({ items: [t1Publishing, t2Draft] }) // initial hydrate
+      .mockImplementationOnce((_articleId: string, opts?: { signal?: AbortSignal }) => {
+        stalePollSignal = opts?.signal;
+        return new Promise((resolve) => {
+          resolveStalePoll = resolve;
+        });
+      }) // Poll #1 (stale)
+      .mockResolvedValueOnce({ items: [t1Published, t2Failed] }); // Poll #2 (simultaneous PUBLISHED + FAILED)
+
+    publishDistributionTaskMock.mockResolvedValueOnce(t2Publishing);
+    const onPublishRecordsSynced = vi.fn();
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+        onPublishRecordsSynced={onPublishRecordsSynced}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(capturedPollingEnabled).toBe(true);
+    });
+
+    // Start Poll #1 while t1 is PUBLISHING and t2 is DRAFT_VARIANT
+    const poll1Promise = capturedPollingCallback?.();
+    expect(stalePollSignal?.aborted).toBe(false);
+
+    // Switch to Task 2 and publish live while Poll #1 is still in-flight
+    const tabsRoot = screen.getByTestId('distribution-variant-tabs');
+    fireEvent.click(within(tabsRoot).getByText('WordPress Blog 2'));
+    fireEvent.click(await screen.findByTestId('distribution-publish-live-btn'));
+
+    await waitFor(() => {
+      expect(publishDistributionTaskMock).toHaveBeenCalledWith(
+        'task_poll_2',
+        expect.objectContaining({ publishAsDraft: false }),
+        expect.anything(),
+      );
+    });
+    expect(stalePollSignal?.aborted).toBe(true);
+
+    // Resolve stale Poll #1 with old snapshot [t1: PUBLISHED, t2: DRAFT_VARIANT]
+    // It MUST be ignored so Task 2 stays PUBLISHING and polling remains enabled!
+    await act(async () => {
+      resolveStalePoll({ items: [t1Published, t2Draft] });
+      await poll1Promise;
+    });
+
+    expect(capturedPollingEnabled).toBe(true);
+    expect(onPublishRecordsSynced).not.toHaveBeenCalled();
+
+    notifySuccessMock.mockClear();
+    notifyErrorMock.mockClear();
+
+    // Poll #2 returns simultaneous t1=PUBLISHED and t2=FAILED -> BOTH notifications must fire!
+    await act(async () => {
+      await capturedPollingCallback?.();
+    });
+
+    await waitFor(() => {
+      expect(onPublishRecordsSynced).toHaveBeenCalledWith(GLOBAL_ARTICLE.id);
+      expect(notifySuccessMock).toHaveBeenCalledWith(
+        '已上线发布，已自动同步至发布记录并排期 T+7/14/30 复测',
+      );
+      expect(notifyErrorMock).toHaveBeenCalledWith('HTTP 401 Invalid WordPress App Password');
+      expect(capturedPollingEnabled).toBe(false);
+    });
+  });
+
+  it('clamps 80-char L3 Community channelLabel to 60 chars to satisfy publishRecordCreateSchema on quick register', async () => {
+    const longChannelLabel =
+      'Reddit_r_DataHoarder_Enterprise_NAS_Acoustics_Benchmark_Community_Channel_80Char';
+    expect(longChannelLabel.length).toBe(80);
+    const communityTask = makeTask({
+      id: 'task_comm_long',
+      provider: 'REDDIT_ASSIST',
+      mode: 'L3_COMMUNITY_ASSIST',
+      channelLabel: longChannelLabel,
+      connectionId: null,
+    });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [communityTask] });
+    const onCreatePublishRecord = vi.fn().mockResolvedValue(true);
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+        onCreatePublishRecord={onCreatePublishRecord}
+      />,
+    );
+
+    const urlInput = await screen.findByLabelText('已发布社区链接');
+    fireEvent.change(urlInput, {
+      target: { value: 'https://www.reddit.com/r/DataHoarder/comments/long80/nas' },
+    });
+    fireEvent.click(screen.getByTestId('distribution-quick-register-btn'));
+
+    await waitFor(() => {
+      expect(onCreatePublishRecord).toHaveBeenCalledTimes(1);
+    });
+    const sentPayload = onCreatePublishRecord.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(typeof sentPayload.channel).toBe('string');
+    expect((sentPayload.channel as string).length).toBe(60);
+    expect(publishRecordCreateSchema.safeParse(sentPayload).success).toBe(true);
   });
 });

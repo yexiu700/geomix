@@ -354,6 +354,15 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
         testedAt: '2026-11-23T06:07:00.000Z',
         targets: [
           {
+            id: 'col_1',
+            name: 'Guides',
+            handle: 'guides',
+            meta: {
+              siteId: 'site_1',
+              collectionSlug: 'guides',
+            },
+          },
+          {
             id: 'col_2',
             name: 'Benchmarks',
             handle: 'benchmarks',
@@ -368,7 +377,14 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
           },
         ],
       });
-    updateChannelConnectionMock.mockResolvedValueOnce(wfConn);
+    updateChannelConnectionMock.mockResolvedValueOnce({
+      ...wfConn,
+      configJson: {
+        ...wfConn.configJson,
+        collectionId: 'col_2',
+        collectionSlug: 'benchmarks',
+      },
+    });
 
     fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_wf_1'));
     const wfModal = await screen.findByTestId('channel-connection-modal');
@@ -393,6 +409,23 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
         'brand_1',
         'conn_wf_1',
         { siteId: 'site_1', collectionId: 'col_2' },
+        expect.anything(),
+      );
+    });
+
+    // Saving preserves col_2 AND collectionSlug: 'benchmarks' even though backend returned [col_1, col_2]
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(updateChannelConnectionMock).toHaveBeenLastCalledWith(
+        'brand_1',
+        'conn_wf_1',
+        expect.objectContaining({
+          configJson: expect.objectContaining({
+            siteId: 'site_1',
+            collectionId: 'col_2',
+            collectionSlug: 'benchmarks',
+          }),
+        }),
         expect.anything(),
       );
     });
@@ -519,5 +552,211 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
+  });
+
+  it('disables card & modal test/edit/delete/add buttons when readOnly is true and clears stale Shopify blogHandle on manual blogId edit', async () => {
+    const conn = makeConn({
+      id: 'conn_ro_1',
+      displayName: 'Expired Tenant Store',
+      configJson: {
+        blogId: 'gid://shopify/Blog/101',
+        blogHandle: 'news',
+        defaultPublishAsDraft: true,
+        inlineJsonLd: true,
+      },
+    });
+    listChannelConnectionsMock.mockResolvedValue({ items: [conn] });
+    updateChannelConnectionMock.mockResolvedValueOnce({
+      ...conn,
+      configJson: {
+        blogId: 'gid://shopify/Blog/999',
+        defaultPublishAsDraft: true,
+        inlineJsonLd: true,
+      },
+    });
+
+    const { rerender } = render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('channel-connection-card-conn_ro_1');
+
+    // Manual Shopify blogId edit clears stale blogHandle before save
+    fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_ro_1'));
+    const editModal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.change(within(editModal).getByLabelText('Shopify Blog ID'), {
+      target: { value: 'gid://shopify/Blog/999' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(updateChannelConnectionMock).toHaveBeenCalledTimes(1);
+    });
+    const savedConfig = (
+      updateChannelConnectionMock.mock.calls[0]?.[2] as { configJson?: Record<string, unknown> }
+    )?.configJson;
+    expect(savedConfig?.blogId).toBe('gid://shopify/Blog/999');
+    expect(savedConfig).not.toHaveProperty('blogHandle');
+
+    // Open edit modal then flip readOnly=true -> modal test button & card actions all disabled
+    fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_ro_1'));
+    await screen.findByTestId('channel-connection-modal');
+    rerender(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={true}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    const modalTestBtn = screen.getByTestId(
+      'channel-connection-modal-test-btn',
+    ) as HTMLButtonElement;
+    expect(modalTestBtn.disabled).toBe(true);
+    fireEvent.click(modalTestBtn);
+
+    const addBtn = screen.getByTestId('add-channel-connection-btn') as HTMLButtonElement;
+    const testBtn = screen.getByTestId(
+      'channel-connection-test-btn-conn_ro_1',
+    ) as HTMLButtonElement;
+    const editBtn = screen.getByTestId(
+      'channel-connection-edit-btn-conn_ro_1',
+    ) as HTMLButtonElement;
+    const deleteBtn = screen.getByTestId(
+      'channel-connection-delete-btn-conn_ro_1',
+    ) as HTMLButtonElement;
+
+    expect(addBtn.disabled).toBe(true);
+    expect(testBtn.disabled).toBe(true);
+    expect(editBtn.disabled).toBe(true);
+    expect(deleteBtn.disabled).toBe(true);
+
+    fireEvent.click(testBtn);
+    expect(testChannelConnectionMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts in-flight handleTestCard on unmount/brand switch and ignores stale handleDeleteCard confirm after brand switch', async () => {
+    const connA = makeConn({ id: 'conn_a_1', brandId: 'brand_a', displayName: 'Brand A Store' });
+    listChannelConnectionsMock
+      .mockResolvedValueOnce({ items: [connA] })
+      .mockResolvedValueOnce({ items: [] });
+
+    let resolveTest!: (v: ChannelConnectionTestResultDto) => void;
+    let capturedSignal: AbortSignal | undefined;
+    testChannelConnectionMock.mockImplementationOnce(
+      (_brandId: string, _connId: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        capturedSignal = opts?.signal;
+        return new Promise<ChannelConnectionTestResultDto>((resolve) => {
+          resolveTest = resolve;
+        });
+      },
+    );
+
+    let capturedDeleteOnOk: (() => Promise<void> | void) | undefined;
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      capturedDeleteOnOk = onOk;
+    });
+
+    const { rerender, unmount } = render(
+      <BrandChannelConnections
+        brandId="brand_a"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('channel-connection-card-conn_a_1');
+
+    // Start card test and open delete confirm on Brand A
+    fireEvent.click(screen.getByTestId('channel-connection-test-btn-conn_a_1'));
+    fireEvent.click(screen.getByTestId('channel-connection-delete-btn-conn_a_1'));
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal?.aborted).toBe(false);
+    expect(capturedDeleteOnOk).toBeTypeOf('function');
+
+    // Switch brand to brand_b before either completes
+    rerender(
+      <BrandChannelConnections
+        brandId="brand_b"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(listChannelConnectionsMock).toHaveBeenCalledWith(
+        'brand_b',
+        'GLOBAL',
+        expect.anything(),
+      );
+    });
+    expect(capturedSignal?.aborted).toBe(true);
+
+    // Late test resolution & late confirm onOk MUST NOT fire stale toasts or delete Brand A
+    await act(async () => {
+      resolveTest({
+        ok: true,
+        status: 'ACTIVE',
+        message: 'BRAND_A_STALE_TEST_OK',
+        testedAt: '2026-11-23T06:30:00.000Z',
+      });
+      await capturedDeleteOnOk?.();
+    });
+
+    expect(notifySuccessMock).not.toHaveBeenCalled();
+    expect(notifyErrorMock).not.toHaveBeenCalled();
+    expect(deleteChannelConnectionMock).not.toHaveBeenCalled();
+
+    // Unmount guard also aborts an in-flight test on brand_b
+    const connB = makeConn({ id: 'conn_b_1', brandId: 'brand_b', displayName: 'Brand B Store' });
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [connB] });
+    rerender(
+      <BrandChannelConnections
+        brandId="brand_b"
+        activeMarket="CN"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+    await screen.findByTestId('channel-connection-card-conn_b_1');
+
+    let resolveUnmountTest!: (v: ChannelConnectionTestResultDto) => void;
+    let unmountSignal: AbortSignal | undefined;
+    testChannelConnectionMock.mockImplementationOnce(
+      (_brandId: string, _connId: string, _input: unknown, opts?: { signal?: AbortSignal }) => {
+        unmountSignal = opts?.signal;
+        return new Promise<ChannelConnectionTestResultDto>((resolve) => {
+          resolveUnmountTest = resolve;
+        });
+      },
+    );
+    fireEvent.click(screen.getByTestId('channel-connection-test-btn-conn_b_1'));
+    expect(unmountSignal?.aborted).toBe(false);
+
+    unmount();
+    expect(unmountSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveUnmountTest({
+        ok: true,
+        status: 'ACTIVE',
+        message: 'UNMOUNTED_STALE_OK',
+        testedAt: '2026-11-23T06:31:00.000Z',
+      });
+    });
+    expect(notifySuccessMock).not.toHaveBeenCalled();
+    expect(notifyErrorMock).not.toHaveBeenCalled();
   });
 });

@@ -231,7 +231,15 @@ export function BrandChannelConnections({
   const loadSeqRef = useRef(0);
   const loadCtrlRef = useRef<AbortController | null>(null);
   const modalActionCtrlRef = useRef<AbortController | null>(null);
+  const cardActionCtrlsRef = useRef<Set<AbortController>>(new Set());
   const skipNextSelfRefreshRef = useRef(false);
+
+  const abortCardActions = useCallback(() => {
+    for (const ctrl of cardActionCtrlsRef.current) {
+      ctrl.abort();
+    }
+    cardActionCtrlsRef.current.clear();
+  }, []);
 
   const broadcastConnectionsChanged = useCallback(() => {
     skipNextSelfRefreshRef.current = true;
@@ -317,6 +325,7 @@ export function BrandChannelConnections({
 
   useEffect(() => {
     resetModalState();
+    abortCardActions();
     setConnections([]);
     setError(null);
     setTestingCardId(null);
@@ -324,14 +333,16 @@ export function BrandChannelConnections({
       loadCtrlRef.current?.abort();
       loadSeqRef.current += 1;
       setLoading(false);
-      return undefined;
+    } else {
+      void loadConnections();
     }
-    void loadConnections();
     return () => {
+      loadSeqRef.current += 1;
       loadCtrlRef.current?.abort();
       modalActionCtrlRef.current?.abort();
+      abortCardActions();
     };
-  }, [brandId, activeMarket, marketEnabled, loadConnections, resetModalState]);
+  }, [brandId, activeMarket, marketEnabled, loadConnections, resetModalState, abortCardActions]);
 
   useTabFreshness({
     active: marketEnabled,
@@ -381,6 +392,9 @@ export function BrandChannelConnections({
     const trimmedIndexNow = indexNowKey.trim();
     if (trimmedIndexNow && trimmedIndexNow.length < 8) {
       return { ok: false, error: 'IndexNow Key 如需填写，长度至少为 8 位字符' };
+    }
+    if (trimmedIndexNow && trimmedIndexNow.length > 128) {
+      return { ok: false, error: 'IndexNow Key 长度不能超过 128 位字符' };
     }
     const config: ChannelConnectionConfig = {
       defaultPublishAsDraft,
@@ -479,7 +493,11 @@ export function BrandChannelConnections({
   };
 
   const applyDiscoveredTargets = useCallback(
-    (targetProvider: L1ChannelProvider, targets: readonly ChannelRemoteTargetDto[]) => {
+    (
+      targetProvider: L1ChannelProvider,
+      targets: readonly ChannelRemoteTargetDto[],
+      overrides?: { siteId?: string; collectionId?: string },
+    ) => {
       setRemoteTargets([...targets]);
       if (targetProvider === 'SHOPIFY' && targets.length > 0) {
         const currentMatch = blogId ? targets.find((t) => t.id === blogId) : null;
@@ -491,19 +509,24 @@ export function BrandChannelConnections({
           setBlogHandle(chosen.handle);
         }
       } else if (targetProvider === 'WEBFLOW' && targets.length > 0) {
+        const effectiveSiteId = overrides?.siteId !== undefined ? overrides.siteId : siteId;
+        const effectiveCollectionId =
+          overrides?.collectionId !== undefined ? overrides.collectionId : collectionId;
         const isSiteList = targets.every((t) => t.meta?.kind === 'site');
         if (isSiteList) {
-          if (!siteId && targets[0]) {
+          if (!effectiveSiteId && targets[0]) {
             setSiteId(targets[0].id);
           }
         } else {
-          const firstCollection = targets.find((t) => t.id === collectionId) ?? targets[0]!;
+          const firstCollection =
+            (effectiveCollectionId ? targets.find((t) => t.id === effectiveCollectionId) : null) ??
+            targets[0]!;
           const discoveredSiteId =
             typeof firstCollection.meta?.siteId === 'string' ? firstCollection.meta.siteId : '';
-          if (discoveredSiteId && !siteId) {
+          if (discoveredSiteId && !effectiveSiteId) {
             setSiteId(discoveredSiteId);
           }
-          if (!collectionId && firstCollection.id) {
+          if (!effectiveCollectionId && firstCollection.id) {
             setCollectionId(firstCollection.id);
           }
           if (typeof firstCollection.meta?.collectionSlug === 'string') {
@@ -523,31 +546,35 @@ export function BrandChannelConnections({
       targetProvider: L1ChannelProvider,
       overrides?: { siteId?: string; collectionId?: string },
     ) => {
+      if (readOnly) return;
       modalActionCtrlRef.current?.abort();
       const ctrl = new AbortController();
       modalActionCtrlRef.current = ctrl;
+      const seq = loadSeqRef.current;
       setModalTesting(true);
       setModalError(null);
       try {
+        const effectiveTestSiteId = (
+          overrides?.siteId !== undefined ? overrides.siteId : siteId
+        ).trim();
+        const effectiveTestCollectionId = (
+          overrides?.collectionId !== undefined ? overrides.collectionId : collectionId
+        ).trim();
         const testPayload =
           targetProvider === 'WEBFLOW'
             ? {
-                ...((overrides?.siteId ?? siteId.trim())
-                  ? { siteId: (overrides?.siteId ?? siteId).trim() }
-                  : {}),
-                ...((overrides?.collectionId ?? collectionId.trim())
-                  ? { collectionId: (overrides?.collectionId ?? collectionId).trim() }
-                  : {}),
+                ...(effectiveTestSiteId ? { siteId: effectiveTestSiteId } : {}),
+                ...(effectiveTestCollectionId ? { collectionId: effectiveTestCollectionId } : {}),
               }
             : {};
         const res = await testChannelConnection(brandId, connId, testPayload, {
           storage: window.sessionStorage,
           signal: ctrl.signal,
         });
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
         setModalTestResult(res);
         if (res.targets && res.targets.length > 0) {
-          applyDiscoveredTargets(targetProvider, res.targets);
+          applyDiscoveredTargets(targetProvider, res.targets, overrides);
         }
         setConnections((prev) =>
           prev.map((item) =>
@@ -568,20 +595,29 @@ export function BrandChannelConnections({
           feedback.notifyWarning(res.message || '连接测试未通过，请检查凭据或站点地址');
         }
       } catch (err) {
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
         const msg = formatConnError(err, '测试连接失败');
         setModalError(msg);
         feedback.notifyError(msg);
       } finally {
-        if (!ctrl.signal.aborted) {
+        if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
           setModalTesting(false);
         }
       }
     },
-    [applyDiscoveredTargets, brandId, broadcastConnectionsChanged, collectionId, feedback, siteId],
+    [
+      applyDiscoveredTargets,
+      brandId,
+      broadcastConnectionsChanged,
+      collectionId,
+      feedback,
+      readOnly,
+      siteId,
+    ],
   );
 
   const handleModalSubmit = async (options?: { testAfterCreate?: boolean }) => {
+    if (readOnly) return;
     setModalError(null);
     const trimmedName = displayName.trim();
     const trimmedUrl = siteBaseUrl.trim();
@@ -602,6 +638,7 @@ export function BrandChannelConnections({
     modalActionCtrlRef.current?.abort();
     const ctrl = new AbortController();
     modalActionCtrlRef.current = ctrl;
+    const seq = loadSeqRef.current;
     setSubmitting(true);
 
     try {
@@ -622,7 +659,7 @@ export function BrandChannelConnections({
           storage: window.sessionStorage,
           signal: ctrl.signal,
         });
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
         setConnections((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
         broadcastConnectionsChanged();
         feedback.notifySuccess(`已保存渠道连接「${updated.displayName}」`);
@@ -649,7 +686,7 @@ export function BrandChannelConnections({
             signal: ctrl.signal,
           },
         );
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
         setConnections((prev) => [created, ...prev.filter((c) => c.id !== created.id)]);
         broadcastConnectionsChanged();
 
@@ -667,18 +704,22 @@ export function BrandChannelConnections({
         resetModalState();
       }
     } catch (err) {
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
       const msg = formatConnError(err, editingConn ? '保存渠道连接失败' : '添加渠道连接失败');
       setModalError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (!ctrl.signal.aborted) {
+      if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
         setSubmitting(false);
       }
     }
   };
 
   const handleTestCard = async (conn: ChannelConnectionDto) => {
+    if (readOnly) return;
+    const seq = loadSeqRef.current;
+    const ctrl = new AbortController();
+    cardActionCtrlsRef.current.add(ctrl);
     setTestingCardId(conn.id);
     try {
       const cfg = conn.configJson ?? {};
@@ -693,7 +734,9 @@ export function BrandChannelConnections({
           : {};
       const res = await testChannelConnection(brandId, conn.id, input, {
         storage: window.sessionStorage,
+        signal: ctrl.signal,
       });
+      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
       setConnections((prev) =>
         prev.map((item) =>
           item.id === conn.id
@@ -713,13 +756,19 @@ export function BrandChannelConnections({
         feedback.notifyError(res.message || `「${conn.displayName}」连接测试失败`);
       }
     } catch (err) {
+      if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
       feedback.notifyError(formatConnError(err, '测试渠道连接失败'));
     } finally {
-      setTestingCardId((prev) => (prev === conn.id ? null : prev));
+      cardActionCtrlsRef.current.delete(ctrl);
+      if (!ctrl.signal.aborted && seq === loadSeqRef.current) {
+        setTestingCardId((prev) => (prev === conn.id ? null : prev));
+      }
     }
   };
 
   const handleDeleteCard = (conn: ChannelConnectionDto) => {
+    if (readOnly) return;
+    const seq = loadSeqRef.current;
     feedback.confirm({
       title: `确认删除渠道连接「${conn.displayName}」？`,
       content:
@@ -728,15 +777,23 @@ export function BrandChannelConnections({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
+        if (seq !== loadSeqRef.current) return;
+        const ctrl = new AbortController();
+        cardActionCtrlsRef.current.add(ctrl);
         try {
           await deleteChannelConnection(brandId, conn.id, {
             storage: window.sessionStorage,
+            signal: ctrl.signal,
           });
+          if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
           setConnections((prev) => prev.filter((item) => item.id !== conn.id));
           broadcastConnectionsChanged();
           feedback.notifySuccess(`已删除渠道连接「${conn.displayName}」`);
         } catch (err) {
+          if (ctrl.signal.aborted || seq !== loadSeqRef.current) return;
           feedback.notifyError(formatConnError(err, '删除渠道连接失败'));
+        } finally {
+          cardActionCtrlsRef.current.delete(ctrl);
         }
       },
     });
@@ -1000,7 +1057,13 @@ export function BrandChannelConnections({
                   {conn.provider === 'SHOPIFY' && shopifyTarget ? (
                     <Tag
                       color="blue"
-                      style={{ margin: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}
+                      style={{
+                        margin: 0,
+                        maxWidth: '100%',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                      }}
                     >
                       Blog: {shopifyTarget}
                     </Tag>
@@ -1013,7 +1076,13 @@ export function BrandChannelConnections({
                   {conn.provider === 'WEBFLOW' && webflowTarget ? (
                     <Tag
                       color="blue"
-                      style={{ margin: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}
+                      style={{
+                        margin: 0,
+                        maxWidth: '100%',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                      }}
                     >
                       集合: {webflowTarget}
                     </Tag>
@@ -1042,6 +1111,7 @@ export function BrandChannelConnections({
                     size="small"
                     data-testid={`channel-connection-test-btn-${conn.id}`}
                     loading={testingCardId === conn.id}
+                    disabled={readOnly}
                     style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                     onClick={() => void handleTestCard(conn)}
                   >
@@ -1103,7 +1173,7 @@ export function BrandChannelConnections({
               <Button
                 data-testid="channel-connection-modal-test-btn"
                 loading={modalTesting}
-                disabled={submitting}
+                disabled={readOnly || submitting}
                 style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 onClick={() => void runModalTest(editingConn.id, provider)}
               >
@@ -1254,7 +1324,12 @@ export function BrandChannelConnections({
                   aria-label="Shopify Blog ID"
                   placeholder="可选，例如 gid://shopify/Blog/123456"
                   value={blogId}
-                  onChange={(e) => setBlogId(e.target.value)}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setBlogId(nextId);
+                    const matched = remoteTargets.find((t) => t.id === nextId.trim());
+                    setBlogHandle(matched?.handle ?? '');
+                  }}
                 />
               </div>
             </>
@@ -1571,6 +1646,7 @@ export function BrandChannelConnections({
               </div>
               <Input
                 aria-label="IndexNow Key"
+                maxLength={128}
                 placeholder="留空则跳过 IndexNow 提交"
                 value={indexNowKey}
                 onChange={(e) => setIndexNowKey(e.target.value)}

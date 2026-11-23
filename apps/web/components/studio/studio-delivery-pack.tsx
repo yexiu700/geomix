@@ -322,8 +322,26 @@ export function StudioDeliveryPack({
             .slice(0, 3);
           return (
             <div key={item.channel} className="gm-studio-channel-item">
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                <Tag color="geekblue" style={{ margin: 0, alignSelf: 'flex-start' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 6,
+                  alignItems: 'center',
+                  minWidth: 0,
+                }}
+              >
+                <Tag
+                  color="geekblue"
+                  style={{
+                    margin: 0,
+                    alignSelf: 'flex-start',
+                    maxWidth: '100%',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                  }}
+                >
                   {item.channel}
                 </Tag>
                 {item.priority === 'HIGH' ? (

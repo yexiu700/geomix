@@ -221,6 +221,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   // Anti-race AbortControllers & monotonic context/article sequences
   const centerPaneRef = useRef<HTMLElement | null>(null);
   const returnFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextSeqRef = useRef(0);
   const urlHydratedSeqRef = useRef(0);
   const articleSeqRef = useRef(0);
@@ -551,6 +552,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       clearTimeout(returnFocusTimerRef.current);
       returnFocusTimerRef.current = null;
     }
+    if (editorFocusTimerRef.current) {
+      clearTimeout(editorFocusTimerRef.current);
+      editorFocusTimerRef.current = null;
+    }
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
     editorCursorRef.current = null;
@@ -583,6 +588,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (returnFocusTimerRef.current) {
         clearTimeout(returnFocusTimerRef.current);
         returnFocusTimerRef.current = null;
+      }
+      if (editorFocusTimerRef.current) {
+        clearTimeout(editorFocusTimerRef.current);
+        editorFocusTimerRef.current = null;
       }
       clearArticleActionControllers();
       insertingMediaRef.current = false;
@@ -1540,6 +1549,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (returnFocusTimerRef.current) {
         clearTimeout(returnFocusTimerRef.current);
       }
+      if (editorFocusTimerRef.current) {
+        clearTimeout(editorFocusTimerRef.current);
+        editorFocusTimerRef.current = null;
+      }
       returnFocusTimerRef.current = setTimeout(() => {
         returnFocusTimerRef.current = null;
         const pane = centerPaneRef.current;
@@ -1556,25 +1569,40 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           feedback.notifyWarning('已定位到待补充事实胶囊，点击即可行内补填');
           return;
         }
-        let textarea = pane.querySelector<HTMLTextAreaElement>(
-          'textarea[aria-label="文章 Markdown 正文"]',
-        );
-        if (!textarea) {
-          const editLabel = Array.from(
-            pane.querySelectorAll<HTMLElement>('.ant-segmented-item'),
-          ).find((el) => el.textContent?.includes('编辑 Markdown'));
-          editLabel?.click();
-          textarea = pane.querySelector<HTMLTextAreaElement>(
-            'textarea[aria-label="文章 Markdown 正文"]',
-          );
-        }
-        const target =
-          textarea ?? pane.querySelector<HTMLInputElement>('input[aria-label="文章标题"]');
-        if (target) {
+        const focusTarget = (target: HTMLElement | null) => {
+          if (!target) return;
           if (typeof target.scrollIntoView === 'function') {
             target.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
           target.focus();
+        };
+        const textarea = pane.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="文章 Markdown 正文"]',
+        );
+        if (textarea) {
+          focusTarget(textarea);
+        } else {
+          const editLabel = Array.from(
+            pane.querySelectorAll<HTMLElement>('.ant-segmented-item'),
+          ).find((el) => el.textContent?.includes('编辑 Markdown'));
+          if (editLabel) {
+            editLabel.click();
+            if (editorFocusTimerRef.current) {
+              clearTimeout(editorFocusTimerRef.current);
+            }
+            editorFocusTimerRef.current = setTimeout(() => {
+              editorFocusTimerRef.current = null;
+              const currentPane = centerPaneRef.current;
+              if (!currentPane) return;
+              const nextTarget =
+                currentPane.querySelector<HTMLTextAreaElement>(
+                  'textarea[aria-label="文章 Markdown 正文"]',
+                ) ?? currentPane.querySelector<HTMLInputElement>('input[aria-label="文章标题"]');
+              focusTarget(nextTarget);
+            }, 40);
+          } else {
+            focusTarget(pane.querySelector<HTMLInputElement>('input[aria-label="文章标题"]'));
+          }
         }
         feedback.notifyWarning('已返回编辑器，请修正发布前体检阻断项后再推送');
       }, 50);

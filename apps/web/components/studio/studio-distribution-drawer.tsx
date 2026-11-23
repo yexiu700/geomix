@@ -280,7 +280,9 @@ export function StudioDistributionDrawer({
   const [generating, setGenerating] = useState(false);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [publishingTaskId, setPublishingTaskId] = useState<string | null>(null);
-  const [publishBlockedNotice, setPublishBlockedNotice] = useState<string | null>(null);
+  const [publishBlockedNoticeByTask, setPublishBlockedNoticeByTask] = useState<
+    Record<string, string>
+  >({});
   const [prActionTaskId, setPrActionTaskId] = useState<string | null>(null);
   const [quickRegisteringTaskId, setQuickRegisteringTaskId] = useState<string | null>(null);
 
@@ -294,15 +296,33 @@ export function StudioDistributionDrawer({
   );
 
   const sessionSeqRef = useRef(0);
+  const pollMutationEpochRef = useRef(0);
   const hydrateCtrlRef = useRef<AbortController | null>(null);
   const actionCtrlRef = useRef<AbortController | null>(null);
+  const taskActionCtrlsRef = useRef<Set<AbortController>>(new Set());
+  const pollCtrlRef = useRef<AbortController | null>(null);
   const prevPublishingIdsRef = useRef<Set<string>>(new Set());
+
+  const abortAllTaskActions = useCallback(() => {
+    for (const ctrl of taskActionCtrlsRef.current) {
+      ctrl.abort();
+    }
+    taskActionCtrlsRef.current.clear();
+  }, []);
+
+  const bumpPollEpoch = useCallback(() => {
+    pollMutationEpochRef.current += 1;
+    pollCtrlRef.current?.abort();
+    pollCtrlRef.current = null;
+  }, []);
 
   const resetAllDrawerState = useCallback(() => {
     hydrateCtrlRef.current?.abort();
     hydrateCtrlRef.current = null;
     actionCtrlRef.current?.abort();
     actionCtrlRef.current = null;
+    abortAllTaskActions();
+    bumpPollEpoch();
     sessionSeqRef.current += 1;
     prevPublishingIdsRef.current.clear();
 
@@ -321,14 +341,14 @@ export function StudioDistributionDrawer({
     setGenerating(false);
     setSavingTaskId(null);
     setPublishingTaskId(null);
-    setPublishBlockedNotice(null);
+    setPublishBlockedNoticeByTask({});
     setPrActionTaskId(null);
     setQuickRegisteringTaskId(null);
     setVariantDrafts({});
     setGeneratedPrShareByTask({});
     setQuickRegisterUrls({});
     setCheckedChecklistByTask({});
-  }, []);
+  }, [abortAllTaskActions, bumpPollEpoch]);
 
   const syncTasksState = useCallback((nextTasks: ArticleDistributionTaskItem[]) => {
     setTasks(nextTasks);
@@ -369,16 +389,34 @@ export function StudioDistributionDrawer({
   const reloadConnections = useCallback(async () => {
     if (!open || !brandId || !brandMarketId) return;
     const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
     try {
       const res = await listChannelConnections(brandId, market, {
         storage: window.sessionStorage,
+        signal: ctrl.signal,
       });
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       setConnections(res.items);
     } catch {
       // Non-blocking silent refresh
+    } finally {
+      taskActionCtrlsRef.current.delete(ctrl);
     }
   }, [brandId, brandMarketId, market, open]);
+
+  // Ensure unmount always invalidates active session and aborts all in-flight work
+  useEffect(() => {
+    return () => {
+      sessionSeqRef.current += 1;
+      hydrateCtrlRef.current?.abort();
+      hydrateCtrlRef.current = null;
+      actionCtrlRef.current?.abort();
+      actionCtrlRef.current = null;
+      abortAllTaskActions();
+      bumpPollEpoch();
+    };
+  }, [abortAllTaskActions, bumpPollEpoch]);
 
   // Full reset whenever context or article changes, or drawer closes
   useEffect(() => {
@@ -398,11 +436,13 @@ export function StudioDistributionDrawer({
     const effectiveMarkdown = draftMarkdown || article.contentMarkdown;
     const reqOpts = { storage: window.sessionStorage, signal: ctrl.signal };
 
-    const preflightPromise = runArticlePreflight(
-      article.id,
-      { title: effectiveTitle, contentMarkdown: effectiveMarkdown },
-      reqOpts,
-    ).catch(() => buildLocalPreflightFallback());
+    const preflightPromise = readOnly
+      ? Promise.resolve(buildLocalPreflightFallback())
+      : runArticlePreflight(
+          article.id,
+          { title: effectiveTitle, contentMarkdown: effectiveMarkdown },
+          reqOpts,
+        ).catch(() => buildLocalPreflightFallback());
 
     const distributionsPromise = listArticleDistributions(article.id, reqOpts);
 
@@ -437,6 +477,7 @@ export function StudioDistributionDrawer({
       setPreflightLoading(false);
 
       if (distRes.status === 'fulfilled') {
+        bumpPollEpoch();
         syncTasksState(distRes.value.items);
         prevPublishingIdsRef.current = new Set(
           distRes.value.items.filter((t) => t.status === 'PUBLISHING').map((t) => t.id),
@@ -461,7 +502,12 @@ export function StudioDistributionDrawer({
     });
 
     return () => {
+      sessionSeqRef.current += 1;
       ctrl.abort();
+      actionCtrlRef.current?.abort();
+      actionCtrlRef.current = null;
+      abortAllTaskActions();
+      bumpPollEpoch();
     };
     // Hydrate strictly when drawer opens or article/context identity changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -489,16 +535,27 @@ export function StudioDistributionDrawer({
     onPoll: async () => {
       if (!article) return;
       const seq = sessionSeqRef.current;
+      const pollEpoch = pollMutationEpochRef.current;
+      pollCtrlRef.current?.abort();
+      const pollCtrl = new AbortController();
+      pollCtrlRef.current = pollCtrl;
       try {
         const res = await listArticleDistributions(article.id, {
           storage: window.sessionStorage,
+          signal: pollCtrl.signal,
         });
-        if (seq !== sessionSeqRef.current) return;
+        if (
+          pollCtrl.signal.aborted ||
+          seq !== sessionSeqRef.current ||
+          pollEpoch !== pollMutationEpochRef.current
+        ) {
+          return;
+        }
 
         const prevPublishing = prevPublishingIdsRef.current;
         let publishedJustCompleted = false;
         let draftPushCompleted = false;
-        let failedMessage: string | null = null;
+        const failedMessages: string[] = [];
 
         for (const item of res.items) {
           if (prevPublishing.has(item.id) && item.status !== 'PUBLISHING') {
@@ -507,7 +564,7 @@ export function StudioDistributionDrawer({
             } else if (item.status === 'DRAFT_PUSHED') {
               draftPushCompleted = true;
             } else if (item.status === 'FAILED') {
-              failedMessage = item.lastError || `「${item.channelLabel}」推送失败`;
+              failedMessages.push(item.lastError || `「${item.channelLabel}」推送失败`);
             }
           }
         }
@@ -522,15 +579,27 @@ export function StudioDistributionDrawer({
           invalidateFreshness('publish-records', 'distributions', 'articles');
           void onPublishRecordsSynced?.(article.id);
           void onRefreshWallet?.();
-        } else if (draftPushCompleted) {
+        }
+        if (draftPushCompleted) {
           feedback.notifySuccess('草稿已推送至目标站点后台，可点击管理页链接审核上线');
-          invalidateFreshness('distributions');
-        } else if (failedMessage) {
-          feedback.notifyError(failedMessage);
-          invalidateFreshness('distributions');
+          if (!publishedJustCompleted) {
+            invalidateFreshness('distributions');
+          }
+        }
+        if (failedMessages.length > 0) {
+          for (const msg of failedMessages) {
+            feedback.notifyError(msg);
+          }
+          if (!publishedJustCompleted && !draftPushCompleted) {
+            invalidateFreshness('distributions');
+          }
         }
       } catch {
         // Silent retry on next polling tick
+      } finally {
+        if (pollCtrlRef.current === pollCtrl) {
+          pollCtrlRef.current = null;
+        }
       }
     },
   });
@@ -621,9 +690,23 @@ export function StudioDistributionDrawer({
 
   const handleRerunPreflight = async () => {
     if (!article) return;
+    setPublishBlockedNoticeByTask({});
+    if (readOnly) {
+      const fallback = buildLocalPreflightFallback();
+      if (fallback) {
+        setPreflight(fallback);
+        if (fallback.ok) {
+          feedback.notifySuccess('发布前体检已通过');
+        } else {
+          feedback.notifyWarning(`检测到 ${fallback.blockers.length} 项发布前硬拦截项`);
+        }
+      }
+      return;
+    }
     const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
     setPreflightLoading(true);
-    setPublishBlockedNotice(null);
     try {
       const res = await runArticlePreflight(
         article.id,
@@ -631,9 +714,9 @@ export function StudioDistributionDrawer({
           title: draftTitle || article.title,
           contentMarkdown: draftMarkdown || article.contentMarkdown,
         },
-        { storage: window.sessionStorage },
+        { storage: window.sessionStorage, signal: ctrl.signal },
       );
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       setPreflight(res);
       if (res.ok) {
         feedback.notifySuccess('发布前体检已通过');
@@ -641,11 +724,12 @@ export function StudioDistributionDrawer({
         feedback.notifyWarning(`检测到 ${res.blockers.length} 项发布前硬拦截项`);
       }
     } catch {
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       const fallback = buildLocalPreflightFallback();
       if (fallback) setPreflight(fallback);
     } finally {
-      if (seq === sessionSeqRef.current) {
+      taskActionCtrlsRef.current.delete(ctrl);
+      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
         setPreflightLoading(false);
       }
     }
@@ -657,6 +741,7 @@ export function StudioDistributionDrawer({
     const ctrl = new AbortController();
     actionCtrlRef.current = ctrl;
     const seq = sessionSeqRef.current;
+    bumpPollEpoch();
 
     const payloadTargets: DistributionVariantTargetInput[] = selectedTargets.map((opt) => ({
       provider: opt.provider,
@@ -682,6 +767,7 @@ export function StudioDistributionDrawer({
       }
       setPointsConfirmOpen(false);
       setSelectedTargetKeys([]);
+      bumpPollEpoch();
 
       // Reload authoritative list (includes publishRecords relation)
       try {
@@ -689,23 +775,34 @@ export function StudioDistributionDrawer({
           storage: window.sessionStorage,
           signal: ctrl.signal,
         });
-        if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-          syncTasksState(refreshed.items);
-          if (res.tasks[0]?.id) {
-            setActiveTaskId(res.tasks[0].id);
-          }
+        if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+        bumpPollEpoch();
+        syncTasksState(refreshed.items);
+        if (res.tasks[0]?.id) {
+          setActiveTaskId(res.tasks[0].id);
         }
       } catch {
+        if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+        bumpPollEpoch();
         const appended: ArticleDistributionTaskItem[] = res.tasks.map((t) => ({
           ...t,
           publishRecords: [],
         }));
-        syncTasksState([
+        setTasks((prev) => [
           ...appended,
-          ...tasks.filter((old) => !appended.some((a) => a.id === old.id)),
+          ...prev.filter((old) => !appended.some((a) => a.id === old.id)),
         ]);
+        setVariantDrafts((prev) => {
+          const next = { ...prev };
+          for (const t of appended) {
+            next[t.id] = prev[t.id] ?? buildDraftFromTask(t);
+          }
+          return next;
+        });
         if (appended[0]?.id) setActiveTaskId(appended[0].id);
       }
+
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
       invalidateFreshness('distributions', 'points');
       void onRefreshWallet?.();
@@ -723,7 +820,7 @@ export function StudioDistributionDrawer({
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (seq === sessionSeqRef.current) {
+      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
         setGenerating(false);
       }
     }
@@ -733,6 +830,9 @@ export function StudioDistributionDrawer({
     const draft = variantDrafts[task.id];
     if (!draft || readOnly) return;
     const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
+    bumpPollEpoch();
     setSavingTaskId(task.id);
     setDrawerError(null);
     try {
@@ -749,9 +849,10 @@ export function StudioDistributionDrawer({
               }
             : {}),
         },
-        { storage: window.sessionStorage },
+        { storage: window.sessionStorage, signal: ctrl.signal },
       );
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+      bumpPollEpoch();
       setTasks((prev) =>
         prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
       );
@@ -761,13 +862,14 @@ export function StudioDistributionDrawer({
       invalidateFreshness('distributions');
       feedback.notifySuccess(`已保存「${task.channelLabel}」变体修改`);
     } catch (err) {
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       const msg = formatDrawerError(err, '保存变体修改失败');
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (seq === sessionSeqRef.current) {
-        setSavingTaskId(null);
+      taskActionCtrlsRef.current.delete(ctrl);
+      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
+        setSavingTaskId((prev) => (prev === task.id ? null : prev));
       }
     }
   };
@@ -777,8 +879,16 @@ export function StudioDistributionDrawer({
     const draft = variantDrafts[task.id];
     const targetConnectionId = draft?.connectionId ?? task.connectionId ?? undefined;
     const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
+    bumpPollEpoch();
     setPublishingTaskId(task.id);
-    setPublishBlockedNotice(null);
+    setPublishBlockedNoticeByTask((prev) => {
+      if (!(task.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[task.id];
+      return next;
+    });
     setDrawerError(null);
 
     try {
@@ -791,11 +901,13 @@ export function StudioDistributionDrawer({
         },
         {
           storage: window.sessionStorage,
+          signal: ctrl.signal,
           idempotencyKey: createDistributionIdempotencyKey('pub'),
         },
       );
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
+      bumpPollEpoch();
       if (updated.status === 'PUBLISHING') {
         prevPublishingIdsRef.current.add(updated.id);
       }
@@ -820,7 +932,7 @@ export function StudioDistributionDrawer({
         );
       }
     } catch (err) {
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       if (isPreflightBlockedError(err)) {
         const nextPreflight: DistributionPreflightResult = err.preflight ?? {
           ok: false,
@@ -828,9 +940,11 @@ export function StudioDistributionDrawer({
           warnings: err.warnings,
         };
         setPreflight(nextPreflight);
-        setPublishBlockedNotice(
-          err.message || '发布前校验未通过，请先返回编辑器补填缺失事实，或勾选风险确认后再推送。',
-        );
+        setPublishBlockedNoticeByTask((prev) => ({
+          ...prev,
+          [task.id]:
+            err.message || '发布前校验未通过，请先返回编辑器补填缺失事实，或勾选风险确认后再推送。',
+        }));
         feedback.notifyWarning('发布已被体检门禁拦截，请查看 Step 1 拦截明细');
         return;
       }
@@ -838,8 +952,9 @@ export function StudioDistributionDrawer({
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (seq === sessionSeqRef.current) {
-        setPublishingTaskId(null);
+      taskActionCtrlsRef.current.delete(ctrl);
+      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
+        setPublishingTaskId((prev) => (prev === task.id ? null : prev));
       }
     }
   };
@@ -855,7 +970,7 @@ export function StudioDistributionDrawer({
     setQuickRegisteringTaskId(task.id);
     try {
       const ok = await onCreatePublishRecord({
-        channel: task.channelLabel,
+        channel: task.channelLabel.trim().slice(0, 60),
         publishedUrl: rawUrl,
         autoRetest: { enabled: true },
       });
@@ -867,7 +982,7 @@ export function StudioDistributionDrawer({
       }
     } finally {
       if (seq === sessionSeqRef.current) {
-        setQuickRegisteringTaskId(null);
+        setQuickRegisteringTaskId((prev) => (prev === task.id ? null : prev));
       }
     }
   };
@@ -875,15 +990,19 @@ export function StudioDistributionDrawer({
   const handleCreatePrShare = async (task: ArticleDistributionTaskItem) => {
     if (readOnly) return;
     const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
+    bumpPollEpoch();
     setPrActionTaskId(task.id);
     setDrawerError(null);
     try {
       const res = await createPrShareLink(
         task.id,
         { ttlDays: 30 },
-        { storage: window.sessionStorage },
+        { storage: window.sessionStorage, signal: ctrl.signal },
       );
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+      bumpPollEpoch();
       setGeneratedPrShareByTask((prev) => ({
         ...prev,
         [task.id]: { shareUrl: res.shareUrl, expiresAt: res.expiresAt },
@@ -898,19 +1017,21 @@ export function StudioDistributionDrawer({
       invalidateFreshness('distributions');
       feedback.notifySuccess('已生成 30 天免登录外部供稿链接');
     } catch (err) {
-      if (seq !== sessionSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       const msg = formatDrawerError(err, '生成外部供稿链接失败');
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (seq === sessionSeqRef.current) {
-        setPrActionTaskId(null);
+      taskActionCtrlsRef.current.delete(ctrl);
+      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
+        setPrActionTaskId((prev) => (prev === task.id ? null : prev));
       }
     }
   };
 
   const handleRevokePrShare = (task: ArticleDistributionTaskItem) => {
     if (readOnly) return;
+    const seq = sessionSeqRef.current;
     feedback.confirm({
       title: '确认撤销外部供稿链接？',
       content: '撤销后该免登录链接将立即返回 404，外部媒体或 KOL 将无法继续打开或回传链接。',
@@ -918,11 +1039,18 @@ export function StudioDistributionDrawer({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        const seq = sessionSeqRef.current;
+        if (seq !== sessionSeqRef.current) return;
+        const ctrl = new AbortController();
+        taskActionCtrlsRef.current.add(ctrl);
+        bumpPollEpoch();
         setPrActionTaskId(task.id);
         try {
-          await revokePrShareLink(task.id, { storage: window.sessionStorage });
-          if (seq !== sessionSeqRef.current) return;
+          await revokePrShareLink(task.id, {
+            storage: window.sessionStorage,
+            signal: ctrl.signal,
+          });
+          if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+          bumpPollEpoch();
           setGeneratedPrShareByTask((prev) => {
             const next = { ...prev };
             delete next[task.id];
@@ -938,11 +1066,12 @@ export function StudioDistributionDrawer({
           invalidateFreshness('distributions');
           feedback.notifySuccess('已撤销外部供稿链接');
         } catch (err) {
-          if (seq !== sessionSeqRef.current) return;
+          if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
           feedback.notifyError(formatDrawerError(err, '撤销供稿链接失败'));
         } finally {
-          if (seq === sessionSeqRef.current) {
-            setPrActionTaskId(null);
+          taskActionCtrlsRef.current.delete(ctrl);
+          if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
+            setPrActionTaskId((prev) => (prev === task.id ? null : prev));
           }
         }
       },
@@ -976,6 +1105,7 @@ export function StudioDistributionDrawer({
     const factSheet = parseFactSheet(extras);
     const generatedShare = generatedPrShareByTask[task.id];
     const checkedItems = checkedChecklistByTask[task.id] ?? [];
+    const taskPublishBlockedNotice = publishBlockedNoticeByTask[task.id] ?? null;
 
     const updateDraftField = <K extends keyof VariantDraftState>(
       key: K,
@@ -1052,12 +1182,13 @@ export function StudioDistributionDrawer({
           />
         ) : null}
 
-        {publishBlockedNotice && task.mode === 'L1_API' ? (
+        {taskPublishBlockedNotice && task.mode === 'L1_API' ? (
           <Alert
             type="error"
             showIcon
             message="推送被发布前体检门禁拦截"
-            description={publishBlockedNotice}
+            description={taskPublishBlockedNotice}
+            style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
             action={
               <Button
                 size="small"
@@ -1433,23 +1564,42 @@ export function StudioDistributionDrawer({
             }}
           >
             {factSheet ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
                   结构化媒体 Fact Sheet 预览
                 </div>
                 {factSheet.keyAngles.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                     {factSheet.keyAngles.map((angle) => (
-                      <Tag key={angle} color="blue" style={{ margin: 0 }}>
+                      <Tag
+                        key={angle}
+                        color="blue"
+                        style={{
+                          margin: 0,
+                          maxWidth: '100%',
+                          whiteSpace: 'normal',
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                        }}
+                      >
                         {angle}
                       </Tag>
                     ))}
                   </div>
                 ) : null}
                 {factSheet.verifiedFacts.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                     {factSheet.verifiedFacts.map((fact) => (
-                      <div key={fact.title} style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                      <div
+                        key={fact.title}
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--gm-fg-2)',
+                          minWidth: 0,
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                        }}
+                      >
                         <strong style={{ color: 'var(--gm-fg-1)' }}>{fact.title}：</strong>
                         {fact.summary}
                       </div>
@@ -1477,7 +1627,9 @@ export function StudioDistributionDrawer({
                 style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                 onClick={() => void handleCreatePrShare(task)}
               >
-                生成 30 天免登录供稿链接
+                {task.shareLinkActive || generatedShare
+                  ? '重新生成 30 天免登录供稿链接'
+                  : '生成 30 天免登录供稿链接'}
               </Button>
               {task.shareLinkActive || generatedShare ? (
                 <Button
@@ -1550,7 +1702,7 @@ export function StudioDistributionDrawer({
                 type="info"
                 showIcon
                 message={`当前已有生效中的免登录供稿链接（有效期至 ${formatShanghaiDateTime(task.shareExpiresAt)}）`}
-                description="出于安全原因，系统仅保存链接哈希值且不再明文回显。如需重新获取明文链接，请点击「生成 30 天免登录供稿链接」签发新链接（旧链接将自动失效）。"
+                description="出于安全原因，系统仅保存链接哈希值且不再明文回显。如需重新获取明文链接，请点击「重新生成 30 天免登录供稿链接」签发新链接（旧链接将自动失效）。"
               />
             ) : null}
           </div>
@@ -1564,6 +1716,7 @@ export function StudioDistributionDrawer({
       <Drawer
         open={open}
         onClose={onClose}
+        destroyOnHidden
         title={null}
         closable={false}
         footer={null}
@@ -1729,7 +1882,15 @@ export function StudioDistributionDrawer({
                     >
                       {preflight.blockers.map((blocker) => (
                         <div key={blocker.code} style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-danger)' }}>
+                          <div
+                            style={{
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: 'var(--gm-danger)',
+                              overflowWrap: 'anywhere',
+                              wordBreak: 'break-word',
+                            }}
+                          >
                             {blocker.message}
                           </div>
                           {blocker.details && blocker.details.length > 0 ? (
@@ -1806,7 +1967,15 @@ export function StudioDistributionDrawer({
                       }}
                     >
                       {preflight.warnings.map((w) => (
-                        <div key={w.code} style={{ fontSize: 12, color: 'var(--gm-warning)' }}>
+                        <div
+                          key={w.code}
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--gm-warning)',
+                            overflowWrap: 'anywhere',
+                            wordBreak: 'break-word',
+                          }}
+                        >
                           • {w.message}
                         </div>
                       ))}
@@ -1908,7 +2077,14 @@ export function StudioDistributionDrawer({
                                 }}
                               >
                                 <span
-                                  style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: 'var(--gm-fg-1)',
+                                    minWidth: 0,
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                  }}
                                 >
                                   {rec.channel}
                                 </span>
@@ -1921,7 +2097,14 @@ export function StudioDistributionDrawer({
                                   </Tag>
                                 ) : null}
                               </div>
-                              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: 'var(--gm-fg-2)',
+                                  overflowWrap: 'anywhere',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
                                 {rec.reason}
                               </div>
                               {safeUrls.length > 0 ? (
@@ -2004,9 +2187,13 @@ export function StudioDistributionDrawer({
                         {l1Options.map((opt) => {
                           const selected = selectedTargetKeys.includes(opt.key);
                           return (
-                            <label
+                            <div
                               key={opt.key}
+                              role="presentation"
                               data-testid={`distribution-target-${opt.key}`}
+                              onClick={() => {
+                                if (!readOnly) toggleTargetKey(opt.key);
+                              }}
                               style={{
                                 padding: 10,
                                 borderRadius: 'var(--gm-radius-sm)',
@@ -2024,11 +2211,14 @@ export function StudioDistributionDrawer({
                                 boxSizing: 'border-box',
                               }}
                             >
-                              <Checkbox
-                                checked={selected}
-                                disabled={readOnly}
-                                onChange={() => toggleTargetKey(opt.key)}
-                              />
+                              <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                                <Checkbox
+                                  checked={selected}
+                                  disabled={readOnly}
+                                  aria-label={opt.channelLabel}
+                                  onChange={() => toggleTargetKey(opt.key)}
+                                />
+                              </span>
                               <div style={{ minWidth: 0, flex: 1 }}>
                                 <div
                                   style={{
@@ -2036,6 +2226,7 @@ export function StudioDistributionDrawer({
                                     flexWrap: 'wrap',
                                     alignItems: 'center',
                                     gap: 6,
+                                    minWidth: 0,
                                   }}
                                 >
                                   <span
@@ -2043,6 +2234,9 @@ export function StudioDistributionDrawer({
                                       fontSize: 13,
                                       fontWeight: 600,
                                       color: 'var(--gm-fg-1)',
+                                      minWidth: 0,
+                                      overflowWrap: 'anywhere',
+                                      wordBreak: 'break-word',
                                     }}
                                   >
                                     {opt.channelLabel}
@@ -2067,13 +2261,14 @@ export function StudioDistributionDrawer({
                                       color: 'var(--gm-fg-3)',
                                       marginTop: 4,
                                       overflowWrap: 'anywhere',
+                                      wordBreak: 'break-word',
                                     }}
                                   >
                                     {opt.siteBaseUrl}
                                   </div>
                                 ) : null}
                               </div>
-                            </label>
+                            </div>
                           );
                         })}
                       </div>
@@ -2095,9 +2290,13 @@ export function StudioDistributionDrawer({
                       {communityOptions.map((opt) => {
                         const selected = selectedTargetKeys.includes(opt.key);
                         return (
-                          <label
+                          <div
                             key={opt.key}
+                            role="presentation"
                             data-testid={`distribution-target-${opt.provider}`}
+                            onClick={() => {
+                              if (!readOnly) toggleTargetKey(opt.key);
+                            }}
                             style={{
                               padding: 10,
                               borderRadius: 'var(--gm-radius-sm)',
@@ -2113,11 +2312,14 @@ export function StudioDistributionDrawer({
                               boxSizing: 'border-box',
                             }}
                           >
-                            <Checkbox
-                              checked={selected}
-                              disabled={readOnly}
-                              onChange={() => toggleTargetKey(opt.key)}
-                            />
+                            <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selected}
+                                disabled={readOnly}
+                                aria-label={opt.channelLabel}
+                                onChange={() => toggleTargetKey(opt.key)}
+                              />
+                            </span>
                             <div style={{ minWidth: 0, flex: 1 }}>
                               <div
                                 style={{
@@ -2125,10 +2327,18 @@ export function StudioDistributionDrawer({
                                   flexWrap: 'wrap',
                                   alignItems: 'center',
                                   gap: 6,
+                                  minWidth: 0,
                                 }}
                               >
                                 <span
-                                  style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: 'var(--gm-fg-1)',
+                                    minWidth: 0,
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                  }}
                                 >
                                   {opt.channelLabel}
                                 </span>
@@ -2141,11 +2351,19 @@ export function StudioDistributionDrawer({
                                   </Tag>
                                 ) : null}
                               </div>
-                              <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
+                              <div
+                                style={{
+                                  fontSize: 12,
+                                  color: 'var(--gm-fg-3)',
+                                  marginTop: 4,
+                                  overflowWrap: 'anywhere',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
                                 {opt.description}
                               </div>
                             </div>
-                          </label>
+                          </div>
                         );
                       })}
                     </div>
@@ -2159,9 +2377,13 @@ export function StudioDistributionDrawer({
                     {prOptions.map((opt) => {
                       const selected = selectedTargetKeys.includes(opt.key);
                       return (
-                        <label
+                        <div
                           key={opt.key}
+                          role="presentation"
                           data-testid="distribution-target-PR_PACKET"
+                          onClick={() => {
+                            if (!readOnly) toggleTargetKey(opt.key);
+                          }}
                           style={{
                             padding: 10,
                             borderRadius: 'var(--gm-radius-sm)',
@@ -2177,20 +2399,39 @@ export function StudioDistributionDrawer({
                             boxSizing: 'border-box',
                           }}
                         >
-                          <Checkbox
-                            checked={selected}
-                            disabled={readOnly}
-                            onChange={() => toggleTargetKey(opt.key)}
-                          />
+                          <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selected}
+                              disabled={readOnly}
+                              aria-label={opt.channelLabel}
+                              onChange={() => toggleTargetKey(opt.key)}
+                            />
+                          </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                            <div
+                              style={{
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: 'var(--gm-fg-1)',
+                                overflowWrap: 'anywhere',
+                                wordBreak: 'break-word',
+                              }}
+                            >
                               {opt.channelLabel}
                             </div>
-                            <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--gm-fg-3)',
+                                marginTop: 4,
+                                overflowWrap: 'anywhere',
+                                wordBreak: 'break-word',
+                              }}
+                            >
                               {opt.description}
                             </div>
                           </div>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>
@@ -2224,6 +2465,7 @@ export function StudioDistributionDrawer({
                   ) : (
                     <Tabs
                       className="gm-vis-tabs"
+                      destroyOnHidden
                       activeKey={activeTaskId ?? tasks[0]?.id}
                       onChange={setActiveTaskId}
                       items={tasks.map((task) => ({
@@ -2304,9 +2546,19 @@ export function StudioDistributionDrawer({
             个目标渠道的专属变体：
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
             {selectedTargets.map((opt) => (
-              <Tag key={opt.key} color="geekblue" style={{ margin: 0 }}>
+              <Tag
+                key={opt.key}
+                color="geekblue"
+                style={{
+                  margin: 0,
+                  maxWidth: '100%',
+                  whiteSpace: 'normal',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                }}
+              >
                 {opt.channelLabel}
               </Tag>
             ))}
