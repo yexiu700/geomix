@@ -47,11 +47,14 @@ jobs:
       SEARCH_PROVIDER: link_list
       FEATURE_AI_IMAGE: 'true'
       FEATURE_VISIBILITY: 'true'
+      CREDENTIAL_ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      PUBLIC_APP_URL: http://127.0.0.1:3000
       NEXT_PUBLIC_API_BASE: http://127.0.0.1:3001/api/v1
       NEXT_E2E_FAST_BUILD: '1'
       E2E_BASE_URL: http://127.0.0.1:3000
       E2E_API_BASE: http://127.0.0.1:3001/api/v1
       E2E_PUBLIC_FIXTURE_HOST: public.e2e.example
+      E2E_FIXTURE_PORT: '3099'
       E2E_V2: '1'
       AUTH_CAPTCHA_MAX: '100'
     steps:
