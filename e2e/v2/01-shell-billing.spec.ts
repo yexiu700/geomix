@@ -1248,7 +1248,9 @@ v2Describe(
 
           await page.reload({ waitUntil: 'domcontentloaded' });
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
-          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandB.name);
+          const brandBGlobalLabel =
+            brandB.markets.find((m) => m.market === 'GLOBAL')?.localBrandName ?? brandB.name;
+          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandBGlobalLabel);
         } finally {
           await context.close();
         }
