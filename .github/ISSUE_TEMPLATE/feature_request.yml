@@ -8,13 +8,13 @@ body:
     attributes:
       label: Target Area
       options:
-        - Material Studio (Keywords / Questions / Gallery / Knowledge)
-        - AI Writing (Prompts / Categories / Tasks / Articles)
-        - Traffic Replication (Single / Batch Rewrite)
-        - AI Image Generation
-        - AI Visibility & Analytics
-        - Auth / Billing / Admin / Shell
-        - Architecture / Refactor / Tooling
+        - Action Home & Workspace Shell (/home, Brand/Market Switcher)
+        - Brand Assets (Brands / Dual-Market / Fact Cards / Media Gallery)
+        - AI Visibility Diagnostics & Radar (/visibility)
+        - GEO Brief Engine (Diagnosis-to-Brief / Competitor Counter)
+        - GEO Content Studio & Delivery (/studio, SSE, Batch, Evaluator, Export, Retest)
+        - Account, Auth, Billing & Admin Console (/account, /admin)
+        - Architecture / Refactor / Tooling / E2E
     validations:
       required: true
 

@@ -26,8 +26,9 @@
 
 以下条目在后续迭代中落地或演进，覆盖/补充上表初期基线（现行实现详情见 [架构与模块索引](./架构与模块索引.md)）：
 
-- **AI 可见度提前落地**：原定二期的「AI 数据看板」与「AI 可见度诊断」已在一期后提前实现（受 `FEATURE_VISIBILITY` 控制），新增队列 `visibility-check` 与计费项 `visibility_check`（默认 `2` 点/次）。
-- **视觉体系与前端组件选型收敛**：全站采用 **Sonar Ink（声呐墨）暗色主题**（运行时真值在 `apps/web/lib/design-tokens.ts` 与 `apps/web/app/globals.css`）；保持零多余重依赖，以 Ant Design 5 + 原生 CSS + 手写 SVG + 自研轻量富文本编辑器（`article-rich-editor.tsx`）替代早先路线图中的 ProComponents、ECharts、wangEditor 与 Tailwind。
-- **用户界面偏好与历史路由**：多标签布局开关已通过 `PATCH /api/v1/account/ui-prefs` 持久化至 `User.uiPrefs`；已登记 16 条历史 `/user/*` 入口重定向（`apps/web/lib/route-map.ts` + `middleware.ts`）。
-- **自动化门禁与发布**：GitHub Actions 已接入 Playwright 全栈 E2E（`e2e.yml`）、非草稿 PR 自动合入（`auto-merge.yml`）与 GHCR + Self-Hosted Runner CD（`cd.yml`）。
+- **AI 可见度提前落地**：原定二期的 AI 可见度诊断已在一期后提前实现（受 `FEATURE_VISIBILITY` 控制），新增队列 `visibility-check` 与计费项 `visibility_check`（默认 `2` 点/次），并在 GeoMix 2.0 扩展为双市场引擎矩阵（国内 8 引擎 + 海外 5 引擎）。
+- **视觉体系与前端组件选型收敛**：全站采用 **Sonar Ink（声呐墨）暗色主题**（运行时真值在 `apps/web/lib/design-tokens.ts` 与 `apps/web/app/globals.css`）；保持零多余重依赖，以 Ant Design 5 + 原生 CSS + 手写 SVG 替代早先路线图中的 ProComponents、ECharts、wangEditor 与 Tailwind（编辑器在 GeoMix 2.0 演进为 `studio-editor-canvas.tsx`）。
+- **GeoMix 2.0 极简 5 工作区与双市场重构**：控制台从一期多标签 15 页收敛为品牌 + 双市场（`CN` / `GLOBAL`）驱动的 5 工作区（`/home`、`/brands`、`/visibility`、`/studio`、`/account`），通过 `middleware.ts` + `lib/route-map.ts` 提供 23 条 307 旧路由兼容跳转，下线前端 `/me/money` 入口；侧栏折叠偏好仍通过 `PATCH /api/v1/account/ui-prefs` 持久化至 `User.uiPrefs`。
+- **GeoMix 2.0 领域模型、队列与定价收敛**：数据模型通过增量迁移 `20261120100000_geomix_v2_domain_schema` 重构为 27 个模型，核心业务接口采用 `/api/v2` 版本化路由，异步队列收敛为 4 个（`fact-index`、`geo-batch`、`visibility-check`、`maintenance`）；计费项收敛为 3 项（`geo_write` 10 点、`visibility_check` 2 点、`inline_image_gen` 5 点，取消 `kb_addon` 拆账），事实卡提炼、写作意见、GEO 体检与局部改写转为 0 点防刷限流标配能力。
+- **自动化门禁与发布**：GitHub Actions 已接入 Playwright 全栈 E2E（`e2e.yml`，含 `E2E_V2=1` 四层与 Tier 5 对抗套件）、非草稿 PR 自动合入（`auto-merge.yml`）与 GHCR + Self-Hosted Runner CD（`cd.yml`）。
 
