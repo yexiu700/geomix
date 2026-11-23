@@ -6,7 +6,10 @@ import {
   FACT_INDEX_ENQUEUER,
   FACT_INDEX_HANDLER,
 } from '../brands/brand-fact-index.runner';
+import { BrandsService } from '../brands/brands.service';
 import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.service';
+import { CrawlProbeService } from '../distribution/crawl-probe.service';
+import { RetestSchedulerService } from '../distribution/retest-scheduler.service';
 import { AdaptersModule } from '../infra/adapters.module';
 import { GEO_BATCH_ENQUEUER, GEO_BATCH_HANDLER, GeoBatchRunner } from '../studio/geo-batch.runner';
 import { RetestMetricsHookService } from '../studio/retest-metrics-hook.service';
@@ -15,6 +18,7 @@ import { VISIBILITY_CONFIG, readVisibilityConfig } from '../visibility/visibilit
 import { VisibilityCollectorService } from '../visibility/visibility-collector.service';
 import { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
 import { VisibilityJudgeService } from '../visibility/visibility-judge.service';
+import { VisibilityRunLifecycleService } from '../visibility/visibility-run-lifecycle.service';
 import {
   VISIBILITY_RUN_COMPLETE_HOOKS,
   VISIBILITY_RUN_ENQUEUER,
@@ -73,7 +77,7 @@ export class QueueModule {
         { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
         { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
-        MaintenanceRunner,
+        BrandsService,
         WorkerRuntimeService,
         {
           provide: VISIBILITY_CONFIG,
@@ -82,6 +86,10 @@ export class QueueModule {
         VisibilityCollectorService,
         VisibilityEngineHealthService,
         VisibilityJudgeService,
+        VisibilityRunLifecycleService,
+        CrawlProbeService,
+        RetestSchedulerService,
+        MaintenanceRunner,
         BrandFactIndexRunner,
         { provide: FACT_INDEX_HANDLER, useExisting: BrandFactIndexRunner },
         StudioGenerationService,
@@ -109,6 +117,9 @@ export class QueueModule {
         VISIBILITY_RUN_ENQUEUER,
         FACT_INDEX_ENQUEUER,
         GEO_BATCH_ENQUEUER,
+        VisibilityRunLifecycleService,
+        CrawlProbeService,
+        RetestSchedulerService,
         VisibilityRunRunner,
         BrandFactIndexRunner,
         StudioGenerationService,

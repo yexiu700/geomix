@@ -495,6 +495,9 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
               facts: {
                 select: { slot: true, content: true },
               },
+              markets: {
+                select: { ownedDomains: true },
+              },
             },
           },
           brandMarket: {
@@ -503,6 +506,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
               market: true,
               localBrandName: true,
               competitors: true,
+              ownedDomains: true,
             },
           },
           observations: {
@@ -532,6 +536,17 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
 
       const market: GeoMarket = run.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
       const fallbackCompetitors = parseCompetitorNamesFromJson(run.brandMarket.competitors);
+      const ownedDomains = dedupeTrimmed(
+        [
+          ...(Array.isArray(run.brandMarket.ownedDomains) ? run.brandMarket.ownedDomains : []),
+          ...(Array.isArray(run.brand.markets)
+            ? run.brand.markets.flatMap((m) =>
+                Array.isArray(m.ownedDomains) ? m.ownedDomains : [],
+              )
+            : []),
+        ],
+        30,
+      );
       const presentFactSlots = new Set<BrandFactSlot>(
         run.brand.facts
           .filter((f) => typeof f.content === 'string' && f.content.trim().length > 0)
@@ -554,6 +569,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
           domain: c.domain,
           title: c.title,
           sourceKind: toCitationSourceKind(c.sourceKind),
+          ...(typeof c.position === 'number' ? { position: c.position } : {}),
         })),
       }));
 
@@ -605,6 +621,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
           targetFanOuts: candidate.targetFanOuts,
           observations: candidate.observations,
           citations: candidate.citations,
+          ownedDomains,
           matchedFacts,
           presentFactSlots,
         };

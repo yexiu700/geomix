@@ -189,6 +189,16 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       { kind: 'orphan-files' },
       { repeat: { pattern: '30 3 * * *' }, jobId: 'orphan-files' },
     );
+    await queue.add(
+      'crawl-probe-sweep',
+      { kind: 'crawl-probe-sweep' },
+      { repeat: { pattern: '*/30 * * * *' }, jobId: 'crawl-probe-sweep' },
+    );
+    await queue.add(
+      'retest-schedule-sweep',
+      { kind: 'retest-schedule-sweep' },
+      { repeat: { pattern: '*/15 * * * *' }, jobId: 'retest-schedule-sweep' },
+    );
   }
 }
 

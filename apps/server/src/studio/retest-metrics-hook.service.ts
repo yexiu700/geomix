@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import {
   normalizeVisibilityDomain,
   recomputeRunMetrics,
+  type GeoRetestMetricsSnapshot,
   type ProfileForMetrics,
   type RetestMetricSnapshot,
 } from '@geomix/shared';
@@ -79,15 +80,11 @@ function pickDominantSentiment(summary: {
   return bestCount > 0 ? bestKey : null;
 }
 
-/**
- * 计算发布前（基线）或发布后（RETEST 复测）的单篇指标快照。
- * 纯函数，供 RetestMetricsHookService 与 GeoDeliveryService 复用。
- */
-export function computeRetestMetricSnapshot(
+function computeRetestSnapshotDetail(
   observations: readonly RetestObservationLike[],
   brandMarket: RetestBrandMarketLike,
   publishedUrl?: string | null,
-): RetestMetricSnapshot | null {
+): GeoRetestMetricsSnapshot | null {
   const completed = observations.filter((obs) => obs.status === 'SUCCESS');
   if (completed.length === 0) return null;
 
@@ -112,7 +109,7 @@ export function computeRetestMetricSnapshot(
   let citationHit = metrics.ownedCitations > 0;
   if (!citationHit && (publishedCanonical || publishedIsOwnedDomain)) {
     for (const obs of completed) {
-      for (const cite of obs.citations) {
+      for (const cite of obs.citations ?? []) {
         if (cite.sourceKind === 'OWNED') {
           citationHit = true;
           break;
@@ -140,11 +137,46 @@ export function computeRetestMetricSnapshot(
   }
 
   return {
-    mentionRate: metrics.visibilityPct,
-    avgPosition: metrics.avgPosition,
+    mentionRate: Number.isFinite(metrics.visibilityPct) ? metrics.visibilityPct : 0,
+    avgPosition:
+      typeof metrics.avgPosition === 'number' && Number.isFinite(metrics.avgPosition)
+        ? metrics.avgPosition
+        : null,
     sentiment: pickDominantSentiment(metrics.sentimentSummary),
     citationHit,
+    sampleCount: completed.length,
+    hitCount: metrics.mentionedChecks,
   };
+}
+
+/**
+ * 计算发布前（基线）或发布后（RETEST 复测）的单篇指标快照。
+ * 纯函数，供 RetestMetricsHookService 与 GeoDeliveryService 复用。
+ */
+export function computeRetestMetricSnapshot(
+  observations: readonly RetestObservationLike[],
+  brandMarket: RetestBrandMarketLike,
+  publishedUrl?: string | null,
+): RetestMetricSnapshot | null {
+  const detail = computeRetestSnapshotDetail(observations, brandMarket, publishedUrl);
+  if (!detail) return null;
+  return {
+    mentionRate: detail.mentionRate,
+    avgPosition: detail.avgPosition,
+    sentiment: detail.sentiment,
+    citationHit: detail.citationHit,
+  };
+}
+
+/**
+ * 计算定时复测节点（支持 sampleCount=1|3 多次采样聚合）的扩展指标快照。
+ */
+export function computeScheduleMetricsSnapshot(
+  observations: readonly RetestObservationLike[],
+  brandMarket: RetestBrandMarketLike,
+  publishedUrl?: string | null,
+): GeoRetestMetricsSnapshot | null {
+  return computeRetestSnapshotDetail(observations, brandMarket, publishedUrl);
 }
 
 /**
@@ -191,6 +223,27 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           return;
         }
 
+        const allLinkedSchedules = await tx.geoRetestSchedule.findMany({
+          where: {
+            tenantId: event.tenantId,
+            brandId: run.brandId,
+            brandMarketId: run.brandMarketId,
+            visibilityRunId: run.id,
+          },
+          include: {
+            publishRecord: {
+              select: {
+                id: true,
+                publishedUrl: true,
+              },
+            },
+          },
+        });
+
+        const schedules = allLinkedSchedules.filter(
+          (schedule) => schedule.status === 'PENDING' || schedule.status === 'RUNNING',
+        );
+
         let records = await tx.geoPublishRecord.findMany({
           where: {
             tenantId: event.tenantId,
@@ -200,8 +253,11 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           },
         });
 
-        // Worker-first race fallback: worker may complete fake RETEST before API links latestRetestRunId
-        if (records.length === 0 && run.retestArticleId) {
+        // Worker-first race fallback: worker may complete fake RETEST before API links latestRetestRunId.
+        // Skip fallback whenever ANY schedule is linked to this run (including CANCELLED or already
+        // COMPLETED schedules) so a scheduled retest on an older channel never mutates an unrelated
+        // publish record on the same article.
+        if (records.length === 0 && allLinkedSchedules.length === 0 && run.retestArticleId) {
           records = await tx.geoPublishRecord.findMany({
             where: {
               tenantId: event.tenantId,
@@ -214,11 +270,24 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           });
         }
 
-        if (records.length === 0) {
+        const uniqueRecords = new Map<string, { id: string; publishedUrl: string }>();
+        for (const record of records) {
+          uniqueRecords.set(record.id, { id: record.id, publishedUrl: record.publishedUrl });
+        }
+        for (const schedule of schedules) {
+          if (schedule.publishRecord) {
+            uniqueRecords.set(schedule.publishRecord.id, {
+              id: schedule.publishRecord.id,
+              publishedUrl: schedule.publishRecord.publishedUrl,
+            });
+          }
+        }
+
+        if (uniqueRecords.size === 0 && schedules.length === 0) {
           return;
         }
 
-        for (const record of records) {
+        for (const record of uniqueRecords.values()) {
           const snapshot = computeRetestMetricSnapshot(
             run.observations,
             run.brandMarket,
@@ -231,6 +300,26 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
             data: {
               latestRetestRunId: run.id,
               afterMetrics: snapshot as unknown as Prisma.InputJsonValue,
+            },
+          });
+        }
+
+        const executedAt = new Date();
+        for (const schedule of schedules) {
+          const scheduleSnapshot = computeScheduleMetricsSnapshot(
+            run.observations,
+            run.brandMarket,
+            schedule.publishRecord?.publishedUrl ?? null,
+          );
+          if (!scheduleSnapshot) continue;
+
+          await tx.geoRetestSchedule.update({
+            where: { id: schedule.id },
+            data: {
+              status: 'COMPLETED',
+              executedAt,
+              skipReason: null,
+              metricsSnapshotJson: scheduleSnapshot as unknown as Prisma.InputJsonValue,
             },
           });
         }

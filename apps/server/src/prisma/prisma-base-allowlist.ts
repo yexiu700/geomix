@@ -48,6 +48,8 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'briefs/briefs-auto-generator.service.ts': { category: 'worker', direct: 1, txOrRaw: 1 },
   'common/test-db.ts': { category: 'test-support', direct: 5, txOrRaw: 0 },
   'dashboard/dashboard.service.ts': { category: 'merchant-debt', direct: 2, txOrRaw: 0 },
+  'distribution/crawl-probe.service.ts': { category: 'worker', direct: 1, txOrRaw: 0 },
+  'distribution/retest-scheduler.service.ts': { category: 'worker', direct: 1, txOrRaw: 0 },
   'infra/adapters.module.ts': { category: 'infra', direct: 2, txOrRaw: 0 },
   'me/me.service.ts': { category: 'merchant-debt', direct: 16, txOrRaw: 0 },
   'queue/active-work.ts': { category: 'worker', direct: 3, txOrRaw: 0 },
