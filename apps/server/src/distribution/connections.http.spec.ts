@@ -492,7 +492,8 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
   const db = new InMemoryConnectionsDb();
   let mockCmsServer: Server;
   let mockCmsBaseUrl = '';
-  let cmsMode: 'ok' | 'upstream_401' | 'upstream_500' = 'ok';
+  let cmsMode: 'ok' | 'upstream_401' | 'upstream_500' | 'custom_400' = 'ok';
+  let custom400Body = '';
   let app: INestApplication;
   let apiBaseUrl = '';
   let strictApp: INestApplication;
@@ -548,6 +549,11 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
         if (cmsMode === 'upstream_500') {
           res.writeHead(500, { 'content-type': 'application/json' });
           res.end(`Crash exposing ${shopifyHeader} ${authHeader}`);
+          return;
+        }
+        if (cmsMode === 'custom_400') {
+          res.writeHead(400, { 'content-type': 'text/plain' });
+          res.end(custom400Body);
           return;
         }
 
@@ -992,5 +998,79 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
     expect(listed.json.data.items).toHaveLength(1);
     expect(listed.json.data.items[0]?.status).toBe('INVALID');
     assertNoSecretsLeaked(listed.rawText, [shopifySecret]);
+  });
+
+  it('S-02: redacts lowercase %xx, + form-encoded, whitespace-split, PHP JSON-escaped \\/, and configJson secrets in ConnectionsService.test() 400 errors', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+    const wpPass = 'abcd efgh ijkl mnop';
+    const slashToken = 'tok+abc/def=9876';
+    const indexNowKey = 'indexnow_secret_key_test_77';
+    const wpBase64 = Buffer.from(`wpadmin:${wpPass}`, 'utf8').toString('base64');
+
+    const createdWp = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'WORDPRESS',
+        displayName: 'WP Redaction Test',
+        siteBaseUrl: `${mockCmsBaseUrl}/wp`,
+        credentials: { username: 'wpadmin', appPassword: wpPass },
+        configJson: { indexNowKey },
+      },
+    });
+    expect(createdWp.status).toBe(200);
+    const wpConnId = createdWp.json.data.id;
+
+    // 1. WordPress 400 echoing whitespace-split password, + form-encoded password, and indexNowKey
+    cmsMode = 'custom_400';
+    custom400Body = `Rejected pass=abcd\nefgh\tijkl  mnop form=abcd+efgh+ijkl+mnop key=${indexNowKey} b64=${wpBase64.replace(/\//g, '\\/')}`;
+    const wpTestRes = await apiFetch<ChannelConnectionTestResultDto>(
+      `/api/v2/brands/brand_a/connections/${wpConnId}/test`,
+      { method: 'POST', token: tokenA, body: {} },
+    );
+    expect(wpTestRes.status).toBe(200);
+    expect(wpTestRes.json.data.ok).toBe(false);
+    expect(wpTestRes.json.data.message).toContain('[REDACTED]');
+    const wpStoredErr = db.connections.find((c) => c.id === wpConnId)?.lastError ?? '';
+    for (const out of [wpTestRes.rawText, wpStoredErr]) {
+      expect(out).not.toContain(wpPass);
+      expect(out).not.toContain('abcd+efgh+ijkl+mnop');
+      expect(out).not.toContain(indexNowKey);
+      expect(out).not.toContain(wpBase64);
+      expect(out).not.toContain(wpBase64.replace(/\//g, '\\/'));
+    }
+
+    // 2. Shopify 400 echoing lowercase %xx encoded token and PHP json_encode \/ escaped token
+    const createdShop = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Shopify Encoded Redaction',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { accessToken: slashToken },
+      },
+    });
+    expect(createdShop.status).toBe(200);
+    const shopConnId = createdShop.json.data.id;
+
+    cmsMode = 'custom_400';
+    custom400Body = 'PHP error: {"err":"bad tok+abc\\/def=9876" pct=tok%2babc%2fdef%3d9876';
+    const shopTestRes = await apiFetch<ChannelConnectionTestResultDto>(
+      `/api/v2/brands/brand_a/connections/${shopConnId}/test`,
+      { method: 'POST', token: tokenA, body: {} },
+    );
+    expect(shopTestRes.status).toBe(200);
+    expect(shopTestRes.json.data.ok).toBe(false);
+    expect(shopTestRes.json.data.message).toContain('[REDACTED]');
+    const shopStoredErr = db.connections.find((c) => c.id === shopConnId)?.lastError ?? '';
+    for (const out of [shopTestRes.rawText, shopStoredErr]) {
+      expect(out).not.toContain(slashToken);
+      expect(out).not.toContain('tok+abc\\/def=9876');
+      expect(out).not.toContain('tok%2babc%2fdef%3d9876');
+    }
+    cmsMode = 'ok';
   });
 });

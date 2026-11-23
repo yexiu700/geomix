@@ -473,7 +473,12 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
   ) {}
 
   async onVisibilityRunComplete(event: VisibilityRunCompleteEvent): Promise<void> {
-    if (event.triggerType === 'RETEST' || event.successCount <= 0) {
+    if (
+      event.triggerType === 'RETEST' ||
+      event.status === 'FAILED' ||
+      event.status === 'CANCELLED' ||
+      event.successCount <= 0
+    ) {
       return;
     }
 

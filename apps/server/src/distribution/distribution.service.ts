@@ -292,9 +292,13 @@ export class DistributionService {
         ? article.brief.matchedFactIds.length
         : article.brand.facts.length;
 
+    const variantMetaDesc = overrides?.variantMetaDesc ?? null;
     const liveFlags = [
       ...this.compliance.scan(title, { market }).geoFlags,
       ...this.compliance.scan(contentMarkdown, { market }).geoFlags,
+      ...(variantMetaDesc?.trim()
+        ? this.compliance.scan(variantMetaDesc, { market }).geoFlags
+        : []),
     ];
     const combinedFlags = dedupeComplianceFlags(
       hasContentOverride
@@ -467,6 +471,7 @@ export class DistributionService {
     const liveFlags = dedupeComplianceFlags([
       ...this.compliance.scan(nextTitle, { market }).geoFlags,
       ...this.compliance.scan(nextMarkdown, { market }).geoFlags,
+      ...(nextMetaDesc?.trim() ? this.compliance.scan(nextMetaDesc, { market }).geoFlags : []),
     ]);
 
     const preflight = evaluateDistributionPreflight({
@@ -627,6 +632,9 @@ export class DistributionService {
     const liveFlags = dedupeComplianceFlags([
       ...this.compliance.scan(task.variantTitle, { market }).geoFlags,
       ...this.compliance.scan(task.variantMarkdown, { market }).geoFlags,
+      ...(task.variantMetaDesc?.trim()
+        ? this.compliance.scan(task.variantMetaDesc, { market }).geoFlags
+        : []),
     ]);
 
     const preflight = evaluateDistributionPreflight({

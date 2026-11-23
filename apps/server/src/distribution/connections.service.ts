@@ -414,7 +414,7 @@ export class ConnectionsService {
       return {
         ok: true,
         status: 'ACTIVE',
-        message: this.sanitizeConnectionError(result.message, credentials),
+        message: this.sanitizeConnectionError(result.message, credentials, configRecord),
         testedAt: now.toISOString(),
         targets: result.targets,
       };
@@ -425,7 +425,7 @@ export class ConnectionsService {
           : error instanceof Error
             ? error.message
             : '渠道连接测试失败';
-      const safeMsg = this.sanitizeConnectionError(rawMessage, credentials);
+      const safeMsg = this.sanitizeConnectionError(rawMessage, credentials, configRecord);
 
       await this.prisma.scoped.channelConnection.update({
         where: { id: existing.id },
@@ -470,8 +470,13 @@ export class ConnectionsService {
   /**
    * 供本服务及 M5 DistributionRunner 复用的错误信息脱敏方法。
    */
-  sanitizeConnectionError(rawMessage: string, credentials?: ConnectorSecrets): string {
-    const candidates = credentials ? collectSecretCandidates(credentials) : [];
+  sanitizeConnectionError(
+    rawMessage: string,
+    credentials?: ConnectorSecrets,
+    configJson?: Record<string, unknown> | null,
+  ): string {
+    const candidates =
+      credentials || configJson ? collectSecretCandidates(credentials ?? {}, configJson) : [];
     const cleaned = redactSecrets(rawMessage, candidates, 500);
     return cleaned || '渠道连接异常';
   }

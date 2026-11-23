@@ -991,4 +991,88 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
       expect(screen.queryByTestId('channel-connection-modal')).toBeNull();
     });
   });
+
+  it('W-01: enforces synchronous single-flight mutexes on same-tick double-click for createChannelConnection and testChannelConnection', async () => {
+    const existing = makeConn({ id: 'conn_card_mutex', displayName: 'Card Mutex Blog' });
+    listChannelConnectionsMock.mockResolvedValue({ items: [existing] });
+
+    let resolveCreate!: (val: ChannelConnectionDto) => void;
+    createChannelConnectionMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    let resolveCardTest!: (val: ChannelConnectionTestResultDto) => void;
+    testChannelConnectionMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCardTest = resolve;
+        }),
+    );
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    // 1. Same-tick double-click on card test button -> strictly 1 testChannelConnection call
+    const cardTestBtn = await screen.findByTestId('channel-connection-test-btn-conn_card_mutex');
+    act(() => {
+      cardTestBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      cardTestBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(testChannelConnectionMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCardTest({
+        ok: true,
+        status: 'ACTIVE',
+        message: '连接测试通过',
+        testedAt: '2026-11-23T06:20:00.000Z',
+        targets: [],
+      });
+    });
+
+    // 2. Same-tick double-click on submit + save-and-test -> strictly 1 createChannelConnection call
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Single Flight Store' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://singleflight.myshopify.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Shopify Access Token'), {
+      target: { value: 'shpat_single_flight_token_123456' },
+    });
+
+    const submitBtn = screen.getByTestId('channel-connection-submit-btn');
+    const saveAndTestBtn = screen.getByTestId('channel-connection-save-and-test-btn');
+    act(() => {
+      submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      saveAndTestBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(createChannelConnectionMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveCreate(
+        makeConn({
+          id: 'conn_single_flight_created',
+          displayName: 'Single Flight Store',
+          siteBaseUrl: 'https://singleflight.myshopify.com',
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('channel-connection-modal')).toBeNull();
+    });
+  });
 });

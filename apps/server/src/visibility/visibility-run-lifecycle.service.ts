@@ -620,6 +620,18 @@ export class VisibilityRunLifecycleService {
         where: { runId, tenantId, status: 'PENDING' },
         data: { status: 'SKIPPED', checkedAt: now },
       });
+      await tx.geoRetestSchedule.updateMany({
+        where: {
+          tenantId,
+          visibilityRunId: runId,
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          executedAt: now,
+          skipReason: '关联复测任务已取消',
+        },
+      });
       return tx.visibilityObservation.count({
         where: { runId, tenantId, status: 'RUNNING' },
       });

@@ -77,6 +77,19 @@ function createHarness(opts?: {
     tenants.set(t.id, { ...t });
   }
 
+  const visibilityRuns = new Map<
+    string,
+    {
+      id: string;
+      tenantId: string;
+      brandId: string;
+      brandMarketId: string;
+      status: string;
+      lastError: string | null;
+      finishedAt: Date | null;
+    }
+  >();
+
   let seq = 1;
 
   const prisma = {
@@ -104,6 +117,20 @@ function createHarness(opts?: {
       },
     },
     scoped: {
+      visibilityRun: {
+        findFirst: vi.fn(
+          async (args: { where: { id?: string; brandId?: string; brandMarketId?: string } }) => {
+            const tid = currentTenantId();
+            const run = args.where.id ? visibilityRuns.get(args.where.id) : undefined;
+            if (!run || run.tenantId !== tid) return null;
+            if (args.where.brandId && run.brandId !== args.where.brandId) return null;
+            if (args.where.brandMarketId && run.brandMarketId !== args.where.brandMarketId) {
+              return null;
+            }
+            return run;
+          },
+        ),
+      },
       geoPublishRecord: {
         findFirst: vi.fn(
           async (args: { where: { id?: string; brandId?: string; brandMarketId?: string } }) => {
@@ -346,6 +373,7 @@ function createHarness(opts?: {
   return {
     service,
     prisma,
+    visibilityRuns,
     billing,
     engineHealth,
     createRunMock,
@@ -712,5 +740,123 @@ describe('RetestSchedulerService.runDueSweep', () => {
     expect(sched.status).toBe('RUNNING');
     expect(sched.visibilityRunId).toBe(deriveVisibilityRunId('tenant_a', `sched:${sched.id}`));
     expect(sched.skipReason).toBeNull();
+  });
+
+  it('S-03: runDueSweep self-heals stuck RUNNING schedules whose linked VisibilityRun is FAILED, CANCELLED, or missing/stale while keeping active RUNNING runs intact', async () => {
+    const h = createHarness();
+    const now = new Date('2026-10-15T12:00:00Z');
+    const oldTime = new Date('2026-10-15T11:30:00Z');
+
+    // Seed 4 RUNNING schedules: linked FAILED, linked CANCELLED, orphaned missing run (>10m old), and still-active RUNNING
+    h.schedules.set('sched_failed', {
+      id: 'sched_failed',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      publishRecordId: 'pub_1',
+      milestoneDay: 7,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_failed_1',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+    h.schedules.set('sched_cancelled', {
+      id: 'sched_cancelled',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      publishRecordId: 'pub_1',
+      milestoneDay: 14,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_cancelled_1',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+    h.schedules.set('sched_orphan', {
+      id: 'sched_orphan',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      publishRecordId: 'pub_1',
+      milestoneDay: 30,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_missing_999',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+    h.schedules.set('sched_active', {
+      id: 'sched_active',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      publishRecordId: 'pub_2',
+      milestoneDay: 7,
+      sampleCount: 1,
+      dueAt: oldTime,
+      status: 'RUNNING',
+      visibilityRunId: 'run_active_1',
+      metricsSnapshotJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: oldTime,
+      updatedAt: oldTime,
+    });
+
+    h.visibilityRuns.set('run_failed_1', {
+      id: 'run_failed_1',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      status: 'FAILED',
+      lastError: 'All SonarGate checks timed out',
+      finishedAt: new Date('2026-10-15T11:45:00Z'),
+    });
+    h.visibilityRuns.set('run_cancelled_1', {
+      id: 'run_cancelled_1',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      status: 'CANCELLED',
+      lastError: null,
+      finishedAt: new Date('2026-10-15T11:46:00Z'),
+    });
+    h.visibilityRuns.set('run_active_1', {
+      id: 'run_active_1',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_1',
+      status: 'RUNNING',
+      lastError: null,
+      finishedAt: null,
+    });
+
+    await h.service.runDueSweep({ now });
+
+    expect(h.schedules.get('sched_failed')?.status).toBe('FAILED');
+    expect(h.schedules.get('sched_failed')?.skipReason).toContain('SonarGate checks timed out');
+    expect(h.schedules.get('sched_failed')?.executedAt).toBeInstanceOf(Date);
+
+    expect(h.schedules.get('sched_cancelled')?.status).toBe('CANCELLED');
+    expect(h.schedules.get('sched_cancelled')?.skipReason).toContain('取消');
+
+    expect(h.schedules.get('sched_orphan')?.status).toBe('FAILED');
+    expect(h.schedules.get('sched_orphan')?.skipReason).toContain('缺失');
+
+    expect(h.schedules.get('sched_active')?.status).toBe('RUNNING');
   });
 });

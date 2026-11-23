@@ -234,12 +234,15 @@ export function BrandChannelConnections({
   const modalActionCtrlRef = useRef<AbortController | null>(null);
   const cardActionCtrlsRef = useRef<Set<AbortController>>(new Set());
   const skipNextSelfRefreshRef = useRef(false);
+  const submittingRef = useRef(false);
+  const testingCardsRef = useRef<Set<string>>(new Set());
 
   const abortCardActions = useCallback(() => {
     for (const ctrl of cardActionCtrlsRef.current) {
       ctrl.abort();
     }
     cardActionCtrlsRef.current.clear();
+    testingCardsRef.current.clear();
   }, []);
 
   const broadcastConnectionsChanged = useCallback(() => {
@@ -262,6 +265,7 @@ export function BrandChannelConnections({
   const resetModalState = useCallback(() => {
     modalActionCtrlRef.current?.abort();
     modalActionCtrlRef.current = null;
+    submittingRef.current = false;
     setModalOpen(false);
     setEditingConn(null);
     setProvider('SHOPIFY');
@@ -341,6 +345,7 @@ export function BrandChannelConnections({
     return () => {
       contextSeqRef.current += 1;
       loadSeqRef.current += 1;
+      submittingRef.current = false;
       loadCtrlRef.current?.abort();
       modalActionCtrlRef.current?.abort();
       abortCardActions();
@@ -620,7 +625,7 @@ export function BrandChannelConnections({
   );
 
   const handleModalSubmit = async (options?: { testAfterCreate?: boolean }) => {
-    if (readOnly) return;
+    if (readOnly || submittingRef.current) return;
     setModalError(null);
     const trimmedName = displayName.trim();
     const trimmedUrl = siteBaseUrl.trim();
@@ -638,20 +643,19 @@ export function BrandChannelConnections({
       return;
     }
 
-    modalActionCtrlRef.current?.abort();
-    const ctrl = new AbortController();
-    modalActionCtrlRef.current = ctrl;
-    const seq = contextSeqRef.current;
-    setSubmitting(true);
+    if (editingConn) {
+      const credPatch = buildPatchCredentials();
+      if (!credPatch.ok) {
+        setModalError(credPatch.error);
+        return;
+      }
+      submittingRef.current = true;
+      const ctrl = new AbortController();
+      modalActionCtrlRef.current = ctrl;
+      const seq = contextSeqRef.current;
+      setSubmitting(true);
 
-    try {
-      if (editingConn) {
-        const credPatch = buildPatchCredentials();
-        if (!credPatch.ok) {
-          setModalError(credPatch.error);
-          setSubmitting(false);
-          return;
-        }
+      try {
         const payload: UpdateChannelConnectionInput = {
           displayName: trimmedName,
           siteBaseUrl: trimmedUrl,
@@ -667,59 +671,90 @@ export function BrandChannelConnections({
         broadcastConnectionsChanged();
         feedback.notifySuccess(`已保存渠道连接「${updated.displayName}」`);
         resetModalState();
-      } else {
-        const credRes = buildCreateCredentials();
-        if (!credRes.ok) {
-          setModalError(credRes.error);
-          setSubmitting(false);
-          return;
-        }
-        const created = await createChannelConnection(
-          brandId,
-          {
-            market: activeMarket,
-            provider,
-            displayName: trimmedName,
-            siteBaseUrl: trimmedUrl,
-            credentials: credRes.credentials,
-            configJson: cfgRes.config,
-          },
-          {
-            storage: window.sessionStorage,
-            signal: ctrl.signal,
-          },
-        );
+      } catch (err) {
         if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
-        setConnections((prev) => [created, ...prev.filter((c) => c.id !== created.id)]);
-        broadcastConnectionsChanged();
-
-        if (options?.testAfterCreate) {
-          // Transition seamlessly into edit mode, wipe raw secrets immediately, and pull remote targets
-          setEditingConn(created);
-          clearModalSecrets();
-          setSubmitting(false);
-          feedback.notifySuccess(`已创建连接「${created.displayName}」，正在测试连通性…`);
-          await runModalTest(created.id, provider);
-          return;
+        const msg = formatConnError(err, '保存渠道连接失败');
+        setModalError(msg);
+        feedback.notifyError(msg);
+      } finally {
+        if (modalActionCtrlRef.current === ctrl) {
+          modalActionCtrlRef.current = null;
         }
-
-        feedback.notifySuccess(`已添加渠道连接「${created.displayName}」`);
-        resetModalState();
+        if (seq === contextSeqRef.current) {
+          submittingRef.current = false;
+          if (!ctrl.signal.aborted) {
+            setSubmitting(false);
+          }
+        }
       }
+      return;
+    }
+
+    const credRes = buildCreateCredentials();
+    if (!credRes.ok) {
+      setModalError(credRes.error);
+      return;
+    }
+
+    submittingRef.current = true;
+    const ctrl = new AbortController();
+    modalActionCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setSubmitting(true);
+
+    try {
+      const created = await createChannelConnection(
+        brandId,
+        {
+          market: activeMarket,
+          provider,
+          displayName: trimmedName,
+          siteBaseUrl: trimmedUrl,
+          credentials: credRes.credentials,
+          configJson: cfgRes.config,
+        },
+        {
+          storage: window.sessionStorage,
+          signal: ctrl.signal,
+        },
+      );
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      setConnections((prev) => [created, ...prev.filter((c) => c.id !== created.id)]);
+      broadcastConnectionsChanged();
+
+      if (options?.testAfterCreate) {
+        // Transition seamlessly into edit mode, wipe raw secrets immediately, and pull remote targets
+        setEditingConn(created);
+        clearModalSecrets();
+        setSubmitting(false);
+        feedback.notifySuccess(`已创建连接「${created.displayName}」，正在测试连通性…`);
+        await runModalTest(created.id, provider);
+        return;
+      }
+
+      feedback.notifySuccess(`已添加渠道连接「${created.displayName}」`);
+      resetModalState();
     } catch (err) {
       if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
-      const msg = formatConnError(err, editingConn ? '保存渠道连接失败' : '添加渠道连接失败');
+      const msg = formatConnError(err, '添加渠道连接失败');
       setModalError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
-        setSubmitting(false);
+      if (modalActionCtrlRef.current === ctrl) {
+        modalActionCtrlRef.current = null;
+      }
+      if (seq === contextSeqRef.current) {
+        submittingRef.current = false;
+        if (!ctrl.signal.aborted) {
+          setSubmitting(false);
+        }
       }
     }
   };
 
   const handleTestCard = async (conn: ChannelConnectionDto) => {
-    if (readOnly) return;
+    if (readOnly || testingCardsRef.current.has(conn.id)) return;
+    testingCardsRef.current.add(conn.id);
     const seq = contextSeqRef.current;
     const ctrl = new AbortController();
     cardActionCtrlsRef.current.add(ctrl);
@@ -763,8 +798,11 @@ export function BrandChannelConnections({
       feedback.notifyError(formatConnError(err, '测试渠道连接失败'));
     } finally {
       cardActionCtrlsRef.current.delete(ctrl);
-      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
-        setTestingCardId((prev) => (prev === conn.id ? null : prev));
+      if (seq === contextSeqRef.current) {
+        testingCardsRef.current.delete(conn.id);
+        if (!ctrl.signal.aborted) {
+          setTestingCardId((prev) => (prev === conn.id ? null : prev));
+        }
       }
     }
   };

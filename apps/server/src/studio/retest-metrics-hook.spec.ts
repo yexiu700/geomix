@@ -453,4 +453,84 @@ describe('RetestMetricsHookService brand & market scoping (B-04)', () => {
       expect(pubRecords[1]!.afterMetrics).toBeNull();
     }
   });
+
+  it('S-03: transitions linked RUNNING GeoRetestSchedule rows to FAILED / CANCELLED when RETEST run fails or is cancelled with 0 successes', async () => {
+    const updateManyCalls: Array<Record<string, unknown>> = [];
+
+    for (const scenario of [
+      {
+        eventStatus: 'FAILED' as const,
+        runStatus: 'FAILED',
+        lastError: 'Upstream SonarGate 504 timeout',
+        expectedStatus: 'FAILED',
+        expectedReasonPart: 'SonarGate 504 timeout',
+      },
+      {
+        eventStatus: 'CANCELLED' as const,
+        runStatus: 'CANCELLED',
+        lastError: null,
+        expectedStatus: 'CANCELLED',
+        expectedReasonPart: '已取消',
+      },
+    ]) {
+      updateManyCalls.length = 0;
+      const tx = {
+        visibilityRun: {
+          findFirst: vi.fn(async () => ({
+            id: `run_${scenario.eventStatus.toLowerCase()}`,
+            tenantId: 'tenant_a',
+            brandId: 'brand_a',
+            brandMarketId: 'bm_a_global',
+            triggerType: 'RETEST',
+            status: scenario.runStatus,
+            lastError: scenario.lastError,
+            retestArticleId: 'art_1',
+            brandMarket: null,
+            observations: [],
+          })),
+        },
+        geoRetestSchedule: {
+          updateMany: vi.fn(async (args: Record<string, unknown>) => {
+            updateManyCalls.push(args);
+            return { count: 1 };
+          }),
+        },
+      };
+
+      const prisma = {
+        base: {
+          $transaction: vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+        },
+      } as unknown as PrismaService;
+
+      const hook = new RetestMetricsHookService(prisma);
+      await hook.onVisibilityRunComplete({
+        tenantId: 'tenant_a',
+        brandId: 'brand_a',
+        brandMarketId: 'bm_a_global',
+        runId: `run_${scenario.eventStatus.toLowerCase()}`,
+        triggerType: 'RETEST',
+        retestArticleId: 'art_1',
+        status: scenario.eventStatus,
+        successCount: 0,
+      });
+
+      expect(updateManyCalls).toHaveLength(1);
+      expect(updateManyCalls[0]).toMatchObject({
+        where: {
+          tenantId: 'tenant_a',
+          brandId: 'brand_a',
+          brandMarketId: 'bm_a_global',
+          visibilityRunId: `run_${scenario.eventStatus.toLowerCase()}`,
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        data: {
+          status: scenario.expectedStatus,
+        },
+      });
+      const data = updateManyCalls[0]!.data as { executedAt?: unknown; skipReason?: string };
+      expect(data.executedAt).toBeInstanceOf(Date);
+      expect(data.skipReason).toContain(scenario.expectedReasonPart);
+    }
+  });
 });

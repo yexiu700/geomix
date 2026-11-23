@@ -650,7 +650,7 @@ function stripBrandProperNouns(text: string, brandNames: readonly string[]): str
 
   let stripped = text;
   for (const name of cjkNames) {
-    stripped = stripped.replace(new RegExp(escapeRegExp(name), 'g'), ' ');
+    stripped = stripped.replace(new RegExp(escapeRegExp(name), 'gi'), ' ');
   }
   return stripped;
 }
@@ -672,7 +672,11 @@ export function evaluateDistributionPreflight(
   const blockers: DistributionPreflightItem[] = [];
   const warnings: DistributionPreflightItem[] = [];
 
-  const combinedText = `${input.title ?? ''}\n${input.contentMarkdown ?? ''}`;
+  const combinedText = [
+    input.title ?? '',
+    input.variantMetaDesc ?? '',
+    input.contentMarkdown ?? '',
+  ].join('\n');
 
   // 1. Hard Blocker: Missing fact placeholder slots
   const missingSlots = extractMissingFactSlots(combinedText);

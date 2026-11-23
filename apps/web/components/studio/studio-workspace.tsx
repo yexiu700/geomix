@@ -56,7 +56,11 @@ import {
   triggerPublishRetest,
   updateArticle,
 } from '../../lib/studio';
-import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
+import {
+  invalidateFreshness,
+  useTabFreshness,
+  type FreshnessDomain,
+} from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
   fetchVisibilityEngines,
@@ -754,6 +758,27 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     };
   }, [activeArticleId, activeBrandId, activeBrandMarketId, reloadPublishRecords]);
 
+  const skipNextSelfPublishRecordsRefreshRef = useRef(false);
+
+  const broadcastSelfPublishRecordsFreshness = useCallback((...domains: FreshnessDomain[]) => {
+    skipNextSelfPublishRecordsRefreshRef.current = true;
+    try {
+      invalidateFreshness(...domains);
+    } finally {
+      skipNextSelfPublishRecordsRefreshRef.current = false;
+    }
+  }, []);
+
+  const handlePublishRecordUpdated = useCallback((updated: GeoPublishRecordDto) => {
+    setPublishRecords((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+    // StudioPublishRetest broadcasts invalidateFreshness('publish-records') right after this callback
+    // so other tabs (e.g. /home) refresh; skip redundant self-reload within the same tick.
+    skipNextSelfPublishRecordsRefreshRef.current = true;
+    queueMicrotask(() => {
+      skipNextSelfPublishRecordsRefreshRef.current = false;
+    });
+  }, []);
+
   // Poll pending retest run until afterMetrics writeback or terminal status
   useTaskPolling({
     enabled: Boolean(activeBrandId && activeBrandMarket && pendingRetest),
@@ -772,7 +797,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (matched?.afterMetrics && matched.latestRetestRunId === currentPending.runId) {
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
           return;
         }
@@ -785,7 +810,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (detail.status === 'FAILED' || detail.status === 'CANCELLED') {
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           feedback.notifyWarning('本次复测未成功完成，已按规则退还异常引擎点数');
           return;
         }
@@ -796,7 +821,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           const recheckMatched = recheck.items.find((r) => r.id === currentPending.recordId);
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           if (
             recheckMatched?.afterMetrics &&
             recheckMatched.latestRetestRunId === currentPending.runId
@@ -814,9 +839,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     },
   });
 
-  // Cross-tab freshness sync
+  // Cross-tab freshness sync (briefs/articles/brand-facts/brand-media)
   useTabFreshness({
-    domains: ['briefs', 'articles', 'brand-facts', 'brand-media', 'publish-records'],
+    domains: ['briefs', 'articles', 'brand-facts', 'brand-media'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     refreshOnActivate: false,
     onRefresh: () => {
@@ -824,6 +849,24 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       void loadWorkspaceData(activeBrandId, activeMarket, contextSeqRef.current, {
         preserveSelection: true,
       });
+    },
+  });
+
+  // Dedicated 'publish-records' freshness sync: reload active article's publish records on external changes
+  useTabFreshness({
+    domains: ['publish-records'],
+    active: Boolean(activeBrandId && activeBrandMarket && !streaming),
+    refreshOnActivate: false,
+    onRefresh: () => {
+      if (skipNextSelfPublishRecordsRefreshRef.current) {
+        skipNextSelfPublishRecordsRefreshRef.current = false;
+        return;
+      }
+      if (!activeBrandId || !activeBrandMarket || streaming) return;
+      const openArticleId = activeArticleIdRef.current;
+      if (openArticleId) {
+        void reloadPublishRecords(openArticleId);
+      }
     },
   });
 
@@ -1514,7 +1557,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       );
       setArticles((prev) => prev.map((a) => (a.id === nextArticle.id ? nextArticle : a)));
       feedback.notifySuccess('已登记发布链接并标记文章为「已发布」');
-      invalidateFreshness('publish-records', 'articles');
+      broadcastSelfPublishRecordsFreshness('publish-records', 'articles');
       return true;
     } catch (err) {
       if (isStale()) return false;
@@ -1537,10 +1580,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setArticles((prev) =>
         prev.map((a) => (a.id === articleId ? { ...a, status: 'PUBLISHED' } : a)),
       );
-      invalidateFreshness('publish-records', 'articles', 'distributions');
+      broadcastSelfPublishRecordsFreshness('publish-records', 'articles', 'distributions');
       void consoleCtx?.refreshWallet();
     },
-    [consoleCtx, reloadPublishRecords],
+    [broadcastSelfPublishRecordsFreshness, consoleCtx, reloadPublishRecords],
   );
 
   const handleReturnToEditorForFix = useCallback(
@@ -1957,6 +2000,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 readOnly={readOnly}
                 onCreatePublishRecord={handleCreatePublishRecord}
                 onTriggerRetest={handleOpenRetestModal}
+                onPublishRecordUpdated={handlePublishRecordUpdated}
               />
             )
           }

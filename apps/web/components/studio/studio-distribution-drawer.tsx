@@ -302,6 +302,12 @@ export function StudioDistributionDrawer({
   const taskActionCtrlsRef = useRef<Set<AbortController>>(new Set());
   const pollCtrlRef = useRef<AbortController | null>(null);
   const prevPublishingIdsRef = useRef<Set<string>>(new Set());
+  const generatingRef = useRef(false);
+  const pendingVariantIdemKeyRef = useRef<string | null>(null);
+  const publishingTasksRef = useRef<Set<string>>(new Set());
+  const prActionTasksRef = useRef<Set<string>>(new Set());
+  const savingTasksRef = useRef<Set<string>>(new Set());
+  const quickRegisteringTasksRef = useRef<Set<string>>(new Set());
 
   const abortAllTaskActions = useCallback(() => {
     for (const ctrl of taskActionCtrlsRef.current) {
@@ -325,6 +331,12 @@ export function StudioDistributionDrawer({
     bumpPollEpoch();
     sessionSeqRef.current += 1;
     prevPublishingIdsRef.current.clear();
+    generatingRef.current = false;
+    pendingVariantIdemKeyRef.current = null;
+    publishingTasksRef.current.clear();
+    prActionTasksRef.current.clear();
+    savingTasksRef.current.clear();
+    quickRegisteringTasksRef.current.clear();
 
     setHydrating(false);
     setDrawerError(null);
@@ -407,8 +419,18 @@ export function StudioDistributionDrawer({
 
   // Ensure unmount always invalidates active session and aborts all in-flight work
   useEffect(() => {
+    const publishingTasks = publishingTasksRef.current;
+    const prActionTasks = prActionTasksRef.current;
+    const savingTasks = savingTasksRef.current;
+    const quickRegisteringTasks = quickRegisteringTasksRef.current;
     return () => {
       sessionSeqRef.current += 1;
+      generatingRef.current = false;
+      pendingVariantIdemKeyRef.current = null;
+      publishingTasks.clear();
+      prActionTasks.clear();
+      savingTasks.clear();
+      quickRegisteringTasks.clear();
       hydrateCtrlRef.current?.abort();
       hydrateCtrlRef.current = null;
       actionCtrlRef.current?.abort();
@@ -683,6 +705,7 @@ export function StudioDistributionDrawer({
   );
 
   const toggleTargetKey = (key: string) => {
+    pendingVariantIdemKeyRef.current = null;
     setSelectedTargetKeys((prev) =>
       prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
     );
@@ -736,8 +759,8 @@ export function StudioDistributionDrawer({
   };
 
   const handleConfirmGenerateVariants = async () => {
-    if (!article || selectedTargets.length === 0 || readOnly || generating) return;
-    actionCtrlRef.current?.abort();
+    if (!article || selectedTargets.length === 0 || readOnly || generatingRef.current) return;
+    generatingRef.current = true;
     const ctrl = new AbortController();
     actionCtrlRef.current = ctrl;
     const seq = sessionSeqRef.current;
@@ -754,7 +777,9 @@ export function StudioDistributionDrawer({
     setGenerating(true);
     setDrawerError(null);
     try {
-      const idempotencyKey = createDistributionIdempotencyKey('var');
+      const idempotencyKey =
+        pendingVariantIdemKeyRef.current ?? createDistributionIdempotencyKey('var');
+      pendingVariantIdemKeyRef.current = idempotencyKey;
       const res = await generateDistributionVariants(
         article.id,
         { targets: payloadTargets },
@@ -762,6 +787,7 @@ export function StudioDistributionDrawer({
       );
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
+      pendingVariantIdemKeyRef.current = null;
       if (typeof res.unitPrice === 'number' && Number.isFinite(res.unitPrice)) {
         setUnitPrice(res.unitPrice);
       }
@@ -820,15 +846,22 @@ export function StudioDistributionDrawer({
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-        setGenerating(false);
+      if (actionCtrlRef.current === ctrl) {
+        actionCtrlRef.current = null;
+      }
+      if (seq === sessionSeqRef.current) {
+        generatingRef.current = false;
+        if (!ctrl.signal.aborted) {
+          setGenerating(false);
+        }
       }
     }
   };
 
   const handleSaveVariantDraft = async (task: ArticleDistributionTaskItem) => {
     const draft = variantDrafts[task.id];
-    if (!draft || readOnly) return;
+    if (!draft || readOnly || savingTasksRef.current.has(task.id)) return;
+    savingTasksRef.current.add(task.id);
     const seq = sessionSeqRef.current;
     const ctrl = new AbortController();
     taskActionCtrlsRef.current.add(ctrl);
@@ -868,14 +901,18 @@ export function StudioDistributionDrawer({
       feedback.notifyError(msg);
     } finally {
       taskActionCtrlsRef.current.delete(ctrl);
-      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-        setSavingTaskId((prev) => (prev === task.id ? null : prev));
+      if (seq === sessionSeqRef.current) {
+        savingTasksRef.current.delete(task.id);
+        if (!ctrl.signal.aborted) {
+          setSavingTaskId((prev) => (prev === task.id ? null : prev));
+        }
       }
     }
   };
 
   const handlePublishL1 = async (task: ArticleDistributionTaskItem, publishAsDraft: boolean) => {
-    if (!article || readOnly) return;
+    if (!article || readOnly || publishingTasksRef.current.has(task.id)) return;
+    publishingTasksRef.current.add(task.id);
     const draft = variantDrafts[task.id];
     const targetConnectionId = draft?.connectionId ?? task.connectionId ?? undefined;
     const seq = sessionSeqRef.current;
@@ -953,19 +990,30 @@ export function StudioDistributionDrawer({
       feedback.notifyError(msg);
     } finally {
       taskActionCtrlsRef.current.delete(ctrl);
-      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-        setPublishingTaskId((prev) => (prev === task.id ? null : prev));
+      if (seq === sessionSeqRef.current) {
+        publishingTasksRef.current.delete(task.id);
+        if (!ctrl.signal.aborted) {
+          setPublishingTaskId((prev) => (prev === task.id ? null : prev));
+        }
       }
     }
   };
 
   const handleQuickRegisterUrl = async (task: ArticleDistributionTaskItem) => {
-    if (!article || readOnly || !onCreatePublishRecord) return;
+    if (
+      !article ||
+      readOnly ||
+      !onCreatePublishRecord ||
+      quickRegisteringTasksRef.current.has(task.id)
+    ) {
+      return;
+    }
     const rawUrl = (quickRegisterUrls[task.id] ?? '').trim();
     if (!isSafeDistributionHttpUrl(rawUrl)) {
       feedback.notifyWarning('请输入有效的 http:// 或 https:// 已发链接');
       return;
     }
+    quickRegisteringTasksRef.current.add(task.id);
     const seq = sessionSeqRef.current;
     setQuickRegisteringTaskId(task.id);
     try {
@@ -982,13 +1030,15 @@ export function StudioDistributionDrawer({
       }
     } finally {
       if (seq === sessionSeqRef.current) {
+        quickRegisteringTasksRef.current.delete(task.id);
         setQuickRegisteringTaskId((prev) => (prev === task.id ? null : prev));
       }
     }
   };
 
   const handleCreatePrShare = async (task: ArticleDistributionTaskItem) => {
-    if (readOnly) return;
+    if (readOnly || prActionTasksRef.current.has(task.id)) return;
+    prActionTasksRef.current.add(task.id);
     const seq = sessionSeqRef.current;
     const ctrl = new AbortController();
     taskActionCtrlsRef.current.add(ctrl);
@@ -1023,14 +1073,17 @@ export function StudioDistributionDrawer({
       feedback.notifyError(msg);
     } finally {
       taskActionCtrlsRef.current.delete(ctrl);
-      if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-        setPrActionTaskId((prev) => (prev === task.id ? null : prev));
+      if (seq === sessionSeqRef.current) {
+        prActionTasksRef.current.delete(task.id);
+        if (!ctrl.signal.aborted) {
+          setPrActionTaskId((prev) => (prev === task.id ? null : prev));
+        }
       }
     }
   };
 
   const handleRevokePrShare = (task: ArticleDistributionTaskItem) => {
-    if (readOnly) return;
+    if (readOnly || prActionTasksRef.current.has(task.id)) return;
     const seq = sessionSeqRef.current;
     feedback.confirm({
       title: '确认撤销外部供稿链接？',
@@ -1039,7 +1092,8 @@ export function StudioDistributionDrawer({
       cancelText: '取消',
       okButtonProps: { danger: true },
       onOk: async () => {
-        if (seq !== sessionSeqRef.current) return;
+        if (seq !== sessionSeqRef.current || prActionTasksRef.current.has(task.id)) return;
+        prActionTasksRef.current.add(task.id);
         const ctrl = new AbortController();
         taskActionCtrlsRef.current.add(ctrl);
         bumpPollEpoch();
@@ -1070,8 +1124,11 @@ export function StudioDistributionDrawer({
           feedback.notifyError(formatDrawerError(err, '撤销供稿链接失败'));
         } finally {
           taskActionCtrlsRef.current.delete(ctrl);
-          if (!ctrl.signal.aborted && seq === sessionSeqRef.current) {
-            setPrActionTaskId((prev) => (prev === task.id ? null : prev));
+          if (seq === sessionSeqRef.current) {
+            prActionTasksRef.current.delete(task.id);
+            if (!ctrl.signal.aborted) {
+              setPrActionTaskId((prev) => (prev === task.id ? null : prev));
+            }
           }
         }
       },
@@ -1093,6 +1150,44 @@ export function StudioDistributionDrawer({
     const matchingL1Connections = connections.filter(
       (c) => c.provider === task.provider && c.status !== 'DISABLED',
     );
+    const rawSelectedConnId = draft.connectionId ?? null;
+    const boundConnection = rawSelectedConnId
+      ? (connections.find((c) => c.id === rawSelectedConnId) ?? null)
+      : null;
+    const hasActiveBoundConn = Boolean(
+      rawSelectedConnId && matchingL1Connections.some((c) => c.id === rawSelectedConnId),
+    );
+    const disabledBoundConn =
+      !hasActiveBoundConn &&
+      boundConnection &&
+      boundConnection.provider === task.provider &&
+      boundConnection.status === 'DISABLED'
+        ? boundConnection
+        : null;
+    const missingBoundConn = Boolean(
+      rawSelectedConnId && !hasActiveBoundConn && !disabledBoundConn,
+    );
+    const l1ConnectionOptions = [
+      ...matchingL1Connections.map((c) => ({
+        value: c.id,
+        label: `${c.displayName} (${c.siteBaseUrl})`,
+        disabled: false,
+      })),
+      ...(disabledBoundConn
+        ? [
+            {
+              value: disabledBoundConn.id,
+              label: `${disabledBoundConn.displayName}（已停用）`,
+              disabled: true,
+            },
+          ]
+        : []),
+    ];
+    const safeSelectedConnValue = hasActiveBoundConn
+      ? (rawSelectedConnId ?? undefined)
+      : disabledBoundConn
+        ? disabledBoundConn.id
+        : undefined;
     const extras = task.variantExtrasJson ?? {};
     const antiBanChecklist = readStringArray(extras.antiBanChecklist);
     const threadPosts = readStringArray(extras.threadPosts);
@@ -1279,16 +1374,20 @@ export function StudioDistributionDrawer({
                 aria-label="目标站点连接"
                 style={{ width: '100%' }}
                 disabled={isTaskLocked || matchingL1Connections.length === 0}
-                placeholder="选择已绑定的站点连接"
-                value={draft.connectionId ?? undefined}
-                options={matchingL1Connections.map((c) => ({
-                  value: c.id,
-                  label: `${c.displayName} (${c.siteBaseUrl})`,
-                }))}
+                placeholder={
+                  missingBoundConn ? '原绑定连接已删除，请重新选择可用连接' : '选择已绑定的站点连接'
+                }
+                value={safeSelectedConnValue}
+                options={l1ConnectionOptions}
                 onChange={(val) =>
                   updateDraftField('connectionId', typeof val === 'string' ? val : null)
                 }
               />
+              {disabledBoundConn || missingBoundConn ? (
+                <div style={{ fontSize: 11, color: 'var(--gm-warning)', marginTop: 4 }}>
+                  原绑定连接已停用或删除，请重新选择可用连接
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -2022,7 +2121,10 @@ export function StudioDistributionDrawer({
                       loading={generating}
                       disabled={selectedTargets.length === 0 || readOnly || generating}
                       style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                      onClick={() => setPointsConfirmOpen(true)}
+                      onClick={() => {
+                        pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
+                        setPointsConfirmOpen(true);
+                      }}
                     >
                       生成渠道变体
                       {selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}
@@ -2513,10 +2615,19 @@ export function StudioDistributionDrawer({
         destroyOnHidden
         keyboard={!generating}
         maskClosable={!generating}
-        onCancel={() => setPointsConfirmOpen(false)}
+        onCancel={() => {
+          pendingVariantIdemKeyRef.current = null;
+          setPointsConfirmOpen(false);
+        }}
         footer={
           <Space wrap>
-            <Button disabled={generating} onClick={() => setPointsConfirmOpen(false)}>
+            <Button
+              disabled={generating}
+              onClick={() => {
+                pendingVariantIdemKeyRef.current = null;
+                setPointsConfirmOpen(false);
+              }}
+            >
               取消
             </Button>
             <Button

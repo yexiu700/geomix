@@ -11,6 +11,7 @@ import {
   WebflowConnector,
   WebhookConnector,
   WordPressConnector,
+  collectSecretCandidates,
   joinBasePath,
   redactSecrets,
   signWebhookPayload,
@@ -993,6 +994,54 @@ describe('L1 CMS Connectors (Shopify, WordPress, Webflow, Webhook)', () => {
       expect(cleaned).not.toContain('whsec_12345678');
       expect(cleaned).not.toContain('shpat_abcdef1234');
       expect(cleaned).toContain('[REDACTED]');
+    });
+
+    it('S-02: redactSecrets blocks whitespace-collapsed reconstruction, lowercase/mixed %xx, + form-encoding, JSON-escaped \\/ and configJson secrets', () => {
+      const wpPass = 'abcd efgh ijkl mnop';
+      const slashToken = 'tok+abc/def=9876';
+      const idxKey = 'idx_secret_config_key_42';
+      const hdrSecret = 'hdr_secret_value_99';
+      const candidates = collectSecretCandidates(
+        {
+          username: 'wpadmin',
+          appPassword: wpPass,
+          apiToken: slashToken,
+        },
+        {
+          indexNowKey: idxKey,
+          extraHeaders: { 'X-Api-Key': hdrSecret, 'X-Public-Tag': 'public-ok' },
+        },
+      );
+
+      // (a) Whitespace-collapsed reconstruction of spaced WP password
+      const wsReconstructed = redactSecrets(
+        'Upstream rejected password: abcd\nefgh\tijkl  mnop',
+        candidates,
+      );
+      expect(wsReconstructed).toContain('[REDACTED]');
+      expect(wsReconstructed).not.toContain(wpPass);
+      expect(wsReconstructed).not.toContain('abcd efgh');
+
+      // (b) Lowercase/mixed %xx & + form-encoding
+      const encodedLeak = redactSecrets(
+        'Invalid token=tok%2babc%2fdef%3d9876 mixed=tok%2Babc%2fdef%3D9876 pass=abcd+efgh+ijkl+mnop',
+        candidates,
+      );
+      expect(encodedLeak).toContain('[REDACTED]');
+      expect(encodedLeak).not.toContain('tok%2babc%2fdef%3d9876');
+      expect(encodedLeak).not.toContain('tok%2Babc%2fdef%3D9876');
+      expect(encodedLeak).not.toContain('abcd+efgh+ijkl+mnop');
+
+      // (c) PHP json_encode escaped \/ in truncated non-JSON error
+      const jsonSlashLeak = redactSecrets(
+        'PHP error: {"err":"bad tok+abc\\/def=9876" idx=idx_secret_config_key_42 hdr=hdr_secret_value_99',
+        candidates,
+      );
+      expect(jsonSlashLeak).toContain('[REDACTED]');
+      expect(jsonSlashLeak).not.toContain('tok+abc\\/def=9876');
+      expect(jsonSlashLeak).not.toContain(slashToken);
+      expect(jsonSlashLeak).not.toContain(idxKey);
+      expect(jsonSlashLeak).not.toContain(hdrSecret);
     });
   });
 });

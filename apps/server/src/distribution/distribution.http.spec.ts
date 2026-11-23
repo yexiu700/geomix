@@ -1191,4 +1191,53 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
       milestones: [7, 14],
     });
   });
+
+  it('S-04: scans variantMetaDesc for compliance blockers, missing-fact slots, and GLOBAL CJK leaks on preflight, PATCH, and POST /publish', async () => {
+    // 1. preflightArticle with prohibited term in variantMetaDesc
+    const pfRes = await req<DistributionPreflightResult>(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      {
+        provider: 'WORDPRESS',
+        variantSlug: 'acme-power-station',
+        variantMetaDesc: 'Illegal gambling guide [TBD] 中文摘要',
+      },
+    );
+    expect(pfRes.status).toBe(200);
+    expect(pfRes.body.data.ok).toBe(false);
+    const pfCodes = pfRes.body.data.blockers.map((b) => b.code);
+    expect(pfCodes).toContain('MISSING_FACT_SLOTS');
+    expect(pfCodes).toContain('GLOBAL_CJK_LEAK');
+    expect(pfCodes).toContain('COMPLIANCE_BLOCKED');
+
+    // 2. PATCH task_wp_clean with prohibited compliance term + placeholder in variantMetaDesc -> preflightJson records blockers
+    const patchRes = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      {
+        variantMetaDesc: 'Illegal gambling guide [TBD: price]',
+      },
+    );
+    expect(patchRes.status).toBe(200);
+    expect(patchRes.body.data.preflightJson?.ok).toBe(false);
+    expect(patchRes.body.data.preflightJson?.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'COMPLIANCE_BLOCKED']),
+    );
+
+    // 3. POST /publish rejects with HTTP 422 including both COMPLIANCE_BLOCKED and MISSING_FACT_SLOTS
+    const pubRes = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_wp_clean/publish', tokenA, {
+      publishAsDraft: false,
+      connectionId: 'conn_wp_ok',
+    });
+    expect(pubRes.status).toBe(422);
+    expect(pubRes.body.data.ok).toBe(false);
+    expect(pubRes.body.data.blockers.map((b) => b.code)).toEqual(
+      expect.arrayContaining(['MISSING_FACT_SLOTS', 'COMPLIANCE_BLOCKED']),
+    );
+  });
 });

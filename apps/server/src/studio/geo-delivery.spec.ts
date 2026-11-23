@@ -103,8 +103,33 @@ describe('computeRetestMetricSnapshot', () => {
 });
 
 describe('RetestMetricsHookService', () => {
-  it('skips MANUAL runs and runs with successCount <= 0 without touching Prisma', async () => {
-    const txSpy = vi.fn();
+  it('skips MANUAL runs without touching Prisma and transitions linked schedules to FAILED on 0-success RETEST runs without mutating GeoPublishRecord', async () => {
+    const scheduleUpdateMany = vi.fn(async () => ({ count: 1 }));
+    const publishRecordUpdate = vi.fn();
+    const txSpy = vi.fn(async (fn: (tx: unknown) => Promise<void>) => {
+      await fn({
+        visibilityRun: {
+          findFirst: vi.fn(async () => ({
+            id: 'run_empty',
+            tenantId: 'tenant_a',
+            brandId: 'brand_1',
+            brandMarketId: 'bm_1',
+            triggerType: 'RETEST',
+            status: 'FAILED',
+            lastError: 'All observations failed',
+            retestArticleId: 'art_1',
+            brandMarket: MARKET_CN,
+            observations: [],
+          })),
+        },
+        geoRetestSchedule: {
+          updateMany: scheduleUpdateMany,
+        },
+        geoPublishRecord: {
+          update: publishRecordUpdate,
+        },
+      });
+    });
     const hook = new RetestMetricsHookService({
       base: { $transaction: txSpy },
     } as unknown as PrismaService);
@@ -119,6 +144,8 @@ describe('RetestMetricsHookService', () => {
       status: 'COMPLETED',
       successCount: 2,
     });
+    expect(txSpy).not.toHaveBeenCalled();
+
     await hook.onVisibilityRunComplete({
       tenantId: 'tenant_a',
       brandId: 'brand_1',
@@ -126,10 +153,23 @@ describe('RetestMetricsHookService', () => {
       runId: 'run_empty',
       triggerType: 'RETEST',
       retestArticleId: 'art_1',
-      status: 'PARTIAL',
+      status: 'FAILED',
       successCount: 0,
     });
-    expect(txSpy).not.toHaveBeenCalled();
+    expect(txSpy).toHaveBeenCalledTimes(1);
+    expect(scheduleUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant_a',
+          visibilityRunId: 'run_empty',
+          status: { in: ['PENDING', 'RUNNING'] },
+        }),
+        data: expect.objectContaining({
+          status: 'FAILED',
+        }),
+      }),
+    );
+    expect(publishRecordUpdate).not.toHaveBeenCalled();
   });
 
   it('writes afterMetrics on linked publish record and handles worker-first race fallback by retestArticleId with strict tenantId filter', async () => {

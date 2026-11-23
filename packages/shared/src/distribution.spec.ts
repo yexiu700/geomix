@@ -501,4 +501,58 @@ describe('evaluateDistributionPreflight()', () => {
     expect(l3.ok).toBe(true);
     expect(l3.warnings).toEqual([]);
   });
+
+  it('S-04: scans variantMetaDesc for missing-fact slots and GLOBAL CJK leaks, catches fullwidth/bare placeholders, and ignores case differences in CJK brand names', () => {
+    // 1. variantMetaDesc carrying both a missing-fact slot and non-brand CJK on GLOBAL
+    const metaDescBlocked = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Clean English Title',
+      contentMarkdown: 'Verified 1200Wh portable power station review.',
+      variantMetaDesc: 'Best power station [TBD: price] 中文摘要',
+      geoScore: 85,
+      matchedFactCount: 2,
+      provider: 'SHOPIFY',
+      variantSlug: 'clean-english-title',
+    });
+    expect(metaDescBlocked.ok).toBe(false);
+    expect(metaDescBlocked.blockers.map((b) => b.code)).toContain('MISSING_FACT_SLOTS');
+    expect(metaDescBlocked.blockers.map((b) => b.code)).toContain('GLOBAL_CJK_LEAK');
+
+    // 2. Fullwidth Chinese/square brackets & bare placeholders
+    const fullwidthAndBare = evaluateDistributionPreflight({
+      market: 'CN',
+      title: '测试标题',
+      contentMarkdown:
+        '价格为 【待补充：官方指导价】，规格为 ［TBD: spec］，其他待确认项：[TBD]、[待补充]、[To be verified]、【待补充】、【TBD】。',
+      geoScore: 80,
+      matchedFactCount: 1,
+    });
+    expect(fullwidthAndBare.ok).toBe(false);
+    const slotBlocker = fullwidthAndBare.blockers.find((b) => b.code === 'MISSING_FACT_SLOTS');
+    expect(slotBlocker).toBeDefined();
+    expect(slotBlocker?.details).toEqual(
+      expect.arrayContaining([
+        '【待补充：官方指导价】',
+        '［TBD: spec］',
+        '[TBD]',
+        '[待补充]',
+        '[To be verified]',
+        '【待补充】',
+        '【TBD】',
+      ]),
+    );
+
+    // 3. Mixed-case CJK brand proper noun (极米Pro vs 极米pro) must NOT false-positive GLOBAL_CJK_LEAK
+    const mixedCaseBrand = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'XGIMI Projector Benchmark',
+      contentMarkdown: 'Also sold in China under the 极米pro flagship name.',
+      variantMetaDesc: 'Independent 极米PRO comparison.',
+      brandNames: ['极米Pro', 'XGIMI'],
+      geoScore: 88,
+      matchedFactCount: 2,
+    });
+    expect(mixedCaseBrand.ok).toBe(true);
+    expect(mixedCaseBrand.blockers).toEqual([]);
+  });
 });

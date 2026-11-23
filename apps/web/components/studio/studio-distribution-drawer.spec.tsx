@@ -1035,4 +1035,206 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect((sentPayload.channel as string).length).toBe(60);
     expect(publishRecordCreateSchema.safeParse(sentPayload).success).toBe(true);
   });
+
+  it('W-01: enforces synchronous single-flight mutexes on same-tick double-clicks for variant generation, L1 publish, and PR share link creation', async () => {
+    const conn: ChannelConnectionDto = {
+      ...SHOPIFY_CONN,
+      id: 'conn_sh_mutex',
+      provider: 'SHOPIFY',
+      status: 'ACTIVE',
+    };
+    const l1Task = makeTask({
+      id: 'task_l1_mutex',
+      provider: 'SHOPIFY',
+      mode: 'L1_API',
+      channelLabel: 'Shopify Official Blog',
+      connectionId: conn.id,
+      status: 'READY_TO_PUBLISH',
+    });
+    const prTask = makeTask({
+      id: 'task_pr_mutex',
+      provider: 'PR_PACKET',
+      mode: 'L3_PR_PACKET',
+      channelLabel: 'PR 外部供稿包',
+      connectionId: null,
+      status: 'DRAFT_VARIANT',
+    });
+
+    listChannelConnectionsMock.mockResolvedValue({ items: [conn] });
+    listArticleDistributionsMock.mockResolvedValue({ items: [l1Task, prTask] });
+
+    let resolveGenerate!: (val: unknown) => void;
+    let firstGenSignal: AbortSignal | undefined;
+    generateDistributionVariantsMock.mockImplementation(
+      (_articleId: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+        firstGenSignal = opts?.signal;
+        return new Promise((resolve) => {
+          resolveGenerate = resolve;
+        });
+      },
+    );
+
+    let resolvePublish!: (val: unknown) => void;
+    publishDistributionTaskMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePublish = resolve;
+        }),
+    );
+
+    let resolvePrShare!: (val: unknown) => void;
+    createPrShareLinkMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePrShare = resolve;
+        }),
+    );
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    // 1. Same-tick double-click on Points Confirmation submit button -> strictly 1 API call and signal #1 NOT aborted
+    const targetCheckbox = await screen.findByTestId('distribution-target-l1:conn_sh_mutex');
+    fireEvent.click(targetCheckbox);
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    const confirmBtn = await screen.findByTestId('distribution-points-confirm-submit-btn');
+
+    act(() => {
+      confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(1);
+    expect(firstGenSignal?.aborted).toBe(false);
+
+    await act(async () => {
+      resolveGenerate({
+        tasks: [l1Task],
+        failures: [],
+        unitPrice: 2,
+        chargedPoints: 2,
+        refundedPoints: 0,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
+    });
+
+    // 2. Same-tick click on publish-draft + publish-live -> strictly 1 publishDistributionTask call
+    const draftBtn = await screen.findByTestId('distribution-publish-draft-btn');
+    const liveBtn = screen.getByTestId('distribution-publish-live-btn');
+    act(() => {
+      draftBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      liveBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(publishDistributionTaskMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePublish({ ...l1Task, status: 'DRAFT_PUSHED' });
+    });
+
+    // 3. Same-tick double-click on PR share creation -> strictly 1 createPrShareLink call
+    const tabsRoot = screen.getByTestId('distribution-variant-tabs');
+    fireEvent.click(within(tabsRoot).getByText('PR 外部供稿包'));
+    const prShareBtn = await screen.findByTestId('distribution-pr-share-btn');
+    act(() => {
+      prShareBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      prShareBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(createPrShareLinkMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrShare({
+        taskId: 'task_pr_mutex',
+        shareUrl: 'https://app.geomix.example/share/pr/tok_single_flight',
+        token: 'tok_single_flight',
+        expiresAt: '2026-12-23T06:00:00.000Z',
+        ttlDays: 30,
+      });
+    });
+    expect((await screen.findByTestId('distribution-pr-share-url')).textContent).toBe(
+      'https://app.geomix.example/share/pr/tok_single_flight',
+    );
+  });
+
+  it('W-04: never exposes raw opaque CUID in L1 connection selector when bound connection is DISABLED or deleted', async () => {
+    const disabledConn: ChannelConnectionDto = {
+      ...SHOPIFY_CONN,
+      id: 'cm1234567890opaque',
+      provider: 'SHOPIFY',
+      displayName: 'Legacy Disabled Shop',
+      status: 'DISABLED',
+    };
+    const activeConn: ChannelConnectionDto = {
+      ...SHOPIFY_CONN,
+      id: 'conn_active_shopify',
+      provider: 'SHOPIFY',
+      displayName: 'Active Global Shop',
+      status: 'ACTIVE',
+    };
+    const taskWithDisabledConn = makeTask({
+      id: 'task_disabled_conn',
+      provider: 'SHOPIFY',
+      mode: 'L1_API',
+      channelLabel: 'Disabled Bound Tab',
+      connectionId: 'cm1234567890opaque',
+    });
+    const taskWithDeletedConn = makeTask({
+      id: 'task_deleted_conn',
+      provider: 'SHOPIFY',
+      mode: 'L1_API',
+      channelLabel: 'Deleted Bound Tab',
+      connectionId: 'cm9999999999deleted',
+    });
+
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [disabledConn, activeConn] });
+    listArticleDistributionsMock.mockResolvedValueOnce({
+      items: [taskWithDisabledConn, taskWithDeletedConn],
+    });
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    const drawer = await screen.findByTestId('studio-distribution-drawer');
+    await waitFor(() => {
+      expect(drawer.textContent).toContain('Legacy Disabled Shop（已停用）');
+    });
+    expect(drawer.textContent).not.toContain('cm1234567890opaque');
+    expect(drawer.textContent).toContain('原绑定连接已停用或删除，请重新选择可用连接');
+
+    // Switch to tab with deleted connection ID
+    const tabsRoot = screen.getByTestId('distribution-variant-tabs');
+    fireEvent.click(within(tabsRoot).getByText('Deleted Bound Tab'));
+    await waitFor(() => {
+      expect(drawer.textContent).toContain('原绑定连接已删除，请重新选择可用连接');
+    });
+    expect(drawer.textContent).not.toContain('cm9999999999deleted');
+  });
 });

@@ -192,7 +192,7 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async onVisibilityRunComplete(event: VisibilityRunCompleteEvent): Promise<void> {
-    if (event.triggerType !== 'RETEST' || event.successCount <= 0) {
+    if (event.triggerType !== 'RETEST') {
       return;
     }
 
@@ -214,12 +214,44 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           },
         });
 
-        if (
-          !run ||
-          run.triggerType !== 'RETEST' ||
-          !run.brandMarket ||
-          run.observations.length === 0
-        ) {
+        if (!run || run.triggerType !== 'RETEST') {
+          return;
+        }
+
+        const isTerminalNoSuccess =
+          event.status === 'FAILED' ||
+          event.status === 'CANCELLED' ||
+          event.successCount <= 0 ||
+          run.observations.length === 0;
+
+        if (isTerminalNoSuccess) {
+          const nextStatus =
+            event.status === 'CANCELLED' || run.status === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+          const fallbackReason =
+            nextStatus === 'CANCELLED' ? '关联复测任务已取消' : '关联复测任务全部观测失败';
+          const reason =
+            typeof run.lastError === 'string' && run.lastError.trim()
+              ? run.lastError.trim().slice(0, 240)
+              : fallbackReason;
+
+          await tx.geoRetestSchedule.updateMany({
+            where: {
+              tenantId: event.tenantId,
+              brandId: run.brandId,
+              brandMarketId: run.brandMarketId,
+              visibilityRunId: run.id,
+              status: { in: ['PENDING', 'RUNNING'] },
+            },
+            data: {
+              status: nextStatus,
+              executedAt: new Date(),
+              skipReason: reason,
+            },
+          });
+          return;
+        }
+
+        if (!run.brandMarket) {
           return;
         }
 

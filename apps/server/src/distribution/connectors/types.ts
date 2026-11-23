@@ -134,15 +134,110 @@ export function joinBasePath(
   return url.toString();
 }
 
+const CONFIG_SECRET_KEY_PATTERN = /token|secret|password|key|auth/i;
+const EXPLICIT_CONFIG_SECRET_KEYS = new Set(['indexNowKey', 'indexNowKeyLocation']);
+const PERCENT_HEX_PATTERN = /%[0-9A-Fa-f]{2}/g;
+const MAX_PERCENT_REGEX_LENGTH = 2048;
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * 收集凭据明文及其常见变形（去首尾空白、去内部空白、URL 编码、WordPress Basic Auth Base64），
+ * 构造线性时间、零回溯（ReDoS 安全）的百分号编码大小写不敏感匹配正则。
+ */
+function buildPercentInsensitiveRegex(encoded: string): RegExp | null {
+  if (encoded.length > MAX_PERCENT_REGEX_LENGTH) {
+    return null;
+  }
+  PERCENT_HEX_PATTERN.lastIndex = 0;
+  if (!PERCENT_HEX_PATTERN.test(encoded)) {
+    return null;
+  }
+  PERCENT_HEX_PATTERN.lastIndex = 0;
+  const parts: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PERCENT_HEX_PATTERN.exec(encoded)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(escapeRegExp(encoded.slice(lastIndex, match.index)));
+    }
+    const hex = match[0].slice(1);
+    const hexPattern = hex
+      .split('')
+      .map((ch) => (/[A-Fa-f]/.test(ch) ? `[${ch.toLowerCase()}${ch.toUpperCase()}]` : ch))
+      .join('');
+    parts.push(`%${hexPattern}`);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < encoded.length) {
+    parts.push(escapeRegExp(encoded.slice(lastIndex)));
+  }
+  return new RegExp(parts.join(''), 'g');
+}
+
+/**
+ * 从渠道 configJson 中提取可能包含敏感信息的配置值（如 indexNowKey、indexNowKeyLocation 及敏感 extraHeaders）。
+ */
+export function extractConfigSecretValues(configJson?: Record<string, unknown> | null): string[] {
+  if (!configJson || typeof configJson !== 'object' || Array.isArray(configJson)) {
+    return [];
+  }
+  const values: string[] = [];
+  for (const [key, value] of Object.entries(configJson)) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (
+        trimmed &&
+        (EXPLICIT_CONFIG_SECRET_KEYS.has(key) || CONFIG_SECRET_KEY_PATTERN.test(key))
+      ) {
+        values.push(trimmed);
+      }
+    } else if (
+      key === 'extraHeaders' &&
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value)
+    ) {
+      for (const [hdrKey, hdrVal] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof hdrVal !== 'string') continue;
+        const trimmed = hdrVal.trim();
+        if (trimmed && CONFIG_SECRET_KEY_PATTERN.test(hdrKey)) {
+          values.push(trimmed);
+        }
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * 收集凭据明文、敏感配置值及其常见变形（去首尾空白、折叠/去除空白、URL 编码、JSON 转义、WordPress Basic Auth Base64），
  * 按长度降序排列以确保完整凭据先被脱敏。
  */
-export function collectSecretCandidates(secrets: ConnectorSecrets): string[] {
+export function collectSecretCandidates(
+  secrets: ConnectorSecrets,
+  configJson?: Record<string, unknown> | null,
+): string[] {
   const set = new Set<string>();
   const add = (candidate: string | undefined) => {
     if (!candidate || candidate.length === 0) return;
     set.add(candidate);
+  };
+
+  const addWithWhitespaceVariants = (rawValue: string) => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return;
+    add(rawValue);
+    add(trimmed);
+    const collapsed = trimmed.replace(/\s+/g, ' ');
+    if (collapsed.length >= 4) {
+      add(collapsed);
+    }
+    const compact = trimmed.replace(/\s+/g, '');
+    if (compact.length >= 4) {
+      add(compact);
+    }
   };
 
   for (const [key, rawValue] of Object.entries(secrets)) {
@@ -151,25 +246,20 @@ export function collectSecretCandidates(secrets: ConnectorSecrets): string[] {
     const trimmed = rawValue.trim();
     if (!trimmed) continue;
     if (key.toLowerCase() !== 'username' || trimmed.length >= 8) {
-      add(rawValue);
-      add(trimmed);
-      const compact = trimmed.replace(/\s+/g, '');
-      if (compact.length >= 4) {
-        add(compact);
-      }
-      try {
-        const encoded = encodeURIComponent(trimmed);
-        if (encoded.length >= 4) {
-          add(encoded);
-        }
-      } catch {
-        // Ignore malformed surrogate pairs
-      }
+      addWithWhitespaceVariants(rawValue);
     }
   }
 
+  for (const configSecret of extractConfigSecretValues(configJson)) {
+    addWithWhitespaceVariants(configSecret);
+  }
+
   const username = secrets.username?.trim();
-  const appPassword = (secrets.appPassword ?? secrets.applicationPassword)?.trim();
+  const appPassword = (
+    secrets.appPassword ??
+    secrets.applicationPassword ??
+    secrets.password
+  )?.trim();
   if (username && appPassword) {
     add(Buffer.from(`${username}:${appPassword}`, 'utf8').toString('base64'));
     const compactPassword = appPassword.replace(/\s+/g, '');
@@ -181,36 +271,130 @@ export function collectSecretCandidates(secrets: ConnectorSecrets): string[] {
   return [...set].sort((a, b) => b.length - a.length);
 }
 
-function escapeRegExp(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+type PreparedRedactionMatcher = {
+  longLiterals: string[];
+  percentRegexes: RegExp[];
+  shortRegexes: RegExp[];
+};
+
+function prepareRedactionMatcher(secretCandidates: readonly string[]): PreparedRedactionMatcher {
+  const longLiteralSet = new Set<string>();
+  const percentEncodedSet = new Set<string>();
+  const shortSet = new Set<string>();
+
+  const addEncodedForm = (encoded: string) => {
+    if (encoded.length < 4) return;
+    longLiteralSet.add(encoded);
+    const lowerEncoded = encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase());
+    if (lowerEncoded !== encoded) {
+      longLiteralSet.add(lowerEncoded);
+    }
+    percentEncodedSet.add(encoded);
+  };
+
+  const addJsonEscapedForms = (value: string) => {
+    if (value.length < 4) return;
+    // 覆盖 PHP json_encode 默认将 `/` 转义为 `\/` 以及标准 JSON 转义（`\\`、`\"` 等）
+    const slashEscaped = value.replace(/\//g, '\\/');
+    if (slashEscaped !== value) {
+      longLiteralSet.add(slashEscaped);
+    }
+    try {
+      const jsonInner = JSON.stringify(value).slice(1, -1);
+      if (jsonInner.length >= 4 && jsonInner !== value) {
+        longLiteralSet.add(jsonInner);
+      }
+      const jsonSlashEscaped = jsonInner.replace(/\//g, '\\/');
+      if (jsonSlashEscaped.length >= 4 && jsonSlashEscaped !== jsonInner) {
+        longLiteralSet.add(jsonSlashEscaped);
+      }
+    } catch {
+      // Ignore unserializable surrogate edge cases
+    }
+  };
+
+  for (const rawCandidate of secretCandidates) {
+    if (!rawCandidate) continue;
+    if (rawCandidate.length < 4) {
+      shortSet.add(rawCandidate);
+      continue;
+    }
+
+    const baseForms = new Set<string>([rawCandidate]);
+    const collapsed = rawCandidate
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (collapsed.length >= 4) {
+      baseForms.add(collapsed);
+    }
+
+    for (const candidate of baseForms) {
+      longLiteralSet.add(candidate);
+      addJsonEscapedForms(candidate);
+
+      try {
+        const encoded = encodeURIComponent(candidate);
+        addEncodedForm(encoded);
+        if (encoded.includes('%20')) {
+          addEncodedForm(encoded.replace(/%20/g, '+'));
+        }
+      } catch {
+        // Ignore malformed surrogate pairs
+      }
+
+      try {
+        const formUrlEncoded = new URLSearchParams([['v', candidate]]).toString().slice(2);
+        if (formUrlEncoded.length >= 4) {
+          addEncodedForm(formUrlEncoded);
+        }
+      } catch {
+        // Ignore malformed surrogate pairs
+      }
+    }
+  }
+
+  const longLiterals = [...longLiteralSet].sort((a, b) => b.length - a.length);
+  const percentRegexes: RegExp[] = [];
+  for (const encoded of [...percentEncodedSet].sort((a, b) => b.length - a.length)) {
+    const re = buildPercentInsensitiveRegex(encoded);
+    if (re) {
+      percentRegexes.push(re);
+    }
+  }
+
+  const shortRegexes = [...shortSet]
+    .sort((a, b) => b.length - a.length)
+    .map(
+      (candidate) =>
+        new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(candidate)}(?![A-Za-z0-9_-])`, 'g'),
+    );
+
+  return { longLiterals, percentRegexes, shortRegexes };
 }
 
-/**
- * 清除文本中可能出现的凭据明文、认证头、签名值及常见令牌前缀，并裁剪控制字符与长度。
- */
-export function redactSecrets(
-  raw: string,
-  secretCandidates: readonly string[],
-  maxLen = 300,
-): string {
-  let text = String(raw ?? '');
+function applySecretRedactionPass(input: string, matcher: PreparedRedactionMatcher): string {
+  let text = input;
 
-  for (const candidate of secretCandidates) {
-    if (!candidate) continue;
-    if (candidate.length >= 4) {
-      text = text.split(candidate).join('[REDACTED]');
-    } else {
-      const boundaryRegex = new RegExp(
-        `(?<![A-Za-z0-9_-])${escapeRegExp(candidate)}(?![A-Za-z0-9_-])`,
-        'g',
-      );
-      text = text.replace(boundaryRegex, '[REDACTED]');
+  for (const literal of matcher.longLiterals) {
+    if (text.includes(literal)) {
+      text = text.split(literal).join('[REDACTED]');
     }
+  }
+
+  for (const re of matcher.percentRegexes) {
+    re.lastIndex = 0;
+    text = text.replace(re, '[REDACTED]');
+  }
+
+  for (const boundaryRegex of matcher.shortRegexes) {
+    boundaryRegex.lastIndex = 0;
+    text = text.replace(boundaryRegex, '[REDACTED]');
   }
 
   text = text
     .replace(/(authorization\s*[:=]\s*(?:bearer|basic)\s+)[^\s"',;]+/gi, '$1[REDACTED]')
-    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [REDACTED]')
+    .replace(/\b(bearer|basic)\s+(?:[A-Za-z0-9._~+/=-]|\\\/){8,}/gi, '$1 [REDACTED]')
     .replace(/(x-shopify-access-token\s*[:=]\s*)[^\s"',;]+/gi, '$1[REDACTED]')
     .replace(/(x-geomix-signature\s*[:=]\s*)sha256=[0-9a-fA-F]+/gi, '$1[REDACTED]')
     .replace(/\b(shpat|shpca|shppa|shpss|whsec|wf)_[A-Za-z0-9_-]{4,}\b/gi, '$1_[REDACTED]')
@@ -220,11 +404,28 @@ export function redactSecrets(
       '$1"[REDACTED]"',
     );
 
-  // 清除控制字符与多余空白
+  return text;
+}
+
+/**
+ * 清除文本中可能出现的凭据明文、URL/表单编码变体、JSON 转义变体、认证头、签名值及常见令牌前缀，并裁剪控制字符与长度。
+ * 在空白/控制字符归一化前后各执行一次脱敏，防止通过换行/制表符拆分带空格密钥在归一化后被重组为明文。
+ */
+export function redactSecrets(
+  raw: string,
+  secretCandidates: readonly string[],
+  maxLen = 300,
+): string {
+  const matcher = prepareRedactionMatcher(secretCandidates);
+  let text = applySecretRedactionPass(String(raw ?? ''), matcher);
+
+  // 清除控制字符与多余空白后再次执行脱敏，彻底阻断空白折叠重组明文绕过
   text = text
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  text = applySecretRedactionPass(text, matcher);
 
   if (text.length > maxLen) {
     return `${text.slice(0, Math.max(0, maxLen - 3)).trimEnd()}...`;

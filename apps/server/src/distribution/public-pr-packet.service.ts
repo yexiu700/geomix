@@ -64,6 +64,7 @@ export function readPublicPrPacketSubmitRateLimit(
 type LocatedPublicTask = {
   id: string;
   tenantId: string;
+  shareTokenHash: string;
   shareExpiresAt: Date;
 };
 
@@ -192,7 +193,7 @@ export class PublicPrPacketService {
 
     return runInTenant(located.tenantId, async () => {
       const task = await this.prisma.scoped.geoDistributionTask.findFirst({
-        where: { id: located.id },
+        where: this.activeTokenWhere(located),
         include: {
           brand: {
             select: {
@@ -319,7 +320,7 @@ export class PublicPrPacketService {
 
     return runInTenant(located.tenantId, async () => {
       const task = await this.prisma.scoped.geoDistributionTask.findFirst({
-        where: { id: located.id },
+        where: this.activeTokenWhere(located),
         select: {
           id: true,
           articleId: true,
@@ -344,25 +345,33 @@ export class PublicPrPacketService {
       this.inFlightSubmits.set(lockKey, lockPromise);
 
       try {
+        // 临界区内重新校验令牌活跃状态（未吊销、未轮换、未过期、未归档），消除 assertAllowedUrl / 排队期间的 TOCTOU 竞态
+        const latestTask = await this.prisma.scoped.geoDistributionTask.findFirst({
+          where: this.activeTokenWhere(located),
+          select: {
+            id: true,
+            articleId: true,
+            channelLabel: true,
+            status: true,
+            remotePublishedUrl: true,
+          },
+        });
+
+        if (!latestTask || latestTask.status === 'ARCHIVED') {
+          throw new ApiError(404, AUTH_ERROR.NOT_FOUND, UNIFORM_NOT_FOUND_MESSAGE);
+        }
+
         const existing = await this.prisma.scoped.geoPublishRecord.findFirst({
           where: {
-            articleId: task.articleId,
+            articleId: latestTask.articleId,
             publishedUrl,
           },
         });
 
         if (existing) {
-          const latestTask = await this.prisma.scoped.geoDistributionTask.findFirst({
-            where: { id: task.id },
-            select: {
-              id: true,
-              status: true,
-              remotePublishedUrl: true,
-            },
-          });
-          if (latestTask && (latestTask.status !== 'PUBLISHED' || !latestTask.remotePublishedUrl)) {
-            await this.prisma.scoped.geoDistributionTask.update({
-              where: { id: task.id },
+          if (latestTask.status !== 'PUBLISHED' || !latestTask.remotePublishedUrl) {
+            const updated = await this.prisma.scoped.geoDistributionTask.updateMany({
+              where: this.activeTokenWhere(located),
               data: {
                 status: 'PUBLISHED',
                 remotePublishedUrl: existing.publishedUrl,
@@ -370,6 +379,9 @@ export class PublicPrPacketService {
                 lastError: null,
               },
             });
+            if (updated.count === 0) {
+              throw new ApiError(404, AUTH_ERROR.NOT_FOUND, UNIFORM_NOT_FOUND_MESSAGE);
+            }
           }
           return {
             accepted: true,
@@ -380,18 +392,18 @@ export class PublicPrPacketService {
         }
 
         const record = await this.geoDelivery.createPublishRecord(
-          task.articleId,
+          latestTask.articleId,
           {
             publishedUrl,
-            channel: task.channelLabel.trim() || 'Tech Review Media',
-            distributionTaskId: task.id,
+            channel: latestTask.channelLabel.trim() || 'Tech Review Media',
+            distributionTaskId: latestTask.id,
             autoRetest: { enabled: true },
           },
           { tenantId: located.tenantId, userId: 'public-pr-submit' },
         );
 
-        await this.prisma.scoped.geoDistributionTask.update({
-          where: { id: task.id },
+        const updated = await this.prisma.scoped.geoDistributionTask.updateMany({
+          where: this.activeTokenWhere(located),
           data: {
             status: 'PUBLISHED',
             remotePublishedUrl: record.publishedUrl,
@@ -399,6 +411,9 @@ export class PublicPrPacketService {
             lastError: null,
           },
         });
+        if (updated.count === 0) {
+          throw new ApiError(404, AUTH_ERROR.NOT_FOUND, UNIFORM_NOT_FOUND_MESSAGE);
+        }
 
         return {
           accepted: true,
@@ -446,7 +461,21 @@ export class PublicPrPacketService {
     return {
       id: located.id,
       tenantId: located.tenantId,
+      shareTokenHash,
       shareExpiresAt: located.shareExpiresAt,
+    };
+  }
+
+  private activeTokenWhere(
+    located: LocatedPublicTask,
+    now = new Date(),
+  ): Prisma.GeoDistributionTaskWhereInput {
+    return {
+      id: located.id,
+      shareTokenHash: located.shareTokenHash,
+      status: { not: 'ARCHIVED' },
+      shareRevokedAt: null,
+      shareExpiresAt: { gt: now },
     };
   }
 }

@@ -763,7 +763,7 @@ export function stripHtmlToText(html: string): string {
 // ==================== 缺失事实显式留槽解析与回填（F14 / #343） ====================
 
 export const MISSING_FACT_CAPSULE_RE =
-  /\[(?:待补充|TBD|To be verified)[:：]\s*([^\]\n]{1,120})\](?:\([^)\n]{1,200}\))?/gi;
+  /(?:\[(?:待补充|TBD|To be verified)(?:[:：]\s*([^\]\n]{1,120}))?\](?:\([^)\n]{1,200}\))?|【(?:待补充|TBD|To be verified)(?:[:：]\s*([^】\n]{1,120}))?】|［(?:待补充|TBD|To be verified)(?:[:：]\s*([^］\n]{1,120}))?］)/gi;
 
 export function formatMissingFactPlaceholder(label: string, market: GeoMarket): string {
   const clean = label.trim() || (market === 'GLOBAL' ? 'verify specification' : '请补充真实参数');
@@ -804,7 +804,7 @@ export function extractMissingFactSlots(markdown: string): MissingFactSlot[] {
   while ((match = re.exec(markdown)) !== null) {
     slots.push({
       raw: match[0],
-      hint: (match[1] ?? '').trim(),
+      hint: (match[1] ?? match[2] ?? match[3] ?? '').trim(),
       index: idx,
       start: match.index,
       end: match.index + match[0].length,

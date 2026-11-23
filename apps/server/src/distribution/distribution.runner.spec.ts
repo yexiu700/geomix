@@ -587,6 +587,18 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
         sentinel: 'END_V5',
         forbidden: [indexNowKey, indexNowKeyLocation, indexNowKeyLocationLowerEncoded],
       },
+      {
+        label: 'json-escaped-slash-and-whitespace-collapsed-wp',
+        message: `PHP error: {"err":"bad ${encodedToken.replace(/\//g, '\\/')}" basic=${wpBase64.replace(/\//g, '\\/')} pass=abcd\nefgh\tijkl  mnop | END_V6`,
+        sentinel: 'END_V6',
+        forbidden: [
+          encodedToken,
+          encodedToken.replace(/\//g, '\\/'),
+          wpBase64,
+          wpBase64.replace(/\//g, '\\/'),
+          wpAppPassword,
+        ],
+      },
     ];
 
     for (const vec of vectors) {

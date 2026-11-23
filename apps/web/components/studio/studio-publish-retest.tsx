@@ -265,6 +265,7 @@ export function StudioPublishRetest({
     scheduleCtrlRef.current = null;
     setSubmitting(false);
     setChannel(activeMarket === 'GLOBAL' ? GLOBAL_CHANNELS[0] : CN_CHANNELS[0]);
+    setUrlInput('');
     setUrlError(null);
     setAutoRetestEnabled(true);
     setFormSampleCount(1);

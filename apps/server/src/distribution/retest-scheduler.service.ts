@@ -30,6 +30,7 @@ import {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_BATCH_SIZE = 20;
 const MAX_SWEEP_BATCH_SIZE = 100;
+const STALE_RUNNING_ORPHAN_MS = 10 * 60 * 1000;
 
 export type RetestScheduleTargetRecord = {
   id: string;
@@ -324,6 +325,8 @@ export class RetestSchedulerService {
       Math.max(1, opts?.batchSize ?? DEFAULT_SWEEP_BATCH_SIZE),
     );
 
+    await this.reconcileStaleRunningSchedules(now, batchSize);
+
     const due = await this.prisma.base.geoRetestSchedule.findMany({
       where: { status: 'PENDING', dueAt: { lte: now } },
       include: {
@@ -568,5 +571,81 @@ export class RetestSchedulerService {
     }
 
     return report;
+  }
+
+  /**
+   * 自愈巡检：回收关联 VisibilityRun 已终态（FAILED / CANCELLED）或缺失超时的卡死 RUNNING 日程，
+   * 防止 Worker 异常退出或历史数据导致日程永久滞留在「复测中」。
+   */
+  private async reconcileStaleRunningSchedules(now: Date, batchSize: number): Promise<void> {
+    const runningSchedules = await this.prisma.base.geoRetestSchedule.findMany({
+      where: { status: 'RUNNING' },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: batchSize,
+    });
+
+    for (const schedule of runningSchedules) {
+      await runInTenant(schedule.tenantId, async () => {
+        try {
+          const run = schedule.visibilityRunId
+            ? await this.prisma.scoped.visibilityRun.findFirst({
+                where: {
+                  id: schedule.visibilityRunId,
+                  brandId: schedule.brandId,
+                  brandMarketId: schedule.brandMarketId,
+                },
+                select: {
+                  id: true,
+                  status: true,
+                  lastError: true,
+                  finishedAt: true,
+                },
+              })
+            : null;
+
+          if (run && (run.status === 'FAILED' || run.status === 'CANCELLED')) {
+            const nextStatus = run.status === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+            const fallbackReason =
+              nextStatus === 'CANCELLED' ? '关联复测任务已取消' : '关联复测任务全部观测失败';
+            const reason =
+              typeof run.lastError === 'string' && run.lastError.trim()
+                ? run.lastError.trim().slice(0, 240)
+                : fallbackReason;
+
+            await this.prisma.scoped.geoRetestSchedule.updateMany({
+              where: { id: schedule.id, status: 'RUNNING' },
+              data: {
+                status: nextStatus,
+                executedAt: run.finishedAt ?? now,
+                skipReason: reason,
+              },
+            });
+            return;
+          }
+
+          const isOrphaned =
+            !run &&
+            (!schedule.visibilityRunId ||
+              now.getTime() - schedule.updatedAt.getTime() >= STALE_RUNNING_ORPHAN_MS);
+
+          if (isOrphaned) {
+            await this.prisma.scoped.geoRetestSchedule.updateMany({
+              where: { id: schedule.id, status: 'RUNNING' },
+              data: {
+                status: 'FAILED',
+                executedAt: now,
+                skipReason: '关联复测任务缺失或执行中断',
+              },
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            `retest-schedule-sweep reconcile failed for schedule=${schedule.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      });
+    }
   }
 }

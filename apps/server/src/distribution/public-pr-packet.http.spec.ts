@@ -99,6 +99,7 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
   const tasks = new Map<string, TaskRow>();
   const publishRecords: PublishRecordRow[] = [];
   let createPublishRecordSpy: MockInstance<GeoDeliveryService['createPublishRecord']>;
+  let assertAllowedUrlSpy: MockInstance<OutboundHttpClient['assertAllowedUrl']>;
 
   function seedState(): void {
     tasks.clear();
@@ -211,10 +212,45 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
           }
           return null;
         },
-        findFirst: async (args: { where: { id?: string } }) => {
+        findFirst: async (args: {
+          where: {
+            id?: string;
+            shareTokenHash?: string;
+            status?: string | { not?: string };
+            shareRevokedAt?: Date | null;
+            shareExpiresAt?: { gt?: Date };
+          };
+        }) => {
           const tid = currentTenantId();
           const row = args.where.id ? tasks.get(args.where.id) : undefined;
           if (!row || row.tenantId !== tid) return null;
+          if (
+            args.where.shareTokenHash !== undefined &&
+            row.shareTokenHash !== args.where.shareTokenHash
+          ) {
+            return null;
+          }
+          if (typeof args.where.status === 'string' && row.status !== args.where.status) {
+            return null;
+          }
+          if (
+            args.where.status &&
+            typeof args.where.status === 'object' &&
+            args.where.status.not !== undefined &&
+            row.status === args.where.status.not
+          ) {
+            return null;
+          }
+          if ('shareRevokedAt' in args.where && row.shareRevokedAt !== args.where.shareRevokedAt) {
+            return null;
+          }
+          if (
+            args.where.shareExpiresAt?.gt &&
+            (!row.shareExpiresAt ||
+              row.shareExpiresAt.getTime() <= args.where.shareExpiresAt.gt.getTime())
+          ) {
+            return null;
+          }
           return {
             ...row,
             brand: {
@@ -244,6 +280,56 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
           Object.assign(row, args.data);
           return { ...row };
         },
+        updateMany: async (args: {
+          where: {
+            id?: string;
+            shareTokenHash?: string;
+            status?: string | { not?: string };
+            shareRevokedAt?: Date | null;
+            shareExpiresAt?: { gt?: Date };
+          };
+          data: Partial<TaskRow>;
+        }) => {
+          const tid = currentTenantId();
+          let count = 0;
+          for (const row of tasks.values()) {
+            if (row.tenantId !== tid) continue;
+            if (args.where.id !== undefined && row.id !== args.where.id) continue;
+            if (
+              args.where.shareTokenHash !== undefined &&
+              row.shareTokenHash !== args.where.shareTokenHash
+            ) {
+              continue;
+            }
+            if (typeof args.where.status === 'string' && row.status !== args.where.status) {
+              continue;
+            }
+            if (
+              args.where.status &&
+              typeof args.where.status === 'object' &&
+              args.where.status.not !== undefined &&
+              row.status === args.where.status.not
+            ) {
+              continue;
+            }
+            if (
+              'shareRevokedAt' in args.where &&
+              row.shareRevokedAt !== args.where.shareRevokedAt
+            ) {
+              continue;
+            }
+            if (
+              args.where.shareExpiresAt?.gt &&
+              (!row.shareExpiresAt ||
+                row.shareExpiresAt.getTime() <= args.where.shareExpiresAt.gt.getTime())
+            ) {
+              continue;
+            }
+            Object.assign(row, args.data);
+            count += 1;
+          }
+          return { count };
+        },
       },
       geoPublishRecord: {
         findFirst: async (args: { where: { articleId?: string; publishedUrl?: string } }) => {
@@ -267,13 +353,15 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
     // while keeping real SSRF rejection for 127.0.0.1, 10.x, 169.254.169.254, localhost, sonargate
     const outbound = app.get(OutboundHttpClient);
     const origAssert = outbound.assertAllowedUrl.bind(outbound);
-    vi.spyOn(outbound, 'assertAllowedUrl').mockImplementation(async (rawUrl, opts) => {
-      const parsed = new URL(rawUrl);
-      if (parsed.hostname === 'media.public-press.example') {
-        return parsed;
-      }
-      return origAssert(rawUrl, opts);
-    });
+    assertAllowedUrlSpy = vi
+      .spyOn(outbound, 'assertAllowedUrl')
+      .mockImplementation(async (rawUrl, opts) => {
+        const parsed = new URL(rawUrl);
+        if (parsed.hostname === 'media.public-press.example') {
+          return parsed;
+        }
+        return origAssert(rawUrl, opts);
+      });
 
     const geoDelivery = app.get(GeoDeliveryService);
     createPublishRecordSpy = vi
@@ -544,5 +632,107 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
         createPublishRecordSpy.mockImplementation(origImpl);
       }
     }
+  });
+
+  it('S-01: rejects mid-flight revoke+archive during assertAllowedUrl on new URL submit without creating publish record or resurrecting ARCHIVED', async () => {
+    const origAssertImpl = assertAllowedUrlSpy.getMockImplementation();
+    expect(origAssertImpl).toBeDefined();
+
+    assertAllowedUrlSpy.mockImplementationOnce(async (rawUrl, opts) => {
+      const task = tasks.get('task_valid');
+      expect(task).toBeDefined();
+      // Simulate concurrent revoke + archive while DNS/SSRF validation is in flight
+      task!.shareRevokedAt = new Date();
+      task!.status = 'ARCHIVED';
+      return origAssertImpl!(rawUrl, opts);
+    });
+
+    const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publishedUrl: 'https://media.public-press.example/toctou-new' }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(404);
+    expect(body.code).toBe(AUTH_ERROR.NOT_FOUND);
+    expect(createPublishRecordSpy).not.toHaveBeenCalled();
+    expect(publishRecords).toHaveLength(0);
+    expect(tasks.get('task_valid')?.status).toBe('ARCHIVED');
+  });
+
+  it('S-01: rejects mid-flight revoke+archive on already-recorded URL submit without resurrecting ARCHIVED to PUBLISHED', async () => {
+    const existingUrl = 'https://media.public-press.example/toctou-existing';
+    publishRecords.push({
+      id: 'pr_existing',
+      tenantId: 'tenant_a',
+      articleId: 'art_1',
+      distributionTaskId: 'task_valid',
+      publishedUrl: existingUrl,
+      channel: 'Tech Review Media',
+      publishedAt: new Date(),
+    });
+
+    const origAssertImpl = assertAllowedUrlSpy.getMockImplementation();
+    assertAllowedUrlSpy.mockImplementationOnce(async (rawUrl, opts) => {
+      const task = tasks.get('task_valid');
+      task!.shareRevokedAt = new Date();
+      task!.status = 'ARCHIVED';
+      return origAssertImpl!(rawUrl, opts);
+    });
+
+    const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publishedUrl: existingUrl }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(404);
+    expect(body.code).toBe(AUTH_ERROR.NOT_FOUND);
+    expect(tasks.get('task_valid')?.status).toBe('ARCHIVED');
+  });
+
+  it('S-01: rejects mid-flight token rotation during assertAllowedUrl and prevents stale-token publish', async () => {
+    const origAssertImpl = assertAllowedUrlSpy.getMockImplementation();
+    assertAllowedUrlSpy.mockImplementationOnce(async (rawUrl, opts) => {
+      const task = tasks.get('task_valid');
+      // Simulate merchant rotating PR share link to a brand new token while old request is in flight
+      task!.shareTokenHash = sha256('rotated_new_token_abcdefghijklmnopqrstuvwxyz_99');
+      return origAssertImpl!(rawUrl, opts);
+    });
+
+    const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publishedUrl: 'https://media.public-press.example/toctou-rotated' }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(404);
+    expect(body.code).toBe(AUTH_ERROR.NOT_FOUND);
+    expect(createPublishRecordSpy).not.toHaveBeenCalled();
+    expect(tasks.get('task_valid')?.status).toBe('DRAFT_VARIANT');
+  });
+
+  it('S-01: guards updateMany against concurrent archive occurring inside createPublishRecord without resurrecting ARCHIVED', async () => {
+    const origImpl = createPublishRecordSpy.getMockImplementation();
+    expect(origImpl).toBeDefined();
+
+    createPublishRecordSpy.mockImplementationOnce(async (articleId, input, auth) => {
+      const result = await origImpl!(articleId, input, auth);
+      // Simulate archive happening right after createPublishRecord completes before status update
+      const task = tasks.get('task_valid');
+      task!.status = 'ARCHIVED';
+      task!.shareRevokedAt = new Date();
+      return result;
+    });
+
+    const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publishedUrl: 'https://media.public-press.example/toctou-late' }),
+    });
+    const body = (await res.json()) as Envelope<null>;
+    expect(res.status).toBe(404);
+    expect(body.code).toBe(AUTH_ERROR.NOT_FOUND);
+    expect(tasks.get('task_valid')?.status).toBe('ARCHIVED');
   });
 });

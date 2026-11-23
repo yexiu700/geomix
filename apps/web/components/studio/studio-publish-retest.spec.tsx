@@ -714,4 +714,71 @@ describe('StudioPublishRetest (M6B #355)', () => {
       expect((probeBtn as HTMLButtonElement).disabled).toBe(false);
     });
   });
+
+  it('W-03: resets urlInput cleanly when switching article or activeMarket', () => {
+    const articleB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_2',
+      title: 'Second Independent Article',
+    };
+
+    const { rerender } = render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    const urlInput = screen.getByLabelText('已发布文章 URL') as HTMLInputElement;
+    fireEvent.change(urlInput, {
+      target: { value: 'https://blog.example.com/article-a-url' },
+    });
+    expect(urlInput.value).toBe('https://blog.example.com/article-a-url');
+
+    // Switching article clears typed URL
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={articleB}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+    expect((screen.getByLabelText('已发布文章 URL') as HTMLInputElement).value).toBe('');
+
+    // Type again on articleB, then switch market GLOBAL -> CN -> clears typed URL
+    fireEvent.change(screen.getByLabelText('已发布文章 URL'), {
+      target: { value: 'https://blog.example.com/article-b-global' },
+    });
+    expect((screen.getByLabelText('已发布文章 URL') as HTMLInputElement).value).toBe(
+      'https://blog.example.com/article-b-global',
+    );
+
+    rerender(
+      <StudioPublishRetest
+        activeMarket="CN"
+        article={articleB}
+        publishRecords={[]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+    expect((screen.getByLabelText('已发布文章 URL') as HTMLInputElement).value).toBe('');
+  });
 });
