@@ -411,4 +411,74 @@ describe('apps/web/lib/distribution API client', () => {
       code: -1,
     });
   });
+
+  it('v2.2 startShopifyOAuth, runArticlePreflight(targetLocale), and getRetestBudget call exact endpoints', async () => {
+    const { startShopifyOAuth, runArticlePreflight, getRetestBudget } =
+      await import('./distribution');
+
+    authorizedV2RequestMock.mockResolvedValueOnce({
+      authorizeUrl: 'https://demo.myshopify.com/admin/oauth/authorize?client_id=abc',
+      state: 'st_1',
+      shop: 'demo.myshopify.com',
+      expiresAt: '2026-11-24T12:10:00.000Z',
+    });
+    const oauthRes = await startShopifyOAuth('brand/1', {
+      shop: 'demo.myshopify.com',
+      market: 'GLOBAL',
+      targetLocale: 'de-DE',
+    });
+    expect(oauthRes.shop).toBe('demo.myshopify.com');
+    expect(authorizedV2RequestMock).toHaveBeenCalledWith(
+      '/brands/brand%2F1/connections/shopify/oauth/start',
+      expect.objectContaining({
+        method: 'POST',
+        body: { shop: 'demo.myshopify.com', market: 'GLOBAL', targetLocale: 'de-DE' },
+      }),
+    );
+
+    authorizedV2RequestMock.mockResolvedValueOnce({ ok: true, blockers: [], warnings: [] });
+    await runArticlePreflight('art_ja_1', {
+      title: '静音NAS比較',
+      contentMarkdown: '日本語のテスト記事です。',
+      targetLocale: 'ja-JP',
+    });
+    expect(authorizedV2RequestMock).toHaveBeenCalledWith(
+      '/articles/art_ja_1/preflight',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.objectContaining({ targetLocale: 'ja-JP' }),
+      }),
+    );
+
+    authorizedV2RequestMock.mockResolvedValueOnce({
+      publishRecordId: 'pub_1',
+      market: 'GLOBAL',
+      targetPromptCount: 1,
+      configuredControlPromptCount: 2,
+      effectiveControlPromptCount: 2,
+      selectedControlPrompts: ['Control A', 'Control B'],
+      totalPromptCount: 3,
+      activeEngineCount: 2,
+      sampleCount: 3,
+      includeControlPrompts: true,
+      unitPrice: 2,
+      perRunPoints: 36,
+      pendingMilestoneCount: 3,
+      totalEstimatedPoints: 108,
+      billingMode: 'SHADOW',
+      walletAvailable: 500,
+      sufficientForNextRun: true,
+      sufficientForAllPending: true,
+    });
+    const budget = await getRetestBudget('pub_1', {
+      sampleCount: 3,
+      includeControlPrompts: true,
+      milestones: [7, 14, 30],
+    });
+    expect(budget.totalEstimatedPoints).toBe(108);
+    expect(authorizedV2RequestMock).toHaveBeenCalledWith(
+      '/publish-records/pub_1/retest-budget?sampleCount=3&includeControlPrompts=true&milestones=7%2C14%2C30',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
 });

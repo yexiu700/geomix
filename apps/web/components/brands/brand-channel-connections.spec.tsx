@@ -13,6 +13,7 @@ const createChannelConnectionMock = vi.fn();
 const updateChannelConnectionMock = vi.fn();
 const deleteChannelConnectionMock = vi.fn();
 const testChannelConnectionMock = vi.fn();
+const startShopifyOAuthMock = vi.fn();
 
 vi.mock('../../lib/distribution', () => ({
   listChannelConnections: (...args: unknown[]) => listChannelConnectionsMock(...args),
@@ -20,6 +21,7 @@ vi.mock('../../lib/distribution', () => ({
   updateChannelConnection: (...args: unknown[]) => updateChannelConnectionMock(...args),
   deleteChannelConnection: (...args: unknown[]) => deleteChannelConnectionMock(...args),
   testChannelConnection: (...args: unknown[]) => testChannelConnectionMock(...args),
+  startShopifyOAuth: (...args: unknown[]) => startShopifyOAuthMock(...args),
 }));
 
 const confirmMock = vi.fn();
@@ -156,6 +158,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
 
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.click(within(modal).getByRole('tab', { name: /Custom App Token/ }));
 
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'AstraVault Shopify' },
@@ -1043,6 +1046,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 2. Same-tick double-click on submit + save-and-test -> strictly 1 createChannelConnection call
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.click(within(modal).getByRole('tab', { name: /Custom App Token/ }));
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Single Flight Store' },
     });
@@ -1074,5 +1078,465 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('channel-connection-modal')).toBeNull();
     });
+  });
+
+  it('supports Shopify OAuth 2.0 start with safe redirect validation and graceful 503 fallback to Custom App Token', async () => {
+    const onOAuthRedirect = vi.fn();
+    startShopifyOAuthMock
+      .mockRejectedValueOnce(
+        new GatewayApiError(
+          503,
+          50301,
+          'Shopify OAuth 尚未配置（请先设置 SHOPIFY_OAUTH_CLIENT_ID 与 SHOPIFY_OAUTH_CLIENT_SECRET，或使用 Custom App Token 接入）',
+        ),
+      )
+      .mockResolvedValueOnce({
+        authorizeUrl: 'https://evil.example.com/phish',
+        state: 'st_bad',
+        shop: 'demo.myshopify.com',
+        expiresAt: '2026-11-24T12:10:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        authorizeUrl: 'https://demo.myshopify.com/admin/oauth/authorize?client_id=cid&state=st_ok',
+        state: 'st_ok',
+        shop: 'demo.myshopify.com',
+        expiresAt: '2026-11-24T12:10:00.000Z',
+      });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+        supportedLocales={['en-US', 'de-DE']}
+        onOAuthRedirect={onOAuthRedirect}
+      />,
+    );
+
+    await waitFor(() => expect(listChannelConnectionsMock).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+
+    // Tab 1 (OAuth) is default
+    expect(within(modal).getByTestId('shopify-oauth-tab-panel')).toBeTruthy();
+    fireEvent.change(within(modal).getByTestId('shopify-oauth-shop-input'), {
+      target: { value: 'demo.myshopify.com' },
+    });
+
+    // 1. 503 unconfigured -> shows fallback banner & switches to Custom tab on click
+    fireEvent.click(within(modal).getByTestId('shopify-oauth-start-btn'));
+    expect(await within(modal).findByTestId('shopify-oauth-503-fallback')).toBeTruthy();
+    fireEvent.click(within(modal).getByTestId('shopify-switch-to-custom-btn'));
+    expect(within(modal).getByLabelText('Shopify Access Token')).toBeTruthy();
+
+    // Switch back to OAuth tab
+    fireEvent.click(within(modal).getByRole('tab', { name: /Shopify OAuth 2\.0/ }));
+    fireEvent.change(within(modal).getByTestId('shopify-oauth-shop-input'), {
+      target: { value: 'demo.myshopify.com' },
+    });
+
+    // 2. Blocks unsafe redirect URL
+    fireEvent.click(within(modal).getByTestId('shopify-oauth-start-btn'));
+    expect(await within(modal).findByText(/拦截到不安全的 Shopify 授权跳转地址/)).toBeTruthy();
+    expect(onOAuthRedirect).not.toHaveBeenCalled();
+
+    // 3. Valid https://*.myshopify.com redirect succeeds
+    fireEvent.click(within(modal).getByTestId('shopify-oauth-start-btn'));
+    await waitFor(() => {
+      expect(onOAuthRedirect).toHaveBeenCalledWith(
+        'https://demo.myshopify.com/admin/oauth/authorize?client_id=cid&state=st_ok',
+      );
+    });
+  });
+
+  it('creates GHOST (validating hex key), DEVTO, HASHNODE (apiToken), and GITHUB_MDX connections with targetLocale', async () => {
+    createChannelConnectionMock
+      .mockResolvedValueOnce(
+        makeConn({
+          id: 'conn_ghost',
+          provider: 'GHOST',
+          displayName: 'Ghost DE Blog',
+          siteBaseUrl: 'https://de.example.com',
+          targetLocale: 'de-DE',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeConn({
+          id: 'conn_devto',
+          provider: 'DEVTO',
+          displayName: 'Dev.to Official',
+          siteBaseUrl: 'https://dev.to',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeConn({
+          id: 'conn_hashnode',
+          provider: 'HASHNODE',
+          displayName: 'Hashnode Eng',
+          siteBaseUrl: 'https://hashnode.com',
+        }),
+      )
+      .mockResolvedValueOnce(
+        makeConn({
+          id: 'conn_gh',
+          provider: 'GITHUB_MDX',
+          displayName: 'Docs MDX Repo',
+          siteBaseUrl: 'https://github.com/acme/docs',
+          configJson: {
+            repoOwner: 'acme',
+            repoName: 'docs',
+            branch: 'main',
+            contentDir: 'content/blog',
+            fileExtension: 'mdx',
+          },
+        }),
+      );
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+        supportedLocales={['en-US', 'de-DE']}
+      />,
+    );
+    await waitFor(() => expect(listChannelConnectionsMock).toHaveBeenCalledTimes(1));
+
+    // 1. GHOST with bad key -> validation error, then valid even-length hex key + targetLocale
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    let modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Ghost 博客');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Ghost DE Blog' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://de.example.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Ghost Admin API Key'), {
+      target: { value: 'bad-key-no-hex' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    expect(await within(modal).findByText(/格式为 id:hex_secret/)).toBeTruthy();
+
+    fireEvent.change(within(modal).getByLabelText('Ghost Admin API Key'), {
+      target: { value: '64a1b2c3:0123456789abcdef0123456789abcdef' },
+    });
+    await selectAntdOption(
+      within(modal).getByTestId('channel-connection-locale-select'),
+      '德语（德国） (de-DE) · Deutsch',
+    );
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          provider: 'GHOST',
+          targetLocale: 'de-DE',
+          credentials: { adminApiKey: '64a1b2c3:0123456789abcdef0123456789abcdef' },
+        }),
+        expect.anything(),
+      );
+    });
+    expect(await screen.findByTestId('channel-connection-locale-conn_ghost')).toBeTruthy();
+
+    // 2. DEVTO
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to 技术社区');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Dev.to Official' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://dev.to' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Dev.to API Key'), {
+      target: { value: 'devto_key_abc' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          provider: 'DEVTO',
+          credentials: { apiKey: 'devto_key_abc' },
+        }),
+        expect.anything(),
+      );
+    });
+
+    // 3. HASHNODE (exact apiToken credential key)
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode 博客');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Hashnode Eng' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://hashnode.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Hashnode Personal Access Token'), {
+      target: { value: 'hn_pat_12345' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Hashnode Publication ID'), {
+      target: { value: 'pub_xyz' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          provider: 'HASHNODE',
+          credentials: { apiToken: 'hn_pat_12345' },
+          configJson: expect.objectContaining({ publicationId: 'pub_xyz' }),
+        }),
+        expect.anything(),
+      );
+    });
+
+    // 4. GITHUB_MDX (repoOwner / repoName / branch / fileExtension)
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'GitHub MDX 仓库');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Docs MDX Repo' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://github.com/acme/docs' },
+    });
+    fireEvent.change(within(modal).getByLabelText('GitHub Personal Access Token'), {
+      target: { value: 'ghp_test_token_123' },
+    });
+    fireEvent.change(within(modal).getByLabelText('GitHub 仓库所有者'), {
+      target: { value: 'acme' },
+    });
+    fireEvent.change(within(modal).getByLabelText('GitHub 仓库名称'), {
+      target: { value: 'docs' },
+    });
+    fireEvent.change(within(modal).getByLabelText('GitHub 目标分支'), {
+      target: { value: 'main' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          provider: 'GITHUB_MDX',
+          credentials: { token: 'ghp_test_token_123' },
+          configJson: expect.objectContaining({
+            repoOwner: 'acme',
+            repoName: 'docs',
+            branch: 'main',
+            fileExtension: 'mdx',
+          }),
+        }),
+        expect.anything(),
+      );
+    });
+    expect(await screen.findByText(/Repo: acme\/docs@main/)).toBeTruthy();
+  });
+
+  it('creates CN WECHAT_OFFICIAL connection with permanent draft-only & IP whitelist 40164 notices', async () => {
+    listChannelConnectionsMock.mockResolvedValueOnce({
+      items: [
+        makeConn({
+          id: 'conn_wx_existing',
+          market: 'CN',
+          provider: 'WECHAT_OFFICIAL',
+          displayName: '官方服务号草稿箱',
+          siteBaseUrl: 'https://mp.weixin.qq.com',
+          status: 'INVALID',
+          lastError: '微信公众号接口返回 IP 白名单拦截（错误码 40164）',
+          configJson: { defaultPublishAsDraft: true, author: '品牌编辑部' },
+        }),
+      ],
+    });
+    createChannelConnectionMock.mockResolvedValueOnce(
+      makeConn({
+        id: 'conn_wx_new',
+        market: 'CN',
+        provider: 'WECHAT_OFFICIAL',
+        displayName: '订阅号草稿箱',
+        siteBaseUrl: 'https://mp.weixin.qq.com',
+        configJson: { defaultPublishAsDraft: true, inlineJsonLd: false, needOpenComment: false },
+      }),
+    );
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="CN"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    // Card shows draft-only notice AND 40164 IP whitelist guidance
+    const draftNotice = await screen.findByTestId('wechat-card-draft-notice-conn_wx_existing');
+    expect(draftNotice.textContent).toContain('仅推送至公众号草稿箱，绝不自动群发');
+    expect(draftNotice.textContent).toContain('40164');
+    expect(screen.getByText(/处理指引：请登录微信公众平台/)).toBeTruthy();
+
+    // Open modal & create WECHAT_OFFICIAL
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(
+      within(modal).getByTestId('channel-provider-select'),
+      '微信公众号草稿箱',
+    );
+    expect(within(modal).getByTestId('wechat-modal-draft-notice').textContent).toContain(
+      '仅推送至公众号草稿箱，绝不自动群发',
+    );
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: '订阅号草稿箱' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://mp.weixin.qq.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('微信公众号 AppID'), {
+      target: { value: 'wx1234567890abcdef' },
+    });
+    fireEvent.change(within(modal).getByLabelText('微信公众号 AppSecret'), {
+      target: { value: 'secret_wx_12345' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          market: 'CN',
+          provider: 'WECHAT_OFFICIAL',
+          credentials: { appId: 'wx1234567890abcdef', appSecret: 'secret_wx_12345' },
+          configJson: expect.objectContaining({
+            defaultPublishAsDraft: true,
+            inlineJsonLd: false,
+          }),
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('BUG-3 regression: blocks Shopify OAuth authorizeUrl with non-standard port or non-authorize storefront redirect path', async () => {
+    const onOAuthRedirect = vi.fn();
+    startShopifyOAuthMock
+      .mockResolvedValueOnce({
+        authorizeUrl: 'https://demo.myshopify.com:8443/admin/oauth/authorize?client_id=cid',
+        state: 'st_port',
+        shop: 'demo.myshopify.com',
+        expiresAt: '2026-11-24T12:10:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        authorizeUrl: 'https://demo.myshopify.com/evil-redirect?to=https://evil.com',
+        state: 'st_path',
+        shop: 'demo.myshopify.com',
+        expiresAt: '2026-11-24T12:10:00.000Z',
+      });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+        onOAuthRedirect={onOAuthRedirect}
+      />,
+    );
+    await waitFor(() => expect(listChannelConnectionsMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.change(within(modal).getByTestId('shopify-oauth-shop-input'), {
+      target: { value: 'demo.myshopify.com' },
+    });
+
+    // 1. Non-standard port blocked
+    fireEvent.click(within(modal).getByTestId('shopify-oauth-start-btn'));
+    expect(await within(modal).findByText(/拦截到不安全的 Shopify 授权跳转地址/)).toBeTruthy();
+    expect(onOAuthRedirect).not.toHaveBeenCalled();
+
+    // 2. Arbitrary storefront path blocked
+    fireEvent.click(within(modal).getByTestId('shopify-oauth-start-btn'));
+    await waitFor(() => expect(startShopifyOAuthMock).toHaveBeenCalledTimes(2));
+    expect(within(modal).getByText(/拦截到不安全的 Shopify 授权跳转地址/)).toBeTruthy();
+    expect(onOAuthRedirect).not.toHaveBeenCalled();
+  });
+
+  it('BUG-4 regression: resets cross-provider hidden fields (tagsInput/primaryDomain) on provider switch and prevents Shopify OAuth edit downgrade via hidden accessToken', async () => {
+    const oauthConn = makeConn({
+      id: 'conn_shopify_oauth_1',
+      provider: 'SHOPIFY',
+      authType: 'OAUTH',
+      displayName: 'OAuth Flagship Store',
+      siteBaseUrl: 'https://flagship.myshopify.com',
+      externalShopDomain: 'flagship.myshopify.com',
+      configJson: { defaultPublishAsDraft: true, inlineJsonLd: true },
+    });
+    listChannelConnectionsMock.mockResolvedValue({ items: [oauthConn] });
+    createChannelConnectionMock.mockResolvedValueOnce(
+      makeConn({
+        id: 'conn_hashnode_clean',
+        provider: 'HASHNODE',
+        displayName: 'Clean Hashnode',
+        siteBaseUrl: 'https://hashnode.com',
+      }),
+    );
+    updateChannelConnectionMock.mockResolvedValueOnce(oauthConn);
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled={true}
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+    await screen.findByTestId('channel-connection-card-conn_shopify_oauth_1');
+
+    // Part A: Type tags under DEVTO -> switch to HASHNODE -> saved configJson MUST NOT leak tags
+    fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
+    let modal = await screen.findByTestId('channel-connection-modal');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to 技术社区');
+    fireEvent.change(within(modal).getByLabelText('Dev.to 默认标签'), {
+      target: { value: 't1, t2, t3, t4, t5' },
+    });
+
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode 博客');
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Clean Hashnode' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://hashnode.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Hashnode Personal Access Token'), {
+      target: { value: 'hn_clean_token' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => expect(createChannelConnectionMock).toHaveBeenCalledTimes(1));
+    const createdConfig = (
+      createChannelConnectionMock.mock.calls[0]?.[1] as { configJson?: Record<string, unknown> }
+    )?.configJson;
+    expect(createdConfig).not.toHaveProperty('tags');
+
+    // Part B: Edit OAuth Shopify connection -> switch to Custom tab, type token -> switch back to OAuth tab -> Save MUST NOT send credentials.accessToken
+    fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_shopify_oauth_1'));
+    modal = await screen.findByTestId('channel-connection-modal');
+    fireEvent.click(within(modal).getByRole('tab', { name: 'Custom App Token' }));
+    fireEvent.change(within(modal).getByLabelText('Shopify Access Token'), {
+      target: { value: 'shpat_TYPED_THEN_SWITCHED' },
+    });
+    fireEvent.click(within(modal).getByRole('tab', { name: /Shopify OAuth 2\.0/ }));
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+    await waitFor(() => expect(updateChannelConnectionMock).toHaveBeenCalledTimes(1));
+    const patchPayload = updateChannelConnectionMock.mock.calls[0]?.[2] as {
+      credentials?: Record<string, string>;
+    };
+    expect(patchPayload.credentials).toBeUndefined();
   });
 });

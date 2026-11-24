@@ -9,10 +9,10 @@ import {
   type GeoMarket,
   type MediaStorageSummary,
 } from '@geomix/shared';
-import { Button, Skeleton, Tag, Typography } from 'antd';
+import { Alert, Button, Skeleton, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBrandFacts, listBrandMedia } from '../../lib/brands';
-import { useTabFreshness } from '../../lib/tab-freshness';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
   selectActiveBrand,
@@ -25,6 +25,40 @@ import { BrandChannelConnections } from './brand-channel-connections';
 import { BrandFactsSection } from './brand-facts-section';
 import { BrandIdentitySection } from './brand-identity-section';
 import { BrandMediaSection } from './brand-media-section';
+import { ExtensionPairingPanel } from './extension-pairing-panel';
+
+type ShopifyOAuthBannerState = {
+  status: 'connected' | 'error';
+  connectionId?: string;
+  reason?: string;
+};
+
+const KNOWN_OAUTH_ERROR_REASONS: Record<string, string> = {
+  access_denied: '您已取消 Shopify 店铺授权。',
+  invalid_hmac: 'Shopify 回调签名校验未通过，请重新发起授权。',
+  invalid_state: '授权会话已过期或无效，请重新发起 OAuth 授权。',
+  state_expired: '授权会话已超过 10 分钟有效期，请重新发起授权。',
+  token_exchange_failed: 'Shopify 换取访问令牌失败，请稍后重试或改用 Custom App Token。',
+  shop_mismatch: '回调店铺域名与发起授权的店铺不一致，已安全拦截。',
+  oauth_unconfigured: '服务端尚未配置 Shopify OAuth 凭据，请改用 Custom App Token 接入。',
+};
+
+const DEFAULT_OAUTH_ERROR_MESSAGE =
+  'Shopify OAuth 授权未完成，请重试或改用 Custom App Token 接入。';
+
+function formatSafeOAuthReason(raw: string | null): string {
+  if (!raw) return DEFAULT_OAUTH_ERROR_MESSAGE;
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim()
+    .slice(0, 160);
+  if (!cleaned) return DEFAULT_OAUTH_ERROR_MESSAGE;
+  const key = cleaned.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(KNOWN_OAUTH_ERROR_REASONS, key)) {
+    return KNOWN_OAUTH_ERROR_REASONS[key] ?? DEFAULT_OAUTH_ERROR_MESSAGE;
+  }
+  return DEFAULT_OAUTH_ERROR_MESSAGE;
+}
 
 export function BrandsWorkspace() {
   const consoleCtx = useConsoleContext();
@@ -43,6 +77,9 @@ export function BrandsWorkspace() {
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [mediaItems, setMediaItems] = useState<BrandMediaAssetRecord[]>([]);
   const [mediaStorage, setMediaStorage] = useState<MediaStorageSummary | null>(null);
+  const [shopifyOAuthBanner, setShopifyOAuthBanner] = useState<ShopifyOAuthBannerState | null>(
+    null,
+  );
 
   const loadSeqRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -153,6 +190,63 @@ export function BrandsWorkspace() {
     },
   });
 
+  // Parse Shopify OAuth callback query params safely (without useSearchParams) & clean transient URL params
+  const urlSearch = consoleCtx?.urlSearch ?? '';
+  const consumedOAuthSearchRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const rawSearch = urlSearch || window.location.search;
+    const normalizedSearch = rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch;
+    const params = new URLSearchParams(normalizedSearch);
+    const oauthStatus = params.get('shopifyOAuth');
+    if (oauthStatus !== 'connected' && oauthStatus !== 'error') {
+      consumedOAuthSearchRef.current = null;
+      return;
+    }
+    if (consumedOAuthSearchRef.current === normalizedSearch) return;
+    consumedOAuthSearchRef.current = normalizedSearch;
+
+    const connectionId = params.get('connectionId')?.trim() || undefined;
+    const rawReason =
+      params.get('reason') ?? params.get('error_description') ?? params.get('error');
+    setShopifyOAuthBanner({
+      status: oauthStatus,
+      connectionId,
+      reason: oauthStatus === 'error' ? formatSafeOAuthReason(rawReason) : undefined,
+    });
+    if (oauthStatus === 'connected') {
+      invalidateFreshness('channel-connections');
+    }
+    // Clean transient OAuth params from URL while preserving brandId & market
+    const currentUrl = new URL(window.location.href);
+    for (const transientKey of [
+      'shopifyOAuth',
+      'connectionId',
+      'reason',
+      'error',
+      'error_description',
+    ]) {
+      currentUrl.searchParams.delete(transientKey);
+    }
+    const nextRelative = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`;
+    window.history.replaceState(window.history.state, '', nextRelative);
+  }, [urlSearch]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (state.activeMarket !== 'CN') return;
+    const rawSearch = urlSearch || window.location.search;
+    const params = new URLSearchParams(rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch);
+    const section = params.get('section');
+    if (section === 'extension' || window.location.hash === '#brand-section-extension') {
+      const target = document.getElementById('brand-section-extension');
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }, [urlSearch, state.activeMarket, activeBrandId]);
+
   // Cold-load skeleton state (zero 0-count or empty-state flash)
   if (state.brandsLoading) {
     return (
@@ -250,6 +344,7 @@ export function BrandsWorkspace() {
             <a href="#brand-section-facts">事实卡</a>
             <a href="#brand-section-media">实拍图库</a>
             <a href="#brand-section-connections">发布渠道</a>
+            {state.activeMarket === 'CN' ? <a href="#brand-section-extension">扩展配对</a> : null}
           </nav>
           {missingMarket ? (
             <Button
@@ -270,6 +365,27 @@ export function BrandsWorkspace() {
           </Button>
         </div>
       </div>
+
+      {shopifyOAuthBanner ? (
+        <Alert
+          type={shopifyOAuthBanner.status === 'connected' ? 'success' : 'error'}
+          showIcon
+          closable
+          data-testid="shopify-oauth-callback-banner"
+          onClose={() => setShopifyOAuthBanner(null)}
+          message={
+            shopifyOAuthBanner.status === 'connected'
+              ? 'Shopify OAuth 2.0 授权成功，店铺发布渠道已连接'
+              : 'Shopify OAuth 2.0 授权未完成'
+          }
+          description={
+            shopifyOAuthBanner.status === 'connected'
+              ? '已加密保存店铺访问凭据并自动注册卸载同步 Webhook；可在下方「发布渠道」卡片测试连接或选择目标 Blog。'
+              : shopifyOAuthBanner.reason
+          }
+          style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+        />
+      ) : null}
 
       <BrandIdentitySection
         key={`identity-${activeBrand.id}`}
@@ -325,9 +441,18 @@ export function BrandsWorkspace() {
         brandId={activeBrand.id}
         activeMarket={state.activeMarket}
         marketEnabled={Boolean(activeBrandMarket)}
+        supportedLocales={activeBrandMarket?.supportedLocales}
         readOnly={readOnly}
         onEnableMarket={() => consoleCtx?.openEnableMarketModal(state.activeMarket)}
       />
+
+      {state.activeMarket === 'CN' ? (
+        <ExtensionPairingPanel
+          variant="brands"
+          readOnly={readOnly}
+          active={state.activeMarket === 'CN'}
+        />
+      ) : null}
     </section>
   );
 }

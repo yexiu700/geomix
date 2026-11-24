@@ -1589,4 +1589,396 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     fireEvent.click(screen.getByTestId('distribution-warning-locate-btn'));
     expect(onReturnToEditor).toHaveBeenCalledWith('GLOBAL_CLAIM_WARNING', 'risk-free');
   });
+
+  it('supports v2.2 multi-locale variant job, ja-JP preflight without false-positive CJK block, and new L1 affordances (GITHUB_MDX, DEVTO, WECHAT_OFFICIAL)', async () => {
+    const jaArticle: GeoArticleRecord = {
+      ...GLOBAL_ARTICLE,
+      id: 'art_ja_drawer',
+      targetLocale: 'ja-JP',
+      title: '2026年 静音ホームNAS比較ガイド',
+      contentMarkdown:
+        '# 静音ホームNAS比較\n\nAstraVault X4は18.5dBの静音設計で、24時間稼働でも快適です。',
+    };
+    // Simulate server preflight failure -> falls back to local evaluateDistributionPreflight with ja-JP
+    runArticlePreflightMock.mockRejectedValueOnce(new Error('offline'));
+    listChannelConnectionsMock.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'conn_gh_1',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_gl_1',
+          market: 'GLOBAL',
+          provider: 'GITHUB_MDX',
+          displayName: 'Docs MDX Repo',
+          siteBaseUrl: 'https://github.com/acme/docs',
+          credentialHint: 'ghp_****1234',
+          configJson: { repoOwner: 'acme', repoName: 'docs', branch: 'main' },
+          status: 'ACTIVE',
+          authType: 'API_KEY',
+          targetLocale: 'ja-JP',
+          lastTestedAt: '2026-11-23T00:00:00.000Z',
+          lastError: null,
+          createdAt: '2026-11-20T00:00:00.000Z',
+          updatedAt: '2026-11-23T00:00:00.000Z',
+        } satisfies ChannelConnectionDto,
+      ],
+    });
+    const ghTask = makeTask({
+      id: 'task_gh_1',
+      articleId: jaArticle.id,
+      targetLocale: 'ja-JP',
+      connectionId: 'conn_gh_1',
+      provider: 'GITHUB_MDX',
+      mode: 'L1_API',
+      channelLabel: 'Docs MDX Repo',
+      variantTitle: '2026年 静音ホームNAS比較ガイド',
+      variantSlug: 'quiet-home-nas-ja-2026',
+      variantMetaDesc: '静音ホームNASの比較データ',
+      variantMarkdown: '# MDX Content',
+      variantHtml: '',
+      variantExtrasJson: { tags: ['nas', 'homelab'] },
+      status: 'DRAFT_PUSHED',
+      publishAsDraft: true,
+      remotePostId: 'pr#42',
+      remoteAdminUrl: 'https://github.com/acme/docs/pull/42',
+      remotePublishedUrl: null,
+    });
+    const devtoTask: ArticleDistributionTaskItem = {
+      ...ghTask,
+      id: 'task_devto_1',
+      provider: 'DEVTO',
+      channelLabel: 'Dev.to Official',
+      status: 'DRAFT_VARIANT',
+      remotePostId: null,
+      remoteAdminUrl: null,
+      variantExtrasJson: {
+        canonicalUrl: 'https://astravault.example.com/guides/nas-2026',
+        tags: ['homelab', 'selfhosted'],
+      },
+    };
+    listArticleDistributionsMock.mockResolvedValue({ items: [ghTask, devtoTask] });
+    createDistributionVariantJobMock.mockResolvedValueOnce({
+      id: 'vjob_ja_1',
+      articleId: jaArticle.id,
+      brandId: 'brand_1',
+      brandMarketId: 'bm_gl_1',
+      status: 'COMPLETED',
+      total: 1,
+      doneCount: 1,
+      failCount: 0,
+      unitPrice: 2,
+      totalChargedPoints: 2,
+      refundedCount: 0,
+      refundedPoints: 0,
+      reservationId: null,
+      billingMode: 'SHADOW',
+      replayed: false,
+      taskIds: ['task_gh_1'],
+      failures: [],
+      lastError: null,
+      createdAt: '2026-11-24T00:00:00.000Z',
+      updatedAt: '2026-11-24T00:00:00.000Z',
+      finishedAt: '2026-11-24T00:00:01.000Z',
+    } satisfies GeoVariantJobDto);
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={jaArticle}
+        draftTitle={jaArticle.title}
+        draftMarkdown={jaArticle.contentMarkdown}
+        brandNames={['AstraVault']}
+        supportedLocales={['en-US', 'ja-JP', 'de-DE']}
+        defaultTargetLocale="ja-JP"
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    // 1. ja-JP preflight passes locally with ZERO GLOBAL_CJK_LEAK blockers
+    await waitFor(() => {
+      expect(runArticlePreflightMock).toHaveBeenCalledWith(
+        jaArticle.id,
+        expect.objectContaining({ targetLocale: 'ja-JP' }),
+        expect.anything(),
+      );
+      expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
+    });
+
+    // 2. Step 2 shows conditional variant locale selector & submits targetLocale on variant job
+    expect(await screen.findByTestId('distribution-target-locale-select')).toBeTruthy();
+    expect(screen.queryByTestId('distribution-l2-extension-group')).toBeNull();
+    fireEvent.click(screen.getByTestId('distribution-target-l1:conn_gh_1'));
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    fireEvent.click(await screen.findByTestId('distribution-points-confirm-submit-btn'));
+    await waitFor(() => {
+      expect(createDistributionVariantJobMock).toHaveBeenCalledWith(
+        jaArticle.id,
+        {
+          targets: [
+            expect.objectContaining({
+              provider: 'GITHUB_MDX',
+              connectionId: 'conn_gh_1',
+              targetLocale: 'ja-JP',
+            }),
+          ],
+        },
+        expect.anything(),
+      );
+    });
+
+    // 3. Step 3 GITHUB_MDX shows PR review link & locale tag
+    const prLink = await screen.findByTestId('distribution-github-pr-link');
+    expect(prLink.getAttribute('href')).toBe('https://github.com/acme/docs/pull/42');
+    expect(prLink.textContent).toContain('pr#42');
+    expect(screen.getByTestId('distribution-task-locale-tag').textContent).toContain('ja-JP');
+
+    // 4. Switch to DEVTO tab -> shows canonical URL & tags preview
+    fireEvent.click(screen.getByRole('tab', { name: /Dev\.to Official/ }));
+    const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
+    expect(canonicalBox.textContent).toContain('https://astravault.example.com/guides/nas-2026');
+    expect(canonicalBox.textContent).toContain('#homelab');
+  });
+
+  it('supports CN WECHAT_OFFICIAL draft-only/media_id/40164 and 3 CN L2 Extension queues with pairing guides', async () => {
+    const cnArticle: GeoArticleRecord = {
+      ...GLOBAL_ARTICLE,
+      id: 'art_cn_v22',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      targetLocale: 'zh-CN',
+      title: '2026 静音四盘位 NAS 选购指南',
+      contentMarkdown: '# 2026 静音四盘位 NAS 选购指南\n\n星辰存储实测 18.5dB。',
+    };
+    const onNavigateExtensionPairing = vi.fn();
+    const onNavigateAccount = vi.fn();
+    const onClose = vi.fn();
+
+    runArticlePreflightMock.mockResolvedValueOnce({ ok: true, blockers: [], warnings: [] });
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [] });
+
+    const wechatTask = makeTask({
+      id: 'task_wx_1',
+      articleId: cnArticle.id,
+      brandMarketId: 'bm_cn_1',
+      targetLocale: 'zh-CN',
+      connectionId: 'conn_wx_1',
+      provider: 'WECHAT_OFFICIAL',
+      mode: 'L1_API',
+      channelLabel: '官方服务号草稿箱',
+      variantTitle: '2026 静音四盘位 NAS 选购指南',
+      variantSlug: null,
+      variantMetaDesc: '星辰存储实测 18.5dB 静音表现。',
+      variantMarkdown: '# 公众号正文',
+      variantHtml: '',
+      variantExtrasJson: { digest: '星辰存储实测 18.5dB 静音表现。' },
+      status: 'DRAFT_PUSHED',
+      publishAsDraft: true,
+      remotePostId: 'wx_media_id_8899',
+      remoteAdminUrl: 'https://mp.weixin.qq.com/',
+      remotePublishedUrl: null,
+      lastError: '错误码 40164：invalid ip',
+    });
+    const zhihuExtTask = makeTask({
+      ...wechatTask,
+      id: 'task_zhihu_ext_1',
+      connectionId: null,
+      provider: 'ZHIHU_EXT',
+      mode: 'L2_EXTENSION',
+      channelLabel: '知乎（Chrome 扩展）',
+      status: 'DRAFT_VARIANT',
+      remotePostId: null,
+      remoteAdminUrl: null,
+      lastError: null,
+      variantExtrasJson: {
+        antiBanChecklist: ['确认已移除营销诱导话术', '人工核对草稿箱排版后发布'],
+      },
+    });
+    listArticleDistributionsMock.mockResolvedValue({ items: [wechatTask, zhihuExtTask] });
+    updateDistributionTaskMock.mockResolvedValueOnce({
+      ...zhihuExtTask,
+      status: 'READY_TO_PUBLISH',
+    });
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_cn_1"
+        market="CN"
+        contextEpoch={1}
+        article={cnArticle}
+        draftTitle={cnArticle.title}
+        draftMarkdown={cnArticle.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={onClose}
+        onReturnToEditor={vi.fn()}
+        onNavigateExtensionPairing={onNavigateExtensionPairing}
+        onNavigateAccount={onNavigateAccount}
+        onCreatePublishRecord={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+
+    // 1. CN Step 2 shows all 3 L2 Extension targets
+    const l2Group = await screen.findByTestId('distribution-l2-extension-group');
+    expect(within(l2Group).getByTestId('distribution-target-ZHIHU_EXT')).toBeTruthy();
+    expect(within(l2Group).getByTestId('distribution-target-TOUTIAO_EXT')).toBeTruthy();
+    expect(within(l2Group).getByTestId('distribution-target-SMZDM_EXT')).toBeTruthy();
+
+    // 2. WECHAT_OFFICIAL Step 3 tab: draft-only notice, media_id, 40164 hint, NO live publish button, NO URL Slug
+    expect(await screen.findByTestId('distribution-wechat-draft-only-notice')).toBeTruthy();
+    expect(screen.getByTestId('distribution-wechat-media-id').textContent).toContain(
+      'wx_media_id_8899',
+    );
+    expect(screen.getByText(/处理指引：前往微信公众平台/)).toBeTruthy();
+    expect(screen.queryByTestId('distribution-publish-live-btn')).toBeNull();
+    expect(screen.queryByLabelText('URL Slug')).toBeNull();
+
+    // 3. Switch to ZHIHU_EXT L2 Extension tab -> panel, mark-ready, anti-ban checklist & pairing links
+    fireEvent.click(screen.getByRole('tab', { name: /知乎（Chrome 扩展）/ }));
+    const l2Panel = await screen.findByTestId('distribution-l2-extension-panel');
+    expect(l2Panel.textContent).toContain('等待 Chrome 扩展拉取');
+    expect(l2Panel.textContent).toContain('确认已移除营销诱导话术');
+
+    fireEvent.click(within(l2Panel).getByTestId('distribution-l2-mark-ready-btn'));
+    await waitFor(() => {
+      expect(updateDistributionTaskMock).toHaveBeenCalledWith(
+        'task_zhihu_ext_1',
+        { status: 'READY_TO_PUBLISH' },
+        expect.anything(),
+      );
+    });
+
+    fireEvent.click(within(l2Panel).getByTestId('distribution-l2-pair-brands-btn'));
+    expect(onNavigateExtensionPairing).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(l2Panel).getByTestId('distribution-l2-pair-account-btn'));
+    expect(onNavigateAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('Defect 1 regression: blocks loopback, private, metadata, IPv6-mapped, obfuscated IPv4, and non-HTTPS GitHub PR links from rendering as clickable <a> elements', async () => {
+    runArticlePreflightMock.mockResolvedValueOnce({ ok: true, blockers: [], warnings: [] });
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [] });
+
+    const unsafeGhTask = makeTask({
+      id: 'task_gh_unsafe',
+      provider: 'GITHUB_MDX',
+      mode: 'L1_API',
+      channelLabel: 'Unsafe GitHub PR',
+      status: 'DRAFT_PUSHED',
+      remotePostId: 'pr#99',
+      remoteAdminUrl: 'http://127.0.0.1/pr',
+      remotePublishedUrl: 'http://169.254.169.254/latest/meta-data',
+    });
+    const httpGhTask = makeTask({
+      id: 'task_gh_http',
+      provider: 'GITHUB_MDX',
+      mode: 'L1_API',
+      channelLabel: 'HTTP GitHub PR',
+      status: 'DRAFT_PUSHED',
+      remotePostId: 'pr#100',
+      remoteAdminUrl: 'http://github.com/acme/docs/pull/100',
+      remotePublishedUrl: 'http://2130706433/article',
+    });
+    const unsafeDevtoTask = makeTask({
+      id: 'task_devto_unsafe',
+      provider: 'DEVTO',
+      mode: 'L1_API',
+      channelLabel: 'Unsafe Dev.to',
+      status: 'DRAFT_VARIANT',
+      remoteAdminUrl: 'http://[::ffff:127.0.0.1]/admin',
+      remotePublishedUrl: 'http://localhost:3000/post',
+      variantExtrasJson: {
+        canonicalUrl: 'http://0x7f000001/canonical',
+      },
+    });
+    listArticleDistributionsMock.mockResolvedValueOnce({
+      items: [unsafeGhTask, httpGhTask, unsafeDevtoTask],
+    });
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(listArticleDistributionsMock).toHaveBeenCalledTimes(1));
+    // Active tab 1: GITHUB_MDX with 127.0.0.1 / 169.254.169.254 -> zero clickable links
+    expect(screen.queryByTestId('distribution-github-pr-link')).toBeNull();
+    expect(screen.queryByRole('link', { name: /查看已上线公开文章/ })).toBeNull();
+
+    // Tab 2: GITHUB_MDX with plain http://github.com & single-integer 2130706433 -> zero clickable links
+    fireEvent.click(screen.getByRole('tab', { name: /HTTP GitHub PR/ }));
+    expect(screen.queryByTestId('distribution-github-pr-link')).toBeNull();
+    expect(screen.queryByRole('link', { name: /查看已上线公开文章/ })).toBeNull();
+
+    // Tab 3: DEVTO with hex IPv4 canonicalUrl & ::ffff:127.0.0.1 / localhost -> rendered as plain text only, zero <a> tags
+    fireEvent.click(screen.getByRole('tab', { name: /Unsafe Dev\.to/ }));
+    const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
+    expect(canonicalBox.querySelector('a')).toBeNull();
+    expect(screen.queryByRole('link', { name: /打开站点后台草稿/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /查看已上线公开文章/ })).toBeNull();
+  });
+
+  it('Defect 4 regression: CN market drawer forces zh-CN preflight and never leaks stale non-CN defaultTargetLocale into preflight blockers', async () => {
+    const cnArticle: GeoArticleRecord = {
+      ...GLOBAL_ARTICLE,
+      id: 'art_cn_locale_gate',
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      targetLocale: undefined,
+      title: '2026 静音四盘位 NAS 选购指南',
+      contentMarkdown:
+        '# 2026 静音四盘位 NAS 选购指南\n\n星辰存储实测 18.5dB 静音表现，适合家庭长期稳定运行。',
+    };
+    // Force fallback to local evaluateDistributionPreflight so any ja-JP leak would trigger GLOBAL_CJK_LEAK
+    runArticlePreflightMock.mockRejectedValueOnce(new Error('network fallback'));
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [] });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [] });
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_cn_1"
+        market="CN"
+        contextEpoch={1}
+        article={cnArticle}
+        draftTitle={cnArticle.title}
+        draftMarkdown={cnArticle.contentMarkdown}
+        brandNames={['星辰存储']}
+        defaultTargetLocale="ja-JP"
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(runArticlePreflightMock).toHaveBeenCalledWith(
+        cnArticle.id,
+        expect.objectContaining({ targetLocale: 'zh-CN' }),
+        expect.anything(),
+      );
+    });
+    expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
+  });
 });

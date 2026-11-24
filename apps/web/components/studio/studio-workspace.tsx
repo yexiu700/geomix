@@ -4,8 +4,10 @@ import {
   BRAND_FACT_SLOT_LABELS,
   GEO_MARKET_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
+  GLOBAL_SUPPORTED_LOCALES,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   defaultTargetFormatForMarket,
+  resolveEffectiveLocale,
   targetFormatsForMarket,
   type BrandFactRecord,
   type BrandFactSlot,
@@ -24,6 +26,7 @@ import {
   type PreflightItemCode,
   type PromptPreferenceRecord,
   type PublishRecordCreateInput,
+  type SupportedLocale,
   type VisibilityEngineAvailabilityItem,
   type VisibilityEngineKey,
 } from '@geomix/shared';
@@ -186,6 +189,30 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [promptPreference, setPromptPreference] = useState<PromptPreferenceRecord>(EMPTY_PREF);
   const [prefsSaving, setPrefsSaving] = useState(false);
 
+  const supportedLocalesKey = (activeBrandMarket?.supportedLocales ?? []).join(',');
+
+  const availableLocales = useMemo<SupportedLocale[]>(() => {
+    if (activeMarket === 'CN') return ['zh-CN'];
+    const raw = supportedLocalesKey ? supportedLocalesKey.split(',') : [];
+    const validGlobal = raw.filter((code): code is SupportedLocale =>
+      (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(code),
+    );
+    if (validGlobal.length > 0) return [...new Set(validGlobal)];
+    return [resolveEffectiveLocale(activeBrandMarket?.locale, 'GLOBAL')];
+  }, [activeBrandMarket?.locale, activeMarket, supportedLocalesKey]);
+
+  const defaultTargetLocale = useMemo<SupportedLocale>(() => {
+    const preferred = resolveEffectiveLocale(activeBrandMarket?.locale, activeMarket);
+    return availableLocales.includes(preferred) ? preferred : (availableLocales[0] ?? 'en-US');
+  }, [activeBrandMarket?.locale, activeMarket, availableLocales]);
+
+  const availableLocalesRef = useRef(availableLocales);
+  availableLocalesRef.current = availableLocales;
+  const defaultTargetLocaleRef = useRef(defaultTargetLocale);
+  defaultTargetLocaleRef.current = defaultTargetLocale;
+
+  const showLocaleSelector = activeMarket === 'GLOBAL' && availableLocales.length > 1;
+
   // Pre-Write Form State
   const [linkedBrief, setLinkedBrief] = useState<GeoBriefRecord | null>(null);
   const [targetPrompt, setTargetPrompt] = useState('');
@@ -195,7 +222,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [targetFormat, setTargetFormat] = useState<GeoTargetFormat>(() =>
     defaultTargetFormatForMarket(activeMarket),
   );
+  const [targetLocale, setTargetLocale] = useState<SupportedLocale>(() => defaultTargetLocale);
   const [wordCountTarget, setWordCountTarget] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    setTargetLocale((prev) => (availableLocales.includes(prev) ? prev : defaultTargetLocale));
+  }, [availableLocales, defaultTargetLocale]);
 
   // Active Article & Streaming State
   const [activeArticle, setActiveArticle] = useState<GeoArticleRecord | null>(null);
@@ -347,6 +379,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setActiveArticle(article);
       setDraftTitle(article.title);
       setDraftMarkdown(article.contentMarkdown);
+      if (article.targetLocale && availableLocalesRef.current.includes(article.targetLocale)) {
+        setTargetLocale(article.targetLocale);
+      }
       setStreamError(null);
       setPartialDraft(null);
       replaceStudioUrlParam('articleId', article.id);
@@ -641,6 +676,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       editorFocusTimerRef.current = null;
     }
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
+    setTargetLocale(defaultTargetLocaleRef.current);
     hadActiveBatchRef.current = false;
     editorCursorRef.current = null;
     pendingUsedMediaIdsRef.current = [];
@@ -1134,6 +1170,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           ...(outlineH2.length > 0 ? { outlineH2 } : {}),
           ...(targetFanOuts.length > 0 ? { targetFanOuts } : {}),
           ...(wordCountTarget ? { wordCountTarget } : {}),
+          ...(showLocaleSelector && targetLocale ? { targetLocale } : {}),
         },
         {
           onMeta: (meta) => {
@@ -1562,6 +1599,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         {
           market: activeMarket,
           briefIds: [...briefIds],
+          ...(showLocaleSelector && targetLocale ? { targetLocale } : {}),
         },
         idemKey,
       );
@@ -2113,6 +2151,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             onStartStream={() => void handleStartStream()}
             onAbortStream={handleAbortStream}
             readOnly={readOnly}
+            availableLocales={availableLocales}
+            targetLocale={targetLocale}
+            onTargetLocaleChange={setTargetLocale}
           />
 
           <StudioEditorCanvas
@@ -2233,11 +2274,17 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
         evaluation={evaluation}
         linkedBrief={linkedBrief}
+        supportedLocales={availableLocales}
+        defaultTargetLocale={activeArticle?.targetLocale ?? targetLocale}
         readOnly={readOnly}
         walletAvailable={consoleCtx?.wallet?.available ?? null}
         onClose={() => setDistributionDrawerOpen(false)}
         onReturnToEditor={handleReturnToEditorForFix}
         onNavigateBrands={() => consoleCtx?.navigateWorkspace('/brands')}
+        onNavigateExtensionPairing={() =>
+          consoleCtx?.navigateWorkspace('/brands?section=extension')
+        }
+        onNavigateAccount={() => consoleCtx?.navigateWorkspace('/account?tab=extension')}
         onRefreshWallet={() => consoleCtx?.refreshWallet()}
         onPublishRecordsSynced={handleDistributionPublishRecordsSynced}
         onCreatePublishRecord={handleCreatePublishRecord}

@@ -10,8 +10,10 @@ import {
   formatShanghaiDate,
   formatShanghaiDateTime,
   isSafeHttpPublishedUrl,
+  type ConfidenceLevel,
   type CrawlProbeReport,
   type CrawlProbeStatus,
+  type DidDirection,
   type GeoArticleRecord,
   type GeoMarket,
   type GeoPublishRecordDto,
@@ -21,18 +23,25 @@ import {
   type RetestScheduleConfigInput,
   type RetestScheduleStatus,
   type VisibilitySentiment,
+  type WilsonInterval,
 } from '@geomix/shared';
 import { Button, Checkbox, Input, Spin, Tag } from 'antd';
 import type { FormEvent, JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authorizedRequest } from '../../lib/api';
 import { GM, truncateMiddle } from '../../lib/design-tokens';
-import { triggerCrawlProbe, updateRetestSchedules } from '../../lib/distribution';
+import {
+  getRetestBudget,
+  triggerCrawlProbe,
+  updateRetestSchedules,
+  type RetestBudgetEstimateDto,
+} from '../../lib/distribution';
 import { GatewayApiError, unwrapEnvelope } from '../../lib/envelope';
 import { formatRetestDeltaSummary } from '../../lib/home';
 import { invalidateFreshness } from '../../lib/tab-freshness';
 import { fetchVisibilityEngines, filterEnginesForMarket } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { SignalPill, type SignalTone } from '../geo/primitives';
 
 export type StudioPublishRetestProps = {
   activeMarket: GeoMarket;
@@ -148,6 +157,97 @@ function scheduleStatusTagColor(status: RetestScheduleStatus): string {
   }
 }
 
+const CONFIDENCE_LABELS: Record<ConfidenceLevel, string> = {
+  HIGH: '高置信',
+  MEDIUM: '中置信',
+  LOW: '低置信',
+  INSUFFICIENT: '样本不足',
+};
+
+const CONFIDENCE_TONE: Record<ConfidenceLevel, SignalTone> = {
+  HIGH: 'cited',
+  MEDIUM: 'info',
+  LOW: 'warning',
+  INSUFFICIENT: 'neutral',
+};
+
+const DID_DIRECTION_LABELS: Record<DidDirection, string> = {
+  POSITIVE: '正向净增益',
+  NEGATIVE: '负向变化',
+  NEUTRAL: '无显著净差',
+};
+
+const DID_DIRECTION_TONE: Record<DidDirection, SignalTone> = {
+  POSITIVE: 'cited',
+  NEGATIVE: 'danger',
+  NEUTRAL: 'neutral',
+};
+
+function resolveConfidenceTone(level: unknown): SignalTone {
+  return typeof level === 'string' && Object.prototype.hasOwnProperty.call(CONFIDENCE_TONE, level)
+    ? CONFIDENCE_TONE[level as ConfidenceLevel]
+    : 'neutral';
+}
+
+function resolveConfidenceLabel(level: unknown): string {
+  return typeof level === 'string' && Object.prototype.hasOwnProperty.call(CONFIDENCE_LABELS, level)
+    ? CONFIDENCE_LABELS[level as ConfidenceLevel]
+    : '样本不足';
+}
+
+function resolveDidDirectionTone(direction: unknown): SignalTone {
+  return typeof direction === 'string' &&
+    Object.prototype.hasOwnProperty.call(DID_DIRECTION_TONE, direction)
+    ? DID_DIRECTION_TONE[direction as DidDirection]
+    : 'neutral';
+}
+
+function resolveDidDirectionLabel(direction: unknown): string {
+  return typeof direction === 'string' &&
+    Object.prototype.hasOwnProperty.call(DID_DIRECTION_LABELS, direction)
+    ? DID_DIRECTION_LABELS[direction as DidDirection]
+    : '无显著净差';
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isValidWilson(wilson: WilsonInterval | null | undefined): wilson is WilsonInterval {
+  return Boolean(
+    wilson &&
+    isFiniteNumber(wilson.lower) &&
+    isFiniteNumber(wilson.upper) &&
+    isFiniteNumber(wilson.trials) &&
+    wilson.trials > 0,
+  );
+}
+
+function formatDidPp(fraction: number): string {
+  const pp = fraction * 100;
+  return `${pp > 0 ? '+' : ''}${pp.toFixed(1)}pp`;
+}
+
+function formatLiveBudgetText(budget: RetestBudgetEstimateDto): string {
+  if (budget.activeEngineCount <= 0) {
+    return '当前市场暂无在线引擎，节点到期时将自动跳过且不产生扣费。';
+  }
+  const controlNote =
+    budget.includeControlPrompts && budget.effectiveControlPromptCount > 0
+      ? `（含 ${budget.effectiveControlPromptCount} 条对照）`
+      : '';
+  if (budget.pendingMilestoneCount <= 0) {
+    if (budget.perRunPoints <= 0) {
+      return '当前无待执行自动节点，节点开启后将按实时引擎定价核算预算上限。';
+    }
+    return `当前无待执行自动节点；单次复测上限 ${budget.totalPromptCount} 问句${controlNote} × ${budget.activeEngineCount} 活跃引擎 × ${budget.sampleCount} 次采样 × ${budget.unitPrice} 点 = ${budget.perRunPoints} 点（余额不足自动温和跳过，绝不透支）。`;
+  }
+  if (budget.totalEstimatedPoints <= 0) {
+    return `当前 ${budget.pendingMilestoneCount} 个待执行节点将按当前计费规则自动运行，余额不足时自动温和跳过。`;
+  }
+  return `预计预算上限：${budget.pendingMilestoneCount} 节点 × ${budget.totalPromptCount} 问句${controlNote} × ${budget.activeEngineCount} 活跃引擎 × ${budget.sampleCount} 次采样 × ${budget.unitPrice} 点 = 上限 ${budget.totalEstimatedPoints} 点（单次 ${budget.perRunPoints} 点）；余额不足时自动温和跳过，绝不透支。`;
+}
+
 function formatBudgetCeilingText(params: {
   enabledMilestones: number;
   onlineEngineCount: number;
@@ -246,6 +346,7 @@ export function StudioPublishRetest({
   const [probingRecordId, setProbingRecordId] = useState<string | null>(null);
   const [updatingScheduleRecordId, setUpdatingScheduleRecordId] = useState<string | null>(null);
   const [expandedCrawlIds, setExpandedCrawlIds] = useState<Record<string, boolean>>({});
+  const [liveBudgets, setLiveBudgets] = useState<Record<string, RetestBudgetEstimateDto>>({});
 
   const submittingRef = useRef(false);
   const probingRef = useRef(false);
@@ -274,6 +375,7 @@ export function StudioPublishRetest({
     setProbingRecordId(null);
     setUpdatingScheduleRecordId(null);
     setExpandedCrawlIds({});
+    setLiveBudgets({});
     return () => {
       submittingRef.current = false;
       probingRef.current = false;
@@ -336,6 +438,71 @@ export function StudioPublishRetest({
       };
     });
   }, [publishRecords, crawlOverrides, scheduleOverrides]);
+
+  const budgetQueryKey = useMemo(() => {
+    return effectiveEntries
+      .map(({ rec }) => {
+        const schedules = rec.retestSchedules ?? [];
+        const pending = schedules.filter((s) => s.status === 'PENDING');
+        const sampleCount = pending[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
+        const includeControlPrompts = Boolean(
+          pending[0]?.includeControlPrompts ?? schedules[0]?.includeControlPrompts,
+        );
+        const days = pending
+          .map((s) => s.milestoneDay)
+          .sort((a, b) => a - b)
+          .join(',');
+        return `${rec.id}|${sampleCount}|${includeControlPrompts ? '1' : '0'}|${days}`;
+      })
+      .join(';');
+  }, [effectiveEntries]);
+
+  useEffect(() => {
+    if (effectiveEntries.length === 0) {
+      setLiveBudgets({});
+      return;
+    }
+    setLiveBudgets({});
+    const ctrl = new AbortController();
+    const seq = contextKeyRef.current;
+
+    void Promise.allSettled(
+      effectiveEntries.map(async ({ rec }) => {
+        const schedules = rec.retestSchedules ?? [];
+        const pending = schedules.filter((s) => s.status === 'PENDING');
+        const sampleCount: RetestSampleCount =
+          pending[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
+        const includeControlPrompts = Boolean(
+          pending[0]?.includeControlPrompts ?? schedules[0]?.includeControlPrompts,
+        );
+        const pendingDays = pending.map((s) => s.milestoneDay).sort((a, b) => a - b);
+        const res = await getRetestBudget(
+          rec.id,
+          {
+            sampleCount,
+            includeControlPrompts,
+            ...(pendingDays.length > 0 ? { milestones: pendingDays } : {}),
+          },
+          { storage: window.sessionStorage, signal: ctrl.signal },
+        );
+        return { recordId: rec.id, budget: res };
+      }),
+    ).then((results) => {
+      if (ctrl.signal.aborted || seq !== contextKeyRef.current) return;
+      const next: Record<string, RetestBudgetEstimateDto> = {};
+      for (const item of results) {
+        if (item.status === 'fulfilled' && item.value?.budget) {
+          next[item.value.recordId] = item.value.budget;
+        }
+      }
+      setLiveBudgets(next);
+    });
+
+    return () => {
+      ctrl.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budgetQueryKey, activeMarket, article?.id]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -686,12 +853,19 @@ export function StudioPublishRetest({
                 const hasPendingSchedules = activePendingSchedules.length > 0;
                 const currentSampleCount: RetestSampleCount =
                   activePendingSchedules[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
-                const cardBudgetText = formatBudgetCeilingText({
-                  enabledMilestones: activePendingSchedules.length,
-                  onlineEngineCount,
-                  sampleCount: currentSampleCount,
-                  unitPrice: visibilityUnitPrice,
-                });
+                const currentIncludeControlPrompts = Boolean(
+                  activePendingSchedules[0]?.includeControlPrompts ??
+                  schedules[0]?.includeControlPrompts,
+                );
+                const liveBudget = liveBudgets[rec.id] ?? null;
+                const cardBudgetText = liveBudget
+                  ? formatLiveBudgetText(liveBudget)
+                  : formatBudgetCeilingText({
+                      enabledMilestones: activePendingSchedules.length,
+                      onlineEngineCount,
+                      sampleCount: currentSampleCount,
+                      unitPrice: visibilityUnitPrice,
+                    });
 
                 return (
                   <div
@@ -1067,6 +1241,49 @@ export function StudioPublishRetest({
                       </div>
 
                       <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 6,
+                          minWidth: 0,
+                        }}
+                      >
+                        <Checkbox
+                          data-testid={`publish-retest-control-toggle-${rec.id}`}
+                          checked={currentIncludeControlPrompts}
+                          disabled={
+                            readOnly || Boolean(updatingScheduleRecordId) || !hasPendingSchedules
+                          }
+                          onChange={(e) => {
+                            if (!hasPendingSchedules) return;
+                            const nextChecked = e.target.checked;
+                            void handleUpdateSchedules(
+                              raw,
+                              rec,
+                              { includeControlPrompts: nextChecked },
+                              nextChecked
+                                ? '已开启对照组 DiD 归因复测'
+                                : '已关闭对照组 DiD 归因复测',
+                            );
+                          }}
+                          style={{ fontSize: 11.5, color: GM.fg.f2 }}
+                        >
+                          开启对照组 DiD 归因
+                        </Checkbox>
+                        {liveBudget?.includeControlPrompts &&
+                        liveBudget.effectiveControlPromptCount > 0 ? (
+                          <Tag
+                            color="cyan"
+                            style={{ margin: 0, fontSize: 10.5, whiteSpace: 'nowrap' }}
+                          >
+                            含 {liveBudget.effectiveControlPromptCount} 条对照
+                          </Tag>
+                        ) : null}
+                      </div>
+
+                      <div
                         data-testid={`publish-retest-budget-${rec.id}`}
                         style={{
                           fontSize: 11,
@@ -1077,6 +1294,40 @@ export function StudioPublishRetest({
                       >
                         {cardBudgetText}
                       </div>
+
+                      {liveBudget?.includeControlPrompts &&
+                      liveBudget.configuredControlPromptCount === 0 ? (
+                        <div
+                          data-testid={`publish-retest-zero-controls-hint-${rec.id}`}
+                          style={{
+                            fontSize: 11,
+                            color: GM.status.warning,
+                            lineHeight: 1.45,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          当前品牌市场尚未配置对照组问句，本次将仅监测目标问句；可前往品牌设置添加最多
+                          5 条对照组问句以计算 DiD 净增益。
+                        </div>
+                      ) : null}
+
+                      {liveBudget &&
+                      liveBudget.billingMode === 'STRICT' &&
+                      liveBudget.perRunPoints > 0 &&
+                      !liveBudget.sufficientForNextRun ? (
+                        <div
+                          data-testid={`publish-retest-insufficient-hint-${rec.id}`}
+                          style={{
+                            fontSize: 11,
+                            color: GM.status.warning,
+                            lineHeight: 1.45,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          当前可用余额低于下次复测上限（{liveBudget.perRunPoints}{' '}
+                          点），到期时将自动温和跳过且不产生扣费。
+                        </div>
+                      ) : null}
 
                       <div
                         style={{
@@ -1288,10 +1539,86 @@ export function StudioPublishRetest({
                                 </div>
                               ) : null}
 
-                              {(sched?.status === 'SKIPPED_INSUFFICIENT_POINTS' ||
-                                sched?.status === 'SKIPPED_NO_ENGINE' ||
+                              {sched?.status === 'COMPLETED' &&
+                              isValidWilson(sched.metricsSnapshot?.wilson) ? (
+                                <div
+                                  data-testid={`publish-retest-wilson-${rec.id}-T${day}`}
+                                  style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    fontSize: 10.5,
+                                    color: GM.fg.f3,
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  <span className="gm-num" style={{ overflowWrap: 'anywhere' }}>
+                                    95% CI [{(sched.metricsSnapshot.wilson.lower * 100).toFixed(1)}
+                                    %, {(sched.metricsSnapshot.wilson.upper * 100).toFixed(1)}%]（n=
+                                    {sched.metricsSnapshot.wilson.trials}）
+                                  </span>
+                                  <SignalPill
+                                    tone={resolveConfidenceTone(
+                                      sched.metricsSnapshot.wilson.confidenceLevel,
+                                    )}
+                                  >
+                                    {resolveConfidenceLabel(
+                                      sched.metricsSnapshot.wilson.confidenceLevel,
+                                    )}
+                                  </SignalPill>
+                                  {sched.metricsSnapshot.wilson.confidenceLevel === 'LOW' ||
+                                  sched.metricsSnapshot.wilson.trials < 5 ? (
+                                    <span style={{ color: GM.status.warning }}>
+                                      样本较少，建议开启 3× 采样
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              {sched?.status === 'COMPLETED' &&
+                              sched.controlMetricsJson?.did &&
+                              isFiniteNumber(sched.controlMetricsJson.did.netLift) &&
+                              isFiniteNumber(sched.controlMetricsJson.did.treatmentDelta) &&
+                              isFiniteNumber(sched.controlMetricsJson.did.controlDelta) ? (
+                                <div
+                                  data-testid={`publish-retest-did-${rec.id}-T${day}`}
+                                  style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    fontSize: 10.5,
+                                    color: GM.fg.f2,
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  <SignalPill
+                                    tone={resolveDidDirectionTone(
+                                      sched.controlMetricsJson.did.direction,
+                                    )}
+                                  >
+                                    DiD 净增益 {formatDidPp(sched.controlMetricsJson.did.netLift)} ·{' '}
+                                    {resolveDidDirectionLabel(
+                                      sched.controlMetricsJson.did.direction,
+                                    )}
+                                  </SignalPill>
+                                  <span
+                                    className="gm-num"
+                                    style={{ color: GM.fg.f3, overflowWrap: 'anywhere' }}
+                                  >
+                                    处理组 Δ{' '}
+                                    {formatDidPp(sched.controlMetricsJson.did.treatmentDelta)} ·
+                                    对照组 Δ{' '}
+                                    {formatDidPp(sched.controlMetricsJson.did.controlDelta)}
+                                  </span>
+                                </div>
+                              ) : null}
+
+                              {sched?.status === 'SKIPPED_INSUFFICIENT_POINTS' ||
+                              ((sched?.status === 'SKIPPED_NO_ENGINE' ||
                                 sched?.status === 'FAILED') &&
-                              sched.skipReason ? (
+                                sched.skipReason) ? (
                                 <div
                                   style={{
                                     color:
@@ -1302,7 +1629,7 @@ export function StudioPublishRetest({
                                     overflowWrap: 'anywhere',
                                   }}
                                 >
-                                  {sched.skipReason}
+                                  {sched.skipReason ?? '余额不足，已自动温和跳过本次复测（未扣费）'}
                                 </div>
                               ) : null}
                             </div>

@@ -29,6 +29,7 @@ import type {
   RetestSampleCount,
   RetestScheduleConfigInput,
   RetestScheduleStatus,
+  SupportedLocale,
   TestChannelConnectionInput,
   UpdateChannelConnectionInput,
   UpdateDistributionTaskInput,
@@ -67,6 +68,7 @@ export type {
   RetestSampleCount,
   RetestScheduleConfigInput,
   RetestScheduleStatus,
+  SupportedLocale,
   TestChannelConnectionInput,
   UpdateChannelConnectionInput,
   UpdateDistributionTaskInput,
@@ -110,6 +112,48 @@ export type RunArticlePreflightRequest = {
   provider?: ChannelProvider | null;
   variantSlug?: string | null;
   variantMetaDesc?: string | null;
+  targetLocale?: SupportedLocale | null;
+};
+
+export type StartShopifyOAuthRequest = {
+  shop: string;
+  market?: GeoMarket;
+  displayName?: string;
+  targetLocale?: SupportedLocale | null;
+};
+
+export type StartShopifyOAuthResponse = {
+  authorizeUrl: string;
+  state: string;
+  shop: string;
+  expiresAt: string;
+};
+
+export type RetestBudgetEstimateQuery = {
+  sampleCount?: RetestSampleCount;
+  includeControlPrompts?: boolean;
+  milestones?: readonly number[];
+};
+
+export type RetestBudgetEstimateDto = {
+  publishRecordId: string;
+  market: GeoMarket;
+  targetPromptCount: number;
+  configuredControlPromptCount: number;
+  effectiveControlPromptCount: number;
+  selectedControlPrompts: string[];
+  totalPromptCount: number;
+  activeEngineCount: number;
+  sampleCount: RetestSampleCount;
+  includeControlPrompts: boolean;
+  unitPrice: number;
+  perRunPoints: number;
+  pendingMilestoneCount: number;
+  totalEstimatedPoints: number;
+  billingMode: 'SHADOW' | 'STRICT';
+  walletAvailable: number;
+  sufficientForNextRun: boolean;
+  sufficientForAllPending: boolean;
 };
 
 export type ChannelConnectionListResponse = {
@@ -335,6 +379,22 @@ export async function testChannelConnection(
   );
 }
 
+export async function startShopifyOAuth(
+  brandId: string,
+  input: StartShopifyOAuthRequest,
+  options?: DistributionClientOptions,
+): Promise<StartShopifyOAuthResponse> {
+  return authorizedV2Request<StartShopifyOAuthResponse>(
+    `/brands/${encodeURIComponent(brandId)}/connections/shopify/oauth/start`,
+    {
+      method: 'POST',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
 // ==================== B. 发布前校验与分发任务编排 ====================
 
 export async function runArticlePreflight(
@@ -545,6 +605,32 @@ export async function updateRetestSchedules(
     {
       method: 'PATCH',
       body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function getRetestBudget(
+  publishRecordId: string,
+  query?: RetestBudgetEstimateQuery,
+  options?: DistributionClientOptions,
+): Promise<RetestBudgetEstimateDto> {
+  const params = new URLSearchParams();
+  if (query?.sampleCount !== undefined) {
+    params.set('sampleCount', String(query.sampleCount));
+  }
+  if (query?.includeControlPrompts !== undefined) {
+    params.set('includeControlPrompts', query.includeControlPrompts ? 'true' : 'false');
+  }
+  if (query?.milestones && query.milestones.length > 0) {
+    params.set('milestones', query.milestones.join(','));
+  }
+  const qs = params.toString();
+  return authorizedV2Request<RetestBudgetEstimateDto>(
+    `/publish-records/${encodeURIComponent(publishRecordId)}/retest-budget${qs ? `?${qs}` : ''}`,
+    {
+      method: 'GET',
       storage: options?.storage,
       signal: options?.signal,
     },

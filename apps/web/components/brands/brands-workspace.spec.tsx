@@ -38,6 +38,7 @@ vi.mock('../../lib/brands', () => ({
 }));
 
 const listChannelConnectionsMock = vi.fn();
+const listExtensionTokensMock = vi.fn();
 
 vi.mock('../../lib/distribution', () => ({
   listChannelConnections: (...args: unknown[]) => listChannelConnectionsMock(...args),
@@ -45,6 +46,13 @@ vi.mock('../../lib/distribution', () => ({
   updateChannelConnection: vi.fn(),
   deleteChannelConnection: vi.fn(),
   testChannelConnection: vi.fn(),
+  startShopifyOAuth: vi.fn(),
+}));
+
+vi.mock('../../lib/extension', () => ({
+  listExtensionTokens: (...args: unknown[]) => listExtensionTokensMock(...args),
+  createExtensionToken: vi.fn(),
+  revokeExtensionToken: vi.fn(),
 }));
 
 const confirmMock = vi.fn();
@@ -192,6 +200,7 @@ beforeEach(() => {
   useWorkspaceStore.getState().reset(window.localStorage);
   vi.clearAllMocks();
   listChannelConnectionsMock.mockResolvedValue({ items: [] });
+  listExtensionTokensMock.mockResolvedValue({ items: [] });
 });
 
 afterEach(async () => {
@@ -486,5 +495,248 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     expect(useWorkspaceStore.getState().brands.find((b) => b.id === 'b-w7-1')?.name).toBe(
       '品牌甲-新名',
     );
+  });
+
+  it('mounts CN ExtensionPairingPanel on CN market and hides it on GLOBAL while showing GLOBAL supportedLocales & controlPrompts editors', async () => {
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-v22'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-v22'));
+    const dualBrand = makeBrand('b-v22', '星辰存储');
+    dualBrand.markets.push({
+      id: 'bm-gl-v22',
+      brandId: 'b-v22',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      localBrandName: 'AstraVault',
+      localCategory: 'Home NAS',
+      aliases: [],
+      ownedDomains: ['astravault.example.com'],
+      competitors: [],
+      seedPrompts: ['Best quiet 4-bay NAS 2026'],
+      supportedLocales: ['en-US', 'ja-JP'],
+      controlPrompts: ['Best cloud backup service 2026'],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    });
+    updateBrandMarketMock.mockResolvedValueOnce(dualBrand);
+
+    useWorkspaceStore.getState().upsertBrand(dualBrand, {
+      activate: true,
+      market: 'CN',
+      persistStorage: window.localStorage,
+    });
+
+    renderWorkspace();
+    expect(await screen.findByTestId('extension-pairing-panel')).toBeTruthy();
+    expect(screen.getByRole('link', { name: '扩展配对' }).getAttribute('href')).toBe(
+      '#brand-section-extension',
+    );
+    expect(screen.queryByTestId('brand-supported-locales-field')).toBeNull();
+
+    // Switch to GLOBAL: ExtensionPairingPanel hides, supportedLocales & controlPrompts appear
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('extension-pairing-panel')).toBeNull();
+      expect(screen.getByTestId('brand-supported-locales-field')).toBeTruthy();
+      expect(screen.getByTestId('brand-control-prompts-field')).toBeTruthy();
+    });
+
+    // Reject control prompt overlapping seedPrompts
+    fireEvent.change(screen.getByTestId('control-prompt-input'), {
+      target: { value: '  best quiet 4-bay nas 2026  ' },
+    });
+    fireEvent.click(screen.getByTestId('add-control-prompt-btn'));
+    expect(await screen.findByTestId('brand-market-error')).toBeTruthy();
+    expect(screen.getByTestId('brand-market-error').textContent).toContain(
+      '不能与种子监控问句重复',
+    );
+
+    // Add valid control prompt and save market config
+    fireEvent.change(screen.getByTestId('control-prompt-input'), {
+      target: { value: 'Best external SSD 2026' },
+    });
+    fireEvent.click(screen.getByTestId('add-control-prompt-btn'));
+    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledWith(
+        'b-v22',
+        'GLOBAL',
+        expect.objectContaining({
+          supportedLocales: ['en-US', 'ja-JP'],
+          controlPrompts: ['Best cloud backup service 2026', 'Best external SSD 2026'],
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('renders XSS-safe Shopify OAuth callback banner and cleans transient query params via replaceState', async () => {
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-oauth'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-oauth'));
+    const brand = makeBrand('b-oauth', 'OAuth Brand');
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(brand, { activate: true, market: 'CN', persistStorage: window.localStorage });
+
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+    window.history.pushState(
+      {},
+      '',
+      '/brands?brandId=b-oauth&market=GLOBAL&shopifyOAuth=error&reason=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E',
+    );
+
+    renderWorkspace({
+      urlSearch:
+        'brandId=b-oauth&market=GLOBAL&shopifyOAuth=error&reason=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E',
+    });
+
+    const banner = await screen.findByTestId('shopify-oauth-callback-banner');
+    expect(banner.textContent).toContain('Shopify OAuth 2.0 授权未完成');
+    expect(banner.querySelector('img')).toBeNull();
+    expect(replaceStateSpy).toHaveBeenCalled();
+    const cleanedUrl = String(replaceStateSpy.mock.calls.at(-1)?.[2] ?? '');
+    expect(cleanedUrl).toContain('brandId=b-oauth');
+    expect(cleanedUrl).not.toContain('shopifyOAuth');
+    expect(cleanedUrl).not.toContain('reason=');
+  });
+
+  it('BUG-3 regression: maps unknown ?reason= to fixed safe generic message and never resurrects dismissed OAuth banner on market switch', async () => {
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-oauth-safe'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-oauth-safe'));
+    const dualBrand = makeBrand('b-oauth-safe', 'OAuth Safe Brand');
+    dualBrand.markets.push({
+      id: 'bm-gl-oauth-safe',
+      brandId: 'b-oauth-safe',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      localBrandName: 'OAuth Safe Global',
+      localCategory: 'NAS',
+      aliases: [],
+      ownedDomains: ['oauth-safe.example.com'],
+      competitors: [],
+      seedPrompts: ['Best NAS 2026'],
+      supportedLocales: ['en-US'],
+      controlPrompts: [],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    });
+    useWorkspaceStore.getState().upsertBrand(dualBrand, {
+      activate: true,
+      market: 'GLOBAL',
+      persistStorage: window.localStorage,
+    });
+
+    const staleSearch =
+      'brandId=b-oauth-safe&market=GLOBAL&shopifyOAuth=error&reason=Account+suspended+visit+evil.com';
+    window.history.pushState({}, '', `/brands?${staleSearch}`);
+
+    renderWorkspace({ urlSearch: staleSearch });
+
+    const banner = await screen.findByTestId('shopify-oauth-callback-banner');
+    expect(banner.textContent).toContain(
+      'Shopify OAuth 授权未完成，请重试或改用 Custom App Token 接入。',
+    );
+    expect(banner.textContent).not.toContain('Account suspended visit evil.com');
+
+    // Dismiss the banner
+    const closeBtn = within(banner).getByRole('button', { name: /close/i });
+    fireEvent.click(closeBtn);
+    await waitFor(() => {
+      expect(screen.queryByTestId('shopify-oauth-callback-banner')).toBeNull();
+    });
+
+    // Switch market GLOBAL -> CN while stale urlSearch prop remains unchanged -> banner MUST NOT resurrect
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('CN', window.localStorage);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('extension-pairing-panel')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('shopify-oauth-callback-banner')).toBeNull();
+  });
+
+  it('BUG-5 regression: aborts in-flight market save on CN <-> GLOBAL switch so stale responses never yank activeMarket or leak errors', async () => {
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-race'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-race'));
+    const dualBrand = makeBrand('b-race', '竞态测试品牌');
+    dualBrand.markets.push({
+      id: 'bm-gl-race',
+      brandId: 'b-race',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      localBrandName: 'Race Global',
+      localCategory: 'NAS',
+      aliases: [],
+      ownedDomains: ['race.example.com'],
+      competitors: [],
+      seedPrompts: ['Best NAS 2026'],
+      supportedLocales: ['en-US'],
+      controlPrompts: [],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    });
+    useWorkspaceStore.getState().upsertBrand(dualBrand, {
+      activate: true,
+      market: 'CN',
+      persistStorage: window.localStorage,
+    });
+
+    let cnSignal: AbortSignal | undefined;
+    let resolveCnSave!: (brand: BrandRecord) => void;
+    let rejectGlobalSave!: (err: Error) => void;
+
+    updateBrandMarketMock
+      .mockImplementationOnce(
+        (_bid: string, _mkt: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+          cnSignal = opts?.signal;
+          return new Promise<BrandRecord>((resolve) => {
+            resolveCnSave = resolve;
+          });
+        },
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<BrandRecord>((_resolve, reject) => {
+            rejectGlobalSave = reject;
+          }),
+      );
+
+    renderWorkspace();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存市场配置' })).toBeTruthy();
+    });
+
+    // 1. Start CN save, switch to GLOBAL before it settles -> aborted & resolving it MUST NOT yank activeMarket back to CN
+    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    await waitFor(() => expect(updateBrandMarketMock).toHaveBeenCalledTimes(1));
+    expect(cnSignal?.aborted).toBe(false);
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    expect(cnSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveCnSave(dualBrand);
+      await Promise.resolve();
+    });
+    expect(useWorkspaceStore.getState().activeMarket).toBe('GLOBAL');
+
+    // 2. Start GLOBAL save, switch back to CN before it rejects -> stale GLOBAL error MUST NOT leak onto CN
+    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    await waitFor(() => expect(updateBrandMarketMock).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('CN', window.localStorage);
+    });
+    await act(async () => {
+      rejectGlobalSave(new Error('STALE GLOBAL SAVE ERROR'));
+      await Promise.resolve();
+    });
+    expect(screen.queryByText('STALE GLOBAL SAVE ERROR')).toBeNull();
   });
 });

@@ -4,7 +4,10 @@ import {
   CHANNEL_PROVIDER_LABELS,
   DISTRIBUTION_TASK_STATUS_LABELS,
   GEO_MARKET_LABELS,
+  GLOBAL_SUPPORTED_LOCALES,
+  L2_EXTENSION_PROVIDERS,
   PRICING_DEFAULTS,
+  SUPPORTED_LOCALES,
   buildRecommendedChannelsForMarket,
   defaultTemplateKeyForProvider,
   evaluateDistributionPreflight,
@@ -22,6 +25,7 @@ import {
   type GeoMarket,
   type PreflightItemCode,
   type PublishRecordCreateInput,
+  type SupportedLocale,
 } from '@geomix/shared';
 import {
   Alert,
@@ -76,11 +80,15 @@ export type StudioDistributionDrawerProps = {
   matchedFactCount?: number;
   evaluation?: GeoEvaluationResult | null;
   linkedBrief?: GeoBriefRecord | null;
+  supportedLocales?: readonly SupportedLocale[];
+  defaultTargetLocale?: SupportedLocale | null;
   readOnly: boolean;
   walletAvailable?: number | null;
   onClose: () => void;
   onReturnToEditor: (code?: PreflightItemCode, locateTerm?: string) => void;
   onNavigateBrands?: () => void;
+  onNavigateExtensionPairing?: () => void;
+  onNavigateAccount?: () => void;
   onRefreshWallet?: () => Promise<void> | void;
   onPublishRecordsSynced?: (articleId: string) => Promise<void> | void;
   onCreatePublishRecord?: (input: PublishRecordCreateInput) => Promise<boolean | void>;
@@ -88,13 +96,14 @@ export type StudioDistributionDrawerProps = {
 
 type SelectableTargetOption = {
   key: string;
-  group: 'L1' | 'L3_COMMUNITY' | 'L3_PR';
+  group: 'L1' | 'L2_EXTENSION' | 'L3_COMMUNITY' | 'L3_PR';
   provider: ChannelProvider;
   connectionId?: string;
   channelLabel: string;
   description: string;
   siteBaseUrl?: string;
   connectionStatus?: ChannelConnectionDto['status'];
+  targetLocale?: SupportedLocale | null;
   targetUrlHint?: string;
   recommendedPriority?: 'HIGH' | 'MEDIUM';
 };
@@ -149,6 +158,124 @@ function taskStatusTone(
       return 'danger';
     default:
       return 'neutral';
+  }
+}
+
+function isBlockedIpv4(host: string): boolean {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!match) return false;
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  const c = Number(match[3]);
+  const d = Number(match[4]);
+  if (a > 255 || b > 255 || c > 255 || d > 255) return true;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+function parseIpv6Groups(raw: string): number[] | null {
+  const addr = (raw.toLowerCase().split('%')[0] ?? '').trim();
+  if (!addr || !/^[0-9a-f:]+$/.test(addr)) return null;
+  const parts = addr.split('::');
+  if (parts.length > 2) return null;
+  const left = parts[0] ? parts[0].split(':') : [];
+  const right = parts.length === 2 && parts[1] ? parts[1].split(':') : [];
+  const parsePart = (tokens: string[]): number[] | null => {
+    const out: number[] = [];
+    for (const token of tokens) {
+      if (!/^[0-9a-f]{1,4}$/.test(token)) return null;
+      out.push(Number.parseInt(token, 16));
+    }
+    return out;
+  };
+  const leftNums = parsePart(left);
+  const rightNums = parsePart(right);
+  if (!leftNums || !rightNums) return null;
+  if (parts.length === 1) {
+    return leftNums.length === 8 ? leftNums : null;
+  }
+  const missing = 8 - (leftNums.length + rightNums.length);
+  if (missing < 1) return null;
+  return [...leftNums, ...Array<number>(missing).fill(0), ...rightNums];
+}
+
+function isBlockedIpv6(unbracketedHost: string): boolean {
+  const groups = parseIpv6Groups(unbracketedHost);
+  if (!groups) return true;
+  const allZero = groups.every((g) => g === 0);
+  if (allZero) return true;
+  const isLoopback = groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1;
+  if (isLoopback) return true;
+  // IPv4-mapped IPv6 (::ffff:0:0/96) & IPv4-compatible IPv6 (::/96)
+  if (groups.slice(0, 5).every((g) => g === 0) && (groups[5] === 0xffff || groups[5] === 0)) {
+    return true;
+  }
+  // Link-local fe80::/10, ULA fc00::/7 (fc00::/8 & fd00::/8), multicast ff00::/8
+  const first = groups[0] ?? 0;
+  if ((first & 0xffc0) === 0xfe80) return true;
+  if ((first & 0xfe00) === 0xfc00) return true;
+  if ((first & 0xff00) === 0xff00) return true;
+  return false;
+}
+
+function isSafePublicExternalHttpUrl(raw: string, options?: { requireHttps?: boolean }): boolean {
+  if (!isSafeDistributionHttpUrl(raw)) return false;
+  const trimmed = raw.trim();
+  const authorityMatch = /^https?:\/\/([^/?#]+)/i.exec(trimmed);
+  if (!authorityMatch?.[1]) return false;
+  const authority = authorityMatch[1];
+  if (authority.includes('@')) return false;
+  const rawHost = authority.startsWith('[')
+    ? authority.slice(0, authority.indexOf(']') + 1).toLowerCase()
+    : (authority.split(':')[0] ?? '').replace(/\.+$/, '').toLowerCase();
+  if (!rawHost) return false;
+  if (!rawHost.startsWith('[')) {
+    if (!rawHost.includes('.')) return false;
+    const labels = rawHost.split('.');
+    const allNumericOrHex = labels.every((lbl) => /^(?:0x[0-9a-f]+|\d+)$/i.test(lbl));
+    if (
+      allNumericOrHex &&
+      (labels.length !== 4 || labels.some((lbl) => !/^(?:0|[1-9]\d{0,2})$/.test(lbl)))
+    ) {
+      return false;
+    }
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (options?.requireHttps && parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    const rawParsedHost = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    if (!rawParsedHost) return false;
+
+    if (rawParsedHost.startsWith('[') && rawParsedHost.endsWith(']')) {
+      return !isBlockedIpv6(rawParsedHost.slice(1, -1));
+    }
+    if (rawParsedHost.includes(':')) {
+      return !isBlockedIpv6(rawParsedHost);
+    }
+    if (
+      rawParsedHost === 'localhost' ||
+      rawParsedHost.endsWith('.localhost') ||
+      rawParsedHost.endsWith('.local') ||
+      rawParsedHost.endsWith('.internal') ||
+      rawParsedHost.endsWith('.localdomain') ||
+      rawParsedHost.endsWith('.home.arpa')
+    ) {
+      return false;
+    }
+    if (!rawParsedHost.includes('.')) return false;
+    if (isBlockedIpv4(rawParsedHost)) return false;
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -213,6 +340,15 @@ function findMatchingRecommendation(
         r.channel.includes('社媒'),
     );
   }
+  if (provider === 'ZHIHU_EXT') {
+    return recommendations.find((r) => r.channel.includes('知乎'));
+  }
+  if (provider === 'TOUTIAO_EXT') {
+    return recommendations.find((r) => r.channel.includes('头条'));
+  }
+  if (provider === 'SMZDM_EXT') {
+    return recommendations.find((r) => r.channel.includes('值得买'));
+  }
   if (provider === 'CN_COMMUNITY_ASSIST') {
     return recommendations.find(
       (r) =>
@@ -266,16 +402,41 @@ export function StudioDistributionDrawer({
   matchedFactCount,
   evaluation,
   linkedBrief,
+  supportedLocales,
+  defaultTargetLocale,
   readOnly,
   walletAvailable,
   onClose,
   onReturnToEditor,
   onNavigateBrands,
+  onNavigateExtensionPairing,
+  onNavigateAccount,
   onRefreshWallet,
   onPublishRecordsSynced,
   onCreatePublishRecord,
 }: StudioDistributionDrawerProps): JSX.Element {
   const feedback = useUxFeedback();
+
+  const effectiveSupportedLocales = useMemo<SupportedLocale[]>(() => {
+    if (market !== 'GLOBAL') return ['zh-CN'];
+    const raw = supportedLocales ?? [];
+    const valid = raw.filter((code) =>
+      (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(code),
+    );
+    return valid.length > 0 ? [...new Set(valid)] : ['en-US'];
+  }, [market, supportedLocales]);
+
+  const showVariantLocaleSelector = market === 'GLOBAL' && effectiveSupportedLocales.length > 1;
+  const effectiveArticleLocale: SupportedLocale | undefined =
+    market === 'CN'
+      ? 'zh-CN'
+      : article?.targetLocale &&
+          (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(article.targetLocale)
+        ? article.targetLocale
+        : defaultTargetLocale &&
+            (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(defaultTargetLocale)
+          ? defaultTargetLocale
+          : undefined;
 
   // Core drawer data
   const [hydrating, setHydrating] = useState(false);
@@ -289,6 +450,13 @@ export function StudioDistributionDrawer({
 
   // Interactive workbench state
   const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>([]);
+  const [variantTargetLocale, setVariantTargetLocale] = useState<SupportedLocale | undefined>(() =>
+    article?.targetLocale && effectiveSupportedLocales.includes(article.targetLocale)
+      ? article.targetLocale
+      : defaultTargetLocale && effectiveSupportedLocales.includes(defaultTargetLocale)
+        ? defaultTargetLocale
+        : effectiveSupportedLocales[0],
+  );
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [ackWarnings, setAckWarnings] = useState(false);
   const [pointsConfirmOpen, setPointsConfirmOpen] = useState(false);
@@ -446,6 +614,7 @@ export function StudioDistributionDrawer({
     if (!article) return null;
     return evaluateDistributionPreflight({
       market,
+      targetLocale: effectiveArticleLocale,
       title: draftTitle || article.title,
       contentMarkdown: draftMarkdown || article.contentMarkdown,
       brandNames,
@@ -458,6 +627,7 @@ export function StudioDistributionDrawer({
     brandNames,
     draftMarkdown,
     draftTitle,
+    effectiveArticleLocale,
     evaluation?.geoScore,
     market,
     matchedFactCount,
@@ -525,11 +695,23 @@ export function StudioDistributionDrawer({
     const effectiveMarkdown = draftMarkdown || article.contentMarkdown;
     const reqOpts = { storage: window.sessionStorage, signal: ctrl.signal };
 
+    setVariantTargetLocale(
+      article.targetLocale && effectiveSupportedLocales.includes(article.targetLocale)
+        ? article.targetLocale
+        : defaultTargetLocale && effectiveSupportedLocales.includes(defaultTargetLocale)
+          ? defaultTargetLocale
+          : effectiveSupportedLocales[0],
+    );
+
     const preflightPromise = readOnly
       ? Promise.resolve(buildLocalPreflightFallback())
       : runArticlePreflight(
           article.id,
-          { title: effectiveTitle, contentMarkdown: effectiveMarkdown },
+          {
+            title: effectiveTitle,
+            contentMarkdown: effectiveMarkdown,
+            ...(effectiveArticleLocale ? { targetLocale: effectiveArticleLocale } : {}),
+          },
           reqOpts,
         ).catch(() => buildLocalPreflightFallback());
 
@@ -798,7 +980,28 @@ export function StudioDistributionDrawer({
         description: CHANNEL_PROVIDER_LABELS[conn.provider] ?? conn.provider,
         siteBaseUrl: conn.siteBaseUrl,
         connectionStatus: conn.status,
+        targetLocale: conn.targetLocale ?? null,
       });
+    }
+
+    // Group 1.5 (CN Only): L2 Chrome Extension Draft Queue
+    if (market === 'CN') {
+      for (const provider of L2_EXTENSION_PROVIDERS) {
+        const rec = findMatchingRecommendation(provider, effectiveRecommendedChannels);
+        const firstSafeCitedUrl = rec?.citedExampleUrls?.find((u) =>
+          isSafePublicExternalHttpUrl(u),
+        );
+        list.push({
+          key: `l2:${provider}`,
+          group: 'L2_EXTENSION',
+          provider,
+          channelLabel: CHANNEL_PROVIDER_LABELS[provider],
+          description:
+            '入队至 Chrome 扩展待发草稿队列，自动填充平台草稿箱，人工核对后手动发布并回传链接',
+          targetUrlHint: firstSafeCitedUrl,
+          recommendedPriority: rec?.priority,
+        });
+      }
     }
 
     // Group 2: L3 Community Assist (Market-specific, human-assist only)
@@ -809,7 +1012,7 @@ export function StudioDistributionDrawer({
 
     for (const provider of communityProviders) {
       const rec = findMatchingRecommendation(provider, effectiveRecommendedChannels);
-      const firstSafeCitedUrl = rec?.citedExampleUrls?.find((u) => isSafeDistributionHttpUrl(u));
+      const firstSafeCitedUrl = rec?.citedExampleUrls?.find((u) => isSafePublicExternalHttpUrl(u));
       list.push({
         key: `l3:${provider}`,
         group: 'L3_COMMUNITY',
@@ -875,6 +1078,7 @@ export function StudioDistributionDrawer({
         {
           title: draftTitle || article.title,
           contentMarkdown: draftMarkdown || article.contentMarkdown,
+          ...(effectiveArticleLocale ? { targetLocale: effectiveArticleLocale } : {}),
         },
         { storage: window.sessionStorage, signal: ctrl.signal },
       );
@@ -905,13 +1109,24 @@ export function StudioDistributionDrawer({
     const seq = sessionSeqRef.current;
     bumpPollEpoch();
 
-    const payloadTargets: DistributionVariantTargetInput[] = selectedTargets.map((opt) => ({
-      provider: opt.provider,
-      ...(opt.connectionId ? { connectionId: opt.connectionId } : {}),
-      channelLabel: opt.channelLabel,
-      ...(opt.targetUrlHint ? { targetUrlHint: opt.targetUrlHint } : {}),
-      templateKey: defaultTemplateKeyForProvider(opt.provider),
-    }));
+    const payloadTargets: DistributionVariantTargetInput[] = selectedTargets.map((opt) => {
+      const resolvedTargetLocale =
+        market === 'CN'
+          ? opt.targetLocale === 'zh-CN'
+            ? 'zh-CN'
+            : undefined
+          : showVariantLocaleSelector
+            ? (variantTargetLocale ?? opt.targetLocale ?? undefined)
+            : (opt.targetLocale ?? undefined);
+      return {
+        provider: opt.provider,
+        ...(opt.connectionId ? { connectionId: opt.connectionId } : {}),
+        channelLabel: opt.channelLabel,
+        ...(opt.targetUrlHint ? { targetUrlHint: opt.targetUrlHint } : {}),
+        ...(resolvedTargetLocale ? { targetLocale: resolvedTargetLocale } : {}),
+        templateKey: defaultTemplateKeyForProvider(opt.provider),
+      };
+    });
 
     setGenerating(true);
     setDrawerError(null);
@@ -1009,6 +1224,44 @@ export function StudioDistributionDrawer({
     } catch (err) {
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
       const msg = formatDrawerError(err, '保存变体修改失败');
+      setDrawerError(msg);
+      feedback.notifyError(msg);
+    } finally {
+      taskActionCtrlsRef.current.delete(ctrl);
+      if (seq === sessionSeqRef.current) {
+        savingTasksRef.current.delete(task.id);
+        if (!ctrl.signal.aborted) {
+          setSavingTaskId((prev) => (prev === task.id ? null : prev));
+        }
+      }
+    }
+  };
+
+  const handleMarkExtensionTaskReady = async (task: ArticleDistributionTaskItem) => {
+    if (readOnly || savingTasksRef.current.has(task.id)) return;
+    savingTasksRef.current.add(task.id);
+    const seq = sessionSeqRef.current;
+    const ctrl = new AbortController();
+    taskActionCtrlsRef.current.add(ctrl);
+    bumpPollEpoch();
+    setSavingTaskId(task.id);
+    setDrawerError(null);
+    try {
+      const updated = await updateDistributionTask(
+        task.id,
+        { status: 'READY_TO_PUBLISH' },
+        { storage: window.sessionStorage, signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+      bumpPollEpoch();
+      setTasks((prev) =>
+        prev.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+      );
+      invalidateFreshness('distributions');
+      feedback.notifySuccess(`「${task.channelLabel}」已标记为待扩展拉取`);
+    } catch (err) {
+      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
+      const msg = formatDrawerError(err, '更新扩展队列状态失败');
       setDrawerError(msg);
       feedback.notifyError(msg);
     } finally {
@@ -1249,6 +1502,7 @@ export function StudioDistributionDrawer({
 
   const totalEstimatedPoints = selectedTargets.length * unitPrice;
   const l1Options = targetOptions.filter((o) => o.group === 'L1');
+  const l2ExtensionOptions = targetOptions.filter((o) => o.group === 'L2_EXTENSION');
   const communityOptions = targetOptions.filter((o) => o.group === 'L3_COMMUNITY');
   const prOptions = targetOptions.filter((o) => o.group === 'L3_PR');
 
@@ -1301,6 +1555,25 @@ export function StudioDistributionDrawer({
         ? disabledBoundConn.id
         : undefined;
     const extras = task.variantExtrasJson ?? {};
+    const isWechatTask = task.provider === 'WECHAT_OFFICIAL';
+    const isGithubMdxTask = task.provider === 'GITHUB_MDX';
+    const isDevtoOrHashnode = task.provider === 'DEVTO' || task.provider === 'HASHNODE';
+    const canonicalUrlRaw =
+      typeof extras.canonicalUrl === 'string' ? extras.canonicalUrl.trim() : '';
+    const safeCanonicalUrl = isSafePublicExternalHttpUrl(canonicalUrlRaw) ? canonicalUrlRaw : null;
+    const safeRemoteAdminUrl =
+      task.remoteAdminUrl &&
+      isSafePublicExternalHttpUrl(task.remoteAdminUrl, { requireHttps: isGithubMdxTask })
+        ? task.remoteAdminUrl
+        : null;
+    const safeRemotePublishedUrl =
+      task.remotePublishedUrl && isSafePublicExternalHttpUrl(task.remotePublishedUrl)
+        ? task.remotePublishedUrl
+        : null;
+    const extraTags = readStringArray(extras.tags);
+    const hasWechat40164Error =
+      isWechatTask && Boolean(task.lastError && task.lastError.includes('40164'));
+    const taskLocaleMeta = task.targetLocale ? SUPPORTED_LOCALES[task.targetLocale] : null;
     const antiBanChecklist = readStringArray(extras.antiBanChecklist);
     const threadPosts = readStringArray(extras.threadPosts);
     const targetThreadUrls = [
@@ -1308,7 +1581,7 @@ export function StudioDistributionDrawer({
         ...readStringArray(extras.targetThreadUrls),
         ...(task.targetUrlHint ? [task.targetUrlHint] : []),
       ]),
-    ].filter((u) => isSafeDistributionHttpUrl(u));
+    ].filter((u) => isSafePublicExternalHttpUrl(u));
     const factSheet = parseFactSheet(extras);
     const generatedShare = generatedPrShareByTask[task.id];
     const checkedItems = checkedChecklistByTask[task.id] ?? [];
@@ -1358,6 +1631,15 @@ export function StudioDistributionDrawer({
             <SignalPill tone={taskStatusTone(task.status)}>
               {DISTRIBUTION_TASK_STATUS_LABELS[task.status]}
             </SignalPill>
+            {task.targetLocale && taskLocaleMeta ? (
+              <Tag
+                color="purple"
+                data-testid="distribution-task-locale-tag"
+                style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+              >
+                {task.targetLocale} · {taskLocaleMeta.nativeLabel}
+              </Tag>
+            ) : null}
             {task.indexNowStatus ? (
               <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
                 IndexNow: {task.indexNowStatus}
@@ -1370,6 +1652,16 @@ export function StudioDistributionDrawer({
             </span>
           ) : null}
         </div>
+
+        {isWechatTask ? (
+          <Alert
+            type="info"
+            showIcon
+            data-testid="distribution-wechat-draft-only-notice"
+            message="仅推送至微信公众号草稿箱，绝不自动群发"
+            description="推送后请前往微信公众平台后台人工复核排版并手动群发；如遇错误码 40164，请将服务器出口 IP 加入公众号 IP 白名单。"
+          />
+        ) : null}
 
         {task.status === 'PUBLISHING' ? (
           <Alert
@@ -1384,7 +1676,11 @@ export function StudioDistributionDrawer({
             type="error"
             showIcon
             message="上次推送失败"
-            description={task.lastError}
+            description={
+              hasWechat40164Error
+                ? `${task.lastError}（处理指引：前往微信公众平台「设置与开发 → 基本配置 → IP 白名单」添加服务器出口 IP 后重试）`
+                : task.lastError
+            }
             style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
           />
         ) : null}
@@ -1413,9 +1709,95 @@ export function StudioDistributionDrawer({
           />
         ) : null}
 
-        {/* Remote Links (Admin Draft & Published URL) */}
-        {(task.remoteAdminUrl && isSafeDistributionHttpUrl(task.remoteAdminUrl)) ||
-        (task.remotePublishedUrl && isSafeDistributionHttpUrl(task.remotePublishedUrl)) ? (
+        {/* WeChat Official Draft media_id Display */}
+        {isWechatTask && task.status === 'DRAFT_PUSHED' && task.remotePostId ? (
+          <div
+            data-testid="distribution-wechat-media-id"
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              padding: '8px 12px',
+              borderRadius: 'var(--gm-radius-sm)',
+              border: '1px solid var(--gm-line-2)',
+              background: 'var(--gm-bg-base)',
+              fontSize: 12,
+            }}
+          >
+            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+              <span style={{ color: 'var(--gm-fg-2)' }}>公众号草稿 media_id：</span>
+              <code className="gm-mono" style={{ color: 'var(--gm-fg-1)' }}>
+                {task.remotePostId}
+              </code>
+            </div>
+            <Button
+              size="small"
+              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              onClick={() => {
+                if (!task.remotePostId) return;
+                void copyTextToClipboard(task.remotePostId).then((ok) => {
+                  if (ok) feedback.notifySuccess('已复制草稿 media_id');
+                });
+              }}
+            >
+              复制 media_id
+            </Button>
+          </div>
+        ) : null}
+
+        {/* Dev.to / Hashnode Canonical URL & Tags Preview */}
+        {isDevtoOrHashnode && (canonicalUrlRaw || extraTags.length > 0) ? (
+          <div
+            data-testid="distribution-canonical-preview"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 'var(--gm-radius-sm)',
+              border: '1px solid var(--gm-line-2)',
+              background: 'var(--gm-bg-base)',
+              fontSize: 12,
+              minWidth: 0,
+            }}
+          >
+            {canonicalUrlRaw ? (
+              <div style={{ overflowWrap: 'anywhere' }}>
+                <span style={{ color: 'var(--gm-fg-2)' }}>Canonical URL 回指：</span>
+                {safeCanonicalUrl ? (
+                  <a
+                    href={safeCanonicalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="gm-mono"
+                    style={{ color: 'var(--gm-info)', overflowWrap: 'anywhere' }}
+                  >
+                    {safeCanonicalUrl} ↗
+                  </a>
+                ) : (
+                  <span className="gm-mono" style={{ color: 'var(--gm-fg-1)' }}>
+                    {canonicalUrlRaw}
+                  </span>
+                )}
+              </div>
+            ) : null}
+            {extraTags.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <span style={{ color: 'var(--gm-fg-2)' }}>规范化标签：</span>
+                {extraTags.map((tag) => (
+                  <Tag key={tag} color="blue" style={{ margin: 0 }}>
+                    #{tag}
+                  </Tag>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Remote Links (Admin Draft / GitHub PR Review Link & Published URL) */}
+        {safeRemoteAdminUrl || safeRemotePublishedUrl ? (
           <div
             style={{
               display: 'flex',
@@ -1428,19 +1810,24 @@ export function StudioDistributionDrawer({
               fontSize: 12,
             }}
           >
-            {task.remoteAdminUrl && isSafeDistributionHttpUrl(task.remoteAdminUrl) ? (
+            {safeRemoteAdminUrl ? (
               <a
-                href={task.remoteAdminUrl}
+                href={safeRemoteAdminUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                data-testid={isGithubMdxTask ? 'distribution-github-pr-link' : undefined}
                 style={{ color: 'var(--gm-info)', overflowWrap: 'anywhere' }}
               >
-                打开站点后台草稿 / 管理页 ↗
+                {isGithubMdxTask
+                  ? `查看 GitHub PR 审核链接${task.remotePostId ? ` (${task.remotePostId})` : ''} ↗`
+                  : isWechatTask
+                    ? '前往微信公众平台草稿箱 ↗'
+                    : '打开站点后台草稿 / 管理页 ↗'}
               </a>
             ) : null}
-            {task.remotePublishedUrl && isSafeDistributionHttpUrl(task.remotePublishedUrl) ? (
+            {safeRemotePublishedUrl ? (
               <a
-                href={task.remotePublishedUrl}
+                href={safeRemotePublishedUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: 'var(--gm-success)', overflowWrap: 'anywhere' }}
@@ -1470,18 +1857,20 @@ export function StudioDistributionDrawer({
               gap: 10,
             }}
           >
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                URL Slug（英文短链）
+            {!isWechatTask ? (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  URL Slug（英文短链）
+                </div>
+                <Input
+                  aria-label="URL Slug"
+                  disabled={isTaskLocked}
+                  placeholder="例如：best-quiet-4-bay-nas-2026"
+                  value={draft.variantSlug}
+                  onChange={(e) => updateDraftField('variantSlug', e.target.value)}
+                />
               </div>
-              <Input
-                aria-label="URL Slug"
-                disabled={isTaskLocked}
-                placeholder="例如：best-quiet-4-bay-nas-2026"
-                value={draft.variantSlug}
-                onChange={(e) => updateDraftField('variantSlug', e.target.value)}
-              />
-            </div>
+            ) : null}
 
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
@@ -1520,17 +1909,23 @@ export function StudioDistributionDrawer({
                 marginBottom: 4,
               }}
             >
-              <span>摘要描述（Meta Description）</span>
+              <span>
+                {isWechatTask ? '公众号摘要（Digest，≤120 字）' : '摘要描述（Meta Description）'}
+              </span>
               <span className="gm-num" style={{ color: 'var(--gm-fg-3)' }}>
-                {draft.variantMetaDesc.length} / 160 字
+                {draft.variantMetaDesc.length} / {isWechatTask ? 120 : 160} 字
               </span>
             </div>
             <Input.TextArea
               aria-label="摘要描述"
               rows={2}
-              maxLength={320}
+              maxLength={isWechatTask ? 120 : 320}
               disabled={isTaskLocked}
-              placeholder="建议 140–160 字符，直接概述核心数据与结论"
+              placeholder={
+                isWechatTask
+                  ? '公众号草稿箱摘要，最多 120 字'
+                  : '建议 140–160 字符，直接概述核心数据与结论'
+              }
               value={draft.variantMetaDesc}
               onChange={(e) => updateDraftField('variantMetaDesc', e.target.value)}
             />
@@ -1552,45 +1947,273 @@ export function StudioDistributionDrawer({
 
         {/* Save Variant Button + Provider-Specific Actions */}
         {task.mode === 'L1_API' ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-            <Button
-              data-testid="distribution-save-variant-btn"
-              loading={savingTaskId === task.id}
-              disabled={isTaskLocked}
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-              onClick={() => void handleSaveVariantDraft(task)}
-            >
-              保存变体修改
-            </Button>
-            <Button
-              data-testid="distribution-publish-draft-btn"
-              loading={publishingTaskId === task.id}
-              disabled={
-                readOnly ||
-                task.status === 'PUBLISHING' ||
-                task.status === 'PUBLISHED' ||
-                task.status === 'ARCHIVED'
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <Button
+                data-testid="distribution-save-variant-btn"
+                loading={savingTaskId === task.id}
+                disabled={isTaskLocked}
+                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                onClick={() => void handleSaveVariantDraft(task)}
+              >
+                保存变体修改
+              </Button>
+              <Button
+                type={isWechatTask ? 'primary' : 'default'}
+                data-testid="distribution-publish-draft-btn"
+                loading={publishingTaskId === task.id}
+                disabled={
+                  readOnly ||
+                  task.status === 'PUBLISHING' ||
+                  task.status === 'PUBLISHED' ||
+                  task.status === 'ARCHIVED'
+                }
+                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                onClick={() => void handlePublishL1(task, true)}
+              >
+                {isWechatTask
+                  ? '推送至公众号草稿箱'
+                  : isGithubMdxTask
+                    ? '创建 GitHub Draft PR（推荐）'
+                    : '推送为草稿（推荐）'}
+              </Button>
+              {!isWechatTask ? (
+                <Button
+                  type="primary"
+                  data-testid="distribution-publish-live-btn"
+                  loading={publishingTaskId === task.id}
+                  disabled={
+                    readOnly ||
+                    task.status === 'PUBLISHING' ||
+                    task.status === 'PUBLISHED' ||
+                    task.status === 'ARCHIVED'
+                  }
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => void handlePublishL1(task, false)}
+                >
+                  {isGithubMdxTask ? '直接提交至目标分支' : '立即上线发布'}
+                </Button>
+              ) : null}
+            </div>
+
+            {isWechatTask && task.status === 'DRAFT_PUSHED' && onCreatePublishRecord ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  padding: 10,
+                  borderRadius: 'var(--gm-radius-sm)',
+                  border: '1px solid var(--gm-line-1)',
+                  background: 'var(--gm-bg-base)',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                  在公众号后台人工群发后，可在此登记文章链接以开启自动复测
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <Input
+                    aria-label="已发布公众号链接"
+                    style={{ flex: '1 1 240px', minWidth: 0 }}
+                    disabled={readOnly}
+                    placeholder="粘贴公众号已群发文章链接，例如 https://mp.weixin.qq.com/s/..."
+                    value={quickRegisterUrls[task.id] ?? ''}
+                    onChange={(e) =>
+                      setQuickRegisterUrls((prev) => ({ ...prev, [task.id]: e.target.value }))
+                    }
+                  />
+                  <Button
+                    size="small"
+                    type="primary"
+                    loading={quickRegisteringTaskId === task.id}
+                    disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
+                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    onClick={() => void handleQuickRegisterUrl(task)}
+                  >
+                    登记已发链接
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {task.mode === 'L2_EXTENSION' ? (
+          <div
+            data-testid="distribution-l2-extension-panel"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              padding: 12,
+              borderRadius: 'var(--gm-radius-md)',
+              border: '1px solid var(--gm-line-1)',
+              background: 'var(--gm-bg-base)',
+            }}
+          >
+            <Alert
+              type={task.status === 'PUBLISHED' ? 'success' : 'info'}
+              showIcon
+              message={
+                task.status === 'PUBLISHED'
+                  ? '已由 Chrome 扩展回传公网链接并纳入追踪'
+                  : '已入队等待 Chrome 扩展拉取（写入平台草稿箱，人工审核后手动发布）'
               }
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-              onClick={() => void handlePublishL1(task, true)}
-            >
-              推送为草稿（推荐）
-            </Button>
-            <Button
-              type="primary"
-              data-testid="distribution-publish-live-btn"
-              loading={publishingTaskId === task.id}
-              disabled={
-                readOnly ||
-                task.status === 'PUBLISHING' ||
-                task.status === 'PUBLISHED' ||
-                task.status === 'ARCHIVED'
+              description={
+                task.status === 'PUBLISHED'
+                  ? '该国内平台发布链接已同步至发布记录，并自动创建 T+7 / T+14 / T+30 复测日程。'
+                  : '打开已配对的 GeoMix Chrome 扩展即可拉取此变体并填充到目标平台草稿箱；扩展绝不读取 Cookie，绝不自动点击最终发布。'
               }
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-              onClick={() => void handlePublishL1(task, false)}
-            >
-              立即上线发布
-            </Button>
+            />
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <Button
+                data-testid="distribution-save-variant-btn"
+                loading={savingTaskId === task.id}
+                disabled={isTaskLocked}
+                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                onClick={() => void handleSaveVariantDraft(task)}
+              >
+                保存变体修改
+              </Button>
+              {task.status === 'DRAFT_VARIANT' ? (
+                <Button
+                  type="primary"
+                  data-testid="distribution-l2-mark-ready-btn"
+                  loading={savingTaskId === task.id}
+                  disabled={readOnly}
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => void handleMarkExtensionTaskReady(task)}
+                >
+                  标记待扩展拉取
+                </Button>
+              ) : null}
+              <Button
+                data-testid="distribution-l2-copy-btn"
+                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                onClick={() => {
+                  void copyTextToClipboard(draft.variantMarkdown).then((ok) => {
+                    if (ok) feedback.notifySuccess('已复制国内平台变体正文');
+                    else feedback.notifyError('复制失败，请检查剪贴板权限');
+                  });
+                }}
+              >
+                复制正文
+              </Button>
+              {onNavigateExtensionPairing || onNavigateBrands ? (
+                <Button
+                  size="small"
+                  data-testid="distribution-l2-pair-brands-btn"
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => {
+                    onClose();
+                    (onNavigateExtensionPairing ?? onNavigateBrands)?.();
+                  }}
+                >
+                  前往品牌资产配对 Chrome 扩展
+                </Button>
+              ) : null}
+              {onNavigateAccount ? (
+                <Button
+                  size="small"
+                  data-testid="distribution-l2-pair-account-btn"
+                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  onClick={() => {
+                    onClose();
+                    onNavigateAccount();
+                  }}
+                >
+                  前往账户管理扩展令牌
+                </Button>
+              ) : null}
+            </div>
+
+            {targetThreadUrls.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                  参考高频被引原帖
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {targetThreadUrls.map((url, idx) => (
+                    <a
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="gm-mono"
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--gm-info)',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      参考原帖 #{idx + 1} ↗
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {antiBanChecklist.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                  平台合规防封自检清单
+                </div>
+                {antiBanChecklist.map((item) => {
+                  const isChecked = checkedItems.includes(item);
+                  return (
+                    <Checkbox
+                      key={item}
+                      checked={isChecked}
+                      onChange={(e) => {
+                        setCheckedChecklistByTask((prev) => {
+                          const cur = prev[task.id] ?? [];
+                          return {
+                            ...prev,
+                            [task.id]: e.target.checked
+                              ? [...new Set([...cur, item])]
+                              : cur.filter((x) => x !== item),
+                          };
+                        });
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>{item}</span>
+                    </Checkbox>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {onCreatePublishRecord ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                  手动回传已发链接（也可直接在 Chrome 扩展内一键回传）
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <Input
+                    aria-label="已发布平台链接"
+                    style={{ flex: '1 1 240px', minWidth: 0 }}
+                    disabled={readOnly}
+                    placeholder="粘贴平台发布后的公网链接，自动开启 T+7/14/30 复测"
+                    value={quickRegisterUrls[task.id] ?? ''}
+                    onChange={(e) =>
+                      setQuickRegisterUrls((prev) => ({ ...prev, [task.id]: e.target.value }))
+                    }
+                  />
+                  <Button
+                    type="primary"
+                    data-testid="distribution-quick-register-btn"
+                    loading={quickRegisteringTaskId === task.id}
+                    disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
+                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    onClick={() => void handleQuickRegisterUrl(task)}
+                  >
+                    登记已发链接
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -2312,6 +2935,41 @@ export function StudioDistributionDrawer({
                     </Button>
                   </div>
 
+                  {showVariantLocaleSelector ? (
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '8px 10px',
+                        borderRadius: 'var(--gm-radius-sm)',
+                        border: '1px solid var(--gm-line-1)',
+                        background: 'var(--gm-bg-base)',
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)', whiteSpace: 'nowrap' }}>
+                        变体目标语种：
+                      </span>
+                      <Select<SupportedLocale>
+                        size="small"
+                        aria-label="变体目标语种"
+                        data-testid="distribution-target-locale-select"
+                        style={{ minWidth: 200 }}
+                        disabled={readOnly || generating || isVariantJobRunning}
+                        value={variantTargetLocale}
+                        options={effectiveSupportedLocales.map((code) => {
+                          const meta = SUPPORTED_LOCALES[code];
+                          return {
+                            value: code,
+                            label: `${meta.labelZh} (${code}) · ${meta.nativeLabel}`,
+                          };
+                        })}
+                        onChange={(val) => setVariantTargetLocale(val)}
+                      />
+                    </div>
+                  ) : null}
+
                   {/* Async Variant Generation Progress Card (#363) */}
                   {activeVariantJob ? (
                     <div
@@ -2486,7 +3144,7 @@ export function StudioDistributionDrawer({
                       >
                         {effectiveRecommendedChannels.map((rec) => {
                           const safeUrls = (rec.citedExampleUrls ?? [])
-                            .filter((u) => isSafeDistributionHttpUrl(u))
+                            .filter((u) => isSafePublicExternalHttpUrl(u))
                             .slice(0, 3);
                           return (
                             <div
@@ -2593,7 +3251,9 @@ export function StudioDistributionDrawer({
                         }}
                       >
                         <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                          当前市场尚未绑定 Shopify / WordPress / Webflow / Webhook 渠道连接。
+                          {market === 'CN'
+                            ? '当前市场尚未绑定微信公众号草稿箱 / WordPress / Webhook 渠道连接。'
+                            : '当前市场尚未绑定 Shopify / WordPress / Webflow / Ghost / Dev.to / Hashnode / GitHub MDX / Webhook 渠道连接。'}
                         </span>
                         {onNavigateBrands ? (
                           <Button
@@ -2676,6 +3336,14 @@ export function StudioDistributionDrawer({
                                   <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
                                     {opt.description}
                                   </Tag>
+                                  {opt.targetLocale ? (
+                                    <Tag
+                                      color="purple"
+                                      style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                                    >
+                                      {opt.targetLocale}
+                                    </Tag>
+                                  ) : null}
                                   {opt.connectionStatus === 'INVALID' ? (
                                     <Tag
                                       color="red"
@@ -2706,6 +3374,136 @@ export function StudioDistributionDrawer({
                       </div>
                     )}
                   </div>
+
+                  {/* Group 1.5 (CN Only): L2 Chrome Extension Queue */}
+                  {l2ExtensionOptions.length > 0 ? (
+                    <div
+                      data-testid="distribution-l2-extension-group"
+                      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-2)' }}>
+                          国内平台浏览器扩展队列（L2 Chrome 扩展 · 写入草稿箱人工确认，不自动发布）
+                        </span>
+                        {onNavigateExtensionPairing || onNavigateBrands ? (
+                          <Button
+                            size="small"
+                            type="link"
+                            style={{ padding: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                            onClick={() => {
+                              onClose();
+                              (onNavigateExtensionPairing ?? onNavigateBrands)?.();
+                            }}
+                          >
+                            管理扩展配对令牌 →
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
+                          gap: 8,
+                        }}
+                      >
+                        {l2ExtensionOptions.map((opt) => {
+                          const selected = selectedTargetKeys.includes(opt.key);
+                          return (
+                            <div
+                              key={opt.key}
+                              role="presentation"
+                              data-testid={`distribution-target-${opt.provider}`}
+                              onClick={() => {
+                                if (!readOnly) toggleTargetKey(opt.key);
+                              }}
+                              style={{
+                                padding: 10,
+                                borderRadius: 'var(--gm-radius-sm)',
+                                border: selected
+                                  ? '1px solid var(--gm-phosphor)'
+                                  : '1px solid var(--gm-line-2)',
+                                background: selected
+                                  ? 'var(--gm-bg-selected)'
+                                  : 'var(--gm-bg-base)',
+                                cursor: readOnly ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                gap: 8,
+                                minWidth: 0,
+                                boxSizing: 'border-box',
+                              }}
+                            >
+                              <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                                <Checkbox
+                                  checked={selected}
+                                  disabled={readOnly}
+                                  aria-label={opt.channelLabel}
+                                  onChange={() => toggleTargetKey(opt.key)}
+                                />
+                              </span>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      color: 'var(--gm-fg-1)',
+                                      minWidth: 0,
+                                      overflowWrap: 'anywhere',
+                                      wordBreak: 'break-word',
+                                    }}
+                                  >
+                                    {opt.channelLabel}
+                                  </span>
+                                  <Tag
+                                    color="cyan"
+                                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                                  >
+                                    Chrome 扩展
+                                  </Tag>
+                                  {opt.recommendedPriority === 'HIGH' ? (
+                                    <Tag
+                                      color="gold"
+                                      style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                                    >
+                                      高频被引
+                                    </Tag>
+                                  ) : null}
+                                </div>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    color: 'var(--gm-fg-3)',
+                                    marginTop: 4,
+                                    overflowWrap: 'anywhere',
+                                    wordBreak: 'break-word',
+                                  }}
+                                >
+                                  {opt.description}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Group 2: L3 Community Assist */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

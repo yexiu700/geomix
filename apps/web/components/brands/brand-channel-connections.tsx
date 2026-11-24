@@ -4,23 +4,27 @@ import {
   CHANNEL_PROVIDER_LABELS,
   GEO_MARKET_LABELS,
   L1_CHANNEL_PROVIDERS,
+  SUPPORTED_LOCALES,
   formatShanghaiDateTime,
   isSafeDistributionHttpUrl,
+  supportedLocalesForMarket,
   type ChannelConnectionConfig,
   type ChannelConnectionDto,
   type ChannelConnectionTestResultDto,
   type ChannelRemoteTargetDto,
   type GeoMarket,
   type L1ChannelProvider,
+  type SupportedLocale,
   type UpdateChannelConnectionInput,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Select, Space, Switch, Tag } from 'antd';
+import { Alert, Button, Input, Modal, Select, Space, Switch, Tabs, Tag } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChannelConnection,
   deleteChannelConnection,
   listChannelConnections,
+  startShopifyOAuth,
   testChannelConnection,
   updateChannelConnection,
 } from '../../lib/distribution';
@@ -36,6 +40,9 @@ export type BrandChannelConnectionsProps = {
   marketEnabled: boolean;
   readOnly: boolean;
   onEnableMarket: () => void;
+  supportedLocales?: readonly SupportedLocale[];
+  /** Optional redirect callback for Shopify OAuth (defaults to window.location.assign) */
+  onOAuthRedirect?: (authorizeUrl: string) => void;
 };
 
 type WebflowFieldOption = {
@@ -129,9 +136,60 @@ function providerSiteHint(provider: L1ChannelProvider): string {
   }
 }
 
+const GHOST_ADMIN_API_KEY_PATTERN = /^[^:\s]+:(?:[0-9a-fA-F]{2}){8,}$/;
+
+const WECHAT_DRAFT_ONLY_NOTICE =
+  '仅推送至公众号草稿箱，绝不自动群发；请推送后前往微信公众平台后台人工复核并发布。';
+const WECHAT_IP_WHITELIST_NOTICE =
+  '需提前将服务器出口 IP 加入微信公众平台「设置与开发 → 基本配置 → IP 白名单」，否则接口将返回错误码 40164 拦截。';
+
+function hasWechatIpWhitelistError(message: string | null | undefined): boolean {
+  return Boolean(message && message.includes('40164'));
+}
+
+function isSafeShopifyOAuthAuthorizeUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    if (parsed.port) return false;
+    if (parsed.pathname !== '/admin/oauth/authorize') return false;
+    const host = parsed.hostname.toLowerCase();
+    if (!host.endsWith('.myshopify.com')) return false;
+    const prefix = host.slice(0, -'.myshopify.com'.length);
+    return /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(prefix);
+  } catch {
+    return false;
+  }
+}
+
 function readStringConfig(config: Record<string, unknown>, key: string): string {
   const val = config[key];
   return typeof val === 'string' ? val : '';
+}
+
+function readStringArrayConfig(config: Record<string, unknown>, key: string): string[] {
+  const val = config[key];
+  if (!Array.isArray(val)) return [];
+  return val
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map((item) => item.trim())
+    .slice(0, 20);
+}
+
+function parseTagsInput(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[,，\n]/)) {
+    const trimmed = part.trim().slice(0, 60);
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= 20) break;
+  }
+  return out;
 }
 
 function readNumberArrayConfig(config: Record<string, unknown>, key: string): number[] {
@@ -205,6 +263,8 @@ export function BrandChannelConnections({
   marketEnabled,
   readOnly,
   onEnableMarket,
+  supportedLocales,
+  onOAuthRedirect,
 }: BrandChannelConnectionsProps): JSX.Element {
   const feedback = useUxFeedback();
 
@@ -219,6 +279,15 @@ export function BrandChannelConnections({
   const [provider, setProvider] = useState<L1ChannelProvider>('SHOPIFY');
   const [displayName, setDisplayName] = useState('');
   const [siteBaseUrl, setSiteBaseUrl] = useState('');
+  const [targetLocale, setTargetLocale] = useState<SupportedLocale | null>(null);
+
+  // Shopify Dual-Mode Tabs State (OAuth 2.0 vs Custom App Token)
+  const [shopifyAuthMode, setShopifyAuthMode] = useState<'oauth' | 'custom'>('oauth');
+  const [shopifyOAuthShop, setShopifyOAuthShop] = useState('');
+  const [shopifyOAuthStarting, setShopifyOAuthStarting] = useState(false);
+  const [shopifyOAuthUnconfiguredMsg, setShopifyOAuthUnconfiguredMsg] = useState<string | null>(
+    null,
+  );
 
   // Provider credential inputs (always cleared on close / after create)
   const [shopifyAccessToken, setShopifyAccessToken] = useState('');
@@ -226,6 +295,12 @@ export function BrandChannelConnections({
   const [wpAppPassword, setWpAppPassword] = useState('');
   const [webflowApiToken, setWebflowApiToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
+  const [ghostAdminApiKey, setGhostAdminApiKey] = useState('');
+  const [devtoApiKey, setDevtoApiKey] = useState('');
+  const [hashnodeApiToken, setHashnodeApiToken] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [wechatAppId, setWechatAppId] = useState('');
+  const [wechatAppSecret, setWechatAppSecret] = useState('');
 
   // Provider configJson fields
   const [blogId, setBlogId] = useState('');
@@ -235,6 +310,18 @@ export function BrandChannelConnections({
   const [collectionId, setCollectionId] = useState('');
   const [collectionSlug, setCollectionSlug] = useState('');
   const [fieldMap, setFieldMap] = useState<WebflowFieldMapDraft>({ ...EMPTY_WEBFLOW_FIELD_MAP });
+  const [publicationId, setPublicationId] = useState('');
+  const [repoOwner, setRepoOwner] = useState('');
+  const [repoName, setRepoName] = useState('');
+  const [repoBranch, setRepoBranch] = useState('');
+  const [contentDir, setContentDir] = useState('');
+  const [fileExtension, setFileExtension] = useState<'mdx' | 'md'>('mdx');
+  const [publicUrlTemplate, setPublicUrlTemplate] = useState('');
+  const [primaryDomain, setPrimaryDomain] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
+  const [wechatAuthor, setWechatAuthor] = useState('');
+  const [wechatCoverMediaId, setWechatCoverMediaId] = useState('');
+  const [wechatNeedOpenComment, setWechatNeedOpenComment] = useState(false);
   const [defaultPublishAsDraft, setDefaultPublishAsDraft] = useState(true);
   const [inlineJsonLd, setInlineJsonLd] = useState(true);
   const [indexNowKey, setIndexNowKey] = useState('');
@@ -280,6 +367,12 @@ export function BrandChannelConnections({
     setWpAppPassword('');
     setWebflowApiToken('');
     setWebhookSecret('');
+    setGhostAdminApiKey('');
+    setDevtoApiKey('');
+    setHashnodeApiToken('');
+    setGithubToken('');
+    setWechatAppId('');
+    setWechatAppSecret('');
   }, []);
 
   const resetModalState = useCallback(() => {
@@ -291,6 +384,11 @@ export function BrandChannelConnections({
     setProvider('SHOPIFY');
     setDisplayName('');
     setSiteBaseUrl('');
+    setTargetLocale(null);
+    setShopifyAuthMode('oauth');
+    setShopifyOAuthShop('');
+    setShopifyOAuthStarting(false);
+    setShopifyOAuthUnconfiguredMsg(null);
     clearModalSecrets();
     setBlogId('');
     setBlogHandle('');
@@ -299,6 +397,18 @@ export function BrandChannelConnections({
     setCollectionId('');
     setCollectionSlug('');
     setFieldMap({ ...EMPTY_WEBFLOW_FIELD_MAP });
+    setPublicationId('');
+    setRepoOwner('');
+    setRepoName('');
+    setRepoBranch('');
+    setContentDir('');
+    setFileExtension('mdx');
+    setPublicUrlTemplate('');
+    setPrimaryDomain('');
+    setTagsInput('');
+    setWechatAuthor('');
+    setWechatCoverMediaId('');
+    setWechatNeedOpenComment(false);
     setDefaultPublishAsDraft(true);
     setInlineJsonLd(true);
     setIndexNowKey('');
@@ -385,12 +495,13 @@ export function BrandChannelConnections({
   const openCreateModal = () => {
     resetModalState();
     setProvider('SHOPIFY');
+    setShopifyAuthMode('oauth');
     setDefaultPublishAsDraft(true);
     setInlineJsonLd(true);
     setModalOpen(true);
   };
 
-  const openEditModal = (conn: ChannelConnectionDto) => {
+  const openEditModal = (conn: ChannelConnectionDto, preferredShopifyTab?: 'oauth' | 'custom') => {
     resetModalState();
     const cfg = conn.configJson ?? {};
     const l1Provider: L1ChannelProvider = L1_CHANNEL_PROVIDERS.includes(
@@ -402,6 +513,11 @@ export function BrandChannelConnections({
     setProvider(l1Provider);
     setDisplayName(conn.displayName);
     setSiteBaseUrl(conn.siteBaseUrl);
+    setTargetLocale(conn.targetLocale ?? null);
+    if (l1Provider === 'SHOPIFY') {
+      setShopifyAuthMode(preferredShopifyTab ?? (conn.authType === 'OAUTH' ? 'oauth' : 'custom'));
+      setShopifyOAuthShop(conn.externalShopDomain ?? conn.siteBaseUrl ?? '');
+    }
     setBlogId(readStringConfig(cfg, 'blogId'));
     setBlogHandle(readStringConfig(cfg, 'blogHandle'));
     setCategoryIds(readNumberArrayConfig(cfg, 'categoryIds'));
@@ -409,15 +525,30 @@ export function BrandChannelConnections({
     setCollectionId(readStringConfig(cfg, 'collectionId'));
     setCollectionSlug(readStringConfig(cfg, 'collectionSlug'));
     setFieldMap(readFieldMapConfig(cfg));
-    setDefaultPublishAsDraft(cfg.defaultPublishAsDraft !== false);
-    setInlineJsonLd(cfg.inlineJsonLd !== false);
+    setPublicationId(readStringConfig(cfg, 'publicationId'));
+    setRepoOwner(readStringConfig(cfg, 'repoOwner'));
+    setRepoName(readStringConfig(cfg, 'repoName'));
+    setRepoBranch(readStringConfig(cfg, 'branch'));
+    setContentDir(readStringConfig(cfg, 'contentDir'));
+    setFileExtension(cfg.fileExtension === 'md' ? 'md' : 'mdx');
+    setPublicUrlTemplate(readStringConfig(cfg, 'publicUrlTemplate'));
+    setPrimaryDomain(readStringConfig(cfg, 'primaryDomain'));
+    setTagsInput(readStringArrayConfig(cfg, 'tags').join(', '));
+    setWechatAuthor(readStringConfig(cfg, 'author'));
+    setWechatCoverMediaId(readStringConfig(cfg, 'defaultCoverMediaId'));
+    setWechatNeedOpenComment(cfg.needOpenComment === true);
+    setDefaultPublishAsDraft(
+      l1Provider === 'WECHAT_OFFICIAL' ? true : cfg.defaultPublishAsDraft !== false,
+    );
+    setInlineJsonLd(l1Provider === 'WECHAT_OFFICIAL' ? false : cfg.inlineJsonLd !== false);
     setIndexNowKey(readStringConfig(cfg, 'indexNowKey'));
     setModalOpen(true);
   };
 
   const buildConfigPayload = ():
     { ok: true; config: ChannelConnectionConfig } | { ok: false; error: string } => {
-    const trimmedIndexNow = indexNowKey.trim();
+    const isWechat = provider === 'WECHAT_OFFICIAL';
+    const trimmedIndexNow = isWechat ? '' : indexNowKey.trim();
     if (trimmedIndexNow && trimmedIndexNow.length < 8) {
       return { ok: false, error: 'IndexNow Key 如需填写，长度至少为 8 位字符' };
     }
@@ -425,8 +556,8 @@ export function BrandChannelConnections({
       return { ok: false, error: 'IndexNow Key 长度不能超过 128 位字符' };
     }
     const config: ChannelConnectionConfig = {
-      defaultPublishAsDraft,
-      inlineJsonLd,
+      defaultPublishAsDraft: isWechat ? true : defaultPublishAsDraft,
+      inlineJsonLd: isWechat ? false : inlineJsonLd,
     };
     if (trimmedIndexNow) {
       config.indexNowKey = trimmedIndexNow;
@@ -456,6 +587,31 @@ export function BrandChannelConnections({
       if (Object.keys(cleanFieldMap).length > 0) {
         config.fieldMap = cleanFieldMap;
       }
+    } else if (provider === 'GHOST') {
+      const parsedTags = parseTagsInput(tagsInput);
+      if (parsedTags.length > 0) config.tags = parsedTags;
+      if (editingConn && primaryDomain.trim()) config.primaryDomain = primaryDomain.trim();
+    } else if (provider === 'DEVTO') {
+      const parsedTags = parseTagsInput(tagsInput);
+      if (parsedTags.length > 0) config.tags = parsedTags.slice(0, 4);
+    } else if (provider === 'HASHNODE') {
+      if (publicationId.trim()) config.publicationId = publicationId.trim();
+    } else if (provider === 'GITHUB_MDX') {
+      if (repoOwner.trim()) config.repoOwner = repoOwner.trim();
+      if (repoName.trim()) config.repoName = repoName.trim();
+      if (repoBranch.trim()) config.branch = repoBranch.trim();
+      if (contentDir.trim()) config.contentDir = contentDir.trim();
+      config.fileExtension = fileExtension;
+      if (publicUrlTemplate.trim()) config.publicUrlTemplate = publicUrlTemplate.trim();
+      if (primaryDomain.trim()) config.primaryDomain = primaryDomain.trim();
+    } else if (provider === 'WECHAT_OFFICIAL') {
+      const trimmedAuthor = wechatAuthor.trim();
+      if (trimmedAuthor.length > 16) {
+        return { ok: false, error: '微信公众号默认作者名最多 16 个字符' };
+      }
+      if (trimmedAuthor) config.author = trimmedAuthor;
+      if (wechatCoverMediaId.trim()) config.defaultCoverMediaId = wechatCoverMediaId.trim();
+      config.needOpenComment = wechatNeedOpenComment;
     }
 
     return { ok: true, config };
@@ -486,8 +642,38 @@ export function BrandChannelConnections({
         if (secret.length < 8) return { ok: false, error: 'Webhook 签名密钥长度至少为 8 位' };
         return { ok: true, credentials: { signingSecret: secret } };
       }
-      default:
-        return { ok: false, error: '该渠道暂未在当前面板完成表单配置' };
+      case 'GHOST': {
+        const key = ghostAdminApiKey.trim();
+        if (!GHOST_ADMIN_API_KEY_PATTERN.test(key)) {
+          return {
+            ok: false,
+            error: '请填写有效的 Ghost Admin API Key（格式为 id:hex_secret）',
+          };
+        }
+        return { ok: true, credentials: { adminApiKey: key } };
+      }
+      case 'DEVTO': {
+        const key = devtoApiKey.trim();
+        if (!key) return { ok: false, error: '请填写 Dev.to API Key' };
+        return { ok: true, credentials: { apiKey: key } };
+      }
+      case 'HASHNODE': {
+        const token = hashnodeApiToken.trim();
+        if (!token) return { ok: false, error: '请填写 Hashnode Personal Access Token' };
+        return { ok: true, credentials: { apiToken: token } };
+      }
+      case 'GITHUB_MDX': {
+        const token = githubToken.trim();
+        if (!token) return { ok: false, error: '请填写 GitHub Personal Access Token' };
+        return { ok: true, credentials: { token } };
+      }
+      case 'WECHAT_OFFICIAL': {
+        const appId = wechatAppId.trim();
+        const appSecret = wechatAppSecret.trim();
+        if (!appId) return { ok: false, error: '请填写微信公众号 AppID' };
+        if (!appSecret) return { ok: false, error: '请填写微信公众号 AppSecret' };
+        return { ok: true, credentials: { appId, appSecret } };
+      }
     }
   };
 
@@ -496,7 +682,9 @@ export function BrandChannelConnections({
     const patch: Record<string, string> = {};
     switch (provider) {
       case 'SHOPIFY': {
-        if (shopifyAccessToken.trim()) patch.accessToken = shopifyAccessToken.trim();
+        if (shopifyAuthMode === 'custom' && shopifyAccessToken.trim()) {
+          patch.accessToken = shopifyAccessToken.trim();
+        }
         break;
       }
       case 'WORDPRESS': {
@@ -518,6 +706,36 @@ export function BrandChannelConnections({
         }
         break;
       }
+      case 'GHOST': {
+        const key = ghostAdminApiKey.trim();
+        if (key) {
+          if (!GHOST_ADMIN_API_KEY_PATTERN.test(key)) {
+            return {
+              ok: false,
+              error: '请填写有效的 Ghost Admin API Key（格式为 id:hex_secret）',
+            };
+          }
+          patch.adminApiKey = key;
+        }
+        break;
+      }
+      case 'DEVTO': {
+        if (devtoApiKey.trim()) patch.apiKey = devtoApiKey.trim();
+        break;
+      }
+      case 'HASHNODE': {
+        if (hashnodeApiToken.trim()) patch.apiToken = hashnodeApiToken.trim();
+        break;
+      }
+      case 'GITHUB_MDX': {
+        if (githubToken.trim()) patch.token = githubToken.trim();
+        break;
+      }
+      case 'WECHAT_OFFICIAL': {
+        if (wechatAppId.trim()) patch.appId = wechatAppId.trim();
+        if (wechatAppSecret.trim()) patch.appSecret = wechatAppSecret.trim();
+        break;
+      }
     }
     return Object.keys(patch).length > 0 ? { ok: true, credentials: patch } : { ok: true };
   };
@@ -537,6 +755,24 @@ export function BrandChannelConnections({
         }
         if (chosen.handle) {
           setBlogHandle(chosen.handle);
+        }
+      } else if (targetProvider === 'HASHNODE' && targets.length > 0) {
+        const currentMatch = publicationId ? targets.find((t) => t.id === publicationId) : null;
+        const chosen = currentMatch ?? targets[0]!;
+        if (!publicationId) {
+          setPublicationId(chosen.id);
+        }
+      } else if (targetProvider === 'GITHUB_MDX' && targets.length > 0) {
+        const chosen = targets[0]!;
+        if (!repoBranch && chosen.handle) {
+          setRepoBranch(chosen.handle);
+        }
+        if (!repoOwner && !repoName && chosen.id.includes('/')) {
+          const [owner, name] = chosen.id.split('/', 2);
+          if (owner && name) {
+            setRepoOwner(owner);
+            setRepoName(name);
+          }
         }
       } else if (targetProvider === 'WEBFLOW' && targets.length > 0) {
         const effectiveSiteId = overrides?.siteId !== undefined ? overrides.siteId : siteId;
@@ -567,7 +803,7 @@ export function BrandChannelConnections({
         }
       }
     },
-    [blogId, collectionId, siteId],
+    [blogId, collectionId, publicationId, repoBranch, repoName, repoOwner, siteId],
   );
 
   const runModalTest = useCallback(
@@ -646,6 +882,64 @@ export function BrandChannelConnections({
     ],
   );
 
+  const handleStartShopifyOAuth = async () => {
+    if (readOnly || shopifyOAuthStarting) return;
+    setModalError(null);
+    setShopifyOAuthUnconfiguredMsg(null);
+    const trimmedShop = shopifyOAuthShop.trim();
+    if (!trimmedShop) {
+      setModalError('请输入有效的 Shopify 店铺域名（*.myshopify.com）');
+      return;
+    }
+
+    const ctrl = new AbortController();
+    modalActionCtrlRef.current?.abort();
+    modalActionCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setShopifyOAuthStarting(true);
+
+    try {
+      const res = await startShopifyOAuth(
+        brandId,
+        {
+          shop: trimmedShop,
+          market: activeMarket,
+          ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+          ...(targetLocale ? { targetLocale } : {}),
+        },
+        { storage: window.sessionStorage, signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      if (!isSafeShopifyOAuthAuthorizeUrl(res.authorizeUrl)) {
+        setModalError('拦截到不安全的 Shopify 授权跳转地址，请检查店铺域名后重试');
+        return;
+      }
+      if (onOAuthRedirect) {
+        onOAuthRedirect(res.authorizeUrl);
+      } else {
+        window.location.assign(res.authorizeUrl);
+      }
+    } catch (err) {
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      if (err instanceof GatewayApiError && err.status === 503) {
+        setShopifyOAuthUnconfiguredMsg(
+          err.message || 'Shopify OAuth 尚未在服务端配置，请直接切换至 Custom App Token 手动接入。',
+        );
+      } else {
+        const msg = formatConnError(err, '发起 Shopify OAuth 授权失败');
+        setModalError(msg);
+        feedback.notifyError(msg);
+      }
+    } finally {
+      if (modalActionCtrlRef.current === ctrl) {
+        modalActionCtrlRef.current = null;
+      }
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setShopifyOAuthStarting(false);
+      }
+    }
+  };
+
   const handleModalSubmit = async (options?: { testAfterCreate?: boolean }) => {
     if (readOnly || submittingRef.current) return;
     setModalError(null);
@@ -682,6 +976,7 @@ export function BrandChannelConnections({
           displayName: trimmedName,
           siteBaseUrl: trimmedUrl,
           configJson: cfgRes.config,
+          targetLocale: targetLocale || null,
           ...(credPatch.credentials ? { credentials: credPatch.credentials } : {}),
         };
         const updated = await updateChannelConnection(brandId, editingConn.id, payload, {
@@ -734,6 +1029,7 @@ export function BrandChannelConnections({
           siteBaseUrl: trimmedUrl,
           credentials: credRes.credentials,
           configJson: cfgRes.config,
+          ...(targetLocale ? { targetLocale } : {}),
         },
         {
           storage: window.sessionStorage,
@@ -920,6 +1216,36 @@ export function BrandChannelConnections({
     );
   };
 
+  const availableProviders = useMemo<L1ChannelProvider[]>(() => {
+    const base =
+      activeMarket === 'GLOBAL'
+        ? L1_CHANNEL_PROVIDERS.filter((p) => p !== 'WECHAT_OFFICIAL')
+        : [...L1_CHANNEL_PROVIDERS];
+    if (editingConn && !base.includes(editingConn.provider as L1ChannelProvider)) {
+      return [...base, editingConn.provider as L1ChannelProvider];
+    }
+    return base;
+  }, [activeMarket, editingConn]);
+
+  const marketLocaleOptions = useMemo(() => {
+    const allowed = supportedLocalesForMarket(activeMarket);
+    const enabledSet = new Set<string>(supportedLocales ?? []);
+    const ordered = [
+      ...allowed.filter((code) => enabledSet.has(code)),
+      ...allowed.filter((code) => !enabledSet.has(code)),
+    ];
+    return ordered.map((code) => {
+      const meta = SUPPORTED_LOCALES[code];
+      return {
+        value: code,
+        label: `${meta.labelZh} (${meta.code}) · ${meta.nativeLabel}`,
+      };
+    });
+  }, [activeMarket, supportedLocales]);
+
+  const isShopifyCreateOAuthTab =
+    provider === 'SHOPIFY' && !editingConn && shopifyAuthMode === 'oauth';
+
   return (
     <section
       id="brand-section-connections"
@@ -945,8 +1271,9 @@ export function BrandChannelConnections({
             </Tag>
           </div>
           <p className="gm-brand-section-desc">
-            当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持
-            Shopify、WordPress、Webflow 与通用签名 Webhook 一键推送草稿或正式上线。
+            {activeMarket === 'CN'
+              ? '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持微信公众号草稿箱（不自动群发）、WordPress、Webhook 等官方 L1 渠道连接。'
+              : '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持 Shopify（OAuth / Custom Token）、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 与通用签名 Webhook。'}
           </p>
         </div>
 
@@ -988,7 +1315,11 @@ export function BrandChannelConnections({
       ) : connections.length === 0 ? (
         <SignalEmpty
           title="当前市场尚未配置自有站点连接"
-          description="绑定 Shopify、WordPress、Webflow 或自定义 Webhook 后，可在写作台一键推送草稿、注入 JSON-LD 并触发 IndexNow 收录通知。"
+          description={
+            activeMarket === 'CN'
+              ? '绑定微信公众号草稿箱、WordPress 或自定义 Webhook 后，可在写作台一键推送草稿并跟踪 AI 收录效果。'
+              : '绑定 Shopify、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 或自定义 Webhook 后，可在写作台一键推送草稿、注入 JSON-LD 并触发 IndexNow 收录通知。'
+          }
           actionText={readOnly ? undefined : '添加渠道连接'}
           onAction={readOnly ? undefined : openCreateModal}
         />
@@ -1020,6 +1351,22 @@ export function BrandChannelConnections({
                 : typeof cfg.collectionId === 'string' && cfg.collectionId
                   ? cfg.collectionId
                   : null;
+            const githubRepoSlug =
+              typeof cfg.repoOwner === 'string' &&
+              cfg.repoOwner &&
+              typeof cfg.repoName === 'string' &&
+              cfg.repoName
+                ? `${cfg.repoOwner}/${cfg.repoName}`
+                : null;
+            const githubBranch = typeof cfg.branch === 'string' && cfg.branch ? cfg.branch : null;
+            const hashnodePubId =
+              typeof cfg.publicationId === 'string' && cfg.publicationId ? cfg.publicationId : null;
+            const isWechatConn = conn.provider === 'WECHAT_OFFICIAL';
+            const isShopifyOAuthDisabled =
+              conn.provider === 'SHOPIFY' &&
+              conn.authType === 'OAUTH' &&
+              conn.status === 'DISABLED';
+            const localeMeta = conn.targetLocale ? SUPPORTED_LOCALES[conn.targetLocale] : null;
 
             return (
               <div
@@ -1062,6 +1409,23 @@ export function BrandChannelConnections({
                       >
                         {CHANNEL_PROVIDER_LABELS[conn.provider] ?? conn.provider}
                       </Tag>
+                      {conn.provider === 'SHOPIFY' ? (
+                        <Tag
+                          color={conn.authType === 'OAUTH' ? 'green' : 'default'}
+                          style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >
+                          {conn.authType === 'OAUTH' ? 'Shopify OAuth' : 'Custom App Token'}
+                        </Tag>
+                      ) : null}
+                      {conn.targetLocale && localeMeta ? (
+                        <Tag
+                          color="purple"
+                          data-testid={`channel-connection-locale-${conn.id}`}
+                          style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                        >
+                          {conn.targetLocale} · {localeMeta.nativeLabel}
+                        </Tag>
+                      ) : null}
                     </div>
                   </div>
                   <SignalPill tone={statusMeta.tone}>{statusMeta.label}</SignalPill>
@@ -1087,6 +1451,11 @@ export function BrandChannelConnections({
                   >
                     {conn.siteBaseUrl}
                   </div>
+                  {conn.externalShopDomain ? (
+                    <div style={{ color: 'var(--gm-fg-3)', overflowWrap: 'anywhere' }}>
+                      绑定店铺：<span className="gm-mono">{conn.externalShopDomain}</span>
+                    </div>
+                  ) : null}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                     <span style={{ color: 'var(--gm-fg-3)' }}>凭据指纹：</span>
                     <span
@@ -1106,13 +1475,26 @@ export function BrandChannelConnections({
                 </div>
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {isDraftDefault ? '默认草稿' : '直接上线'}
+                  <Tag
+                    color={isWechatConn ? 'gold' : undefined}
+                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >
+                    {isWechatConn
+                      ? '仅推草稿箱（不自动群发）'
+                      : isDraftDefault
+                        ? conn.provider === 'GITHUB_MDX'
+                          ? '默认 Draft PR'
+                          : '默认草稿'
+                        : conn.provider === 'GITHUB_MDX'
+                          ? '直接提交分支'
+                          : '直接上线'}
                   </Tag>
-                  <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                    {hasInlineJsonLd ? '内联 JSON-LD' : '关闭内联 JSON-LD'}
-                  </Tag>
-                  {hasIndexNow ? (
+                  {!isWechatConn ? (
+                    <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {hasInlineJsonLd ? '内联 JSON-LD' : '关闭内联 JSON-LD'}
+                    </Tag>
+                  ) : null}
+                  {hasIndexNow && !isWechatConn ? (
                     <Tag color="green" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
                       IndexNow 已启用
                     </Tag>
@@ -1150,13 +1532,76 @@ export function BrandChannelConnections({
                       集合: {webflowTarget}
                     </Tag>
                   ) : null}
+                  {conn.provider === 'HASHNODE' && hashnodePubId ? (
+                    <Tag
+                      color="blue"
+                      style={{
+                        margin: 0,
+                        maxWidth: '100%',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >
+                      Publication: {hashnodePubId}
+                    </Tag>
+                  ) : null}
+                  {conn.provider === 'GITHUB_MDX' && githubRepoSlug ? (
+                    <Tag
+                      color="blue"
+                      style={{
+                        margin: 0,
+                        maxWidth: '100%',
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >
+                      Repo: {githubRepoSlug}
+                      {githubBranch ? `@${githubBranch}` : ''}
+                    </Tag>
+                  ) : null}
                 </div>
+
+                {isWechatConn ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    data-testid={`wechat-card-draft-notice-${conn.id}`}
+                    message="仅推送至公众号草稿箱，绝不自动群发"
+                    description={WECHAT_IP_WHITELIST_NOTICE}
+                    style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                  />
+                ) : null}
+
+                {isShopifyOAuthDisabled ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="Shopify OAuth 授权已停用或卸载"
+                    description="请点击下方「重新授权」恢复 OAuth 连接，或在编辑中改用 Custom App Token。"
+                    action={
+                      <Button
+                        size="small"
+                        type="primary"
+                        disabled={readOnly}
+                        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                        onClick={() => openEditModal(conn, 'oauth')}
+                      >
+                        重新授权
+                      </Button>
+                    }
+                  />
+                ) : null}
 
                 {conn.lastError ? (
                   <Alert
                     type="error"
                     showIcon
                     message={conn.lastError}
+                    description={
+                      isWechatConn && hasWechatIpWhitelistError(conn.lastError)
+                        ? '处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」，添加 GeoMix 服务器出口 IP 后重新测试连接。'
+                        : undefined
+                    }
                     style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
                   />
                 ) : null}
@@ -1213,8 +1658,8 @@ export function BrandChannelConnections({
         title={editingConn ? `编辑发布渠道连接 · ${editingConn.displayName}` : '添加发布渠道连接'}
         width="min(640px, calc(100vw - 32px))"
         destroyOnHidden
-        keyboard={!submitting && !modalTesting}
-        maskClosable={!submitting && !modalTesting}
+        keyboard={!submitting && !modalTesting && !shopifyOAuthStarting}
+        maskClosable={!submitting && !modalTesting && !shopifyOAuthStarting}
         onCancel={resetModalState}
         footer={
           <div
@@ -1226,13 +1671,13 @@ export function BrandChannelConnections({
             }}
           >
             <Button
-              disabled={submitting || modalTesting}
+              disabled={submitting || modalTesting || shopifyOAuthStarting}
               style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
               onClick={resetModalState}
             >
               取消
             </Button>
-            {editingConn ? (
+            {isShopifyCreateOAuthTab ? null : editingConn ? (
               <Button
                 data-testid="channel-connection-modal-test-btn"
                 loading={modalTesting}
@@ -1253,16 +1698,18 @@ export function BrandChannelConnections({
                 保存并测试连接
               </Button>
             )}
-            <Button
-              type="primary"
-              data-testid="channel-connection-submit-btn"
-              loading={submitting}
-              disabled={readOnly || modalTesting}
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-              onClick={() => void handleModalSubmit()}
-            >
-              保存连接
-            </Button>
+            {isShopifyCreateOAuthTab ? null : (
+              <Button
+                type="primary"
+                data-testid="channel-connection-submit-btn"
+                loading={submitting}
+                disabled={readOnly || modalTesting}
+                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                onClick={() => void handleModalSubmit()}
+              >
+                保存连接
+              </Button>
+            )}
           </div>
         }
       >
@@ -1291,6 +1738,13 @@ export function BrandChannelConnections({
               type={modalTestResult.ok ? 'success' : 'warning'}
               showIcon
               message={modalTestResult.message}
+              description={
+                provider === 'WECHAT_OFFICIAL' &&
+                !modalTestResult.ok &&
+                hasWechatIpWhitelistError(modalTestResult.message)
+                  ? '处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」添加出口 IP 后再试。'
+                  : undefined
+              }
               style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
             />
           ) : null}
@@ -1305,60 +1759,255 @@ export function BrandChannelConnections({
               style={{ width: '100%' }}
               disabled={Boolean(editingConn)}
               value={provider}
-              options={L1_CHANNEL_PROVIDERS.map((p) => ({
+              options={availableProviders.map((p) => ({
                 value: p,
                 label: CHANNEL_PROVIDER_LABELS[p],
               }))}
               onChange={(next) => {
                 setProvider(next);
+                if (!editingConn) {
+                  clearModalSecrets();
+                  setShopifyOAuthShop('');
+                  setBlogId('');
+                  setBlogHandle('');
+                  setCategoryIds([]);
+                  setSiteId('');
+                  setCollectionId('');
+                  setCollectionSlug('');
+                  setFieldMap({ ...EMPTY_WEBFLOW_FIELD_MAP });
+                  setPublicationId('');
+                  setRepoOwner('');
+                  setRepoName('');
+                  setRepoBranch('');
+                  setContentDir('');
+                  setFileExtension('mdx');
+                  setPublicUrlTemplate('');
+                  setPrimaryDomain('');
+                  setTagsInput('');
+                  setWechatAuthor('');
+                  setWechatCoverMediaId('');
+                  setWechatNeedOpenComment(false);
+                  setDefaultPublishAsDraft(true);
+                  setInlineJsonLd(next !== 'WECHAT_OFFICIAL');
+                  if (next === 'SHOPIFY') {
+                    setShopifyAuthMode('oauth');
+                  }
+                } else if (next === 'WECHAT_OFFICIAL') {
+                  setDefaultPublishAsDraft(true);
+                  setInlineJsonLd(false);
+                }
                 setModalError(null);
                 setModalTestResult(null);
+                setShopifyOAuthUnconfiguredMsg(null);
                 setRemoteTargets([]);
               }}
             />
           </div>
 
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>连接名称</div>
-            <Input
-              aria-label="连接名称"
-              maxLength={80}
-              placeholder="例如：海外官方 Shopify 博客"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-          </div>
-
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>站点地址</div>
-            <Input
-              aria-label="站点地址"
-              placeholder={providerSitePlaceholder(provider)}
-              value={siteBaseUrl}
-              onChange={(e) => setSiteBaseUrl(e.target.value)}
-            />
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
-              {providerSiteHint(provider)}
-            </div>
-          </div>
-
-          {/* Provider-Specific Credentials & Targets */}
           {provider === 'SHOPIFY' ? (
+            <Tabs
+              activeKey={shopifyAuthMode}
+              onChange={(key) => {
+                const nextMode = key === 'custom' ? 'custom' : 'oauth';
+                setShopifyAuthMode(nextMode);
+                if (nextMode === 'oauth') {
+                  setShopifyAccessToken('');
+                }
+                setModalError(null);
+                setShopifyOAuthUnconfiguredMsg(null);
+              }}
+              items={[
+                {
+                  key: 'oauth',
+                  label: 'Shopify OAuth 2.0 一键授权',
+                  children: (
+                    <div
+                      data-testid="shopify-oauth-tab-panel"
+                      style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}
+                    >
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="官方 OAuth 2.0 一键授权（推荐）"
+                        description="输入您的 *.myshopify.com 店铺域名后跳转 Shopify 官方确认授权；系统将自动加密保存令牌并注册应用卸载同步 Webhook。"
+                      />
+
+                      {shopifyOAuthUnconfiguredMsg ? (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          data-testid="shopify-oauth-503-fallback"
+                          message="当前环境尚未开启 Shopify OAuth 2.0"
+                          description={shopifyOAuthUnconfiguredMsg}
+                          action={
+                            <Button
+                              size="small"
+                              type="primary"
+                              data-testid="shopify-switch-to-custom-btn"
+                              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                              onClick={() => {
+                                setShopifyAuthMode('custom');
+                                setShopifyOAuthUnconfiguredMsg(null);
+                                setModalError(null);
+                              }}
+                            >
+                              改用 Custom App Token
+                            </Button>
+                          }
+                        />
+                      ) : null}
+
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                          Shopify 店铺域名（*.myshopify.com）
+                        </div>
+                        <Input
+                          aria-label="Shopify 店铺域名"
+                          data-testid="shopify-oauth-shop-input"
+                          placeholder="your-store.myshopify.com"
+                          value={shopifyOAuthShop}
+                          disabled={readOnly || shopifyOAuthStarting}
+                          onChange={(e) => setShopifyOAuthShop(e.target.value)}
+                        />
+                      </div>
+
+                      {!editingConn ? (
+                        <>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                              连接名称（可选，默认使用店铺域名）
+                            </div>
+                            <Input
+                              aria-label="OAuth 连接名称"
+                              maxLength={80}
+                              placeholder="例如：北美主站 Shopify 博客"
+                              value={displayName}
+                              disabled={readOnly || shopifyOAuthStarting}
+                              onChange={(e) => setDisplayName(e.target.value)}
+                            />
+                          </div>
+
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                              目标语种（可选）
+                            </div>
+                            <Select<SupportedLocale>
+                              allowClear
+                              aria-label="OAuth 目标语种"
+                              style={{ width: '100%' }}
+                              placeholder="不限定语种（通用）"
+                              disabled={readOnly || shopifyOAuthStarting}
+                              value={targetLocale ?? undefined}
+                              options={marketLocaleOptions}
+                              onChange={(next) => setTargetLocale(next ?? null)}
+                            />
+                          </div>
+                        </>
+                      ) : null}
+
+                      <div>
+                        <Button
+                          type="primary"
+                          data-testid="shopify-oauth-start-btn"
+                          loading={shopifyOAuthStarting}
+                          disabled={readOnly}
+                          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                          onClick={() => void handleStartShopifyOAuth()}
+                        >
+                          {editingConn ? '重新发起 Shopify OAuth 授权' : '前往 Shopify 一键授权'}
+                        </Button>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'custom',
+                  label: 'Custom App Token',
+                  children: (
+                    <div
+                      data-testid="shopify-custom-tab-panel"
+                      style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginBottom: 4 }}
+                    >
+                      使用 Shopify Admin Custom App 手动填入 Access Token 接入；适合自托管或尚未配置
+                      OAuth Client 的环境。
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          ) : null}
+
+          {!isShopifyCreateOAuthTab ? (
             <>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Shopify Admin API Access Token
+                  连接名称
                 </div>
-                <Input.Password
-                  aria-label="Shopify Access Token"
-                  autoComplete="off"
+                <Input
+                  aria-label="连接名称"
+                  maxLength={80}
                   placeholder={
-                    editingConn ? '留空则保留现有加密凭据' : '例如：shpat_xxxxxxxxxxxxxxxx'
+                    provider === 'WECHAT_OFFICIAL'
+                      ? '例如：品牌官方服务号草稿箱'
+                      : '例如：海外官方 Shopify 博客'
                   }
-                  value={shopifyAccessToken}
-                  onChange={(e) => setShopifyAccessToken(e.target.value)}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
                 />
               </div>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  站点地址
+                </div>
+                <Input
+                  aria-label="站点地址"
+                  placeholder={providerSitePlaceholder(provider)}
+                  value={siteBaseUrl}
+                  onChange={(e) => setSiteBaseUrl(e.target.value)}
+                />
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
+                  {providerSiteHint(provider)}
+                </div>
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  目标语种（可选，留空表示通用连接）
+                </div>
+                <Select<SupportedLocale>
+                  allowClear
+                  aria-label="目标语种"
+                  data-testid="channel-connection-locale-select"
+                  style={{ width: '100%' }}
+                  placeholder="不限定语种（通用）"
+                  value={targetLocale ?? undefined}
+                  options={marketLocaleOptions}
+                  onChange={(next) => setTargetLocale(next ?? null)}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {/* Provider-Specific Credentials & Targets */}
+          {provider === 'SHOPIFY' && !isShopifyCreateOAuthTab ? (
+            <>
+              {shopifyAuthMode === 'custom' ? (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    Shopify Admin API Access Token
+                  </div>
+                  <Input.Password
+                    aria-label="Shopify Access Token"
+                    autoComplete="off"
+                    placeholder={
+                      editingConn ? '留空则保留现有加密凭据' : '例如：shpat_xxxxxxxxxxxxxxxx'
+                    }
+                    value={shopifyAccessToken}
+                    onChange={(e) => setShopifyAccessToken(e.target.value)}
+                  />
+                </div>
+              ) : null}
 
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
@@ -1643,79 +2292,447 @@ export function BrandChannelConnections({
             </div>
           ) : null}
 
+          {provider === 'GHOST' ? (
+            <>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  Ghost Admin API Key（格式 id:hex_secret，偶数长度十六进制）
+                </div>
+                <Input.Password
+                  aria-label="Ghost Admin API Key"
+                  autoComplete="off"
+                  placeholder={
+                    editingConn ? '留空则保留现有加密凭据' : '例如：64a1b2c3:0123456789abcdef...'
+                  }
+                  value={ghostAdminApiKey}
+                  onChange={(e) => setGhostAdminApiKey(e.target.value)}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  默认标签（逗号分隔，可选）
+                </div>
+                <Input
+                  aria-label="Ghost 默认标签"
+                  placeholder="例如：geo, product-guide"
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {provider === 'DEVTO' ? (
+            <>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  Dev.to API Key
+                </div>
+                <Input.Password
+                  aria-label="Dev.to API Key"
+                  autoComplete="off"
+                  placeholder={editingConn ? '留空则保留现有加密凭据' : '输入 Dev.to Forem API Key'}
+                  value={devtoApiKey}
+                  onChange={(e) => setDevtoApiKey(e.target.value)}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  默认标签（最多 4 个小写英文标签，逗号分隔，可选）
+                </div>
+                <Input
+                  aria-label="Dev.to 默认标签"
+                  placeholder="例如：devops, selfhosted, homelab"
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {provider === 'HASHNODE' ? (
+            <>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  Hashnode Personal Access Token
+                </div>
+                <Input.Password
+                  aria-label="Hashnode Personal Access Token"
+                  autoComplete="off"
+                  placeholder={
+                    editingConn ? '留空则保留现有加密凭据' : '输入 Hashnode Personal Access Token'
+                  }
+                  value={hashnodeApiToken}
+                  onChange={(e) => setHashnodeApiToken(e.target.value)}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  Hashnode Publication ID（可选，测试连接时自动发现并回填）
+                </div>
+                {remoteTargets.length > 0 ? (
+                  <Select
+                    allowClear
+                    aria-label="Hashnode Publication 选择"
+                    style={{ width: '100%', marginBottom: 6 }}
+                    placeholder="选择发现的 Hashnode Publication"
+                    value={publicationId || undefined}
+                    options={remoteTargets.map((t) => ({
+                      value: t.id,
+                      label: t.handle ? `${t.name} (${t.handle})` : t.name,
+                    }))}
+                    onChange={(next) => setPublicationId(typeof next === 'string' ? next : '')}
+                  />
+                ) : null}
+                <Input
+                  aria-label="Hashnode Publication ID"
+                  placeholder="留空可在测试连接时自动发现"
+                  value={publicationId}
+                  onChange={(e) => setPublicationId(e.target.value)}
+                />
+              </div>
+            </>
+          ) : null}
+
+          {provider === 'GITHUB_MDX' ? (
+            <>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  GitHub Personal Access Token（需具备 repo contents & pull requests 权限）
+                </div>
+                <Input.Password
+                  aria-label="GitHub Personal Access Token"
+                  autoComplete="off"
+                  placeholder={editingConn ? '留空则保留现有加密凭据' : '例如：ghp_xxxxxxxxxxxx'}
+                  value={githubToken}
+                  onChange={(e) => setGithubToken(e.target.value)}
+                />
+              </div>
+
+              {remoteTargets.length > 0 ? (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    已发现仓库（点击自动填充 Owner / Repo / Branch）
+                  </div>
+                  <Select
+                    allowClear
+                    aria-label="GitHub 仓库选择"
+                    style={{ width: '100%' }}
+                    placeholder="选择仓库"
+                    value={repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined}
+                    options={remoteTargets.map((t) => ({
+                      value: t.id,
+                      label: t.handle ? `${t.name} (${t.handle})` : t.name,
+                    }))}
+                    onChange={(next) => {
+                      if (typeof next !== 'string' || !next.includes('/')) return;
+                      const [owner, name] = next.split('/', 2);
+                      if (owner && name) {
+                        setRepoOwner(owner);
+                        setRepoName(name);
+                      }
+                      const matched = remoteTargets.find((t) => t.id === next);
+                      if (matched?.handle) setRepoBranch(matched.handle);
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))',
+                  gap: 10,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    仓库所有者（repoOwner）
+                  </div>
+                  <Input
+                    aria-label="GitHub 仓库所有者"
+                    placeholder="例如：acme-org"
+                    value={repoOwner}
+                    onChange={(e) => setRepoOwner(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    仓库名称（repoName）
+                  </div>
+                  <Input
+                    aria-label="GitHub 仓库名称"
+                    placeholder="例如：docs-site"
+                    value={repoName}
+                    onChange={(e) => setRepoName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))',
+                  gap: 10,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    目标分支（branch）
+                  </div>
+                  <Input
+                    aria-label="GitHub 目标分支"
+                    placeholder="默认 main"
+                    value={repoBranch}
+                    onChange={(e) => setRepoBranch(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    内容目录（contentDir）
+                  </div>
+                  <Input
+                    aria-label="GitHub 内容目录"
+                    placeholder="默认 content/blog"
+                    value={contentDir}
+                    onChange={(e) => setContentDir(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    文件后缀（fileExtension）
+                  </div>
+                  <Select<'mdx' | 'md'>
+                    aria-label="GitHub 文件后缀"
+                    style={{ width: '100%' }}
+                    value={fileExtension}
+                    options={[
+                      { value: 'mdx', label: '.mdx' },
+                      { value: 'md', label: '.md' },
+                    ]}
+                    onChange={setFileExtension}
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
+                  gap: 10,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    公网链接模板（publicUrlTemplate，可选）
+                  </div>
+                  <Input
+                    aria-label="公网链接模板"
+                    placeholder="例如：https://docs.example.com/blog/{{slug}}"
+                    value={publicUrlTemplate}
+                    onChange={(e) => setPublicUrlTemplate(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    主站域名（primaryDomain，可选）
+                  </div>
+                  <Input
+                    aria-label="主站域名"
+                    placeholder="例如：docs.example.com"
+                    value={primaryDomain}
+                    onChange={(e) => setPrimaryDomain(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {provider === 'WECHAT_OFFICIAL' ? (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                data-testid="wechat-modal-draft-notice"
+                message={WECHAT_DRAFT_ONLY_NOTICE}
+                description={WECHAT_IP_WHITELIST_NOTICE}
+              />
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
+                  gap: 10,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    微信公众号 AppID
+                  </div>
+                  <Input
+                    aria-label="微信公众号 AppID"
+                    autoComplete="off"
+                    placeholder={
+                      editingConn ? '留空则保留现有加密凭据' : '例如：wx1234567890abcdef'
+                    }
+                    value={wechatAppId}
+                    onChange={(e) => setWechatAppId(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    微信公众号 AppSecret
+                  </div>
+                  <Input.Password
+                    aria-label="微信公众号 AppSecret"
+                    autoComplete="off"
+                    placeholder={
+                      editingConn ? '留空则保留现有加密凭据' : '输入开发者密钥 AppSecret'
+                    }
+                    value={wechatAppSecret}
+                    onChange={(e) => setWechatAppSecret(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
+                  gap: 10,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    默认作者名（可选，最多 16 字符）
+                  </div>
+                  <Input
+                    aria-label="公众号默认作者名"
+                    maxLength={16}
+                    placeholder="例如：品牌编辑部"
+                    value={wechatAuthor}
+                    onChange={(e) => setWechatAuthor(e.target.value)}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                    默认封面素材 media_id（可选）
+                  </div>
+                  <Input
+                    aria-label="公众号默认封面 media_id"
+                    placeholder="留空则使用正文首图或默认封面"
+                    value={wechatCoverMediaId}
+                    onChange={(e) => setWechatCoverMediaId(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '8px 10px',
+                  borderRadius: 'var(--gm-radius-md)',
+                  border: '1px solid var(--gm-line-1)',
+                  background: 'var(--gm-bg-base)',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>草稿默认开启留言</div>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                    对应微信公众号草稿接口 need_open_comment 字段。
+                  </div>
+                </div>
+                <Switch
+                  aria-label="公众号草稿开启留言"
+                  checked={wechatNeedOpenComment}
+                  onChange={setWechatNeedOpenComment}
+                />
+              </div>
+            </>
+          ) : null}
+
           {/* Common Delivery Toggles & Optional IndexNow */}
-          <div
-            style={{
-              padding: 10,
-              borderRadius: 'var(--gm-radius-md)',
-              border: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-base)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
+          {!isShopifyCreateOAuthTab && provider !== 'WECHAT_OFFICIAL' ? (
             <div
               style={{
+                padding: 10,
+                borderRadius: 'var(--gm-radius-md)',
+                border: '1px solid var(--gm-line-1)',
+                background: 'var(--gm-bg-base)',
                 display: 'flex',
-                flexWrap: 'wrap',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 8,
+                flexDirection: 'column',
+                gap: 10,
               }}
             >
-              <div>
-                <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>默认推送为草稿（推荐）</div>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                  开启后在写作台默认以草稿态推送至后台，审核无误后再正式上线。
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+                    {provider === 'GITHUB_MDX'
+                      ? '默认创建 Draft PR（推荐）'
+                      : '默认推送为草稿（推荐）'}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                    {provider === 'GITHUB_MDX'
+                      ? '开启后新建分支提交 MDX 并生成 Draft PR 审阅；关闭则直接提交至目标分支。'
+                      : '开启后在写作台默认以草稿态推送至后台，审核无误后再正式上线。'}
+                  </div>
                 </div>
+                <Switch
+                  aria-label="默认推送为草稿"
+                  checked={defaultPublishAsDraft}
+                  onChange={setDefaultPublishAsDraft}
+                />
               </div>
-              <Switch
-                aria-label="默认推送为草稿"
-                checked={defaultPublishAsDraft}
-                onChange={setDefaultPublishAsDraft}
-              />
-            </div>
 
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
-                  {provider === 'WORDPRESS'
-                    ? '内联注入 Gutenberg JSON-LD 区块'
-                    : '内联注入 JSON-LD 结构化数据'}
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+                    {provider === 'WORDPRESS'
+                      ? '内联注入 Gutenberg JSON-LD 区块'
+                      : '内联注入 JSON-LD 结构化数据'}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                    自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                  自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。
-                </div>
+                <Switch
+                  aria-label="内联注入 JSON-LD"
+                  checked={inlineJsonLd}
+                  onChange={setInlineJsonLd}
+                />
               </div>
-              <Switch
-                aria-label="内联注入 JSON-LD"
-                checked={inlineJsonLd}
-                onChange={setInlineJsonLd}
-              />
-            </div>
 
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                IndexNow Key（可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录）
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
+                  IndexNow Key（可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录）
+                </div>
+                <Input
+                  aria-label="IndexNow Key"
+                  maxLength={128}
+                  placeholder="留空则跳过 IndexNow 提交"
+                  value={indexNowKey}
+                  onChange={(e) => setIndexNowKey(e.target.value)}
+                />
               </div>
-              <Input
-                aria-label="IndexNow Key"
-                maxLength={128}
-                placeholder="留空则跳过 IndexNow 提交"
-                value={indexNowKey}
-                onChange={(e) => setIndexNowKey(e.target.value)}
-              />
             </div>
-          </div>
+          ) : null}
         </div>
       </Modal>
     </section>

@@ -781,4 +781,436 @@ describe('StudioPublishRetest (M6B #355)', () => {
     );
     expect((screen.getByLabelText('已发布文章 URL') as HTMLInputElement).value).toBe('');
   });
+
+  it('renders Wilson 95% CI, DiD net lift, SKIPPED_INSUFFICIENT_POINTS, and wires includeControlPrompts toggle with live retest-budget disclosure', async () => {
+    const budgetSpy = vi
+      .spyOn(distributionApi, 'getRetestBudget')
+      .mockResolvedValueOnce({
+        publishRecordId: 'pub_v22_1',
+        market: 'GLOBAL',
+        targetPromptCount: 1,
+        configuredControlPromptCount: 0,
+        effectiveControlPromptCount: 0,
+        selectedControlPrompts: [],
+        totalPromptCount: 1,
+        activeEngineCount: 2,
+        sampleCount: 1,
+        includeControlPrompts: false,
+        unitPrice: 2,
+        perRunPoints: 4,
+        pendingMilestoneCount: 1,
+        totalEstimatedPoints: 4,
+        billingMode: 'SHADOW',
+        walletAvailable: 500,
+        sufficientForNextRun: true,
+        sufficientForAllPending: true,
+      })
+      .mockResolvedValueOnce({
+        publishRecordId: 'pub_v22_1',
+        market: 'GLOBAL',
+        targetPromptCount: 1,
+        configuredControlPromptCount: 0,
+        effectiveControlPromptCount: 0,
+        selectedControlPrompts: [],
+        totalPromptCount: 1,
+        activeEngineCount: 2,
+        sampleCount: 1,
+        includeControlPrompts: true,
+        unitPrice: 2,
+        perRunPoints: 4,
+        pendingMilestoneCount: 1,
+        totalEstimatedPoints: 4,
+        billingMode: 'STRICT',
+        walletAvailable: 2,
+        sufficientForNextRun: false,
+        sufficientForAllPending: false,
+      });
+
+    const patchSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValueOnce({
+      publishRecordId: 'pub_v22_1',
+      items: [
+        {
+          id: 'sch_t7',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 7,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'COMPLETED',
+          sampleCount: 3,
+          includeControlPrompts: true,
+          visibilityRunId: 'run_t7',
+          metricsSnapshot: {
+            mentionRate: 75,
+            avgPosition: 1.5,
+            sentiment: 'positive',
+            citationHit: true,
+            sampleCount: 3,
+            hitCount: 2,
+            wilson: {
+              hits: 2,
+              trials: 3,
+              rate: 0.667,
+              lower: 0.208,
+              upper: 0.939,
+              halfWidth: 0.365,
+              z: 1.96,
+              confidenceLevel: 'LOW',
+            },
+            confidenceLevel: 'LOW',
+          },
+          controlMetricsJson: {
+            controlPrompts: ['Best cloud backup 2026'],
+            baselineMentionRate: 20,
+            currentMentionRate: 25,
+            sampleCount: 3,
+            hitCount: 1,
+            did: {
+              treatmentDelta: 0.55,
+              controlDelta: 0.05,
+              netLift: 0.5,
+              direction: 'POSITIVE',
+            },
+          },
+          skipReason: null,
+          executedAt: '2026-11-27T09:00:00.000Z',
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-27T09:00:00.000Z',
+        },
+        {
+          id: 'sch_t14',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 14,
+          dueAt: '2026-12-04T08:00:00.000Z',
+          status: 'SKIPPED_INSUFFICIENT_POINTS',
+          sampleCount: 1,
+          includeControlPrompts: true,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-12-04T08:00:00.000Z',
+        },
+        {
+          id: 'sch_t30',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 30,
+          dueAt: '2026-12-20T08:00:00.000Z',
+          status: 'PENDING',
+          sampleCount: 1,
+          includeControlPrompts: true,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-20T08:00:00.000Z',
+        },
+      ],
+    });
+
+    const record = makeRecord({
+      id: 'pub_v22_1',
+      retestSchedules: [
+        {
+          id: 'sch_t7',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 7,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'COMPLETED',
+          sampleCount: 3,
+          includeControlPrompts: false,
+          visibilityRunId: 'run_t7',
+          metricsSnapshot: {
+            mentionRate: 75,
+            avgPosition: 1.5,
+            sentiment: 'positive',
+            citationHit: true,
+            sampleCount: 3,
+            hitCount: 2,
+            wilson: {
+              hits: 2,
+              trials: 3,
+              rate: 0.667,
+              lower: 0.208,
+              upper: 0.939,
+              halfWidth: 0.365,
+              z: 1.96,
+              confidenceLevel: 'LOW',
+            },
+            confidenceLevel: 'LOW',
+          },
+          controlMetricsJson: {
+            controlPrompts: ['Best cloud backup 2026'],
+            baselineMentionRate: 20,
+            currentMentionRate: 25,
+            sampleCount: 3,
+            hitCount: 1,
+            did: {
+              treatmentDelta: 0.55,
+              controlDelta: 0.05,
+              netLift: 0.5,
+              direction: 'POSITIVE',
+            },
+          },
+          skipReason: null,
+          executedAt: '2026-11-27T09:00:00.000Z',
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-27T09:00:00.000Z',
+        },
+        {
+          id: 'sch_t14',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 14,
+          dueAt: '2026-12-04T08:00:00.000Z',
+          status: 'SKIPPED_INSUFFICIENT_POINTS',
+          sampleCount: 1,
+          includeControlPrompts: false,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-12-04T08:00:00.000Z',
+        },
+        {
+          id: 'sch_t30',
+          publishRecordId: 'pub_v22_1',
+          milestoneDay: 30,
+          dueAt: '2026-12-20T08:00:00.000Z',
+          status: 'PENDING',
+          sampleCount: 1,
+          includeControlPrompts: false,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-20T08:00:00.000Z',
+        },
+      ],
+    });
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[record]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    // 1. Wilson 95% CI + low-sample 3x hint
+    const wilsonEl = await screen.findByTestId('publish-retest-wilson-pub_v22_1-T7');
+    expect(wilsonEl.textContent).toContain('95% CI [20.8%, 93.9%]');
+    expect(wilsonEl.textContent).toContain('低置信');
+    expect(wilsonEl.textContent).toContain('样本较少，建议开启 3× 采样');
+
+    // 2. DiD net lift + treatment/control breakdown
+    const didEl = screen.getByTestId('publish-retest-did-pub_v22_1-T7');
+    expect(didEl.textContent).toContain('DiD 净增益 +50.0pp');
+    expect(didEl.textContent).toContain('正向净增益');
+    expect(didEl.textContent).toContain('处理组 Δ +55.0pp');
+    expect(didEl.textContent).toContain('对照组 Δ +5.0pp');
+
+    // 3. SKIPPED_INSUFFICIENT_POINTS fallback text
+    const skippedNode = screen.getByTestId('publish-retest-node-pub_v22_1-T14');
+    expect(skippedNode.textContent).toContain('点数不足已跳过');
+    expect(skippedNode.textContent).toContain('余额不足，已自动温和跳过');
+
+    // 4. Toggle includeControlPrompts -> PATCH + re-query live budget -> shows 0-controls hint & STRICT insufficient hint
+    const controlToggle = screen.getByTestId('publish-retest-control-toggle-pub_v22_1');
+    fireEvent.click(controlToggle);
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(
+        'pub_v22_1',
+        { includeControlPrompts: true },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(budgetSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByTestId('publish-retest-zero-controls-hint-pub_v22_1')).toBeTruthy();
+    expect(screen.getByTestId('publish-retest-insufficient-hint-pub_v22_1')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/(?:^|[^\d])0\s*点/);
+  });
+
+  it('Defect 3 regression: clears stale liveBudgets when getRetestBudget fails after schedule config change', async () => {
+    const budgetSpy = vi
+      .spyOn(distributionApi, 'getRetestBudget')
+      .mockResolvedValueOnce({
+        publishRecordId: 'pub_stale_1',
+        market: 'GLOBAL',
+        targetPromptCount: 1,
+        configuredControlPromptCount: 2,
+        effectiveControlPromptCount: 0,
+        selectedControlPrompts: [],
+        totalPromptCount: 1,
+        activeEngineCount: 3,
+        sampleCount: 1,
+        includeControlPrompts: false,
+        unitPrice: 2,
+        perRunPoints: 6,
+        pendingMilestoneCount: 3,
+        totalEstimatedPoints: 18,
+        billingMode: 'SHADOW',
+        walletAvailable: 500,
+        sufficientForNextRun: true,
+        sufficientForAllPending: true,
+      })
+      .mockRejectedValueOnce(new Error('HTTP 500 budget endpoint unavailable'));
+
+    const record1x = makeRecord({
+      id: 'pub_stale_1',
+      retestSchedules: [7, 14, 30].map((day) => ({
+        id: `sch_stale_${day}`,
+        publishRecordId: 'pub_stale_1',
+        milestoneDay: day as 7 | 14 | 30,
+        dueAt: '2026-12-01T08:00:00.000Z',
+        status: 'PENDING',
+        sampleCount: 1,
+        includeControlPrompts: false,
+        visibilityRunId: null,
+        metricsSnapshot: null,
+        controlMetricsJson: null,
+        skipReason: null,
+        executedAt: null,
+        createdAt: '2026-11-20T08:00:00.000Z',
+        updatedAt: '2026-11-20T08:00:00.000Z',
+      })),
+    });
+
+    const record3xWithControls = makeRecord({
+      id: 'pub_stale_1',
+      retestSchedules: record1x.retestSchedules!.map((s) => ({
+        ...s,
+        sampleCount: 3 as const,
+        includeControlPrompts: true,
+      })),
+    });
+
+    const { rerender } = render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[record1x]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('publish-retest-budget-pub_stale_1').textContent).toContain(
+        '上限 18 点',
+      );
+    });
+
+    // Upgrade schedule to 3x + controlPrompts, and second getRetestBudget fails
+    rerender(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[record3xWithControls]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(budgetSpy).toHaveBeenCalledTimes(2);
+    });
+    const budgetText = screen.getByTestId('publish-retest-budget-pub_stale_1').textContent ?? '';
+    expect(budgetText).not.toContain('上限 18 点');
+    expect(budgetText).not.toContain('1 次采样');
+    expect(budgetText).toContain('3 次采样');
+  });
+
+  it('Defect 5 regression: safely renders SignalPill fallbacks on unexpected or prototype-named confidenceLevel and did.direction without crashing', async () => {
+    vi.spyOn(distributionApi, 'getRetestBudget').mockRejectedValue(new Error('offline'));
+
+    const recordWithUnknownEnums = makeRecord({
+      id: 'pub_unknown_enum',
+      retestSchedules: [
+        {
+          id: 'sch_unk_t7',
+          publishRecordId: 'pub_unknown_enum',
+          milestoneDay: 7,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'COMPLETED',
+          sampleCount: 3,
+          includeControlPrompts: true,
+          visibilityRunId: 'run_unk',
+          metricsSnapshot: {
+            mentionRate: 50,
+            avgPosition: 2,
+            sentiment: 'neutral',
+            citationHit: true,
+            sampleCount: 3,
+            hitCount: 2,
+            wilson: {
+              hits: 2,
+              trials: 6,
+              rate: 0.333,
+              lower: 0.097,
+              upper: 0.7,
+              halfWidth: 0.301,
+              z: 1.96,
+              confidenceLevel: 'UNKNOWN_LEVEL' as unknown as 'HIGH',
+            },
+          },
+          controlMetricsJson: {
+            controlPrompts: ['Control A'],
+            baselineMentionRate: 10,
+            currentMentionRate: 10,
+            sampleCount: 3,
+            hitCount: 1,
+            did: {
+              treatmentDelta: 0.2,
+              controlDelta: 0.1,
+              netLift: 0.1,
+              direction: 'toString' as unknown as 'POSITIVE',
+            },
+          },
+          skipReason: null,
+          executedAt: '2026-11-27T09:00:00.000Z',
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-27T09:00:00.000Z',
+        },
+      ],
+    });
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[recordWithUnknownEnums]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    const wilsonEl = await screen.findByTestId('publish-retest-wilson-pub_unknown_enum-T7');
+    expect(wilsonEl.textContent).toContain('样本不足');
+    const didEl = screen.getByTestId('publish-retest-did-pub_unknown_enum-T7');
+    expect(didEl.textContent).toContain('无显著净差');
+  });
 });

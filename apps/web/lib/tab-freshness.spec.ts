@@ -151,4 +151,13 @@ describe('useTabFreshness (#215)', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledWith('invalidated');
   });
+
+  it('supports v2.2 extension-tokens freshness domain across /brands and /account', () => {
+    const onRefresh = vi.fn();
+    render(createElement(Probe, { active: true, domains: ['extension-tokens'], onRefresh }));
+
+    invalidateFreshness('extension-tokens');
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).toHaveBeenCalledWith('invalidated');
+  });
 });
