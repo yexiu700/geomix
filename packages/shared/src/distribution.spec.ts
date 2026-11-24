@@ -8,6 +8,7 @@ import {
   DISTRIBUTION_MODES,
   DISTRIBUTION_TASK_STATUSES,
   DISTRIBUTION_TEMPLATE_KEYS,
+  GLOBAL_PREFLIGHT_CLAIM_RULES,
   L1_CHANNEL_PROVIDERS,
   RETEST_SAMPLE_COUNTS,
   RETEST_SCHEDULE_STATUSES,
@@ -22,6 +23,7 @@ import {
   extractPlainTextFromHtml,
   isL1ChannelProvider,
   isSafeDistributionHttpUrl,
+  localizePublicChannelLabel,
   publicPrPacketSubmitSchema,
   publishDistributionTaskSchema,
   retestScheduleConfigSchema,
@@ -744,5 +746,119 @@ describe('evaluateDistributionPreflight()', () => {
     const repeatZeroNoSemi = `&#x${'0'.repeat(60_000)}`;
     expect(extractPlainTextFromHtml(repeatZeroNoSemi)).toBe(repeatZeroNoSemi);
     expect(Date.now() - startMs).toBeLessThan(500);
+  });
+
+  it('flags GLOBAL deceptive medical/financial claims as blockers and exaggerated superlatives as warnings with line & excerpt (#365)', () => {
+    const res = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'AstraVault Benchmark Review',
+      contentMarkdown: [
+        '## Lab Measurements',
+        'AstraVault runs at 21 dBA under full load.',
+        'Guaranteed #1 cure-all miracle!',
+        'Backed by 100% safe design and risk-free return for investors.',
+      ].join('\n'),
+      geoScore: 88,
+      matchedFactCount: 3,
+    });
+
+    expect(res.ok).toBe(false);
+    const blocker = res.blockers.find((b) => b.code === 'COMPLIANCE_BLOCKED');
+    expect(blocker).toBeDefined();
+    expect(blocker?.matches?.map((m) => m.matchedText.toLowerCase())).toEqual(
+      expect.arrayContaining(['cure-all', 'miracle', '100% safe', 'risk-free return']),
+    );
+    expect(blocker?.matches?.find((m) => m.matchedText.toLowerCase() === 'cure-all')?.line).toBe(3);
+    expect(blocker?.details?.some((d) => d.includes('第 3 行') && d.includes('cure-all'))).toBe(
+      true,
+    );
+
+    const warn = res.warnings.find((w) => w.code === 'GLOBAL_CLAIM_WARNING');
+    expect(warn).toBeDefined();
+    expect(warn?.matches?.map((m) => m.matchedText.toLowerCase())).toEqual(
+      expect.arrayContaining(['guaranteed', '#1']),
+    );
+    // Overlapping "risk-free" inside "risk-free return" must not double-warn
+    expect(warn?.matches?.some((m) => m.matchedText.toLowerCase() === 'risk-free')).toBe(false);
+  });
+
+  it('handles case, space/hyphen variants, configurable rules, and produces zero false positives on clean GLOBAL specs (#365)', () => {
+    // Mixed case & space/hyphen variants
+    const variants = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'CURE ALL & RISK FREE Testing',
+      contentMarkdown: 'Claims include 100-PERCENT SAFE, Zero Side Effects, and NUMBER ONE pick.',
+      geoScore: 86,
+      matchedFactCount: 2,
+    });
+    expect(variants.ok).toBe(false);
+    const blockerTerms =
+      variants.blockers
+        .find((b) => b.code === 'COMPLIANCE_BLOCKED')
+        ?.matches?.map((m) => m.matchedText.toLowerCase()) ?? [];
+    expect(blockerTerms).toEqual(
+      expect.arrayContaining(['cure all', '100-percent safe', 'zero side effects']),
+    );
+    const warningTerms =
+      variants.warnings
+        .find((w) => w.code === 'GLOBAL_CLAIM_WARNING')
+        ?.matches?.map((m) => m.matchedText.toLowerCase()) ?? [];
+    expect(warningTerms).toEqual(expect.arrayContaining(['risk free', 'number one']));
+
+    // Clean technical copy with factual 100% specs, Step #1, Item #1, Issue #1, and warranty guarantees
+    const clean = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: '2026 Quiet 4-Bay NAS Benchmark',
+      contentMarkdown: [
+        '## Methodology',
+        'Step #1: Measure acoustic floor at 1m in an ISO chamber.',
+        'Item #1 uses a 100% aluminum chassis and 100% recyclable packaging.',
+        'See https://example.com/guide#1 and Issue #1 for raw logs.',
+        'The 3-year hardware warranty guarantees free replacement of defective fans.',
+      ].join('\n'),
+      geoScore: 90,
+      matchedFactCount: 4,
+    });
+    expect(clean).toEqual({ ok: true, blockers: [], warnings: [] });
+
+    // Custom configurable rules override
+    const custom = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      title: 'Custom Policy Check',
+      contentMarkdown: 'This device is totally indestructible in daily use.',
+      geoScore: 88,
+      matchedFactCount: 2,
+      globalClaimRules: [
+        ...GLOBAL_PREFLIGHT_CLAIM_RULES,
+        {
+          id: 'custom-indestructible',
+          label: 'indestructible',
+          category: 'superlative',
+          severity: 'blocker',
+          pattern: /\bindestructible\b/gi,
+        },
+      ],
+    });
+    expect(custom.ok).toBe(false);
+    expect(custom.blockers[0]?.code).toBe('COMPLIANCE_BLOCKED');
+    expect(custom.blockers[0]?.matches?.[0]?.matchedText).toBe('indestructible');
+  });
+
+  it('localizes public PR channel labels by market without leaking CJK on GLOBAL pages (#366)', () => {
+    expect(localizePublicChannelLabel('PR / KOL 外部媒体协作包', 'GLOBAL', 'PR_PACKET')).toBe(
+      'PR / KOL Media Kit',
+    );
+    expect(localizePublicChannelLabel('自定义中文媒体包', 'GLOBAL', 'PR_PACKET')).toBe(
+      'PR / KOL Media Kit',
+    );
+    expect(localizePublicChannelLabel('Tech Review Media', 'GLOBAL', 'PR_PACKET')).toBe(
+      'Tech Review Media',
+    );
+    expect(localizePublicChannelLabel('PR / KOL Media Kit', 'CN', 'PR_PACKET')).toBe(
+      'PR / KOL 外部媒体协作包',
+    );
+    expect(localizePublicChannelLabel('国内科技媒体协作包', 'CN', 'PR_PACKET')).toBe(
+      '国内科技媒体协作包',
+    );
   });
 });

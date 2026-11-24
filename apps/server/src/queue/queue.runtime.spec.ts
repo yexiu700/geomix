@@ -33,6 +33,9 @@ describe('QueueRuntime distribution queue isolation', () => {
     const distributionHandler = {
       process: vi.fn(async () => undefined),
     };
+    const variantJobHandler = {
+      process: vi.fn(async () => undefined),
+    };
 
     const runtime = new QueueRuntime(
       producer,
@@ -43,6 +46,7 @@ describe('QueueRuntime distribution queue isolation', () => {
       factIndexer,
       geoBatchRunner,
       opts?.omitDistributionHandler ? undefined : distributionHandler,
+      variantJobHandler,
     );
 
     return {
@@ -52,12 +56,20 @@ describe('QueueRuntime distribution queue isolation', () => {
       factIndexer,
       geoBatchRunner,
       distributionHandler,
+      variantJobHandler,
     };
   }
 
   it('never falls through to WorkDriver.handle() or other runners on wrong job.name for distribution queue', async () => {
-    const { runtime, driver, visibilityRunner, factIndexer, geoBatchRunner, distributionHandler } =
-      makeRuntime();
+    const {
+      runtime,
+      driver,
+      visibilityRunner,
+      factIndexer,
+      geoBatchRunner,
+      distributionHandler,
+      variantJobHandler,
+    } = makeRuntime();
 
     const wrongJobs: Array<{ name: string; data: unknown }> = [
       { name: 'wrong-name', data: { tenantId: 'tenant_a', runId: 'run_1' } },
@@ -76,6 +88,7 @@ describe('QueueRuntime distribution queue isolation', () => {
     expect(factIndexer.process).not.toHaveBeenCalled();
     expect(geoBatchRunner.process).not.toHaveBeenCalled();
     expect(distributionHandler.process).not.toHaveBeenCalled();
+    expect(variantJobHandler.process).not.toHaveBeenCalled();
   });
 
   it('drops malformed or reserved distribution payloads and dispatches only valid jobs to DISTRIBUTION_HANDLER', async () => {
@@ -115,6 +128,38 @@ describe('QueueRuntime distribution queue isolation', () => {
       tenantId: 'tenant_a',
       taskId: 'task_42',
     });
+    expect(driver.handle).not.toHaveBeenCalled();
+  });
+
+  it('dispatches valid variant-generate jobs on distribution queue to VARIANT_JOB_HANDLER and drops invalid payloads (#363)', async () => {
+    const { runtime, driver, distributionHandler, variantJobHandler } = makeRuntime();
+
+    const invalidPayloads: unknown[] = [
+      null,
+      {},
+      { tenantId: 'system', jobId: 'gvj_1' },
+      { tenantId: 'tenant_a', jobId: 'system' },
+      { tenantId: 'tenant_a', taskId: 'task_1' },
+    ];
+    for (const payload of invalidPayloads) {
+      await runtime.dispatchJob('distribution', { name: 'variant-generate', data: payload });
+    }
+
+    expect(variantJobHandler.process).not.toHaveBeenCalled();
+    expect(distributionHandler.process).not.toHaveBeenCalled();
+    expect(driver.handle).not.toHaveBeenCalled();
+
+    await runtime.dispatchJob('distribution', {
+      name: 'variant-generate',
+      data: { tenantId: 'tenant_a', jobId: 'gvj_99' },
+    });
+
+    expect(variantJobHandler.process).toHaveBeenCalledTimes(1);
+    expect(variantJobHandler.process).toHaveBeenCalledWith({
+      tenantId: 'tenant_a',
+      jobId: 'gvj_99',
+    });
+    expect(distributionHandler.process).not.toHaveBeenCalled();
     expect(driver.handle).not.toHaveBeenCalled();
   });
 

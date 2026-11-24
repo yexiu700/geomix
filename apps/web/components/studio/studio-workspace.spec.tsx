@@ -2764,4 +2764,129 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       expect(fetchPubSpy.mock.calls.length).toBeGreaterThan(countBeforeExternal);
     });
   });
+
+  it('Issue #364: preserves ?articleId= across refresh (including outside top-50 list), warns & cleans invalid/mismatched articleId, and auto-switches bare ?articleId= links', async () => {
+    const globalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_gl_deep_364',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      title: 'Deep Link GLOBAL Article 364',
+      contentMarkdown: '# Deep Link GLOBAL Article 364\n\nVerified lab benchmarks.',
+    };
+
+    // 1. Refresh on /studio?brandId=...&market=GLOBAL&articleId=art_gl_deep_364 when article is NOT in initial top-50 list
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=${globalArticle.id}`,
+    );
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      hydrated: true,
+      contextEpoch: 1,
+    });
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(studioApi, 'getArticle').mockResolvedValueOnce(globalArticle);
+
+    const { unmount } = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe(
+        'Deep Link GLOBAL Article 364',
+      );
+    });
+    expect((screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    unmount();
+
+    // 2. Missing / 404 articleId shows friendly warning and cleans URL parameter
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=art_nonexistent_364`,
+    );
+    vi.spyOn(studioApi, 'getArticle').mockRejectedValueOnce(new Error('404 not found'));
+
+    const res2 = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+    await waitFor(() => {
+      expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+    });
+    res2.unmount();
+
+    // 3. Explicit brand/market mismatch warns & cleans stale articleId
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=CN&articleId=${globalArticle.id}`,
+    );
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      hydrated: true,
+      contextEpoch: 2,
+    });
+    vi.spyOn(studioApi, 'getArticle').mockResolvedValueOnce(globalArticle);
+
+    const res3 = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+    await waitFor(() => {
+      expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+    });
+    res3.unmount();
+
+    // 4. Bare /studio?articleId=... (no conflicting brand/market in URL) auto-switches from CN -> GLOBAL and opens article
+    window.history.replaceState(null, '', `/studio?articleId=${globalArticle.id}`);
+    useWorkspaceStore.setState({
+      brands: [DUAL_BRAND],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      hydrated: true,
+      contextEpoch: 3,
+    });
+    vi.spyOn(studioApi, 'fetchArticles').mockImplementation(async (_bid, mkt) => ({
+      items: mkt === 'GLOBAL' ? [globalArticle] : [],
+      total: mkt === 'GLOBAL' ? 1 : 0,
+    }));
+    vi.spyOn(studioApi, 'getArticle').mockResolvedValue(globalArticle);
+
+    const res4 = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().activeMarket).toBe('GLOBAL');
+      expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe(
+        'Deep Link GLOBAL Article 364',
+      );
+    });
+    expect(new URLSearchParams(window.location.search).get('articleId')).toBe(globalArticle.id);
+    res4.unmount();
+  });
 });

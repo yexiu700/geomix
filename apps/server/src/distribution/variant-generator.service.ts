@@ -8,11 +8,14 @@ import {
   CHANNEL_PROVIDERS,
   DISTRIBUTION_MODES,
   DISTRIBUTION_TASK_STATUSES,
+  GEO_VARIANT_JOB_STATUSES,
   createDistributionVariantsSchema,
   defaultDistributionModeForProvider,
   defaultTemplateKeyForProvider,
   distributionPreflightResultSchema,
+  distributionVariantTargetSchema,
   evaluateDistributionPreflight,
+  finishStatus,
   isSafeDistributionHttpUrl,
   markdownToSanitizedHtml,
   type BrandFactSlot,
@@ -26,6 +29,9 @@ import {
   type GeoComplianceFlag,
   type GeoDistributionTaskDto,
   type GeoMarket,
+  type GeoVariantJobDto,
+  type GeoVariantJobFailureItem,
+  type GeoVariantJobStatus,
 } from '@geomix/shared';
 import { BillingService, type ReservationView } from '../billing/billing.service';
 import { parseStoredChannels } from '../briefs/briefs.mapper';
@@ -36,8 +42,9 @@ import {
 } from '../common/free-action-rate-limiter';
 import { ComplianceService } from '../infra/compliance';
 import { LlmService, assertCompletionAllowed } from '../infra/llm';
-import { ProviderError } from '../infra/provider-error';
+import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { runInTenant } from '../tenant/tenant-context';
 import {
   VariantGlobalCjkLeakError,
   buildDeterministicFakeVariantDraft,
@@ -53,18 +60,121 @@ import {
   type VariantPromptContext,
 } from './variant-templates';
 
+export const VARIANT_JOB_HANDLER = Symbol('VARIANT_JOB_HANDLER');
+export const VARIANT_JOB_ENQUEUER = Symbol('VARIANT_JOB_ENQUEUER');
+
+export type VariantJobData = {
+  tenantId: string;
+  jobId: string;
+};
+
+export interface VariantJobHandler {
+  process(payload: VariantJobData): Promise<void>;
+}
+
+export interface VariantJobEnqueuer {
+  enqueueVariantJob(job: VariantJobData): Promise<void>;
+}
+
 const DEFAULT_GEO_VARIANT_FREE_MAX = 20;
 const DEFAULT_GEO_VARIANT_FREE_WINDOW_SECONDS = 60;
+const DEFAULT_GEO_VARIANT_CONCURRENCY = 3;
+const MAX_GEO_VARIANT_CONCURRENCY = 6;
+const DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS = 45_000;
 const MAX_TARGETS_PER_BATCH = 10;
 
 const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
 const DISTRIBUTION_MODE_SET = new Set<string>(DISTRIBUTION_MODES);
 const DISTRIBUTION_TASK_STATUS_SET = new Set<string>(DISTRIBUTION_TASK_STATUSES);
+const VARIANT_JOB_STATUS_SET = new Set<string>(GEO_VARIANT_JOB_STATUSES);
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
   const parsed = Number(raw.trim());
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function readGeoVariantConcurrency(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const value = readPositiveInt(env.GEO_VARIANT_CONCURRENCY, DEFAULT_GEO_VARIANT_CONCURRENCY);
+  return Math.min(MAX_GEO_VARIANT_CONCURRENCY, Math.max(1, value));
+}
+
+export function readGeoVariantChannelTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const value = readPositiveInt(
+    env.GEO_VARIANT_CHANNEL_TIMEOUT_MS,
+    DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS,
+  );
+  return Math.min(180_000, Math.max(1_000, value));
+}
+
+async function withChannelTimeout<T>(
+  timeoutMs: number,
+  parentSignal: AbortSignal | undefined,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onParentAbort = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort();
+    } else {
+      parentSignal.addEventListener('abort', onParentAbort, { once: true });
+    }
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(
+        new ProviderError(
+          PROVIDER_KIND.TIMEOUT,
+          `单渠道变体生成超过 ${Math.round(timeoutMs / 1000)} 秒超时，已自动退还该渠道点数`,
+          'variant_channel_timeout',
+        ),
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fn(controller.signal), timeoutPromise]);
+  } catch (err) {
+    if (timedOut) {
+      throw new ProviderError(
+        PROVIDER_KIND.TIMEOUT,
+        `单渠道变体生成超过 ${Math.round(timeoutMs / 1000)} 秒超时，已自动退还该渠道点数`,
+        'variant_channel_timeout',
+      );
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
+  }
+}
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+  let cursor = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor;
+      cursor += 1;
+      await worker(items[idx]!, idx);
+    }
+  });
+  await Promise.all(runners);
 }
 
 function dedupeComplianceFlags(flags: readonly GeoComplianceFlag[]): GeoComplianceFlag[] {
@@ -88,6 +198,116 @@ export function readGeoVariantFreeRateLimit(
     DEFAULT_GEO_VARIANT_FREE_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
+}
+
+export type GeoVariantJobRow = {
+  id: string;
+  tenantId?: string;
+  brandId: string;
+  brandMarketId: string;
+  articleId: string;
+  idempotencyKey?: string | null;
+  requestFingerprint?: string | null;
+  targetsJson: Prisma.JsonValue;
+  total: number;
+  doneCount: number;
+  failCount: number;
+  unitPrice: number;
+  totalChargedPoints: number;
+  refundedCount: number;
+  refundedPoints: number;
+  billingMode: string;
+  reservationId: string | null;
+  status: string;
+  taskIds: string[];
+  failuresJson: Prisma.JsonValue;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  finishedAt: Date | null;
+};
+
+function toVariantJobStatus(raw: string): GeoVariantJobStatus {
+  return VARIANT_JOB_STATUS_SET.has(raw) ? (raw as GeoVariantJobStatus) : 'QUEUED';
+}
+
+function toBillingMode(raw: string): 'SHADOW' | 'STRICT' | 'FREE' {
+  if (raw === 'STRICT' || raw === 'FREE') return raw;
+  return 'SHADOW';
+}
+
+function parseStoredFailures(raw: Prisma.JsonValue | null | undefined): GeoVariantJobFailureItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GeoVariantJobFailureItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const obj = item as Record<string, unknown>;
+    if (
+      typeof obj.index === 'number' &&
+      typeof obj.provider === 'string' &&
+      typeof obj.channelLabel === 'string' &&
+      typeof obj.templateKey === 'string' &&
+      typeof obj.error === 'string'
+    ) {
+      out.push({
+        index: obj.index,
+        provider: toChannelProvider(obj.provider),
+        channelLabel: obj.channelLabel,
+        templateKey: obj.templateKey as DistributionTemplateKey,
+        error: obj.error,
+      });
+    }
+  }
+  return out;
+}
+
+function parseStoredTargets(
+  raw: Prisma.JsonValue | null | undefined,
+): DistributionVariantTargetInput[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DistributionVariantTargetInput[] = [];
+  for (const item of raw) {
+    const parsed = distributionVariantTargetSchema.safeParse(item);
+    if (parsed.success) {
+      out.push(parsed.data);
+    }
+  }
+  return out;
+}
+
+export function presentVariantJob(row: GeoVariantJobRow, replayed = false): GeoVariantJobDto {
+  return {
+    id: row.id,
+    articleId: row.articleId,
+    brandId: row.brandId,
+    brandMarketId: row.brandMarketId,
+    status: toVariantJobStatus(row.status),
+    total: row.total,
+    doneCount: row.doneCount,
+    failCount: row.failCount,
+    unitPrice: row.unitPrice,
+    totalChargedPoints: row.totalChargedPoints,
+    refundedCount: row.refundedCount,
+    refundedPoints: row.refundedPoints,
+    reservationId: row.reservationId ?? null,
+    billingMode: toBillingMode(row.billingMode),
+    replayed,
+    taskIds: Array.isArray(row.taskIds) ? [...row.taskIds] : [],
+    failures: parseStoredFailures(row.failuresJson),
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
+  };
+}
+
+function isUniqueConstraintError(err: unknown): boolean {
+  return (
+    err !== null &&
+    typeof err === 'object' &&
+    'code' in err &&
+    (err as { code?: unknown }).code === 'P2002'
+  );
 }
 
 export type GeoDistributionTaskRow = {
@@ -416,6 +636,9 @@ export class VariantGeneratorService {
     @Optional()
     @Inject(FreeActionRateLimiter)
     private readonly rateLimiter?: FreeActionRateLimiter,
+    @Optional()
+    @Inject(VARIANT_JOB_ENQUEUER)
+    private readonly enqueuer?: VariantJobEnqueuer,
   ) {}
 
   async generateVariants(
@@ -720,16 +943,722 @@ export class VariantGeneratorService {
         ? article.brief.matchedFactIds.length
         : facts.length;
 
-    const tasks: GeoDistributionTaskDto[] = [];
-    const failures: GenerateVariantsFailureItem[] = [];
+    const batchOutcome = await this.executeTargetsBatch({
+      tenantId: auth.tenantId,
+      article,
+      targets,
+      validatedConnections,
+      facts,
+      customForbiddenWords,
+      customToneNote,
+      brandNames,
+      market,
+      locale,
+      marketCompetitors,
+      competitorFocus,
+      targetFanOuts,
+      articleSchemaObj,
+      matchedFactCount,
+      batchRefId,
+      unitPrice,
+      reservationId: reservation?.id ?? null,
+      reservationShadow,
+      normalizedIdempotencyKey,
+      requestFingerprint,
+      signal,
+    });
+
+    if (batchOutcome.tasks.length === 0 && batchOutcome.failures.length > 0) {
+      throw (
+        batchOutcome.firstFatalError ??
+        new ApiError(502, API_ERROR.UPSTREAM_UNAVAILABLE, '渠道变体生成失败，请稍后重试')
+      );
+    }
+
+    return {
+      articleId: article.id,
+      unitPrice,
+      totalChargedPoints: batchOutcome.totalChargedPoints,
+      refundedCount: batchOutcome.refundedCount,
+      refundedPoints: batchOutcome.refundedPoints,
+      reservationId: reservation?.id ?? null,
+      billingMode,
+      replayed: false,
+      tasks: batchOutcome.tasks,
+      failures: batchOutcome.failures,
+    };
+  }
+
+  /**
+   * 异步创建 1→N 渠道变体生成任务（Issue #363）：
+   * - 立即校验母稿、连接、预扣点数并写入 GeoVariantJob（QUEUED），入队 BullMQ 后毫秒级返回，彻底消除 60s 网关 504；
+   * - 同 Idempotency-Key + 同参数重试（即使仍在 QUEUED/RUNNING 中）直接返回现有任务（replayed: true），供前端接续轮询，不抛 409(40902)；
+   * - 仅当同 Idempotency-Key 携带不同参数时返回 409 冲突保护。
+   */
+  async createVariantJob(
+    articleId: string,
+    rawInput: CreateDistributionVariantsInput | unknown,
+    auth: VariantGeneratorAuthContext,
+    options?: { idempotencyKey?: string },
+  ): Promise<GeoVariantJobDto> {
+    const parsedInput = createDistributionVariantsSchema.safeParse(rawInput);
+    if (!parsedInput.success) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        parsedInput.error.issues[0]?.message ?? '渠道变体生成参数校验失败',
+      );
+    }
+
+    const targets = parsedInput.data.targets;
+    const normalizedIdempotencyKey = options?.idempotencyKey?.trim() || undefined;
+    const requestFingerprint = computeVariantBatchFingerprint(targets);
+
+    const article = await this.prisma.scoped.geoArticle.findFirst({
+      where: { id: articleId },
+      select: {
+        id: true,
+        brandId: true,
+        brandMarketId: true,
+      },
+    });
+    if (!article) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或无权访问');
+    }
+
+    await this.validateTargetConnections(article, targets);
+
+    // 1. 幂等重放检测：同幂等键 + 同参数直接返回现有任务（含进行中 QUEUED/RUNNING），绝不报 409
+    if (normalizedIdempotencyKey) {
+      const existing = await this.prisma.scoped.geoVariantJob.findFirst({
+        where: {
+          articleId: article.id,
+          idempotencyKey: normalizedIdempotencyKey,
+        },
+      });
+      if (existing) {
+        if (existing.requestFingerprint && existing.requestFingerprint !== requestFingerprint) {
+          throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被用于不同的渠道变体生成请求');
+        }
+        return presentVariantJob(existing as GeoVariantJobRow, true);
+      }
+    }
+
+    // 2. 计费预扣或 0 点限流
+    const batchRefId = deriveBatchRefId(auth.tenantId, article.id, normalizedIdempotencyKey);
+    const unitPrice = await this.billing.unitPrice('geo_variant');
+
+    let reservation: ReservationView | null = null;
+    let billingMode: 'SHADOW' | 'STRICT' | 'FREE';
+
+    if (unitPrice === 0) {
+      this.rateLimiter?.assertAllowed('geo_variant', auth.tenantId, readGeoVariantFreeRateLimit());
+      billingMode = 'FREE';
+    } else {
+      reservation = await this.billing.reserve({
+        tenantId: auth.tenantId,
+        refType: 'geo_variant',
+        refId: batchRefId,
+        amount: targets.length * unitPrice,
+      });
+      if (reservation.status === 'CLOSED') {
+        if (normalizedIdempotencyKey) {
+          const existing = await this.prisma.scoped.geoVariantJob.findFirst({
+            where: {
+              articleId: article.id,
+              idempotencyKey: normalizedIdempotencyKey,
+            },
+          });
+          if (existing) {
+            if (existing.requestFingerprint && existing.requestFingerprint !== requestFingerprint) {
+              throw new ApiError(
+                409,
+                BILLING_ERROR.CONFLICT,
+                '幂等键已被用于不同的渠道变体生成请求',
+              );
+            }
+            return presentVariantJob(existing as GeoVariantJobRow, true);
+          }
+        }
+        throw new ApiError(
+          409,
+          BILLING_ERROR.CONFLICT,
+          '当前渠道变体批次已结算关闭，请更换幂等键后重试',
+        );
+      }
+      billingMode = reservation.shadow ? 'SHADOW' : 'STRICT';
+    }
+
+    // 3. 持久化 GeoVariantJob（并发同幂等键触发 P2002 时回读已建任务无缝续接）
+    let created: GeoVariantJobRow;
+    try {
+      created = (await this.prisma.scoped.geoVariantJob.create({
+        data: {
+          tenantId: auth.tenantId,
+          brandId: article.brandId,
+          brandMarketId: article.brandMarketId,
+          articleId: article.id,
+          idempotencyKey: normalizedIdempotencyKey ?? null,
+          requestFingerprint,
+          targetsJson: targets as unknown as Prisma.InputJsonValue,
+          total: targets.length,
+          doneCount: 0,
+          failCount: 0,
+          unitPrice,
+          totalChargedPoints: 0,
+          refundedCount: 0,
+          refundedPoints: 0,
+          billingMode,
+          reservationId: reservation?.id ?? null,
+          status: 'QUEUED',
+          taskIds: [],
+          failuresJson: [] as unknown as Prisma.InputJsonValue,
+        },
+      })) as GeoVariantJobRow;
+    } catch (createErr) {
+      if (normalizedIdempotencyKey && isUniqueConstraintError(createErr)) {
+        const winner = await this.prisma.scoped.geoVariantJob.findFirst({
+          where: {
+            articleId: article.id,
+            idempotencyKey: normalizedIdempotencyKey,
+          },
+        });
+        if (winner) {
+          if (winner.requestFingerprint && winner.requestFingerprint !== requestFingerprint) {
+            throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被用于不同的渠道变体生成请求');
+          }
+          return presentVariantJob(winner as GeoVariantJobRow, true);
+        }
+      }
+      if (reservation) {
+        await this.billing
+          .close({ tenantId: auth.tenantId, reservationId: reservation.id })
+          .catch(() => undefined);
+      }
+      throw createErr;
+    }
+
+    // 4. 入队 BullMQ 'distribution' 队列（无队列注入时异步降级进程内执行；入队失败原子退还冻结单）
+    if (this.enqueuer) {
+      try {
+        await this.enqueuer.enqueueVariantJob({
+          tenantId: auth.tenantId,
+          jobId: created.id,
+        });
+      } catch {
+        const refundedCount = reservation ? targets.length : 0;
+        const refundedPoints = reservation ? targets.length * unitPrice : 0;
+        await this.prisma.scoped.geoVariantJob
+          .updateMany({
+            where: { id: created.id, status: 'QUEUED' },
+            data: {
+              status: 'FAILED',
+              failCount: targets.length,
+              refundedCount,
+              refundedPoints,
+              lastError: '渠道变体生成队列暂时不可用，请稍后重试',
+              finishedAt: new Date(),
+            },
+          })
+          .catch(() => undefined);
+        if (reservation) {
+          await this.billing
+            .close({ tenantId: auth.tenantId, reservationId: reservation.id })
+            .catch(() => undefined);
+        }
+        throw new ApiError(
+          503,
+          API_ERROR.UPSTREAM_UNAVAILABLE,
+          '渠道变体生成队列暂时不可用，请稍后重试',
+        );
+      }
+    } else {
+      setImmediate(() => {
+        void this.processVariantJob(auth.tenantId, created.id).catch((err: unknown) => {
+          this.logger.warn(
+            `in-process variant job failed job=${created.id}: ${sanitizeFailureMessage(err)}`,
+          );
+        });
+      });
+    }
+
+    return presentVariantJob(created, false);
+  }
+
+  async listVariantJobs(articleId: string): Promise<{ items: GeoVariantJobDto[] }> {
+    const article = await this.prisma.scoped.geoArticle.findFirst({
+      where: { id: articleId },
+      select: { id: true },
+    });
+    if (!article) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或无权访问');
+    }
+
+    const rows = await this.prisma.scoped.geoVariantJob.findMany({
+      where: { articleId: article.id },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 10,
+    });
+    return {
+      items: rows.map((row) => presentVariantJob(row as GeoVariantJobRow, false)),
+    };
+  }
+
+  async getVariantJob(articleId: string, jobId: string): Promise<GeoVariantJobDto> {
+    const row = await this.prisma.scoped.geoVariantJob.findFirst({
+      where: { id: jobId, articleId },
+    });
+    if (!row) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '渠道变体生成任务不存在或无权访问');
+    }
+    return presentVariantJob(row as GeoVariantJobRow, false);
+  }
+
+  /**
+   * Worker 侧消费 `'variant-generate'` 任务：
+   * - 100% 在 `runInTenant(tenantId, ...)` 内使用 `prisma.scoped`，零 `prisma.base`；
+   * - 原子认领 QUEUED -> RUNNING，并行生成多渠道变体并按单渠道超时与单渠道失败自动退点；
+   * - 每完成/失败一个渠道即刷新数据库进度，供前端 useTaskPolling 实时展示与刷新恢复。
+   */
+  async processVariantJob(tenantId: string, jobId: string): Promise<void> {
+    await runInTenant(tenantId, async () => {
+      const claimed = await this.prisma.scoped.geoVariantJob.updateMany({
+        where: { id: jobId, status: 'QUEUED' },
+        data: { status: 'RUNNING' },
+      });
+      if (claimed.count !== 1) {
+        return;
+      }
+
+      const job = (await this.prisma.scoped.geoVariantJob.findFirst({
+        where: { id: jobId },
+      })) as GeoVariantJobRow | null;
+      if (!job) {
+        return;
+      }
+
+      const targets = parseStoredTargets(job.targetsJson);
+      const reservationId = job.reservationId ?? null;
+      const reservationShadow = job.billingMode !== 'STRICT';
+      const normalizedIdempotencyKey = job.idempotencyKey?.trim() || undefined;
+      const batchRefId = deriveBatchRefId(
+        tenantId,
+        job.articleId,
+        normalizedIdempotencyKey ?? job.id,
+      );
+      const requestFingerprint = job.requestFingerprint ?? computeVariantBatchFingerprint(targets);
+
+      const finishFatal = async (reason: string) => {
+        if (reservationId) {
+          await this.billing.close({ tenantId, reservationId }).catch(() => undefined);
+        }
+        await this.prisma.scoped.geoVariantJob
+          .updateMany({
+            where: { id: job.id },
+            data: {
+              status: 'FAILED',
+              lastError: reason.slice(0, 200),
+              finishedAt: new Date(),
+            },
+          })
+          .catch(() => undefined);
+      };
+
+      if (targets.length === 0) {
+        await finishFatal('渠道变体目标列表为空，任务已终止');
+        return;
+      }
+
+      const article = await this.prisma.scoped.geoArticle.findFirst({
+        where: { id: job.articleId },
+        include: {
+          brand: {
+            select: {
+              id: true,
+              name: true,
+              category: true,
+            },
+          },
+          brandMarket: {
+            select: {
+              id: true,
+              market: true,
+              locale: true,
+              localBrandName: true,
+              localCategory: true,
+              aliases: true,
+              ownedDomains: true,
+              competitors: true,
+            },
+          },
+          brief: {
+            select: {
+              id: true,
+              targetFanOuts: true,
+              competitorFocus: true,
+              matchedFactIds: true,
+              recommendedChannels: true,
+            },
+          },
+        },
+      });
+
+      if (!article) {
+        await finishFatal('对应文章不存在或已被删除，已退还冻结点数');
+        return;
+      }
+
+      let validatedConnections: Map<
+        string,
+        {
+          id: string;
+          provider: string;
+          displayName: string;
+          status: string;
+          configJson: Prisma.JsonValue;
+        }
+      >;
+      try {
+        validatedConnections = await this.validateTargetConnections(article, targets, {
+          allowMissing: true,
+        });
+      } catch (err) {
+        await finishFatal(sanitizeFailureMessage(err));
+        return;
+      }
+
+      const [factRows, promptPreference] = await Promise.all([
+        this.prisma.scoped.brandFact.findMany({
+          where: { brandId: article.brandId },
+          select: { id: true, slot: true, title: true, content: true },
+          orderBy: [{ slot: 'asc' }, { updatedAt: 'desc' }],
+        }),
+        this.prisma.scoped.promptPreference.findFirst({
+          where: { tenantId },
+          select: { customToneNote: true, customForbiddenWords: true },
+        }),
+      ]);
+
+      const facts: VariantBrandFactInput[] = factRows
+        .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
+        .map((row) => ({
+          id: row.id,
+          slot: toBrandFactSlot(row.slot),
+          title: row.title,
+          content: row.content,
+        }));
+
+      const market: GeoMarket = article.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+      const locale = article.brandMarket.locale || (market === 'GLOBAL' ? 'en-US' : 'zh-CN');
+      const brandNames = [
+        article.brand.name,
+        article.brandMarket.localBrandName,
+        ...(article.brandMarket.aliases ?? []),
+      ].filter((name) => typeof name === 'string' && name.trim().length > 0);
+      const marketCompetitors = parseCompetitorNames(article.brandMarket.competitors);
+      const competitorFocus =
+        article.brief?.competitorFocus && article.brief.competitorFocus.length > 0
+          ? article.brief.competitorFocus
+          : marketCompetitors;
+      const targetFanOuts = article.brief?.targetFanOuts ?? [];
+      const customForbiddenWords = promptPreference?.customForbiddenWords ?? [];
+      const customToneNote = promptPreference?.customToneNote ?? null;
+      const articleSchemaObj = asJsonRecord(article.schemaJsonLd);
+      const matchedFactCount =
+        article.brief?.matchedFactIds && article.brief.matchedFactIds.length > 0
+          ? article.brief.matchedFactIds.length
+          : facts.length;
+
+      let flushChain: Promise<void> = Promise.resolve();
+      const flushProgress = (snapshot: {
+        doneCount: number;
+        failCount: number;
+        totalChargedPoints: number;
+        refundedCount: number;
+        refundedPoints: number;
+        taskIds: string[];
+        failures: GenerateVariantsFailureItem[];
+        lastError: string | null;
+      }) => {
+        flushChain = flushChain
+          .then(async () => {
+            await this.prisma.scoped.geoVariantJob.updateMany({
+              where: { id: job.id },
+              data: {
+                doneCount: snapshot.doneCount,
+                failCount: snapshot.failCount,
+                totalChargedPoints: snapshot.totalChargedPoints,
+                refundedCount: snapshot.refundedCount,
+                refundedPoints: snapshot.refundedPoints,
+                taskIds: snapshot.taskIds,
+                failuresJson: snapshot.failures as unknown as Prisma.InputJsonValue,
+                lastError: snapshot.lastError,
+              },
+            });
+          })
+          .catch(() => undefined);
+      };
+
+      const outcome = await this.executeTargetsBatch({
+        tenantId,
+        article,
+        targets,
+        validatedConnections,
+        facts,
+        customForbiddenWords,
+        customToneNote,
+        brandNames,
+        market,
+        locale,
+        marketCompetitors,
+        competitorFocus,
+        targetFanOuts,
+        articleSchemaObj,
+        matchedFactCount,
+        batchRefId,
+        unitPrice: job.unitPrice,
+        reservationId,
+        reservationShadow,
+        normalizedIdempotencyKey,
+        requestFingerprint,
+        onProgress: flushProgress,
+      });
+
+      await flushChain;
+
+      const finalStatus = finishStatus({
+        done: outcome.tasks.length,
+        fail: outcome.failures.length,
+        skip: 0,
+        cancelled: false,
+      });
+
+      await this.prisma.scoped.geoVariantJob.updateMany({
+        where: { id: job.id },
+        data: {
+          status: finalStatus,
+          doneCount: outcome.tasks.length,
+          failCount: outcome.failures.length,
+          totalChargedPoints: outcome.totalChargedPoints,
+          refundedCount: outcome.refundedCount,
+          refundedPoints: outcome.refundedPoints,
+          taskIds: outcome.tasks.map((t) => t.id),
+          failuresJson: outcome.failures as unknown as Prisma.InputJsonValue,
+          lastError: outcome.failures[0]?.error ?? null,
+          finishedAt: new Date(),
+        },
+      });
+    });
+  }
+
+  private async validateTargetConnections(
+    article: { brandId: string; brandMarketId: string },
+    targets: readonly DistributionVariantTargetInput[],
+    options?: { allowMissing?: boolean },
+  ): Promise<
+    Map<
+      string,
+      {
+        id: string;
+        provider: string;
+        displayName: string;
+        status: string;
+        configJson: Prisma.JsonValue;
+      }
+    >
+  > {
+    const validatedConnections = new Map<
+      string,
+      {
+        id: string;
+        provider: string;
+        displayName: string;
+        status: string;
+        configJson: Prisma.JsonValue;
+      }
+    >();
+    for (const target of targets) {
+      if (!target.connectionId) continue;
+      if (validatedConnections.has(target.connectionId)) {
+        const cached = validatedConnections.get(target.connectionId)!;
+        if (cached.provider !== target.provider) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与目标分发渠道不匹配');
+        }
+        continue;
+      }
+      const conn = await this.prisma.scoped.channelConnection.findFirst({
+        where: { id: target.connectionId },
+        select: {
+          id: true,
+          brandId: true,
+          brandMarketId: true,
+          provider: true,
+          displayName: true,
+          status: true,
+          configJson: true,
+        },
+      });
+      if (!conn) {
+        if (options?.allowMissing) continue;
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '目标渠道连接不存在');
+      }
+      if (conn.brandId !== article.brandId || conn.brandMarketId !== article.brandMarketId) {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接与当前文章所属品牌市场不匹配');
+      }
+      if (conn.provider !== target.provider) {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与目标分发渠道不匹配');
+      }
+      if (conn.status === 'DISABLED') {
+        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该渠道连接已停用，请先启用或更换连接');
+      }
+      validatedConnections.set(conn.id, conn);
+    }
+    return validatedConnections;
+  }
+
+  private async executeTargetsBatch(params: {
+    tenantId: string;
+    article: {
+      id: string;
+      brandId: string;
+      brandMarketId: string;
+      title: string;
+      targetPrompt: string;
+      contentMarkdown: string;
+      schemaJsonLd: Prisma.JsonValue;
+      llmsTxtSnippet: string | null;
+      geoScore: number;
+      brand: { id: string; name: string; category: string };
+      brandMarket: {
+        id: string;
+        market: string;
+        locale: string;
+        localBrandName: string | null;
+        localCategory: string | null;
+        aliases: string[];
+        ownedDomains: string[];
+        competitors: Prisma.JsonValue;
+      };
+      brief: {
+        id: string;
+        targetFanOuts: string[];
+        competitorFocus: string[];
+        matchedFactIds: string[];
+        recommendedChannels: Prisma.JsonValue;
+      } | null;
+    };
+    targets: readonly DistributionVariantTargetInput[];
+    validatedConnections: Map<
+      string,
+      {
+        id: string;
+        provider: string;
+        displayName: string;
+        status: string;
+        configJson: Prisma.JsonValue;
+      }
+    >;
+    facts: VariantBrandFactInput[];
+    customForbiddenWords: string[];
+    customToneNote: string | null;
+    brandNames: string[];
+    market: GeoMarket;
+    locale: string;
+    marketCompetitors: string[];
+    competitorFocus: string[];
+    targetFanOuts: string[];
+    articleSchemaObj: Record<string, unknown>;
+    matchedFactCount: number;
+    batchRefId: string;
+    unitPrice: number;
+    reservationId: string | null;
+    reservationShadow: boolean;
+    normalizedIdempotencyKey?: string;
+    requestFingerprint?: string;
+    signal?: AbortSignal;
+    onProgress?: (snapshot: {
+      doneCount: number;
+      failCount: number;
+      totalChargedPoints: number;
+      refundedCount: number;
+      refundedPoints: number;
+      taskIds: string[];
+      failures: GenerateVariantsFailureItem[];
+      lastError: string | null;
+    }) => void;
+  }): Promise<{
+    tasks: GeoDistributionTaskDto[];
+    failures: GenerateVariantsFailureItem[];
+    totalChargedPoints: number;
+    refundedCount: number;
+    refundedPoints: number;
+    firstFatalError: ApiError | null;
+  }> {
+    const {
+      tenantId,
+      article,
+      targets,
+      validatedConnections,
+      facts,
+      customForbiddenWords,
+      customToneNote,
+      brandNames,
+      market,
+      locale,
+      marketCompetitors,
+      competitorFocus,
+      targetFanOuts,
+      articleSchemaObj,
+      matchedFactCount,
+      batchRefId,
+      unitPrice,
+      reservationId,
+      reservationShadow,
+      normalizedIdempotencyKey,
+      requestFingerprint,
+      signal,
+      onProgress,
+    } = params;
+
+    const taskSlots: Array<GeoDistributionTaskDto | undefined> = Array.from(
+      { length: targets.length },
+      () => undefined,
+    );
+    const failureSlots: Array<GenerateVariantsFailureItem | undefined> = Array.from(
+      { length: targets.length },
+      () => undefined,
+    );
+    const fatalSlots: Array<ApiError | undefined> = Array.from(
+      { length: targets.length },
+      () => undefined,
+    );
     let totalChargedPoints = 0;
     let refundedCount = 0;
     let refundedPoints = 0;
-    let firstFatalError: ApiError | null = null;
+
+    const concurrency = readGeoVariantConcurrency();
+    const channelTimeoutMs = readGeoVariantChannelTimeoutMs();
+
+    const emitProgress = () => {
+      if (!onProgress) return;
+      const orderedTasks = taskSlots.filter((t): t is GeoDistributionTaskDto => Boolean(t));
+      const orderedFailures = failureSlots.filter((f): f is GenerateVariantsFailureItem =>
+        Boolean(f),
+      );
+      onProgress({
+        doneCount: orderedTasks.length,
+        failCount: orderedFailures.length,
+        totalChargedPoints,
+        refundedCount,
+        refundedPoints,
+        taskIds: orderedTasks.map((t) => t.id),
+        failures: orderedFailures,
+        lastError: orderedFailures[0]?.error ?? null,
+      });
+    };
 
     try {
-      for (let i = 0; i < targets.length; i += 1) {
-        const target = targets[i]!;
+      await runWithConcurrency(targets, concurrency, async (target, i) => {
         const templateKey = resolveVariantTemplateKey(target);
         const unitKey = `geo_var:${batchRefId}:${i}`;
         const citedExampleUrls = extractCitedUrlsForTarget(
@@ -765,13 +1694,18 @@ export class VariantGeneratorService {
         };
 
         try {
-          const { draft, model, tokensIn, tokensOut } = await this.generateSingleVariantDraft(
-            auth.tenantId,
-            batchRefId,
-            i,
-            promptCtx,
-            reservationShadow,
+          const { draft, model, tokensIn, tokensOut } = await withChannelTimeout(
+            channelTimeoutMs,
             signal,
+            (channelSignal) =>
+              this.generateSingleVariantDraft(
+                tenantId,
+                batchRefId,
+                i,
+                promptCtx,
+                reservationShadow,
+                channelSignal,
+              ),
           );
 
           // 双轨合规扫描（禁做行业拦截；广告法/自定义禁用词清洗后重新渲染 HTML、同步摘要长度、线程文案与 JSON-LD）
@@ -982,13 +1916,13 @@ export class VariantGeneratorService {
           const publishAsDraft =
             target.publishAsDraft ?? readConnectionDefaultDraft(linkedConn?.configJson) ?? true;
           const deterministicId = normalizedIdempotencyKey
-            ? deriveDeterministicTaskId(auth.tenantId, article.id, normalizedIdempotencyKey, i)
+            ? deriveDeterministicTaskId(tenantId, article.id, normalizedIdempotencyKey, i)
             : undefined;
 
           const createdRow = await this.prisma.scoped.geoDistributionTask.create({
             data: {
               ...(deterministicId ? { id: deterministicId } : {}),
-              tenantId: auth.tenantId,
+              tenantId,
               brandId: article.brandId,
               brandMarketId: article.brandMarketId,
               articleId: article.id,
@@ -1009,11 +1943,11 @@ export class VariantGeneratorService {
             },
           });
 
-          if (reservation) {
+          if (reservationId) {
             try {
               await this.billing.settle({
-                tenantId: auth.tenantId,
-                reservationId: reservation.id,
+                tenantId,
+                reservationId,
                 unitKey,
                 action: 'geo_variant',
                 amount: unitPrice,
@@ -1034,28 +1968,26 @@ export class VariantGeneratorService {
             }
           }
 
-          tasks.push(presentDistributionTask(createdRow as GeoDistributionTaskRow));
+          taskSlots[i] = presentDistributionTask(createdRow as GeoDistributionTaskRow);
+          emitProgress();
         } catch (targetErr) {
-          const fatal = mapFatalError(targetErr);
-          if (!firstFatalError) {
-            firstFatalError = fatal;
-          }
-          failures.push({
+          fatalSlots[i] = mapFatalError(targetErr);
+          failureSlots[i] = {
             index: i,
             provider: target.provider,
             channelLabel: target.channelLabel,
             templateKey,
             error: sanitizeFailureMessage(targetErr),
-          });
+          };
           this.logger.warn(
             `variant generation failed article=${article.id} targetIndex=${i} provider=${target.provider}: ${sanitizeFailureMessage(targetErr)}`,
           );
 
-          if (reservation) {
+          if (reservationId) {
             try {
               await this.billing.releaseUnit({
-                tenantId: auth.tenantId,
-                reservationId: reservation.id,
+                tenantId,
+                reservationId,
                 unitKey,
                 amount: unitPrice,
                 title: '渠道变体生成失败退还',
@@ -1068,37 +2000,31 @@ export class VariantGeneratorService {
               );
             }
           }
+          emitProgress();
         }
-      }
+      });
     } finally {
-      if (reservation) {
+      if (reservationId) {
         await this.billing
           .close({
-            tenantId: auth.tenantId,
-            reservationId: reservation.id,
+            tenantId,
+            reservationId,
           })
           .catch(() => undefined);
       }
     }
 
-    if (tasks.length === 0 && failures.length > 0) {
-      throw (
-        firstFatalError ??
-        new ApiError(502, API_ERROR.UPSTREAM_UNAVAILABLE, '渠道变体生成失败，请稍后重试')
-      );
-    }
+    const tasks = taskSlots.filter((t): t is GeoDistributionTaskDto => Boolean(t));
+    const failures = failureSlots.filter((f): f is GenerateVariantsFailureItem => Boolean(f));
+    const firstFatalError = fatalSlots.find((e): e is ApiError => Boolean(e)) ?? null;
 
     return {
-      articleId: article.id,
-      unitPrice,
+      tasks,
+      failures,
       totalChargedPoints,
       refundedCount,
       refundedPoints,
-      reservationId: reservation?.id ?? null,
-      billingMode,
-      replayed: false,
-      tasks,
-      failures,
+      firstFatalError,
     };
   }
 

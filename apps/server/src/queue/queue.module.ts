@@ -25,6 +25,12 @@ import {
 } from '../distribution/distribution.runner';
 import { IndexNowService } from '../distribution/indexnow.service';
 import { RetestSchedulerService } from '../distribution/retest-scheduler.service';
+import { VariantGeneratorService } from '../distribution/variant-generator.service';
+import {
+  VARIANT_JOB_ENQUEUER,
+  VARIANT_JOB_HANDLER,
+  VariantJobRunner,
+} from '../distribution/variant-job.runner';
 import { AdaptersModule } from '../infra/adapters.module';
 import { GEO_BATCH_ENQUEUER, GEO_BATCH_HANDLER, GeoBatchRunner } from '../studio/geo-batch.runner';
 import { GeoDeliveryService } from '../studio/geo-delivery.service';
@@ -53,7 +59,7 @@ import { QueueRuntime } from './queue.runtime';
 import { StepGate } from './step-gate';
 import { WorkDriver } from './work-driver';
 
-export { DISTRIBUTION_ENQUEUER, DISTRIBUTION_HANDLER };
+export { DISTRIBUTION_ENQUEUER, DISTRIBUTION_HANDLER, VARIANT_JOB_ENQUEUER, VARIANT_JOB_HANDLER };
 
 @Module({})
 export class QueueModule {
@@ -71,6 +77,7 @@ export class QueueModule {
         { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
         { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         { provide: DISTRIBUTION_ENQUEUER, useExisting: QueueProducer },
+        { provide: VARIANT_JOB_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BullBoardMount,
       ],
@@ -81,6 +88,7 @@ export class QueueModule {
         FACT_INDEX_ENQUEUER,
         GEO_BATCH_ENQUEUER,
         DISTRIBUTION_ENQUEUER,
+        VARIANT_JOB_ENQUEUER,
         WorkDriver,
         StepGate,
       ],
@@ -99,6 +107,7 @@ export class QueueModule {
         { provide: FACT_INDEX_ENQUEUER, useExisting: QueueProducer },
         { provide: GEO_BATCH_ENQUEUER, useExisting: QueueProducer },
         { provide: DISTRIBUTION_ENQUEUER, useExisting: QueueProducer },
+        { provide: VARIANT_JOB_ENQUEUER, useExisting: QueueProducer },
         WorkDriver,
         BrandsService,
         WorkerRuntimeService,
@@ -123,6 +132,9 @@ export class QueueModule {
         CmsConnectorRegistry,
         ConnectionsService,
         IndexNowService,
+        VariantGeneratorService,
+        VariantJobRunner,
+        { provide: VARIANT_JOB_HANDLER, useExisting: VariantJobRunner },
         DistributionRunner,
         { provide: DISTRIBUTION_HANDLER, useExisting: DistributionRunner },
         MaintenanceRunner,
@@ -155,6 +167,8 @@ export class QueueModule {
         GEO_BATCH_ENQUEUER,
         DISTRIBUTION_ENQUEUER,
         DISTRIBUTION_HANDLER,
+        VARIANT_JOB_ENQUEUER,
+        VARIANT_JOB_HANDLER,
         VisibilityRunLifecycleService,
         CrawlProbeService,
         RetestSchedulerService,
@@ -162,6 +176,8 @@ export class QueueModule {
         CmsConnectorRegistry,
         ConnectionsService,
         IndexNowService,
+        VariantGeneratorService,
+        VariantJobRunner,
         GeoDeliveryService,
         DistributionRunner,
         VisibilityRunRunner,

@@ -38,6 +38,7 @@ export const REQUIRED_TENANT_MODELS = [
   'ChannelConnection',
   'GeoDistributionTask',
   'GeoRetestSchedule',
+  'GeoVariantJob',
 ] as const;
 
 export const NULLABLE_TENANT_MODELS = [] as const;

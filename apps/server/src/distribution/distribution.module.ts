@@ -24,6 +24,7 @@ import { PublicPrPacketController } from './public-pr-packet.controller';
 import { PublicPrPacketService } from './public-pr-packet.service';
 import { RetestSchedulerService } from './retest-scheduler.service';
 import { VariantGeneratorService } from './variant-generator.service';
+import { VariantJobRunner } from './variant-job.runner';
 
 @Module({
   imports: [PrismaModule, AuthModule, BillingModule, AdaptersModule, BrandsModule, StudioModule],
@@ -38,6 +39,7 @@ import { VariantGeneratorService } from './variant-generator.service';
     IndexNowService,
     ConnectionsService,
     VariantGeneratorService,
+    VariantJobRunner,
     CrawlProbeService,
     RetestSchedulerService,
     DistributionService,
@@ -50,6 +52,7 @@ import { VariantGeneratorService } from './variant-generator.service';
     IndexNowService,
     ConnectionsService,
     VariantGeneratorService,
+    VariantJobRunner,
     CrawlProbeService,
     RetestSchedulerService,
     DistributionService,

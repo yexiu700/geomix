@@ -124,6 +124,56 @@ export const CHANNEL_PROVIDER_LABELS: Record<ChannelProvider, string> = {
   CN_COMMUNITY_ASSIST: '中文社区问答 / 评测',
 };
 
+export const CHANNEL_PROVIDER_EN_LABELS: Record<ChannelProvider, string> = {
+  SHOPIFY: 'Shopify Blog',
+  WORDPRESS: 'WordPress Site',
+  WEBFLOW: 'Webflow CMS',
+  WEBHOOK: 'Signed Webhook',
+  REDDIT_ASSIST: 'Reddit Discussion',
+  QUORA_ASSIST: 'Quora Q&A',
+  SOCIAL_THREAD_ASSIST: 'Social Thread (X / LinkedIn)',
+  PR_PACKET: 'PR / KOL Media Kit',
+  CN_COMMUNITY_ASSIST: 'CN Community Q&A',
+};
+
+const ZH_TO_EN_CHANNEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
+  CHANNEL_PROVIDERS.map((provider) => [
+    CHANNEL_PROVIDER_LABELS[provider],
+    CHANNEL_PROVIDER_EN_LABELS[provider],
+  ]),
+);
+
+const EN_TO_ZH_CHANNEL_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
+  CHANNEL_PROVIDERS.map((provider) => [
+    CHANNEL_PROVIDER_EN_LABELS[provider].toLowerCase(),
+    CHANNEL_PROVIDER_LABELS[provider],
+  ]),
+);
+
+/**
+ * 将面向外部的渠道标签按市场语言规整：
+ * - GLOBAL 市场：将默认中文标签或含中文字符的内部默认标签映射为英文，避免海外公开页语言混杂；
+ * - CN 市场：将默认英文标签映射为中文，自定义标签保持原样。
+ */
+export function localizePublicChannelLabel(
+  channelLabel: string | null | undefined,
+  market: GeoMarket,
+  provider: ChannelProvider = 'PR_PACKET',
+): string {
+  const trimmed = typeof channelLabel === 'string' ? channelLabel.trim() : '';
+  if (market === 'GLOBAL') {
+    if (!trimmed) return CHANNEL_PROVIDER_EN_LABELS[provider];
+    const mapped = ZH_TO_EN_CHANNEL_LABELS[trimmed];
+    if (mapped) return mapped;
+    if (containsCjk(trimmed)) return CHANNEL_PROVIDER_EN_LABELS[provider];
+    return trimmed;
+  }
+  if (!trimmed) return CHANNEL_PROVIDER_LABELS[provider];
+  const mappedCn = EN_TO_ZH_CHANNEL_LABELS[trimmed.toLowerCase()];
+  if (mappedCn) return mappedCn;
+  return trimmed;
+}
+
 export const DISTRIBUTION_TASK_STATUS_LABELS: Record<DistributionTaskStatus, string> = {
   DRAFT_VARIANT: '变体草稿',
   READY_TO_PUBLISH: '待发布',
@@ -436,6 +486,7 @@ export const PREFLIGHT_ITEM_CODES = [
   'MISSING_FACT_SLOTS',
   'GLOBAL_CJK_LEAK',
   'COMPLIANCE_BLOCKED',
+  'GLOBAL_CLAIM_WARNING',
   'LOW_GEO_SCORE',
   'MISSING_FACT_CARDS',
   'MISSING_META_DESCRIPTION',
@@ -443,11 +494,24 @@ export const PREFLIGHT_ITEM_CODES = [
 ] as const;
 export type PreflightItemCode = (typeof PREFLIGHT_ITEM_CODES)[number];
 
+export const GLOBAL_PREFLIGHT_CLAIM_CATEGORIES = ['medical', 'financial', 'superlative'] as const;
+export type GlobalPreflightClaimCategory = (typeof GLOBAL_PREFLIGHT_CLAIM_CATEGORIES)[number];
+
+export const distributionPreflightMatchSchema = z.object({
+  term: z.string().min(1),
+  matchedText: z.string().min(1),
+  category: z.enum(GLOBAL_PREFLIGHT_CLAIM_CATEGORIES),
+  line: z.number().int().min(1),
+  excerpt: z.string().min(1),
+});
+export type DistributionPreflightMatch = z.infer<typeof distributionPreflightMatchSchema>;
+
 export const distributionPreflightItemSchema = z.object({
   code: z.enum(PREFLIGHT_ITEM_CODES),
   severity: z.enum(['blocker', 'warning']),
   message: z.string().min(1),
   details: z.array(z.string()).optional(),
+  matches: z.array(distributionPreflightMatchSchema).optional(),
 });
 
 export type DistributionPreflightItem = z.infer<typeof distributionPreflightItemSchema>;
@@ -459,6 +523,48 @@ export const distributionPreflightResultSchema = z.object({
 });
 
 export type DistributionPreflightResult = z.infer<typeof distributionPreflightResultSchema>;
+
+export const GEO_VARIANT_JOB_STATUSES = [
+  'QUEUED',
+  'RUNNING',
+  'COMPLETED',
+  'PARTIAL',
+  'FAILED',
+  'CANCELLED',
+] as const;
+export type GeoVariantJobStatus = (typeof GEO_VARIANT_JOB_STATUSES)[number];
+
+export type GeoVariantJobFailureItem = {
+  index: number;
+  provider: ChannelProvider;
+  channelLabel: string;
+  templateKey: DistributionTemplateKey;
+  error: string;
+};
+
+export type GeoVariantJobDto = {
+  id: string;
+  articleId: string;
+  brandId: string;
+  brandMarketId: string;
+  status: GeoVariantJobStatus;
+  total: number;
+  doneCount: number;
+  failCount: number;
+  unitPrice: number;
+  totalChargedPoints: number;
+  refundedCount: number;
+  refundedPoints: number;
+  reservationId: string | null;
+  billingMode: 'SHADOW' | 'STRICT' | 'FREE';
+  replayed: boolean;
+  taskIds: string[];
+  failures: GeoVariantJobFailureItem[];
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+};
 
 // ==================== 安全 DTO 定义（零明文凭据 / 零内部 tokenHash） ====================
 
@@ -622,6 +728,14 @@ export type PublicPrPacketSubmitResultDto = {
 
 // ==================== 发布前硬校验纯函数（evaluateDistributionPreflight） ====================
 
+export type GlobalPreflightClaimRule = {
+  id: string;
+  label: string;
+  category: GlobalPreflightClaimCategory;
+  severity: 'blocker' | 'warning';
+  pattern: RegExp;
+};
+
 export type EvaluateDistributionPreflightInput = {
   market: GeoMarket;
   title: string;
@@ -634,6 +748,7 @@ export type EvaluateDistributionPreflightInput = {
   provider?: ChannelProvider | null;
   variantSlug?: string | null;
   variantMetaDesc?: string | null;
+  globalClaimRules?: readonly GlobalPreflightClaimRule[];
 };
 
 const CJK_RUN_RE = /[\u3400-\u9fff\uf900-\ufaff]+/g;
@@ -843,16 +958,251 @@ function stripBrandProperNouns(text: string, brandNames: readonly string[]): str
   return stripped;
 }
 
+const GLOBAL_CLAIM_CATEGORY_LABELS: Record<GlobalPreflightClaimCategory, string> = {
+  medical: '医疗/夸大疗效',
+  financial: '金融/保本收益',
+  superlative: '绝对化/最佳宣称',
+};
+
+const STRUCTURAL_HASH_ONE_PREFIX_RE =
+  /\b(?:issue|step|item|part|option|tip|figure|table|method|test|case|rule|point|note|row|line|section|chapter|question|example|sample|tier|phase|stage|batch|slot|post|thread|comment|pr|pull\s+request|ticket|bug|task|article|chapter|model|unit|version|slot)\s*$/i;
+
+/**
+ * GLOBAL 市场发布前门禁违禁/高风险夸大宣称默认词典（可通过 input.globalClaimRules 覆盖/扩展）：
+ * - blocker（硬阻断）：医疗夸大疗效（cure-all / miracle / guaranteed to cure / 100% safe / zero side effects）、
+ *   金融保本承诺（guaranteed profit/return / risk-free return / get rich quick）
+ * - warning（软警告）：无佐证绝对化/最佳宣称（guaranteed / risk-free / #1 / number-one / clinically proven 等）
+ */
+export const GLOBAL_PREFLIGHT_CLAIM_RULES: readonly GlobalPreflightClaimRule[] = [
+  // Medical / health deceptive hard blockers
+  {
+    id: 'medical-cure-all',
+    label: 'cure-all',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\bcure(?:[\s-]+all|all)\b/gi,
+  },
+  {
+    id: 'medical-miracle-cure',
+    label: 'miracle cure',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\bmiracle[\s-]+(?:cure|pill|drug|remedy|formula|treatment|solution)\b/gi,
+  },
+  {
+    id: 'medical-miracle',
+    label: 'miracle',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\bmiracle\b/gi,
+  },
+  {
+    id: 'medical-guaranteed-cure',
+    label: 'guaranteed to cure',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\bguaranteed\s+to\s+(?:cure|heal|treat|prevent|eliminate)\b/gi,
+  },
+  {
+    id: 'medical-cures-disease',
+    label: 'cures disease',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\bcures?\s+(?:cancer|diabetes|alzheimer'?s|arthritis|depression|diseases?)\b/gi,
+  },
+  {
+    id: 'medical-100-safe',
+    label: '100% safe / effective',
+    category: 'medical',
+    severity: 'blocker',
+    pattern:
+      /\b100(?:\s*%|[\s-]+percent)\s*(?:safe|effective|guaranteed|risk[\s-]+free|cure|natural\s+cure)\b/gi,
+  },
+  {
+    id: 'medical-zero-side-effects',
+    label: 'zero side effects',
+    category: 'medical',
+    severity: 'blocker',
+    pattern: /\b(?:zero|no)\s+side[\s-]+effects?\b/gi,
+  },
+  // Financial deceptive hard blockers
+  {
+    id: 'financial-guaranteed-return',
+    label: 'guaranteed return / profit',
+    category: 'financial',
+    severity: 'blocker',
+    pattern:
+      /\bguaranteed\s+(?:\d+(?:\.\d+)?%\s+)?(?:profits?|returns?|income|roi|wealth|earnings?|payouts?)\b/gi,
+  },
+  {
+    id: 'financial-risk-free-return',
+    label: 'risk-free return / investment',
+    category: 'financial',
+    severity: 'blocker',
+    pattern:
+      /\b(?:risk|zero)[\s-]+(?:free|risk)\s+(?:guaranteed\s+)?(?:returns?|profits?|investments?|income|gains?)\b/gi,
+  },
+  {
+    id: 'financial-get-rich-quick',
+    label: 'get-rich-quick',
+    category: 'financial',
+    severity: 'blocker',
+    pattern: /\bget[\s-]+rich[\s-]+quick\b/gi,
+  },
+  // Superlative / unsubstantiated absolute claim warnings
+  {
+    id: 'superlative-risk-free',
+    label: 'risk-free',
+    category: 'superlative',
+    severity: 'warning',
+    pattern: /\brisk[\s-]+free\b/gi,
+  },
+  {
+    id: 'superlative-guaranteed',
+    label: 'guaranteed',
+    category: 'superlative',
+    severity: 'warning',
+    pattern: /\bguaranteed\b/gi,
+  },
+  {
+    id: 'superlative-hash-one',
+    label: '#1',
+    category: 'superlative',
+    severity: 'warning',
+    pattern: /#\s*1(?![\d.])|\b(?:number[\s-]+one|no\.\s*1)\b/gi,
+  },
+  {
+    id: 'superlative-unsubstantiated-proven',
+    label: 'clinically / scientifically proven',
+    category: 'superlative',
+    severity: 'warning',
+    pattern: /\b(?:clinically|scientifically)\s+proven\b/gi,
+  },
+];
+
+type GlobalClaimScanHit = {
+  rule: GlobalPreflightClaimRule;
+  match: DistributionPreflightMatch;
+  sectionLabel: string;
+};
+
+function buildClaimExcerpt(lineText: string, start: number, end: number): string {
+  const maxLen = 72;
+  const trimmed = lineText.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  const half = Math.floor((maxLen - (end - start)) / 2);
+  const sliceStart = Math.max(0, start - Math.max(12, half));
+  const sliceEnd = Math.min(lineText.length, Math.max(end + 12, sliceStart + maxLen));
+  const prefix = sliceStart > 0 ? '…' : '';
+  const suffix = sliceEnd < lineText.length ? '…' : '';
+  return `${prefix}${lineText.slice(sliceStart, sliceEnd).trim()}${suffix}`;
+}
+
+function scanSectionForGlobalClaims(
+  text: string,
+  sectionLabel: string,
+  rules: readonly GlobalPreflightClaimRule[],
+): GlobalClaimScanHit[] {
+  if (!text.trim()) return [];
+  const hits: GlobalClaimScanHit[] = [];
+  const lines = text.split(/\r?\n/);
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
+    const lineText = lines[lineIdx] ?? '';
+    if (!lineText.trim()) continue;
+
+    const candidates: Array<{
+      rule: GlobalPreflightClaimRule;
+      start: number;
+      end: number;
+      matchedText: string;
+    }> = [];
+
+    for (const rule of rules) {
+      const flags = rule.pattern.flags.includes('g')
+        ? rule.pattern.flags
+        : `${rule.pattern.flags}g`;
+      const re = new RegExp(rule.pattern.source, flags);
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(lineText)) !== null) {
+        if (m[0].length === 0) {
+          re.lastIndex += 1;
+          continue;
+        }
+        const matchedText = m[0];
+        const start = m.index;
+        const end = start + matchedText.length;
+
+        // Avoid false positives on structural enumerations like "Step #1", "Item #1", "Issue #1", "Figure #1"
+        if (matchedText.startsWith('#')) {
+          const before = lineText.slice(Math.max(0, start - 32), start);
+          if (STRUCTURAL_HASH_ONE_PREFIX_RE.test(before)) {
+            continue;
+          }
+          // Require non-word boundary before '#' (avoid matching inside URLs/anchors like foo#1)
+          if (start > 0 && /[\w/]/.test(lineText[start - 1]!)) {
+            continue;
+          }
+        }
+
+        candidates.push({ rule, start, end, matchedText });
+      }
+    }
+
+    if (candidates.length === 0) continue;
+
+    // Prefer blocker over warning, then longer span over shorter span, then earlier index
+    candidates.sort((a, b) => {
+      const sevDiff =
+        (a.rule.severity === 'blocker' ? 0 : 1) - (b.rule.severity === 'blocker' ? 0 : 1);
+      if (sevDiff !== 0) return sevDiff;
+      const lenDiff = b.end - b.start - (a.end - a.start);
+      if (lenDiff !== 0) return lenDiff;
+      return a.start - b.start;
+    });
+
+    const acceptedSpans: Array<{ start: number; end: number }> = [];
+    for (const cand of candidates) {
+      const overlaps = acceptedSpans.some((span) => cand.start < span.end && cand.end > span.start);
+      if (overlaps) continue;
+      acceptedSpans.push({ start: cand.start, end: cand.end });
+      hits.push({
+        rule: cand.rule,
+        sectionLabel,
+        match: {
+          term: cand.matchedText,
+          matchedText: cand.matchedText,
+          category: cand.rule.category,
+          line: lineIdx + 1,
+          excerpt: buildClaimExcerpt(lineText, cand.start, cand.end),
+        },
+      });
+    }
+  }
+
+  return hits;
+}
+
+function formatClaimDetail(hit: GlobalClaimScanHit): string {
+  const catLabel = GLOBAL_CLAIM_CATEGORY_LABELS[hit.rule.category];
+  const loc =
+    hit.sectionLabel === '正文'
+      ? `第 ${hit.match.line} 行`
+      : `${hit.sectionLabel}第 ${hit.match.line} 行`;
+  return `[${catLabel}] "${hit.match.matchedText}"（${loc}：${hit.match.excerpt}）`;
+}
+
 /**
  * 发布前硬校验（Preflight）纯函数：
  * - 硬拦截（blockers）：
  *   1. 未补全事实胶囊（[待补充：…] / [TBD: …] / [To be verified: …]）
  *   2. GLOBAL 市场正文中混入非品牌专有名词的中文字符
- *   3. 严重合规拦截项（severity === 'blocked' 或 code === 'PROHIBITED_INDUSTRY'）
+ *   3. 严重合规拦截项（severity === 'blocked' / code === 'PROHIBITED_INDUSTRY' 及 GLOBAL 医疗/金融夸大硬阻断词）
  * - 软告警（warnings）：
- *   1. GEO 体检得分 < 70
- *   2. 未关联任何品牌事实卡（matchedFactCount <= 0）
- *   3. L1 自有站点渠道缺少 metaDescription 或 slug
+ *   1. GLOBAL 绝对化/无佐证最佳宣称（guaranteed / risk-free / #1 等）
+ *   2. GEO 体检得分 < 70
+ *   3. 未关联任何品牌事实卡（matchedFactCount <= 0）
+ *   4. L1 自有站点渠道缺少 metaDescription 或 slug
  */
 export function evaluateDistributionPreflight(
   input: EvaluateDistributionPreflightInput,
@@ -893,16 +1243,64 @@ export function evaluateDistributionPreflight(
     }
   }
 
-  // 3. Hard Blocker: Severe compliance flags
+  // 3. Hard Blocker + Warning: Severe compliance flags & GLOBAL exaggerated/deceptive claims
   const severeCompliance = (input.complianceFlags ?? []).filter(
     (flag) => flag.severity === 'blocked' || flag.code === 'PROHIBITED_INDUSTRY',
   );
-  if (severeCompliance.length > 0) {
+
+  const globalBlockerHits: GlobalClaimScanHit[] = [];
+  const globalWarningHits: GlobalClaimScanHit[] = [];
+  if (input.market === 'GLOBAL') {
+    const rules = input.globalClaimRules ?? GLOBAL_PREFLIGHT_CLAIM_RULES;
+    const primaryHits = [
+      ...scanSectionForGlobalClaims(input.title ?? '', '标题', rules),
+      ...scanSectionForGlobalClaims(input.variantMetaDesc ?? '', '摘要', rules),
+      ...scanSectionForGlobalClaims(input.contentMarkdown ?? '', '正文', rules),
+    ];
+    const seenPrimaryKeys = new Set(
+      primaryHits.map((h) => `${h.rule.id}:${h.match.matchedText.toLowerCase()}`),
+    );
+    const htmlOnlyHits = variantHtmlText
+      ? scanSectionForGlobalClaims(variantHtmlText, 'HTML 正文', rules).filter(
+          (h) => !seenPrimaryKeys.has(`${h.rule.id}:${h.match.matchedText.toLowerCase()}`),
+        )
+      : [];
+
+    for (const hit of [...primaryHits, ...htmlOnlyHits]) {
+      if (hit.rule.severity === 'blocker') {
+        globalBlockerHits.push(hit);
+      } else {
+        globalWarningHits.push(hit);
+      }
+    }
+  }
+
+  const totalComplianceBlockers = severeCompliance.length + globalBlockerHits.length;
+  if (totalComplianceBlockers > 0) {
+    const details = [
+      ...severeCompliance.map((flag) => `${flag.term}: ${flag.message}`),
+      ...globalBlockerHits.map(formatClaimDetail),
+    ].slice(0, 10);
+    const matches =
+      globalBlockerHits.length > 0
+        ? globalBlockerHits.slice(0, 10).map((hit) => hit.match)
+        : undefined;
     blockers.push({
       code: 'COMPLIANCE_BLOCKED',
       severity: 'blocker',
-      message: `存在 ${severeCompliance.length} 项高危合规拦截词，必须移除后方可发布`,
-      details: severeCompliance.slice(0, 10).map((flag) => `${flag.term}: ${flag.message}`),
+      message: `存在 ${totalComplianceBlockers} 项高危合规拦截词，必须移除后方可发布`,
+      details,
+      ...(matches ? { matches } : {}),
+    });
+  }
+
+  if (globalWarningHits.length > 0) {
+    warnings.push({
+      code: 'GLOBAL_CLAIM_WARNING',
+      severity: 'warning',
+      message: `检测到 ${globalWarningHits.length} 处海外夸大或绝对化宣称，建议补充权威依据或改为客观表述`,
+      details: globalWarningHits.slice(0, 10).map(formatClaimDetail),
+      matches: globalWarningHits.slice(0, 10).map((hit) => hit.match),
     });
   }
 

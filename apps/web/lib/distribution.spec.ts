@@ -15,13 +15,16 @@ import {
   PreflightBlockedError,
   createChannelConnection,
   createDistributionIdempotencyKey,
+  createDistributionVariantJob,
   createPrShareLink,
   deleteChannelConnection,
   fetchPublicPrPacket,
   generateDistributionVariants,
+  getDistributionVariantJob,
   isPreflightBlockedError,
   listArticleDistributions,
   listChannelConnections,
+  listDistributionVariantJobs,
   publishDistributionTask,
   revokePrShareLink,
   runArticlePreflight,
@@ -135,6 +138,34 @@ describe('apps/web/lib/distribution API client', () => {
       string
     >;
     expect(autoHeaders['Idempotency-Key']).toMatch(/^dist_var_/);
+
+    authorizedV2RequestMock.mockResolvedValueOnce({ id: 'gvj_1', status: 'QUEUED' });
+    await createDistributionVariantJob(
+      'art/1',
+      { targets: [{ provider: 'PR_PACKET', channelLabel: 'PR' }] },
+      { idempotencyKey: 'idem_job_1' },
+    );
+    expect(authorizedV2RequestMock).toHaveBeenLastCalledWith(
+      '/articles/art%2F1/distributions/variant-jobs',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem_job_1' },
+      }),
+    );
+
+    authorizedV2RequestMock.mockResolvedValueOnce({ items: [] });
+    await listDistributionVariantJobs('art/1');
+    expect(authorizedV2RequestMock).toHaveBeenLastCalledWith(
+      '/articles/art%2F1/distributions/variant-jobs',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    authorizedV2RequestMock.mockResolvedValueOnce({ id: 'gvj_1', status: 'RUNNING' });
+    await getDistributionVariantJob('art/1', 'gvj/1');
+    expect(authorizedV2RequestMock).toHaveBeenLastCalledWith(
+      '/articles/art%2F1/distributions/variant-jobs/gvj%2F1',
+      expect.objectContaining({ method: 'GET' }),
+    );
 
     authorizedV2RequestMock.mockResolvedValueOnce({ id: 'task_1' });
     await updateDistributionTask('task/1', { variantTitle: 'Updated Title' });

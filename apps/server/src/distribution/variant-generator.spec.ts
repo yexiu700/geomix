@@ -297,6 +297,114 @@ function makeHarness(options?: {
           return existing;
         }),
       },
+      geoVariantJob: (() => {
+        const storedJobs = new Map<string, Record<string, unknown>>();
+        let jobSeq = 0;
+        const matchWhere = (row: Record<string, unknown>, where: Record<string, unknown>) => {
+          for (const [k, v] of Object.entries(where)) {
+            if (v === undefined) continue;
+            if (k === 'status' && v && typeof v === 'object' && 'in' in v) {
+              if (!(v as { in: string[] }).in.includes(String(row.status))) return false;
+              continue;
+            }
+            if (row[k] !== v) return false;
+          }
+          return true;
+        };
+        return {
+          _store: storedJobs,
+          findFirst: vi
+            .fn()
+            .mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+              for (const row of storedJobs.values()) {
+                if (matchWhere(row, where)) return { ...row };
+              }
+              return null;
+            }),
+          findMany: vi
+            .fn()
+            .mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+              return [...storedJobs.values()]
+                .filter((row) => matchWhere(row, where))
+                .map((r) => ({ ...r }));
+            }),
+          create: vi
+            .fn()
+            .mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+              for (const existing of storedJobs.values()) {
+                if (
+                  data.idempotencyKey &&
+                  existing.tenantId === data.tenantId &&
+                  existing.articleId === data.articleId &&
+                  existing.idempotencyKey === data.idempotencyKey
+                ) {
+                  throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+                }
+              }
+              jobSeq += 1;
+              const now = new Date();
+              const row: Record<string, unknown> = {
+                id: typeof data.id === 'string' ? data.id : `gvj_${jobSeq}`,
+                tenantId: data.tenantId,
+                brandId: data.brandId,
+                brandMarketId: data.brandMarketId,
+                articleId: data.articleId,
+                idempotencyKey: data.idempotencyKey ?? null,
+                requestFingerprint: data.requestFingerprint ?? null,
+                targetsJson: data.targetsJson,
+                status: data.status ?? 'QUEUED',
+                total: data.total ?? 0,
+                doneCount: data.doneCount ?? 0,
+                failCount: data.failCount ?? 0,
+                unitPrice: data.unitPrice ?? 0,
+                totalChargedPoints: data.totalChargedPoints ?? 0,
+                refundedCount: data.refundedCount ?? 0,
+                refundedPoints: data.refundedPoints ?? 0,
+                reservationId: data.reservationId ?? null,
+                billingMode: data.billingMode ?? 'SHADOW',
+                taskIds: data.taskIds ?? [],
+                failuresJson: data.failuresJson ?? [],
+                lastError: data.lastError ?? null,
+                finishedAt: data.finishedAt ?? null,
+                createdAt: now,
+                updatedAt: now,
+              };
+              storedJobs.set(String(row.id), row);
+              return { ...row };
+            }),
+          update: vi
+            .fn()
+            .mockImplementation(
+              async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+                const existing = storedJobs.get(where.id);
+                if (!existing) throw new Error(`Job ${where.id} not found`);
+                const next = { ...existing, ...data, updatedAt: new Date() };
+                storedJobs.set(where.id, next);
+                return { ...next };
+              },
+            ),
+          updateMany: vi
+            .fn()
+            .mockImplementation(
+              async ({
+                where,
+                data,
+              }: {
+                where: Record<string, unknown>;
+                data: Record<string, unknown>;
+              }) => {
+                let count = 0;
+                for (const [id, row] of storedJobs.entries()) {
+                  if (matchWhere(row, where)) {
+                    storedJobs.set(id, { ...row, ...data, updatedAt: new Date() });
+                    count += 1;
+                  }
+                }
+                return { count };
+              },
+            ),
+        };
+      })(),
     },
   } as unknown as PrismaService;
 
@@ -351,6 +459,12 @@ function makeHarness(options?: {
   const llm = options?.llm ?? LlmService.fromEnv({ LLM_PROVIDERS: '{}' });
   const compliance = new ComplianceService();
   const rateLimiter = options?.rateLimiter ?? new FreeActionRateLimiter();
+  const enqueuedVariantJobs: Array<{ tenantId: string; jobId: string }> = [];
+  const variantEnqueuer = {
+    enqueueVariantJob: vi.fn(async (data: { tenantId: string; jobId: string }) => {
+      enqueuedVariantJobs.push(data);
+    }),
+  };
 
   const service = new VariantGeneratorService(
     prismaStub,
@@ -358,6 +472,7 @@ function makeHarness(options?: {
     llm,
     compliance,
     rateLimiter,
+    variantEnqueuer,
   );
 
   return {
@@ -369,6 +484,8 @@ function makeHarness(options?: {
     rateLimiter,
     storedTasks,
     reservationState,
+    variantEnqueuer,
+    enqueuedVariantJobs,
   };
 }
 
@@ -2443,5 +2560,187 @@ describe('variant-templates & VariantGeneratorService (M3 / Issue #351)', () => 
       cnCtx,
     );
     expect(preservedCnDraft.variantExtrasJson.antiBanChecklist).toEqual(preservedCnItems);
+  });
+
+  describe('Async GeoVariantJob lifecycle & concurrency (#363)', () => {
+    const savedConcurrency = process.env.GEO_VARIANT_CONCURRENCY;
+    const savedTimeout = process.env.GEO_VARIANT_CHANNEL_TIMEOUT_MS;
+
+    afterEach(() => {
+      if (savedConcurrency === undefined) delete process.env.GEO_VARIANT_CONCURRENCY;
+      else process.env.GEO_VARIANT_CONCURRENCY = savedConcurrency;
+      if (savedTimeout === undefined) delete process.env.GEO_VARIANT_CHANNEL_TIMEOUT_MS;
+      else process.env.GEO_VARIANT_CHANNEL_TIMEOUT_MS = savedTimeout;
+    });
+
+    it('creates a QUEUED async job immediately, replays in-progress job without 409/40902, and rejects different targets with 409', async () => {
+      const { service, billingStub, enqueuedVariantJobs } = makeHarness({ unitPrice: 2 });
+      const targets = [
+        { provider: 'REDDIT_ASSIST' as const, channelLabel: 'Reddit' },
+        { provider: 'QUORA_ASSIST' as const, channelLabel: 'Quora' },
+        { provider: 'PR_PACKET' as const, channelLabel: 'PR / KOL Media Kit' },
+      ];
+
+      const created = await service.createVariantJob(
+        'art_1',
+        { targets },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_async_1' },
+      );
+
+      expect(created.status).toBe('QUEUED');
+      expect(created.total).toBe(3);
+      expect(created.doneCount).toBe(0);
+      expect(created.failCount).toBe(0);
+      expect(created.replayed).toBe(false);
+      expect(created.reservationId).toBe('res_gv_1');
+      expect(billingStub.reserve).toHaveBeenCalledTimes(1);
+      expect(billingStub.reserve).toHaveBeenCalledWith(expect.objectContaining({ amount: 6 }));
+      expect(enqueuedVariantJobs).toEqual([{ tenantId: 't_1', jobId: created.id }]);
+
+      // Immediate retry with same Idempotency-Key while job is QUEUED returns the in-progress job (NO 409!)
+      const replayed = await service.createVariantJob(
+        'art_1',
+        { targets },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_async_1' },
+      );
+      expect(replayed.id).toBe(created.id);
+      expect(replayed.status).toBe('QUEUED');
+      expect(replayed.replayed).toBe(true);
+      expect(billingStub.reserve).toHaveBeenCalledTimes(1);
+      expect(enqueuedVariantJobs).toHaveLength(1);
+
+      // Reusing same Idempotency-Key with DIFFERENT targets still rejects with 409
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'PR_PACKET', channelLabel: 'Different' }] },
+          { tenantId: 't_1' },
+          { idempotencyKey: 'idem_async_1' },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('processes async job channels in parallel, updates progress & settles points, and exposes list/get', async () => {
+      process.env.GEO_VARIANT_CONCURRENCY = '3';
+      const { service, billingStub, storedTasks, reservationState } = makeHarness({ unitPrice: 2 });
+      const targets = [
+        {
+          provider: 'SHOPIFY' as const,
+          connectionId: 'conn_shopify',
+          channelLabel: 'Shopify Blog',
+        },
+        { provider: 'REDDIT_ASSIST' as const, channelLabel: 'Reddit' },
+        { provider: 'PR_PACKET' as const, channelLabel: 'PR / KOL Media Kit' },
+      ];
+
+      const created = await service.createVariantJob(
+        'art_1',
+        { targets },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_async_parallel' },
+      );
+
+      await service.processVariantJob('t_1', created.id);
+
+      const finalJob = await service.getVariantJob('art_1', created.id);
+      expect(finalJob.status).toBe('COMPLETED');
+      expect(finalJob.total).toBe(3);
+      expect(finalJob.doneCount).toBe(3);
+      expect(finalJob.failCount).toBe(0);
+      expect(finalJob.totalChargedPoints).toBe(6);
+      expect(finalJob.refundedPoints).toBe(0);
+      expect(finalJob.taskIds).toHaveLength(3);
+      expect(finalJob.finishedAt).toBeTruthy();
+      expect(storedTasks.size).toBe(3);
+      expect(reservationState.settled).toBe(6);
+      expect(reservationState.released).toBe(0);
+      expect(billingStub.close).toHaveBeenCalledTimes(1);
+
+      const listed = await service.listVariantJobs('art_1');
+      expect(listed.items).toHaveLength(1);
+      expect(listed.items[0]?.id).toBe(created.id);
+    });
+
+    it('auto-refunds timed-out channel in async job while preserving succeeded channels (PARTIAL)', async () => {
+      process.env.GEO_VARIANT_CONCURRENCY = '2';
+      process.env.GEO_VARIANT_CHANNEL_TIMEOUT_MS = '1000';
+
+      let callNum = 0;
+      const slowLlm = {
+        isLive: () => true,
+        complete: vi
+          .fn()
+          .mockImplementation(async (_req: unknown, opts?: { signal?: AbortSignal }) => {
+            callNum += 1;
+            if (callNum === 2) {
+              return new Promise((_resolve, reject) => {
+                const onAbort = () => reject(new Error('aborted'));
+                opts?.signal?.addEventListener('abort', onAbort, { once: true });
+              });
+            }
+            return {
+              text: JSON.stringify({
+                variantTitle: 'NebulaNAS N4 Acoustic Bench Notes',
+                variantMarkdown:
+                  'NebulaNAS N4 measured 21 dB under load and 9W idle power with dual 2.5GbE.',
+              }),
+              provider: 'stub',
+              model: 'stub-1',
+              usage: { inputTokens: 100, outputTokens: 80 },
+            };
+          }),
+      } as unknown as LlmService;
+
+      const { service, reservationState } = makeHarness({ unitPrice: 3, llm: slowLlm });
+      const created = await service.createVariantJob(
+        'art_1',
+        {
+          targets: [
+            { provider: 'REDDIT_ASSIST', channelLabel: 'Reddit' },
+            { provider: 'QUORA_ASSIST', channelLabel: 'Quora' },
+          ],
+        },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_async_timeout' },
+      );
+
+      await service.processVariantJob('t_1', created.id);
+
+      const finalJob = await service.getVariantJob('art_1', created.id);
+      expect(finalJob.status).toBe('PARTIAL');
+      expect(finalJob.doneCount).toBe(1);
+      expect(finalJob.failCount).toBe(1);
+      expect(finalJob.totalChargedPoints).toBe(3);
+      expect(finalJob.refundedCount).toBe(1);
+      expect(finalJob.refundedPoints).toBe(3);
+      expect(finalJob.failures).toHaveLength(1);
+      expect(finalJob.failures[0]?.error).toContain('超时');
+      expect(reservationState.settled).toBe(3);
+      expect(reservationState.released).toBe(3);
+    });
+
+    it('closes reservation and marks job FAILED with 503 if BullMQ enqueue fails', async () => {
+      const { service, billingStub, variantEnqueuer, reservationState } = makeHarness({
+        unitPrice: 2,
+      });
+      variantEnqueuer.enqueueVariantJob.mockRejectedValueOnce(new Error('Redis offline'));
+
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'PR_PACKET', channelLabel: 'PR' }] },
+          { tenantId: 't_1' },
+          { idempotencyKey: 'idem_enqueue_fail' },
+        ),
+      ).rejects.toMatchObject({ status: 503 });
+
+      expect(billingStub.close).toHaveBeenCalledTimes(1);
+      expect(reservationState.released).toBe(2);
+      const listed = await service.listVariantJobs('art_1');
+      expect(listed.items[0]?.status).toBe('FAILED');
+      expect(listed.items[0]?.refundedPoints).toBe(2);
+    });
   });
 });

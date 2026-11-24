@@ -20,6 +20,12 @@ import {
   type DistributionJobData,
 } from '../distribution/distribution.runner';
 import {
+  VARIANT_JOB_ENQUEUER,
+  VARIANT_JOB_HANDLER,
+  type VariantJobData,
+  type VariantJobHandler,
+} from '../distribution/variant-job.runner';
+import {
   GEO_BATCH_ENQUEUER,
   GEO_BATCH_HANDLER,
   type GeoBatchHandler,
@@ -46,6 +52,8 @@ export {
   FACT_INDEX_HANDLER,
   GEO_BATCH_ENQUEUER,
   GEO_BATCH_HANDLER,
+  VARIANT_JOB_ENQUEUER,
+  VARIANT_JOB_HANDLER,
   VISIBILITY_RUN_ENQUEUER,
   VISIBILITY_RUN_HANDLER,
 };
@@ -79,6 +87,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(DISTRIBUTION_HANDLER)
     private readonly distributionRunner?: DistributionHandler,
+    @Optional()
+    @Inject(VARIANT_JOB_HANDLER)
+    private readonly variantJobRunner?: VariantJobHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -164,10 +175,19 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       return;
     }
     if (name === 'distribution') {
-      if (job.name !== 'distribution') return;
-      const distData = readDistributionPayload(job.data);
-      if (distData && this.distributionRunner) {
-        await this.distributionRunner.process(distData);
+      if (job.name === 'distribution') {
+        const distData = readDistributionPayload(job.data);
+        if (distData && this.distributionRunner) {
+          await this.distributionRunner.process(distData);
+        }
+        return;
+      }
+      if (job.name === 'variant-generate') {
+        const variantData = readVariantJobPayload(job.data);
+        if (variantData && this.variantJobRunner) {
+          await this.variantJobRunner.process(variantData);
+        }
+        return;
       }
       return;
     }
@@ -289,6 +309,16 @@ function readDistributionPayload(data: unknown): DistributionJobData | null {
   if (!ID.test(tenantId) || !ID.test(taskId)) return null;
   if (tenantId === 'system' || taskId === 'system') return null;
   return { tenantId, taskId };
+}
+
+function readVariantJobPayload(data: unknown): VariantJobData | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const jobId = (data as { jobId?: unknown }).jobId;
+  if (typeof tenantId !== 'string' || typeof jobId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(jobId)) return null;
+  if (tenantId === 'system' || jobId === 'system') return null;
+  return { tenantId, jobId };
 }
 
 function readKind(name: string, data: unknown): string {

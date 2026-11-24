@@ -5,6 +5,7 @@ import {
   formatShanghaiDate,
   formatShanghaiDateTime,
   isSafeDistributionHttpUrl,
+  localizePublicChannelLabel,
   markdownToSanitizedHtml,
   sanitizeRichArticleHtml,
   type PublicPrPacketDto,
@@ -574,7 +575,11 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                       </Tag>
                       {packet.channelLabel ? (
                         <Tag color="geekblue" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-                          {packet.channelLabel}
+                          {localizePublicChannelLabel(
+                            packet.channelLabel,
+                            packet.market,
+                            'PR_PACKET',
+                          )}
                         </Tag>
                       ) : null}
                     </div>

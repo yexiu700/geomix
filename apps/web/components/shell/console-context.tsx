@@ -10,6 +10,7 @@ export type ConsoleContextValue = {
   readOnly: boolean;
   wallet: WalletSummary | null;
   walletLoading: boolean;
+  urlSearch?: string;
   openCreateBrandModal: () => void;
   openEnableMarketModal: (market: GeoMarket) => void;
   refreshWallet: () => Promise<void>;

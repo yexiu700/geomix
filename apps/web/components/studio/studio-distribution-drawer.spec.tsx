@@ -11,7 +11,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as apiLib from '../../lib/api';
 import * as briefsApi from '../../lib/briefs';
-import { PreflightBlockedError, type ArticleDistributionTaskItem } from '../../lib/distribution';
+import {
+  PreflightBlockedError,
+  type ArticleDistributionTaskItem,
+  type GeoVariantJobDto,
+} from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioLib from '../../lib/studio';
 import { StudioDistributionDrawer } from './studio-distribution-drawer';
@@ -19,7 +23,9 @@ import { StudioDistributionDrawer } from './studio-distribution-drawer';
 const runArticlePreflightMock = vi.fn();
 const listArticleDistributionsMock = vi.fn();
 const listChannelConnectionsMock = vi.fn();
-const generateDistributionVariantsMock = vi.fn();
+const createDistributionVariantJobMock = vi.fn();
+const listDistributionVariantJobsMock = vi.fn();
+const getDistributionVariantJobMock = vi.fn();
 const updateDistributionTaskMock = vi.fn();
 const publishDistributionTaskMock = vi.fn();
 const createPrShareLinkMock = vi.fn();
@@ -33,7 +39,9 @@ vi.mock('../../lib/distribution', async () => {
     runArticlePreflight: (...args: unknown[]) => runArticlePreflightMock(...args),
     listArticleDistributions: (...args: unknown[]) => listArticleDistributionsMock(...args),
     listChannelConnections: (...args: unknown[]) => listChannelConnectionsMock(...args),
-    generateDistributionVariants: (...args: unknown[]) => generateDistributionVariantsMock(...args),
+    createDistributionVariantJob: (...args: unknown[]) => createDistributionVariantJobMock(...args),
+    listDistributionVariantJobs: (...args: unknown[]) => listDistributionVariantJobsMock(...args),
+    getDistributionVariantJob: (...args: unknown[]) => getDistributionVariantJobMock(...args),
     updateDistributionTask: (...args: unknown[]) => updateDistributionTaskMock(...args),
     publishDistributionTask: (...args: unknown[]) => publishDistributionTaskMock(...args),
     createPrShareLink: (...args: unknown[]) => createPrShareLinkMock(...args),
@@ -57,11 +65,22 @@ vi.mock('../crud/ux-feedback', () => ({
 
 let capturedPollingCallback: (() => Promise<void> | void) | null = null;
 let capturedPollingEnabled = false;
+let capturedVariantJobPollingCallback: (() => Promise<void> | void) | null = null;
+let capturedVariantJobPollingEnabled = false;
 
 vi.mock('../../lib/use-task-polling', () => ({
-  useTaskPolling: (opts: { enabled: boolean; onPoll: () => Promise<void> | void }) => {
-    capturedPollingEnabled = opts.enabled;
-    capturedPollingCallback = opts.enabled ? opts.onPoll : null;
+  useTaskPolling: (opts: {
+    enabled: boolean;
+    intervalMs?: number;
+    onPoll: () => Promise<void> | void;
+  }) => {
+    if (opts.intervalMs === 1_500) {
+      capturedVariantJobPollingEnabled = opts.enabled;
+      capturedVariantJobPollingCallback = opts.enabled ? opts.onPoll : null;
+    } else {
+      capturedPollingEnabled = opts.enabled;
+      capturedPollingCallback = opts.enabled ? opts.onPoll : null;
+    }
   },
 }));
 
@@ -197,16 +216,46 @@ function mockPricingUnitPoints(unitPoints: number) {
   );
 }
 
+function makeVariantJob(overrides: Partial<GeoVariantJobDto> = {}): GeoVariantJobDto {
+  return {
+    id: 'gvj_test_1',
+    articleId: GLOBAL_ARTICLE.id,
+    brandId: 'brand_1',
+    brandMarketId: 'bm_gl_1',
+    status: 'COMPLETED',
+    total: 1,
+    doneCount: 1,
+    failCount: 0,
+    unitPrice: 2,
+    totalChargedPoints: 2,
+    refundedCount: 0,
+    refundedPoints: 0,
+    reservationId: 'res_1',
+    billingMode: 'SHADOW',
+    replayed: false,
+    taskIds: ['task_gen_1'],
+    failures: [],
+    lastError: null,
+    createdAt: '2026-11-23T06:00:00.000Z',
+    updatedAt: '2026-11-23T06:00:05.000Z',
+    finishedAt: '2026-11-23T06:00:05.000Z',
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   capturedPollingCallback = null;
   capturedPollingEnabled = false;
+  capturedVariantJobPollingCallback = null;
+  capturedVariantJobPollingEnabled = false;
   runArticlePreflightMock.mockResolvedValue({
     ok: true,
     blockers: [],
     warnings: [],
   } satisfies DistributionPreflightResult);
   listArticleDistributionsMock.mockResolvedValue({ items: [] });
+  listDistributionVariantJobsMock.mockResolvedValue({ items: [] });
   listChannelConnectionsMock.mockResolvedValue({ items: [SHOPIFY_CONN] });
   vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_WITH_CITATIONS);
   mockPricingUnitPoints(2);
@@ -316,18 +365,14 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       publishedAt: '2026-11-23T06:20:00.000Z',
     };
 
-    generateDistributionVariantsMock.mockResolvedValueOnce({
-      articleId: GLOBAL_ARTICLE.id,
-      unitPrice: 2,
-      totalChargedPoints: 4,
-      refundedCount: 0,
-      refundedPoints: 0,
-      reservationId: 'res_1',
-      billingMode: 'SHADOW',
-      replayed: false,
-      tasks: [generatedTask],
-      failures: [],
-    });
+    createDistributionVariantJobMock.mockResolvedValueOnce(
+      makeVariantJob({
+        total: 2,
+        doneCount: 1,
+        totalChargedPoints: 4,
+        taskIds: [generatedTask.id],
+      }),
+    );
     listArticleDistributionsMock
       .mockResolvedValueOnce({ items: [] }) // initial hydrate
       .mockResolvedValueOnce({ items: [generatedTask] }) // post-generate reload
@@ -374,7 +419,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
 
     fireEvent.click(screen.getByTestId('distribution-points-confirm-submit-btn'));
     await waitFor(() => {
-      expect(generateDistributionVariantsMock).toHaveBeenCalledWith(
+      expect(createDistributionVariantJobMock).toHaveBeenCalledWith(
         GLOBAL_ARTICLE.id,
         {
           targets: expect.arrayContaining([
@@ -669,18 +714,12 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       })
       .mockResolvedValueOnce({ items: [] }); // Brand B initial hydrate
 
-    generateDistributionVariantsMock.mockResolvedValueOnce({
-      articleId: GLOBAL_ARTICLE.id,
-      unitPrice: 2,
-      totalChargedPoints: 2,
-      refundedCount: 0,
-      refundedPoints: 0,
-      reservationId: 'res_race',
-      billingMode: 'SHADOW',
-      replayed: false,
-      tasks: [leakedTask],
-      failures: [],
-    });
+    createDistributionVariantJobMock.mockResolvedValueOnce(
+      makeVariantJob({
+        reservationId: 'res_race',
+        taskIds: [leakedTask.id],
+      }),
+    );
 
     let capturedRevokeOnOk: (() => Promise<void> | void) | undefined;
     confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
@@ -1066,7 +1105,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
 
     let resolveGenerate!: (val: unknown) => void;
     let firstGenSignal: AbortSignal | undefined;
-    generateDistributionVariantsMock.mockImplementation(
+    createDistributionVariantJobMock.mockImplementation(
       (_articleId: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
         firstGenSignal = opts?.signal;
         return new Promise((resolve) => {
@@ -1118,17 +1157,15 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       confirmBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(1);
+    expect(createDistributionVariantJobMock).toHaveBeenCalledTimes(1);
     expect(firstGenSignal?.aborted).toBe(false);
 
     await act(async () => {
-      resolveGenerate({
-        tasks: [l1Task],
-        failures: [],
-        unitPrice: 2,
-        chargedPoints: 2,
-        refundedPoints: 0,
-      });
+      resolveGenerate(
+        makeVariantJob({
+          taskIds: [l1Task.id],
+        }),
+      );
     });
     await waitFor(() => {
       expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
@@ -1255,7 +1292,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     listArticleDistributionsMock.mockResolvedValue({ items: [] });
 
     const seenKeys: Array<string | undefined> = [];
-    generateDistributionVariantsMock
+    createDistributionVariantJobMock
       // Attempt 1: definitive 502 from server -> must rotate key on immediate retry
       .mockImplementationOnce(
         (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
@@ -1281,18 +1318,12 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       .mockImplementationOnce(
         (_articleId: string, _body: unknown, opts?: { idempotencyKey?: string }) => {
           seenKeys.push(opts?.idempotencyKey);
-          return Promise.resolve({
-            articleId: GLOBAL_ARTICLE.id,
-            unitPrice: 2,
-            totalChargedPoints: 2,
-            refundedCount: 0,
-            refundedPoints: 0,
-            reservationId: 'res_r2_ok',
-            billingMode: 'SHADOW',
-            replayed: false,
-            tasks: [generatedTask],
-            failures: [],
-          });
+          return Promise.resolve(
+            makeVariantJob({
+              reservationId: 'res_r2_ok',
+              taskIds: [generatedTask.id],
+            }),
+          );
         },
       );
 
@@ -1321,20 +1352,20 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     // Attempt 1 -> 502 error (modal stays open, pending key cleared)
     fireEvent.click(confirmBtn);
     await waitFor(() => {
-      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(1);
+      expect(createDistributionVariantJobMock).toHaveBeenCalledTimes(1);
       expect(notifyErrorMock).toHaveBeenCalledWith('渠道变体生成失败，请稍后重试');
     });
 
     // Attempt 2 -> immediate retry inside still-open modal MUST rotate key (key2 !== key1), fails with 504
     fireEvent.click(screen.getByTestId('distribution-points-confirm-submit-btn'));
     await waitFor(() => {
-      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(2);
+      expect(createDistributionVariantJobMock).toHaveBeenCalledTimes(2);
     });
 
     // Attempt 3 -> immediate retry after 504 MUST preserve key2 (key3 === key2)
     fireEvent.click(screen.getByTestId('distribution-points-confirm-submit-btn'));
     await waitFor(() => {
-      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(3);
+      expect(createDistributionVariantJobMock).toHaveBeenCalledTimes(3);
     });
 
     // Cancel modal & reopen -> MUST rotate key (key4 !== key3) and succeed
@@ -1349,7 +1380,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
     fireEvent.click(await screen.findByTestId('distribution-points-confirm-submit-btn'));
     await waitFor(() => {
-      expect(generateDistributionVariantsMock).toHaveBeenCalledTimes(4);
+      expect(createDistributionVariantJobMock).toHaveBeenCalledTimes(4);
       expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
     });
 
@@ -1360,5 +1391,202 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(seenKeys[2]).toBe(seenKeys[1]); // 504 preserved key!
     expect(seenKeys[3]).toMatch(/^dist_var_/);
     expect(seenKeys[3]).not.toBe(seenKeys[2]); // cancel + reopen rotated key!
+  });
+
+  it('Issue #363: tracks async variant job progress via useTaskPolling, displays partial failure refund, and recovers active job after refresh/reopen', async () => {
+    const task1 = makeTask({ id: 'task_async_1', channelLabel: 'AstraVault Shopify Blog' });
+    const queuedJob = makeVariantJob({
+      id: 'gvj_async_progress',
+      status: 'QUEUED',
+      total: 2,
+      doneCount: 0,
+      failCount: 0,
+      totalChargedPoints: 0,
+      taskIds: [],
+      finishedAt: null,
+    });
+    const runningJob = makeVariantJob({
+      ...queuedJob,
+      status: 'RUNNING',
+      doneCount: 1,
+      totalChargedPoints: 2,
+      taskIds: [task1.id],
+    });
+    const partialJob = makeVariantJob({
+      ...runningJob,
+      status: 'PARTIAL',
+      doneCount: 1,
+      failCount: 1,
+      refundedCount: 1,
+      refundedPoints: 2,
+      failures: [
+        {
+          index: 1,
+          provider: 'REDDIT_ASSIST',
+          channelLabel: 'Reddit 社区合规辅发',
+          templateKey: 'REDDIT_DISCUSSION',
+          error: '单渠道变体生成超过 45 秒超时，已自动退还该渠道点数',
+        },
+      ],
+      finishedAt: '2026-11-23T06:01:00.000Z',
+    });
+
+    createDistributionVariantJobMock.mockResolvedValueOnce(queuedJob);
+    getDistributionVariantJobMock
+      .mockResolvedValueOnce(runningJob)
+      .mockResolvedValueOnce(partialJob);
+    listArticleDistributionsMock
+      .mockResolvedValueOnce({ items: [] }) // initial hydrate
+      .mockResolvedValueOnce({ items: [task1] }) // mid-job refresh when doneCount grows
+      .mockResolvedValueOnce({ items: [task1] }); // final refresh on PARTIAL
+
+    const onRefreshWallet = vi.fn();
+
+    const { unmount } = render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+        onRefreshWallet={onRefreshWallet}
+      />,
+    );
+
+    fireEvent.click(await screen.findByTestId('distribution-target-l1:conn_shopify_1'));
+    fireEvent.click(screen.getByTestId('distribution-target-REDDIT_ASSIST'));
+    fireEvent.click(screen.getByTestId('distribution-generate-variants-btn'));
+    fireEvent.click(await screen.findByTestId('distribution-points-confirm-submit-btn'));
+
+    // Modal closes immediately upon QUEUED enqueue and progress card becomes visible
+    await waitFor(() => {
+      expect(screen.queryByTestId('distribution-points-confirm-modal')).toBeNull();
+      expect(screen.getByTestId('distribution-variant-job-progress')).toBeTruthy();
+    });
+    expect(capturedVariantJobPollingEnabled).toBe(true);
+    expect(capturedVariantJobPollingCallback).toBeTypeOf('function');
+
+    // Tick 1: RUNNING (1/2)
+    await act(async () => {
+      await capturedVariantJobPollingCallback?.();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('distribution-variant-job-progress').textContent).toContain(
+        '后台并行生成中',
+      );
+    });
+
+    // Tick 2: PARTIAL (1 done, 1 failed + auto refund)
+    await act(async () => {
+      await capturedVariantJobPollingCallback?.();
+    });
+    await waitFor(() => {
+      const progressCard = screen.getByTestId('distribution-variant-job-progress');
+      expect(progressCard.textContent).toContain('部分渠道生成完成');
+      expect(progressCard.textContent).toContain('已自动退还');
+      expect(notifyWarningMock).toHaveBeenCalledWith(expect.stringContaining('已自动退还 2 点'));
+      expect(capturedVariantJobPollingEnabled).toBe(false);
+    });
+
+    unmount();
+
+    // Refresh / reopen recovery: drawer hydrates an in-progress RUNNING job automatically
+    listDistributionVariantJobsMock.mockResolvedValueOnce({ items: [runningJob] });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [task1] });
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={2}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    const recovered = await screen.findByTestId('distribution-variant-job-progress');
+    expect(recovered.textContent).toContain('后台并行生成中');
+    expect(capturedVariantJobPollingEnabled).toBe(true);
+  });
+
+  it('Issue #365: renders GLOBAL exaggerated claim blocker/warning details and passes matchedTerm to onReturnToEditor', async () => {
+    runArticlePreflightMock.mockResolvedValueOnce({
+      ok: false,
+      blockers: [
+        {
+          code: 'COMPLIANCE_BLOCKED',
+          severity: 'blocker',
+          message: '海外（GLOBAL）稿件命中高风险医疗/功效或金融收益违禁宣称',
+          details: ['"cure-all" (第 2 行)'],
+          matches: [
+            {
+              category: 'medical',
+              term: 'cure-all',
+              matchedText: 'cure-all',
+              line: 2,
+              excerpt: 'Guaranteed #1 cure-all miracle!',
+            },
+          ],
+        },
+      ],
+      warnings: [
+        {
+          code: 'GLOBAL_CLAIM_WARNING',
+          severity: 'warning',
+          message: '海外（GLOBAL）稿件包含绝对化/未经证实的夸大表述',
+          details: ['"risk-free" (第 2 行)'],
+          matches: [
+            {
+              category: 'superlative',
+              term: 'risk-free',
+              matchedText: 'risk-free',
+              line: 2,
+              excerpt: '100% safe and risk-free for everyone.',
+            },
+          ],
+        },
+      ],
+    } satisfies DistributionPreflightResult);
+
+    const onReturnToEditor = vi.fn();
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={onReturnToEditor}
+      />,
+    );
+
+    const blockerBox = await screen.findByTestId('distribution-preflight-blockers');
+    expect(blockerBox.textContent).toContain('"cure-all" (第 2 行)');
+    fireEvent.click(screen.getByTestId('distribution-back-to-editor-btn'));
+    expect(onReturnToEditor).toHaveBeenCalledWith('COMPLIANCE_BLOCKED', 'cure-all');
+
+    const warningBox = screen.getByTestId('distribution-preflight-warnings');
+    expect(warningBox.textContent).toContain('"risk-free" (第 2 行)');
+    fireEvent.click(screen.getByTestId('distribution-warning-locate-btn'));
+    expect(onReturnToEditor).toHaveBeenCalledWith('GLOBAL_CLAIM_WARNING', 'risk-free');
   });
 });

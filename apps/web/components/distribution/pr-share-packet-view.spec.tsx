@@ -131,6 +131,29 @@ describe('PrSharePacketView (M6B #355)', () => {
     expect(screen.getByTestId('pr-share-draft-preview').textContent).toContain('星辰存储实测');
   });
 
+  it('Issue #366: localizes Chinese default PR_PACKET badge to English on GLOBAL links so zero CJK leaks into header/chrome', async () => {
+    vi.spyOn(distributionApi, 'fetchPublicPrPacket').mockResolvedValueOnce(
+      makePacket({
+        market: 'GLOBAL',
+        locale: 'en-US',
+        channelLabel: 'PR / KOL 外部媒体协作包',
+      }),
+    );
+
+    render(<PrSharePacketView token="tok_global_i18n_366" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pr-share-fact-table')).toBeTruthy();
+    });
+
+    const page = screen.getByTestId('pr-share-page');
+    const header = page.querySelector('header');
+    expect(header).toBeTruthy();
+    expect(header?.textContent).toContain('PR / KOL Media Kit');
+    expect(header?.textContent).not.toContain('外部媒体协作包');
+    expect(/[\u4E00-\u9FFF]/.test(page.textContent ?? '')).toBe(false);
+  });
+
   it('validates URL client-side, submits valid URL, and displays receipt (including alreadyRecorded)', async () => {
     vi.spyOn(distributionApi, 'fetchPublicPrPacket').mockResolvedValueOnce(makePacket());
     const submitSpy = vi
