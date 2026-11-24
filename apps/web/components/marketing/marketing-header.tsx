@@ -209,7 +209,7 @@ export function MarketingHeader() {
               type="button"
               className="gm-mkt-menu-btn"
               aria-expanded={mobileOpen}
-              aria-controls="gm-mkt-mobile-drawer"
+              aria-controls={mobileOpen ? 'gm-mkt-mobile-drawer' : undefined}
               aria-label={mobileOpen ? copy.menuCloseLabel : copy.menuOpenLabel}
               onClick={() => setMobileOpen((prev) => !prev)}
             >

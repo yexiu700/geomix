@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_MARKETING_LOCALE,
@@ -391,5 +393,28 @@ describe('buildMarketingCanonical and buildMarketingAlternates', () => {
         'x-default': 'https://app.geomix.example/pricing',
       },
     });
+  });
+});
+
+describe('production deployment ops contract (Self-GEO & SSR pricing)', () => {
+  it('exposes PUBLIC_APP_URL, WEB_ORIGIN, and INTERNAL_API_BASE to docker-compose.prod.yml web service without env_file and documents INTERNAL_API_BASE in .env.example', () => {
+    const repoRoot = resolve(__dirname, '../../..');
+    const composeRaw = readFileSync(resolve(repoRoot, 'docker-compose.prod.yml'), 'utf8');
+    const envExampleRaw = readFileSync(resolve(repoRoot, '.env.example'), 'utf8');
+
+    const webServiceMatch = composeRaw.match(
+      /\n  web:\n([\s\S]*?)(?:\n  [a-zA-Z0-9_-]+:|\nvolumes:|$)/,
+    );
+    expect(webServiceMatch, 'docker-compose.prod.yml must define a web service').toBeTruthy();
+    const webBlock = webServiceMatch?.[1] ?? '';
+
+    expect(webBlock).not.toMatch(/^\s*env_file:/m);
+    expect(webBlock).toMatch(/^\s*PUBLIC_APP_URL:\s*\$\{PUBLIC_APP_URL:-\}/m);
+    expect(webBlock).toMatch(/^\s*WEB_ORIGIN:\s*\$\{WEB_ORIGIN:-\}/m);
+    expect(webBlock).toMatch(
+      /^\s*INTERNAL_API_BASE:\s*\$\{INTERNAL_API_BASE:-http:\/\/api:3001\/api\/v1\}/m,
+    );
+
+    expect(envExampleRaw).toMatch(/^INTERNAL_API_BASE=/m);
   });
 });

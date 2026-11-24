@@ -279,4 +279,87 @@ describe('DemoRequestForm & /demo SSR Pages (EN & ZH)', () => {
     expect(zhSchemas[0]?.['@type']).toBe('ContactPage');
     expect(zhSchemas[0]?.inLanguage).toBe('zh-CN');
   });
+
+  it('resets estimatedPts, monthlyGoal, targetMarket, and prior submitted state when searchParams / prefillKey changes on /demo and /zh/demo', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: 0, msg: 'ok', data: { accepted: true, id: 'lead_1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 1. Initial /demo render with calculator prefill
+    const firstEn = await MarketingDemoPage({
+      searchParams: Promise.resolve({
+        estimatedPts: '1168',
+        targetMarket: 'BOTH',
+        monthlyGoal: 'Publish 16 articles/mo',
+      }),
+    });
+    const { rerender } = render(firstEn);
+
+    expect(screen.getByTestId('demo-estimated-pts-banner').textContent).toContain('1,168');
+    expect((screen.getByLabelText(/Monthly GEO Goal/i) as HTMLInputElement).value).toBe(
+      'Publish 16 articles/mo',
+    );
+    expect((screen.getByLabelText(/Target Market/i) as HTMLSelectElement).value).toBe('BOTH');
+
+    // Submit once to enter submitted confirmation state
+    fireEvent.change(screen.getByLabelText(/Your Name/i), { target: { value: 'Alex Chen' } });
+    fireEvent.change(screen.getByLabelText(/Work Email/i), {
+      target: { value: 'alex@nordicaudio.example' },
+    });
+    fireEvent.change(screen.getByLabelText(/Company or Brand Name/i), {
+      target: { value: 'NordicAudio' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Submit 1,000-Point Trial Demo Request/i }));
+    await screen.findByTestId('demo-submit-success');
+
+    // 2. Same-route navigation to plain /demo (no query params) resets submitted state and prefill
+    const clearedEn = await MarketingDemoPage({
+      searchParams: Promise.resolve({}),
+    });
+    rerender(clearedEn);
+
+    expect(screen.queryByTestId('demo-submit-success')).toBeNull();
+    expect(screen.queryByTestId('demo-estimated-pts-banner')).toBeNull();
+    expect((screen.getByLabelText(/Monthly GEO Goal/i) as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText(/Target Market/i) as HTMLSelectElement).value).toBe('GLOBAL');
+
+    // 3. Navigate to a different prefill query on /demo
+    const updatedEn = await MarketingDemoPage({
+      searchParams: Promise.resolve({
+        estimatedPts: '520',
+        targetMarket: 'CN',
+        monthlyGoal: 'CN engine baseline',
+      }),
+    });
+    rerender(updatedEn);
+
+    expect(screen.getByTestId('demo-estimated-pts-banner').textContent).toContain('520');
+    expect((screen.getByLabelText(/Monthly GEO Goal/i) as HTMLInputElement).value).toBe(
+      'CN engine baseline',
+    );
+    expect((screen.getByLabelText(/Target Market/i) as HTMLSelectElement).value).toBe('CN');
+
+    // 4. Same prefill reset guarantee on /zh/demo
+    cleanup();
+    const firstZh = await MarketingZhDemoPage({
+      searchParams: Promise.resolve({
+        estimatedPts: '880',
+        targetMarket: 'CN',
+        monthlyGoal: '豆包与 DeepSeek 基线监测',
+      }),
+    });
+    const zhView = render(firstZh);
+    expect(screen.getByTestId('demo-estimated-pts-banner').textContent).toContain('880');
+
+    const clearedZh = await MarketingZhDemoPage({
+      searchParams: Promise.resolve({}),
+    });
+    zhView.rerender(clearedZh);
+    expect(screen.queryByTestId('demo-estimated-pts-banner')).toBeNull();
+    expect((screen.getByLabelText(/月度 GEO 目标/i) as HTMLInputElement).value).toBe('');
+  });
 });

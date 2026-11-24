@@ -117,6 +117,12 @@ export function isSafeMarketingHttpUrl(raw: string): boolean {
     if (
       hostname === 'localhost' ||
       hostname.endsWith('.localhost') ||
+      hostname === 'localhost.localdomain' ||
+      hostname.endsWith('.localdomain') ||
+      hostname === 'home.arpa' ||
+      hostname.endsWith('.home.arpa') ||
+      hostname === 'metadata.goog' ||
+      hostname.endsWith('.metadata.goog') ||
       hostname.endsWith('.local') ||
       hostname.endsWith('.internal')
     ) {

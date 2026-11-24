@@ -26,6 +26,7 @@ export function generateMetadata(): Metadata {
 export default async function MarketingDemoPage({ searchParams }: DemoPageProps) {
   const resolved = await searchParams;
   const initialPrefill = sanitizeDemoSearchParams(resolved);
+  const prefillKey = `${initialPrefill.targetMarket}|${initialPrefill.estimatedPts ?? ''}|${initialPrefill.monthlyGoal ?? ''}`;
   const copy = getDemoPageCopy('en');
   const contactSchema = buildDemoContactPageJsonLd('en');
 
@@ -43,7 +44,7 @@ export default async function MarketingDemoPage({ searchParams }: DemoPageProps)
 
           <div className="gm-mkt-demo-grid">
             <div className="gm-mkt-demo-card">
-              <DemoRequestForm locale="en" initialPrefill={initialPrefill} />
+              <DemoRequestForm key={prefillKey} locale="en" initialPrefill={initialPrefill} />
             </div>
 
             <aside className="gm-mkt-demo-aside">

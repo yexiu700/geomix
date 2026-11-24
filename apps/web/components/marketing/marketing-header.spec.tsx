@@ -87,21 +87,35 @@ describe('MarketingHeader', () => {
     });
   });
 
-  it('opens and closes the accessible mobile drawer via button and Escape key', () => {
+  it('opens and closes the accessible mobile drawer via button and Escape key with valid aria-controls', () => {
     currentPathname = '/';
-    render(<MarketingHeader />);
+    const { container } = render(<MarketingHeader />);
+
+    const assertAllAriaControlsExist = () => {
+      for (const el of Array.from(container.querySelectorAll('[aria-controls]'))) {
+        const targetId = el.getAttribute('aria-controls');
+        expect(targetId).toBeTruthy();
+        expect(document.getElementById(targetId!)).not.toBeNull();
+      }
+    };
 
     const menuBtn = screen.getByRole('button', { name: 'Open navigation menu' });
     expect(menuBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(menuBtn.getAttribute('aria-controls')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
+    assertAllAriaControlsExist();
 
     fireEvent.click(menuBtn);
     expect(menuBtn.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(menuBtn.getAttribute('aria-controls')).toBe('gm-mkt-mobile-drawer');
+    expect(screen.getByRole('dialog').id).toBe('gm-mkt-mobile-drawer');
+    assertAllAriaControlsExist();
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(menuBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(menuBtn.getAttribute('aria-controls')).toBeNull();
     expect(screen.queryByRole('dialog')).toBeNull();
+    assertAllAriaControlsExist();
   });
 
   it('ignores whitespace-only and expired JWT tokens, and accepts valid future-exp JWTs', async () => {

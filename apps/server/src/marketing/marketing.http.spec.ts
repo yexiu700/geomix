@@ -191,8 +191,10 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
   let marketingService: MarketingService | undefined;
   let adminToken = '';
   let expiredAdminToken = '';
+  let inactiveAdminToken = '';
   let merchantToken = '';
   let expiredMerchantToken = '';
+  let inactiveMerchantToken = '';
 
   const future = new Date('2099-12-31T00:00:00.000Z');
   const past = new Date('2020-01-01T00:00:00.000Z');
@@ -267,6 +269,42 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
           name: 'Expired Tenant',
           isActive: true,
           expiresAt: past,
+        },
+      },
+    ],
+    [
+      'user_inactive_admin',
+      {
+        id: 'user_inactive_admin',
+        tenantId: 'tenant_inactive_admin',
+        username: 'admin-inactive',
+        passwordHash: 'hashed_pw',
+        nickname: 'Inactive Admin',
+        role: 'ADMIN' as const,
+        uiPrefs: null,
+        tenant: {
+          id: 'tenant_inactive_admin',
+          name: 'Inactive Platform Admin',
+          isActive: false,
+          expiresAt: future,
+        },
+      },
+    ],
+    [
+      'user_inactive_merchant',
+      {
+        id: 'user_inactive_merchant',
+        tenantId: 'tenant_inactive_merchant',
+        username: 'merchant-inactive',
+        passwordHash: 'hashed_pw',
+        nickname: 'Inactive Merchant',
+        role: 'MERCHANT' as const,
+        uiPrefs: null,
+        tenant: {
+          id: 'tenant_inactive_merchant',
+          name: 'Inactive Tenant',
+          isActive: false,
+          expiresAt: future,
         },
       },
     ],
@@ -441,6 +479,18 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
   }
 
   beforeAll(async () => {
+    const existingWebOrigin = (process.env.WEB_ORIGIN ?? '').trim();
+    if (!existingWebOrigin) {
+      process.env.WEB_ORIGIN = 'http://localhost:3000';
+    } else if (
+      !existingWebOrigin
+        .split(',')
+        .map((origin) => origin.trim())
+        .includes('http://localhost:3000')
+    ) {
+      process.env.WEB_ORIGIN = `${existingWebOrigin},http://localhost:3000`;
+    }
+
     app = await createApiApp();
     const prismaSvc = app.get(PrismaService) as unknown as { base: unknown; scoped: unknown };
     prismaSvc.base = fakeBase;
@@ -462,6 +512,11 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
       tenantId: 'tenant_expired_admin',
       role: 'ADMIN',
     });
+    inactiveAdminToken = mintAccessToken(secret, {
+      id: 'user_inactive_admin',
+      tenantId: 'tenant_inactive_admin',
+      role: 'ADMIN',
+    });
     merchantToken = mintAccessToken(secret, {
       id: 'user_merchant',
       tenantId: 'tenant_a',
@@ -470,6 +525,11 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
     expiredMerchantToken = mintAccessToken(secret, {
       id: 'user_expired_merchant',
       tenantId: 'tenant_expired',
+      role: 'MERCHANT',
+    });
+    inactiveMerchantToken = mintAccessToken(secret, {
+      id: 'user_inactive_merchant',
+      tenantId: 'tenant_inactive_merchant',
       role: 'MERCHANT',
     });
   });
@@ -1452,5 +1512,218 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
     expect(exactCap).toEqual({ max: 100_000, windowMs: 2_147_483_000 });
     expect(Number.isSafeInteger(exactCap.windowMs)).toBe(true);
     expect(exactCap.windowMs).toBeLessThan(2 ** 31);
+  });
+
+  it('22. exposes Retry-After via CORS on cross-origin 429 for allowed WEB_ORIGIN and blocks untrusted origins', async () => {
+    process.env.MARKETING_LEAD_IP_RATE_LIMIT_MAX = '50';
+    process.env.MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX = '2';
+
+    const payload = {
+      name: 'CORS Tester',
+      email: 'cors-429@example.com',
+      companyBrand: 'CorsCo',
+    };
+
+    for (let i = 0; i < 2; i += 1) {
+      const okRes = await requestJson<{ accepted: boolean; id?: string }>('/api/v2/public/leads', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:3000' },
+        body: payload,
+      });
+      expect(okRes.status).toBe(200);
+      expect(okRes.headers.get('access-control-allow-origin')).toBe('http://localhost:3000');
+    }
+
+    const rateLimited = await requestJson<null>('/api/v2/public/leads', {
+      method: 'POST',
+      headers: { origin: 'http://localhost:3000' },
+      body: payload,
+    });
+    expect(rateLimited.status).toBe(429);
+    expect(rateLimited.body.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+    expect(rateLimited.headers.get('access-control-allow-origin')).toBe('http://localhost:3000');
+    expect(rateLimited.headers.get('access-control-expose-headers') ?? '').toMatch(/Retry-After/i);
+    const retryAfter = rateLimited.headers.get('retry-after');
+    expect(retryAfter).toMatch(/^\d+$/);
+    expect(Number(retryAfter)).toBeGreaterThan(0);
+
+    const evilOriginRes = await requestJson<null>('/api/v2/public/leads', {
+      method: 'POST',
+      headers: { origin: 'https://evil.example' },
+      body: payload,
+    });
+    expect(evilOriginRes.status).toBe(429);
+    expect(evilOriginRes.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('23. createRedisRateLimitStore handles allow, block with positive/zero TTL, exact Redis keys, and close() quit/disconnect fallback', async () => {
+    const evalMock = vi
+      .fn()
+      .mockResolvedValueOnce([1, 600_000])
+      .mockResolvedValueOnce([3, 12_345])
+      .mockResolvedValueOnce([3, 0]);
+    const quitMock = vi.fn().mockResolvedValue('OK');
+    const disconnectMock = vi.fn();
+
+    const store = createRedisRateLimitStore('redis://unused:6379', 'geomix_prod', () => ({
+      eval: evalMock,
+      on: vi.fn(),
+      quit: quitMock,
+      disconnect: disconnectMock,
+    }));
+
+    const limit = { max: 2, windowMs: 600_000 };
+    const allowed = await store.consume('marketing_lead_ip', 'abc123', limit);
+    expect(allowed).toEqual({ allowed: true });
+    expect(evalMock).toHaveBeenNthCalledWith(
+      1,
+      expect.any(String),
+      1,
+      'geomix_prod:marketing:rl:marketing_lead_ip:abc123',
+      '600000',
+    );
+
+    const blockedPositiveTtl = await store.consume('marketing_lead_ip', 'abc123', limit);
+    expect(blockedPositiveTtl).toEqual({ allowed: false, retryAfterSeconds: 13 });
+
+    const blockedZeroTtl = await store.consume('marketing_lead_ip', 'abc123', limit);
+    expect(blockedZeroTtl).toEqual({ allowed: false, retryAfterSeconds: 600 });
+
+    await store.close?.();
+    expect(quitMock).toHaveBeenCalledTimes(1);
+    expect(disconnectMock).not.toHaveBeenCalled();
+
+    // Closing a second time is a no-op
+    await store.close?.();
+    expect(quitMock).toHaveBeenCalledTimes(1);
+
+    // When quit() rejects, close() falls back cleanly to disconnect()
+    const failingQuit = vi.fn().mockRejectedValue(new Error('socket already closed'));
+    const fallbackDisconnect = vi.fn();
+    const storeWithQuitError = createRedisRateLimitStore(
+      'redis://unused:6379',
+      'geomix_prod',
+      () => ({
+        eval: vi.fn().mockResolvedValue([1, 60_000]),
+        on: vi.fn(),
+        quit: failingQuit,
+        disconnect: fallbackDisconnect,
+      }),
+    );
+
+    await storeWithQuitError.consume('marketing_lead_email', 'hash456', {
+      max: 3,
+      windowMs: 60_000,
+    });
+    await expect(storeWithQuitError.close?.()).resolves.toBeUndefined();
+    expect(failingQuit).toHaveBeenCalledTimes(1);
+    expect(fallbackDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('24. enforces AuthGuard -> AdminGuard -> TenantActiveGuard precedence for inactive (403 at AuthGuard) and expired (404 for MERCHANT vs 200/403 for ADMIN) users', async () => {
+    const seeded = seedLead({
+      id: 'lead_inactive_guard',
+      createdAt: new Date('2026-11-24T01:00:00.000Z'),
+    });
+
+    // Disabled (isActive: false) tenants are rejected uniformly at AuthGuard with 403 before route guards
+    // (same response on admin and non-admin routes, preventing any route-existence oracle).
+    for (const token of [inactiveAdminToken, inactiveMerchantToken]) {
+      const getRes = await requestJson<null>('/api/v1/admin/leads', {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(getRes.status).toBe(403);
+      expect(getRes.body.code).toBe(API_ERROR.TENANT_EXPIRED);
+      expect(getRes.body.msg).toBe('账号已停用');
+
+      const patchRes = await requestJson<null>(`/api/v1/admin/leads/${seeded.id}`, {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${token}` },
+        body: { status: 'CONTACTED' },
+      });
+      expect(patchRes.status).toBe(403);
+      expect(patchRes.body.code).toBe(API_ERROR.TENANT_EXPIRED);
+      expect(patchRes.body.msg).toBe('账号已停用');
+    }
+
+    // Expired (isActive: true, expiresAt < now) accounts pass AuthGuard:
+    // AdminGuard runs before TenantActiveGuard, so expired MERCHANT gets 404 on BOTH GET and PATCH,
+    // while expired ADMIN is read-only (200 on GET, 403 on PATCH).
+    const expiredMerchantGet = await requestJson<null>('/api/v1/admin/leads', {
+      headers: { authorization: `Bearer ${expiredMerchantToken}` },
+    });
+    expect(expiredMerchantGet.status).toBe(404);
+    expect(expiredMerchantGet.body.code).toBe(AUTH_ERROR.NOT_FOUND);
+
+    const expiredMerchantPatch = await requestJson<null>(`/api/v1/admin/leads/${seeded.id}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${expiredMerchantToken}` },
+      body: { status: 'CONTACTED' },
+    });
+    expect(expiredMerchantPatch.status).toBe(404);
+    expect(expiredMerchantPatch.body.code).toBe(AUTH_ERROR.NOT_FOUND);
+
+    const expiredAdminGet = await requestJson<MarketingLeadListResult>('/api/v1/admin/leads', {
+      headers: { authorization: `Bearer ${expiredAdminToken}` },
+    });
+    expect(expiredAdminGet.status).toBe(200);
+    expect(expiredAdminGet.body.code).toBe(0);
+
+    const expiredAdminPatch = await requestJson<null>(`/api/v1/admin/leads/${seeded.id}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${expiredAdminToken}` },
+      body: { status: 'CONTACTED' },
+    });
+    expect(expiredAdminPatch.status).toBe(403);
+    expect(expiredAdminPatch.body.code).toBe(API_ERROR.TENANT_EXPIRED);
+  });
+
+  it('25. rejects non-object/malformed JSON with 400 (40001) and sanitizes unexpected Prisma errors to 500 (50000) without leaks', async () => {
+    // Non-object JSON payloads & malformed JSON body
+    for (const rawPayload of ['[]', 'null', '{bad']) {
+      const response = await fetch(`${baseUrl}/api/v2/public/leads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: rawPayload,
+      });
+      const body = (await response.json()) as Envelope<null>;
+      expect(response.status, `Payload ${rawPayload} should return 400`).toBe(400);
+      expect(body.code, `Payload ${rawPayload} should return 40001`).toBe(API_ERROR.BAD_REQUEST);
+    }
+
+    // Unexpected Prisma failures must map to sanitized 500 without leaking DB details or stack traces
+    const secretDbError = 'FATAL: password authentication failed for user geomix_prod_secret';
+    const leadCreateSpy = vi
+      .spyOn(fakeScoped.marketingLead, 'create')
+      .mockRejectedValueOnce(new Error(secretDbError));
+    const pricingFindSpy = vi
+      .spyOn(fakeScoped.pricingItem, 'findMany')
+      .mockRejectedValueOnce(new Error(secretDbError));
+
+    try {
+      const leadRes = await requestJson<null>('/api/v2/public/leads', {
+        method: 'POST',
+        body: {
+          name: 'Db Crash Lead',
+          email: 'db-crash@example.com',
+          companyBrand: 'CrashCo',
+        },
+      });
+      expect(leadRes.status).toBe(500);
+      expect(leadRes.body).toEqual({ code: 50000, msg: '服务器错误', data: null });
+      expect(leadRes.rawText).not.toContain('geomix_prod_secret');
+      expect(leadRes.rawText).not.toContain('FATAL');
+      expect(leadRes.rawText).not.toContain('Error:');
+
+      const pricingRes = await requestJson<null>('/api/v2/public/pricing');
+      expect(pricingRes.status).toBe(500);
+      expect(pricingRes.body).toEqual({ code: 50000, msg: '服务器错误', data: null });
+      expect(pricingRes.rawText).not.toContain('geomix_prod_secret');
+      expect(pricingRes.rawText).not.toContain('FATAL');
+      expect(pricingRes.rawText).not.toContain('Error:');
+    } finally {
+      leadCreateSpy.mockRestore();
+      pricingFindSpy.mockRestore();
+    }
   });
 });

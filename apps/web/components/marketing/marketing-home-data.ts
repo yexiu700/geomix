@@ -890,6 +890,9 @@ export function buildHomeJsonLdSchemas(
       : 'Dual-market Generative Engine Optimization (GEO) & AI Visibility Platform (Global + CN).',
   };
 
+  const pointsFormatted = PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US');
+  const validDays = PUBLIC_PRICING_FALLBACK.demoTrial.validDays;
+
   const softwareApplication: JsonLdData = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -902,10 +905,11 @@ export function buildHomeJsonLdSchemas(
     offers: {
       '@type': 'Offer',
       name: isZh
-        ? `${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')} 点免费 Demo 试用（${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} 天有效）`
-        : `${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')}-Point Trial Demo (${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} Days)`,
-      price: '0',
-      priceCurrency: 'USD',
+        ? `${pointsFormatted} 点免费 Demo 试用（${validDays} 天有效）`
+        : `${pointsFormatted}-Point Trial Demo (${validDays} Days)`,
+      description: isZh
+        ? `面向品牌与增长团队的免费体验额度：含 ${pointsFormatted} 点初始额度与 ${validDays} 天有效期，失败自动退还点数。`
+        : `Complimentary Trial Demo workspace with ${pointsFormatted} points valid for ${validDays} days and automatic point refunds on task failure.`,
       availability: 'https://schema.org/InStock',
       url: demoUrl,
     },

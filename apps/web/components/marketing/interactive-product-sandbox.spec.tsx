@@ -26,32 +26,55 @@ describe('HeroEngineStrip', () => {
 });
 
 describe('InteractiveProductSandbox', () => {
-  it('supports ARIA tab switching via click and keyboard arrows (ArrowRight/ArrowLeft/Home/End)', () => {
-    render(<InteractiveProductSandbox locale="en" />);
+  it('supports ARIA tab switching via click and keyboard arrows (ArrowRight/ArrowLeft/Home/End) with valid aria-controls targets', () => {
+    const { container } = render(<InteractiveProductSandbox locale="en" />);
+
+    const assertValidAriaControls = (
+      expectedActiveTab: HTMLElement,
+      inactiveTabs: HTMLElement[],
+    ) => {
+      const panel = screen.getByRole('tabpanel');
+      expect(expectedActiveTab.getAttribute('aria-controls')).toBe(panel.id);
+      for (const tab of inactiveTabs) {
+        expect(tab.getAttribute('aria-controls')).toBeNull();
+      }
+      const controlledEls = Array.from(container.querySelectorAll('[aria-controls]'));
+      expect(controlledEls.length).toBeGreaterThan(0);
+      for (const el of controlledEls) {
+        const targetId = el.getAttribute('aria-controls');
+        expect(targetId).toBeTruthy();
+        expect(document.getElementById(targetId!)).not.toBeNull();
+      }
+    };
 
     const [tab0, tab1, tab2] = screen.getAllByRole('tab');
     if (!tab0 || !tab1 || !tab2) throw new Error('Expected 3 sandbox tabs');
     expect(tab0.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('sandbox-panel-diagnosis')).toBeTruthy();
+    assertValidAriaControls(tab0, [tab1, tab2]);
 
     // ArrowRight moves to Tab 2
     fireEvent.keyDown(tab0, { key: 'ArrowRight' });
     expect(tab1.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('sandbox-panel-preflight')).toBeTruthy();
+    assertValidAriaControls(tab1, [tab0, tab2]);
 
     // End moves to Tab 3
     fireEvent.keyDown(tab1, { key: 'End' });
     expect(tab2.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('sandbox-panel-distribution')).toBeTruthy();
+    assertValidAriaControls(tab2, [tab0, tab1]);
 
     // Home returns to Tab 1
     fireEvent.keyDown(tab2, { key: 'Home' });
     expect(tab0.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByTestId('sandbox-panel-diagnosis')).toBeTruthy();
+    assertValidAriaControls(tab0, [tab1, tab2]);
 
     // ArrowLeft wraps to Tab 3
     fireEvent.keyDown(tab0, { key: 'ArrowLeft' });
     expect(tab2.getAttribute('aria-selected')).toBe('true');
+    assertValidAriaControls(tab2, [tab0, tab1]);
   });
 
   it('toggles GLOBAL (NordicAudio) and CN (北境声学) citation diagnosis breakdown in Tab 1', () => {

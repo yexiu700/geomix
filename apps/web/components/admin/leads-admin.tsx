@@ -197,18 +197,20 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
     [client, feedback, loadLeads],
   );
 
-  const openEditModal = useCallback(
-    (row: MarketingLeadDto) => {
-      if (updatingIdsRef.current.has(row.id)) return;
-      setEditing(row);
-      setModalError(null);
-      editForm.setFieldsValue({
-        status: row.status,
-        adminNote: row.adminNote ?? '',
-      });
-    },
-    [editForm],
-  );
+  const openEditModal = useCallback((row: MarketingLeadDto) => {
+    if (updatingIdsRef.current.has(row.id)) return;
+    setEditing(row);
+    setModalError(null);
+  }, []);
+
+  useEffect(() => {
+    if (!editing) return;
+    editForm.resetFields();
+    editForm.setFieldsValue({
+      status: editing.status,
+      adminNote: editing.adminNote ?? '',
+    });
+  }, [editing, editForm]);
 
   const closeEditModal = useCallback(() => {
     if (modalSaving) return;
@@ -258,7 +260,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
       {
         title: '品牌 / 官网',
         key: 'brand',
-        width: 210,
+        width: '15%',
         render: (_value, row) => (
           <div>
             <Typography.Text strong>{row.companyBrand}</Typography.Text>
@@ -292,7 +294,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
       {
         title: '联系人 / 邮箱',
         key: 'contact',
-        width: 210,
+        width: '16%',
         render: (_value, row) => (
           <div>
             <div>{row.name}</div>
@@ -310,7 +312,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '目标市场',
         dataIndex: 'targetMarket',
         key: 'targetMarket',
-        width: 132,
+        width: 118,
         render: (market: MarketingLeadMarket) => (
           <Tag style={{ marginInlineEnd: 0 }}>
             {MARKETING_LEAD_MARKET_LABELS[market]?.zh ?? market}
@@ -320,7 +322,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
       {
         title: '月度目标 / 预估点数',
         key: 'goal',
-        width: 220,
+        width: '15%',
         render: (_value, row) => {
           const hasPts = row.estimatedPts !== null && row.estimatedPts !== undefined;
           const hasGoal = Boolean(row.monthlyGoal);
@@ -353,7 +355,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 104,
+        width: 88,
         render: (status: MarketingLeadStatus) => (
           <Tag color={STATUS_TAG_COLORS[status]} style={{ marginInlineEnd: 0 }}>
             {MARKETING_LEAD_STATUS_LABELS[status]}
@@ -364,7 +366,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '跟进备注',
         dataIndex: 'adminNote',
         key: 'adminNote',
-        width: 200,
+        width: '12%',
         render: (adminNote: string | null) =>
           adminNote ? (
             <Typography.Paragraph ellipsis={{ rows: 2, tooltip: adminNote }} style={{ margin: 0 }}>
@@ -378,7 +380,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '提交时间',
         dataIndex: 'createdAt',
         key: 'createdAt',
-        width: 150,
+        width: 132,
         render: (createdAt: string) => (
           <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
             {formatShanghaiDateTime(createdAt)}
@@ -388,7 +390,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
       {
         title: '操作',
         key: 'actions',
-        width: 224,
+        width: 196,
         render: (_value, row) => {
           const isUpdating = updatingIds.has(row.id);
           return (
@@ -399,7 +401,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                 value={row.status}
                 disabled={isUpdating}
                 loading={isUpdating}
-                style={{ width: 116 }}
+                style={{ width: 102 }}
                 options={STATUS_OPTIONS}
                 onChange={(nextStatus: MarketingLeadStatus) =>
                   void handleQuickStatusChange(row, nextStatus)
@@ -521,7 +523,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         loading={loading}
         columns={columns}
         dataSource={rows}
-        scroll={{ x: 'max-content' }}
+        tableLayout="fixed"
         locale={{ emptyText: hasActiveFilters ? '没有匹配的试用线索' : '暂无试用线索' }}
         pagination={{
           current: page,
@@ -620,7 +622,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
           <Alert type="error" showIcon message={modalError} style={{ marginBottom: 12 }} />
         ) : null}
 
-        <Form form={editForm} layout="vertical" scrollToFirstError>
+        <Form form={editForm} preserve={false} layout="vertical" scrollToFirstError>
           <Form.Item
             label="线索状态"
             name="status"

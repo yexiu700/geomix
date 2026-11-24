@@ -471,14 +471,14 @@ async function verifySandboxForLocale(page: Page, path: '/' | '/zh'): Promise<vo
     /block|warn|pass|ready|TBD|CJK|hype|门禁|阻断|警告|通过|违规|泄漏/i,
   );
 
-  // Toggle back to confirm reversible live evaluation
+  // Toggle back to confirm reversible live evaluation restores exact initial score
   if (toggledControlIndex >= 0) {
     await preflightControls.nth(toggledControlIndex).click();
     await expect
       .poll(async () => extractGeoScoreFromText(((await tab2Panel.innerText()) ?? '').trim()), {
         timeout: 5_000,
       })
-      .not.toBe(updatedScore);
+      .toBe(initialScore);
   }
 
   // Tab 3 — 1→N Distribution & Attribution: switch channels + verify T+1 CrawlProbe & SVG T+7/14/30 chart
@@ -706,6 +706,25 @@ test.describe(
               articleBodyLen,
               `${spec.path}: guide detail page must render substantial article body`,
             ).toBeGreaterThan(300);
+          }
+
+          if (
+            spec.path === '/' ||
+            spec.path === '/zh' ||
+            spec.path === '/pricing' ||
+            spec.path === '/zh/pricing'
+          ) {
+            const routeSeo = await extractHeadSeo(page);
+            for (const rawJsonLd of routeSeo.jsonLdRawScripts) {
+              expect(
+                rawJsonLd,
+                `${spec.path}: JSON-LD must not contain fiat priceCurrency or fiat price tokens`,
+              ).not.toMatch(/"priceCurrency"|"price"\s*:|\b(?:USD|CNY|RMB|EUR|GBP)\b/i);
+              expect(
+                rawJsonLd,
+                `${spec.path}: JSON-LD must not contain forbidden fiat price patterns`,
+              ).not.toMatch(FORBIDDEN_FIAT_PRICE_RE);
+            }
           }
         }
 
@@ -1924,6 +1943,384 @@ test.describe(
 );
 
 // ============================================================================
+// TIER 5 — White-Box Adversarial Hardening (Exhaustive Sandbox, Mobile Drawer
+// & Heavy Guide Overflow, /admin/leads Production Ops Flows)
+// ============================================================================
+
+test.describe(
+  'Marketing Site — Tier 5: White-Box Adversarial Hardening',
+  { tag: ['@marketing', '@tier5'] },
+  () => {
+    test('T5.1 Exhaustive Tab 2 Preflight Gate across all 3 toggles, GLOBAL <-> CN track switching, exact score/finding deltas, and valid aria-controls', async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: MARKETING_VIEWPORTS.desktop });
+      const page = await context.newPage();
+      const collector = attachErrorCollector(page);
+
+      try {
+        const res = await page.goto('/', { waitUntil: 'domcontentloaded' });
+        expect(res?.status()).toBe(200);
+
+        const assertNoDanglingAriaControls = async (label: string) => {
+          const dangling = await page.evaluate(() => {
+            const bad: string[] = [];
+            for (const el of Array.from(document.querySelectorAll('[aria-controls]'))) {
+              const targetId = el.getAttribute('aria-controls');
+              if (!targetId || !document.getElementById(targetId)) {
+                bad.push(`${el.tagName}#${el.id || '(no-id)'} -> ${String(targetId)}`);
+              }
+            }
+            return bad;
+          });
+          expect(
+            dangling,
+            `${label}: every [aria-controls] must point to a mounted DOM ID`,
+          ).toEqual([]);
+        };
+
+        await assertNoDanglingAriaControls('initial Tab 1');
+
+        const tablist = await locateSandboxTablist(page, '/');
+        const tabs = tablist.getByRole('tab');
+        await expect(tabs).toHaveCount(3);
+        await tabs.nth(1).click();
+        await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+        await assertNoDanglingAriaControls('after switching to Tab 2');
+
+        const scoreEl = page.getByTestId('sandbox-geo-score');
+        const gateEl = page.getByTestId('sandbox-gate-status');
+        const findingsEl = page.getByTestId('sandbox-preflight-findings');
+        const tbdBtn = page.getByTestId('sandbox-toggle-tbd');
+        const hypeBtn = page.getByTestId('sandbox-toggle-hype');
+        const cjkBtn = page.getByTestId('sandbox-toggle-cjk');
+
+        // Clean GLOBAL baseline: 100 / PASS
+        await expect(scoreEl).toHaveText('100');
+        await expect(gateEl).toContainText('PASS');
+
+        // Toggle 1: [TBD: runtime] -> 93 / BLOCKED / MISSING_FACT_SLOTS
+        await tbdBtn.click();
+        await expect(scoreEl).toHaveText('93');
+        await expect(gateEl).toContainText('BLOCKED');
+        await expect(findingsEl).toContainText('MISSING_FACT_SLOTS');
+        await expect(findingsEl).toContainText('[TBD: runtime]');
+
+        // Toggle 2: Exaggerated/prohibited claim -> 89 / COMPLIANCE_BLOCKED + GLOBAL_CLAIM_WARNING, zero CJK leak
+        await hypeBtn.click();
+        await expect(scoreEl).toHaveText('89');
+        await expect(findingsEl).toContainText('COMPLIANCE_BLOCKED');
+        await expect(findingsEl).toContainText('GLOBAL_CLAIM_WARNING');
+        const enFindingsText = (await findingsEl.textContent()) ?? '';
+        expect(enFindingsText, 'EN preflight findings must not leak CJK text').not.toMatch(
+          /[\u4e00-\u9fff]/,
+        );
+
+        // Toggle 3: CJK leak on GLOBAL -> GLOBAL_CJK_LEAK
+        await cjkBtn.click();
+        await expect(findingsEl).toContainText('GLOBAL_CJK_LEAK');
+
+        // Switch to CN · WordPress -> cjk toggle disabled, GLOBAL_CJK_LEAK disappears, TBD & COMPLIANCE remain
+        await page.getByRole('button', { name: 'CN · WordPress' }).click();
+        await expect(cjkBtn).toBeDisabled();
+        await expect(findingsEl).not.toContainText('GLOBAL_CJK_LEAK');
+        await expect(findingsEl).toContainText('MISSING_FACT_SLOTS');
+        await expect(findingsEl).toContainText('COMPLIANCE_BLOCKED');
+
+        // Toggle TBD and hype OFF -> exact restoration to 100 / PASS
+        await tbdBtn.click();
+        await hypeBtn.click();
+        await expect(scoreEl).toHaveText('100');
+        await expect(gateEl).toContainText('PASS');
+
+        assertNoConsoleOrPageErrors(collector);
+      } finally {
+        await context.close();
+      }
+    });
+
+    test('T5.2 Mobile (390x844) drawer a11y + Escape close + heavy code-block guide overflow + EN->ZH locale switch', async ({
+      browser,
+    }) => {
+      const context = await browser.newContext({ viewport: MARKETING_VIEWPORTS.mobile });
+      const page = await context.newPage();
+      const collector = attachErrorCollector(page);
+
+      try {
+        const res = await page.goto('/', { waitUntil: 'domcontentloaded' });
+        expect(res?.status()).toBe(200);
+        await assertNoHorizontalOverflow(page, { viewports: [MARKETING_VIEWPORTS.mobile] });
+
+        // Desktop nav hidden; mobile toggle visible with aria-expanded="false" and no dangling aria-controls
+        await expect(page.locator('header nav.gm-mkt-nav')).toBeHidden();
+        const menuBtn = page.locator('header button[aria-expanded]').first();
+        await expect(menuBtn).toBeVisible();
+        await expect(menuBtn).toHaveAttribute('aria-expanded', 'false');
+        expect(await menuBtn.getAttribute('aria-controls')).toBeNull();
+        await expect(page.locator('#gm-mkt-mobile-drawer')).toHaveCount(0);
+
+        // Open mobile drawer -> aria-expanded="true", valid aria-controls, visible links, zero overflow
+        await menuBtn.click();
+        await expect(menuBtn).toHaveAttribute('aria-expanded', 'true');
+        await expect(menuBtn).toHaveAttribute('aria-controls', 'gm-mkt-mobile-drawer');
+        const drawer = page.locator('#gm-mkt-mobile-drawer[role="dialog"]');
+        await expect(drawer).toBeVisible();
+        await expect(drawer.getByRole('link', { name: /Pricing/i })).toBeVisible();
+        await expect(drawer.getByRole('link', { name: /Guides/i })).toBeVisible();
+        await expect(drawer.getByRole('link', { name: /Sign In|Enter Console/i })).toBeVisible();
+        await expect(drawer.getByRole('link', { name: /Request Demo/i })).toBeVisible();
+        await assertNoHorizontalOverflow(page, { viewports: [MARKETING_VIEWPORTS.mobile] });
+
+        // Escape closes drawer and clears aria-controls
+        await page.keyboard.press('Escape');
+        await expect(drawer).toHaveCount(0);
+        await expect(menuBtn).toHaveAttribute('aria-expanded', 'false');
+        expect(await menuBtn.getAttribute('aria-controls')).toBeNull();
+
+        // Heavy code-block guide (/guides/llms-txt-and-jsonld-playbook) has zero mobile overflow
+        const guideRes = await page.goto('/guides/llms-txt-and-jsonld-playbook', {
+          waitUntil: 'domcontentloaded',
+        });
+        expect(guideRes?.status()).toBe(200);
+        await expect(page.locator('main pre').first()).toBeVisible();
+        await assertNoHorizontalOverflow(page, { viewports: [MARKETING_VIEWPORTS.mobile] });
+
+        // Switch EN -> ZH via header switcher and verify /zh/guides/llms-txt-and-jsonld-playbook zero overflow
+        await clickHeaderLocaleSwitcher(page, 'zh-CN');
+        await expect(page).toHaveURL(/\/zh\/guides\/llms-txt-and-jsonld-playbook(?:[?#]|$)/);
+        await expect(page.locator('main pre').first()).toBeVisible();
+        await assertNoHorizontalOverflow(page, { viewports: [MARKETING_VIEWPORTS.mobile] });
+
+        assertNoConsoleOrPageErrors(collector);
+      } finally {
+        await context.close();
+      }
+    });
+
+    test('T5.3 /admin/leads production ops flows: desktop overflow, status+market filters & reset, inline status select, note clear-to-null, and modal lead switching', async ({
+      browser,
+    }, testInfo) => {
+      const tag = uniqueTag(testInfo, 't5ops');
+      const emailGlobal = `${tag}-global@e2e.example`;
+      const emailCn = `${tag}-cn@e2e.example`;
+      const brandGlobal = `T5Global ${tag}`;
+      const brandCn = `T5China ${tag}`;
+
+      // Seed 2 distinct leads (GLOBAL & CN) via public v2 API
+      const seedGlobal = await requestV2<{ accepted?: boolean; id?: string }>('/public/leads', {
+        method: 'POST',
+        body: {
+          locale: 'en',
+          name: `Ops Global ${tag}`,
+          email: emailGlobal,
+          companyBrand: brandGlobal,
+          websiteUrl: 'https://t5global.example',
+          targetMarket: 'GLOBAL',
+          notes: 'Global ops test lead',
+        },
+      });
+      expect(seedGlobal.status).toBe(200);
+
+      const seedCn = await requestV2<{ accepted?: boolean; id?: string }>('/public/leads', {
+        method: 'POST',
+        body: {
+          locale: 'zh-CN',
+          name: `Ops CN ${tag}`,
+          email: emailCn,
+          companyBrand: brandCn,
+          websiteUrl: 'https://t5cn.example',
+          targetMarket: 'CN',
+          notes: 'CN ops test lead',
+        },
+      });
+      expect(seedCn.status).toBe(200);
+
+      const admin = getAdminSession();
+      const { context, page } = await createAuthenticatedContext(browser, admin, {
+        viewport: MARKETING_VIEWPORTS.desktop,
+      });
+      const collector = attachErrorCollector(page);
+      const consoleWarnings: string[] = [];
+      page.on('console', (msg) => {
+        if (msg.type() === 'warning') {
+          consoleWarnings.push(msg.text());
+        }
+      });
+
+      const selectAntdFilter = async (comboboxAriaLabel: string, optionText: string) => {
+        const combobox = page.getByRole('combobox', { name: comboboxAriaLabel });
+        const selectBox = combobox.locator(
+          'xpath=ancestor-or-self::*[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]',
+        );
+        await selectBox.click();
+        const dropdown = page
+          .locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden)')
+          .last();
+        await expect(dropdown).toBeVisible();
+        await dropdown
+          .locator('.ant-select-item-option')
+          .filter({ hasText: optionText })
+          .first()
+          .click();
+      };
+
+      try {
+        await page.goto('/admin/leads', { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('main')).toBeVisible();
+        await assertNoHorizontalOverflow(page);
+
+        // Search by shared tag so both seeded leads appear
+        const searchInput = page.getByRole('textbox', { name: '搜索线索' });
+        await searchInput.fill(tag);
+        await page.getByRole('button', { name: /搜\s*索/ }).click();
+        await expect(page.locator('tbody tr').filter({ hasText: brandGlobal })).toBeVisible({
+          timeout: 15_000,
+        });
+        await expect(page.locator('tbody tr').filter({ hasText: brandCn })).toBeVisible({
+          timeout: 15_000,
+        });
+
+        // Apply status=NEW (待跟进) + targetMarket=CN (国内市场) filters
+        await selectAntdFilter('状态筛选', '待跟进');
+        await selectAntdFilter('目标市场筛选', '国内市场');
+        await expect(page.locator('tbody tr').filter({ hasText: brandCn })).toBeVisible({
+          timeout: 10_000,
+        });
+        await expect(page.locator('tbody tr').filter({ hasText: brandGlobal })).toHaveCount(0);
+
+        // Click reset (重置筛选) and re-scope by tag
+        await page.getByRole('button', { name: '重置筛选' }).click();
+        await expect(searchInput).toHaveValue('');
+        await searchInput.fill(tag);
+        await page.getByRole('button', { name: /搜\s*索/ }).click();
+        const globalRow = page.locator('tbody tr').filter({ hasText: brandGlobal }).first();
+        const cnRow = page.locator('tbody tr').filter({ hasText: brandCn }).first();
+        await expect(globalRow).toBeVisible({ timeout: 15_000 });
+        await expect(cnRow).toBeVisible({ timeout: 15_000 });
+
+        // Inline row status <Select>: NEW -> CONTACTED persists
+        const inlineCombobox = globalRow.getByRole('combobox', {
+          name: `变更状态 ${brandGlobal}`,
+        });
+        const inlineSelectBox = inlineCombobox.locator(
+          'xpath=ancestor-or-self::*[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]',
+        );
+        const [inlinePatch] = await Promise.all([
+          page.waitForResponse(
+            (res) =>
+              res.request().method() === 'PATCH' && res.url().includes('/api/v1/admin/leads/'),
+            { timeout: 15_000 },
+          ),
+          (async () => {
+            await inlineSelectBox.click();
+            const dropdown = page
+              .locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden)')
+              .last();
+            await expect(dropdown).toBeVisible();
+            await dropdown
+              .locator('.ant-select-item-option')
+              .filter({ hasText: '已联系' })
+              .first()
+              .click();
+          })(),
+        ]);
+        expect(inlinePatch.status()).toBe(200);
+        await expect(globalRow).toContainText('已联系');
+
+        const afterInline = await queryAdminLeadsApi(admin.accessToken, { keyword: emailGlobal });
+        expect(afterInline.items.find((item) => item.email === emailGlobal)?.status).toBe(
+          'CONTACTED',
+        );
+
+        // Set adminNote on Global lead via modal, then reopen and clear to whitespace -> adminNote === null
+        await globalRow.getByRole('button', { name: `跟进备注 ${brandGlobal}` }).click();
+        const modal1 = page.getByRole('dialog').last();
+        await expect(modal1).toBeVisible();
+        const note1 = modal1.getByRole('textbox', { name: '管理员跟进备注' });
+        await note1.fill(`Initial note ${tag}`);
+        const [setNotePatch] = await Promise.all([
+          page.waitForResponse(
+            (res) =>
+              res.request().method() === 'PATCH' && res.url().includes('/api/v1/admin/leads/'),
+            { timeout: 15_000 },
+          ),
+          modal1.getByRole('button', { name: /保\s*存/ }).click(),
+        ]);
+        expect(setNotePatch.status()).toBe(200);
+        await expect(modal1).toBeHidden({ timeout: 10_000 });
+
+        await globalRow.getByRole('button', { name: `跟进备注 ${brandGlobal}` }).click();
+        const modal2 = page.getByRole('dialog').last();
+        await expect(modal2).toBeVisible();
+        const note2 = modal2.getByRole('textbox', { name: '管理员跟进备注' });
+        await expect(note2).toHaveValue(`Initial note ${tag}`);
+        await note2.fill('   ');
+        const [clearNotePatch] = await Promise.all([
+          page.waitForResponse(
+            (res) =>
+              res.request().method() === 'PATCH' && res.url().includes('/api/v1/admin/leads/'),
+            { timeout: 15_000 },
+          ),
+          modal2.getByRole('button', { name: /保\s*存/ }).click(),
+        ]);
+        expect(clearNotePatch.status()).toBe(200);
+        await expect(modal2).toBeHidden({ timeout: 10_000 });
+
+        const afterClear = await queryAdminLeadsApi(admin.accessToken, { keyword: emailGlobal });
+        expect(afterClear.items.find((item) => item.email === emailGlobal)?.adminNote).toBeNull();
+
+        // Modal lead switching: save note on CN lead -> reopen CN lead & edit -> Cancel -> open Global lead (CONTACTED, null note)
+        await cnRow.getByRole('button', { name: `跟进备注 ${brandCn}` }).click();
+        const cnSaveModal = page.getByRole('dialog').last();
+        await expect(cnSaveModal).toBeVisible();
+        await cnSaveModal.getByRole('textbox', { name: '管理员跟进备注' }).fill(`CN note ${tag}`);
+        const [cnPatch] = await Promise.all([
+          page.waitForResponse(
+            (res) =>
+              res.request().method() === 'PATCH' && res.url().includes('/api/v1/admin/leads/'),
+            { timeout: 15_000 },
+          ),
+          cnSaveModal.getByRole('button', { name: /保\s*存/ }).click(),
+        ]);
+        expect(cnPatch.status()).toBe(200);
+        await expect(cnSaveModal).toBeHidden({ timeout: 10_000 });
+
+        // Open CN modal, type unsaved text, Cancel
+        await cnRow.getByRole('button', { name: `跟进备注 ${brandCn}` }).click();
+        const cnCancelModal = page.getByRole('dialog').last();
+        await expect(cnCancelModal).toBeVisible();
+        const cnCancelNote = cnCancelModal.getByRole('textbox', { name: '管理员跟进备注' });
+        await expect(cnCancelNote).toHaveValue(`CN note ${tag}`);
+        await cnCancelNote.fill('Unsaved stale draft');
+        await cnCancelModal.getByRole('button', { name: /取\s*消/ }).click();
+        await expect(cnCancelModal).toBeHidden({ timeout: 10_000 });
+
+        // Open Global modal -> must show clean CONTACTED status and empty note (no stale draft!)
+        await globalRow.getByRole('button', { name: `跟进备注 ${brandGlobal}` }).click();
+        const globalCleanModal = page.getByRole('dialog').last();
+        await expect(globalCleanModal).toBeVisible();
+        await expect(globalCleanModal.getByRole('textbox', { name: '管理员跟进备注' })).toHaveValue(
+          '',
+        );
+        await expect(globalCleanModal).toContainText('已联系');
+        await globalCleanModal.getByRole('button', { name: /取\s*消/ }).click();
+        await expect(globalCleanModal).toBeHidden({ timeout: 10_000 });
+
+        const formWarnings = consoleWarnings.filter((text) =>
+          /useForm|not connected|Warning:/i.test(text),
+        );
+        expect(formWarnings, 'Admin leads modal switching must emit zero form warnings').toEqual(
+          [],
+        );
+        assertNoConsoleOrPageErrors(collector);
+      } finally {
+        await context.close();
+      }
+    });
+  },
+);
+
+// ============================================================================
 // TIER 2 (FINAL SERIAL BLOCK) — Validation Burst & Rate Limiting
 // MUST stay LAST in file (after Tier 4) so the shared 127.0.0.1 IP rate-limit
 // bucket never poisons legitimate lead-submission tests in Tiers 1–4!
@@ -2056,5 +2453,77 @@ test.describe.serial(
       expect(retryAfter!.trim(), 'Retry-After header must be a positive integer').toMatch(/^\d+$/);
       expect(Number(retryAfter!.trim()), 'Retry-After must be > 0').toBeGreaterThan(0);
     });
+
+    test(
+      'T5.4 Live browser cross-origin 429 + Retry-After UI flow on /demo preserves user inputs',
+      { tag: ['@tier5'] },
+      async ({ browser }, testInfo) => {
+        const tag = uniqueTag(testInfo, 'ui429');
+        const throwawayEmail = `ui429-${tag}@e2e.example`;
+
+        // Exhaust the per-email limit (3 valid requests) via server API
+        for (let i = 1; i <= 3; i += 1) {
+          const seedRes = await requestV2<{ accepted?: boolean; id?: string }>('/public/leads', {
+            method: 'POST',
+            body: {
+              locale: 'en',
+              name: `Prefill ${i}`,
+              email: throwawayEmail,
+              companyBrand: `PrefillCo ${tag}`,
+              targetMarket: 'GLOBAL',
+            },
+          });
+          expect(seedRes.status, `Seed request ${i}/3 should succeed`).toBe(200);
+        }
+
+        const context = await browser.newContext({ viewport: MARKETING_VIEWPORTS.desktop });
+        const page = await context.newPage();
+        const pageErrors: string[] = [];
+        page.on('pageerror', (err) => pageErrors.push(err.message));
+
+        try {
+          const res = await page.goto('/demo', { waitUntil: 'domcontentloaded' });
+          expect(res?.status()).toBe(200);
+
+          const enteredName = `Casey ${tag}`;
+          const enteredBrand = `RateLimitBrand ${tag}`;
+          const enteredNotes = `Preserve these notes across HTTP 429 (${tag})`;
+
+          await page.getByLabel(/Your Name/i).fill(enteredName);
+          await page.getByLabel(/Work Email/i).fill(throwawayEmail);
+          await page.getByLabel(/Company or Brand Name/i).fill(enteredBrand);
+          await page.getByLabel(/Additional Notes/i).fill(enteredNotes);
+
+          const submitBtn = page.locator('main form button[type="submit"]').first();
+          const [leadResponse] = await Promise.all([
+            page.waitForResponse(
+              (r) => r.request().method() === 'POST' && r.url().includes('/api/v2/public/leads'),
+              { timeout: 15_000 },
+            ),
+            submitBtn.click(),
+          ]);
+
+          expect(leadResponse.status()).toBe(429);
+          const retryAfter = await leadResponse.headerValue('retry-after');
+          expect(retryAfter).toMatch(/^\d+$/);
+          expect(Number(retryAfter)).toBeGreaterThan(0);
+
+          const errorBanner = page.getByTestId('demo-submit-error');
+          await expect(errorBanner).toBeVisible();
+          await expect(errorBanner).toContainText(/\d+\s*seconds/i);
+          await expect(page.getByTestId('demo-submit-success')).toHaveCount(0);
+
+          // All user-entered form inputs must remain intact
+          await expect(page.getByLabel(/Your Name/i)).toHaveValue(enteredName);
+          await expect(page.getByLabel(/Work Email/i)).toHaveValue(throwawayEmail);
+          await expect(page.getByLabel(/Company or Brand Name/i)).toHaveValue(enteredBrand);
+          await expect(page.getByLabel(/Additional Notes/i)).toHaveValue(enteredNotes);
+
+          expect(pageErrors, 'No uncaught page errors expected during 429 UI flow').toEqual([]);
+        } finally {
+          await context.close();
+        }
+      },
+    );
   },
 );

@@ -507,7 +507,7 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
-                aria-controls={`${baseId}-panel-${tab.key}`}
+                aria-controls={isSelected ? `${baseId}-panel-${tab.key}` : undefined}
                 tabIndex={isSelected ? 0 : -1}
                 className="gm-mkt-tab"
                 onClick={() => setActiveTab(tab.key)}

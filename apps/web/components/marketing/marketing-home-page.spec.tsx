@@ -17,6 +17,8 @@ function parseJsonLdScripts(container: HTMLElement): Array<Record<string, unknow
   return scripts.map((el) => JSON.parse(el.textContent ?? '{}') as Record<string, unknown>);
 }
 
+const FIAT_SYMBOL_OR_CODE_RE = /[$¥￥€£]|\b(?:USD|CNY|RMB|EUR|GBP)\b/i;
+
 describe('MarketingHomePage (EN & ZH)', () => {
   it('renders EN homepage with hero, workflow, explicit v2.2 roadmap boundary, 4 security commitments, and verbatim-synced JSON-LD', () => {
     const { container } = render(<MarketingHomePage locale="en" />);
@@ -57,9 +59,13 @@ describe('MarketingHomePage (EN & ZH)', () => {
     const types = schemas.map((s) => s['@type']);
     expect(types).toEqual(['Organization', 'SoftwareApplication', 'FAQPage']);
 
-    const appSchema = schemas[1] as { offers: { price: string; url: string } };
-    expect(appSchema.offers.price).toBe('0');
-    expect(appSchema.offers.url).toMatch(/\/demo$/);
+    const appSchema = schemas[1] as { offers: Record<string, unknown> };
+    expect('price' in appSchema.offers).toBe(false);
+    expect('priceCurrency' in appSchema.offers).toBe(false);
+    expect(appSchema.offers.availability).toBe('https://schema.org/InStock');
+    expect(typeof appSchema.offers.description).toBe('string');
+    expect(String(appSchema.offers.url)).toMatch(/\/demo$/);
+    expect(FIAT_SYMBOL_OR_CODE_RE.test(JSON.stringify(schemas))).toBe(false);
 
     const faqSchema = schemas[2] as {
       mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }>;
@@ -96,9 +102,17 @@ describe('MarketingHomePage (EN & ZH)', () => {
     expect(languages?.['zh-CN']).toMatch(/\/zh$/);
     expect(languages?.['x-default']).toBe(languages?.en);
 
-    // Verbatim ZH FAQPage JSON-LD
+    // Verbatim ZH FAQPage JSON-LD and zero-fiat SoftwareApplication Offer
     const schemas = parseJsonLdScripts(container);
     expect(schemas).toHaveLength(3);
+    const zhAppSchema = schemas[1] as { offers: Record<string, unknown> };
+    expect('price' in zhAppSchema.offers).toBe(false);
+    expect('priceCurrency' in zhAppSchema.offers).toBe(false);
+    expect(zhAppSchema.offers.availability).toBe('https://schema.org/InStock');
+    expect(typeof zhAppSchema.offers.description).toBe('string');
+    expect(String(zhAppSchema.offers.url)).toMatch(/\/zh\/demo$/);
+    expect(FIAT_SYMBOL_OR_CODE_RE.test(JSON.stringify(schemas))).toBe(false);
+
     const faqSchema = schemas[2] as {
       inLanguage: string;
       mainEntity: Array<{ name: string; acceptedAnswer: { text: string } }>;

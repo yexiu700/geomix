@@ -456,4 +456,60 @@ describe('LeadsAdmin (/admin/leads console, #379)', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
   });
+
+  it('resets form state cleanly when switching modal from Lead A to Lead B with zero React/AntD warnings', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const client = createClient();
+      render(<LeadsAdmin client={client} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('NordicAudio')).toBeTruthy();
+        expect(screen.getByText('华夏云声')).toBeTruthy();
+      });
+
+      // Open Lead A (status: NEW, adminNote: '初筛合格')
+      fireEvent.click(screen.getByRole('button', { name: '跟进备注 NordicAudio' }));
+      const dialogA = await screen.findByRole('dialog');
+      await waitFor(() => {
+        const noteA = within(dialogA).getByRole('textbox', {
+          name: '管理员跟进备注',
+        }) as HTMLTextAreaElement;
+        expect(noteA.value).toBe('初筛合格');
+        expect(within(dialogA).getByText('待跟进')).toBeTruthy();
+      });
+
+      // Mutate Lead A note then Cancel without saving
+      fireEvent.change(within(dialogA).getByRole('textbox', { name: '管理员跟进备注' }), {
+        target: { value: '未保存的草稿' },
+      });
+      fireEvent.click(within(dialogA).getByRole('button', { name: '取 消' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+
+      // Open Lead B (status: CONTACTED, adminNote: null)
+      fireEvent.click(screen.getByRole('button', { name: '跟进备注 华夏云声' }));
+      const dialogB = await screen.findByRole('dialog');
+      await waitFor(() => {
+        const noteB = within(dialogB).getByRole('textbox', {
+          name: '管理员跟进备注',
+        }) as HTMLTextAreaElement;
+        expect(noteB.value).toBe('');
+        expect(within(dialogB).getByText('已联系')).toBeTruthy();
+      });
+
+      // Flush rc-field-form deferred warningUnhooked setTimeout(..., 0)
+      await act(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
 });
