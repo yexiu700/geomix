@@ -84,7 +84,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [updatingIds, setUpdatingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [editing, setEditing] = useState<MarketingLeadDto | null>(null);
   const [modalSaving, setModalSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -92,6 +92,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
 
   const mountedRef = useRef(true);
   const requestSeqRef = useRef(0);
+  const updatingIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -160,8 +161,13 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
 
   const handleQuickStatusChange = useCallback(
     async (row: MarketingLeadDto, nextStatus: MarketingLeadStatus) => {
-      if (nextStatus === row.status) return;
-      setUpdatingId(row.id);
+      if (nextStatus === row.status || updatingIdsRef.current.has(row.id)) return;
+      updatingIdsRef.current.add(row.id);
+      setUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.add(row.id);
+        return next;
+      });
       setError(null);
       setNotice(null);
       try {
@@ -177,8 +183,14 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         setError(msg);
         feedback.notifyError(msg);
       } finally {
+        updatingIdsRef.current.delete(row.id);
         if (mountedRef.current) {
-          setUpdatingId(null);
+          setUpdatingIds((prev) => {
+            if (!prev.has(row.id)) return prev;
+            const next = new Set(prev);
+            next.delete(row.id);
+            return next;
+          });
         }
       }
     },
@@ -187,6 +199,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
 
   const openEditModal = useCallback(
     (row: MarketingLeadDto) => {
+      if (updatingIdsRef.current.has(row.id)) return;
       setEditing(row);
       setModalError(null);
       editForm.setFieldsValue({
@@ -252,7 +265,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
             {row.websiteUrl ? (
               isSafeMarketingHttpUrl(row.websiteUrl) ? (
                 <a
-                  href={row.websiteUrl}
+                  href={row.websiteUrl.trim()}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -262,7 +275,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                     wordBreak: 'break-all',
                   }}
                 >
-                  {row.websiteUrl}
+                  {row.websiteUrl.trim()}
                 </a>
               ) : (
                 <Typography.Text
@@ -376,32 +389,36 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '操作',
         key: 'actions',
         width: 224,
-        render: (_value, row) => (
-          <Space size={6} wrap>
-            <Select
-              size="small"
-              aria-label={`变更状态 ${row.companyBrand}`}
-              value={row.status}
-              disabled={updatingId === row.id}
-              loading={updatingId === row.id}
-              style={{ width: 116 }}
-              options={STATUS_OPTIONS}
-              onChange={(nextStatus: MarketingLeadStatus) =>
-                void handleQuickStatusChange(row, nextStatus)
-              }
-            />
-            <Button
-              size="small"
-              aria-label={`跟进备注 ${row.companyBrand}`}
-              onClick={() => openEditModal(row)}
-            >
-              跟进备注
-            </Button>
-          </Space>
-        ),
+        render: (_value, row) => {
+          const isUpdating = updatingIds.has(row.id);
+          return (
+            <Space size={6} wrap>
+              <Select
+                size="small"
+                aria-label={`变更状态 ${row.companyBrand}`}
+                value={row.status}
+                disabled={isUpdating}
+                loading={isUpdating}
+                style={{ width: 116 }}
+                options={STATUS_OPTIONS}
+                onChange={(nextStatus: MarketingLeadStatus) =>
+                  void handleQuickStatusChange(row, nextStatus)
+                }
+              />
+              <Button
+                size="small"
+                aria-label={`跟进备注 ${row.companyBrand}`}
+                disabled={isUpdating}
+                onClick={() => openEditModal(row)}
+              >
+                跟进备注
+              </Button>
+            </Space>
+          );
+        },
       },
     ],
-    [handleQuickStatusChange, openEditModal, updatingId],
+    [handleQuickStatusChange, openEditModal, updatingIds],
   );
 
   return (
@@ -533,6 +550,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         maskClosable={!modalSaving}
         destroyOnHidden
         okButtonProps={{ loading: modalSaving }}
+        cancelButtonProps={{ disabled: modalSaving }}
         onOk={() => void handleModalSave()}
         onCancel={closeEditModal}
       >
@@ -567,12 +585,12 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                 <strong>官网：</strong>
                 {isSafeMarketingHttpUrl(editing.websiteUrl) ? (
                   <a
-                    href={editing.websiteUrl}
+                    href={editing.websiteUrl.trim()}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ color: 'var(--gm-info)', wordBreak: 'break-all' }}
                   >
-                    {editing.websiteUrl}
+                    {editing.websiteUrl.trim()}
                   </a>
                 ) : (
                   <Typography.Text type="secondary">{editing.websiteUrl}</Typography.Text>

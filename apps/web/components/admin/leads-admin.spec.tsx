@@ -320,4 +320,140 @@ describe('LeadsAdmin (/admin/leads console, #379)', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect((noteBox as HTMLTextAreaElement).value).toBe('保留未丢失的备注');
   });
+
+  it('maintains independent per-row locks across concurrent inline status updates without clobbering in-flight rows', async () => {
+    let resolveRow1!: (value: MarketingLeadDto) => void;
+    let resolveRow2!: (value: MarketingLeadDto) => void;
+
+    const updateAdminLead = vi
+      .fn<LeadsAdminClient['updateAdminLead']>()
+      .mockImplementation((id, input) => {
+        const base = SAMPLE_LEADS.find((item) => item.id === id) ?? SAMPLE_LEADS[0]!;
+        const updated: MarketingLeadDto = {
+          ...base,
+          status: input.status ?? base.status,
+          updatedAt: '2026-11-24T04:00:00.000Z',
+        };
+        if (id === CUID_1) {
+          return new Promise<MarketingLeadDto>((resolve) => {
+            resolveRow1 = () => resolve(updated);
+          });
+        }
+        return new Promise<MarketingLeadDto>((resolve) => {
+          resolveRow2 = () => resolve(updated);
+        });
+      });
+
+    const client = createClient({ updateAdminLead });
+    render(<LeadsAdmin client={client} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('NordicAudio')).toBeTruthy();
+      expect(screen.getByText('华夏云声')).toBeTruthy();
+    });
+
+    const row1Select = () =>
+      screen.getByRole('combobox', { name: '变更状态 NordicAudio' }) as HTMLInputElement;
+    const row2Select = () =>
+      screen.getByRole('combobox', { name: '变更状态 华夏云声' }) as HTMLInputElement;
+    const row1NoteBtn = () =>
+      screen.getByRole('button', { name: '跟进备注 NordicAudio' }) as HTMLButtonElement;
+    const row2NoteBtn = () =>
+      screen.getByRole('button', { name: '跟进备注 华夏云声' }) as HTMLButtonElement;
+
+    // 1. Start inline PATCH on Row 1 -> Row 1 locked, Row 2 remains enabled.
+    await selectAntdOption(row1Select(), '已联系');
+    await waitFor(() => {
+      expect(updateAdminLead).toHaveBeenCalledWith(CUID_1, { status: 'CONTACTED' });
+      expect(row1Select().disabled).toBe(true);
+      expect(row1NoteBtn().disabled).toBe(true);
+    });
+    expect(row2Select().disabled).toBe(false);
+    expect(row2NoteBtn().disabled).toBe(false);
+
+    // 2. While Row 1 is still in-flight, start inline PATCH on Row 2 -> BOTH rows stay locked.
+    await selectAntdOption(row2Select(), '已归档');
+    await waitFor(() => {
+      expect(updateAdminLead).toHaveBeenCalledWith(CUID_2, { status: 'ARCHIVED' });
+      expect(row2Select().disabled).toBe(true);
+      expect(row2NoteBtn().disabled).toBe(true);
+    });
+    expect(row1Select().disabled).toBe(true);
+    expect(row1NoteBtn().disabled).toBe(true);
+
+    // 3. Settle Row 1 while Row 2 is still pending -> Row 1 unlocks, Row 2 MUST remain locked!
+    await act(async () => {
+      resolveRow1(SAMPLE_LEADS[0]!);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(row1Select().disabled).toBe(false);
+      expect(row1NoteBtn().disabled).toBe(false);
+    });
+    expect(row2Select().disabled).toBe(true);
+    expect(row2NoteBtn().disabled).toBe(true);
+
+    // 4. Settle Row 2 -> Row 2 unlocks cleanly.
+    await act(async () => {
+      resolveRow2(SAMPLE_LEADS[1]!);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(row2Select().disabled).toBe(false);
+      expect(row2NoteBtn().disabled).toBe(false);
+    });
+  });
+
+  it('trims websiteUrl hrefs and disables modal cancel button while saving', async () => {
+    let resolveSave!: (value: MarketingLeadDto) => void;
+    const leadWithSpaces: MarketingLeadDto = {
+      ...SAMPLE_LEADS[0]!,
+      websiteUrl: '  https://nordicaudio.example/demo  ',
+    };
+    const client = createClient({
+      listAdminLeads: vi.fn<LeadsAdminClient['listAdminLeads']>().mockResolvedValue({
+        items: [leadWithSpaces],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      }),
+      updateAdminLead: vi.fn<LeadsAdminClient['updateAdminLead']>().mockImplementation(
+        () =>
+          new Promise<MarketingLeadDto>((resolve) => {
+            resolveSave = resolve;
+          }),
+      ),
+    });
+
+    render(<LeadsAdmin client={client} />);
+    await waitFor(() => {
+      expect(screen.getByText('NordicAudio')).toBeTruthy();
+    });
+
+    const tableLink = screen.getByRole('link', { name: 'https://nordicaudio.example/demo' });
+    expect(tableLink.getAttribute('href')).toBe('https://nordicaudio.example/demo');
+
+    fireEvent.click(screen.getByRole('button', { name: '跟进备注 NordicAudio' }));
+    const dialog = await screen.findByRole('dialog');
+    const modalLink = within(dialog).getByRole('link', {
+      name: 'https://nordicaudio.example/demo',
+    });
+    expect(modalLink.getAttribute('href')).toBe('https://nordicaudio.example/demo');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '保 存' }));
+    await waitFor(() => {
+      const cancelBtn = within(dialog).getByRole('button', { name: '取 消' }) as HTMLButtonElement;
+      expect(cancelBtn.disabled).toBe(true);
+    });
+
+    await act(async () => {
+      resolveSave(leadWithSpaces);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  });
 });

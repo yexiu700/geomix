@@ -26,6 +26,11 @@ import { OutboundHttpClient } from '../infra/outbound-http';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   MarketingService,
+  createRedisRateLimitStore,
+  hashClientIp,
+  normalizeMarketingClientIp,
+  readMarketingLeadEmailRateLimit,
+  readMarketingLeadIpRateLimit,
   type MarketingLeadListResult,
   type MarketingRateLimitStore,
 } from './marketing.service';
@@ -1209,5 +1214,243 @@ describe('MarketingModule HTTP & Security Integration (#379)', () => {
     } satisfies Partial<ApiError>);
 
     await svc.onModuleDestroy();
+  });
+
+  it('19. canonicalizes IPv4-mapped IPv6, mixed-case/uncompressed IPv6, and UNKNOWN across rate-limit buckets and sourceIpHash', async () => {
+    const saltEnv = { MARKETING_LEAD_IP_SALT: 'canon-test-salt' };
+
+    const ipv4Variants = [
+      '203.0.113.50',
+      '::ffff:203.0.113.50',
+      '::FFFF:203.0.113.50',
+      '::FfFf:203.0.113.50',
+      '0:0:0:0:0:ffff:203.0.113.50',
+      '::ffff:cb00:7132',
+      '[::ffff:203.0.113.50]',
+    ];
+    for (const variant of ipv4Variants) {
+      expect(normalizeMarketingClientIp(variant)).toBe('203.0.113.50');
+      expect(hashClientIp(variant, saltEnv)).toBe(hashClientIp('203.0.113.50', saltEnv));
+    }
+
+    const ipv6Variants = [
+      '2001:db8::42',
+      '2001:DB8::42',
+      '2001:0db8::42',
+      '2001:0db8:0000:0000:0000:0000:0000:0042',
+      '[2001:DB8::42]',
+      '2001:DB8::42%eth0',
+    ];
+    for (const variant of ipv6Variants) {
+      expect(normalizeMarketingClientIp(variant)).toBe('2001:db8::42');
+      expect(hashClientIp(variant, saltEnv)).toBe(hashClientIp('2001:db8::42', saltEnv));
+    }
+
+    expect(normalizeMarketingClientIp('UNKNOWN')).toBe('unknown');
+    expect(normalizeMarketingClientIp('  unknown  ')).toBe('unknown');
+    expect(normalizeMarketingClientIp('')).toBe('unknown');
+    expect(hashClientIp('UNKNOWN', saltEnv)).toBeNull();
+    expect(hashClientIp('  unknown  ', saltEnv)).toBeNull();
+    expect(hashClientIp('', saltEnv)).toBeNull();
+
+    // Live HTTP verification: all equivalent X-Forwarded-For forms share one IP bucket.
+    process.env.AUTH_TRUST_PROXY = 'true';
+    process.env.MARKETING_LEAD_IP_RATE_LIMIT_MAX = '1';
+    process.env.MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX = '50';
+
+    const firstV4 = await requestJson<{ accepted: boolean; id?: string }>('/api/v2/public/leads', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '203.0.113.50' },
+      body: { name: 'V4-1', email: 'v4-1@example.com', companyBrand: 'V4 Co' },
+    });
+    expect(firstV4.status).toBe(200);
+
+    for (const [idx, headerIp] of [
+      '::ffff:203.0.113.50',
+      '::FFFF:203.0.113.50',
+      '::FfFf:203.0.113.50',
+      '0:0:0:0:0:ffff:203.0.113.50',
+      '::FFFF:cb00:7132',
+    ].entries()) {
+      const blocked = await requestJson<null>('/api/v2/public/leads', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': headerIp },
+        body: { name: `V4-B${idx}`, email: `v4-b${idx}@example.com`, companyBrand: 'V4 Co' },
+      });
+      expect(blocked.status).toBe(429);
+      expect(blocked.body.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+    }
+
+    // Direct service invocation also collapses hex IPv4-mapped IPv6 into the same bucket.
+    await expect(
+      marketingService!.submitLead(
+        { name: 'V4-Direct', email: 'v4-direct@example.com', companyBrand: 'V4 Co' },
+        '::ffff:cb00:7132',
+      ),
+    ).rejects.toMatchObject({
+      status: 429,
+      code: AUTH_ERROR.TOO_MANY_REQUESTS,
+    } satisfies Partial<ApiError>);
+
+    const firstV6 = await requestJson<{ accepted: boolean; id?: string }>('/api/v2/public/leads', {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '2001:db8::42' },
+      body: { name: 'V6-1', email: 'v6-1@example.com', companyBrand: 'V6 Co' },
+    });
+    expect(firstV6.status).toBe(200);
+
+    for (const [idx, headerIp] of [
+      '2001:DB8::42',
+      '2001:0db8::42',
+      '2001:0db8:0000:0000:0000:0000:0000:0042',
+    ].entries()) {
+      const blocked = await requestJson<null>('/api/v2/public/leads', {
+        method: 'POST',
+        headers: { 'x-forwarded-for': headerIp },
+        body: { name: `V6-B${idx}`, email: `v6-b${idx}@example.com`, companyBrand: 'V6 Co' },
+      });
+      expect(blocked.status).toBe(429);
+      expect(blocked.body.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+    }
+  });
+
+  it('20. rejects corrupt Redis eval replies and malformed store decisions cleanly without fail-open, NaN Retry-After, HTTP 500, or shutdown crash', async () => {
+    const fakePrisma = {
+      scoped: fakeScoped,
+    } as unknown as PrismaService;
+
+    const corruptEvalReplies: unknown[] = [
+      [null, 5000],
+      [0, 5000],
+      [-1, 5000],
+      ['', 5000],
+      [11, 'not-a-number'],
+      [11, null],
+      [11, ''],
+      null,
+    ];
+
+    for (const [idx, reply] of corruptEvalReplies.entries()) {
+      const store = createRedisRateLimitStore('redis://unused:6379', 'geomix', () => ({
+        eval: vi.fn().mockResolvedValue(reply),
+        on: vi.fn(),
+        quit: vi.fn().mockResolvedValue('OK'),
+        disconnect: vi.fn(),
+      }));
+
+      await expect(
+        store.consume('marketing_lead_ip', 'key-hash', { max: 1, windowMs: 60_000 }),
+      ).rejects.toThrow();
+
+      // When wired into MarketingService, corrupt replies must fall back to memoryLimiter (no fail-open, valid Retry-After).
+      const svc = new MarketingService(fakePrisma, {
+        redisStore: store,
+        env: {
+          MARKETING_LEAD_IP_RATE_LIMIT_MAX: '1',
+          MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS: '60',
+          MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX: '10',
+        },
+      });
+      const ip = `198.51.100.${10 + idx}`;
+      const okRes = await svc.submitLead(
+        { name: `C${idx}`, email: `c${idx}-a@example.com`, companyBrand: 'Corrupt Redis Co' },
+        ip,
+      );
+      expect(okRes.accepted).toBe(true);
+
+      let caught: unknown;
+      try {
+        await svc.submitLead(
+          { name: `C${idx}B`, email: `c${idx}-b@example.com`, companyBrand: 'Corrupt Redis Co' },
+          ip,
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ApiError);
+      const apiErr = caught as ApiError;
+      expect(apiErr.status).toBe(429);
+      expect(apiErr.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+      expect(Number.isInteger(apiErr.retryAfterSeconds)).toBe(true);
+      expect(apiErr.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    }
+
+    // Malformed custom MarketingRateLimitStore decisions (null or NaN retryAfterSeconds) fall back instead of throwing 500 or emitting Retry-After: NaN.
+    const malformedDecisions: unknown[] = [
+      null,
+      undefined,
+      { allowed: false, retryAfterSeconds: Number.NaN },
+      { allowed: false, retryAfterSeconds: 0 },
+    ];
+
+    for (const [idx, malformed] of malformedDecisions.entries()) {
+      const badStore: MarketingRateLimitStore = {
+        consume: vi.fn().mockResolvedValue(malformed),
+        close: vi.fn().mockRejectedValue(new Error('Redis socket already closed')),
+      };
+      const svc = new MarketingService(fakePrisma, {
+        redisStore: badStore,
+        env: {
+          MARKETING_LEAD_IP_RATE_LIMIT_MAX: '1',
+          MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS: '30',
+          MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX: '10',
+        },
+      });
+      const ip = `198.51.100.${40 + idx}`;
+      const allowedRes = await svc.submitLead(
+        { name: `M${idx}`, email: `m${idx}-a@example.com`, companyBrand: 'Malformed Co' },
+        ip,
+      );
+      expect(allowedRes.accepted).toBe(true);
+
+      let caught: unknown;
+      try {
+        await svc.submitLead(
+          { name: `M${idx}B`, email: `m${idx}-b@example.com`, companyBrand: 'Malformed Co' },
+          ip,
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ApiError);
+      const apiErr = caught as ApiError;
+      expect(apiErr.status).toBe(429);
+      expect(Number.isInteger(apiErr.retryAfterSeconds)).toBe(true);
+      expect(apiErr.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+
+      // Rejecting redisStore.close() must never crash graceful module teardown.
+      await expect(svc.onModuleDestroy()).resolves.toBeUndefined();
+    }
+  });
+
+  it('21. clamps rate-limit env vars with explicit upper bounds so windowMs stays a safe 32-bit-compatible integer', () => {
+    const extremeIp = readMarketingLeadIpRateLimit({
+      MARKETING_LEAD_IP_RATE_LIMIT_MAX: '9007199254740991',
+      MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS: '9007199254740991',
+    });
+    expect(extremeIp).toEqual({ max: 10, windowMs: 600_000 });
+    expect(Number.isSafeInteger(extremeIp.windowMs)).toBe(true);
+
+    const overflowWindowIp = readMarketingLeadIpRateLimit({
+      MARKETING_LEAD_IP_RATE_LIMIT_MAX: '100001',
+      MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS: '100000000000000',
+    });
+    expect(overflowWindowIp).toEqual({ max: 10, windowMs: 600_000 });
+    expect(Number.isSafeInteger(overflowWindowIp.windowMs)).toBe(true);
+
+    const extremeEmail = readMarketingLeadEmailRateLimit({
+      MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX: '9007199254740991',
+      MARKETING_LEAD_EMAIL_RATE_LIMIT_WINDOW_SECONDS: '2147484',
+    });
+    expect(extremeEmail).toEqual({ max: 3, windowMs: 3_600_000 });
+    expect(Number.isSafeInteger(extremeEmail.windowMs)).toBe(true);
+
+    const exactCap = readMarketingLeadIpRateLimit({
+      MARKETING_LEAD_IP_RATE_LIMIT_MAX: '100000',
+      MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS: '2147483',
+    });
+    expect(exactCap).toEqual({ max: 100_000, windowMs: 2_147_483_000 });
+    expect(Number.isSafeInteger(exactCap.windowMs)).toBe(true);
+    expect(exactCap.windowMs).toBeLessThan(2 ** 31);
   });
 });

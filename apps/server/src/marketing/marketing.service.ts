@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { Inject, Injectable, Optional, type OnModuleDestroy } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
@@ -30,6 +31,8 @@ const DEFAULT_LEAD_IP_RATE_LIMIT_MAX = 10;
 const DEFAULT_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS = 600;
 const DEFAULT_LEAD_EMAIL_RATE_LIMIT_MAX = 3;
 const DEFAULT_LEAD_EMAIL_RATE_LIMIT_WINDOW_SECONDS = 3600;
+const MAX_LEAD_RATE_LIMIT_MAX = 100_000;
+const MAX_LEAD_RATE_LIMIT_WINDOW_SECONDS = 2_147_483;
 
 const FIXED_WINDOW_LUA = `
 local current = redis.call('INCR', KEYS[1])
@@ -111,19 +114,24 @@ type SelectedMarketingLead = {
   updatedAt: Date;
 };
 
-function readPositiveInt(raw: string | undefined, fallback: number): number {
+function readPositiveInt(raw: string | undefined, fallback: number, maxAllowed: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
   const parsed = Number(raw.trim());
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maxAllowed ? parsed : fallback;
 }
 
 export function readMarketingLeadIpRateLimit(
   env: Record<string, string | undefined> = process.env,
 ): FreeActionRateLimit {
-  const max = readPositiveInt(env.MARKETING_LEAD_IP_RATE_LIMIT_MAX, DEFAULT_LEAD_IP_RATE_LIMIT_MAX);
+  const max = readPositiveInt(
+    env.MARKETING_LEAD_IP_RATE_LIMIT_MAX,
+    DEFAULT_LEAD_IP_RATE_LIMIT_MAX,
+    MAX_LEAD_RATE_LIMIT_MAX,
+  );
   const windowSeconds = readPositiveInt(
     env.MARKETING_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_LEAD_IP_RATE_LIMIT_WINDOW_SECONDS,
+    MAX_LEAD_RATE_LIMIT_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }
@@ -134,10 +142,12 @@ export function readMarketingLeadEmailRateLimit(
   const max = readPositiveInt(
     env.MARKETING_LEAD_EMAIL_RATE_LIMIT_MAX,
     DEFAULT_LEAD_EMAIL_RATE_LIMIT_MAX,
+    MAX_LEAD_RATE_LIMIT_MAX,
   );
   const windowSeconds = readPositiveInt(
     env.MARKETING_LEAD_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_LEAD_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
+    MAX_LEAD_RATE_LIMIT_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }
@@ -154,26 +164,103 @@ function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
+export function normalizeMarketingClientIp(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === 'unknown') return 'unknown';
+
+  let candidate = trimmed;
+  if (candidate.startsWith('[') && candidate.endsWith(']')) {
+    candidate = candidate.slice(1, -1).trim();
+  }
+  const zoneIndex = candidate.indexOf('%');
+  if (zoneIndex !== -1) {
+    candidate = candidate.slice(0, zoneIndex);
+  }
+  if (!candidate || candidate === 'unknown') return 'unknown';
+
+  if (isIP(candidate) === 6) {
+    try {
+      const canonical = new URL(`http://[${candidate}]`).hostname.slice(1, -1).toLowerCase();
+      const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(canonical);
+      if (mapped) {
+        const hi = Number.parseInt(mapped[1]!, 16);
+        const lo = Number.parseInt(mapped[2]!, 16);
+        return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+      }
+      return canonical;
+    } catch {
+      return candidate;
+    }
+  }
+
+  return candidate;
+}
+
 export function hashClientIp(
   ip: string,
   env: Record<string, string | undefined> = process.env,
 ): string | null {
-  const cleaned = ip.trim();
-  if (!cleaned || cleaned === 'unknown') return null;
+  const cleaned = normalizeMarketingClientIp(ip);
+  if (cleaned === 'unknown') return null;
   const salt = resolveMarketingIpSalt(env);
   return sha256Hex(`${salt}:${cleaned}`);
 }
 
-function createRedisRateLimitStore(redisUrl: string, queuePrefix: string): MarketingRateLimitStore {
-  let client: IORedis | null = null;
-  const ensure = (): IORedis => {
+type RedisRateLimitClient = Pick<IORedis, 'eval' | 'on' | 'quit' | 'disconnect'>;
+
+function parseStrictRedisNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeRateDecision(raw: unknown): MarketingRateDecision {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error('Malformed rate limit decision');
+  }
+  const candidate = raw as { allowed?: unknown; retryAfterSeconds?: unknown };
+  if (typeof candidate.allowed !== 'boolean') {
+    throw new Error('Malformed rate limit decision');
+  }
+  if (candidate.allowed) {
+    return { allowed: true };
+  }
+  if (
+    typeof candidate.retryAfterSeconds !== 'number' ||
+    !Number.isFinite(candidate.retryAfterSeconds) ||
+    candidate.retryAfterSeconds < 1
+  ) {
+    throw new Error('Invalid retryAfterSeconds in rate limit decision');
+  }
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.max(1, Math.ceil(candidate.retryAfterSeconds)),
+  };
+}
+
+export function createRedisRateLimitStore(
+  redisUrl: string,
+  queuePrefix: string,
+  createClient?: () => RedisRateLimitClient,
+): MarketingRateLimitStore {
+  let client: RedisRateLimitClient | null = null;
+  const ensure = (): RedisRateLimitClient => {
     if (!client) {
-      client = new IORedis(redisUrl, {
-        lazyConnect: true,
-        maxRetriesPerRequest: 1,
-        enableReadyCheck: false,
-        connectTimeout: 2_000,
-      });
+      client = createClient
+        ? createClient()
+        : new IORedis(redisUrl, {
+            lazyConnect: true,
+            maxRetriesPerRequest: 1,
+            enableReadyCheck: false,
+            connectTimeout: 2_000,
+          });
       client.on('error', () => {
         // Silent fallback to in-memory limiter when Redis is unavailable.
       });
@@ -190,13 +277,17 @@ function createRedisRateLimitStore(redisUrl: string, queuePrefix: string): Marke
       if (!Array.isArray(raw) || raw.length < 2) {
         throw new Error('Unexpected Redis rate limit response');
       }
-      const current = Number(raw[0]);
-      const ttlMs = Number(raw[1]);
-      if (!Number.isFinite(current)) {
+      const current = parseStrictRedisNumber(raw[0]);
+      if (current === null || !Number.isInteger(current) || current < 1) {
         throw new Error('Invalid Redis rate limit counter');
       }
+      const ttlMs = parseStrictRedisNumber(raw[1]);
+      if (ttlMs === null) {
+        throw new Error('Invalid Redis rate limit TTL');
+      }
       if (current > safeMax) {
-        const retryAfterSeconds = Math.max(1, Math.ceil(Math.max(1, ttlMs) / 1000));
+        const effectiveTtlMs = ttlMs > 0 ? ttlMs : safeWindowMs;
+        const retryAfterSeconds = Math.max(1, Math.ceil(effectiveTtlMs / 1000));
         return { allowed: false, retryAfterSeconds };
       }
       return { allowed: true };
@@ -272,7 +363,11 @@ export class MarketingService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.redisStore?.close?.();
+    try {
+      await this.redisStore?.close?.();
+    } catch {
+      // Ignore Redis shutdown errors during graceful module teardown.
+    }
   }
 
   resetRateLimits(): void {
@@ -281,7 +376,7 @@ export class MarketingService implements OnModuleDestroy {
   }
 
   async submitLead(body: unknown, clientIp: string): Promise<MarketingLeadSubmitResult> {
-    const normalizedIp = clientIp.trim() || 'unknown';
+    const normalizedIp = normalizeMarketingClientIp(clientIp);
     await this.assertRateAllowed(
       'marketing_lead_ip',
       normalizedIp,
@@ -413,7 +508,8 @@ export class MarketingService implements OnModuleDestroy {
 
     if (this.redisStore) {
       try {
-        decision = await this.redisStore.consume(scope, keyHash, limit);
+        const rawDecision = await this.redisStore.consume(scope, keyHash, limit);
+        decision = normalizeRateDecision(rawDecision);
       } catch {
         decision = this.memoryLimiter.consume(scope, keyHash, limit);
       }
@@ -422,12 +518,11 @@ export class MarketingService implements OnModuleDestroy {
     }
 
     if (!decision.allowed) {
-      throw new ApiError(
-        429,
-        AUTH_ERROR.TOO_MANY_REQUESTS,
-        RATE_LIMIT_MESSAGE,
-        decision.retryAfterSeconds,
-      );
+      const safeRetryAfter =
+        Number.isFinite(decision.retryAfterSeconds) && decision.retryAfterSeconds >= 1
+          ? Math.max(1, Math.ceil(decision.retryAfterSeconds))
+          : Math.max(1, Math.ceil(limit.windowMs / 1000));
+      throw new ApiError(429, AUTH_ERROR.TOO_MANY_REQUESTS, RATE_LIMIT_MESSAGE, safeRetryAfter);
     }
   }
 }
