@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 import {
   API_ERROR,
   BRAND_FACT_TOP_K_CHUNKS,
+  NEAR_MISS_TIER_LABELS,
   compareGeoBriefPriority,
   computeGeoBriefPriorityScore,
   normalizeFanOutQueries,
@@ -36,6 +37,7 @@ import {
   type BriefSignalObservation,
   type BriefSynthesisContext,
 } from './briefs.mapper';
+import { NEAR_MISS_GAP_LABELS } from './near-miss-diagnosis';
 
 const MAX_AUTO_BRIEFS_PER_RUN = 5;
 
@@ -390,6 +392,11 @@ function buildBriefSynthesisMessages(
           '- sourceType=CITATION_COUNTER 时，recommendedRecipe 必须固定为 "CITATION_COUNTER"，outlineH2 须覆盖并超越竞品高引用页议题骨架，强制注入我方已匹配品牌事实卡的实测参数与对比表。',
         ]
       : []),
+    ...(ctx.sourceType === 'NEAR_MISS_BOOST'
+      ? [
+          '- sourceType=NEAR_MISS_BOOST 时，须针对已诊断出的页面结构缺口（首段直答、参数对比表、FAQ/JSON-LD、核心品牌事实覆盖）给出可直接落地的补强修改大纲，并优先注入已匹配的品牌事实卡数据。',
+        ]
+      : []),
     ...languageRules,
     ...(strictRetry
       ? [
@@ -417,6 +424,27 @@ function buildBriefSynthesisMessages(
     .map((heading, idx) => `${idx + 1}. ${heading}`);
   const sourceExcerpt = ctx.sourceArticleExcerpt?.trim().slice(0, 4000) ?? '';
 
+  const nearMissBlock = ctx.nearMiss
+    ? [
+        '--- Near-Miss 机会层级与页面缺口诊断 ---',
+        `层级：${ctx.nearMiss.tier}（${NEAR_MISS_TIER_LABELS[ctx.nearMiss.tier]}）`,
+        ...(ctx.nearMiss.diagnosis
+          ? [
+              `抓取状态：${ctx.nearMiss.diagnosis.fetchStatus}${ctx.nearMiss.diagnosis.fetchFallbackReason ? `（${ctx.nearMiss.diagnosis.fetchFallbackReason}）` : ''}`,
+              `已检出结构缺口：${
+                ctx.nearMiss.diagnosis.missingGaps.length > 0
+                  ? ctx.nearMiss.diagnosis.missingGaps
+                      .map((g) => `${g}(${NEAR_MISS_GAP_LABELS[g]})`)
+                      .join('、')
+                  : '无明显基础结构缺口'
+              }`,
+              `已检测 JSON-LD 类型：${ctx.nearMiss.diagnosis.jsonLdTypes.join(', ') || '无'}`,
+              `品牌事实覆盖：${ctx.nearMiss.diagnosis.coveredFactCount}/${ctx.nearMiss.diagnosis.totalFactCount}（正文提及品牌=${String(ctx.nearMiss.diagnosis.brandMentionedOnPage)}）`,
+            ]
+          : []),
+      ].join('\n')
+    : '';
+
   const userContent = [
     `品牌：${ctx.brandName}（当地品牌名：${ctx.localBrandName}，品类：${ctx.category}，市场：${ctx.market}）`,
     `信号来源：${ctx.sourceType}（优先级：${ctx.priorityScore}）`,
@@ -425,10 +453,11 @@ function buildBriefSynthesisMessages(
     ctx.sourceCitationTitle ? `目标页标题：${ctx.sourceCitationTitle}` : '',
     ctx.competitorFocus.length > 0 ? `重点竞品：${ctx.competitorFocus.join('、')}` : '',
     ctx.targetFanOuts.length > 0 ? `搜索拆解子词：${ctx.targetFanOuts.join('、')}` : '',
+    nearMissBlock,
     sourceHeadingLines.length > 0
-      ? `--- 竞品高引用页议题骨架 ---\n${sourceHeadingLines.join('\n')}`
+      ? `--- 目标参考页议题骨架 ---\n${sourceHeadingLines.join('\n')}`
       : '',
-    sourceExcerpt ? `--- 竞品高引用页正文摘录 ---\n${sourceExcerpt}` : '',
+    sourceExcerpt ? `--- 目标参考页正文摘录 ---\n${sourceExcerpt}` : '',
     obsLines.length > 0 ? `--- AI 回答观测摘要 ---\n${obsLines.join('\n')}` : '',
     citeLines.length > 0
       ? `--- 引用来源（共 ${ctx.citations.length} 条）---\n${citeLines.join('\n')}`

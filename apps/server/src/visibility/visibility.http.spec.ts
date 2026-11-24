@@ -9,6 +9,7 @@ import {
   PRICING_DEFAULTS,
   QUOTA_DEFAULTS,
   parseEnv,
+  type NearMissListResponse,
   type VisibilityCitationListResponse,
   type VisibilityEngineAvailabilityResponse,
   type VisibilityOpportunitiesResponse,
@@ -167,6 +168,7 @@ type ObservationRec = {
   brandPassage: string | null;
   competitorHits: Prisma.JsonValue | null;
   fanOutQueries: string[];
+  rawMetaJson: Prisma.JsonValue | null;
   judgeModel: string | null;
   tokensIn: number | null;
   tokensOut: number | null;
@@ -186,6 +188,49 @@ type CitationRec = {
   sourceKind: string;
   position: number;
   createdAt: Date;
+};
+
+type RetrievedSourceRec = {
+  id: string;
+  tenantId: string;
+  brandId: string;
+  brandMarketId: string;
+  observationId: string;
+  engine: string;
+  url: string;
+  domain: string;
+  title: string | null;
+  snippet: string | null;
+  sourceKind: string;
+  wasOpened: boolean;
+  wasCited: boolean;
+  rank: number | null;
+  createdAt: Date;
+};
+
+type PublishRecordRec = {
+  id: string;
+  tenantId: string;
+  brandId: string;
+  brandMarketId: string;
+  articleId: string;
+  publishedUrl: string;
+  channel: string;
+  publishedAt: Date;
+  latestRetestRunId: string | null;
+  afterMetrics: Prisma.JsonValue | null;
+  crawlStatus: string;
+  crawlCheckedAt: Date | null;
+  updatedAt: Date;
+  article: { id: string; title: string; targetPrompt: string } | null;
+  retestSchedules: Array<{
+    id: string;
+    status: string;
+    milestoneDay: number;
+    visibilityRunId: string | null;
+    metricsSnapshotJson: Prisma.JsonValue | null;
+    executedAt: Date | null;
+  }>;
 };
 
 class InMemoryVisibilityStore {
@@ -215,6 +260,8 @@ class InMemoryVisibilityStore {
   readonly runs = new Map<string, RunRec>();
   readonly observations = new Map<string, ObservationRec>();
   readonly citations = new Map<string, CitationRec>();
+  readonly retrievedSources = new Map<string, RetrievedSourceRec>();
+  readonly publishRecords = new Map<string, PublishRecordRec>();
   readonly retestSchedules = new Map<
     string,
     {
@@ -1082,6 +1129,7 @@ class InMemoryVisibilityStore {
               brandPassage: null,
               competitorHits: null,
               fanOutQueries: [],
+              rawMetaJson: null,
               judgeModel: null,
               tokensIn: null,
               tokensOut: null,
@@ -1184,6 +1232,77 @@ class InMemoryVisibilityStore {
           return { count };
         },
       },
+      visibilityRetrievedSource: {
+        count: async ({ where }: { where?: Record<string, unknown> }) => {
+          let count = 0;
+          for (const row of this.retrievedSources.values()) {
+            if (where?.tenantId && row.tenantId !== where.tenantId) continue;
+            if (where?.brandId && row.brandId !== where.brandId) continue;
+            if (where?.brandMarketId && row.brandMarketId !== where.brandMarketId) continue;
+            if (typeof where?.wasCited === 'boolean' && row.wasCited !== where.wasCited) continue;
+            const createdAt = where?.createdAt as { gte?: Date; lte?: Date } | undefined;
+            if (createdAt?.gte && row.createdAt < createdAt.gte) continue;
+            if (createdAt?.lte && row.createdAt > createdAt.lte) continue;
+            count += 1;
+          }
+          return count;
+        },
+        findMany: async ({ where, take }: { where?: Record<string, unknown>; take?: number }) => {
+          const out: Array<RetrievedSourceRec & { observation: ObservationRec | null }> = [];
+          for (const row of this.retrievedSources.values()) {
+            if (where?.tenantId && row.tenantId !== where.tenantId) continue;
+            if (where?.brandId && row.brandId !== where.brandId) continue;
+            if (where?.brandMarketId && row.brandMarketId !== where.brandMarketId) continue;
+            if (typeof where?.wasCited === 'boolean' && row.wasCited !== where.wasCited) continue;
+            const createdAt = where?.createdAt as { gte?: Date; lte?: Date } | undefined;
+            if (createdAt?.gte && row.createdAt < createdAt.gte) continue;
+            if (createdAt?.lte && row.createdAt > createdAt.lte) continue;
+            const obs = this.observations.get(row.observationId) ?? null;
+            out.push({ ...row, observation: obs ? { ...obs } : null });
+          }
+          out.sort(
+            (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+          );
+          return typeof take === 'number' ? out.slice(0, take) : out;
+        },
+        createMany: async ({
+          data,
+        }: {
+          data: Array<Omit<RetrievedSourceRec, 'id' | 'createdAt'>>;
+        }) => {
+          for (const item of data) {
+            const id = this.nextId('vret');
+            this.retrievedSources.set(id, { id, ...item, createdAt: new Date() });
+          }
+          return { count: data.length };
+        },
+        deleteMany: async ({ where }: { where: { observationId: string; tenantId: string } }) => {
+          let count = 0;
+          for (const [id, row] of this.retrievedSources.entries()) {
+            if (row.observationId === where.observationId && row.tenantId === where.tenantId) {
+              this.retrievedSources.delete(id);
+              count += 1;
+            }
+          }
+          return { count };
+        },
+      },
+      geoPublishRecord: {
+        findMany: async ({ where, take }: { where?: Record<string, unknown>; take?: number }) => {
+          const out: PublishRecordRec[] = [];
+          for (const rec of this.publishRecords.values()) {
+            if (where?.tenantId && rec.tenantId !== where.tenantId) continue;
+            if (where?.brandId && rec.brandId !== where.brandId) continue;
+            if (where?.brandMarketId && rec.brandMarketId !== where.brandMarketId) continue;
+            if (where?.crawlStatus && rec.crawlStatus !== where.crawlStatus) continue;
+            out.push({
+              ...rec,
+              retestSchedules: rec.retestSchedules.filter((s) => s.status === 'COMPLETED'),
+            });
+          }
+          return typeof take === 'number' ? out.slice(0, take) : out;
+        },
+      },
     };
     return client;
   }
@@ -1230,6 +1349,8 @@ class InMemoryVisibilityStore {
         'updateMany',
       ]),
       visibilityCitation: wrapDelegate('visibilityCitation', ['findMany']),
+      visibilityRetrievedSource: wrapDelegate('visibilityRetrievedSource', ['count', 'findMany']),
+      geoPublishRecord: wrapDelegate('geoPublishRecord', ['findMany']),
     };
   }
 }
@@ -2060,5 +2181,149 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
     expect(autoIdem1.data.id).not.toBe(autoIdem2.data.id);
     await runner.process({ tenantId: tenantB, runId: autoIdem1.data.id });
     await runner.process({ tenantId: tenantB, runId: autoIdem2.data.id });
+  });
+
+  it('serves GET /api/v2/brands/:brandId/visibility/near-miss across all 4 tiers, supports blank query params, Day-1 fallback, filters, and tenant isolation (#368)', async () => {
+    // 1. Auth 401
+    const unauth = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss`,
+    );
+    expect(unauth.status).toBe(401);
+
+    // 2. Cross-tenant / unknown brand 404
+    const crossTenant = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=CN`,
+      { token: tokenShadowB },
+    );
+    expect(crossTenant.status).toBe(404);
+
+    // 3. Dual-market missing market -> 400; invalid days/tier -> 400
+    const missingMarket = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=&days=&tier=&sourceKind=`,
+      { token: tokenStrictA },
+    );
+    expect(missingMarket.status).toBe(400);
+
+    const badDays = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=CN&days=91`,
+      { token: tokenStrictA },
+    );
+    expect(badDays.status).toBe(400);
+
+    const badTier = await httpJson(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=CN&tier=INVALID_TIER`,
+      { token: tokenStrictA },
+    );
+    expect(badTier.status).toBe(400);
+
+    // 4. CN brand with blank query params (?market=&days=&tier=&sourceKind=) after runner.process()
+    // Seed a Tier 3A CRAWLED_NOT_CITED publish record on dualBrandA CN
+    const now = new Date();
+    store.publishRecords.set('pub_nm_3a_1', {
+      id: 'pub_nm_3a_1',
+      tenantId: tenantA,
+      brandId: dualBrandAId,
+      brandMarketId: dualBrandAMarketCnId,
+      articleId: 'art_nm_1',
+      publishedUrl: 'https://jiguangnas.cn/blog/crawled-not-cited-guide',
+      channel: 'WORDPRESS',
+      publishedAt: now,
+      latestRetestRunId: null,
+      afterMetrics: null,
+      crawlStatus: 'OK',
+      crawlCheckedAt: now,
+      updatedAt: now,
+      article: {
+        id: 'art_nm_1',
+        title: '极光NAS 四盘位静音实测全指南',
+        targetPrompt: '家用静音四盘位NAS推荐',
+      },
+      retestSchedules: [
+        {
+          id: 'sched_nm_3a_1',
+          status: 'COMPLETED',
+          milestoneDay: 7,
+          visibilityRunId: null,
+          metricsSnapshotJson: {
+            mentionRate: 0.5,
+            avgPosition: 2,
+            sentiment: 'positive',
+            citationHit: false,
+          },
+          executedAt: now,
+        },
+      ],
+    });
+
+    const cnAll = await httpJson<NearMissListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=cn&days=&tier=&sourceKind=`,
+      { token: tokenStrictA },
+    );
+    expect(cnAll.status).toBe(200);
+    expect(cnAll.code).toBe(0);
+    expect(cnAll.data.brandId).toBe(dualBrandAId);
+    expect(cnAll.data.market).toBe('CN');
+    expect(cnAll.data.days).toBe(30);
+    expect(cnAll.data.hasRawRetrievalSignals).toBe(true);
+    expect(cnAll.data.tierCounts.OPENED_NOT_CITED).toBeGreaterThan(0);
+    expect(cnAll.data.tierCounts.RETRIEVED_NOT_CITED).toBeGreaterThan(0);
+    expect(cnAll.data.tierCounts.CRAWLED_NOT_CITED).toBe(1);
+    expect(cnAll.data.items.length).toBe(cnAll.data.total);
+
+    // Tier filter preserves tierCounts while filtering returned items
+    const onlyTier1 = await httpJson<NearMissListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${dualBrandAId}/visibility/near-miss?market=CN&tier=OPENED_NOT_CITED&sourceKind=OWNED`,
+      { token: tokenStrictA },
+    );
+    expect(onlyTier1.status).toBe(200);
+    expect(onlyTier1.data.items.length).toBeGreaterThan(0);
+    expect(onlyTier1.data.items.every((i) => i.tier === 'OPENED_NOT_CITED' && i.isOwned)).toBe(
+      true,
+    );
+    expect(onlyTier1.data.tierCounts.RETRIEVED_NOT_CITED).toBeGreaterThan(0);
+
+    // 5. Day-1 Fallback on single-market GLOBAL brand (perplexity omits retrievedSources)
+    const globalRun = await httpJson<VisibilityRunDetailRecord>(
+      base,
+      'POST',
+      `/api/v2/brands/${singleGlobalBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        headers: { 'Idempotency-Key': 'vrun_global_nm_fallback_01' },
+        body: {
+          prompts: ['[E2E_COMP_DOMAIN] Best quiet 4-bay NAS 2026'],
+          engines: ['perplexity'],
+        },
+      },
+    );
+    expect(globalRun.status).toBe(200);
+    await runner.process({ tenantId: tenantA, runId: globalRun.data.id });
+
+    const globalFallback = await httpJson<NearMissListResponse>(
+      base,
+      'GET',
+      `/api/v2/brands/${singleGlobalBrandAId}/visibility/near-miss?market=&days=&tier=&sourceKind=`,
+      { token: tokenStrictA },
+    );
+    expect(globalFallback.status).toBe(200);
+    expect(globalFallback.data.market).toBe('GLOBAL');
+    expect(globalFallback.data.hasRawRetrievalSignals).toBe(false);
+    expect(globalFallback.data.tierCounts.OPENED_NOT_CITED).toBe(0);
+    expect(globalFallback.data.tierCounts.RETRIEVED_NOT_CITED).toBe(0);
+    expect(globalFallback.data.tierCounts.MENTIONED_NOT_OWNED).toBeGreaterThan(0);
   });
 });

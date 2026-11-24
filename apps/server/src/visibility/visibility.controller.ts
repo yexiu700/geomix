@@ -16,6 +16,7 @@ import {
   API_ERROR,
   AccountQueryError,
   VISIBILITY_ID_PATTERN,
+  nearMissQuerySchema,
   ok,
   readIdempotencyKey,
   visibilityRunBulkDeleteSchema,
@@ -38,6 +39,7 @@ import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { parseBrandId, parseMarket, requireAuth } from '../brands/brands.http-utils';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
+import { VisibilityNearMissService } from './visibility-near-miss.service';
 import { VisibilityService } from './visibility.service';
 
 function readVisibilityId(raw: string, label = '编号'): string {
@@ -101,7 +103,10 @@ function flattenQuery(raw: Record<string, unknown>): Record<string, string | und
 @Controller({ path: 'brands/:brandId/visibility', version: '2' })
 @UseGuards(AuthGuard)
 export class VisibilityController {
-  constructor(@Inject(VisibilityService) private readonly visibility: VisibilityService) {}
+  constructor(
+    @Inject(VisibilityService) private readonly visibility: VisibilityService,
+    @Inject(VisibilityNearMissService) private readonly nearMissService: VisibilityNearMissService,
+  ) {}
 
   // ===================== Engines =====================
 
@@ -278,5 +283,19 @@ export class VisibilityController {
       limit: parsed.limit,
     };
     return ok(await this.visibility.opportunities(brandId, normalized));
+  }
+
+  @Get('near-miss')
+  async nearMiss(@Param('brandId') brandIdRaw: string, @Query() query: Record<string, unknown>) {
+    const brandId = parseBrandId(brandIdRaw);
+    const flat = flattenQuery(query);
+    const cleaned: Record<string, string | undefined> = {};
+    for (const [key, val] of Object.entries(flat)) {
+      const trimmed = val?.trim();
+      if (!trimmed) continue;
+      cleaned[key] = key === 'market' ? trimmed.toUpperCase() : trimmed;
+    }
+    const parsed = parseBody(nearMissQuerySchema, cleaned);
+    return ok(await this.nearMissService.listNearMiss(brandId, parsed));
   }
 }

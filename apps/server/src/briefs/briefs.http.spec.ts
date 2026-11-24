@@ -1112,4 +1112,311 @@ describe('Briefs HTTP API & ApiModule/WorkerModule DI boot checks', () => {
       fetchSpy.mockRestore();
     }
   });
+
+  it('POST /api/v2/brands/:brandId/briefs/from-near-miss diagnoses 4 GEO gaps, enforces SSRF 400, rate limits near_miss_boost, and degrades gracefully on non-SSRF fetch errors (#368)', async () => {
+    const publicFetch = app.get(PublicFetchService);
+    const rateLimiter = app.get(FreeActionRateLimiter);
+    rateLimiter.reset();
+
+    const sparseHtml = [
+      '<!doctype html><html><head><title>星云存储产品随笔</title></head><body><article>',
+      '<h1>星云存储产品随笔</h1>',
+      '<p>随着家庭影音娱乐需求不断增长，越来越多用户开始关注家庭私有云存储设备的长期使用体验与数据安全。</p>',
+      '<p>本文记录了家庭日常相册备份的基本思路，后续将持续更新更多信息。</p>',
+      '</article></body></html>',
+    ].join('');
+
+    const globalHtml = [
+      '<!doctype html><html><head><title>NebulaNAS Home Storage Notes</title></head><body><article>',
+      '<h1>NebulaNAS Home Storage Notes</h1>',
+      '<p>In recent years many enthusiasts have explored quiet multi-bay home storage setups for media archives.</p>',
+      '<h2>Hardware Overview</h2><p>Compact aluminum chassis designed for living room desks.</p>',
+      '</article></body></html>',
+    ].join('');
+
+    const fetchSpy = vi.spyOn(publicFetch, 'fetch').mockImplementation(async (url: string) => {
+      if (url.includes('/ssrf-redirect-trap')) {
+        throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'ipv4_special');
+      }
+      if (url.includes('/non-ssrf-timeout')) {
+        throw new ProviderError(PROVIDER_KIND.TIMEOUT, '抓取超时', 'timeout');
+      }
+      if (url.includes('/non-ssrf-403')) {
+        throw new ProviderError(PROVIDER_KIND.NOT_PUBLIC, '登录墙拦截', 'status_403');
+      }
+      if (url.includes('/non-ssrf-robots')) {
+        throw new ProviderError(PROVIDER_KIND.ROBOTS, 'robots 禁止', 'robots_disallow');
+      }
+      if (url.includes('nebulanas.example')) {
+        return {
+          url,
+          status: 200,
+          contentType: 'text/html; charset=utf-8',
+          body: globalHtml,
+          bytes: Buffer.byteLength(globalHtml),
+        };
+      }
+      return {
+        url,
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: sparseHtml,
+        bytes: Buffer.byteLength(sparseHtml),
+      };
+    });
+
+    const prevRateMax = process.env.NEAR_MISS_BOOST_RATE_LIMIT_MAX;
+    try {
+      // 1. CN happy path with sourceUrl -> fetches page, diagnoses gaps, creates NEAR_MISS_BOOST brief
+      const cnRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'OPENED_NOT_CITED',
+          targetPrompt: '2026 四盘位家用静音 NAS 推荐',
+          sourceUrl: 'https://xingyun.example/guides/nas-notes?utm_source=ai',
+          sourceTitle: '星云存储产品随笔',
+        },
+      );
+      expect(cnRes.status).toBe(200);
+      expect(cnRes.body.code).toBe(0);
+      expect(cnRes.body.data.sourceType).toBe('NEAR_MISS_BOOST');
+      expect(cnRes.body.data.sourceCitationUrl).toBe('https://xingyun.example/guides/nas-notes');
+      expect(cnRes.body.data.recommendedRecipe).toBe('AUTHORITY_GUIDE');
+      expect(cnRes.body.data.priorityScore).toBeGreaterThanOrEqual(72);
+      expect(cnRes.body.data.priorityScore).toBeLessThanOrEqual(88);
+      expect(cnRes.body.data.diagnosisSummary).toContain('点开未引用');
+      expect(cnRes.body.data.diagnosisSummary).toContain('首段直答缺失');
+      expect(cnRes.body.data.missingFactHints.some((h) => h.includes('参数对比表'))).toBe(true);
+      expect(cnRes.body.data.outlineH2.length).toBeGreaterThanOrEqual(4);
+      expect(cnRes.body.data.matchedFactIds.length).toBeGreaterThan(0);
+
+      // 2. GLOBAL happy path with sourceUrl -> strict EN title/H2 + ZH diagnosis + zero CN channels
+      const globalRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'GLOBAL',
+          tier: 'RETRIEVED_NOT_CITED',
+          targetPrompt: 'Best quiet 4-bay home NAS 2026',
+          sourceUrl: 'https://nebulanas.example/guides/storage-notes',
+        },
+      );
+      expect(globalRes.status).toBe(200);
+      expect(globalRes.body.data.market).toBe('GLOBAL');
+      expect(globalRes.body.data.sourceType).toBe('NEAR_MISS_BOOST');
+      expect(globalRes.body.data.targetFormat).toBe('GLOBAL_AUTHORITY_GUIDE');
+      expect(/[\u4e00-\u9fa5]/.test(globalRes.body.data.diagnosisSummary)).toBe(true);
+      expect(/[A-Za-z]{4,}/.test(globalRes.body.data.suggestedTitle)).toBe(true);
+      expect(globalRes.body.data.outlineH2.every((h) => /[A-Za-z]{3,}/.test(h.heading))).toBe(true);
+      expect(
+        globalRes.body.data.recommendedChannels.every(
+          (c) => !/知乎|小红书|什么值得买|微信公众号/.test(c.channel),
+        ),
+      ).toBe(true);
+
+      // 3. Omitted sourceUrl (Tier 3B MENTIONED_NOT_OWNED) -> skips publicFetch, succeeds 200
+      fetchSpy.mockClear();
+      const noUrlRes = await req<GeoBriefRecord>(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '家用四盘位 NAS 哪款最静音',
+        },
+      );
+      expect(noUrlRes.status).toBe(200);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(noUrlRes.body.data.sourceType).toBe('NEAR_MISS_BOOST');
+      expect(noUrlRes.body.data.sourceCitationUrl).toBeNull();
+      expect(noUrlRes.body.data.diagnosisSummary).toContain('提及未引官网');
+
+      // 4. Non-SSRF external fetch failures (timeout / 403 / robots) -> graceful 200 fallback
+      for (const path of ['/non-ssrf-timeout', '/non-ssrf-403', '/non-ssrf-robots']) {
+        const fallbackRes = await req<GeoBriefRecord>(
+          'POST',
+          '/api/v2/brands/brand_dual/briefs/from-near-miss',
+          tokenA,
+          {
+            market: 'CN',
+            tier: 'OPENED_NOT_CITED',
+            targetPrompt: '2026 四盘位家用 NAS 推荐',
+            sourceUrl: `https://public-site.example${path}`,
+          },
+        );
+        expect(fallbackRes.status).toBe(200);
+        expect(fallbackRes.body.data.sourceType).toBe('NEAR_MISS_BOOST');
+        expect(fallbackRes.body.data.diagnosisSummary).toContain('未能直连解析');
+        rateLimiter.reset();
+      }
+
+      // 5. SSRF rejection -> deterministic 400 (sync pre-check BEFORE fetch + dynamic redirect/DNS trap)
+      fetchSpy.mockClear();
+      for (const badUrl of [
+        'http://127.0.0.1/admin',
+        'http://localhost:3000/',
+        'http://169.254.169.254/latest/meta-data/',
+        'http://10.0.0.1/secret',
+        'http://192.168.1.1/router',
+        'http://sonargate:8080/v1/collect',
+        'ftp://example.com/file',
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+      ]) {
+        const blocked = await req(
+          'POST',
+          '/api/v2/brands/brand_dual/briefs/from-near-miss',
+          tokenA,
+          {
+            market: 'CN',
+            tier: 'OPENED_NOT_CITED',
+            targetPrompt: '2026 四盘位家用 NAS 推荐',
+            sourceUrl: badUrl,
+          },
+        );
+        expect(blocked.status).toBe(400);
+        expect(blocked.body.code).toBe(API_ERROR.BAD_REQUEST);
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      // Dynamic redirect-to-private / DNS-to-private SSRF from PublicFetchService -> 400
+      const redirectTrap = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'OPENED_NOT_CITED',
+          targetPrompt: '2026 四盘位家用 NAS 推荐',
+          sourceUrl: 'https://public-site.example/ssrf-redirect-trap',
+        },
+      );
+      expect(redirectTrap.status).toBe(400);
+      expect(redirectTrap.body.code).toBe(API_ERROR.BAD_REQUEST);
+      expect(redirectTrap.body.msg).toBe('目标地址不允许访问');
+
+      // 6. Rate limiting on near_miss_boost bucket -> 429 with Retry-After, independent of geo_brief
+      rateLimiter.reset();
+      process.env.NEAR_MISS_BOOST_RATE_LIMIT_MAX = '2';
+      for (let i = 0; i < 2; i += 1) {
+        const okRes = await req('POST', '/api/v2/brands/brand_dual/briefs/from-near-miss', tokenA, {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: `限流测试问题 ${i + 1}`,
+        });
+        expect(okRes.status).toBe(200);
+      }
+      const limitedRes = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '限流测试问题 3',
+        },
+      );
+      expect(limitedRes.status).toBe(429);
+      expect(limitedRes.body.code).toBe(AUTH_ERROR.TOO_MANY_REQUESTS);
+
+      // geo_brief bucket remains unaffected
+      const normalGen = await req('POST', '/api/v2/brands/brand_dual/briefs/generate', tokenA, {
+        market: 'CN',
+        sourceType: 'MANUAL',
+        customPrompt: '独立限流桶验证问题',
+      });
+      expect(normalGen.status).toBe(200);
+
+      // 7. Cross-tenant 404, cross-tenant observationIds 404, expired tenant 403/40301, nested qs 400
+      rateLimiter.reset();
+      delete process.env.NEAR_MISS_BOOST_RATE_LIMIT_MAX;
+
+      const foreignBrand = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenB,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '跨租户隔离测试',
+        },
+      );
+      expect(foreignBrand.status).toBe(404);
+
+      const foreignObs = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '跨租户观测测试',
+          observationIds: ['obs_nonexistent_foreign'],
+        },
+      );
+      expect(foreignObs.status).toBe(404);
+
+      const expired = await req(
+        'POST',
+        '/api/v2/brands/brand_exp/briefs/from-near-miss',
+        tokenExp,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '过期租户拦截测试',
+        },
+      );
+      expect(expired.status).toBe(403);
+      expect(expired.body.code).toBe(API_ERROR.TENANT_EXPIRED);
+
+      const nestedQs = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss?market[foo]=CN',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '嵌套参数拒绝测试',
+        },
+      );
+      expect(nestedQs.status).toBe(400);
+
+      // 8. #321 STRICT LLM fake_fallback_rejected -> 503
+      const llm = app.get(LlmService);
+      const llmSpy = vi
+        .spyOn(llm, 'complete')
+        .mockRejectedValueOnce(
+          new ProviderError(
+            PROVIDER_KIND.UPSTREAM,
+            '大模型上游暂时不可用',
+            'fake_fallback_rejected',
+          ),
+        );
+      const strictFail = await req(
+        'POST',
+        '/api/v2/brands/brand_dual/briefs/from-near-miss',
+        tokenA,
+        {
+          market: 'CN',
+          tier: 'MENTIONED_NOT_OWNED',
+          targetPrompt: '严格模型降级校验测试',
+        },
+      );
+      expect(strictFail.status).toBe(503);
+      expect(strictFail.body.code).toBe(API_ERROR.UPSTREAM_UNAVAILABLE);
+      llmSpy.mockRestore();
+    } finally {
+      if (prevRateMax === undefined) {
+        delete process.env.NEAR_MISS_BOOST_RATE_LIMIT_MAX;
+      } else {
+        process.env.NEAR_MISS_BOOST_RATE_LIMIT_MAX = prevRateMax;
+      }
+      fetchSpy.mockRestore();
+    }
+  });
 });

@@ -1084,4 +1084,65 @@ describe('VisibilityCollectorService - remote_scraper SSRF & contract guards', (
     expect(remoteRes.answerText).toBe('Remote answer without fake override.');
     expect(capturedBodies[0]).not.toHaveProperty('triggerType');
   });
+
+  it('emits deterministic rawMeta retrieval signals for CN/deepseek & GLOBAL chatgpt/claude while omitting them for perplexity/gemini/google_aio', async () => {
+    const fakeCollector = VisibilityCollectorService.fromEnv({ VISIBILITY_COLLECTOR: 'fake' });
+
+    const cnInput = {
+      tenantId: 'tenant_nm',
+      engine: 'deepseek',
+      promptText: '2026 四盘位静音家用 NAS 推荐',
+      brandName: '极光NAS',
+      ownedDomains: ['jiguangnas.cn'],
+      competitors: [{ name: '群晖', domains: ['synology.com'] }],
+      market: 'CN' as const,
+    };
+    const cnFirst = await fakeCollector.collect(cnInput);
+    const cnSecond = await fakeCollector.collect(cnInput);
+    expect(cnSecond).toEqual(cnFirst);
+    expect(cnFirst.rawMeta?.provider).toBe('fake');
+    expect(typeof cnFirst.rawMeta?.latencyMs).toBe('number');
+    expect(cnFirst.rawMeta?.serverToolSearchCount).toBe(2);
+    expect(cnFirst.rawMeta?.serverToolFetchCount).toBe(2);
+    expect(Array.isArray(cnFirst.rawMeta?.retrievedSources)).toBe(true);
+    expect(Array.isArray(cnFirst.rawMeta?.openedPages)).toBe(true);
+    const cnSources = cnFirst.rawMeta?.retrievedSources as Array<{ url: string; opened?: boolean }>;
+    const cnOpened = cnFirst.rawMeta?.openedPages as string[];
+    expect(cnSources.some((s) => s.url.includes('jiguangnas.cn/near-miss/opened-'))).toBe(true);
+    expect(cnSources.some((s) => s.url.includes('jiguangnas.cn/near-miss/retrieved-'))).toBe(true);
+    expect(cnOpened.some((u) => u.includes('zhuanlan.zhihu.com/p/nm-'))).toBe(true);
+
+    const chatgptRes = await fakeCollector.collect({
+      ...cnInput,
+      engine: 'chatgpt',
+      promptText: 'Best quiet 4-bay NAS 2026',
+      brandName: 'AuroraNAS',
+      ownedDomains: ['auroranas.example.com'],
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+    });
+    expect(Array.isArray(chatgptRes.rawMeta?.retrievedSources)).toBe(true);
+    expect(Array.isArray(chatgptRes.rawMeta?.openedPages)).toBe(true);
+
+    for (const fallbackEngine of ['perplexity', 'gemini', 'google_aio'] as const) {
+      const res = await fakeCollector.collect({
+        ...cnInput,
+        engine: fallbackEngine,
+        promptText: 'Best quiet 4-bay NAS 2026',
+        brandName: 'AuroraNAS',
+        ownedDomains: ['auroranas.example.com'],
+        market: 'GLOBAL',
+        locale: 'en-US',
+        region: 'US',
+      });
+      expect(res.rawMeta?.provider).toBe('fake');
+      expect(typeof res.rawMeta?.latencyMs).toBe('number');
+      expect(res.rawMeta?.retrievedSources).toBeUndefined();
+      expect(res.rawMeta?.openedPages).toBeUndefined();
+      if (fallbackEngine === 'google_aio') {
+        expect(res.rawMeta?.aiOverviewTriggered).toBe(true);
+      }
+    }
+  });
 });

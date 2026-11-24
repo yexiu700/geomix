@@ -18,6 +18,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VisibilityCollectorService } from './visibility-collector.service';
 import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityJudgeService } from './visibility-judge.service';
+import {
+  parseRetrievedSourcesFromRawMeta,
+  sanitizeObservationRawMeta,
+  type ParsedRetrievedSource,
+} from './visibility-raw-meta';
 
 export const VISIBILITY_RUN_HANDLER = Symbol('VISIBILITY_RUN_HANDLER');
 export const VISIBILITY_RUN_ENQUEUER = Symbol('VISIBILITY_RUN_ENQUEUER');
@@ -371,10 +376,20 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         idempotencyKey: `vis-jdg:${obs.id}`,
       });
 
+      const rawMetaJson = sanitizeObservationRawMeta(collected.rawMeta);
+      const retrievedSources = parseRetrievedSourcesFromRawMeta(collected.rawMeta, {
+        citations: classifiedCitations,
+        ownedDomains,
+        competitorDomains,
+      });
+
       const persisted = await this.persistObservationSuccess({
         tenantId,
+        brandId: run.brandId,
+        brandMarketId: run.brandMarketId,
         runId: run.id,
         observationId: obs.id,
+        engine: obs.engine,
         collectorKind: collected.collectorKind,
         answerText: collected.answerText,
         brandMentioned: judged.brandMentioned,
@@ -383,10 +398,12 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         brandPassage: judged.brandPassage,
         competitorHits: judged.competitorHits as unknown as Prisma.InputJsonValue,
         fanOutQueries,
+        rawMetaJson: rawMetaJson as Prisma.InputJsonValue | null,
         judgeModel: judged.judgeModel,
         tokensIn: judged.tokensIn,
         tokensOut: judged.tokensOut,
         citations: classifiedCitations,
+        retrievedSources,
       });
 
       if (persisted === 'cancelled') {
@@ -451,8 +468,11 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
 
   private async persistObservationSuccess(input: {
     tenantId: string;
+    brandId: string;
+    brandMarketId: string;
     runId: string;
     observationId: string;
+    engine: string;
     collectorKind: string;
     answerText: string;
     brandMentioned: boolean;
@@ -461,6 +481,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     brandPassage: string | null;
     competitorHits: Prisma.InputJsonValue;
     fanOutQueries: string[];
+    rawMetaJson: Prisma.InputJsonValue | null;
     judgeModel: string;
     tokensIn: number;
     tokensOut: number;
@@ -472,6 +493,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       sourceKind: CitationSourceKind;
       position: number;
     }>;
+    retrievedSources: ReadonlyArray<ParsedRetrievedSource>;
   }): Promise<'saved' | 'cancelled'> {
     return this.prisma.base.$transaction(async (tx) => {
       const currentRun = await tx.visibilityRun.findFirst({
@@ -514,6 +536,30 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         });
       }
 
+      await tx.visibilityRetrievedSource.deleteMany({
+        where: { observationId: input.observationId, tenantId: input.tenantId },
+      });
+
+      if (input.retrievedSources.length > 0) {
+        await tx.visibilityRetrievedSource.createMany({
+          data: input.retrievedSources.map((src) => ({
+            tenantId: input.tenantId,
+            brandId: input.brandId,
+            brandMarketId: input.brandMarketId,
+            observationId: input.observationId,
+            engine: input.engine,
+            url: src.url,
+            domain: src.domain,
+            title: src.title,
+            snippet: src.snippet,
+            sourceKind: src.sourceKind,
+            wasOpened: src.wasOpened,
+            wasCited: src.wasCited,
+            rank: src.rank,
+          })),
+        });
+      }
+
       await tx.visibilityObservation.update({
         where: { id: input.observationId },
         data: {
@@ -526,6 +572,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
           brandPassage: input.brandPassage,
           competitorHits: input.competitorHits,
           fanOutQueries: input.fanOutQueries,
+          rawMetaJson: input.rawMetaJson ?? Prisma.DbNull,
           judgeModel: input.judgeModel,
           tokensIn: input.tokensIn,
           tokensOut: input.tokensOut,
@@ -596,6 +643,9 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         await tx.visibilityCitation.deleteMany({
           where: { observationId: input.observationId, tenantId: input.tenantId },
         });
+        await tx.visibilityRetrievedSource.deleteMany({
+          where: { observationId: input.observationId, tenantId: input.tenantId },
+        });
         await tx.visibilityObservation.update({
           where: { id: input.observationId },
           data: {
@@ -607,6 +657,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
             brandPassage: null,
             competitorHits: Prisma.DbNull,
             fanOutQueries: [],
+            rawMetaJson: Prisma.DbNull,
             judgeModel: null,
             tokensIn: null,
             tokensOut: null,
