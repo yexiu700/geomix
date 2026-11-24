@@ -37,6 +37,7 @@ const SCHEMA_MODELS = [
   'ChannelConnection',
   'GeoDistributionTask',
   'GeoRetestSchedule',
+  'GeoVariantJob',
 ];
 
 describe('schema migrations contract', () => {
@@ -59,6 +60,7 @@ describe('schema migrations contract', () => {
       '20261120100000_geomix_v2_domain_schema',
       '20261122090000_brand_market_local_category',
       '20261123090000_geomix_v2_1_distribution',
+      '20261124090000_geomix_v2_1_variant_jobs',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -176,6 +178,14 @@ describe('schema migrations contract', () => {
     expect(v21Sql).toContain('ON DELETE SET NULL');
     expect(v21Sql.toLowerCase()).not.toContain('drop table');
     expect(v21Sql.toLowerCase()).not.toContain('create extension');
+    const variantJobSql = readFileSync(
+      resolve(migrationsDir, '20261124090000_geomix_v2_1_variant_jobs', 'migration.sql'),
+      'utf8',
+    );
+    expect(variantJobSql).toContain('CREATE TABLE IF NOT EXISTS "GeoVariantJob"');
+    expect(variantJobSql).toContain('GeoVariantJob_tenantId_articleId_idempotencyKey_key');
+    expect(variantJobSql.toLowerCase()).not.toContain('drop table');
+    expect(variantJobSql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(SCHEMA_MODELS);

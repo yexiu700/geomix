@@ -19,6 +19,9 @@ import type {
   GeoMarket,
   GeoPublishRecordDto,
   GeoRetestScheduleDto,
+  GeoVariantJobDto,
+  GeoVariantJobFailureItem,
+  GeoVariantJobStatus,
   L1ChannelProvider,
   PublicPrPacketDto,
   PublicPrPacketSubmitInput,
@@ -54,6 +57,9 @@ export type {
   GeoMarket,
   GeoPublishRecordDto,
   GeoRetestScheduleDto,
+  GeoVariantJobDto,
+  GeoVariantJobFailureItem,
+  GeoVariantJobStatus,
   L1ChannelProvider,
   PublicPrPacketDto,
   PublicPrPacketSubmitInput,
@@ -361,6 +367,10 @@ export async function listArticleDistributions(
   );
 }
 
+export type DistributionVariantJobListResponse = {
+  items: GeoVariantJobDto[];
+};
+
 export async function generateDistributionVariants(
   articleId: string,
   input: CreateDistributionVariantsInput,
@@ -373,6 +383,53 @@ export async function generateDistributionVariants(
       method: 'POST',
       body: input,
       headers: { 'Idempotency-Key': idempotencyKey },
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function createDistributionVariantJob(
+  articleId: string,
+  input: CreateDistributionVariantsInput,
+  options?: DistributionIdempotentClientOptions,
+): Promise<GeoVariantJobDto> {
+  const idempotencyKey = options?.idempotencyKey ?? createDistributionIdempotencyKey('var');
+  return authorizedV2Request<GeoVariantJobDto>(
+    `/articles/${encodeURIComponent(articleId)}/distributions/variant-jobs`,
+    {
+      method: 'POST',
+      body: input,
+      headers: { 'Idempotency-Key': idempotencyKey },
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function listDistributionVariantJobs(
+  articleId: string,
+  options?: DistributionClientOptions,
+): Promise<DistributionVariantJobListResponse> {
+  return authorizedV2Request<DistributionVariantJobListResponse>(
+    `/articles/${encodeURIComponent(articleId)}/distributions/variant-jobs`,
+    {
+      method: 'GET',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function getDistributionVariantJob(
+  articleId: string,
+  jobId: string,
+  options?: DistributionClientOptions,
+): Promise<GeoVariantJobDto> {
+  return authorizedV2Request<GeoVariantJobDto>(
+    `/articles/${encodeURIComponent(articleId)}/distributions/variant-jobs/${encodeURIComponent(jobId)}`,
+    {
+      method: 'GET',
       storage: options?.storage,
       signal: options?.signal,
     },

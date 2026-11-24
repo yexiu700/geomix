@@ -441,11 +441,20 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
 
       const variantTabs = page.getByTestId('distribution-variant-tabs');
       await expect(variantTabs).toBeVisible({ timeout: 25_000 });
-      await expect(variantTabs.getByRole('tab', { name: /E2E Webhook/ })).toBeVisible();
+      await expect(variantTabs.getByRole('tab', { name: /E2E Webhook/ })).toBeVisible({
+        timeout: 25_000,
+      });
+      await expect(variantTabs.getByRole('tab', { name: /PR|媒体/ })).toBeVisible({
+        timeout: 25_000,
+      });
 
+      await expect
+        .poll(async () => (await getTenantWallet(tenant.session)).points, { timeout: 15_000 })
+        .toBe(walletBeforeGen - 4);
       const walletAfterGen = (await getTenantWallet(tenant.session)).points;
-      expect(walletAfterGen).toBe(walletBeforeGen - 4);
-      await expect(page.getByTestId('header-points-pill')).toContainText(`${walletAfterGen}`);
+      await expect(page.getByTestId('header-points-pill')).toContainText(`${walletAfterGen}`, {
+        timeout: 15_000,
+      });
 
       // Context-switch isolation while Drawer is open (dispatchEvent avoids .ant-drawer-mask interception)
       await page
@@ -456,14 +465,21 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         timeout: 10_000,
       });
       await expect(page).toHaveURL(/market=CN/);
+      // Issue #364: switching market clears stale articleId from URL
+      expect(new URL(page.url()).searchParams.get('articleId')).toBeNull();
 
-      // Return to GLOBAL article & trigger L1 live publish on Webhook
+      // Return to GLOBAL article, reload browser (#364), and verify selection & distribution CTA remain ready
       await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
         waitUntil: 'domcontentloaded',
       });
       await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
         timeout: 20_000,
       });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
+        timeout: 20_000,
+      });
+      expect(new URL(page.url()).searchParams.get('articleId')).toBe(articleId);
       await page.getByTestId('studio-open-distribution-btn').click();
       await expect(page.getByTestId('distribution-variant-tabs')).toBeVisible({
         timeout: 15_000,
@@ -550,13 +566,16 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         await expect(incognitoPage.getByTestId('pr-share-fact-table')).toBeVisible();
         await expect(incognitoPage.getByTestId('pr-share-submit-form')).toBeVisible();
 
-        // Assert EN (GLOBAL) copy, zero ConsoleShell chrome, no /login redirect
+        // Assert EN (GLOBAL) copy, zero ConsoleShell chrome, no /login redirect, zero CJK in header (#366)
         await expect(incognitoPage.getByTestId('pr-share-page')).toContainText(
           'PR / KOL Collaboration Brief',
         );
         await expect(incognitoPage.getByTestId('pr-share-page')).toContainText(
           'Brand Overview & Verified Core Facts',
         );
+        const incognitoHeaderText = await incognitoPage.locator('header').innerText();
+        expect(incognitoHeaderText).toContain('PR / KOL Media Kit');
+        expect(/[\u4E00-\u9FFF]/.test(incognitoHeaderText)).toBe(false);
         expect(incognitoPage.url()).toContain('/share/pr/');
         expect(incognitoPage.url()).not.toContain('/login');
         await expect

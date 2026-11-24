@@ -109,6 +109,34 @@ export class DistributionController {
     return ok(await this.distribution.generateVariants(articleId, input, auth, idempotencyKey));
   }
 
+  @Post('articles/:articleId/distributions/variant-jobs')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async createVariantJob(
+    @Req() request: unknown,
+    @Param('articleId') articleIdRaw: string,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(request);
+    const articleId = parseEntityId(articleIdRaw, '文章编号');
+    const input = parseBody(createDistributionVariantsSchema, body);
+    const idempotencyKey = parseOptionalIdempotencyHeader(request);
+    return ok(await this.distribution.createVariantJob(articleId, input, auth, idempotencyKey));
+  }
+
+  @Get('articles/:articleId/distributions/variant-jobs')
+  async listVariantJobs(@Param('articleId') articleIdRaw: string) {
+    const articleId = parseEntityId(articleIdRaw, '文章编号');
+    return ok(await this.distribution.listVariantJobs(articleId));
+  }
+
+  @Get('articles/:articleId/distributions/variant-jobs/:jobId')
+  async getVariantJob(@Param('articleId') articleIdRaw: string, @Param('jobId') jobIdRaw: string) {
+    const articleId = parseEntityId(articleIdRaw, '文章编号');
+    const jobId = parseEntityId(jobIdRaw, '变体生成任务编号');
+    return ok(await this.distribution.getVariantJob(articleId, jobId));
+  }
+
   @Patch('distributions/:taskId')
   @UseGuards(TenantActiveGuard)
   async updateTask(@Param('taskId') taskIdRaw: string, @Body() body: unknown) {

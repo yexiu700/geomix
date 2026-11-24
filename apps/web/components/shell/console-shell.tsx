@@ -300,13 +300,14 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
             readOnly: account.tenant.readOnly,
             wallet,
             walletLoading,
+            urlSearch: search,
             openCreateBrandModal: () => setCreateBrandModalOpen(true),
             openEnableMarketModal: (market: GeoMarket) => setEnableMarketModalTarget(market),
             refreshWallet,
             navigateWorkspace,
           }
         : null,
-    [account, navigateWorkspace, refreshWallet, wallet, walletLoading],
+    [account, navigateWorkspace, refreshWallet, search, wallet, walletLoading],
   );
 
   if (offline) {

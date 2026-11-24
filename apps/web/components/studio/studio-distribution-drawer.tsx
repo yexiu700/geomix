@@ -23,23 +23,38 @@ import {
   type PreflightItemCode,
   type PublishRecordCreateInput,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Drawer, Input, Modal, Select, Space, Tabs, Tag } from 'antd';
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Drawer,
+  Input,
+  Modal,
+  Progress,
+  Select,
+  Space,
+  Tabs,
+  Tag,
+} from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authorizedRequest } from '../../lib/api';
 import { getBrief } from '../../lib/briefs';
 import {
   createDistributionIdempotencyKey,
+  createDistributionVariantJob,
   createPrShareLink,
-  generateDistributionVariants,
+  getDistributionVariantJob,
   isPreflightBlockedError,
   listArticleDistributions,
   listChannelConnections,
+  listDistributionVariantJobs,
   publishDistributionTask,
   revokePrShareLink,
   runArticlePreflight,
   updateDistributionTask,
   type ArticleDistributionTaskItem,
+  type GeoVariantJobDto,
 } from '../../lib/distribution';
 import { GatewayApiError, unwrapEnvelope } from '../../lib/envelope';
 import { copyTextToClipboard } from '../../lib/studio';
@@ -64,7 +79,7 @@ export type StudioDistributionDrawerProps = {
   readOnly: boolean;
   walletAvailable?: number | null;
   onClose: () => void;
-  onReturnToEditor: (code?: PreflightItemCode) => void;
+  onReturnToEditor: (code?: PreflightItemCode, locateTerm?: string) => void;
   onNavigateBrands?: () => void;
   onRefreshWallet?: () => Promise<void> | void;
   onPublishRecordsSynced?: (articleId: string) => Promise<void> | void;
@@ -278,6 +293,7 @@ export function StudioDistributionDrawer({
   const [ackWarnings, setAckWarnings] = useState(false);
   const [pointsConfirmOpen, setPointsConfirmOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [activeVariantJob, setActiveVariantJob] = useState<GeoVariantJobDto | null>(null);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [publishingTaskId, setPublishingTaskId] = useState<string | null>(null);
   const [publishBlockedNoticeByTask, setPublishBlockedNoticeByTask] = useState<
@@ -301,6 +317,9 @@ export function StudioDistributionDrawer({
   const actionCtrlRef = useRef<AbortController | null>(null);
   const taskActionCtrlsRef = useRef<Set<AbortController>>(new Set());
   const pollCtrlRef = useRef<AbortController | null>(null);
+  const variantJobPollCtrlRef = useRef<AbortController | null>(null);
+  const lastVariantJobDoneCountRef = useRef(0);
+  const notifiedVariantJobIdsRef = useRef<Set<string>>(new Set());
   const prevPublishingIdsRef = useRef<Set<string>>(new Set());
   const generatingRef = useRef(false);
   const pendingVariantIdemKeyRef = useRef<string | null>(null);
@@ -327,10 +346,14 @@ export function StudioDistributionDrawer({
     hydrateCtrlRef.current = null;
     actionCtrlRef.current?.abort();
     actionCtrlRef.current = null;
+    variantJobPollCtrlRef.current?.abort();
+    variantJobPollCtrlRef.current = null;
     abortAllTaskActions();
     bumpPollEpoch();
     sessionSeqRef.current += 1;
     prevPublishingIdsRef.current.clear();
+    lastVariantJobDoneCountRef.current = 0;
+    notifiedVariantJobIdsRef.current.clear();
     generatingRef.current = false;
     pendingVariantIdemKeyRef.current = null;
     publishingTasksRef.current.clear();
@@ -351,6 +374,7 @@ export function StudioDistributionDrawer({
     setAckWarnings(false);
     setPointsConfirmOpen(false);
     setGenerating(false);
+    setActiveVariantJob(null);
     setSavingTaskId(null);
     setPublishingTaskId(null);
     setPublishBlockedNoticeByTask({});
@@ -376,6 +400,47 @@ export function StudioDistributionDrawer({
       return nextTasks[0]?.id ?? null;
     });
   }, []);
+
+  const finalizeVariantJob = useCallback(
+    async (job: GeoVariantJobDto, articleId: string, seq: number, signal?: AbortSignal) => {
+      if (notifiedVariantJobIdsRef.current.has(job.id)) return;
+      notifiedVariantJobIdsRef.current.add(job.id);
+      lastVariantJobDoneCountRef.current = job.doneCount;
+
+      try {
+        const refreshed = await listArticleDistributions(articleId, {
+          storage: window.sessionStorage,
+          signal,
+        });
+        if (signal?.aborted || seq !== sessionSeqRef.current) return;
+        bumpPollEpoch();
+        syncTasksState(refreshed.items);
+        if (job.taskIds[0]) {
+          setActiveTaskId(job.taskIds[0]);
+        }
+      } catch {
+        // Non-blocking fallback; user can still inspect existing list
+      }
+
+      if (signal?.aborted || seq !== sessionSeqRef.current) return;
+
+      invalidateFreshness('distributions', 'points');
+      void onRefreshWallet?.();
+
+      const failCount = job.failCount || job.failures.length;
+      if (job.status === 'FAILED' || (job.doneCount === 0 && failCount > 0)) {
+        const refundNote = job.refundedPoints > 0 ? `（已自动退还 ${job.refundedPoints} 点）` : '';
+        feedback.notifyError(job.lastError || `生成渠道变体失败${refundNote}`);
+      } else if (failCount > 0) {
+        feedback.notifyWarning(
+          `已生成 ${job.doneCount} 个渠道变体，${failCount} 个失败${job.refundedPoints > 0 ? `（已自动退还 ${job.refundedPoints} 点）` : ''}`,
+        );
+      } else {
+        feedback.notifySuccess(`已成功生成 ${job.doneCount} 个渠道变体`);
+      }
+    },
+    [bumpPollEpoch, feedback, onRefreshWallet, syncTasksState],
+  );
 
   const buildLocalPreflightFallback = useCallback((): DistributionPreflightResult | null => {
     if (!article) return null;
@@ -435,6 +500,8 @@ export function StudioDistributionDrawer({
       hydrateCtrlRef.current = null;
       actionCtrlRef.current?.abort();
       actionCtrlRef.current = null;
+      variantJobPollCtrlRef.current?.abort();
+      variantJobPollCtrlRef.current = null;
       abortAllTaskActions();
       bumpPollEpoch();
     };
@@ -468,6 +535,10 @@ export function StudioDistributionDrawer({
 
     const distributionsPromise = listArticleDistributions(article.id, reqOpts);
 
+    const variantJobsPromise = listDistributionVariantJobs(article.id, reqOpts).catch(() => ({
+      items: [] as GeoVariantJobDto[],
+    }));
+
     const connectionsPromise =
       brandId && brandMarketId
         ? listChannelConnections(brandId, market, reqOpts)
@@ -488,7 +559,8 @@ export function StudioDistributionDrawer({
       connectionsPromise,
       briefPromise,
       pricingPromise,
-    ]).then(([preflightRes, distRes, connRes, briefRes, priceRes]) => {
+      variantJobsPromise,
+    ]).then(([preflightRes, distRes, connRes, briefRes, priceRes, jobsRes]) => {
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
       if (preflightRes.status === 'fulfilled' && preflightRes.value) {
@@ -520,6 +592,16 @@ export function StudioDistributionDrawer({
         setUnitPrice(priceRes.value);
       }
 
+      if (jobsRes.status === 'fulfilled') {
+        const runningJob = jobsRes.value.items.find(
+          (j) => j.status === 'QUEUED' || j.status === 'RUNNING',
+        );
+        if (runningJob) {
+          lastVariantJobDoneCountRef.current = runningJob.doneCount;
+          setActiveVariantJob(runningJob);
+        }
+      }
+
       setHydrating(false);
     });
 
@@ -528,6 +610,8 @@ export function StudioDistributionDrawer({
       ctrl.abort();
       actionCtrlRef.current?.abort();
       actionCtrlRef.current = null;
+      variantJobPollCtrlRef.current?.abort();
+      variantJobPollCtrlRef.current = null;
       abortAllTaskActions();
       bumpPollEpoch();
     };
@@ -541,6 +625,61 @@ export function StudioDistributionDrawer({
     refreshOnActivate: false,
     onRefresh: () => {
       void reloadConnections();
+    },
+  });
+
+  // Poll active async variant generation job via useTaskPolling (NEVER raw setInterval)
+  const isVariantJobRunning = Boolean(
+    activeVariantJob &&
+    (activeVariantJob.status === 'QUEUED' || activeVariantJob.status === 'RUNNING'),
+  );
+
+  useTaskPolling({
+    enabled: open && Boolean(article?.id) && isVariantJobRunning,
+    active: open,
+    intervalMs: 1_500,
+    onPoll: async () => {
+      if (!article || !activeVariantJob) return;
+      const seq = sessionSeqRef.current;
+      variantJobPollCtrlRef.current?.abort();
+      const pollCtrl = new AbortController();
+      variantJobPollCtrlRef.current = pollCtrl;
+      try {
+        const latest = await getDistributionVariantJob(article.id, activeVariantJob.id, {
+          storage: window.sessionStorage,
+          signal: pollCtrl.signal,
+        });
+        if (pollCtrl.signal.aborted || seq !== sessionSeqRef.current) return;
+
+        setActiveVariantJob(latest);
+        const stillRunning = latest.status === 'QUEUED' || latest.status === 'RUNNING';
+        if (stillRunning) {
+          if (latest.doneCount > lastVariantJobDoneCountRef.current) {
+            lastVariantJobDoneCountRef.current = latest.doneCount;
+            try {
+              const refreshed = await listArticleDistributions(article.id, {
+                storage: window.sessionStorage,
+                signal: pollCtrl.signal,
+              });
+              if (!pollCtrl.signal.aborted && seq === sessionSeqRef.current) {
+                bumpPollEpoch();
+                syncTasksState(refreshed.items);
+              }
+            } catch {
+              // Silent retry on next poll tick
+            }
+          }
+          return;
+        }
+
+        await finalizeVariantJob(latest, article.id, seq, pollCtrl.signal);
+      } catch {
+        // Silent retry on next polling tick
+      } finally {
+        if (variantJobPollCtrlRef.current === pollCtrl) {
+          variantJobPollCtrlRef.current = null;
+        }
+      }
     },
   });
 
@@ -780,7 +919,7 @@ export function StudioDistributionDrawer({
       const idempotencyKey =
         pendingVariantIdemKeyRef.current ?? createDistributionIdempotencyKey('var');
       pendingVariantIdemKeyRef.current = idempotencyKey;
-      const res = await generateDistributionVariants(
+      const job = await createDistributionVariantJob(
         article.id,
         { targets: payloadTargets },
         { storage: window.sessionStorage, signal: ctrl.signal, idempotencyKey },
@@ -788,57 +927,27 @@ export function StudioDistributionDrawer({
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
       pendingVariantIdemKeyRef.current = null;
-      if (typeof res.unitPrice === 'number' && Number.isFinite(res.unitPrice)) {
-        setUnitPrice(res.unitPrice);
+      if (typeof job.unitPrice === 'number' && Number.isFinite(job.unitPrice)) {
+        setUnitPrice(job.unitPrice);
       }
       setPointsConfirmOpen(false);
       setSelectedTargetKeys([]);
       bumpPollEpoch();
 
-      // Reload authoritative list (includes publishRecords relation)
-      try {
-        const refreshed = await listArticleDistributions(article.id, {
-          storage: window.sessionStorage,
-          signal: ctrl.signal,
-        });
-        if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
-        bumpPollEpoch();
-        syncTasksState(refreshed.items);
-        if (res.tasks[0]?.id) {
-          setActiveTaskId(res.tasks[0].id);
-        }
-      } catch {
-        if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
-        bumpPollEpoch();
-        const appended: ArticleDistributionTaskItem[] = res.tasks.map((t) => ({
-          ...t,
-          publishRecords: [],
-        }));
-        setTasks((prev) => [
-          ...appended,
-          ...prev.filter((old) => !appended.some((a) => a.id === old.id)),
-        ]);
-        setVariantDrafts((prev) => {
-          const next = { ...prev };
-          for (const t of appended) {
-            next[t.id] = prev[t.id] ?? buildDraftFromTask(t);
-          }
-          return next;
-        });
-        if (appended[0]?.id) setActiveTaskId(appended[0].id);
-      }
+      lastVariantJobDoneCountRef.current = job.doneCount;
+      setActiveVariantJob(job);
 
-      if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
-
-      invalidateFreshness('distributions', 'points');
-      void onRefreshWallet?.();
-
-      if (res.failures.length > 0) {
-        feedback.notifyWarning(
-          `已生成 ${res.tasks.length} 个渠道变体，${res.failures.length} 个失败${res.refundedPoints > 0 ? `（已自动退还 ${res.refundedPoints} 点）` : ''}`,
+      const running = job.status === 'QUEUED' || job.status === 'RUNNING';
+      if (running) {
+        invalidateFreshness('points');
+        void onRefreshWallet?.();
+        feedback.notifySuccess(
+          job.replayed
+            ? '检测到相同生成任务正在进行中，已自动接续查看实时进度'
+            : `已提交 ${job.total} 个渠道变体生成任务，正在后台并行生成…`,
         );
       } else {
-        feedback.notifySuccess(`已成功生成 ${res.tasks.length} 个渠道变体`);
+        await finalizeVariantJob(job, article.id, seq, ctrl.signal);
       }
     } catch (err) {
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
@@ -1291,7 +1400,12 @@ export function StudioDistributionDrawer({
               <Button
                 size="small"
                 style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                onClick={() => onReturnToEditor(preflight?.blockers[0]?.code)}
+                onClick={() => {
+                  const first = preflight?.blockers[0];
+                  const term = first?.matches?.[0]?.matchedText;
+                  if (term) onReturnToEditor(first?.code, term);
+                  else onReturnToEditor(first?.code);
+                }}
               >
                 返回编辑器补填
               </Button>
@@ -2039,7 +2153,12 @@ export function StudioDistributionDrawer({
                           danger
                           data-testid="distribution-back-to-editor-btn"
                           style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                          onClick={() => onReturnToEditor(preflight.blockers[0]?.code)}
+                          onClick={() => {
+                            const first = preflight.blockers[0];
+                            const term = first?.matches?.[0]?.matchedText;
+                            if (term) onReturnToEditor(first?.code, term);
+                            else onReturnToEditor(first?.code);
+                          }}
                         >
                           返回编辑器定位补填
                         </Button>
@@ -2058,6 +2177,7 @@ export function StudioDistributionDrawer({
 
                   {preflight && preflight.warnings.length > 0 ? (
                     <div
+                      data-testid="distribution-preflight-warnings"
                       style={{
                         padding: 10,
                         borderRadius: 'var(--gm-radius-sm)',
@@ -2065,20 +2185,72 @@ export function StudioDistributionDrawer({
                         background: 'rgba(242, 184, 75, 0.08)',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: 4,
+                        gap: 6,
                       }}
                     >
                       {preflight.warnings.map((w) => (
-                        <div
-                          key={w.code}
-                          style={{
-                            fontSize: 12,
-                            color: 'var(--gm-warning)',
-                            overflowWrap: 'anywhere',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          • {w.message}
+                        <div key={w.code} style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--gm-warning)',
+                                overflowWrap: 'anywhere',
+                                wordBreak: 'break-word',
+                                flex: '1 1 220px',
+                              }}
+                            >
+                              • {w.message}
+                            </div>
+                            {w.code === 'GLOBAL_CLAIM_WARNING' ? (
+                              <Button
+                                size="small"
+                                data-testid="distribution-warning-locate-btn"
+                                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                                onClick={() =>
+                                  onReturnToEditor(
+                                    'GLOBAL_CLAIM_WARNING',
+                                    w.matches?.[0]?.matchedText,
+                                  )
+                                }
+                              >
+                                返回编辑器定位修改
+                              </Button>
+                            ) : null}
+                          </div>
+                          {w.details && w.details.length > 0 ? (
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: 6,
+                                marginTop: 4,
+                              }}
+                            >
+                              {w.details.map((detail) => (
+                                <Tag
+                                  key={detail}
+                                  color="gold"
+                                  style={{
+                                    margin: 0,
+                                    maxWidth: '100%',
+                                    overflowWrap: 'anywhere',
+                                    whiteSpace: 'normal',
+                                  }}
+                                >
+                                  {detail}
+                                </Tag>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                     </div>
@@ -2121,18 +2293,173 @@ export function StudioDistributionDrawer({
                     <Button
                       type="primary"
                       data-testid="distribution-generate-variants-btn"
-                      loading={generating}
-                      disabled={selectedTargets.length === 0 || readOnly || generating}
+                      loading={generating || isVariantJobRunning}
+                      disabled={
+                        selectedTargets.length === 0 ||
+                        readOnly ||
+                        generating ||
+                        isVariantJobRunning
+                      }
                       style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                       onClick={() => {
                         pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
                         setPointsConfirmOpen(true);
                       }}
                     >
-                      生成渠道变体
-                      {selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}
+                      {isVariantJobRunning
+                        ? `并行生成中（${(activeVariantJob?.doneCount ?? 0) + (activeVariantJob?.failCount ?? 0)}/${activeVariantJob?.total ?? 0}）`
+                        : `生成渠道变体${selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}`}
                     </Button>
                   </div>
+
+                  {/* Async Variant Generation Progress Card (#363) */}
+                  {activeVariantJob ? (
+                    <div
+                      data-testid="distribution-variant-job-progress"
+                      style={{
+                        padding: 12,
+                        borderRadius: 'var(--gm-radius-sm)',
+                        border:
+                          activeVariantJob.status === 'FAILED'
+                            ? '1px solid var(--gm-danger)'
+                            : activeVariantJob.status === 'PARTIAL'
+                              ? '1px solid var(--gm-warning)'
+                              : '1px solid var(--gm-line-2)',
+                        background: 'var(--gm-bg-base)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            alignItems: 'center',
+                            gap: 8,
+                          }}
+                        >
+                          <SignalPill
+                            tone={
+                              activeVariantJob.status === 'COMPLETED'
+                                ? 'cited'
+                                : activeVariantJob.status === 'FAILED'
+                                  ? 'danger'
+                                  : activeVariantJob.status === 'PARTIAL'
+                                    ? 'warning'
+                                    : 'info'
+                            }
+                          >
+                            {activeVariantJob.status === 'QUEUED'
+                              ? '任务排队中'
+                              : activeVariantJob.status === 'RUNNING'
+                                ? '后台并行生成中'
+                                : activeVariantJob.status === 'COMPLETED'
+                                  ? '渠道变体已全部生成'
+                                  : activeVariantJob.status === 'PARTIAL'
+                                    ? '部分渠道生成完成'
+                                    : '渠道变体生成失败'}
+                          </SignalPill>
+                          <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                            成功{' '}
+                            <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
+                              {activeVariantJob.doneCount}
+                            </strong>{' '}
+                            / <span className="gm-num">{activeVariantJob.total}</span> 个渠道
+                            {activeVariantJob.failCount > 0 ? (
+                              <>
+                                {' '}
+                                · 失败{' '}
+                                <strong className="gm-num" style={{ color: 'var(--gm-danger)' }}>
+                                  {activeVariantJob.failCount}
+                                </strong>{' '}
+                                个
+                              </>
+                            ) : null}
+                            {activeVariantJob.refundedPoints > 0 ? (
+                              <>
+                                {' '}
+                                · 已自动退还{' '}
+                                <strong className="gm-num" style={{ color: 'var(--gm-success)' }}>
+                                  {activeVariantJob.refundedPoints}
+                                </strong>{' '}
+                                点
+                              </>
+                            ) : null}
+                          </span>
+                        </div>
+                        {!isVariantJobRunning ? (
+                          <Button
+                            size="small"
+                            type="text"
+                            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                            onClick={() => setActiveVariantJob(null)}
+                          >
+                            收起进度
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <Progress
+                        size="small"
+                        percent={
+                          activeVariantJob.total > 0
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                  ((activeVariantJob.doneCount + activeVariantJob.failCount) /
+                                    activeVariantJob.total) *
+                                    100,
+                                ),
+                              )
+                            : 0
+                        }
+                        status={
+                          activeVariantJob.status === 'FAILED'
+                            ? 'exception'
+                            : activeVariantJob.status === 'COMPLETED'
+                              ? 'success'
+                              : isVariantJobRunning
+                                ? 'active'
+                                : 'normal'
+                        }
+                      />
+
+                      {isVariantJobRunning ? (
+                        <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                          刷新页面或关闭抽屉后任务仍会在后台继续，重新打开即可恢复进度；单渠道失败将自动退还对应点数。
+                        </div>
+                      ) : null}
+
+                      {activeVariantJob.failures.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {activeVariantJob.failures.map((item) => (
+                            <div
+                              key={`${item.index}-${item.provider}`}
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--gm-danger)',
+                                overflowWrap: 'anywhere',
+                                wordBreak: 'break-word',
+                              }}
+                            >
+                              • 「{item.channelLabel}」生成失败：{item.error}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {/* Citation-Driven Highlights */}
                   {effectiveRecommendedChannels.length > 0 ? (

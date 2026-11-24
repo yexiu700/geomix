@@ -1374,4 +1374,122 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     expect(enqueuedJobs).toHaveLength(enqueuedBefore);
     expect(tasks.get('task_wp_clean')?.status).toBe('READY_TO_PUBLISH');
   });
+
+  it('Issue #363: exposes POST/GET /articles/:articleId/distributions/variant-jobs and enforces TenantActiveGuard on write', async () => {
+    const variantSvc = app.get(VariantGeneratorService);
+    const sampleJob = {
+      id: 'gvj_http_1',
+      articleId: 'art_clean',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_global',
+      status: 'QUEUED' as const,
+      total: 2,
+      doneCount: 0,
+      failCount: 0,
+      unitPrice: 2,
+      totalChargedPoints: 0,
+      refundedCount: 0,
+      refundedPoints: 0,
+      reservationId: 'res_gvj_1',
+      billingMode: 'SHADOW' as const,
+      replayed: false,
+      taskIds: [],
+      failures: [],
+      lastError: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      finishedAt: null,
+    };
+
+    const createSpy = vi.spyOn(variantSvc, 'createVariantJob').mockResolvedValueOnce(sampleJob);
+    const listSpy = vi
+      .spyOn(variantSvc, 'listVariantJobs')
+      .mockResolvedValueOnce({ items: [sampleJob] });
+    const getSpy = vi.spyOn(variantSvc, 'getVariantJob').mockResolvedValueOnce({
+      ...sampleJob,
+      status: 'COMPLETED',
+      doneCount: 2,
+      totalChargedPoints: 4,
+      taskIds: ['task_1', 'task_2'],
+    });
+
+    const postRes = await req<typeof sampleJob>(
+      'POST',
+      '/api/v2/articles/art_clean/distributions/variant-jobs',
+      tokenA,
+      {
+        targets: [
+          { provider: 'REDDIT_ASSIST', channelLabel: 'Reddit' },
+          { provider: 'PR_PACKET', channelLabel: 'PR / KOL Media Kit' },
+        ],
+      },
+      { 'Idempotency-Key': 'dist_var_http_test_1' },
+    );
+    expect(postRes.status).toBe(200);
+    expect(postRes.body.code).toBe(0);
+    expect(postRes.body.data.id).toBe('gvj_http_1');
+    expect(postRes.body.data.status).toBe('QUEUED');
+    expect(createSpy).toHaveBeenCalledWith(
+      'art_clean',
+      expect.objectContaining({ targets: expect.any(Array) }),
+      expect.objectContaining({ tenantId: 'tenant_a' }),
+      expect.objectContaining({ idempotencyKey: 'dist_var_http_test_1' }),
+    );
+
+    const listRes = await req<{ items: Array<typeof sampleJob> }>(
+      'GET',
+      '/api/v2/articles/art_clean/distributions/variant-jobs',
+      tokenA,
+    );
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.data.items).toHaveLength(1);
+    expect(listSpy).toHaveBeenCalledWith('art_clean');
+
+    const getRes = await req<typeof sampleJob>(
+      'GET',
+      '/api/v2/articles/art_clean/distributions/variant-jobs/gvj_http_1',
+      tokenA,
+    );
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.data.status).toBe('COMPLETED');
+    expect(getRes.body.data.doneCount).toBe(2);
+    expect(getSpy).toHaveBeenCalledWith('art_clean', 'gvj_http_1');
+
+    // Expired tenant blocked on POST with 403 / 40301
+    const expRes = await req(
+      'POST',
+      '/api/v2/articles/art_exp/distributions/variant-jobs',
+      tokenExpired,
+      { targets: [{ provider: 'PR_PACKET', channelLabel: 'PR' }] },
+    );
+    expect(expRes.status).toBe(403);
+    expect(expRes.body.code).toBe(40301);
+
+    createSpy.mockRestore();
+    listSpy.mockRestore();
+    getSpy.mockRestore();
+  });
+
+  it('Issue #365: flags English exaggerated medical/financial claims as blockers and superlatives as warnings on GLOBAL preflight', async () => {
+    const res = await req<{
+      ok: boolean;
+      blockers: Array<{
+        code: string;
+        details?: string[];
+        matches?: Array<{ matchedText: string }>;
+      }>;
+      warnings: Array<{
+        code: string;
+        details?: string[];
+        matches?: Array<{ matchedText: string }>;
+      }>;
+    }>('POST', '/api/v2/articles/art_clean/preflight', tokenA, {
+      title: 'Acme Review',
+      contentMarkdown: 'Guaranteed #1 cure-all miracle! 100% safe and risk-free for everyone.',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data.ok).toBe(false);
+    expect(res.body.data.blockers.some((b) => b.code === 'COMPLIANCE_BLOCKED')).toBe(true);
+    expect(res.body.data.warnings.some((w) => w.code === 'GLOBAL_CLAIM_WARNING')).toBe(true);
+  });
 });

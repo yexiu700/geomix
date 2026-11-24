@@ -749,4 +749,18 @@ describe('PublicPrPacketController & PublicPrPacketService HTTP v2 (unauthentica
     // R2-S-03: compensating deleteMany cleans up the orphaned publish record (and cascaded retest schedules)
     expect(publishRecords).toHaveLength(0);
   });
+
+  it('Issue #366: localizes default Chinese PR_PACKET channelLabel to English for GLOBAL public packets', async () => {
+    const task = tasks.get('task_valid');
+    expect(task).toBeDefined();
+    task!.channelLabel = 'PR / KOL 外部媒体协作包';
+
+    const res = await fetch(`${baseUrl}/api/v2/public/pr-packets/${VALID_TOKEN}`);
+    const body = (await res.json()) as Envelope<PublicPrPacketDto>;
+    expect(res.status).toBe(200);
+    expect(body.code).toBe(0);
+    expect(body.data.market).toBe('GLOBAL');
+    expect(body.data.channelLabel).toBe('PR / KOL Media Kit');
+    expect(/[\u4E00-\u9FFF]/.test(body.data.channelLabel)).toBe(false);
+  });
 });

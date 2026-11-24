@@ -16,6 +16,7 @@ import type {
   DistributionEnqueuer,
   DistributionJobData,
 } from '../distribution/distribution.runner';
+import type { VariantJobData, VariantJobEnqueuer } from '../distribution/variant-job.runner';
 import type { GeoBatchEnqueuer, GeoBatchJobData } from '../studio/geo-batch.runner';
 import type {
   VisibilityCheckJobData,
@@ -23,7 +24,13 @@ import type {
 } from '../visibility/visibility-run.runner';
 import type { DriverJob, JobEnqueuer } from './job-enqueuer';
 
-export type { DistributionJobData, FactIndexJobData, GeoBatchJobData, VisibilityCheckJobData };
+export type {
+  DistributionJobData,
+  FactIndexJobData,
+  GeoBatchJobData,
+  VariantJobData,
+  VisibilityCheckJobData,
+};
 
 export const BOARD_PATH = '/api/v1/admin/queues/board';
 
@@ -46,6 +53,7 @@ export class QueueProducer
     FactIndexEnqueuer,
     GeoBatchEnqueuer,
     DistributionEnqueuer,
+    VariantJobEnqueuer,
     OnModuleDestroy
 {
   private connection: IORedis | undefined;
@@ -139,6 +147,21 @@ export class QueueProducer
       'distribution',
       { tenantId: data.tenantId, taskId: data.taskId },
       {
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: { count: 200 },
+      },
+    );
+  }
+
+  async enqueueVariantJob(data: VariantJobData): Promise<void> {
+    await this.connect();
+    const queue = await this.queue('distribution');
+    await queue.add(
+      'variant-generate',
+      { tenantId: data.tenantId, jobId: data.jobId },
+      {
+        jobId: `variant-job-${data.jobId}`,
         attempts: 1,
         removeOnComplete: true,
         removeOnFail: { count: 200 },

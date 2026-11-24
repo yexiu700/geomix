@@ -21,6 +21,7 @@ import {
   type GeoMarket,
   type GeoPublishRecordDto,
   type GeoRetestScheduleDto,
+  type GeoVariantJobDto,
   type PublishDistributionTaskInput,
   type RetestScheduleConfigInput,
   type UpdateDistributionTaskInput,
@@ -362,6 +363,23 @@ export class DistributionService {
     idempotencyKey?: string,
   ): Promise<GenerateVariantsResult> {
     return this.variantGenerator.generateVariants(articleId, input, auth, { idempotencyKey });
+  }
+
+  async createVariantJob(
+    articleId: string,
+    input: CreateDistributionVariantsInput,
+    auth: DistributionAuthContext,
+    idempotencyKey?: string,
+  ): Promise<GeoVariantJobDto> {
+    return this.variantGenerator.createVariantJob(articleId, input, auth, { idempotencyKey });
+  }
+
+  async listVariantJobs(articleId: string): Promise<{ items: GeoVariantJobDto[] }> {
+    return this.variantGenerator.listVariantJobs(articleId);
+  }
+
+  async getVariantJob(articleId: string, jobId: string): Promise<GeoVariantJobDto> {
+    return this.variantGenerator.getVariantJob(articleId, jobId);
   }
 
   async updateTask(

@@ -233,6 +233,7 @@ model Tenant {
   channelConnections     ChannelConnection[]
   geoDistributionTasks   GeoDistributionTask[]
   geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 }
 
 model User {
@@ -463,6 +464,7 @@ model Brand {
   channelConnections     ChannelConnection[]
   geoDistributionTasks   GeoDistributionTask[]
   geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
@@ -495,6 +497,7 @@ model BrandMarket {
   channelConnections     ChannelConnection[]
   geoDistributionTasks   GeoDistributionTask[]
   geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 
   @@unique([brandId, market])
   @@index([tenantId, brandId])
@@ -726,6 +729,7 @@ model GeoArticle {
 
   publishRecords    GeoPublishRecord[]
   distributionTasks GeoDistributionTask[]
+  variantJobs       GeoVariantJob[]
 
   @@index([tenantId, brandMarketId, status, createdAt])
   @@index([tenantId, brandId, createdAt])
@@ -907,4 +911,39 @@ model GeoRetestSchedule {
   @@index([status, dueAt])
   @@index([tenantId, brandMarketId, status])
   @@index([visibilityRunId])
+}
+
+model GeoVariantJob {
+  id                 String      @id @default(cuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId            String
+  brand              Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId      String
+  brandMarket        BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  articleId          String
+  article            GeoArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  idempotencyKey     String?
+  requestFingerprint String?
+  targetsJson        Json        @default("[]")
+  total              Int
+  doneCount          Int         @default(0)
+  failCount          Int         @default(0)
+  unitPrice          Int
+  totalChargedPoints Int         @default(0)
+  refundedCount      Int         @default(0)
+  refundedPoints     Int         @default(0)
+  billingMode        String      @default("SHADOW")
+  reservationId      String?
+  status             TaskStatus  @default(QUEUED)
+  taskIds            String[]    @default([])
+  failuresJson       Json        @default("[]")
+  lastError          String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  finishedAt         DateTime?
+
+  @@unique([tenantId, articleId, idempotencyKey])
+  @@index([tenantId, articleId, createdAt])
+  @@index([tenantId, articleId, status])
 }
