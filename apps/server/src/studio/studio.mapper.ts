@@ -2,10 +2,15 @@ import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
   CHANNEL_PROVIDERS,
+  CONFIDENCE_LEVELS,
   CRAWL_PROBE_STATUSES,
   RETEST_SCHEDULE_STATUSES,
+  computeWilsonInterval,
   crawlProbeReportSchema,
+  differenceInDifferencesSchema,
+  wilsonIntervalSchema,
   type ChannelProvider,
+  type ConfidenceLevel,
   type CrawlProbeReport,
   type CrawlProbeStatus,
   type GeoArticleRecord,
@@ -17,6 +22,7 @@ import {
   type GeoOutlineHeading,
   type GeoPublishRecordDto,
   type GeoRecipe,
+  type GeoRetestControlMetricsSnapshot,
   type GeoRetestMetricsSnapshot,
   type GeoRetestScheduleDto,
   type GeoTargetFormat,
@@ -279,6 +285,7 @@ export function normalizeRetestMetricSnapshot(
 
 const CRAWL_PROBE_STATUS_SET = new Set<string>(CRAWL_PROBE_STATUSES);
 const RETEST_SCHEDULE_STATUS_SET = new Set<string>(RETEST_SCHEDULE_STATUSES);
+const CONFIDENCE_LEVEL_SET = new Set<string>(CONFIDENCE_LEVELS);
 
 export function normalizeGeoRetestMetricsSnapshot(
   raw: Prisma.JsonValue | null | undefined,
@@ -297,7 +304,75 @@ export function normalizeGeoRetestMetricsSnapshot(
   if (typeof obj.hitCount === 'number' && Number.isInteger(obj.hitCount) && obj.hitCount >= 0) {
     out.hitCount = obj.hitCount;
   }
+  const parsedWilson = wilsonIntervalSchema.safeParse(obj.wilson);
+  if (parsedWilson.success) {
+    out.wilson = parsedWilson.data;
+  } else if (out.sampleCount !== undefined && out.hitCount !== undefined && out.sampleCount > 0) {
+    out.wilson = computeWilsonInterval(out.hitCount, out.sampleCount);
+  }
+  if (typeof obj.confidenceLevel === 'string' && CONFIDENCE_LEVEL_SET.has(obj.confidenceLevel)) {
+    out.confidenceLevel = obj.confidenceLevel as ConfidenceLevel;
+  } else if (out.wilson) {
+    out.confidenceLevel = out.wilson.confidenceLevel;
+  }
   return out;
+}
+
+export function normalizeGeoRetestControlMetricsSnapshot(
+  raw: Prisma.JsonValue | null | undefined,
+): GeoRetestControlMetricsSnapshot | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+
+  const currentMentionRate =
+    typeof obj.currentMentionRate === 'number' && Number.isFinite(obj.currentMentionRate)
+      ? obj.currentMentionRate
+      : null;
+  if (currentMentionRate === null) return null;
+
+  const baselineMentionRate =
+    typeof obj.baselineMentionRate === 'number' && Number.isFinite(obj.baselineMentionRate)
+      ? obj.baselineMentionRate
+      : null;
+
+  const controlPrompts = Array.isArray(obj.controlPrompts)
+    ? obj.controlPrompts
+        .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        .map((item) => item.trim())
+    : [];
+
+  const sampleCount =
+    typeof obj.sampleCount === 'number' && Number.isInteger(obj.sampleCount) && obj.sampleCount >= 0
+      ? obj.sampleCount
+      : 0;
+
+  const hitCount =
+    typeof obj.hitCount === 'number' && Number.isInteger(obj.hitCount) && obj.hitCount >= 0
+      ? obj.hitCount
+      : 0;
+
+  const parsedWilson = wilsonIntervalSchema.safeParse(obj.wilson);
+  const wilson = parsedWilson.success
+    ? parsedWilson.data
+    : sampleCount > 0
+      ? computeWilsonInterval(hitCount, sampleCount)
+      : undefined;
+
+  const parsedDid =
+    obj.did === null || obj.did === undefined
+      ? null
+      : differenceInDifferencesSchema.safeParse(obj.did);
+  const did = parsedDid && parsedDid.success ? parsedDid.data : null;
+
+  return {
+    controlPrompts,
+    baselineMentionRate,
+    currentMentionRate,
+    sampleCount,
+    hitCount,
+    ...(wilson ? { wilson } : {}),
+    did,
+  };
 }
 
 export function normalizeCrawlProbeReport(
@@ -313,10 +388,12 @@ export type GeoRetestScheduleRow = {
   publishRecordId: string;
   milestoneDay: number;
   sampleCount: number;
+  includeControlPrompts?: boolean;
   dueAt: Date;
   status: string;
   visibilityRunId: string | null;
   metricsSnapshotJson: Prisma.JsonValue | null;
+  controlMetricsJson?: Prisma.JsonValue | null;
   skipReason: string | null;
   executedAt: Date | null;
   createdAt: Date;
@@ -333,10 +410,12 @@ export function presentRetestSchedule(row: GeoRetestScheduleRow): GeoRetestSched
     publishRecordId: row.publishRecordId,
     milestoneDay: row.milestoneDay,
     sampleCount,
+    includeControlPrompts: Boolean(row.includeControlPrompts),
     dueAt: row.dueAt.toISOString(),
     status,
     visibilityRunId: row.visibilityRunId ?? null,
     metricsSnapshot: normalizeGeoRetestMetricsSnapshot(row.metricsSnapshotJson),
+    controlMetricsJson: normalizeGeoRetestControlMetricsSnapshot(row.controlMetricsJson),
     skipReason: row.skipReason ?? null,
     executedAt: row.executedAt ? row.executedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),

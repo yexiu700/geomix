@@ -14,6 +14,7 @@ import { AdaptersModule } from './infra/adapters.module';
 import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
+import { ReportsModule } from './reports/reports.module';
 import { StudioModule } from './studio/studio.module';
 import { VisibilityModule } from './visibility/visibility.module';
 
@@ -33,6 +34,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     BriefsModule,
     StudioModule,
     DistributionModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

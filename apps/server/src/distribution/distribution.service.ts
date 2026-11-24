@@ -37,7 +37,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { presentPublishRecord } from '../studio/studio.mapper';
 import { CrawlProbeService } from './crawl-probe.service';
 import { DISTRIBUTION_ENQUEUER, type DistributionEnqueuer } from './distribution.runner';
-import { RetestSchedulerService } from './retest-scheduler.service';
+import {
+  RetestSchedulerService,
+  type ParsedRetestBudgetEstimateQuery,
+  type RetestBudgetEstimateDto,
+} from './retest-scheduler.service';
 import {
   VariantGeneratorService,
   presentDistributionTask,
@@ -846,5 +850,17 @@ export class DistributionService {
       publishRecordId,
       items,
     };
+  }
+
+  async estimateRetestBudget(
+    publishRecordId: string,
+    auth: DistributionAuthContext,
+    query?: ParsedRetestBudgetEstimateQuery,
+  ): Promise<RetestBudgetEstimateDto> {
+    return this.retestScheduler.estimateBudgetForPublishRecord(
+      publishRecordId,
+      auth.tenantId,
+      query,
+    );
   }
 }

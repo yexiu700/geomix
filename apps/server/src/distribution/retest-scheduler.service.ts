@@ -1,10 +1,13 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import {
   API_ERROR,
   AUTH_ERROR,
+  BRAND_DEFAULT_RETEST_CONTROL_PROMPTS,
   DEFAULT_RETEST_MILESTONE_DAYS,
   type GeoMarket,
+  type GeoRetestControlMetricsSnapshot,
   type GeoRetestScheduleDto,
   type RetestSampleCount,
   type RetestScheduleConfigInput,
@@ -15,12 +18,21 @@ import { ApiError } from '../common/api-error';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   RetestMetricsHookService,
+  computeControlMetricsSnapshot,
   computeRetestMetricSnapshot,
   computeScheduleMetricsSnapshot,
+  findBaselineControlObservations,
+  normalizeRetestPromptKey,
+  partitionRetestObservations,
   type RetestBrandMarketLike,
   type RetestObservationLike,
+  type VisibilityObservationFinder,
 } from '../studio/retest-metrics-hook.service';
-import { presentRetestSchedule, type GeoRetestScheduleRow } from '../studio/studio.mapper';
+import {
+  normalizeRetestMetricSnapshot,
+  presentRetestSchedule,
+  type GeoRetestScheduleRow,
+} from '../studio/studio.mapper';
 import { runInTenant } from '../tenant/tenant-context';
 import {
   VISIBILITY_CONFIG,
@@ -40,6 +52,59 @@ const MAX_SWEEP_BATCH_SIZE = 100;
 const STALE_RUNNING_ORPHAN_MS = 10 * 60 * 1000;
 const STALE_COMPLETED_RECONCILE_GRACE_MS = 2 * 60 * 1000;
 
+export const retestBudgetEstimateQuerySchema = z.object({
+  sampleCount: z.coerce
+    .number()
+    .int()
+    .refine((v): v is 1 | 3 => v === 1 || v === 3, '采样次数仅支持 1 或 3')
+    .optional(),
+  includeControlPrompts: z
+    .preprocess((v) => {
+      if (v === 'true' || v === true) return true;
+      if (v === 'false' || v === false) return false;
+      return v;
+    }, z.boolean())
+    .optional(),
+  milestones: z
+    .preprocess(
+      (v) => {
+        if (typeof v === 'string') {
+          return v.split(',').map((s) => {
+            const trimmed = s.trim();
+            return /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+          });
+        }
+        return v;
+      },
+      z.array(z.number().int().min(1).max(365)).min(1).max(6),
+    )
+    .optional(),
+});
+
+export type RetestBudgetEstimateQueryInput = z.input<typeof retestBudgetEstimateQuerySchema>;
+export type ParsedRetestBudgetEstimateQuery = z.output<typeof retestBudgetEstimateQuerySchema>;
+
+export type RetestBudgetEstimateDto = {
+  publishRecordId: string;
+  market: GeoMarket;
+  targetPromptCount: number;
+  configuredControlPromptCount: number;
+  effectiveControlPromptCount: number;
+  selectedControlPrompts: string[];
+  totalPromptCount: number;
+  activeEngineCount: number;
+  sampleCount: RetestSampleCount;
+  includeControlPrompts: boolean;
+  unitPrice: number;
+  perRunPoints: number;
+  pendingMilestoneCount: number;
+  totalEstimatedPoints: number;
+  billingMode: 'SHADOW' | 'STRICT';
+  walletAvailable: number;
+  sufficientForNextRun: boolean;
+  sufficientForAllPending: boolean;
+};
+
 export type RetestScheduleTargetRecord = {
   id: string;
   tenantId: string;
@@ -52,6 +117,7 @@ export type AutoRetestConfigInput = {
   enabled?: boolean;
   milestones?: readonly number[];
   sampleCount?: 1 | 3;
+  includeControlPrompts?: boolean;
 };
 
 export type RetestSweepOptions = {
@@ -96,8 +162,55 @@ function safeSkipReason(error: unknown): string {
   return '定时复测触发失败，请稍后重试';
 }
 
+export function selectRetestControlPrompts(
+  targetPrompt: string,
+  rawControlPrompts: readonly string[] | null | undefined,
+  includeControlPrompts: boolean,
+  maxCount: number = BRAND_DEFAULT_RETEST_CONTROL_PROMPTS,
+): string[] {
+  if (
+    !includeControlPrompts ||
+    !Number.isFinite(maxCount) ||
+    maxCount <= 0 ||
+    !Array.isArray(rawControlPrompts) ||
+    rawControlPrompts.length === 0
+  ) {
+    return [];
+  }
+  const targetKey = normalizeRetestPromptKey(targetPrompt);
+  const seen = new Set<string>(targetKey ? [targetKey] : []);
+  const selected: string[] = [];
+  for (const raw of rawControlPrompts) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim().slice(0, 300);
+    if (trimmed.length < 2) continue;
+    const key = normalizeRetestPromptKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    selected.push(trimmed);
+    if (selected.length >= maxCount) break;
+  }
+  return selected;
+}
+
+export function computeRetestEstimatedPoints(params: {
+  targetPromptCount: number;
+  controlPromptCount: number;
+  activeEngineCount: number;
+  sampleCount: RetestSampleCount;
+  unitPrice: number;
+}): number {
+  const prompts =
+    Math.max(0, Math.floor(params.targetPromptCount)) +
+    Math.max(0, Math.floor(params.controlPromptCount));
+  const engines = Math.max(0, Math.floor(params.activeEngineCount));
+  const samples = params.sampleCount === 3 ? 3 : 1;
+  const price = Math.max(0, Math.floor(params.unitPrice));
+  return prompts * engines * samples * price;
+}
+
 /**
- * 幂等创建指定发布记录的定时复测计划（默认 T+7/14/30，sampleCount=1）。
+ * 幂等创建指定发布记录的定时复测计划（默认 T+7/14/30，sampleCount=1，includeControlPrompts=false）。
  * 供 RetestSchedulerService 与 GeoDeliveryService 复用，避免模块间循环依赖。
  */
 export async function ensureRetestSchedulesForPublishRecord(
@@ -125,6 +238,7 @@ export async function ensureRetestSchedulesForPublishRecord(
             publishRecordId: string;
             milestoneDay: number;
             sampleCount: number;
+            includeControlPrompts: boolean;
             dueAt: Date;
             status: 'PENDING';
           }>;
@@ -143,6 +257,7 @@ export async function ensureRetestSchedulesForPublishRecord(
   }
 
   const sampleCount: RetestSampleCount = autoRetestConfig?.sampleCount === 3 ? 3 : 1;
+  const includeControlPrompts = Boolean(autoRetestConfig?.includeControlPrompts);
 
   await delegate.createMany({
     data: milestones.map((milestoneDay) => ({
@@ -152,6 +267,7 @@ export async function ensureRetestSchedulesForPublishRecord(
       publishRecordId: record.id,
       milestoneDay,
       sampleCount,
+      includeControlPrompts,
       dueAt: new Date(record.publishedAt.getTime() + milestoneDay * DAY_MS),
       status: 'PENDING' as const,
     })),
@@ -230,6 +346,14 @@ export class RetestSchedulerService {
     const effectiveSampleCount: RetestSampleCount =
       input.sampleCount ??
       (existing.find((s) => s.status === 'PENDING')?.sampleCount === 3 ? 3 : 1);
+    const effectiveIncludeControlPrompts: boolean =
+      input.includeControlPrompts ??
+      Boolean(
+        (
+          existing.find((s) => s.status === 'PENDING') as
+            { includeControlPrompts?: boolean } | undefined
+        )?.includeControlPrompts,
+      );
 
     if (input.enabled === false) {
       await this.prisma.scoped.geoRetestSchedule.updateMany({
@@ -291,6 +415,7 @@ export class RetestSchedulerService {
               status: 'PENDING',
               skipReason: null,
               sampleCount: effectiveSampleCount,
+              includeControlPrompts: effectiveIncludeControlPrompts,
             },
           });
         }
@@ -305,6 +430,7 @@ export class RetestSchedulerService {
               publishRecordId: record.id,
               milestoneDay,
               sampleCount: effectiveSampleCount,
+              includeControlPrompts: effectiveIncludeControlPrompts,
               dueAt: new Date(record.publishedAt.getTime() + milestoneDay * DAY_MS),
               status: 'PENDING' as const,
             })),
@@ -319,6 +445,13 @@ export class RetestSchedulerService {
           data: { sampleCount: input.sampleCount },
         });
       }
+
+      if (input.includeControlPrompts !== undefined) {
+        await this.prisma.scoped.geoRetestSchedule.updateMany({
+          where: { publishRecordId: record.id, status: 'PENDING' },
+          data: { includeControlPrompts: input.includeControlPrompts },
+        });
+      }
     }
 
     const updated = await this.prisma.scoped.geoRetestSchedule.findMany({
@@ -327,6 +460,114 @@ export class RetestSchedulerService {
     });
 
     return updated.map(presentRetestSchedule);
+  }
+
+  async estimateBudgetForPublishRecord(
+    publishRecordId: string,
+    tenantId: string,
+    query?: ParsedRetestBudgetEstimateQuery,
+  ): Promise<RetestBudgetEstimateDto> {
+    const record = await this.prisma.scoped.geoPublishRecord.findFirst({
+      where: { id: publishRecordId },
+      include: {
+        article: {
+          select: {
+            title: true,
+            targetPrompt: true,
+          },
+        },
+        brandMarket: {
+          select: {
+            market: true,
+            localBrandName: true,
+            controlPrompts: true,
+          },
+        },
+        retestSchedules: {
+          where: { status: 'PENDING' },
+          orderBy: [{ milestoneDay: 'asc' }, { id: 'asc' }],
+          select: {
+            milestoneDay: true,
+            sampleCount: true,
+            includeControlPrompts: true,
+          },
+        },
+      },
+    });
+    if (!record) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '发布记录不存在');
+    }
+
+    const market: GeoMarket = record.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+    const pendingSchedules = Array.isArray(record.retestSchedules) ? record.retestSchedules : [];
+    const firstPending = pendingSchedules[0];
+
+    const sampleCount: RetestSampleCount =
+      query?.sampleCount ?? (firstPending?.sampleCount === 3 ? 3 : 1);
+    const includeControlPrompts: boolean =
+      query?.includeControlPrompts ?? Boolean(firstPending?.includeControlPrompts);
+
+    const promptCandidate = record.article.targetPrompt.trim();
+    const targetPrompt =
+      promptCandidate.length >= 2
+        ? promptCandidate.slice(0, 300)
+        : record.article.title.trim().slice(0, 300) || record.brandMarket.localBrandName;
+
+    const configuredControlPrompts = Array.isArray(record.brandMarket.controlPrompts)
+      ? record.brandMarket.controlPrompts
+      : [];
+    const selectedControlPrompts = selectRetestControlPrompts(
+      targetPrompt,
+      configuredControlPrompts,
+      includeControlPrompts,
+    );
+
+    const engineHealth =
+      this.engineHealth ?? new VisibilityEngineHealthService(this.visibilityConfig);
+    const availability = this.visibilityConfig.featureEnabled
+      ? await engineHealth.getAvailability(market)
+      : { engines: [] };
+    const activeEngineCount = availability.engines.filter((e) => e.available).length;
+
+    const unitPrice = await this.billing.unitPrice('visibility_check');
+    const wallet = await this.billing.wallet(tenantId);
+
+    const targetPromptCount = targetPrompt ? 1 : 0;
+    const perRunPoints = computeRetestEstimatedPoints({
+      targetPromptCount,
+      controlPromptCount: selectedControlPrompts.length,
+      activeEngineCount,
+      sampleCount,
+      unitPrice,
+    });
+
+    const pendingMilestoneCount =
+      query?.milestones !== undefined
+        ? normalizeMilestoneDays(query.milestones).length
+        : pendingSchedules.length;
+    const totalEstimatedPoints = perRunPoints * pendingMilestoneCount;
+    const billingMode: 'SHADOW' | 'STRICT' = wallet.billingMode === 'STRICT' ? 'STRICT' : 'SHADOW';
+
+    return {
+      publishRecordId: record.id,
+      market,
+      targetPromptCount,
+      configuredControlPromptCount: configuredControlPrompts.length,
+      effectiveControlPromptCount: selectedControlPrompts.length,
+      selectedControlPrompts,
+      totalPromptCount: targetPromptCount + selectedControlPrompts.length,
+      activeEngineCount,
+      sampleCount,
+      includeControlPrompts,
+      unitPrice,
+      perRunPoints,
+      pendingMilestoneCount,
+      totalEstimatedPoints,
+      billingMode,
+      walletAvailable: wallet.available,
+      sufficientForNextRun: billingMode === 'SHADOW' || wallet.available >= perRunPoints,
+      sufficientForAllPending: billingMode === 'SHADOW' || wallet.available >= totalEstimatedPoints,
+    };
   }
 
   async runDueSweep(opts?: RetestSweepOptions): Promise<RetestSweepReport> {
@@ -412,6 +653,7 @@ export class RetestSchedulerService {
                   id: true,
                   market: true,
                   localBrandName: true,
+                  controlPrompts: true,
                 },
               },
             },
@@ -475,18 +717,35 @@ export class RetestSchedulerService {
             return;
           }
 
+          const selectedControlPrompts = selectRetestControlPrompts(
+            prompt,
+            record.brandMarket.controlPrompts,
+            Boolean((schedule as { includeControlPrompts?: boolean }).includeControlPrompts),
+          );
+          const prompts = [prompt, ...selectedControlPrompts];
+
           const sampleCount: RetestSampleCount = schedule.sampleCount === 3 ? 3 : 1;
           const unitPrice = await this.billing.unitPrice('visibility_check');
-          const estimatedPoints = engines.length * sampleCount * unitPrice;
+          const estimatedPoints = computeRetestEstimatedPoints({
+            targetPromptCount: 1,
+            controlPromptCount: selectedControlPrompts.length,
+            activeEngineCount: engines.length,
+            sampleCount,
+            unitPrice,
+          });
           const wallet = await this.billing.wallet(schedule.tenantId);
 
           if (wallet.billingMode === 'STRICT' && wallet.available < estimatedPoints) {
+            const breakdown =
+              selectedControlPrompts.length > 0
+                ? `${prompts.length} 问句（含 ${selectedControlPrompts.length} 条对照） × ${engines.length} 引擎 × ${sampleCount} 次采样 × ${unitPrice} 点`
+                : `${engines.length} 引擎 × ${sampleCount} 次采样 × ${unitPrice} 点`;
             await this.prisma.scoped.geoRetestSchedule.updateMany({
               where: { id: schedule.id, status: 'RUNNING' },
               data: {
                 status: 'SKIPPED_INSUFFICIENT_POINTS',
                 visibilityRunId: null,
-                skipReason: `预计需要 ${estimatedPoints} 点（${engines.length} 引擎 × ${sampleCount} 次采样 × ${unitPrice} 点），当前可用 ${wallet.available} 点`,
+                skipReason: `预计需要 ${estimatedPoints} 点（${breakdown}），当前可用 ${wallet.available} 点`,
                 executedAt: now,
               },
             });
@@ -507,7 +766,7 @@ export class RetestSchedulerService {
                 80,
               ),
               engines,
-              prompts: [prompt],
+              prompts,
               triggerType: 'RETEST',
               retestArticleId: record.articleId,
               sampleCount,
@@ -697,20 +956,81 @@ export class RetestSchedulerService {
             if (successObservations.length > 0 && detailedRun?.brandMarket) {
               const publishRecord = await this.prisma.scoped.geoPublishRecord.findFirst({
                 where: { id: schedule.publishRecordId },
-                select: { id: true, publishedUrl: true },
+                select: {
+                  id: true,
+                  publishedUrl: true,
+                  baselineRunId: true,
+                  beforeMetrics: true,
+                  publishedAt: true,
+                  article: {
+                    select: {
+                      targetPrompt: true,
+                    },
+                  },
+                },
               });
               const brandMarketLike = detailedRun.brandMarket as RetestBrandMarketLike;
               const publishedUrl = publishRecord?.publishedUrl ?? null;
+              const includeControlPrompts = Boolean(
+                (schedule as { includeControlPrompts?: boolean }).includeControlPrompts,
+              );
+              const runPrompts = Array.isArray((detailedRun as { prompts?: unknown }).prompts)
+                ? ((detailedRun as { prompts?: string[] }).prompts ?? [])
+                : undefined;
+
+              const partitioned = partitionRetestObservations({
+                observations: successObservations,
+                runPrompts,
+                includeControlPrompts,
+                targetPrompt: publishRecord?.article?.targetPrompt ?? null,
+                brandMarketControlPrompts: brandMarketLike.controlPrompts,
+              });
+
               const scheduleSnapshot = computeScheduleMetricsSnapshot(
-                successObservations,
+                partitioned.targetObservations,
                 brandMarketLike,
                 publishedUrl,
               );
               const recordSnapshot = computeRetestMetricSnapshot(
-                successObservations,
+                partitioned.targetObservations,
                 brandMarketLike,
                 publishedUrl,
               );
+
+              let controlMetrics: GeoRetestControlMetricsSnapshot | null = null;
+              if (
+                includeControlPrompts &&
+                scheduleSnapshot &&
+                partitioned.controlObservations.length > 0
+              ) {
+                const obsDelegate = (
+                  this.prisma.scoped as unknown as {
+                    visibilityObservation?: VisibilityObservationFinder;
+                  }
+                ).visibilityObservation;
+                const baselineControlObservations = await findBaselineControlObservations(
+                  obsDelegate,
+                  {
+                    brandId: schedule.brandId,
+                    brandMarketId: schedule.brandMarketId,
+                    currentRunId: run.id,
+                    baselineRunId: publishRecord?.baselineRunId ?? null,
+                    publishedAt: publishRecord?.publishedAt ?? null,
+                    controlPrompts: partitioned.controlPrompts,
+                  },
+                );
+                const beforeMetrics = normalizeRetestMetricSnapshot(
+                  publishRecord?.beforeMetrics ?? null,
+                );
+                controlMetrics = computeControlMetricsSnapshot({
+                  controlPrompts: partitioned.controlPrompts,
+                  controlObservations: partitioned.controlObservations,
+                  baselineControlObservations,
+                  brandMarket: brandMarketLike,
+                  treatmentBaselineMentionRate: beforeMetrics?.mentionRate ?? null,
+                  treatmentCurrentMentionRate: scheduleSnapshot.mentionRate,
+                });
+              }
 
               if (publishRecord && recordSnapshot) {
                 await this.prisma.scoped.geoPublishRecord.updateMany({
@@ -722,20 +1042,23 @@ export class RetestSchedulerService {
                 });
               }
 
-              await this.prisma.scoped.geoRetestSchedule.updateMany({
-                where: { id: schedule.id, status: 'RUNNING' },
-                data: {
-                  status: 'COMPLETED',
-                  executedAt: run.finishedAt ?? now,
-                  skipReason: null,
-                  ...(scheduleSnapshot
-                    ? {
-                        metricsSnapshotJson: scheduleSnapshot as unknown as Prisma.InputJsonValue,
-                      }
-                    : {}),
-                },
-              });
-              return;
+              if (scheduleSnapshot) {
+                await this.prisma.scoped.geoRetestSchedule.updateMany({
+                  where: { id: schedule.id, status: 'RUNNING' },
+                  data: {
+                    status: 'COMPLETED',
+                    executedAt: run.finishedAt ?? now,
+                    skipReason: null,
+                    metricsSnapshotJson: scheduleSnapshot as unknown as Prisma.InputJsonValue,
+                    ...(controlMetrics
+                      ? {
+                          controlMetricsJson: controlMetrics as unknown as Prisma.InputJsonValue,
+                        }
+                      : {}),
+                  },
+                });
+                return;
+              }
             }
 
             const reason =

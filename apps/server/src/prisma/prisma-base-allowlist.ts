@@ -56,6 +56,7 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'me/me.service.ts': { category: 'merchant-debt', direct: 16, txOrRaw: 0 },
   'queue/active-work.ts': { category: 'worker', direct: 3, txOrRaw: 0 },
   'queue/work-driver.ts': { category: 'worker', direct: 28, txOrRaw: 2 },
+  'reports/roi-report-public.service.ts': { category: 'public', direct: 1, txOrRaw: 0 },
   'studio/geo-batch.runner.ts': { category: 'worker', direct: 0, txOrRaw: 6 },
   'studio/retest-metrics-hook.service.ts': { category: 'worker', direct: 0, txOrRaw: 1 },
   'studio/studio.service.ts': { category: 'billing', direct: 0, txOrRaw: 1 },
