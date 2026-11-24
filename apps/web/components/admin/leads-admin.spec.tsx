@@ -512,4 +512,96 @@ describe('LeadsAdmin (/admin/leads console, #379)', () => {
       errorSpy.mockRestore();
     }
   });
+
+  it('reconciles updated status and adminNote immediately when reopening modal while post-PATCH reload is still pending', async () => {
+    let resolveReload!: (value: MarketingLeadListResult) => void;
+    let listCallCount = 0;
+    const updatedLead: MarketingLeadDto = {
+      ...SAMPLE_LEADS[0]!,
+      status: 'TRIAL_PROVISIONED',
+      adminNote: '已开通 1000 点 Demo 试用账号',
+      updatedAt: '2026-11-24T05:00:00.000Z',
+    };
+
+    const listAdminLeads = vi.fn<LeadsAdminClient['listAdminLeads']>().mockImplementation(() => {
+      listCallCount += 1;
+      if (listCallCount === 1) {
+        return Promise.resolve({
+          items: SAMPLE_LEADS,
+          total: SAMPLE_LEADS.length,
+          page: 1,
+          pageSize: 20,
+        });
+      }
+      return new Promise<MarketingLeadListResult>((resolve) => {
+        resolveReload = resolve;
+      });
+    });
+
+    const updateAdminLead = vi
+      .fn<LeadsAdminClient['updateAdminLead']>()
+      .mockResolvedValue(updatedLead);
+
+    const client = createClient({ listAdminLeads, updateAdminLead });
+    render(<LeadsAdmin client={client} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('NordicAudio')).toBeTruthy();
+    });
+
+    // Open Lead A modal and save a new status + adminNote
+    fireEvent.click(screen.getByRole('button', { name: '跟进备注 NordicAudio' }));
+    const dialog = await screen.findByRole('dialog');
+    await selectAntdOption(
+      within(dialog).getByRole('combobox', { name: '线索状态' }),
+      '已开通试用',
+    );
+    fireEvent.change(within(dialog).getByRole('textbox', { name: '管理员跟进备注' }), {
+      target: { value: '已开通 1000 点 Demo 试用账号' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '保 存' }));
+
+    await waitFor(() => {
+      expect(updateAdminLead).toHaveBeenCalledWith(CUID_1, {
+        status: 'TRIAL_PROVISIONED',
+        adminNote: '已开通 1000 点 Demo 试用账号',
+      });
+      expect(listAdminLeads).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    // Post-PATCH reload is STILL pending — immediately reopen modal on the same lead
+    fireEvent.click(screen.getByRole('button', { name: '跟进备注 NordicAudio' }));
+    const reopenedDialog = await screen.findByRole('dialog');
+
+    await waitFor(() => {
+      const reopenedNote = within(reopenedDialog).getByRole('textbox', {
+        name: '管理员跟进备注',
+      }) as HTMLTextAreaElement;
+      expect(reopenedNote.value).toBe('已开通 1000 点 Demo 试用账号');
+      expect(within(reopenedDialog).getByText('已开通试用')).toBeTruthy();
+    });
+    expect(within(reopenedDialog).queryByText('待跟进')).toBeNull();
+
+    const cancelBtn = within(reopenedDialog).getByRole('button', {
+      name: '取 消',
+    }) as HTMLButtonElement;
+    expect(cancelBtn.disabled).toBe(false);
+
+    const saveBtn = within(reopenedDialog).getByRole('button', {
+      name: '保 存',
+    }) as HTMLButtonElement;
+    expect(saveBtn.classList.contains('ant-btn-loading')).toBe(false);
+
+    // Resolve the deferred reload cleanly at the end of the test
+    await act(async () => {
+      resolveReload({
+        items: [updatedLead, SAMPLE_LEADS[1]!],
+        total: SAMPLE_LEADS.length,
+        page: 1,
+        pageSize: 20,
+      });
+      await Promise.resolve();
+    });
+  });
 });

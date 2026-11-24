@@ -2167,7 +2167,6 @@ test.describe(
       try {
         await page.goto('/admin/leads', { waitUntil: 'domcontentloaded' });
         await expect(page.locator('main')).toBeVisible();
-        await assertNoHorizontalOverflow(page);
 
         // Search by shared tag so both seeded leads appear
         const searchInput = page.getByRole('textbox', { name: '搜索线索' });
@@ -2179,6 +2178,7 @@ test.describe(
         await expect(page.locator('tbody tr').filter({ hasText: brandCn })).toBeVisible({
           timeout: 15_000,
         });
+        await assertNoHorizontalOverflow(page);
 
         // Apply status=NEW (待跟进) + targetMarket=CN (国内市场) filters
         await selectAntdFilter('状态筛选', '待跟进');

@@ -235,23 +235,29 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
       adminNote: trimmedNote === '' ? null : trimmedNote,
     };
 
+    let saved = false;
     try {
-      await client.updateAdminLead(editing.id, payload);
+      const updated = await client.updateAdminLead(editing.id, payload);
       if (!mountedRef.current) return;
+      saved = true;
+      setRows((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       const msg = `已更新「${editing.companyBrand}」线索跟进信息`;
       setEditing(null);
+      setModalSaving(false);
       setNotice(msg);
       feedback.notifySuccess(msg);
-      await loadLeads();
     } catch (reason) {
       if (!mountedRef.current) return;
       const msg = messageOf(reason, '保存跟进信息失败');
       setModalError(msg);
       feedback.notifyError(msg);
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && !saved) {
         setModalSaving(false);
       }
+    }
+    if (saved) {
+      await loadLeads();
     }
   }, [client, editForm, editing, feedback, loadLeads]);
 
