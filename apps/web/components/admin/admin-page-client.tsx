@@ -26,8 +26,11 @@ const AnnouncementAdmin = dynamic(
 const LlmCostAdmin = dynamic(() => import('./llm-cost-admin').then((m) => m.LlmCostAdmin), {
   loading: AdminLoading,
 });
+const LeadsAdmin = dynamic(() => import('./leads-admin').then((m) => m.LeadsAdmin), {
+  loading: AdminLoading,
+});
 
-export type AdminSection = 'tenants' | 'pricing' | 'announcements' | 'llm-costs';
+export type AdminSection = 'tenants' | 'pricing' | 'announcements' | 'llm-costs' | 'leads';
 
 export function AdminPageClient({ section }: { section: AdminSection }) {
   const [client, setClient] = useState<AdminClient | null>(null);
@@ -40,5 +43,6 @@ export function AdminPageClient({ section }: { section: AdminSection }) {
   if (section === 'tenants') return <TenantAdmin client={client} />;
   if (section === 'pricing') return <PricingAdmin client={client} />;
   if (section === 'announcements') return <AnnouncementAdmin client={client} />;
+  if (section === 'leads') return <LeadsAdmin client={client} />;
   return <LlmCostAdmin client={client} />;
 }
