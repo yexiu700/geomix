@@ -51,6 +51,9 @@ const sharedEnv: Record<string, string> = {
   E2E_PUBLIC_FIXTURE_HOST: process.env.E2E_PUBLIC_FIXTURE_HOST || 'public.e2e.example',
   E2E_FIXTURE_PORT: process.env.E2E_FIXTURE_PORT || '3099',
   E2E_MEMORY_MAX_OBJECTS: process.env.E2E_MEMORY_MAX_OBJECTS || '2000',
+  AUTH_CAPTCHA_MAX: process.env.AUTH_CAPTCHA_MAX || '100',
+  MARKETING_LEAD_IP_RATE_LIMIT_MAX: process.env.MARKETING_LEAD_IP_RATE_LIMIT_MAX || '100',
+  NEXT_E2E_FAST_BUILD: process.env.NEXT_E2E_FAST_BUILD || '1',
 };
 
 export default defineConfig({

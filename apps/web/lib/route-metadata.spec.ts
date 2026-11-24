@@ -18,17 +18,21 @@ function collectPageFiles(dir: string): string[] {
   return results.sort();
 }
 
+const USE_CLIENT_DIRECTIVE_RE = /^\s*['"]use client['"]/;
+const ROUTE_METADATA_EXPORT_RE =
+  /^export\s+(?:const\s+metadata\b|(?:async\s+)?function\s+generateMetadata\b)/m;
+
 describe('App Router page metadata parity (#203)', () => {
-  it('exports non-generic route metadata on every (console), /admin/*, and /login page', () => {
+  it('exports route metadata on every (console), (marketing), /admin/*, /share/*, and /login page', () => {
     const pages = collectPageFiles(APP_DIR);
     const missing: string[] = [];
 
     for (const file of pages) {
       const rel = relative(APP_DIR, file).replace(/\\/g, '/');
-      // Root / and /admin redirect immediately
+      // /admin redirects immediately
       if (rel === 'page.tsx' || rel === 'admin/page.tsx') continue;
       const content = readFileSync(file, 'utf8');
-      if (content.startsWith("'use client'") || !/export const metadata\b/.test(content)) {
+      if (USE_CLIENT_DIRECTIVE_RE.test(content) || !ROUTE_METADATA_EXPORT_RE.test(content)) {
         missing.push(rel);
       }
     }

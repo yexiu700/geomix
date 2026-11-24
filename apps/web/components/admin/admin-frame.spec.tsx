@@ -145,7 +145,45 @@ describe('AdminGate auth guard and cross-tab session (#194)', () => {
     expect(document.title).toContain('GeoMix 管理');
     expect(replaceMock).not.toHaveBeenCalled();
     expect(screen.queryByRole('link', { name: '系统模板' })).toBeNull();
+    expect(screen.getByRole('link', { name: '试用线索' }).getAttribute('href')).toBe(
+      '/admin/leads',
+    );
     expect(screen.getByRole('link', { name: '返回后台' }).getAttribute('href')).toBe('/home');
+  });
+
+  it('sets document.title and active link state for /admin/leads when an ADMIN session is valid', async () => {
+    mockPathname = '/admin/leads';
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: adminAccount });
+
+    render(
+      <AdminGate>
+        <div>试用线索正文</div>
+      </AdminGate>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('试用线索正文')).toBeTruthy();
+    });
+    expect(document.title).toBe('试用线索 · GeoMix 管理');
+    expect(screen.getByRole('link', { name: '试用线索' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+  });
+
+  it('redirects unauthenticated /admin/leads visits to /login?next=%2Fadmin%2Fleads', async () => {
+    mockPathname = '/admin/leads';
+    loadAccountMock.mockResolvedValue({ status: 'anonymous' });
+
+    render(
+      <AdminGate>
+        <div>试用线索正文</div>
+      </AdminGate>,
+    );
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/login?next=%2Fadmin%2Fleads');
+    });
+    expect(screen.queryByText('没有这个页面')).toBeNull();
   });
 
   it('renders immediately from warm account cache without boot flash (#203)', () => {

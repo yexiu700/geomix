@@ -143,6 +143,7 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
       pricing: '/admin/pricing',
       announcements: '/admin/announcements',
       llmCosts: '/admin/llm-costs',
+      leads: '/admin/leads',
     });
     expect(Object.keys(PRICING_ACTION_META).sort()).toEqual([
       'geo_variant',

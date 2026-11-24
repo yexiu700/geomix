@@ -8,7 +8,7 @@ import { createPrismaClient } from './client';
  * 不自动隔离的表：
  * - Tenant：租户本身
  * - AuditLog：可选 tenantId，登录撤销记录要按 userId 读取，不能被请求上下文藏掉
- * - PricingItem / Announcement：全局数据
+ * - PricingItem / Announcement / MarketingLead：全局数据
  */
 
 export const REQUIRED_TENANT_MODELS = [
@@ -48,9 +48,14 @@ export const UNSCOPED_OPTIONAL_TENANT_MODELS = ['AuditLog'] as const;
 
 /**
  * 不按请求租户过滤的模型。
- * Tenant 自己就是租户；PricingItem / Announcement 是全局数据。
+ * Tenant 自己就是租户；PricingItem / Announcement / MarketingLead 是全局数据。
  */
-export const UNSCOPED_UNOWNED_MODELS = ['Tenant', 'PricingItem', 'Announcement'] as const;
+export const UNSCOPED_UNOWNED_MODELS = [
+  'Tenant',
+  'PricingItem',
+  'Announcement',
+  'MarketingLead',
+] as const;
 
 const REQUIRED = new Set<string>(REQUIRED_TENANT_MODELS);
 const NULLABLE = new Set<string>(NULLABLE_TENANT_MODELS);

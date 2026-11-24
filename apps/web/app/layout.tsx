@@ -1,17 +1,20 @@
 import { SITE_NAME } from '@geomix/shared';
 import type { Metadata } from 'next';
 import { AppProviders } from '../components/providers';
+import { getMarketingSiteUrl } from '../lib/marketing-i18n';
 import 'antd/dist/reset.css';
 import './globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getMarketingSiteUrl()),
   title: SITE_NAME,
-  description: 'GeoMix 登录与后台',
+  description:
+    'GeoMix — Dual-Market GEO Platform (Global + CN) for AI citation diagnosis, compliant content studio, and T+1/7/14/30 attribution.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="en" suppressHydrationWarning>
       <body>
         <AppProviders>{children}</AppProviders>
       </body>
