@@ -8,6 +8,7 @@ import { BrandsModule } from './brands/brands.module';
 import { BriefsModule } from './briefs/briefs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DistributionModule } from './distribution/distribution.module';
+import { ExtensionModule } from './extension/extension.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { AdaptersModule } from './infra/adapters.module';
@@ -34,6 +35,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     BriefsModule,
     StudioModule,
     DistributionModule,
+    ExtensionModule,
     ReportsModule,
   ],
   controllers: [HealthController],
