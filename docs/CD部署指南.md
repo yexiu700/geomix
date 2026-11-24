@@ -47,7 +47,7 @@ cd /opt/geomix
 docker compose -f docker-compose.prod.yml run --rm migrate pnpm --filter @geomix/db db:seed
 ```
 
-4. 建议在宿主机使用 Nginx 或 Caddy 做 HTTPS 反向代理（并透传 `X-Real-IP` / `X-Forwarded-For` 请求头，以便后端按客户端真实 IP 独立计算验证码与登录限流）：
+4. 建议在宿主机使用 Nginx 或 Caddy 做 HTTPS 反向代理（并透传 `X-Real-IP` / `X-Forwarded-For` 请求头，以便后端按客户端真实 IP 独立计算验证码与登录限流；`/api/` 同时覆盖 `/api/v1` 与 `/api/v2`，并建议为流式写作 SSE 关闭反代缓冲或放宽读超时）：
    * `/api/` → `http://127.0.0.1:3001`
    * `/` → `http://127.0.0.1:3000`
 
@@ -72,4 +72,4 @@ sudo ./svc.sh start
 
 * 之前如果填过 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`，现在可以直接删掉，不再需要。
 * 如需自定义部署目录（默认 `/opt/geomix`），可在 **Variables** 中添加 `DEPLOY_PATH`。
-* 如需自定义前端构建时的接口前缀（默认 `/api/v1`），可在 **Variables** 中添加 `NEXT_PUBLIC_API_BASE`。
+* 如需自定义前端构建时的接口前缀（默认 `/api/v1`，前端自动推导 `/api/v2`），可在 **Variables** 中添加 `NEXT_PUBLIC_API_BASE`。
