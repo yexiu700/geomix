@@ -411,6 +411,7 @@ export function TenantAdmin({
 
       <Table<TenantRow>
         rowKey="id"
+        size="small"
         loading={loading}
         dataSource={filteredRows}
         scroll={{ x: 'max-content' }}
@@ -422,17 +423,17 @@ export function TenantAdmin({
           showTotal: (total) => `共 ${total} 条`,
         }}
         columns={[
-          { title: '名称', dataIndex: 'name', width: 150 },
-          { title: '用户名', dataIndex: 'username', width: 140 },
+          { title: '名称', dataIndex: 'name', width: 112, ellipsis: true },
+          { title: '用户名', dataIndex: 'username', width: 104, ellipsis: true },
           {
             title: '点数',
             dataIndex: 'points',
-            width: 90,
+            width: 70,
             render: (value: number) => <span className="gm-num">{value}</span>,
           },
           {
             title: '计费模式',
-            width: 190,
+            width: 140,
             render: (_value, row) =>
               row.billingMode
                 ? billingModeLabel(row.billingMode)
@@ -440,7 +441,7 @@ export function TenantAdmin({
           },
           {
             title: '有效期',
-            width: 120,
+            width: 96,
             render: (_value, row) => (
               <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
                 {formatShanghaiDate(row.expiresAt)}
@@ -449,7 +450,7 @@ export function TenantAdmin({
           },
           {
             title: '状态',
-            width: 90,
+            width: 66,
             render: (_value, row) => (
               <Tag
                 color={row.isActive ? 'success' : 'default'}
@@ -461,10 +462,11 @@ export function TenantAdmin({
           },
           {
             title: '操作',
-            width: 340,
+            width: 196,
             render: (_value, row) => (
-              <Space wrap={false}>
+              <Space size={4} wrap>
                 <Button
+                  size="small"
                   aria-label={`编辑 ${row.name}`}
                   onClick={() => {
                     setModalError(null);
@@ -479,6 +481,7 @@ export function TenantAdmin({
                   编辑
                 </Button>
                 <Button
+                  size="small"
                   aria-label={`加点 ${row.name}`}
                   onClick={() => {
                     setModalError(null);
@@ -489,6 +492,7 @@ export function TenantAdmin({
                   加点
                 </Button>
                 <Button
+                  size="small"
                   aria-label={`配额 ${row.name}`}
                   onClick={() => {
                     setModalError(null);
@@ -525,9 +529,10 @@ export function TenantAdmin({
                   配额
                 </Button>
                 <Select
+                  size="small"
                   aria-label={`计费模式 ${row.name}`}
                   value={row.billingMode ?? 'inherit'}
-                  style={{ width: 136 }}
+                  style={{ width: 112 }}
                   options={[
                     { value: 'inherit', label: '跟随系统默认' },
                     { value: 'SHADOW', label: UX_TERMS.billingShadow },

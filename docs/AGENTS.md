@@ -66,10 +66,10 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 
 由 [`packages/db/src/schema-contract.spec.ts`](../packages/db/src/schema-contract.spec.ts) 与 [`packages/db/src/tenant-scope.ts`](../packages/db/src/tenant-scope.ts) 共同守卫：
 
-1. **已落地迁移不可改写**：禁止编辑 `packages/db/prisma/migrations/` 下任何已有迁移 SQL（当前共 12 个迁移目录，含 `20261120100000_geomix_v2_domain_schema`）。所有结构变更必须新增一条时间戳迁移目录，且保持幂等安全（常规增量迁移不 `DROP TABLE`，不在增量迁移里重复 `CREATE EXTENSION`）。
+1. **已落地迁移不可改写**：禁止编辑 `packages/db/prisma/migrations/` 下任何已有迁移 SQL（当前共 14 个迁移目录，含 `20261120100000_geomix_v2_domain_schema`、`20261123090000_geomix_v2_1_distribution` 与 `20261124090000_geomix_v2_1_variant_jobs`）。所有结构变更必须新增一条时间戳迁移目录，且保持幂等安全（常规增量迁移不 `DROP TABLE`，不在增量迁移里重复 `CREATE EXTENSION`）。
 2. **同步契约测试**：增删 Prisma model 或新增迁移目录后，必须同步更新 `packages/db/src/schema-contract.spec.ts` 中的 `SCHEMA_MODELS` 与迁移目录断言列表，并运行 `pnpm db:validate`。
-3. **同步租户隔离登记**：任何新增 model 必须归类登记到 `packages/db/src/tenant-scope.ts` 的四个常量之一（当前共 27 个模型）：
-   - `REQUIRED_TENANT_MODELS`（23 个业务表，含 `BrandFactChunk`，读写自动绑定当前 `tenantId`）
+3. **同步租户隔离登记**：任何新增 model 必须归类登记到 `packages/db/src/tenant-scope.ts` 的四个常量之一（当前共 31 个模型）：
+   - `REQUIRED_TENANT_MODELS`（27 个业务表，含 `BrandFactChunk` 及 v2.1 分发域 4 张表，读写自动绑定当前 `tenantId`）
    - `NULLABLE_TENANT_MODELS`（当前为空 `[]`，预留给「系统行 `tenantId = null` + 租户私有行」的混合模型）
    - `UNSCOPED_OPTIONAL_TENANT_MODELS`（1 个：`AuditLog`，登录撤销等记录按 `userId` 读，不自动过滤）
    - `UNSCOPED_UNOWNED_MODELS`（3 个：`Tenant`、`PricingItem`、`Announcement`）
@@ -82,7 +82,7 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 2. **统一路由版本、信封与校验**：
    - 全局路由前缀为 `/api`，开启 URI 版本控制（`defaultVersion: '1'`、`prefix: 'v'`，见 `common/create-api-app.ts`）：
      - 基础/账号/计费/管理/队列接口默认暴露在 `/api/v1/*`；
-     - GeoMix 2.0 核心业务域（`brands`、`visibility`、`briefs`、`studio`）通过 `@Controller({ path: '...', version: '2' })` 暴露在 `/api/v2/*`。不要在 Controller `path` 里重复写 `api/v1` 或 `api/v2`。
+     - GeoMix 2.0 / v2.1 核心业务域（`brands`、`visibility`、`briefs`、`studio`、`distribution` 及公开 `public/pr-packets`）通过 `@Controller({ path: '...', version: '2' })` 暴露在 `/api/v2/*`。不要在 Controller `path` 里重复写 `api/v1` 或 `api/v2`。
    - 成功响应一律返回 `ok(data)`（来自 `@geomix/shared`，格式 `{ code: 0, msg: 'ok', data }`）；流式写作端点（`POST /api/v2/brands/:brandId/articles/stream`）采用 SSE。
    - 请求体用 `parseBody(zodSchema, body)`（`common/parse-body.ts`）校验；业务异常统一抛出 `new ApiError(httpStatus, errorCode, message)`（由 `ApiExceptionFilter` 转换）。
 3. **三层访问守卫与租户上下文**：
@@ -94,9 +94,9 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
    - **事务暂留 base**：租户扩展对 `findUnique` / `update` / `delete` / `upsert` 的归属探测走的是扩展外层 client，不经过事务句柄，所以 `prisma.scoped.$transaction` 内先创建再按主键更新的行会被误判为 `P2025`。在扩展改造之前，事务一律走 `prisma.base.$transaction`，事务内查询必须显式带 `tenantId`。
 4. **计费、免费限流与配额口径**：
    - 全局默认 `BILLING_MODE=SHADOW`；`Tenant.billingMode` 为 `null` 时继承全局值。
-   - GeoMix 2.0 收费项统一收敛为 3 项（`PRICING_DEFAULTS`：`geo_write` 10 点、`visibility_check` 2 点、`inline_image_gen` 5 点）；品牌事实卡提炼、写作意见、GEO 体检与局部改写为 4 项 0 点标配动作（`FREE_RATE_LIMITED_ACTIONS`），由 `FreeActionRateLimiter`（`common/free-action-rate-limiter.ts`）按租户限流。
+   - GeoMix v2.1 收费项共 4 项（`PRICING_DEFAULTS`：`geo_write` 10 点、`visibility_check` 2 点、`inline_image_gen` 5 点、`geo_variant` 2 点，其中 `geo_variant` 支持在管理后台调至 0 点）；品牌事实卡提炼、写作意见、GEO 体检、局部改写、发布前门禁、T+1 抓取体检与外部 PR 分享为 7 项 0 点标配动作（`FREE_RATE_LIMITED_ACTIONS`），由 `FreeActionRateLimiter`（`common/free-action-rate-limiter.ts`）按租户限流。
    - 计费流程固定为 `reserve`（整单冻结）→ `settle`（按产出单元结算，按 `unitKey + action` 幂等）→ `releaseUnit` / `close`（失败或取消退回未结算冻结）。无产出不得实扣。
-   - 存量配额（`MAIN_KEYWORD` 品牌数量、`QUESTION` 写作意见、`STORAGE_BYTES` 图片存储）删除时回退；累计配额（`AI_WRITE` GEO 写作）只增不减。
+   - 存量配额（`MAIN_KEYWORD` 品牌数量、`QUESTION` 写作意见、`STORAGE_BYTES` 图片存储、`SOCIAL_AUTH` 渠道授权连接）删除时回退；累计配额（`AI_WRITE` GEO 写作、`PUBLISH` 文章发布）只增不减。
 5. **外部适配器与安全边界**：
    - 所有大模型、向量、生图、网页抓取、搜索、对象存储均走 `AdaptersModule`，开发/CI 默认确定性假实现（`LLM_PROVIDERS={}`、`EMBEDDING_PROVIDER=fake`、`IMAGE_PROVIDER=fake`、`VISIBILITY_COLLECTOR=fake`、`STORAGE_DRIVER=memory`、`SEARCH_PROVIDER=link_list`）。
    - 任何出网请求必须复用 `PublicFetchService` / `ssrf.ts`（仅 `http/https` 80/443、DNS 解析 IPv4/IPv6 校验、连接钉住、最多 3 次重定向校验、遵守 `robots.txt`；仅受控内部服务可通过 `SSRF_ALLOWLIST` 显式放行）。
@@ -120,15 +120,15 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 
 以下规则由 [`apps/web/eslint.config.mjs`](../apps/web/eslint.config.mjs) 和 [`apps/web/lib/ux-foundation-guard.spec.ts`](../apps/web/lib/ux-foundation-guard.spec.ts) 强制拦截：
 
-| 禁止写法 | 正确替代 |
-| --- | --- |
-| 在 `components/` 调用静态 `Modal.confirm(...)` | `const { confirm } = useUxFeedback()`（`components/crud/ux-feedback.tsx`），自动继承暗黑主题与 ESC 关闭 |
-| 在 `components/` 调用 `URL.revokeObjectURL(...)` | `triggerBlobDownload(...)`（`lib/ux-foundation.ts`），统一挂 DOM 触发并延迟释放 |
-| 对 ISO 时间做 `.replace('T', ' ').slice(0, 16)` / `.expiresAt.slice(0, 10)` 等 UTC 切片 | `formatShanghaiDateTime` / `formatShanghaiDate` / `parseShanghaiDateTimeLocal`（`@geomix/shared`，固定 `Asia/Shanghai` UTC+8） |
-| 文案包含内部研发黑话（如 `影子计费`、`零拷贝`、`检索适配器`、`复刻落库状态`、`已落库查看`、`切分向量索引`、`整段注入`、`切片向量化`、`含手工槽位·不入随机池`、`模型收录计数留到后续模块`）或 `placeholder="名称或备注"` | 使用 `UX_TERMS` 与 `replaceUxJargon`（`@geomix/shared`），写业务语义清晰的占位符 |
-| 在标签标题、副标题、提示语中暴露裸 CUID | 使用 `isOpaqueEntityId`、`sanitizeEntityTitleSegment`、`formatShortDisplayId` 与 `useSyncTabTitle` |
-| 业务列表页手写 `gm-crud-toolbar` 类或传入 `toolbarOrder="default"` | 统一使用 `<CrudTable>` 或 `<CrudToolbar>`（创建前置顺序：`[主创建] -> [刷新] -> [删除] -> [extraLeft]`） |
-| 在 `apps/web/lib/*` 重复定义私有的 `function unwrap` | 复用 `unwrapEnvelope` / `createEnvelopeUnwrapper` / `GatewayApiError`（`apps/web/lib/envelope.ts`） |
+| 禁止写法                                                                                                                                                                                                                | 正确替代                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 在 `components/` 调用静态 `Modal.confirm(...)`                                                                                                                                                                          | `const { confirm } = useUxFeedback()`（`components/crud/ux-feedback.tsx`），自动继承暗黑主题与 ESC 关闭                        |
+| 在 `components/` 调用 `URL.revokeObjectURL(...)`                                                                                                                                                                        | `triggerBlobDownload(...)`（`lib/ux-foundation.ts`），统一挂 DOM 触发并延迟释放                                                |
+| 对 ISO 时间做 `.replace('T', ' ').slice(0, 16)` / `.expiresAt.slice(0, 10)` 等 UTC 切片                                                                                                                                 | `formatShanghaiDateTime` / `formatShanghaiDate` / `parseShanghaiDateTimeLocal`（`@geomix/shared`，固定 `Asia/Shanghai` UTC+8） |
+| 文案包含内部研发黑话（如 `影子计费`、`零拷贝`、`检索适配器`、`复刻落库状态`、`已落库查看`、`切分向量索引`、`整段注入`、`切片向量化`、`含手工槽位·不入随机池`、`模型收录计数留到后续模块`）或 `placeholder="名称或备注"` | 使用 `UX_TERMS` 与 `replaceUxJargon`（`@geomix/shared`），写业务语义清晰的占位符                                               |
+| 在标签标题、副标题、提示语中暴露裸 CUID                                                                                                                                                                                 | 使用 `isOpaqueEntityId`、`sanitizeEntityTitleSegment`、`formatShortDisplayId` 与 `useSyncTabTitle`                             |
+| 业务列表页手写 `gm-crud-toolbar` 类或传入 `toolbarOrder="default"`                                                                                                                                                      | 统一使用 `<CrudTable>` 或 `<CrudToolbar>`（创建前置顺序：`[主创建] -> [刷新] -> [删除] -> [extraLeft]`）                       |
+| 在 `apps/web/lib/*` 重复定义私有的 `function unwrap`                                                                                                                                                                    | 复用 `unwrapEnvelope` / `createEnvelopeUnwrapper` / `GatewayApiError`（`apps/web/lib/envelope.ts`）                            |
 
 #### C. 必用前端底座工具
 
@@ -179,7 +179,7 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 1. 共享请求/响应 Schema 与常量放 `packages/shared`。
 2. Controller 挂 `@UseGuards(AuthGuard, TenantActiveGuard)`（管理端另挂 `AdminGuard`），GeoMix 2.0 业务域使用 `@Controller({ path: '...', version: '2' })`，用 `parseBody` 校验入参，返回 `ok(...)`，失败抛 `ApiError`。
 3. 业务查询走 `prisma.scoped`；涉计费操作走 `BillingService` 冻结与幂等结算；0 点高频 AI 动作走 `FreeActionRateLimiter`；涉出网/内容生成走 `AdaptersModule` 适配器与 `ComplianceService`。
-4. 如需异步队列：在 `packages/shared/src/queue.ts` 复用已有 4 个队列之一（或新增队列常量与并发配置并在 `.env.example` 补充），在 `QueueModule.forApi()` / `QueueModule.forWorker()` 注册生产者与 Runner。
+4. 如需异步队列：在 `packages/shared/src/queue.ts` 复用已有 5 个队列之一（或新增队列常量与并发配置并在 `.env.example` 补充），在 `QueueModule.forApi()` / `QueueModule.forWorker()` 注册生产者与 Runner。
 5. 编写 `*.spec.ts` 单元测试覆盖正常流、权限/到期只读、租户隔离、参数校验与计费幂等。
 
 ### 3.4 新增或重构大型前端页面
@@ -200,15 +200,16 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 
 ## 4. 测试矩阵与本地调试
 
-| 测试层级 | 命令 | 说明 |
-| --- | --- | --- |
-| 全仓单测 | `pnpm test` | 默认不连 DB/Redis，自动经 Turborepo 先构建上游包（`^build`），CI 必跑 |
-| 单文件快测 | `pnpm --filter <pkg> test <path>` | pnpm 10 直接传路径（勿加 `--`，否则 Vitest 会跑全量）；绕过 Turbo `^build`，首次安装或改动 `shared`/`db` 后需先执行 `node packages/db/scripts/prisma-cli.mjs generate` 或对应包 `build` |
-| DB 集成测试 | `GEOMIX_DB_INTEGRATION=1 pnpm --filter @geomix/db test` / `@geomix/server test` | 需本机或 Compose PostgreSQL 16（pgvector）。`apps/server/src/common/test-db.ts` 的 `createIsolatedTestContext` 会自动建/删临时库；注意 `@geomix/db` 种子集成测试会改写目标库演示钱包，勿指共享库 |
-| Redis 队列集成 | `GEOMIX_DB_INTEGRATION=1 GEOMIX_REDIS_INTEGRATION=1 pnpm --filter @geomix/server test` | 需本机或 Compose Redis 7；建议设置独立 `QUEUE_PREFIX` |
-| Playwright E2E | `E2E_V2=1 pnpm test:e2e` | 需 PG + Redis、先 `pnpm db:migrate && pnpm db:seed && pnpm build`；不设 `E2E_V2=1` 时默认忽略 `e2e/v2/**`（仅跑 `main-flow.spec.ts` 与 `console-parity.spec.ts`）；设 `NEXT_E2E_FAST_BUILD=1` 可跳过 Next 构建期重复 lint/tsc 并匹配 `next start`（非 `standalone`），完整 CI 环境变量见 `.github/workflows/e2e.yml` |
+| 测试层级       | 命令                                                                                   | 说明                                                                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 全仓单测       | `pnpm test`                                                                            | 默认不连 DB/Redis，自动经 Turborepo 先构建上游包（`^build`），CI 必跑                                                                                                                                                                                                                                                |
+| 单文件快测     | `pnpm --filter <pkg> test <path>`                                                      | pnpm 10 直接传路径（勿加 `--`，否则 Vitest 会跑全量）；绕过 Turbo `^build`，首次安装或改动 `shared`/`db` 后需先执行 `node packages/db/scripts/prisma-cli.mjs generate` 或对应包 `build`                                                                                                                              |
+| DB 集成测试    | `GEOMIX_DB_INTEGRATION=1 pnpm --filter @geomix/db test` / `@geomix/server test`        | 需本机或 Compose PostgreSQL 16（pgvector）。`apps/server/src/common/test-db.ts` 的 `createIsolatedTestContext` 会自动建/删临时库；注意 `@geomix/db` 种子集成测试会改写目标库演示钱包，勿指共享库                                                                                                                     |
+| Redis 队列集成 | `GEOMIX_DB_INTEGRATION=1 GEOMIX_REDIS_INTEGRATION=1 pnpm --filter @geomix/server test` | 需本机或 Compose Redis 7；建议设置独立 `QUEUE_PREFIX`                                                                                                                                                                                                                                                                |
+| Playwright E2E | `E2E_V2=1 pnpm test:e2e`                                                               | 需 PG + Redis、先 `pnpm db:migrate && pnpm db:seed && pnpm build`；不设 `E2E_V2=1` 时默认忽略 `e2e/v2/**`（仅跑 `main-flow.spec.ts` 与 `console-parity.spec.ts`）；设 `NEXT_E2E_FAST_BUILD=1` 可跳过 Next 构建期重复 lint/tsc 并匹配 `next start`（非 `standalone`），完整 CI 环境变量见 `.github/workflows/e2e.yml` |
 
 > **常见调试细节**：
+>
 > - **jsdom 环境**：`apps/web/vitest.setup.ts` 已补齐 `matchMedia`、`ResizeObserver`、`scrollIntoView` 与 AntD `rc-css` 样式兼容，单测无需重复 mock。
 > - **ESLint 基础约定**：[`packages/config/eslint/base.js`](../packages/config/eslint/base.js) 启用 `@typescript-eslint/no-unused-vars`，有意未使用的参数或变量请以 `_` 开头。
 

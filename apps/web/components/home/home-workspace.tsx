@@ -28,6 +28,7 @@ import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { HomeDistributionSummary } from './home-distribution-summary';
 import { HomeHealthStrip } from './home-health-strip';
 import { HomeRecentArticles } from './home-recent-articles';
 import { HomeTopBriefs } from './home-top-briefs';
@@ -246,7 +247,14 @@ export function HomeWorkspace(): JSX.Element {
   });
 
   useTabFreshness({
-    domains: ['brands', 'visibility-runs', 'briefs', 'articles', 'publish-records'],
+    domains: [
+      'brands',
+      'visibility-runs',
+      'briefs',
+      'articles',
+      'distributions',
+      'publish-records',
+    ],
     active: Boolean(activeBrandId && activeBrandMarket),
     refreshOnActivate: false,
     onRefresh: () => {
@@ -544,6 +552,16 @@ export function HomeWorkspace(): JSX.Element {
           consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
         }
         onTriggerRetest={(rec) => void handleTriggerArticleRetest(rec)}
+        onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
+      />
+
+      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355) */}
+      <HomeDistributionSummary
+        summary={resolvedData.distributionSummary}
+        onOpenArticle={(articleId) =>
+          consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
+        }
+        onOpenPoints={() => consoleCtx?.navigateWorkspace('/account?tab=points')}
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
       />
 

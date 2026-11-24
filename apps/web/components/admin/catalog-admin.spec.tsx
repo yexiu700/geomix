@@ -144,6 +144,76 @@ describe('PricingAdmin (GeoMix 2.0 3-action pricing)', () => {
     expect(await screen.findByText(/价格不正确/)).toBeTruthy();
     expect(client.updatePrices).not.toHaveBeenCalled();
   });
+
+  it('renders geo_variant with Chinese label/unit, allows saving 0 points, and rejects -1 or 01', async () => {
+    const rows: PriceRow[] = [
+      ...samplePrices(),
+      {
+        action: 'geo_variant',
+        unitPoints: 2,
+        enabled: true,
+        updatedAt: '2026-11-23T00:00:00.000Z',
+      },
+    ];
+    const updatePrice = vi.fn(async (input) => ({
+      items: rows.map((row) =>
+        row.action === input.action
+          ? { ...row, unitPoints: input.unitPoints, enabled: input.enabled }
+          : row,
+      ),
+    }));
+    const updatePrices = vi.fn(async ({ items }) => ({
+      items: rows.map((row) => {
+        const patch = items.find((item: { action: string }) => item.action === row.action);
+        return patch ? { ...row, unitPoints: patch.unitPoints, enabled: patch.enabled } : row;
+      }),
+    }));
+    const client = {
+      listPrices: vi.fn(async () => rows),
+      updatePrice,
+      updatePrices,
+    };
+
+    render(<PricingAdmin client={client} />);
+
+    expect(await screen.findByText(/渠道变体改写/)).toBeTruthy();
+    expect(screen.getAllByText(/点\/渠道/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('geo_variant')).toBeNull();
+
+    const variantInput = screen.getByLabelText('渠道变体改写 点数');
+
+    // Negative and leading-zero inputs are rejected
+    for (const invalidValue of ['-1', '01']) {
+      fireEvent.change(variantInput, { target: { value: invalidValue } });
+      expect(await screen.findByText(/价格不正确（请填写 0~1000000 的非负整数）/)).toBeTruthy();
+      expect((screen.getByLabelText('保存 渠道变体改写') as HTMLButtonElement).disabled).toBe(true);
+    }
+
+    // Setting geo_variant to 0 passes validation and saves via single save
+    fireEvent.change(variantInput, { target: { value: '0' } });
+    expect(screen.queryByText(/价格不正确/)).toBeNull();
+    const saveSingleBtn = screen.getByLabelText('保存 渠道变体改写') as HTMLButtonElement;
+    expect(saveSingleBtn.disabled).toBe(false);
+    fireEvent.click(saveSingleBtn);
+
+    await waitFor(() => {
+      expect(updatePrice).toHaveBeenCalledWith({
+        action: 'geo_variant',
+        unitPoints: 0,
+        enabled: true,
+      });
+    });
+
+    // And batch save also succeeds when changing geo_variant from 0 -> 3 -> 0
+    fireEvent.change(variantInput, { target: { value: '3' } });
+    const batchSaveBtn = screen.getByRole('button', { name: /批量保存/ });
+    fireEvent.click(batchSaveBtn);
+    await waitFor(() => {
+      expect(updatePrices).toHaveBeenCalledWith({
+        items: [{ action: 'geo_variant', unitPoints: 3, enabled: true }],
+      });
+    });
+  });
 });
 
 describe('AnnouncementAdmin (#199)', () => {

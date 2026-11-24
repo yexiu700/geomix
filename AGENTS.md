@@ -1,6 +1,6 @@
 # AGENTS.md
 
-GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engine Optimization）** 内容创作与 **AI 可见度增长**平台（Next.js 15 + React 19 + Ant Design 5 + NestJS 10 + Prisma 5 + PostgreSQL 16/pgvector + Redis 7/BullMQ + MinIO）。**GeoMix 2.0**（双市场 `CN` / `GLOBAL`、极简 5 工作区壳、品牌事实卡与 `pgvector` 检索、AI 可见度诊断、GEO 写作意见引擎、SSE 靶向写作与 2–20 篇批量队列、双轨合规与 5 维 GEO 体检/交付包/发布复测闭环、Sonar Ink 暗色设计系统、Playwright `e2e` + `e2e/v2` 与 GHCR/Self-Hosted CD）均已落地。
+GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engine Optimization）** 内容创作、多渠道分发与 **AI 可见度增长**平台（Next.js 15 + React 19 + Ant Design 5 + NestJS 10 + Prisma 5 + PostgreSQL 16/pgvector + Redis 7/BullMQ + MinIO）。**GeoMix 2.0 / v2.1**（双市场 `CN` / `GLOBAL`、极简 5 工作区壳、品牌事实卡与 `pgvector` 检索、AI 可见度诊断、GEO 写作意见引擎、SSE 靶向写作与 2–20 篇批量队列、双轨合规与 5 维 GEO 体检、1→N 异步渠道变体、海外 L1 官方 API 直发与免登录 PR 供稿页 `/share/pr/[token]`、T+1 抓取体检与 T+7/14/30 自动复测闭环、Sonar Ink 暗色设计系统、Playwright `e2e` + `e2e/v2` + `distribution-v2-1` 与 GHCR/Self-Hosted CD）均已落地。
 
 在本仓库工作的编码代理，请**按需查阅**以下文档，避免一次性加载过长历史文档浪费上下文：
 
@@ -9,8 +9,11 @@ GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engin
 ### 活文档（开发必读 / 随时查）
 
 - [开发约定与迭代手册（docs/AGENTS.md）](./docs/AGENTS.md)：**编码前必读**，涵盖分支/PR/CI 流水线、机器强制契约、高频变更配方、重构规范与测试调试。
-- [架构与模块索引（docs/架构与模块索引.md）](./docs/架构与模块索引.md)：当前代码库实时地图（真实技术栈、27 个数据模型与租户隔离表、`/api/v1` + `/api/v2` 接口前缀、4 个队列与 Runner、5 工作区前端路由与复用底座）。
-- [已确认决策（docs/decisions.md）](./docs/decisions.md)：产品与合规决策及 GeoMix 2.0 演进补充。
+- [架构与模块索引（docs/架构与模块索引.md）](./docs/架构与模块索引.md)：当前代码库实时地图（真实技术栈、31 个数据模型与租户隔离表、`/api/v1` + `/api/v2` 接口前缀、5 个队列与 Runner、5 工作区前端路由、公开 PR 页与复用底座）。
+- [已确认决策（docs/decisions.md）](./docs/decisions.md)：产品与合规决策及 GeoMix 2.0 / v2.1 演进补充。
+- [v2.1 分发与写作打通需求与架构设计（docs/v2.1分发与写作打通需求与架构设计.md）](./docs/v2.1分发与写作打通需求与架构设计.md)：Global-First v2.1 PRD、领域模型与 Batch 0–3 拆分规范（对应 Epic #357 / Issues #349–#356）。
+- [v2.2 可证明 ROI 与渠道扩容需求与架构设计（docs/v2.2可证明ROI与渠道扩容需求与架构设计.md）](./docs/v2.2可证明ROI与渠道扩容需求与架构设计.md)：v2.2 PRD、Near-Miss/ROI/多语种/L1 扩容/L2 扩展桥接架构与 Batch 0–4 拆分规范（对应 Epic #375 / Issues #367–#374，伴生仓 `yexiu700/geomix-extension`）。
+- [品牌官网需求与架构设计（docs/GeoMix品牌官网需求与架构设计.md）](./docs/GeoMix品牌官网需求与架构设计.md)：Global-First 中英双语品牌官网 PRD、交互沙盒、点数计算器、试用线索闭环与 Batch 0–3 拆分规范（对应 Epic #382 / Issues #378–#381）。
 - [运维与部署手册（docs/运维与部署手册.md）](./docs/运维与部署手册.md) & [CD 部署指南（docs/CD部署指南.md）](./docs/CD部署指南.md)：生产/预发 Compose、备份恢复、LLM 成本日报与 Runner 部署。
 
 ### 基线与归档文档（按需查阅，日常开发无需通读）
@@ -30,7 +33,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engin
 ## 高频 CI 踩坑速查（详见 `docs/AGENTS.md`）
 
 - **`@geomix/shared`（`packages/shared/src/package-contract.spec.ts`）**：`src/*.ts`（非 `.spec.ts`）与 `package.json#exports` 必须 **1 对 1 精确匹配**（键序 `types` 在前、`default` 在后）；禁止任何内部循环依赖与 `@geomix/shared` 自引用；`task-status.ts` 必须零导入；并行开发只追加模块文件。
-- **`@geomix/db`（`packages/db/src/schema-contract.spec.ts` & `tenant-scope.ts`）**：严禁修改已落地的 12 条迁移 SQL；增删模型或迁移必须同步更新 `schema-contract.spec.ts`（`SCHEMA_MODELS` 与迁移列表）及 `tenant-scope.ts` 分类（当前 27 个模型，业务表含 `BrandFactChunk` 均带 `tenantId`）；若未来新增无 `tenantId` 子表，访问前必须先校验父记录归属。
+- **`@geomix/db`（`packages/db/src/schema-contract.spec.ts` & `tenant-scope.ts`）**：严禁修改已落地的 14 条迁移 SQL；增删模型或迁移必须同步更新 `schema-contract.spec.ts`（`SCHEMA_MODELS` 与迁移列表）及 `tenant-scope.ts` 分类（当前 31 个模型，27 个业务表均带 `tenantId`）；若未来新增无 `tenantId` 子表，访问前必须先校验父记录归属。
 - **`@geomix/web` 静态守卫（`apps/web/eslint.config.mjs` & `ux-foundation-guard.spec.ts`）**：
   - 禁止 `Modal.confirm(...)` → 用 `useUxFeedback().confirm(...)`。
   - 禁止 `URL.revokeObjectURL(...)` → 用 `triggerBlobDownload(...)`。

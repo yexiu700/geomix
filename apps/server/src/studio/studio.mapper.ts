@@ -1,17 +1,29 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
+  CHANNEL_PROVIDERS,
+  CRAWL_PROBE_STATUSES,
+  RETEST_SCHEDULE_STATUSES,
+  crawlProbeReportSchema,
+  type ChannelProvider,
+  type CrawlProbeReport,
+  type CrawlProbeStatus,
   type GeoArticleRecord,
   type GeoArticleStatus,
   type GeoBatchJobRecord,
+  type GeoBriefChannelRecommendation,
   type GeoComplianceFlag,
   type GeoMarket,
   type GeoOutlineHeading,
   type GeoPublishRecordDto,
   type GeoRecipe,
+  type GeoRetestMetricsSnapshot,
+  type GeoRetestScheduleDto,
   type GeoTargetFormat,
   type PromptPreferenceRecord,
   type RetestMetricSnapshot,
+  type RetestSampleCount,
+  type RetestScheduleStatus,
   type TaskStatusName,
 } from '@geomix/shared';
 
@@ -265,6 +277,73 @@ export function normalizeRetestMetricSnapshot(
   };
 }
 
+const CRAWL_PROBE_STATUS_SET = new Set<string>(CRAWL_PROBE_STATUSES);
+const RETEST_SCHEDULE_STATUS_SET = new Set<string>(RETEST_SCHEDULE_STATUSES);
+
+export function normalizeGeoRetestMetricsSnapshot(
+  raw: Prisma.JsonValue | null | undefined,
+): GeoRetestMetricsSnapshot | null {
+  const base = normalizeRetestMetricSnapshot(raw);
+  if (!base) return null;
+  const obj = raw as Record<string, unknown>;
+  const out: GeoRetestMetricsSnapshot = { ...base };
+  if (
+    typeof obj.sampleCount === 'number' &&
+    Number.isInteger(obj.sampleCount) &&
+    obj.sampleCount >= 0
+  ) {
+    out.sampleCount = obj.sampleCount;
+  }
+  if (typeof obj.hitCount === 'number' && Number.isInteger(obj.hitCount) && obj.hitCount >= 0) {
+    out.hitCount = obj.hitCount;
+  }
+  return out;
+}
+
+export function normalizeCrawlProbeReport(
+  raw: Prisma.JsonValue | null | undefined,
+): CrawlProbeReport | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const parsed = crawlProbeReportSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+export type GeoRetestScheduleRow = {
+  id: string;
+  publishRecordId: string;
+  milestoneDay: number;
+  sampleCount: number;
+  dueAt: Date;
+  status: string;
+  visibilityRunId: string | null;
+  metricsSnapshotJson: Prisma.JsonValue | null;
+  skipReason: string | null;
+  executedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export function presentRetestSchedule(row: GeoRetestScheduleRow): GeoRetestScheduleDto {
+  const sampleCount: RetestSampleCount = row.sampleCount === 3 ? 3 : 1;
+  const status: RetestScheduleStatus = RETEST_SCHEDULE_STATUS_SET.has(row.status)
+    ? (row.status as RetestScheduleStatus)
+    : 'PENDING';
+  return {
+    id: row.id,
+    publishRecordId: row.publishRecordId,
+    milestoneDay: row.milestoneDay,
+    sampleCount,
+    dueAt: row.dueAt.toISOString(),
+    status,
+    visibilityRunId: row.visibilityRunId ?? null,
+    metricsSnapshot: normalizeGeoRetestMetricsSnapshot(row.metricsSnapshotJson),
+    skipReason: row.skipReason ?? null,
+    executedAt: row.executedAt ? row.executedAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 export type GeoPublishRecordRow = {
   id: string;
   brandId: string;
@@ -277,9 +356,19 @@ export type GeoPublishRecordRow = {
   latestRetestRunId: string | null;
   beforeMetrics: Prisma.JsonValue | null;
   afterMetrics: Prisma.JsonValue | null;
+  distributionTaskId?: string | null;
+  crawlStatus?: string | null;
+  crawlCheckedAt?: Date | null;
+  crawlReportJson?: Prisma.JsonValue | null;
+  indexNowSubmitted?: boolean | null;
+  retestSchedules?: GeoRetestScheduleRow[];
 };
 
 export function presentPublishRecord(row: GeoPublishRecordRow): GeoPublishRecordDto {
+  const crawlStatus: CrawlProbeStatus =
+    typeof row.crawlStatus === 'string' && CRAWL_PROBE_STATUS_SET.has(row.crawlStatus)
+      ? (row.crawlStatus as CrawlProbeStatus)
+      : 'PENDING';
   return {
     id: row.id,
     brandId: row.brandId,
@@ -292,22 +381,48 @@ export function presentPublishRecord(row: GeoPublishRecordRow): GeoPublishRecord
     latestRetestRunId: row.latestRetestRunId,
     beforeMetrics: normalizeRetestMetricSnapshot(row.beforeMetrics),
     afterMetrics: normalizeRetestMetricSnapshot(row.afterMetrics),
+    distributionTaskId: row.distributionTaskId ?? null,
+    crawlStatus,
+    crawlCheckedAt: row.crawlCheckedAt ? row.crawlCheckedAt.toISOString() : null,
+    crawlReportJson: normalizeCrawlProbeReport(row.crawlReportJson),
+    indexNowSubmitted: Boolean(row.indexNowSubmitted),
+    retestSchedules: Array.isArray(row.retestSchedules)
+      ? row.retestSchedules.map(presentRetestSchedule)
+      : [],
   };
 }
 
+const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
+
 export function normalizeRecommendedChannels(
   raw: Prisma.JsonValue | null | undefined,
-): Array<{ channel: string; reason: string }> {
+): GeoBriefChannelRecommendation[] {
   if (!Array.isArray(raw)) return [];
-  const out: Array<{ channel: string; reason: string }> = [];
+  const out: GeoBriefChannelRecommendation[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const obj = item as Record<string, unknown>;
     const channel = typeof obj.channel === 'string' ? obj.channel.trim() : '';
     const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
-    if (channel) {
-      out.push({ channel, reason });
+    if (!channel) continue;
+
+    const entry: GeoBriefChannelRecommendation = { channel, reason };
+    if (typeof obj.providerHint === 'string' && CHANNEL_PROVIDER_SET.has(obj.providerHint)) {
+      entry.providerHint = obj.providerHint as ChannelProvider;
     }
+    if (obj.priority === 'HIGH' || obj.priority === 'MEDIUM') {
+      entry.priority = obj.priority;
+    }
+    if (Array.isArray(obj.citedExampleUrls)) {
+      const urls = obj.citedExampleUrls
+        .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+        .map((u) => u.trim())
+        .slice(0, 3);
+      if (urls.length > 0) {
+        entry.citedExampleUrls = urls;
+      }
+    }
+    out.push(entry);
   }
   return out;
 }

@@ -312,4 +312,26 @@ describe('geo-studio v2 contracts and extracted markdown helpers', () => {
     const afterSecond = replaceMissingFactSlot(afterFirst, slots2[0]!, '18.5dB');
     expect(afterSecond).toBe('详情见 14W 以及 18.5dB。');
   });
+
+  it('extracts both CN [待补充：...] and GLOBAL [TBD: ...] / [To be verified: ...] capsules and normalizes GLOBAL drafts (#343)', async () => {
+    const {
+      extractMissingFactSlots,
+      normalizeMissingFactPlaceholdersForMarket,
+      replaceMissingFactSlot,
+    } = await import('./geo-studio');
+    const enDraft =
+      'Standby power is [TBD: Standby Power Draw W] and acoustic floor is [To be verified: Idle Noise dB].';
+    const slots = extractMissingFactSlots(enDraft);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]?.hint).toBe('Standby Power Draw W');
+    expect(slots[1]?.hint).toBe('Idle Noise dB');
+    expect(replaceMissingFactSlot(enDraft, slots[0]!, '12.5W')).toContain('Standby power is 12.5W');
+
+    const leakedGlobal = '| Standby Power | [待补充：如待机功耗 W] | [待补充: Weight kg] |';
+    const normalized = normalizeMissingFactPlaceholdersForMarket(leakedGlobal, 'GLOBAL');
+    expect(normalized).not.toMatch(/[\u4e00-\u9fff]/);
+    expect(normalized).toContain('[TBD: verify specification]');
+    expect(normalized).toContain('[TBD: Weight kg]');
+    expect(extractMissingFactSlots(normalized)).toHaveLength(2);
+  });
 });

@@ -145,6 +145,58 @@ enum CitationSourceKind {
   OTHER
 }
 
+enum ChannelProvider {
+  SHOPIFY
+  WORDPRESS
+  WEBFLOW
+  WEBHOOK
+  REDDIT_ASSIST
+  QUORA_ASSIST
+  SOCIAL_THREAD_ASSIST
+  PR_PACKET
+  CN_COMMUNITY_ASSIST
+}
+
+enum ChannelConnectionStatus {
+  ACTIVE
+  INVALID
+  DISABLED
+}
+
+enum DistributionMode {
+  L1_API
+  L3_COMMUNITY_ASSIST
+  L3_PR_PACKET
+}
+
+enum DistributionTaskStatus {
+  DRAFT_VARIANT
+  READY_TO_PUBLISH
+  PUBLISHING
+  DRAFT_PUSHED
+  PUBLISHED
+  FAILED
+  ARCHIVED
+}
+
+enum CrawlProbeStatus {
+  PENDING
+  OK
+  WARNING
+  BLOCKED
+  FAILED
+}
+
+enum RetestScheduleStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  SKIPPED_INSUFFICIENT_POINTS
+  SKIPPED_NO_ENGINE
+  FAILED
+  CANCELLED
+}
+
 // ===================== 底座 =====================
 model Tenant {
   id          String       @id @default(cuid())
@@ -178,6 +230,10 @@ model Tenant {
   geoPublishRecords      GeoPublishRecord[]
   geoBatchJobs           GeoBatchJob[]
   promptPreference       PromptPreference?
+  channelConnections     ChannelConnection[]
+  geoDistributionTasks   GeoDistributionTask[]
+  geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 }
 
 model User {
@@ -216,7 +272,7 @@ model Quota {
 }
 
 model PricingItem {
-  action     String   @id // geo_write | visibility_check | inline_image_gen
+  action     String   @id // geo_write | visibility_check | inline_image_gen | geo_variant
   unitPoints Int
   enabled    Boolean  @default(true)
   updatedAt  DateTime @updatedAt
@@ -227,7 +283,7 @@ model PointReservation {
   id        String            @id @default(cuid())
   tenantId  String
   tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  refType   String // geo_article | geo_batch | visibility_run | inline_image_gen
+  refType   String // geo_article | geo_batch | visibility_run | inline_image_gen | geo_variant | geo_distribution
   refId     String
   shadow    Boolean           @default(false)
   frozen    Int
@@ -405,6 +461,10 @@ model Brand {
   geoArticles            GeoArticle[]
   geoPublishRecords      GeoPublishRecord[]
   geoBatchJobs           GeoBatchJob[]
+  channelConnections     ChannelConnection[]
+  geoDistributionTasks   GeoDistributionTask[]
+  geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
@@ -434,6 +494,10 @@ model BrandMarket {
   geoArticles            GeoArticle[]
   geoPublishRecords      GeoPublishRecord[]
   geoBatchJobs           GeoBatchJob[]
+  channelConnections     ChannelConnection[]
+  geoDistributionTasks   GeoDistributionTask[]
+  geoRetestSchedules     GeoRetestSchedule[]
+  geoVariantJobs         GeoVariantJob[]
 
   @@unique([brandId, market])
   @@index([tenantId, brandId])
@@ -551,6 +615,7 @@ model VisibilityObservation {
   brandMarket    BrandMarket          @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
   promptText     String
   engine         String
+  sampleIndex    Int                  @default(1)
   status         ItemStatus           @default(PENDING)
   collectorKind  String               @default("fake")
   answerText     String?
@@ -569,7 +634,7 @@ model VisibilityObservation {
 
   citations VisibilityCitation[]
 
-  @@unique([runId, promptText, engine])
+  @@unique([runId, promptText, engine, sampleIndex])
   @@index([tenantId, brandMarketId, checkedAt])
   @@index([tenantId, brandId, checkedAt])
   @@index([tenantId, engine, brandMentioned])
@@ -662,7 +727,9 @@ model GeoArticle {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
-  publishRecords GeoPublishRecord[]
+  publishRecords    GeoPublishRecord[]
+  distributionTasks GeoDistributionTask[]
+  variantJobs       GeoVariantJob[]
 
   @@index([tenantId, brandMarketId, status, createdAt])
   @@index([tenantId, brandId, createdAt])
@@ -672,28 +739,38 @@ model GeoArticle {
 }
 
 model GeoPublishRecord {
-  id                String      @id @default(cuid())
-  tenantId          String
-  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  brandId           String
-  brand             Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  brandMarketId     String
-  brandMarket       BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
-  articleId         String
-  article           GeoArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  publishedUrl      String
-  channel           String
-  publishedAt       DateTime    @default(now())
-  baselineRunId     String?
-  latestRetestRunId String?
-  beforeMetrics     Json?
-  afterMetrics      Json?
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  id                 String               @id @default(cuid())
+  tenantId           String
+  tenant             Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId            String
+  brand              Brand                @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId      String
+  brandMarket        BrandMarket          @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  articleId          String
+  article            GeoArticle           @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  publishedUrl       String
+  channel            String
+  publishedAt        DateTime             @default(now())
+  baselineRunId      String?
+  latestRetestRunId  String?
+  beforeMetrics      Json?
+  afterMetrics       Json?
+  distributionTaskId String?
+  distributionTask   GeoDistributionTask? @relation(fields: [distributionTaskId], references: [id], onDelete: SetNull)
+  crawlStatus        CrawlProbeStatus     @default(PENDING)
+  crawlCheckedAt     DateTime?
+  crawlReportJson    Json?
+  indexNowSubmitted  Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  retestSchedules GeoRetestSchedule[]
 
   @@index([tenantId, brandMarketId, publishedAt])
   @@index([tenantId, articleId, createdAt])
   @@index([latestRetestRunId])
+  @@index([distributionTaskId])
+  @@index([crawlStatus, publishedAt])
 }
 
 model GeoBatchJob {
@@ -730,4 +807,143 @@ model PromptPreference {
   recipeOverrides      Json?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
+}
+
+// ===================== 渠道分发与复测排期（GeoMix v2.1） =====================
+model ChannelConnection {
+  id                         String                  @id @default(cuid())
+  tenantId                   String
+  tenant                     Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId                    String
+  brand                      Brand                   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId              String
+  brandMarket                BrandMarket             @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  provider                   ChannelProvider
+  displayName                String
+  siteBaseUrl                String
+  credentialsCiphertext      String
+  credentialsIv              String
+  credentialsTag             String
+  keyVersion                 Int                     @default(1)
+  credentialHint             String
+  configJson                 Json                    @default("{}")
+  status                     ChannelConnectionStatus @default(ACTIVE)
+  lastTestedAt               DateTime?
+  lastError                  String?
+  authType                   String                  @default("API_KEY")
+  oauthAccessTokenCiphertext String?
+  oauthExpiresAt             DateTime?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  distributionTasks GeoDistributionTask[]
+
+  @@index([tenantId, brandMarketId, provider])
+  @@index([tenantId, brandId])
+}
+
+model GeoDistributionTask {
+  id                 String                 @id @default(cuid())
+  tenantId           String
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId            String
+  brand              Brand                  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId      String
+  brandMarket        BrandMarket            @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  articleId          String
+  article            GeoArticle             @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  connectionId       String?
+  connection         ChannelConnection?     @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider           ChannelProvider
+  mode               DistributionMode
+  channelLabel       String
+  targetUrlHint      String?
+  variantTitle       String
+  variantSlug        String?
+  variantMetaDesc    String?
+  variantMarkdown    String
+  variantHtml        String
+  variantExtrasJson  Json                   @default("{}")
+  preflightJson      Json?
+  status             DistributionTaskStatus @default(DRAFT_VARIANT)
+  publishAsDraft     Boolean                @default(true)
+  remotePostId       String?
+  remoteAdminUrl     String?
+  remotePublishedUrl String?
+  indexNowStatus     String?
+  lastError          String?
+  shareTokenHash     String?                @unique
+  shareExpiresAt     DateTime?
+  shareRevokedAt     DateTime?
+  publishedAt        DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  publishRecords GeoPublishRecord[]
+
+  @@index([tenantId, articleId, createdAt])
+  @@index([tenantId, brandMarketId, status])
+  @@index([connectionId])
+}
+
+model GeoRetestSchedule {
+  id                  String               @id @default(cuid())
+  tenantId            String
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId             String
+  brand               Brand                @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId       String
+  brandMarket         BrandMarket          @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  publishRecordId     String
+  publishRecord       GeoPublishRecord     @relation(fields: [publishRecordId], references: [id], onDelete: Cascade)
+  milestoneDay        Int
+  sampleCount         Int                  @default(1)
+  dueAt               DateTime
+  status              RetestScheduleStatus @default(PENDING)
+  visibilityRunId     String?
+  metricsSnapshotJson Json?
+  skipReason          String?
+  executedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([publishRecordId, milestoneDay])
+  @@index([status, dueAt])
+  @@index([tenantId, brandMarketId, status])
+  @@index([visibilityRunId])
+}
+
+model GeoVariantJob {
+  id                 String      @id @default(cuid())
+  tenantId           String
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId            String
+  brand              Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId      String
+  brandMarket        BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  articleId          String
+  article            GeoArticle  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  idempotencyKey     String?
+  requestFingerprint String?
+  targetsJson        Json        @default("[]")
+  total              Int
+  doneCount          Int         @default(0)
+  failCount          Int         @default(0)
+  unitPrice          Int
+  totalChargedPoints Int         @default(0)
+  refundedCount      Int         @default(0)
+  refundedPoints     Int         @default(0)
+  billingMode        String      @default("SHADOW")
+  reservationId      String?
+  status             TaskStatus  @default(QUEUED)
+  taskIds            String[]    @default([])
+  failuresJson       Json        @default("[]")
+  lastError          String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  finishedAt         DateTime?
+
+  @@unique([tenantId, articleId, idempotencyKey])
+  @@index([tenantId, articleId, createdAt])
+  @@index([tenantId, articleId, status])
 }

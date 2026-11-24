@@ -9,6 +9,7 @@ import {
   type GeoRecipe,
   type GeoTargetFormat,
 } from './geo-studio';
+import type { ChannelProvider } from './distribution';
 
 /**
  * GeoMix 2.0 写作诊断意见卡（GeoBrief）契约与竞品高引用 URL 提取/去重/SSRF 校验工具（Issue #326 / #330 / #332）。
@@ -1815,6 +1816,9 @@ export type GeoBriefUpdateInput = z.infer<typeof geoBriefUpdateSchema>;
 export type GeoBriefChannelRecommendation = {
   channel: string;
   reason: string;
+  providerHint?: ChannelProvider;
+  priority?: 'HIGH' | 'MEDIUM';
+  citedExampleUrls?: string[];
 };
 
 export type GeoBriefRecord = {

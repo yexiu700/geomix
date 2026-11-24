@@ -5,11 +5,14 @@ import {
   buildGeoSchemaJsonLd,
   buildLlmsTxtSnippet,
   buildRecommendedChannelsForMarket,
+  evaluateDistributionPreflight,
   htmlToExportMarkdown,
+  isSafeDistributionHttpUrl,
   markdownToSanitizedHtml,
   sanitizeRichArticleHtml,
   serializeJsonLdSafe,
   type GeoArticleRecord,
+  type GeoBriefChannelRecommendation,
   type GeoEvaluationResult,
   type GeoMarket,
 } from '@geomix/shared';
@@ -27,10 +30,14 @@ export type StudioDeliveryPackProps = {
   category?: string;
   localCategory?: string | null;
   ownedDomains?: readonly string[];
+  brandNames?: readonly string[];
+  matchedFactCount?: number;
+  readOnly?: boolean;
   article: GeoArticleRecord | null;
   evaluation: GeoEvaluationResult | null;
-  linkedBriefChannels?: ReadonlyArray<{ channel: string; reason: string }>;
+  linkedBriefChannels?: readonly GeoBriefChannelRecommendation[];
   streaming: boolean;
+  onOpenDistributionDrawer?: () => void;
 };
 
 const JSON_TOKEN_RE =
@@ -75,10 +82,13 @@ export function StudioDeliveryPack({
   category,
   localCategory,
   ownedDomains,
+  brandNames,
+  matchedFactCount,
   article,
   evaluation,
   linkedBriefChannels,
   streaming,
+  onOpenDistributionDrawer,
 }: StudioDeliveryPackProps): JSX.Element {
   const feedback = useUxFeedback();
   const [downloadingDocx, setDownloadingDocx] = useState(false);
@@ -159,7 +169,7 @@ export function StudioDeliveryPack({
     [activeMarket, evaluation?.crawlerChecklist],
   );
 
-  const recommendedChannels = useMemo(() => {
+  const recommendedChannels = useMemo<readonly GeoBriefChannelRecommendation[]>(() => {
     if (linkedBriefChannels && linkedBriefChannels.length > 0) return linkedBriefChannels;
     if (evaluation?.recommendedChannels && evaluation.recommendedChannels.length > 0) {
       return evaluation.recommendedChannels;
@@ -167,40 +177,91 @@ export function StudioDeliveryPack({
     return buildRecommendedChannelsForMarket(activeMarket);
   }, [activeMarket, evaluation?.recommendedChannels, linkedBriefChannels]);
 
-  const handleCopyMarkdown = async () => {
-    if (!article) return;
-    const text = htmlToExportMarkdown({
-      id: article.id,
-      title: article.title,
-      contentHtml: article.contentHtml,
-      contentText: '',
-      contentMarkdown: article.contentMarkdown,
-    });
-    const okCopy = await copyTextToClipboard(text);
-    if (okCopy) feedback.notifySuccess('已复制纯净 Markdown');
-    else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
-  };
-
-  const handleCopyHtml = async () => {
-    if (!article) return;
-    const rawHtmlSource = article.contentHtml.trim()
-      ? article.contentHtml
-      : markdownToSanitizedHtml(
-          htmlToExportMarkdown({
-            id: article.id,
-            title: '',
-            contentHtml: '',
-            contentText: '',
+  const preflight = useMemo(
+    () =>
+      article
+        ? evaluateDistributionPreflight({
+            market: activeMarket,
+            title: article.title,
             contentMarkdown: article.contentMarkdown,
-          }),
-        );
-    const safeHtml = sanitizeRichArticleHtml(rawHtmlSource).contentHtml;
-    const okCopy = await copyTextToClipboard(safeHtml);
-    if (okCopy) feedback.notifySuccess('已复制富文本 HTML');
-    else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+            brandNames,
+            complianceFlags: article.complianceFlags,
+            geoScore: evaluation?.geoScore ?? article.geoScore,
+            matchedFactCount,
+          })
+        : null,
+    [activeMarket, article, brandNames, evaluation?.geoScore, matchedFactCount],
+  );
+
+  const runWithPlaceholderGuard = (actionLabel: string, proceed: () => void): void => {
+    if (!preflight) {
+      proceed();
+      return;
+    }
+    if (!preflight.ok) {
+      const summary = preflight.blockers.map((item) => item.message).join('；');
+      if (activeMarket === 'GLOBAL') {
+        feedback.confirm({
+          title: '发布前体检存在阻断项',
+          content: `${summary}。建议先在中栏补填真实数据或清理异常字符；确定仍要继续${actionLabel}吗？`,
+          okText: `仍然${actionLabel}`,
+          cancelText: '返回补填',
+          okButtonProps: { danger: true },
+          onOk: () => proceed(),
+        });
+        return;
+      }
+      feedback.notifyWarning(`发布前体检提示：${summary}`);
+      proceed();
+      return;
+    }
+    if (preflight.warnings.length > 0) {
+      const warningSummary = preflight.warnings.map((item) => item.message).join('；');
+      feedback.notifyWarning(`发布前优化提示：${warningSummary}`);
+    }
+    proceed();
   };
 
-  const handleDownloadDocx = async () => {
+  const handleCopyMarkdown = () => {
+    if (!article) return;
+    runWithPlaceholderGuard('复制 Markdown', () => {
+      const text = htmlToExportMarkdown({
+        id: article.id,
+        title: article.title,
+        contentHtml: article.contentHtml,
+        contentText: '',
+        contentMarkdown: article.contentMarkdown,
+      });
+      void copyTextToClipboard(text).then((okCopy) => {
+        if (okCopy) feedback.notifySuccess('已复制纯净 Markdown');
+        else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+      });
+    });
+  };
+
+  const handleCopyHtml = () => {
+    if (!article) return;
+    runWithPlaceholderGuard('复制 HTML', () => {
+      const rawHtmlSource = article.contentHtml.trim()
+        ? article.contentHtml
+        : markdownToSanitizedHtml(
+            htmlToExportMarkdown({
+              id: article.id,
+              title: '',
+              contentHtml: '',
+              contentText: '',
+              contentMarkdown: article.contentMarkdown,
+            }),
+          );
+      const safeHtml = sanitizeRichArticleHtml(rawHtmlSource).contentHtml;
+      void copyTextToClipboard(safeHtml).then((okCopy) => {
+        if (okCopy) feedback.notifySuccess('已复制富文本 HTML');
+        else feedback.notifyError('复制失败，请检查浏览器剪贴板权限');
+      });
+    });
+  };
+
+  const executeDownloadDocx = async () => {
     if (!article || downloadingDocxRef.current) return;
     downloadingDocxRef.current = true;
     const seq = contextKeyRef.current;
@@ -228,6 +289,13 @@ export function StudioDeliveryPack({
     }
   };
 
+  const handleDownloadDocx = () => {
+    if (!article || downloadingDocxRef.current) return;
+    runWithPlaceholderGuard('下载 .docx', () => {
+      void executeDownloadDocx();
+    });
+  };
+
   const handleCopyJsonLd = async () => {
     if (!safeJsonLdText) return;
     const okCopy = await copyTextToClipboard(safeJsonLdText);
@@ -248,14 +316,65 @@ export function StudioDeliveryPack({
         {activeMarket === 'GLOBAL' ? '海外高权阵地投放建议' : '国内高权平台发布指引'}
       </span>
       <div className="gm-studio-channel-list">
-        {recommendedChannels.map((item) => (
-          <div key={item.channel} className="gm-studio-channel-item">
-            <Tag color="geekblue" style={{ margin: 0, alignSelf: 'flex-start' }}>
-              {item.channel}
-            </Tag>
-            <span className="gm-studio-channel-reason">{item.reason}</span>
-          </div>
-        ))}
+        {recommendedChannels.map((item) => {
+          const safeCitedUrls = (item.citedExampleUrls ?? [])
+            .filter((u) => isSafeDistributionHttpUrl(u))
+            .slice(0, 3);
+          return (
+            <div key={item.channel} className="gm-studio-channel-item">
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 6,
+                  alignItems: 'center',
+                  minWidth: 0,
+                }}
+              >
+                <Tag
+                  color="geekblue"
+                  style={{
+                    margin: 0,
+                    alignSelf: 'flex-start',
+                    maxWidth: '100%',
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {item.channel}
+                </Tag>
+                {item.priority === 'HIGH' ? (
+                  <Tag color="gold" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    高频被引
+                  </Tag>
+                ) : null}
+              </div>
+              <span className="gm-studio-channel-reason">{item.reason}</span>
+              {safeCitedUrls.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {safeCitedUrls.map((url, idx) => (
+                    <a
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="gm-mono"
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--gm-info)',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      被引原帖 #{idx + 1}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -348,6 +467,17 @@ export function StudioDeliveryPack({
           {activeMarket === 'GLOBAL' ? '🌐 海外交付轨' : '🇨🇳 国内交付轨'}
         </Tag>
       </div>
+
+      <Button
+        block
+        type="primary"
+        data-testid="studio-open-distribution-btn"
+        disabled={!article || streaming}
+        style={{ whiteSpace: 'nowrap' }}
+        onClick={() => onOpenDistributionDrawer?.()}
+      >
+        进入分发工作台
+      </Button>
 
       {!article ? (
         <div className="gm-studio-item-meta">

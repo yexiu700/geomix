@@ -13,6 +13,11 @@ import {
   type ActionHomeQueryInput,
   type ActionHomeResponse,
   type ArticleArchiveFormat,
+  type CrawlProbeStatus,
+  type DistributionChannelAttributionItem,
+  type DistributionCrawlAlertItem,
+  type DistributionSummaryDto,
+  type DistributionUpcomingRetestItem,
   type ExportableArticleDoc,
   type GeoArticleStatus,
   type GeoEvaluateArticleBodyInput,
@@ -23,6 +28,8 @@ import {
   type GeoTargetFormat,
   type PublishRecordCreateInput,
   type PublishRecordRetestInput,
+  type RetestSampleCount,
+  type RetestScheduleStatus,
   type VisibilityEngineKey,
   type VisibilityRunDetailRecord,
 } from '@geomix/shared';
@@ -32,15 +39,70 @@ import {
   FreeActionRateLimiter,
   readGeoEvaluateRateLimit,
 } from '../common/free-action-rate-limiter';
+import {
+  RetestSchedulerService,
+  ensureRetestSchedulesForPublishRecord,
+} from '../distribution/retest-scheduler.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { VisibilityService } from '../visibility/visibility.service';
 import { computeRetestMetricSnapshot } from './retest-metrics-hook.service';
 import {
   normalizeComplianceFlags,
+  normalizeCrawlProbeReport,
+  normalizeGeoRetestMetricsSnapshot,
   normalizeRecommendedChannels,
+  normalizeRetestMetricSnapshot,
   presentPublishRecord,
 } from './studio.mapper';
 import type { StudioAuthContext } from './studio.service';
+
+export type CreatePublishRecordServiceInput = PublishRecordCreateInput & {
+  distributionTaskId?: string | null;
+  indexNowSubmitted?: boolean;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CRAWL_ALERT_PRIORITY: Record<string, number> = {
+  BLOCKED: 0,
+  FAILED: 1,
+  WARNING: 2,
+};
+
+function roundDecimals(value: number, digits: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+function meanOrNull(values: readonly number[], digits: number): number | null {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return null;
+  const sum = finite.reduce((acc, v) => acc + v, 0);
+  return roundDecimals(sum / finite.length, digits);
+}
+
+function pickDominantChannelSentiment(counts: {
+  positive: number;
+  neutral: number;
+  mixed: number;
+  negative: number;
+}): string | null {
+  const ordered: ReadonlyArray<['positive' | 'neutral' | 'mixed' | 'negative', number]> = [
+    ['positive', counts.positive],
+    ['neutral', counts.neutral],
+    ['mixed', counts.mixed],
+    ['negative', counts.negative],
+  ];
+  let bestKey: string | null = null;
+  let bestCount = 0;
+  for (const [key, count] of ordered) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestKey = key;
+    }
+  }
+  return bestCount > 0 ? bestKey : null;
+}
 
 export type ExportedArticlePayload = {
   buffer: Buffer;
@@ -100,6 +162,9 @@ export class GeoDeliveryService {
     @Optional()
     @Inject(FreeActionRateLimiter)
     private readonly rateLimiter?: FreeActionRateLimiter,
+    @Optional()
+    @Inject(RetestSchedulerService)
+    private readonly retestScheduler?: RetestSchedulerService,
   ) {}
 
   async evaluateGeo(
@@ -262,6 +327,11 @@ export class GeoDeliveryService {
 
     const rows = await this.prisma.scoped.geoPublishRecord.findMany({
       where: { articleId: article.id },
+      include: {
+        retestSchedules: {
+          orderBy: { milestoneDay: 'asc' },
+        },
+      },
       orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
     });
     return { items: rows.map(presentPublishRecord) };
@@ -269,7 +339,7 @@ export class GeoDeliveryService {
 
   async createPublishRecord(
     articleId: string,
-    input: PublishRecordCreateInput,
+    input: CreatePublishRecordServiceInput,
     auth: StudioAuthContext,
   ): Promise<GeoPublishRecordDto> {
     const article = await this.prisma.scoped.geoArticle.findFirst({
@@ -353,6 +423,8 @@ export class GeoDeliveryService {
         latestRetestRunId: null,
         beforeMetrics,
         afterMetrics: Prisma.DbNull,
+        distributionTaskId: input.distributionTaskId ?? null,
+        indexNowSubmitted: Boolean(input.indexNowSubmitted),
       },
     });
 
@@ -363,7 +435,14 @@ export class GeoDeliveryService {
       });
     }
 
-    return presentPublishRecord(created);
+    const retestSchedules = this.retestScheduler
+      ? await this.retestScheduler.ensureSchedulesForPublishRecord(created, input.autoRetest)
+      : await ensureRetestSchedulesForPublishRecord(this.prisma.scoped, created, input.autoRetest);
+
+    return {
+      ...presentPublishRecord(created),
+      retestSchedules,
+    };
   }
 
   async retestPublishRecord(
@@ -482,7 +561,7 @@ export class GeoDeliveryService {
       }
     }
 
-    const [topBriefRows, recentArticleRows] = await Promise.all([
+    const [topBriefRows, recentArticleRows, distributionSummary] = await Promise.all([
       this.prisma.scoped.geoBrief.findMany({
         where: {
           brandId: brand.id,
@@ -499,6 +578,11 @@ export class GeoDeliveryService {
         },
         include: {
           publishRecords: {
+            include: {
+              retestSchedules: {
+                orderBy: { milestoneDay: 'asc' },
+              },
+            },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             take: 1,
           },
@@ -506,6 +590,7 @@ export class GeoDeliveryService {
         orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: 5,
       }),
+      this.buildDistributionSummary(brand.id, market.id),
     ]);
 
     return {
@@ -533,6 +618,310 @@ export class GeoDeliveryService {
         updatedAt: row.updatedAt.toISOString(),
         publishRecord: row.publishRecords[0] ? presentPublishRecord(row.publishRecords[0]) : null,
       })),
+      distributionSummary,
+    };
+  }
+
+  private async buildDistributionSummary(
+    brandId: string,
+    brandMarketId: string,
+  ): Promise<DistributionSummaryDto> {
+    const now = new Date();
+    const sevenDaysAhead = new Date(now.getTime() + 7 * DAY_MS);
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * DAY_MS);
+
+    const hasScheduleDelegate =
+      typeof (this.prisma.scoped as unknown as { geoRetestSchedule?: { findMany?: unknown } })
+        .geoRetestSchedule?.findMany === 'function';
+
+    const fetchAlertBucket = (crawlStatus: 'BLOCKED' | 'FAILED' | 'WARNING') =>
+      this.prisma.scoped.geoPublishRecord.findMany({
+        where: {
+          brandId,
+          brandMarketId,
+          crawlStatus,
+        },
+        include: {
+          article: { select: { title: true } },
+        },
+        orderBy: [{ crawlCheckedAt: 'desc' }, { publishedAt: 'desc' }, { id: 'desc' }],
+        take: 5,
+      });
+
+    const [blockedRows, failedRows, warningRows, upcomingRows, attributionRows] = await Promise.all(
+      [
+        fetchAlertBucket('BLOCKED'),
+        fetchAlertBucket('FAILED'),
+        fetchAlertBucket('WARNING'),
+        hasScheduleDelegate
+          ? this.prisma.scoped.geoRetestSchedule.findMany({
+              where: {
+                brandId,
+                brandMarketId,
+                OR: [
+                  { status: { in: ['PENDING', 'RUNNING'] }, dueAt: { lte: sevenDaysAhead } },
+                  { status: 'SKIPPED_INSUFFICIENT_POINTS', updatedAt: { gte: fourteenDaysAgo } },
+                ],
+              },
+              include: {
+                publishRecord: {
+                  select: {
+                    id: true,
+                    articleId: true,
+                    channel: true,
+                    article: { select: { title: true } },
+                  },
+                },
+              },
+              orderBy: [{ dueAt: 'asc' }, { id: 'asc' }],
+              take: 5,
+            })
+          : Promise.resolve([]),
+        this.prisma.scoped.geoPublishRecord.findMany({
+          where: {
+            brandId,
+            brandMarketId,
+          },
+          include: {
+            retestSchedules: {
+              where: { status: 'COMPLETED' },
+              orderBy: [{ milestoneDay: 'desc' }, { executedAt: 'desc' }],
+            },
+          },
+          orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+          take: 500,
+        }),
+      ],
+    );
+
+    const seenAlertIds = new Set<string>();
+    const alertRows = [...blockedRows, ...failedRows, ...warningRows].filter((row) => {
+      if (seenAlertIds.has(row.id)) return false;
+      seenAlertIds.add(row.id);
+      return true;
+    });
+
+    const crawlAlerts: DistributionCrawlAlertItem[] = alertRows
+      .sort((a, b) => {
+        const prioA = CRAWL_ALERT_PRIORITY[a.crawlStatus] ?? 99;
+        const prioB = CRAWL_ALERT_PRIORITY[b.crawlStatus] ?? 99;
+        if (prioA !== prioB) return prioA - prioB;
+        const timeA = (a.crawlCheckedAt ?? a.publishedAt).getTime();
+        const timeB = (b.crawlCheckedAt ?? b.publishedAt).getTime();
+        return timeB - timeA;
+      })
+      .slice(0, 5)
+      .map((row) => {
+        const report = normalizeCrawlProbeReport(row.crawlReportJson);
+        const issues =
+          report && report.issues.length > 0
+            ? report.issues
+            : report?.errorMessage
+              ? [report.errorMessage]
+              : [];
+        return {
+          publishRecordId: row.id,
+          articleId: row.articleId,
+          articleTitle: row.article?.title ?? '',
+          channel: row.channel,
+          publishedUrl: row.publishedUrl,
+          crawlStatus: row.crawlStatus as CrawlProbeStatus,
+          crawlCheckedAt: row.crawlCheckedAt ? row.crawlCheckedAt.toISOString() : null,
+          issues,
+        };
+      });
+
+    const upcomingRetests: DistributionUpcomingRetestItem[] = upcomingRows.map((row) => ({
+      scheduleId: row.id,
+      publishRecordId: row.publishRecordId,
+      articleId: row.publishRecord?.articleId ?? '',
+      articleTitle: row.publishRecord?.article?.title ?? '',
+      channel: row.publishRecord?.channel ?? '',
+      milestoneDay: row.milestoneDay,
+      sampleCount: (row.sampleCount === 3 ? 3 : 1) as RetestSampleCount,
+      dueAt: row.dueAt.toISOString(),
+      status: row.status as RetestScheduleStatus,
+      skipReason: row.skipReason ?? null,
+    }));
+
+    type ChannelBucket = {
+      channel: string;
+      publishedCount: number;
+      crawlOkCount: number;
+      completedRetestCount: number;
+      citationHitCount: number;
+      mentionDeltas: number[];
+      positions: number[];
+      positionDeltas: number[];
+      sentimentCounts: { positive: number; neutral: number; mixed: number; negative: number };
+      retestRunIds: Set<string>;
+    };
+
+    const buckets = new Map<string, ChannelBucket>();
+    for (const row of attributionRows) {
+      let bucket = buckets.get(row.channel);
+      if (!bucket) {
+        bucket = {
+          channel: row.channel,
+          publishedCount: 0,
+          crawlOkCount: 0,
+          completedRetestCount: 0,
+          citationHitCount: 0,
+          mentionDeltas: [],
+          positions: [],
+          positionDeltas: [],
+          sentimentCounts: { positive: 0, neutral: 0, mixed: 0, negative: 0 },
+          retestRunIds: new Set<string>(),
+        };
+        buckets.set(row.channel, bucket);
+      }
+
+      bucket.publishedCount += 1;
+      if (row.crawlStatus === 'OK') {
+        bucket.crawlOkCount += 1;
+      }
+
+      const completedSchedules = Array.isArray(row.retestSchedules) ? row.retestSchedules : [];
+      let latestAfter = null;
+      let linkedRunId: string | null = row.latestRetestRunId ?? null;
+
+      for (const sched of completedSchedules) {
+        const snap = normalizeGeoRetestMetricsSnapshot(sched.metricsSnapshotJson);
+        if (snap) {
+          latestAfter = snap;
+          linkedRunId = sched.visibilityRunId ?? linkedRunId;
+          break;
+        }
+      }
+
+      if (!latestAfter) {
+        latestAfter = normalizeRetestMetricSnapshot(row.afterMetrics);
+      }
+
+      if (!latestAfter) continue;
+
+      bucket.completedRetestCount += 1;
+      if (linkedRunId) {
+        bucket.retestRunIds.add(linkedRunId);
+      }
+      if (latestAfter.citationHit) {
+        bucket.citationHitCount += 1;
+      }
+
+      const before = normalizeRetestMetricSnapshot(row.beforeMetrics);
+      if (
+        before &&
+        Number.isFinite(latestAfter.mentionRate) &&
+        Number.isFinite(before.mentionRate)
+      ) {
+        bucket.mentionDeltas.push(latestAfter.mentionRate - before.mentionRate);
+      }
+      if (typeof latestAfter.avgPosition === 'number' && Number.isFinite(latestAfter.avgPosition)) {
+        bucket.positions.push(latestAfter.avgPosition);
+        if (typeof before?.avgPosition === 'number' && Number.isFinite(before.avgPosition)) {
+          bucket.positionDeltas.push(latestAfter.avgPosition - before.avgPosition);
+        }
+      }
+      if (
+        latestAfter.sentiment === 'positive' ||
+        latestAfter.sentiment === 'neutral' ||
+        latestAfter.sentiment === 'mixed' ||
+        latestAfter.sentiment === 'negative'
+      ) {
+        bucket.sentimentCounts[latestAfter.sentiment] += 1;
+      }
+    }
+
+    // PRD D5 zero-citation graceful degradation: check whether upstream runs returned ANY citations
+    const candidateRunIds = new Set<string>();
+    for (const bucket of buckets.values()) {
+      if (bucket.completedRetestCount > 0 && bucket.citationHitCount === 0) {
+        for (const runId of bucket.retestRunIds) {
+          candidateRunIds.add(runId);
+        }
+      }
+    }
+
+    const runsWithCitations = new Set<string>();
+    const hasObsDelegate =
+      typeof (this.prisma.scoped as unknown as { visibilityObservation?: { findMany?: unknown } })
+        .visibilityObservation?.findMany === 'function';
+
+    if (candidateRunIds.size > 0 && hasObsDelegate) {
+      const citedObs = await this.prisma.scoped.visibilityObservation.findMany({
+        where: {
+          runId: { in: [...candidateRunIds] },
+          status: 'SUCCESS',
+        },
+        select: {
+          runId: true,
+          citations: {
+            select: { id: true },
+            take: 1,
+          },
+        },
+      });
+      for (const obs of citedObs) {
+        if (Array.isArray(obs.citations) && obs.citations.length > 0) {
+          runsWithCitations.add(obs.runId);
+        }
+      }
+    }
+
+    const channelAttribution: DistributionChannelAttributionItem[] = [...buckets.values()]
+      .map((bucket) => {
+        const sentimentTotal =
+          bucket.sentimentCounts.positive +
+          bucket.sentimentCounts.neutral +
+          bucket.sentimentCounts.mixed +
+          bucket.sentimentCounts.negative;
+
+        let citationHitRate: number | null = null;
+        if (bucket.completedRetestCount > 0) {
+          if (bucket.citationHitCount > 0) {
+            citationHitRate = roundDecimals(
+              bucket.citationHitCount / bucket.completedRetestCount,
+              3,
+            );
+          } else {
+            const hasUpstreamCitations = [...bucket.retestRunIds].some((id) =>
+              runsWithCitations.has(id),
+            );
+            citationHitRate = hasUpstreamCitations ? 0 : null;
+          }
+        }
+
+        const positiveSentimentRate =
+          sentimentTotal > 0
+            ? roundDecimals(bucket.sentimentCounts.positive / sentimentTotal, 3)
+            : null;
+
+        return {
+          channel: bucket.channel,
+          publishedCount: bucket.publishedCount,
+          crawlOkCount: bucket.crawlOkCount,
+          completedRetestCount: bucket.completedRetestCount,
+          citationHitCount: bucket.citationHitCount,
+          citationHitRate,
+          avgMentionRateDelta: meanOrNull(bucket.mentionDeltas, 1),
+          avgPosition: meanOrNull(bucket.positions, 1),
+          avgPositionDelta: meanOrNull(bucket.positionDeltas, 1),
+          positiveSentimentRate,
+          sentimentSummary: pickDominantChannelSentiment(bucket.sentimentCounts),
+        };
+      })
+      .sort((a, b) => {
+        if (b.publishedCount !== a.publishedCount) return b.publishedCount - a.publishedCount;
+        if (b.completedRetestCount !== a.completedRetestCount) {
+          return b.completedRetestCount - a.completedRetestCount;
+        }
+        return a.channel.localeCompare(b.channel);
+      });
+
+    return {
+      crawlAlerts,
+      upcomingRetests,
+      channelAttribution,
     };
   }
 }

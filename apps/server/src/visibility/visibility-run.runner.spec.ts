@@ -183,4 +183,159 @@ describe('VisibilityRunRunner billing settle rollback (B-01)', () => {
     expect(state.failCount).toBe(1);
     expect(state.runStatus).toBe('FAILED');
   });
+
+  it('S-03: fires completeHooks on FAILED RETEST run (0 successes) so linked RUNNING GeoRetestSchedule transitions to FAILED', async () => {
+    const state = {
+      runStatus: 'RUNNING',
+      doneCount: 0,
+      failCount: 0,
+      lastError: 'SonarGate upstream timeout',
+      obsStatus: 'PENDING' as 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED',
+    };
+
+    const tx = {
+      visibilityRun: {
+        findFirst: vi.fn(async () => ({
+          id: 'run_retest_fail_1',
+          tenantId: 'tenant_a',
+          brandId: 'brand_a',
+          brandMarketId: 'bm_cn',
+          name: 'Scheduled Retest',
+          triggerType: 'RETEST',
+          retestArticleId: 'art_1',
+          status: state.runStatus,
+          totalChecks: 1,
+          doneCount: state.doneCount,
+          failCount: state.failCount,
+          unitPrice: 2,
+          reservationId: null,
+          finishedAt: null,
+          lastError: state.lastError,
+        })),
+        update: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          if (typeof args.data.status === 'string') state.runStatus = args.data.status;
+          if (typeof args.data.lastError === 'string') state.lastError = args.data.lastError;
+          if (args.data.failCount && typeof args.data.failCount === 'object') {
+            const fc = args.data.failCount as { increment?: number };
+            if (fc.increment) state.failCount += fc.increment;
+          }
+          return {};
+        }),
+        updateMany: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          if (typeof args.data.status === 'string') state.runStatus = args.data.status;
+          return { count: 1 };
+        }),
+      },
+      visibilityObservation: {
+        findMany: vi.fn(async () => (state.obsStatus === 'PENDING' ? [{ id: 'obs_1' }] : [])),
+        findFirst: vi.fn(async (args: { where?: { status?: string } }) => {
+          if (args.where?.status && args.where.status !== state.obsStatus) return null;
+          return { id: 'obs_1', status: state.obsStatus };
+        }),
+        count: vi.fn(async (args?: { where?: { status?: string } }) =>
+          args?.where?.status === state.obsStatus ? 1 : 0,
+        ),
+        updateMany: vi.fn(
+          async (args: {
+            where?: { status?: string; checkedAt?: { lt?: Date } };
+            data: Record<string, unknown>;
+          }) => {
+            if (args.where?.status && args.where.status !== state.obsStatus) return { count: 0 };
+            if (args.where?.checkedAt?.lt) return { count: 0 };
+            if (typeof args.data.status === 'string') {
+              state.obsStatus = args.data.status as typeof state.obsStatus;
+            }
+            return { count: 1 };
+          },
+        ),
+        update: vi.fn(async (args: { data: Record<string, unknown> }) => {
+          if (typeof args.data.status === 'string') {
+            state.obsStatus = args.data.status as typeof state.obsStatus;
+          }
+          return {};
+        }),
+        groupBy: vi.fn(async () => [{ status: state.obsStatus, _count: { _all: 1 } }]),
+      },
+    };
+
+    const prisma = {
+      base: {
+        $transaction: vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+        visibilityRun: {
+          findFirst: vi.fn(async () => ({
+            id: 'run_retest_fail_1',
+            tenantId: 'tenant_a',
+            brandId: 'brand_a',
+            brandMarketId: 'bm_cn',
+            name: 'Scheduled Retest',
+            triggerType: 'RETEST',
+            retestArticleId: 'art_1',
+            status: state.runStatus,
+            unitPrice: 2,
+            reservationId: null,
+            brandMarket: {
+              id: 'bm_cn',
+              market: 'CN',
+              locale: 'zh-CN',
+              region: 'CN',
+              localBrandName: '星辰存储',
+              aliases: [],
+              ownedDomains: ['star.example'],
+              competitors: [],
+            },
+          })),
+        },
+        visibilityObservation: {
+          findFirst: vi.fn(async () => ({
+            id: 'obs_1',
+            engine: 'doubao',
+            promptText: '家用四盘位 NAS 推荐',
+          })),
+        },
+        pointReservation: {
+          findFirst: vi.fn(async () => null),
+        },
+      },
+    } as unknown as PrismaService;
+
+    const billing = {
+      settle: vi.fn(async () => undefined),
+      releaseUnit: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    } as unknown as BillingService;
+
+    const collector = {
+      collect: vi.fn(async () => {
+        throw new Error('SonarGate upstream timeout');
+      }),
+    } as unknown as VisibilityCollectorService;
+
+    const judge = {
+      evaluate: vi.fn(),
+    } as unknown as VisibilityJudgeService;
+
+    const hookEvents: Array<Record<string, unknown>> = [];
+    const runner = new VisibilityRunRunner(prisma, billing, collector, judge);
+    runner.registerCompleteHook({
+      name: 'recording-retest-hook',
+      onVisibilityRunComplete(evt) {
+        hookEvents.push(evt as unknown as Record<string, unknown>);
+      },
+    });
+
+    await runner.process({ tenantId: 'tenant_a', runId: 'run_retest_fail_1' });
+
+    expect(state.runStatus).toBe('FAILED');
+    expect(hookEvents).toHaveLength(1);
+    expect(hookEvents[0]).toEqual({
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_cn',
+      runId: 'run_retest_fail_1',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_1',
+      status: 'FAILED',
+      successCount: 0,
+    });
+  });
 });

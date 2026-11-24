@@ -2,19 +2,27 @@ import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import {
   BRAND_FACT_CORE_SLOTS,
+  CHANNEL_PROVIDERS,
   CN_RECOMMENDED_CHANNELS,
+  ECOMMERCE_CITATION_DOMAINS,
   GEO_BRIEF_SOURCES,
   GEO_BRIEF_STATUSES,
   GEO_RECIPES,
   GEO_TARGET_FORMATS,
+  containsCjk,
   defaultRecipeForBriefSource,
   defaultTargetFormatForMarket,
   geoOutlineHeadingSchema,
+  isPrivateOrReservedHostLiteral,
+  isSafeDistributionHttpUrl,
+  matchesDomain,
   normalizeFanOutQueries,
+  normalizeVisibilityDomain,
   recommendBriefTargetFormat,
   recommendChannelsForMarket,
   targetFormatsForMarket,
   type BrandFactSlot,
+  type ChannelProvider,
   type CitationSourceKind,
   type GeoBriefChannelRecommendation,
   type GeoBriefRecord,
@@ -36,7 +44,12 @@ const CN_CHANNEL_FORBIDDEN_IN_GLOBAL = [
   '抖音',
   '微信公众号',
   '微博',
+  'b站',
+  '官网',
 ] as const;
+
+const CN_CHANNEL_ROMANIZED_FORBIDDEN_RE =
+  /\b(?:zhihu|smzdm|xiaohongshu|bilibili|toutiao|douyin|wechat|weixin|weibo|baidu|36kr)\b/i;
 
 export type GeoBriefRow = {
   id: string;
@@ -75,6 +88,7 @@ export type BriefSignalCitation = {
   domain: string;
   title: string | null;
   sourceKind: CitationSourceKind;
+  position?: number;
 };
 
 export type BriefSignalObservation = {
@@ -117,6 +131,7 @@ export type BriefSynthesisContext = {
   targetFanOuts: string[];
   observations: readonly BriefSignalObservation[];
   citations: readonly BriefSignalCitation[];
+  ownedDomains?: readonly string[];
   matchedFacts: readonly BriefMatchedFact[];
   presentFactSlots: ReadonlySet<BrandFactSlot>;
 };
@@ -181,16 +196,674 @@ export function parseStoredOutlineH2(raw: Prisma.JsonValue): GeoOutlineHeading[]
   return out;
 }
 
+const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
+
+const GLOBAL_EXCLUDED_CN_DOMAINS = [
+  'zhihu.com',
+  'smzdm.com',
+  'xiaohongshu.com',
+  'xhslink.com',
+  'toutiao.com',
+  'douyin.com',
+  'mp.weixin.qq.com',
+  'weixin.qq.com',
+  'weibo.com',
+  'weibo.cn',
+  'bilibili.com',
+  'b23.tv',
+  'tieba.baidu.com',
+  'baike.baidu.com',
+  'baidu.com',
+  'douban.com',
+  'hupu.com',
+  'v2ex.com',
+  'juejin.cn',
+  'csdn.net',
+  'segmentfault.com',
+  'oschina.net',
+  'nga.cn',
+  'ngabbs.com',
+  'kuaishou.com',
+  'jianshu.com',
+  'cnblogs.com',
+  '36kr.com',
+  'huxiu.com',
+  'tmtpost.com',
+  'ifanr.com',
+  'infoq.cn',
+  'sspai.com',
+  'ithome.com',
+  'pconline.com.cn',
+  'zol.com.cn',
+  'chiphell.com',
+  'mydrivers.com',
+  'leiphone.com',
+  'geekpark.net',
+  'pingwest.com',
+  'chongdiantou.com',
+  'zealer.com',
+  '163.com',
+  'qq.com',
+  'sohu.com',
+  'sina.com.cn',
+  'jd.com',
+  'tmall.com',
+  'taobao.com',
+  'pinduoduo.com',
+  'yangkeduo.com',
+  'suning.com',
+  'vip.com',
+  '1688.com',
+  'xinhuanet.com',
+  'caixin.com',
+  'cctv.com',
+] as const;
+
+const CN_OTHER_UGC_DOMAINS = [
+  'bilibili.com',
+  'b23.tv',
+  'weibo.com',
+  'weibo.cn',
+  'tieba.baidu.com',
+  'douban.com',
+  'hupu.com',
+  'v2ex.com',
+  'juejin.cn',
+  'csdn.net',
+  'segmentfault.com',
+  'oschina.net',
+  'nga.cn',
+  'ngabbs.com',
+  'kuaishou.com',
+  'jianshu.com',
+  'cnblogs.com',
+] as const;
+
+const GLOBAL_SOCIAL_THREAD_DOMAINS = [
+  'linkedin.com',
+  'x.com',
+  'twitter.com',
+  'threads.net',
+  'bsky.app',
+] as const;
+
+const GLOBAL_REVIEW_PLATFORM_DOMAINS = [
+  'trustpilot.com',
+  'g2.com',
+  'capterra.com',
+  'producthunt.com',
+  'trustradius.com',
+  'getapp.com',
+] as const;
+
+function isCnOnlyDomain(domain: string): boolean {
+  if (domain.endsWith('.cn')) return true;
+  return GLOBAL_EXCLUDED_CN_DOMAINS.some((cnDomain) => matchesDomain(domain, cnDomain));
+}
+
+function isEcommerceDomain(domain: string): boolean {
+  return ECOMMERCE_CITATION_DOMAINS.some((ecDomain) => matchesDomain(domain, ecDomain));
+}
+
+const MAX_CITATION_HOST_LENGTH = 255;
+const MAX_CITATION_URL_LENGTH = 2048;
+
+function stripTrailingChar(value: string, ch: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === ch) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
+function isOwnedDomain(domain: string, ownedDomains: readonly string[]): boolean {
+  return ownedDomains.some((owned) => matchesDomain(domain, owned));
+}
+
+function safeNormalizeCitationDomain(raw: string): string {
+  if (typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_CITATION_URL_LENGTH) return '';
+  if (/[\s\u0000-\u001f\u007f]/.test(trimmed)) return '';
+
+  let candidateUrl: string;
+  if (/^https?:/i.test(trimmed)) {
+    candidateUrl = trimmed;
+  } else if (trimmed.startsWith('//')) {
+    candidateUrl = `https:${trimmed}`;
+  } else {
+    if (trimmed.includes('://')) return '';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+      const colonIdx = trimmed.indexOf(':');
+      const afterColon = trimmed.slice(colonIdx + 1);
+      const portPart = afterColon.split(/[/?#\\]/)[0] ?? '';
+      if (!/^\d+$/.test(portPart)) {
+        return '';
+      }
+    }
+
+    let delimIdx = trimmed.length;
+    for (let i = 0; i < trimmed.length; i += 1) {
+      const ch = trimmed[i];
+      if (ch === '/' || ch === '\\' || ch === '?' || ch === '#') {
+        delimIdx = i;
+        break;
+      }
+    }
+    const authority = trimmed.slice(0, delimIdx);
+    const rest = trimmed.slice(delimIdx);
+    if (!authority.includes('@') && !authority.startsWith('[')) {
+      const colonIdx = authority.indexOf(':');
+      const hostPart = colonIdx >= 0 ? authority.slice(0, colonIdx) : authority;
+      const portAndRest = (colonIdx >= 0 ? authority.slice(colonIdx) : '') + rest;
+      const normalizedHost = stripTrailingChar(hostPart, '.');
+      if (
+        !normalizedHost ||
+        normalizedHost.length > MAX_CITATION_HOST_LENGTH ||
+        normalizedHost.startsWith('.') ||
+        normalizedHost.includes('..')
+      ) {
+        return '';
+      }
+      candidateUrl = `https://${normalizedHost}${portAndRest}`;
+    } else {
+      candidateUrl = `https://${trimmed}`;
+    }
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidateUrl);
+  } catch {
+    return '';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+
+  const hostname = parsed.hostname;
+  if (!hostname || hostname.length > MAX_CITATION_HOST_LENGTH || hostname.startsWith('[')) {
+    return '';
+  }
+  const strippedHost = stripTrailingChar(hostname, '.');
+  if (
+    !strippedHost ||
+    strippedHost.length > MAX_CITATION_HOST_LENGTH ||
+    strippedHost.startsWith('.') ||
+    strippedHost.includes('..')
+  ) {
+    return '';
+  }
+
+  return normalizeVisibilityDomain(strippedHost);
+}
+
+function isSafePublicCitationHost(hostname: string): boolean {
+  const trimmed = hostname.trim();
+  if (!trimmed || trimmed.length > MAX_CITATION_HOST_LENGTH) return false;
+  const unbracketed = trimmed.toLowerCase().replace(/^\[|\]$/g, '');
+  const normalized = stripTrailingChar(unbracketed, '.');
+  if (
+    !normalized ||
+    normalized.length > MAX_CITATION_HOST_LENGTH ||
+    normalized.startsWith('.') ||
+    normalized.includes('..')
+  ) {
+    return false;
+  }
+  if (isPrivateOrReservedHostLiteral(normalized)) return false;
+  if (!normalized.includes('.')) return false;
+  return true;
+}
+
+function isSafePublicCitationUrl(rawUrl: string): boolean {
+  if (typeof rawUrl !== 'string') return false;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > MAX_CITATION_URL_LENGTH || trimmed.includes('\\')) {
+    return false;
+  }
+  if (!isSafeDistributionHttpUrl(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return isSafePublicCitationHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function hasPrivateOrInternalUrlHost(rawUrl: string): boolean {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > MAX_CITATION_URL_LENGTH) return true;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    return !isSafePublicCitationHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function canonicalizeCitationUrlKey(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > MAX_CITATION_URL_LENGTH) {
+    return '';
+  }
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hash = '';
+    const keepParams = new URLSearchParams();
+    for (const [k, v] of parsed.searchParams.entries()) {
+      if (!/^utm_/i.test(k) && k.toLowerCase() !== 'fbclid' && k.toLowerCase() !== 'gclid') {
+        keepParams.append(k, v);
+      }
+    }
+    keepParams.sort();
+    const qs = keepParams.toString();
+    const hostname = stripTrailingChar(parsed.hostname.toLowerCase(), '.').replace(/^www\./, '');
+    const pathname = stripTrailingChar(parsed.pathname, '/') || '/';
+    return `${parsed.protocol}//${hostname}${pathname}${qs ? `?${qs}` : ''}`;
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+export function inferProviderHintForChannel(channel: string, market: GeoMarket): ChannelProvider {
+  const lower = channel.trim().toLowerCase();
+  if (lower.includes('reddit')) return 'REDDIT_ASSIST';
+  if (lower.includes('quora')) return 'QUORA_ASSIST';
+  if (
+    lower.includes('linkedin') ||
+    lower.includes('twitter') ||
+    lower.includes('/ x') ||
+    lower.includes('x /') ||
+    lower.includes('social thread')
+  ) {
+    return 'SOCIAL_THREAD_ASSIST';
+  }
+  if (
+    lower.includes('trustpilot') ||
+    lower.includes('g2') ||
+    lower.includes('review media') ||
+    lower.includes('pr') ||
+    lower.includes('kol') ||
+    lower.includes('评测媒体') ||
+    lower.includes('行业媒体')
+  ) {
+    return 'PR_PACKET';
+  }
+  if (
+    lower.includes('blog') ||
+    lower.includes('docs') ||
+    lower.includes('官网') ||
+    lower.includes('独立站')
+  ) {
+    return 'WORDPRESS';
+  }
+  if (
+    lower.includes('知乎') ||
+    lower.includes('什么值得买') ||
+    lower.includes('小红书') ||
+    lower.includes('字节头条') ||
+    lower.includes('抖音') ||
+    lower.includes('微信') ||
+    lower.includes('中文社区')
+  ) {
+    return 'CN_COMMUNITY_ASSIST';
+  }
+  return market === 'GLOBAL' ? 'WORDPRESS' : 'CN_COMMUNITY_ASSIST';
+}
+
+type CitationChannelBucket = {
+  channel: string;
+  providerHint: ChannelProvider;
+  kind: 'community' | 'social' | 'review' | 'media' | 'competitor';
+  citationCount: number;
+  bestPosition: number;
+  containsSourceCitationUrl: boolean;
+  domains: Set<string>;
+  urlMap: Map<
+    string,
+    {
+      url: string;
+      count: number;
+      bestPosition: number;
+      isAuthority: number;
+    }
+  >;
+};
+
+function classifyCitationDomainToChannel(
+  domain: string,
+  sourceKind: CitationSourceKind,
+  market: GeoMarket,
+): { channel: string; providerHint: ChannelProvider; kind: CitationChannelBucket['kind'] } | null {
+  if (market === 'GLOBAL') {
+    if (isCnOnlyDomain(domain)) return null;
+    if (matchesDomain(domain, 'reddit.com')) {
+      return { channel: 'Reddit', providerHint: 'REDDIT_ASSIST', kind: 'community' };
+    }
+    if (matchesDomain(domain, 'quora.com')) {
+      return { channel: 'Quora', providerHint: 'QUORA_ASSIST', kind: 'community' };
+    }
+    if (GLOBAL_SOCIAL_THREAD_DOMAINS.some((d) => matchesDomain(domain, d))) {
+      return { channel: 'LinkedIn / X', providerHint: 'SOCIAL_THREAD_ASSIST', kind: 'social' };
+    }
+    if (GLOBAL_REVIEW_PLATFORM_DOMAINS.some((d) => matchesDomain(domain, d))) {
+      return { channel: 'Trustpilot/G2', providerHint: 'PR_PACKET', kind: 'review' };
+    }
+    if (sourceKind === 'COMPETITOR') {
+      return {
+        channel: 'Independent Blog/Docs (llms.txt + JSON-LD)',
+        providerHint: 'WORDPRESS',
+        kind: 'competitor',
+      };
+    }
+    return { channel: 'Independent Review Media', providerHint: 'PR_PACKET', kind: 'media' };
+  }
+
+  // CN market
+  if (matchesDomain(domain, 'zhihu.com')) {
+    return { channel: '知乎', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'smzdm.com')) {
+    return { channel: '什么值得买', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'xiaohongshu.com') || matchesDomain(domain, 'xhslink.com')) {
+    return { channel: '小红书', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'toutiao.com') || matchesDomain(domain, 'douyin.com')) {
+    return { channel: '字节头条/抖音图文', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'mp.weixin.qq.com') || matchesDomain(domain, 'weixin.qq.com')) {
+    return { channel: '微信公众号', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'reddit.com')) {
+    return { channel: 'Reddit', providerHint: 'REDDIT_ASSIST', kind: 'community' };
+  }
+  if (matchesDomain(domain, 'quora.com')) {
+    return { channel: 'Quora', providerHint: 'QUORA_ASSIST', kind: 'community' };
+  }
+  if (GLOBAL_SOCIAL_THREAD_DOMAINS.some((d) => matchesDomain(domain, d))) {
+    return { channel: 'LinkedIn / X', providerHint: 'SOCIAL_THREAD_ASSIST', kind: 'social' };
+  }
+  if (CN_OTHER_UGC_DOMAINS.some((d) => matchesDomain(domain, d))) {
+    return { channel: '中文社区问答', providerHint: 'CN_COMMUNITY_ASSIST', kind: 'community' };
+  }
+  if (sourceKind === 'COMPETITOR') {
+    return { channel: '官网', providerHint: 'WORDPRESS', kind: 'competitor' };
+  }
+  return { channel: '第三方评测媒体', providerHint: 'PR_PACKET', kind: 'media' };
+}
+
+function buildEvidenceBackedChannelReason(
+  bucket: CitationChannelBucket,
+  market: GeoMarket,
+): string {
+  const domainsSample = [...bucket.domains].slice(0, 3).join(', ');
+  const count = bucket.citationCount;
+  if (market === 'GLOBAL') {
+    if (bucket.kind === 'competitor') {
+      return `AI engines cited competitor domains ${count} ${count === 1 ? 'time' : 'times'} (${domainsSample}) for this prompt; publish a structured, JSON-LD backed comparison guide on your owned blog/docs.`;
+    }
+    if (bucket.kind === 'media' || bucket.kind === 'review') {
+      return `AI engines cited ${bucket.channel} ${count} ${count === 1 ? 'time' : 'times'} (${domainsSample}) for this prompt; share a verified PR/KOL fact packet to earn objective editorial coverage.`;
+    }
+    return `AI engines cited ${bucket.channel} ${count} ${count === 1 ? 'time' : 'times'} (${domainsSample}) for this prompt; prioritize compliant, non-promotional participation targeting these cited discussions.`;
+  }
+
+  if (bucket.kind === 'competitor') {
+    return `该问句下 AI 引擎共引用 ${count} 次竞品官网内容（${domainsSample}），建议优先在自有官网发布带结构化参数表与 JSON-LD 的深度对照页进行反制。`;
+  }
+  if (bucket.kind === 'media') {
+    return `该问句下 AI 引擎共引用 ${count} 次第三方评测媒体（${domainsSample}），建议输出标准媒体/KOL 事实协作包切入高权重评测信源。`;
+  }
+  return `该问句下 AI 引擎共引用 ${count} 次 ${bucket.channel} 相关讨论/内容（${domainsSample}），建议优先产出合规实测内容切入高引用信源。`;
+}
+
+function aggregateCitationDrivenChannels(
+  ctx: BriefSynthesisContext,
+): GeoBriefChannelRecommendation[] {
+  const normalizedOwnedDomains = (ctx.ownedDomains ?? [])
+    .map((d) => safeNormalizeCitationDomain(d))
+    .filter((d): d is string => Boolean(d));
+  const sourceCitationKey =
+    ctx.sourceCitationUrl && isSafePublicCitationUrl(ctx.sourceCitationUrl)
+      ? canonicalizeCitationUrlKey(ctx.sourceCitationUrl)
+      : null;
+
+  const buckets = new Map<string, CitationChannelBucket>();
+
+  for (const cite of ctx.citations) {
+    if (cite.sourceKind === 'OWNED' || cite.sourceKind === 'ECOMMERCE') {
+      continue;
+    }
+    const rawUrl = cite.url.trim();
+    if (rawUrl && /^[a-z][a-z0-9+.-]*:/i.test(rawUrl) && !/^https?:/i.test(rawUrl)) {
+      continue;
+    }
+    if (rawUrl && hasPrivateOrInternalUrlHost(rawUrl)) {
+      continue;
+    }
+    const urlDomain = rawUrl ? safeNormalizeCitationDomain(rawUrl) : '';
+    if (urlDomain) {
+      if (
+        !isSafePublicCitationHost(urlDomain) ||
+        isEcommerceDomain(urlDomain) ||
+        (ctx.market === 'GLOBAL' && isCnOnlyDomain(urlDomain)) ||
+        isOwnedDomain(urlDomain, normalizedOwnedDomains)
+      ) {
+        continue;
+      }
+    }
+    const domain = safeNormalizeCitationDomain(cite.domain) || urlDomain;
+    if (!domain || !isSafePublicCitationHost(domain)) continue;
+    if (isEcommerceDomain(domain)) {
+      continue;
+    }
+    if (isOwnedDomain(domain, normalizedOwnedDomains)) {
+      continue;
+    }
+
+    const mapped = classifyCitationDomainToChannel(domain, cite.sourceKind, ctx.market);
+    if (!mapped) continue;
+
+    const bucketKey = mapped.channel.toLowerCase();
+    let bucket = buckets.get(bucketKey);
+    if (!bucket) {
+      bucket = {
+        channel: mapped.channel,
+        providerHint: mapped.providerHint,
+        kind: mapped.kind,
+        citationCount: 0,
+        bestPosition: Number.POSITIVE_INFINITY,
+        containsSourceCitationUrl: false,
+        domains: new Set<string>(),
+        urlMap: new Map(),
+      };
+      buckets.set(bucketKey, bucket);
+    }
+
+    const pos =
+      typeof cite.position === 'number' && Number.isFinite(cite.position) && cite.position > 0
+        ? cite.position
+        : 999;
+    bucket.citationCount += 1;
+    if (pos < bucket.bestPosition) {
+      bucket.bestPosition = pos;
+    }
+    bucket.domains.add(domain);
+
+    if (urlDomain && isSafePublicCitationUrl(rawUrl)) {
+      const urlKey = canonicalizeCitationUrlKey(rawUrl);
+      if (urlKey) {
+        if (sourceCitationKey && urlKey === sourceCitationKey) {
+          bucket.containsSourceCitationUrl = true;
+        }
+        const existingUrl = bucket.urlMap.get(urlKey);
+        const isAuthority = cite.sourceKind === 'AUTHORITY' ? 1 : 0;
+        if (existingUrl) {
+          existingUrl.count += 1;
+          if (pos < existingUrl.bestPosition) {
+            existingUrl.bestPosition = pos;
+          }
+          if (isAuthority > existingUrl.isAuthority) {
+            existingUrl.isAuthority = isAuthority;
+          }
+        } else {
+          bucket.urlMap.set(urlKey, {
+            url: rawUrl,
+            count: 1,
+            bestPosition: pos,
+            isAuthority,
+          });
+        }
+      }
+    }
+  }
+
+  if (buckets.size === 0) {
+    return [];
+  }
+
+  const rankedBuckets = [...buckets.values()].sort((a, b) => {
+    const aHigh = a.citationCount >= 2 || a.containsSourceCitationUrl ? 1 : 0;
+    const bHigh = b.citationCount >= 2 || b.containsSourceCitationUrl ? 1 : 0;
+    return (
+      b.citationCount - a.citationCount ||
+      bHigh - aHigh ||
+      a.bestPosition - b.bestPosition ||
+      a.channel.localeCompare(b.channel)
+    );
+  });
+
+  const result: GeoBriefChannelRecommendation[] = [];
+  const seenChannels = new Set<string>();
+
+  for (const bucket of rankedBuckets.slice(0, 3)) {
+    const key = bucket.channel.toLowerCase();
+    if (seenChannels.has(key)) continue;
+    seenChannels.add(key);
+
+    const priority: 'HIGH' | 'MEDIUM' =
+      bucket.citationCount >= 2 || bucket.containsSourceCitationUrl ? 'HIGH' : 'MEDIUM';
+
+    const topUrls = [...bucket.urlMap.values()]
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          a.bestPosition - b.bestPosition ||
+          b.isAuthority - a.isAuthority ||
+          a.url.localeCompare(b.url),
+      )
+      .slice(0, 3)
+      .map((u) => u.url);
+
+    result.push({
+      channel: bucket.channel,
+      reason: buildEvidenceBackedChannelReason(bucket, ctx.market).slice(0, 300),
+      providerHint: bucket.providerHint,
+      priority,
+      ...(topUrls.length > 0 ? { citedExampleUrls: topUrls } : {}),
+    });
+  }
+
+  // 补充自有站点锚点渠道（若尚未包含且总数 < 4），确保商家始终拥有 L1 自有阵地承接选项
+  const ownedChannelName =
+    ctx.market === 'GLOBAL' ? 'Independent Blog/Docs (llms.txt + JSON-LD)' : '官网';
+  if (!seenChannels.has(ownedChannelName.toLowerCase()) && result.length < 4) {
+    seenChannels.add(ownedChannelName.toLowerCase());
+    result.push({
+      channel: ownedChannelName,
+      reason:
+        ctx.market === 'GLOBAL'
+          ? 'Publish a canonical structured guide with JSON-LD and llms.txt on your owned site to anchor brand truth for AI crawlers.'
+          : '在自有官网同步发布含结构化参数表与 FAQ 的权威长文，沉淀长期可控的 AI 抓取主阵地。',
+      providerHint: 'WORDPRESS',
+      priority: 'MEDIUM',
+    });
+  }
+
+  return result;
+}
+
+export function buildCitationDrivenRecommendedChannels(
+  ctx: BriefSynthesisContext,
+): GeoBriefChannelRecommendation[] {
+  const citationBacked = aggregateCitationDrivenChannels(ctx);
+  if (citationBacked.length > 0) {
+    return citationBacked;
+  }
+
+  const citationCounts = summarizeCitationKinds(ctx.citations);
+  const fallback = recommendChannelsForMarket(ctx.market, {
+    sourceType: ctx.sourceType,
+    socialCitations: citationCounts.SOCIAL,
+    authorityCitations: citationCounts.AUTHORITY,
+    competitorCitations: citationCounts.COMPETITOR,
+    ecommerceCitations: citationCounts.ECOMMERCE,
+    citationsEmpty: ctx.citations.length === 0,
+  });
+
+  const seen = new Set<string>();
+  const enriched: GeoBriefChannelRecommendation[] = [];
+  for (let idx = 0; idx < fallback.length; idx += 1) {
+    const item = fallback[idx]!;
+    const key = item.channel.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    enriched.push({
+      channel: item.channel,
+      reason: item.reason,
+      providerHint: item.providerHint ?? inferProviderHintForChannel(item.channel, ctx.market),
+      priority: item.priority ?? (idx === 0 ? 'HIGH' : 'MEDIUM'),
+    });
+  }
+  return enriched;
+}
+
 export function parseStoredChannels(raw: Prisma.JsonValue): GeoBriefChannelRecommendation[] {
   if (!Array.isArray(raw)) return [];
   const out: GeoBriefChannelRecommendation[] = [];
+  const seen = new Set<string>();
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const rec = entry as Record<string, unknown>;
-    const channel = typeof rec.channel === 'string' ? rec.channel.trim() : '';
-    const reason = typeof rec.reason === 'string' ? rec.reason.trim() : '';
+    const rawChannel = typeof rec.channel === 'string' ? rec.channel : '';
+    const rawReason = typeof rec.reason === 'string' ? rec.reason : '';
+    const channel = rawChannel.trim().slice(0, 80).trim();
+    const reason = rawReason.trim().slice(0, 300).trim();
     if (!channel || !reason) continue;
-    out.push({ channel: channel.slice(0, 80), reason: reason.slice(0, 300) });
+    const key = channel.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const item: GeoBriefChannelRecommendation = {
+      channel,
+      reason,
+    };
+    if (typeof rec.providerHint === 'string' && CHANNEL_PROVIDER_SET.has(rec.providerHint)) {
+      item.providerHint = rec.providerHint as ChannelProvider;
+    }
+    if (rec.priority === 'HIGH' || rec.priority === 'MEDIUM') {
+      item.priority = rec.priority;
+    }
+    if (Array.isArray(rec.citedExampleUrls)) {
+      const urlSet = new Set<string>();
+      const urls: string[] = [];
+      for (const rawUrl of rec.citedExampleUrls) {
+        if (typeof rawUrl !== 'string') continue;
+        const cleaned = rawUrl.trim();
+        if (!cleaned || !isSafePublicCitationUrl(cleaned)) continue;
+        const urlKey = canonicalizeCitationUrlKey(cleaned);
+        if (!urlKey || urlSet.has(urlKey)) continue;
+        urlSet.add(urlKey);
+        urls.push(cleaned);
+        if (urls.length >= 3) break;
+      }
+      if (urls.length > 0) {
+        item.citedExampleUrls = urls;
+      }
+    }
+    out.push(item);
   }
   return out;
 }
@@ -761,14 +1434,7 @@ export function buildDeterministicBriefDraft(ctx: BriefSynthesisContext): BriefD
     ctx.market === 'GLOBAL'
       ? buildEnglishOutline(ctx, recommendedRecipe, targetFanOuts)
       : buildChineseOutline(ctx, recommendedRecipe, targetFanOuts);
-  const recommendedChannels = recommendChannelsForMarket(ctx.market, {
-    sourceType: ctx.sourceType,
-    socialCitations: citationCounts.SOCIAL,
-    authorityCitations: citationCounts.AUTHORITY,
-    competitorCitations: citationCounts.COMPETITOR,
-    ecommerceCitations: citationCounts.ECOMMERCE,
-    citationsEmpty: ctx.citations.length === 0,
-  });
+  const recommendedChannels = buildCitationDrivenRecommendedChannels(ctx);
 
   return {
     diagnosisSummary,
@@ -818,7 +1484,11 @@ export function extractJsonCandidate(rawText: string): unknown {
 }
 
 function hasForbiddenCnChannel(text: string): boolean {
-  return CN_CHANNEL_FORBIDDEN_IN_GLOBAL.some((token) => text.includes(token));
+  const lower = text.toLowerCase();
+  if (CN_CHANNEL_FORBIDDEN_IN_GLOBAL.some((token) => lower.includes(token))) {
+    return true;
+  }
+  return CN_CHANNEL_ROMANIZED_FORBIDDEN_RE.test(text);
 }
 
 /**
@@ -856,29 +1526,53 @@ export function finalizeRealLlmBriefDraft(
           socialHeavy: citationCounts.SOCIAL > 0,
         });
 
-  let channels = parsed.recommendedChannels ?? [];
-  if (ctx.market === 'GLOBAL') {
-    channels = channels.filter(
-      (c) => !hasForbiddenCnChannel(c.channel) && !hasForbiddenCnChannel(c.reason),
-    );
-  } else {
-    channels = channels.filter((c) => c.channel.length > 0);
-    if (channels.length === 0) {
-      channels = recommendChannelsForMarket('CN', {
-        sourceType: ctx.sourceType,
-        citationsEmpty: ctx.citations.length === 0,
-      });
+  const citationBacked = aggregateCitationDrivenChannels(ctx);
+  const llmChannels: GeoBriefChannelRecommendation[] = [];
+  for (const c of parsed.recommendedChannels ?? []) {
+    const channel = c.channel.trim().slice(0, 80).trim();
+    const reason = c.reason.trim().slice(0, 300).trim();
+    if (!channel || !reason) continue;
+    if (
+      ctx.market === 'GLOBAL' &&
+      (containsCjk(channel) ||
+        containsCjk(reason) ||
+        hasForbiddenCnChannel(channel) ||
+        hasForbiddenCnChannel(reason))
+    ) {
+      continue;
     }
-  }
-  if (channels.length === 0) {
-    channels = recommendChannelsForMarket(ctx.market, {
-      sourceType: ctx.sourceType,
-      socialCitations: citationCounts.SOCIAL,
-      authorityCitations: citationCounts.AUTHORITY,
-      competitorCitations: citationCounts.COMPETITOR,
-      ecommerceCitations: citationCounts.ECOMMERCE,
-      citationsEmpty: ctx.citations.length === 0,
+    llmChannels.push({
+      channel,
+      reason,
+      providerHint: inferProviderHintForChannel(channel, ctx.market),
+      priority: llmChannels.length === 0 && citationBacked.length === 0 ? 'HIGH' : 'MEDIUM',
     });
+  }
+
+  let channels: GeoBriefChannelRecommendation[];
+  if (citationBacked.length > 0) {
+    const merged: GeoBriefChannelRecommendation[] = [...citationBacked];
+    const seen = new Set(merged.map((c) => c.channel.toLowerCase()));
+    for (const item of llmChannels) {
+      const key = item.channel.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(item);
+      if (merged.length >= 5) break;
+    }
+    channels = merged;
+  } else if (llmChannels.length > 0) {
+    const deduped: GeoBriefChannelRecommendation[] = [];
+    const seen = new Set<string>();
+    for (const item of llmChannels) {
+      const key = item.channel.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(item);
+    }
+    channels = deduped;
+  } else {
+    channels = buildCitationDrivenRecommendedChannels(ctx);
   }
 
   const targetFanOuts = normalizeFanOutQueries(ctx.targetFanOuts).slice(0, 12);

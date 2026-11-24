@@ -49,6 +49,7 @@ type WorkspaceActions = {
     brandId: string,
     preferredMarket?: GeoMarket,
     persistStorage?: KeyValueStorage,
+    options?: { preserveItemParams?: boolean },
   ) => void;
   setActiveMarket: (market: GeoMarket, persistStorage?: KeyValueStorage) => void;
   upsertBrand: (
@@ -136,7 +137,11 @@ export function writeWorkspaceStorage(
 
 const WORKSPACE_QUERY_PATHS = new Set(['/home', '/brands', '/visibility', '/studio']);
 
-export function syncWorkspaceQueryInUrl(brandId: string | null, market: GeoMarket): void {
+export function syncWorkspaceQueryInUrl(
+  brandId: string | null,
+  market: GeoMarket,
+  options?: { clearItemParams?: boolean },
+): void {
   if (typeof window === 'undefined' || !window.history?.replaceState) return;
   const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
   if (!WORKSPACE_QUERY_PATHS.has(pathname)) return;
@@ -147,6 +152,11 @@ export function syncWorkspaceQueryInUrl(brandId: string | null, market: GeoMarke
   } else {
     params.delete('brandId');
     params.delete('market');
+  }
+  if (options?.clearItemParams && pathname === '/studio') {
+    params.delete('articleId');
+    params.delete('briefId');
+    params.delete('batchJobId');
   }
   const query = params.toString();
   const nextUrl = query ? `${pathname}?${query}` : pathname;
@@ -289,7 +299,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 
-  setActiveBrand: (brandId, preferredMarket, persistStorage) => {
+  setActiveBrand: (brandId, preferredMarket, persistStorage, options) => {
     const state = get();
     if (state.brands.length === 0) return;
     const resolved = resolveActiveWorkspace(
@@ -297,6 +307,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       brandId,
       preferredMarket ?? state.activeMarket,
     );
+    const changed =
+      resolved.activeBrandId !== state.activeBrandId ||
+      resolved.activeMarket !== state.activeMarket;
     set({
       activeBrandId: resolved.activeBrandId,
       activeMarket: resolved.activeMarket,
@@ -307,7 +320,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       activeMarket: resolved.activeMarket,
       menuCollapsed: state.menuCollapsed,
     });
-    syncWorkspaceQueryInUrl(resolved.activeBrandId, resolved.activeMarket);
+    syncWorkspaceQueryInUrl(resolved.activeBrandId, resolved.activeMarket, {
+      clearItemParams: changed && !options?.preserveItemParams,
+    });
   },
 
   setActiveMarket: (market, persistStorage) => {
@@ -329,7 +344,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       activeMarket: market,
       menuCollapsed: state.menuCollapsed,
     });
-    syncWorkspaceQueryInUrl(state.activeBrandId, market);
+    syncWorkspaceQueryInUrl(state.activeBrandId, market, { clearItemParams: true });
   },
 
   upsertBrand: (brand, options) => {

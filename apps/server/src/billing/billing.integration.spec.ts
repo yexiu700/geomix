@@ -645,9 +645,14 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       await expect(quota.release(id, 'PUBLISH', 1)).rejects.toMatchObject({
         code: API_ERROR.BAD_REQUEST,
       });
-      await expect(quota.release(id, 'SOCIAL_AUTH', 1)).rejects.toMatchObject({
-        code: API_ERROR.BAD_REQUEST,
-      });
+      await quota.release(id, 'SOCIAL_AUTH', 1);
+      expect(
+        (
+          await servicePrisma.base.quota.findUniqueOrThrow({
+            where: { tenantId_key: { tenantId: id, key: 'SOCIAL_AUTH' } },
+          })
+        ).used,
+      ).toBe(0n);
       await quota.consume(id, 'STORAGE_BYTES', 40);
       await quota.release(id, 'STORAGE_BYTES', 15);
       expect(

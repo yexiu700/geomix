@@ -21,6 +21,8 @@ import { BriefsAutoGeneratorService } from '../briefs/briefs-auto-generator.serv
 import { ApiError } from '../common/api-error';
 import { createApiApp } from '../common/create-api-app';
 import { FreeActionRateLimiter } from '../common/free-action-rate-limiter';
+import { CrawlProbeService } from '../distribution/crawl-probe.service';
+import { RetestSchedulerService } from '../distribution/retest-scheduler.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueRuntime } from '../queue/queue.runtime';
 import { currentTenantId } from '../tenant/tenant-context';
@@ -129,7 +131,30 @@ type PublishRecordRow = {
   latestRetestRunId: string | null;
   beforeMetrics: unknown;
   afterMetrics: unknown;
+  distributionTaskId: string | null;
+  crawlStatus: string;
+  crawlCheckedAt: Date | null;
+  crawlReportJson: unknown;
+  indexNowSubmitted: boolean;
   createdAt: Date;
+};
+
+type RetestScheduleRow = {
+  id: string;
+  tenantId: string;
+  brandId: string;
+  brandMarketId: string;
+  publishRecordId: string;
+  milestoneDay: number;
+  sampleCount: number;
+  dueAt: Date;
+  status: string;
+  visibilityRunId: string | null;
+  metricsSnapshotJson: unknown;
+  skipReason: string | null;
+  executedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 };
 
 type VisibilityRunRow = {
@@ -250,6 +275,7 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
   const briefs = new Map<string, BriefRow>();
   const articles = new Map<string, ArticleRow>();
   const publishRecords = new Map<string, PublishRecordRow>();
+  const retestSchedules = new Map<string, RetestScheduleRow>();
   const visibilityRuns = new Map<string, VisibilityRunRow>();
   const visibilityObservations = new Map<string, VisibilityObservationRow>();
   const visibilityCitations = new Map<string, VisibilityCitationRow>();
@@ -258,6 +284,7 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
   const enqueuedRuns: Array<{ tenantId: string; runId: string }> = [];
 
   let pubSeq = 1;
+  let schedSeq = 1;
   let obsSeq = 1;
 
   const now = new Date('2026-11-21T08:00:00Z');
@@ -271,6 +298,7 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
     briefs.clear();
     articles.clear();
     publishRecords.clear();
+    retestSchedules.clear();
     visibilityRuns.clear();
     visibilityObservations.clear();
     visibilityCitations.clear();
@@ -278,6 +306,7 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
     reservations.clear();
     enqueuedRuns.length = 0;
     pubSeq = 1;
+    schedSeq = 1;
     obsSeq = 1;
     rateLimiter?.reset();
 
@@ -584,13 +613,27 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
         out.brief = row.briefId ? (briefs.get(row.briefId) ?? null) : null;
       }
       if (include?.publishRecords) {
+        const pubInclude =
+          typeof include.publishRecords === 'object' && include.publishRecords
+            ? (include.publishRecords as {
+                take?: number;
+                include?: { retestSchedules?: unknown };
+              })
+            : undefined;
         const recs = [...publishRecords.values()]
           .filter((r) => r.articleId === row.id && r.tenantId === row.tenantId)
-          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-        const take =
-          typeof include.publishRecords === 'object' && include.publishRecords
-            ? ((include.publishRecords as { take?: number }).take ?? recs.length)
-            : recs.length;
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .map((r) =>
+            pubInclude?.include?.retestSchedules
+              ? {
+                  ...r,
+                  retestSchedules: [...retestSchedules.values()]
+                    .filter((s) => s.publishRecordId === r.id && s.tenantId === r.tenantId)
+                    .sort((a, b) => a.milestoneDay - b.milestoneDay),
+                }
+              : r,
+          );
+        const take = pubInclude?.take ?? recs.length;
         out.publishRecords = recs.slice(0, take);
       }
       return out;
@@ -771,28 +814,83 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
         findMany: async (args: {
           where: {
             articleId?: string;
+            brandId?: string;
+            brandMarketId?: string;
             latestRetestRunId?: string;
+            crawlStatus?: string | { in: string[] };
             tenantId?: string;
+          };
+          include?: {
+            article?: unknown;
+            retestSchedules?: boolean | { where?: { status?: string } };
           };
           take?: number;
         }) => {
           const tenantId = args.where.tenantId ?? t();
+          const crawlFilter = args.where.crawlStatus;
           const list = [...publishRecords.values()]
             .filter(
               (r) =>
                 r.tenantId === tenantId &&
                 (!args.where.articleId || r.articleId === args.where.articleId) &&
+                (!args.where.brandId || r.brandId === args.where.brandId) &&
+                (!args.where.brandMarketId || r.brandMarketId === args.where.brandMarketId) &&
                 (!args.where.latestRetestRunId ||
-                  r.latestRetestRunId === args.where.latestRetestRunId),
+                  r.latestRetestRunId === args.where.latestRetestRunId) &&
+                (!crawlFilter ||
+                  (typeof crawlFilter === 'string'
+                    ? r.crawlStatus === crawlFilter
+                    : crawlFilter.in.includes(r.crawlStatus))),
             )
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .map((r) => {
+              const out: Record<string, unknown> = { ...r };
+              if (args.include?.article) {
+                out.article = articles.get(r.articleId) ?? null;
+              }
+              if (args.include?.retestSchedules) {
+                const statusFilter =
+                  typeof args.include.retestSchedules === 'object'
+                    ? args.include.retestSchedules.where?.status
+                    : undefined;
+                out.retestSchedules = [...retestSchedules.values()]
+                  .filter(
+                    (s) =>
+                      s.publishRecordId === r.id &&
+                      s.tenantId === r.tenantId &&
+                      (!statusFilter || s.status === statusFilter),
+                  )
+                  .sort((a, b) => a.milestoneDay - b.milestoneDay);
+              }
+              return out;
+            });
           return args.take !== undefined ? list.slice(0, args.take) : list;
         },
-        create: async (args: { data: Omit<PublishRecordRow, 'id' | 'createdAt'> }) => {
+        create: async (args: {
+          data: Partial<PublishRecordRow> & {
+            tenantId: string;
+            brandId: string;
+            brandMarketId: string;
+            articleId: string;
+            publishedUrl: string;
+            channel: string;
+            publishedAt: Date;
+            baselineRunId: string | null;
+            latestRetestRunId: string | null;
+          };
+        }) => {
           const id = `pub_${pubSeq++}`;
           const row: PublishRecordRow = {
-            ...args.data,
             id,
+            tenantId: args.data.tenantId,
+            brandId: args.data.brandId,
+            brandMarketId: args.data.brandMarketId,
+            articleId: args.data.articleId,
+            publishedUrl: args.data.publishedUrl,
+            channel: args.data.channel,
+            publishedAt: args.data.publishedAt,
+            baselineRunId: args.data.baselineRunId,
+            latestRetestRunId: args.data.latestRetestRunId,
             beforeMetrics:
               args.data.beforeMetrics && typeof args.data.beforeMetrics === 'object'
                 ? args.data.beforeMetrics
@@ -801,6 +899,11 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
               args.data.afterMetrics && typeof args.data.afterMetrics === 'object'
                 ? args.data.afterMetrics
                 : null,
+            distributionTaskId: args.data.distributionTaskId ?? null,
+            crawlStatus: args.data.crawlStatus ?? 'PENDING',
+            crawlCheckedAt: args.data.crawlCheckedAt ?? null,
+            crawlReportJson: args.data.crawlReportJson ?? null,
+            indexNowSubmitted: Boolean(args.data.indexNowSubmitted),
             createdAt: new Date(now.getTime() + pubSeq * 1000),
           };
           publishRecords.set(id, row);
@@ -939,11 +1042,12 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
             brandId?: string;
             brandMarketId?: string;
             status?: string;
-            runId?: string;
+            runId?: string | { in: string[] };
           };
           include?: Record<string, unknown>;
         }) => {
           const tenantId = args.where.tenantId ?? t();
+          const runFilter = args.where.runId;
           return [...visibilityObservations.values()]
             .filter(
               (o) =>
@@ -951,12 +1055,149 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
                 (!args.where.brandId || o.brandId === args.where.brandId) &&
                 (!args.where.brandMarketId || o.brandMarketId === args.where.brandMarketId) &&
                 (!args.where.status || o.status === args.where.status) &&
-                (!args.where.runId || o.runId === args.where.runId),
+                (!runFilter ||
+                  (typeof runFilter === 'string'
+                    ? o.runId === runFilter
+                    : runFilter.in.includes(o.runId))),
             )
             .map((o) => ({
               ...o,
               citations: [...visibilityCitations.values()].filter((c) => c.observationId === o.id),
             }));
+        },
+      },
+      geoRetestSchedule: {
+        createMany: async (args: {
+          data: Array<{
+            tenantId: string;
+            brandId: string;
+            brandMarketId: string;
+            publishRecordId: string;
+            milestoneDay: number;
+            sampleCount: number;
+            dueAt: Date;
+            status: string;
+          }>;
+          skipDuplicates?: boolean;
+        }) => {
+          let count = 0;
+          for (const item of args.data) {
+            const exists = [...retestSchedules.values()].some(
+              (s) =>
+                s.publishRecordId === item.publishRecordId && s.milestoneDay === item.milestoneDay,
+            );
+            if (exists && args.skipDuplicates) continue;
+            const id = `sched_${schedSeq++}`;
+            retestSchedules.set(id, {
+              id,
+              tenantId: item.tenantId,
+              brandId: item.brandId,
+              brandMarketId: item.brandMarketId,
+              publishRecordId: item.publishRecordId,
+              milestoneDay: item.milestoneDay,
+              sampleCount: item.sampleCount,
+              dueAt: item.dueAt,
+              status: item.status,
+              visibilityRunId: null,
+              metricsSnapshotJson: null,
+              skipReason: null,
+              executedAt: null,
+              createdAt: now,
+              updatedAt: now,
+            });
+            count += 1;
+          }
+          return { count };
+        },
+        findMany: async (args: {
+          where: {
+            tenantId?: string;
+            brandId?: string;
+            brandMarketId?: string;
+            publishRecordId?: string;
+            visibilityRunId?: string;
+            status?: string | { in: string[] };
+            OR?: Array<{
+              status?: string | { in: string[] };
+              dueAt?: { lte: Date };
+              updatedAt?: { gte: Date };
+            }>;
+          };
+          include?: { publishRecord?: unknown };
+          take?: number;
+        }) => {
+          const tenantId = args.where.tenantId ?? t();
+          const matchesStatus = (actual: string, filter?: string | { in: string[] }) =>
+            !filter ||
+            (typeof filter === 'string' ? actual === filter : filter.in.includes(actual));
+
+          const list = [...retestSchedules.values()]
+            .filter((s) => {
+              if (s.tenantId !== tenantId) return false;
+              if (args.where.brandId && s.brandId !== args.where.brandId) return false;
+              if (args.where.brandMarketId && s.brandMarketId !== args.where.brandMarketId) {
+                return false;
+              }
+              if (args.where.publishRecordId && s.publishRecordId !== args.where.publishRecordId) {
+                return false;
+              }
+              if (args.where.visibilityRunId && s.visibilityRunId !== args.where.visibilityRunId) {
+                return false;
+              }
+              if (!matchesStatus(s.status, args.where.status)) return false;
+              if (args.where.OR) {
+                const matchedOr = args.where.OR.some((cond) => {
+                  if (!matchesStatus(s.status, cond.status)) return false;
+                  if (cond.dueAt && s.dueAt.getTime() > cond.dueAt.lte.getTime()) return false;
+                  if (cond.updatedAt && s.updatedAt.getTime() < cond.updatedAt.gte.getTime()) {
+                    return false;
+                  }
+                  return true;
+                });
+                if (!matchedOr) return false;
+              }
+              return true;
+            })
+            .sort((a, b) => a.milestoneDay - b.milestoneDay || a.id.localeCompare(b.id))
+            .map((s) => {
+              if (!args.include?.publishRecord) return s;
+              const rec = publishRecords.get(s.publishRecordId) ?? null;
+              return {
+                ...s,
+                publishRecord: rec
+                  ? {
+                      ...rec,
+                      article: articles.get(rec.articleId) ?? null,
+                    }
+                  : null,
+              };
+            });
+          return args.take !== undefined ? list.slice(0, args.take) : list;
+        },
+        update: async (args: { where: { id: string }; data: Partial<RetestScheduleRow> }) => {
+          const row = retestSchedules.get(args.where.id);
+          if (!row) throw new Error('Not found');
+          const next = { ...row, ...args.data, updatedAt: new Date() };
+          retestSchedules.set(row.id, next);
+          return next;
+        },
+        updateMany: async (args: {
+          where: { id?: string; publishRecordId?: string; status?: string };
+          data: Partial<RetestScheduleRow>;
+        }) => {
+          const tenantId = t();
+          let count = 0;
+          for (const row of retestSchedules.values()) {
+            if (row.tenantId !== tenantId) continue;
+            if (args.where.id && row.id !== args.where.id) continue;
+            if (args.where.publishRecordId && row.publishRecordId !== args.where.publishRecordId) {
+              continue;
+            }
+            if (args.where.status && row.status !== args.where.status) continue;
+            Object.assign(row, args.data, { updatedAt: new Date() });
+            count += 1;
+          }
+          return { count };
         },
       },
       $transaction: async <T>(fn: (tx: Record<string, unknown>) => Promise<T>) => fn(client),
@@ -1105,6 +1346,8 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
       expect(workerCtx.get(BrandFactIndexRunner)).toBeDefined();
       expect(workerCtx.get(BriefsAutoGeneratorService)).toBeInstanceOf(BriefsAutoGeneratorService);
       expect(workerCtx.get(RetestMetricsHookService)).toBeInstanceOf(RetestMetricsHookService);
+      expect(workerCtx.get(CrawlProbeService)).toBeInstanceOf(CrawlProbeService);
+      expect(workerCtx.get(RetestSchedulerService)).toBeInstanceOf(RetestSchedulerService);
     } finally {
       await workerCtx.close();
       startSpy.mockRestore();
@@ -1242,6 +1485,9 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
       citationHit: false,
     });
     expect(created.body.data.afterMetrics).toBeNull();
+    expect(created.body.data.crawlStatus).toBe('PENDING');
+    expect(created.body.data.retestSchedules?.map((s) => s.milestoneDay)).toEqual([7, 14, 30]);
+    expect(created.body.data.retestSchedules?.every((s) => s.sampleCount === 1)).toBe(true);
     expect(articles.get('art_cn_1')?.status).toBe('PUBLISHED');
 
     const listed = await reqJson<{ items: GeoPublishRecordDto[] }>(
@@ -1251,6 +1497,9 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
     );
     expect(listed.status).toBe(200);
     expect(listed.body.data.items).toHaveLength(1);
+    expect(listed.body.data.items[0]?.retestSchedules?.map((s) => s.milestoneDay)).toEqual([
+      7, 14, 30,
+    ]);
 
     // One-click RETEST with EMPTY body returns FLAT VisibilityRunDetailRecord & deducts 2 pts * online engines
     const recordId = created.body.data.id;
@@ -1397,5 +1646,58 @@ describe('M5 Delivery, Export, Publish/Retest, Action Home HTTP & ApiModule/Work
     // Cross-tenant 404
     const cross = await reqJson('GET', '/api/v2/brands/brand_dual/home?market=CN', tokenTenantB);
     expect(cross.status).toBe(404);
+  });
+
+  it('POST /publish-records honors autoRetest.enabled=false and GET /home returns strictly market-isolated distributionSummary', async () => {
+    const cnDisabled = await reqJson<GeoPublishRecordDto>(
+      'POST',
+      '/api/v2/articles/art_cn_1/publish-records',
+      tokenTenantA,
+      {
+        publishedUrl: 'https://xingchennas.example/guides/no-auto',
+        channel: '知乎',
+        autoRetest: { enabled: false },
+      },
+    );
+    expect(cnDisabled.status).toBe(200);
+    expect(cnDisabled.body.data.retestSchedules).toEqual([]);
+
+    // Mark CN publish record BLOCKED to verify crawlAlerts isolation
+    const cnRec = publishRecords.get(cnDisabled.body.data.id)!;
+    cnRec.crawlStatus = 'BLOCKED';
+    cnRec.crawlCheckedAt = new Date();
+    cnRec.crawlReportJson = {
+      checkedUrl: cnRec.publishedUrl,
+      httpStatus: 200,
+      robotsTxtFound: true,
+      robotsMatrix: [],
+      metaNoindex: true,
+      jsonLdTypes: [],
+      jsonLdParseErrors: [],
+      issues: ['检测到 meta robots / X-Robots-Tag 包含 noindex，页面将被禁止收录'],
+    };
+
+    const cnHome = await reqJson<ActionHomeResponse>(
+      'GET',
+      '/api/v2/brands/brand_dual/home?market=CN',
+      tokenTenantA,
+    );
+    expect(cnHome.status).toBe(200);
+    expect(cnHome.body.data.distributionSummary?.crawlAlerts).toHaveLength(1);
+    expect(cnHome.body.data.distributionSummary?.crawlAlerts[0]?.channel).toBe('知乎');
+    expect(cnHome.body.data.distributionSummary?.channelAttribution).toHaveLength(1);
+
+    // GLOBAL home must NOT see CN crawlAlerts or CN channelAttribution
+    const globalHome = await reqJson<ActionHomeResponse>(
+      'GET',
+      '/api/v2/brands/brand_dual/home?market=GLOBAL',
+      tokenTenantA,
+    );
+    expect(globalHome.status).toBe(200);
+    expect(globalHome.body.data.distributionSummary).toEqual({
+      crawlAlerts: [],
+      upcomingRetests: [],
+      channelAttribution: [],
+    });
   });
 });

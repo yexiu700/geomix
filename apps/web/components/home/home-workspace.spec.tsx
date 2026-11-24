@@ -690,4 +690,87 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     const brandAFetches = fetchHomeSpy.mock.calls.filter(([bid]) => bid === BRAND_A.id);
     expect(brandAFetches).toHaveLength(1);
   });
+
+  it('renders M6B distributionSummary (crawl alerts, upcoming retests, PRD D5 channel attribution) and navigates to /studio and /account?tab=points (#355)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [BRAND_A],
+      activeBrandId: BRAND_A.id,
+      activeMarket: 'GLOBAL',
+    });
+
+    const dataWithDist: ActionHomeResponse = {
+      ...makeHomeData(BRAND_A.id, 'GLOBAL', 2),
+      distributionSummary: {
+        crawlAlerts: [
+          {
+            publishRecordId: 'pub_alert_1',
+            articleId: 'art_brand_home_a_1',
+            articleTitle: 'AstraVault Quiet NAS Benchmark',
+            channel: 'Official Blog / Docs',
+            publishedUrl: 'https://astravault.example.com/nas',
+            crawlStatus: 'BLOCKED',
+            crawlCheckedAt: '2026-11-23T04:00:00.000Z',
+            issues: ['robots.txt 拦截了 GPTBot'],
+          },
+        ],
+        upcomingRetests: [
+          {
+            scheduleId: 'sched_skip_home_1',
+            publishRecordId: 'pub_brand_home_a_1',
+            articleId: 'art_brand_home_a_1',
+            articleTitle: 'AstraVault Quiet NAS Benchmark',
+            channel: 'Official Blog / Docs',
+            milestoneDay: 7,
+            sampleCount: 1,
+            dueAt: '2026-11-28T08:00:00.000Z',
+            status: 'SKIPPED_INSUFFICIENT_POINTS',
+            skipReason: '点数不足，已温和跳过本次自动复测',
+          },
+        ],
+        channelAttribution: [
+          {
+            channel: 'Official Blog / Docs',
+            publishedCount: 2,
+            crawlOkCount: 1,
+            completedRetestCount: 2,
+            citationHitCount: 0,
+            citationHitRate: null,
+            avgMentionRateDelta: 30.0,
+            avgPosition: 2.0,
+            avgPositionDelta: -1.0,
+            positiveSentimentRate: 1,
+            sentimentSummary: 'positive',
+          },
+        ],
+      },
+    };
+
+    vi.spyOn(homeApi, 'fetchActionHome').mockResolvedValueOnce(dataWithDist);
+    const navigateWorkspace = vi.fn();
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
+        <HomeWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const summary = await screen.findByTestId('home-distribution-summary');
+    expect(within(summary).getByTestId('home-crawl-alerts').textContent).toContain(
+      'robots.txt 拦截了 GPTBot',
+    );
+    expect(within(summary).getByTestId('home-upcoming-retests').textContent).toContain('T+7');
+    const attrText = within(summary).getByTestId('home-channel-attribution').textContent ?? '';
+    expect(attrText).toContain('待引文就绪');
+    expect(attrText).toContain('+30.0%');
+    expect(attrText).not.toContain('NaN');
+    expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
+
+    fireEvent.click(within(summary).getByRole('button', { name: '前往排查' }));
+    expect(navigateWorkspace).toHaveBeenCalledWith('/studio?articleId=art_brand_home_a_1');
+
+    fireEvent.click(within(summary).getByRole('button', { name: '查看点数' }));
+    expect(navigateWorkspace).toHaveBeenCalledWith('/account?tab=points');
+  });
 });

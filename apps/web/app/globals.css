@@ -454,7 +454,7 @@ input:not([class*='ant-']):hover {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1 1 0;
   overflow: hidden;
   color: var(--gm-fg-2);
   font-size: 12px;

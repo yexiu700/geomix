@@ -172,7 +172,7 @@ function buildGlobalMarkdown(
     : '';
 
   const missingRow = missingFact
-    ? `| Standby Power Draw | [待补充：如待机功耗 W] | 24W |`
+    ? `| Standby Power Draw | [TBD: e.g., Standby Power Draw W] | 24W |`
     : `| Power Efficiency | ${specB} | 28W |`;
 
   const sec1 = [

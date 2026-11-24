@@ -67,25 +67,42 @@ describe('parseEnv', () => {
     expect(env.LLM_PROVIDERS).toEqual({});
     expect(env.S3_FORCE_PATH_STYLE).toBe(true);
     expect(env.ARTICLE_RETENTION_DAYS).toBe(30);
+    expect(env.CREDENTIAL_ENCRYPTION_KEY).toBeUndefined();
+    expect(env.PUBLIC_APP_URL).toBeUndefined();
   });
 
-  it('accepts explicit overrides', () => {
+  it('accepts explicit overrides including optional v2.1 distribution env vars', () => {
     const env = parseEnv({
       BILLING_MODE: 'STRICT',
       FEATURE_AI_IMAGE: 'false',
       API_PORT: '4001',
       LLM_PROVIDERS: '{"fake":{"kind":"offline"}}',
+      CREDENTIAL_ENCRYPTION_KEY: '  any-placeholder-validated-lazily-by-secretbox  ',
+      PUBLIC_APP_URL: 'https://app.geomix.example///',
     });
     expect(env.BILLING_MODE).toBe('STRICT');
     expect(env.FEATURE_AI_IMAGE).toBe(false);
     expect(env.API_PORT).toBe(4001);
     expect(env.LLM_PROVIDERS).toEqual({ fake: { kind: 'offline' } });
+    expect(env.CREDENTIAL_ENCRYPTION_KEY).toBe('any-placeholder-validated-lazily-by-secretbox');
+    expect(env.PUBLIC_APP_URL).toBe('https://app.geomix.example');
+
+    const blankEnv = parseEnv({
+      CREDENTIAL_ENCRYPTION_KEY: '   ',
+      PUBLIC_APP_URL: '   ',
+    });
+    expect(blankEnv.CREDENTIAL_ENCRYPTION_KEY).toBeUndefined();
+    expect(blankEnv.PUBLIC_APP_URL).toBeUndefined();
   });
 
-  it('rejects a bad provider document or billing mode', () => {
+  it('rejects a bad provider document, billing mode, or PUBLIC_APP_URL', () => {
     expect(() => parseLlmProviders('[]')).toThrow(/JSON object/);
     expect(() => parseEnv({ BILLING_MODE: 'LIVE' })).toThrow(/SHADOW or STRICT/);
     expect(() => parseEnv({ WEB_PORT: '0' })).toThrow();
+    expect(() => parseEnv({ PUBLIC_APP_URL: 'not-a-url' })).toThrow(/PUBLIC_APP_URL/);
+    expect(() => parseEnv({ PUBLIC_APP_URL: 'ftp://app.geomix.example' })).toThrow(
+      /http:\/\/ or https:\/\//,
+    );
   });
 });
 

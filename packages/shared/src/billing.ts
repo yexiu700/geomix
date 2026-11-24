@@ -1,5 +1,10 @@
 import type { BillingMode } from './infra';
-import { PRICING_DEFAULTS, QUOTA_MEASURE, type QuotaKeyName } from './catalog';
+import {
+  PRICING_DEFAULTS,
+  QUOTA_MEASURE,
+  isZeroAllowedPricingAction,
+  type QuotaKeyName,
+} from './catalog';
 
 export { PRICING_DEFAULTS, type QuotaKeyName };
 
@@ -22,10 +27,17 @@ export const RESERVATION_REF_TYPES = [
   'geo_batch',
   'inline_image_gen',
   'visibility_run',
+  'geo_variant',
+  'geo_distribution',
 ] as const;
 export type ReservationRefType = (typeof RESERVATION_REF_TYPES)[number];
 
-export const CHARGE_ACTIONS = ['geo_write', 'visibility_check', 'inline_image_gen'] as const;
+export const CHARGE_ACTIONS = [
+  'geo_write',
+  'visibility_check',
+  'inline_image_gen',
+  'geo_variant',
+] as const;
 export type ChargeAction = (typeof CHARGE_ACTIONS)[number];
 
 const REF_TYPE_SET = new Set<string>(RESERVATION_REF_TYPES);
@@ -58,6 +70,13 @@ export function resolveTenantBillingMode(
 
 export function isPositivePoints(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0 && value <= MAX_POINT_AMOUNT;
+}
+
+/** 按计费动作校验单价合法性：geo_variant 允许设为 0（免费限流），其余动作必须为正整数。 */
+export function isValidUnitPoints(action: string, points: number): boolean {
+  if (!Number.isSafeInteger(points) || points > MAX_POINT_AMOUNT) return false;
+  if (isZeroAllowedPricingAction(action)) return points >= 0;
+  return points > 0;
 }
 
 const MAX_LEDGER_TITLE_LENGTH = 80;

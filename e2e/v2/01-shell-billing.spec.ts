@@ -352,7 +352,7 @@ v2Describe('F1: Brand + BrandMarket Dual-Market Domain Schema', { tag: ['@F1', '
 
 v2Describe('F2: Simplified Unified Billing & Pricing', { tag: ['@F2', '@M1'] }, () => {
   test(
-    'T1-F02-01 Public pricing list exposes ONLY the 3 v2 paid actions with exact default prices',
+    'T1-F02-01 Public pricing list exposes ONLY the 4 v2.1 paid actions with exact default prices',
     { tag: ['@tier1', '@F2', '@M1'] },
     async ({}, testInfo) => {
       const tenant = await provisionTenant({ tag: uniqueTag(testInfo, 'f02t1') });
@@ -367,10 +367,11 @@ v2Describe('F2: Simplified Unified Billing & Pricing', { tag: ['@F2', '@M1'] }, 
 
       const items = extractItems(res.body?.data);
       const byAction = new Map(items.map((item) => [item.action, item.unitPoints]));
-      expect(items).toHaveLength(3);
+      expect(items).toHaveLength(4);
       expect(byAction.get('geo_write')).toBe(10);
       expect(byAction.get('visibility_check')).toBe(2);
       expect(byAction.get('inline_image_gen')).toBe(5);
+      expect(byAction.get('geo_variant')).toBe(2);
 
       for (const removed of [
         'kb_addon',
@@ -529,7 +530,7 @@ v2Describe('F2: Simplified Unified Billing & Pricing', { tag: ['@F2', '@M1'] }, 
         '/pricing',
         { token: admin.accessToken },
       );
-      expect(extractItems(list.body?.data)).toHaveLength(3);
+      expect(extractItems(list.body?.data)).toHaveLength(4);
     },
   );
 
@@ -1248,7 +1249,9 @@ v2Describe(
 
           await page.reload({ waitUntil: 'domcontentloaded' });
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
-          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandB.name);
+          const brandBGlobalLabel =
+            brandB.markets.find((m) => m.market === 'GLOBAL')?.localBrandName ?? brandB.name;
+          await expect(page.getByTestId('global-brand-switcher')).toContainText(brandBGlobalLabel);
         } finally {
           await context.close();
         }

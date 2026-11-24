@@ -21,6 +21,7 @@ import {
 } from '../../lib/workspace-store';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { BrandChannelConnections } from './brand-channel-connections';
 import { BrandFactsSection } from './brand-facts-section';
 import { BrandIdentitySection } from './brand-identity-section';
 import { BrandMediaSection } from './brand-media-section';
@@ -240,10 +241,15 @@ export function BrandsWorkspace() {
         </div>
 
         <div className="gm-brand-context-actions">
-          <nav className="gm-brand-jump-links" aria-label="页面区块跳转">
+          <nav
+            className="gm-brand-jump-links"
+            aria-label="页面区块跳转"
+            style={{ flexWrap: 'wrap' }}
+          >
             <a href="#brand-section-identity">基础身份</a>
             <a href="#brand-section-facts">事实卡</a>
             <a href="#brand-section-media">实拍图库</a>
+            <a href="#brand-section-connections">发布渠道</a>
           </nav>
           {missingMarket ? (
             <Button
@@ -312,6 +318,15 @@ export function BrandsWorkspace() {
           setMediaItems(nextItems);
           setMediaStorage(nextStorage);
         }}
+      />
+
+      <BrandChannelConnections
+        key={`connections-${activeBrand.id}-${state.activeMarket}`}
+        brandId={activeBrand.id}
+        activeMarket={state.activeMarket}
+        marketEnabled={Boolean(activeBrandMarket)}
+        readOnly={readOnly}
+        onEnableMarket={() => consoleCtx?.openEnableMarketModal(state.activeMarket)}
       />
     </section>
   );

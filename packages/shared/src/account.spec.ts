@@ -145,6 +145,7 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
       llmCosts: '/admin/llm-costs',
     });
     expect(Object.keys(PRICING_ACTION_META).sort()).toEqual([
+      'geo_variant',
       'geo_write',
       'inline_image_gen',
       'visibility_check',
@@ -154,7 +155,7 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
       expect(meta.action).toBe(item.action);
       expect(meta.label.length).toBeGreaterThan(0);
       expect(meta.label).not.toBe(item.action);
-      expect(meta.unit).toMatch(/^点\/(篇|次|张)$/);
+      expect(meta.unit).toMatch(/^点\/(篇|次|张|渠道)$/);
       expect(meta.description.length).toBeGreaterThan(0);
       expect(PRICING_ACTION_META[item.action]).toBeDefined();
     }
@@ -165,6 +166,10 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
     expect(getPricingActionMeta('inline_image_gen')).toMatchObject({
       label: '行内 AI 配图',
       unit: '点/张',
+    });
+    expect(getPricingActionMeta('geo_variant')).toMatchObject({
+      label: '渠道变体改写',
+      unit: '点/渠道',
     });
   });
 
@@ -193,13 +198,41 @@ describe('v2 pricing metadata, admin routes, batch schema, and UTC+8 formatting'
     ).toThrow();
   });
 
-  it('enforces canonical v2 pricing actions in isPricingAction and pricing schemas', () => {
-    expect(PRICING_ACTION_NAMES).toEqual(['geo_write', 'visibility_check', 'inline_image_gen']);
+  it('enforces canonical v2.1 pricing actions and allows 0 points strictly for geo_variant', () => {
+    expect(PRICING_ACTION_NAMES).toEqual([
+      'geo_write',
+      'visibility_check',
+      'inline_image_gen',
+      'geo_variant',
+    ]);
 
-    for (const action of ['geo_write', 'visibility_check', 'inline_image_gen'] as const) {
+    for (const action of [
+      'geo_write',
+      'visibility_check',
+      'inline_image_gen',
+      'geo_variant',
+    ] as const) {
       expect(isPricingAction(action)).toBe(true);
       const single = pricingUpdateSchema.safeParse({ action, unitPoints: 10, enabled: true });
       expect(single.success).toBe(true);
+    }
+
+    expect(
+      pricingUpdateSchema.safeParse({ action: 'geo_variant', unitPoints: 0, enabled: true })
+        .success,
+    ).toBe(true);
+    expect(
+      pricingBatchUpdateSchema.safeParse({
+        items: [{ action: 'geo_variant', unitPoints: 0, enabled: true }],
+      }).success,
+    ).toBe(true);
+    expect(
+      pricingUpdateSchema.safeParse({ action: 'geo_variant', unitPoints: -1, enabled: true })
+        .success,
+    ).toBe(false);
+    for (const action of ['geo_write', 'visibility_check', 'inline_image_gen'] as const) {
+      const zeroAttempt = pricingUpdateSchema.safeParse({ action, unitPoints: 0, enabled: true });
+      expect(zeroAttempt.success).toBe(false);
     }
 
     const retiredOrUnknown = [

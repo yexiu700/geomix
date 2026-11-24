@@ -215,6 +215,17 @@ class InMemoryVisibilityStore {
   readonly runs = new Map<string, RunRec>();
   readonly observations = new Map<string, ObservationRec>();
   readonly citations = new Map<string, CitationRec>();
+  readonly retestSchedules = new Map<
+    string,
+    {
+      id: string;
+      tenantId: string;
+      visibilityRunId: string | null;
+      status: string;
+      executedAt: Date | null;
+      skipReason: string | null;
+    }
+  >();
 
   nextId(prefix: string): string {
     return `${prefix}_${String(this.seq++).padStart(4, '0')}`;
@@ -1110,6 +1121,37 @@ class InMemoryVisibilityStore {
           return { count };
         },
       },
+      geoRetestSchedule: {
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: {
+            tenantId?: string;
+            visibilityRunId?: string;
+            status?: string | { in?: string[] };
+          };
+          data: Record<string, unknown>;
+        }) => {
+          let count = 0;
+          for (const sched of this.retestSchedules.values()) {
+            if (where.tenantId && sched.tenantId !== where.tenantId) continue;
+            if (where.visibilityRunId && sched.visibilityRunId !== where.visibilityRunId) continue;
+            if (typeof where.status === 'string' && sched.status !== where.status) continue;
+            if (
+              where.status &&
+              typeof where.status === 'object' &&
+              Array.isArray(where.status.in) &&
+              !where.status.in.includes(sched.status)
+            ) {
+              continue;
+            }
+            Object.assign(sched, data);
+            count += 1;
+          }
+          return { count };
+        },
+      },
       visibilityCitation: {
         findMany: async ({ where }: { where?: Record<string, unknown> }) => {
           const tenantId = where?.tenantId as string | undefined;
@@ -1971,6 +2013,15 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
       },
     );
     expect(toCancel.status).toBe(200);
+    // S-03: seed a linked RUNNING GeoRetestSchedule to verify cancelRun transitions it to CANCELLED
+    store.retestSchedules.set('sched_cancel_1', {
+      id: 'sched_cancel_1',
+      tenantId: tenantB,
+      visibilityRunId: toCancel.data.id,
+      status: 'RUNNING',
+      executedAt: null,
+      skipReason: null,
+    });
     const cancelled = await httpJson<VisibilityRunDetailRecord>(
       base,
       'POST',
@@ -1980,6 +2031,10 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
     expect(cancelled.status).toBe(200);
     expect(cancelled.data.status).toBe('CANCELLED');
     expect(cancelHookEvents).toHaveLength(0);
+    const schedAfterCancel = store.retestSchedules.get('sched_cancel_1');
+    expect(schedAfterCancel?.status).toBe('CANCELLED');
+    expect(schedAfterCancel?.executedAt).toBeInstanceOf(Date);
+    expect(schedAfterCancel?.skipReason).toContain('取消');
 
     // Omitted Idempotency-Key succeeds with 200 and auto-generates a unique key per call
     const autoIdem1 = await httpJson<VisibilityRunDetailRecord>(

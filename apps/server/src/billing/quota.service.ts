@@ -16,7 +16,7 @@ type QuotaRow = { used: bigint; limit: bigint };
 /**
  * 配额和业务写入必须放在同一个事务里。
  * 条件更新保证 used + n 不超过 limit。
- * 存量配额删除时回退；AI 写作只增不减；发布和自媒体授权的回退口径未确认，拒绝回退。
+ * 存量配额（含 SOCIAL_AUTH）删除时回退；AI_WRITE 与 PUBLISH 为累计配额，只增不减。
  */
 @Injectable()
 export class QuotaService {
@@ -50,7 +50,9 @@ export class QuotaService {
     tx?: BillingTx,
   ): Promise<QuotaRow> {
     const policy = quotaReleasePolicy(key);
-    if (policy === 'cumulative') throw badRequest('AI写作数量只增不减');
+    if (policy === 'cumulative') {
+      throw badRequest(key === 'AI_WRITE' ? 'AI写作数量只增不减' : '该配额为累计计数，只增不减');
+    }
     if (policy === 'unconfirmed') throw badRequest('这项配额的回退口径未确认');
     const delta = this.amount(amount);
     if (tx) return this.releaseIn(tx, tenantId, key, delta);

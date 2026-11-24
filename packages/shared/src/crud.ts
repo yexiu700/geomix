@@ -72,6 +72,7 @@ export function escapeLikeLiteral(value: string): string {
 export function priceUnit(action: string): string {
   if (action === 'visibility_check') return '次';
   if (action === 'inline_image_gen') return '张';
+  if (action === 'geo_variant') return '渠道';
   return '篇';
 }
 

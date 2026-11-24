@@ -21,6 +21,7 @@ import {
   type GeoRewriteAction,
   type GeoTargetFormat,
   type MissingFactSlot,
+  type PreflightItemCode,
   type PromptPreferenceRecord,
   type PublishRecordCreateInput,
   type VisibilityEngineAvailabilityItem,
@@ -55,7 +56,11 @@ import {
   triggerPublishRetest,
   updateArticle,
 } from '../../lib/studio';
-import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
+import {
+  invalidateFreshness,
+  useTabFreshness,
+  type FreshnessDomain,
+} from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
   fetchVisibilityEngines,
@@ -72,6 +77,7 @@ import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioDeliveryPack } from './studio-delivery-pack';
+import { StudioDistributionDrawer } from './studio-distribution-drawer';
 import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
 import { StudioGeoEvaluator } from './studio-geo-evaluator';
 import { StudioLeftPane } from './studio-left-pane';
@@ -96,18 +102,23 @@ const EMPTY_PREF: PromptPreferenceRecord = {
 };
 
 function readStudioUrlParams(): {
+  brandId: string | null;
+  market: string | null;
   briefId: string | null;
   articleId: string | null;
   batchJobId: string | null;
 } {
   if (typeof window === 'undefined') {
-    return { briefId: null, articleId: null, batchJobId: null };
+    return { brandId: null, market: null, briefId: null, articleId: null, batchJobId: null };
   }
   const sp = new URLSearchParams(window.location.search);
+  const rawMarket = sp.get('market')?.trim().toUpperCase() || null;
   return {
-    briefId: sp.get('briefId'),
-    articleId: sp.get('articleId'),
-    batchJobId: sp.get('batchJobId'),
+    brandId: sp.get('brandId')?.trim() || null,
+    market: rawMarket === 'CN' || rawMarket === 'GLOBAL' ? rawMarket : null,
+    briefId: sp.get('briefId')?.trim() || null,
+    articleId: sp.get('articleId')?.trim() || null,
+    batchJobId: sp.get('batchJobId')?.trim() || null,
   };
 }
 
@@ -120,11 +131,11 @@ function replaceStudioUrlParam(
     const url = new URL(window.location.href);
     if (value) url.searchParams.set(key, value);
     else url.searchParams.delete(key);
-    window.history.replaceState(
-      window.history.state,
-      '',
-      `${url.pathname}${url.search}${url.hash}`,
-    );
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl !== currentUrl) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
   } catch {
     // Ignore history restrictions in constrained test environments
   }
@@ -214,8 +225,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [retestEnginesLoading, setRetestEnginesLoading] = useState(false);
   const [retestEnginesError, setRetestEnginesError] = useState<string | null>(null);
   const [retestCheckedEngines, setRetestCheckedEngines] = useState<VisibilityEngineKey[]>([]);
+  const [distributionDrawerOpen, setDistributionDrawerOpen] = useState(false);
 
   // Anti-race AbortControllers & monotonic context/article sequences
+  const centerPaneRef = useRef<HTMLElement | null>(null);
+  const returnFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contextSeqRef = useRef(0);
   const urlHydratedSeqRef = useRef(0);
   const articleSeqRef = useRef(0);
@@ -249,7 +264,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const prevContextKeyRef = useRef<string | null>(null);
   const abortWalletTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingFilterResetRef = useRef(false);
+  const articlesRef = useRef<GeoArticleRecord[]>([]);
+  const urlSyncCtrlRef = useRef<AbortController | null>(null);
+  const pendingAutoSwitchArticleIdRef = useRef<string | null>(null);
+  const lastNotifiedInvalidArticleIdRef = useRef<string | null>(null);
+  const feedbackRef = useRef(feedback);
 
+  feedbackRef.current = feedback;
+  articlesRef.current = articles;
   articleFiltersRef.current = { status: articleStatusFilter, tag: articleTagFilter };
 
   const applyBriefToPrewrite = useCallback(
@@ -312,6 +334,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setSupplementingTerm(null);
       setRetestingRecordId(null);
       setRetestModalRecord(null);
+      if (nextArticleId === null) {
+        setDistributionDrawerOpen(false);
+      }
     },
     [clearArticleActionControllers],
   );
@@ -430,10 +455,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         }
       }
 
-      // Hydrate ?articleId=
+      // Hydrate ?articleId= (single source of truth for article selection across refresh & shared links)
       if (urlParams.articleId) {
         const localArt = loadedArticles.find((a) => a.id === urlParams.articleId);
         if (localArt) {
+          lastNotifiedInvalidArticleIdRef.current = null;
           applyArticleToCanvas(localArt);
         } else {
           hydrationTasks.push(
@@ -441,10 +467,57 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
               .then((fetched) => {
                 if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
                 if (fetched.brandId === brandId && fetched.market === market) {
+                  lastNotifiedInvalidArticleIdRef.current = null;
+                  setArticles((prev) =>
+                    prev.some((a) => a.id === fetched.id) ? prev : [fetched, ...prev],
+                  );
                   applyArticleToCanvas(fetched);
+                  return;
+                }
+
+                // Bare /studio?articleId=... (or non-conflicting URL): auto-switch to article's brand/market if owned
+                const curParams = readStudioUrlParams();
+                const hasConflictingBrand = Boolean(
+                  curParams.brandId && curParams.brandId !== fetched.brandId,
+                );
+                const hasConflictingMarket = Boolean(
+                  curParams.market && curParams.market !== fetched.market,
+                );
+                const targetBrand = useWorkspaceStore
+                  .getState()
+                  .brands.find(
+                    (b) =>
+                      b.id === fetched.brandId &&
+                      b.markets.some((m) => m.market === fetched.market),
+                  );
+                if (!hasConflictingBrand && !hasConflictingMarket && targetBrand) {
+                  pendingAutoSwitchArticleIdRef.current = fetched.id;
+                  useWorkspaceStore
+                    .getState()
+                    .setActiveBrand(fetched.brandId, fetched.market, window.localStorage, {
+                      preserveItemParams: true,
+                    });
+                  return;
+                }
+
+                replaceStudioUrlParam('articleId', null);
+                if (lastNotifiedInvalidArticleIdRef.current !== urlParams.articleId) {
+                  lastNotifiedInvalidArticleIdRef.current = urlParams.articleId;
+                  feedbackRef.current.notifyWarning(
+                    '该文章不属于当前品牌或市场，已清除链接中的文章参数',
+                  );
                 }
               })
-              .catch(() => undefined),
+              .catch(() => {
+                if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+                replaceStudioUrlParam('articleId', null);
+                if (lastNotifiedInvalidArticleIdRef.current !== urlParams.articleId) {
+                  lastNotifiedInvalidArticleIdRef.current = urlParams.articleId;
+                  feedbackRef.current.notifyWarning(
+                    '未找到链接指定的文章（可能已删除或无权访问），已清除失效参数',
+                  );
+                }
+              }),
           );
         }
       }
@@ -465,6 +538,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   // Brand / Market / ContextEpoch Switch Reset + Reload (Anti-Race)
   useEffect(() => {
     loadCtrlRef.current?.abort();
+    urlSyncCtrlRef.current?.abort();
+    urlSyncCtrlRef.current = null;
     streamCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current = null;
@@ -495,9 +570,27 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
     if (contextChanged) {
       setHighlightedBatchJobId(null);
-      replaceStudioUrlParam('briefId', null);
-      replaceStudioUrlParam('articleId', null);
-      replaceStudioUrlParam('batchJobId', null);
+      const curParams = readStudioUrlParams();
+      const isPreservedAutoSwitch = Boolean(
+        pendingAutoSwitchArticleIdRef.current &&
+        curParams.articleId === pendingAutoSwitchArticleIdRef.current,
+      );
+      if (isPreservedAutoSwitch) {
+        pendingAutoSwitchArticleIdRef.current = null;
+      }
+      const urlTargetsNewContext = Boolean(
+        curParams.articleId &&
+        (!curParams.brandId || curParams.brandId === activeBrandId) &&
+        (!curParams.market || curParams.market === activeMarket),
+      );
+      if (!isPreservedAutoSwitch && !urlTargetsNewContext) {
+        replaceStudioUrlParam('briefId', null);
+        replaceStudioUrlParam('articleId', null);
+        replaceStudioUrlParam('batchJobId', null);
+      } else if (!isPreservedAutoSwitch) {
+        replaceStudioUrlParam('briefId', null);
+        replaceStudioUrlParam('batchJobId', null);
+      }
     }
 
     // Reset history filters on brand/market switch without triggering a duplicate filter fetch
@@ -515,6 +608,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setBatchJobs([]);
     setSelectedBriefIds([]);
     setLinkedBrief(null);
+    setTargetPrompt('');
+    setOutlineH2([]);
+    setTargetFanOuts([]);
     setActiveArticle(null);
     setDraftTitle('');
     setDraftMarkdown('');
@@ -535,6 +631,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setRetestCheckedEngines([]);
     setRetestEnginesError(null);
     setCounterModalOpen(false);
+    setDistributionDrawerOpen(false);
+    if (returnFocusTimerRef.current) {
+      clearTimeout(returnFocusTimerRef.current);
+      returnFocusTimerRef.current = null;
+    }
+    if (editorFocusTimerRef.current) {
+      clearTimeout(editorFocusTimerRef.current);
+      editorFocusTimerRef.current = null;
+    }
     setTargetFormat(defaultTargetFormatForMarket(activeMarket));
     hadActiveBatchRef.current = false;
     editorCursorRef.current = null;
@@ -555,6 +660,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
     return () => {
       loadCtrlRef.current?.abort();
+      urlSyncCtrlRef.current?.abort();
+      urlSyncCtrlRef.current = null;
       streamCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current = null;
@@ -563,6 +670,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (abortWalletTimerRef.current) {
         clearTimeout(abortWalletTimerRef.current);
         abortWalletTimerRef.current = null;
+      }
+      if (returnFocusTimerRef.current) {
+        clearTimeout(returnFocusTimerRef.current);
+        returnFocusTimerRef.current = null;
+      }
+      if (editorFocusTimerRef.current) {
+        clearTimeout(editorFocusTimerRef.current);
+        editorFocusTimerRef.current = null;
       }
       clearArticleActionControllers();
       insertingMediaRef.current = false;
@@ -575,6 +690,109 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     loadWorkspaceData,
     clearArticleActionControllers,
   ]);
+
+  // Reactive URL sync for ?articleId= (handles in-app navigation and browser Back/Forward)
+  const syncArticleFromCurrentUrl = useCallback(() => {
+    if (!activeBrandId || !activeBrandMarketId) return;
+    const seq = contextSeqRef.current;
+    if (urlHydratedSeqRef.current !== seq) return;
+
+    const urlParams = readStudioUrlParams();
+    if (!urlParams.articleId) {
+      if (activeArticleIdRef.current !== null) {
+        resetActiveArticleContext(null);
+        setActiveArticle(null);
+        setDraftTitle('');
+        setDraftMarkdown('');
+      }
+      return;
+    }
+
+    if (urlParams.articleId === activeArticleIdRef.current) {
+      return;
+    }
+
+    const localArt = articlesRef.current.find((a) => a.id === urlParams.articleId);
+    if (localArt) {
+      lastNotifiedInvalidArticleIdRef.current = null;
+      applyArticleToCanvas(localArt);
+      return;
+    }
+
+    urlSyncCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    urlSyncCtrlRef.current = ctrl;
+    const targetArticleId = urlParams.articleId;
+
+    void getArticle(targetArticleId, { signal: ctrl.signal })
+      .then((fetched) => {
+        if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+        if (fetched.brandId === activeBrandId && fetched.market === activeMarket) {
+          lastNotifiedInvalidArticleIdRef.current = null;
+          setArticles((prev) =>
+            prev.some((a) => a.id === fetched.id) ? prev : [fetched, ...prev],
+          );
+          applyArticleToCanvas(fetched);
+          return;
+        }
+        const curParams = readStudioUrlParams();
+        const hasConflictingBrand = Boolean(
+          curParams.brandId && curParams.brandId !== fetched.brandId,
+        );
+        const hasConflictingMarket = Boolean(
+          curParams.market && curParams.market !== fetched.market,
+        );
+        const targetBrand = useWorkspaceStore
+          .getState()
+          .brands.find(
+            (b) => b.id === fetched.brandId && b.markets.some((m) => m.market === fetched.market),
+          );
+        if (!hasConflictingBrand && !hasConflictingMarket && targetBrand) {
+          pendingAutoSwitchArticleIdRef.current = fetched.id;
+          useWorkspaceStore
+            .getState()
+            .setActiveBrand(fetched.brandId, fetched.market, window.localStorage, {
+              preserveItemParams: true,
+            });
+          return;
+        }
+        replaceStudioUrlParam('articleId', null);
+        if (lastNotifiedInvalidArticleIdRef.current !== targetArticleId) {
+          lastNotifiedInvalidArticleIdRef.current = targetArticleId;
+          feedbackRef.current.notifyWarning('该文章不属于当前品牌或市场，已清除链接中的文章参数');
+        }
+      })
+      .catch(() => {
+        if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
+        replaceStudioUrlParam('articleId', null);
+        if (lastNotifiedInvalidArticleIdRef.current !== targetArticleId) {
+          lastNotifiedInvalidArticleIdRef.current = targetArticleId;
+          feedbackRef.current.notifyWarning(
+            '未找到链接指定的文章（可能已删除或无权访问），已清除失效参数',
+          );
+        }
+      });
+  }, [
+    activeBrandId,
+    activeBrandMarketId,
+    activeMarket,
+    applyArticleToCanvas,
+    resetActiveArticleContext,
+  ]);
+
+  useEffect(() => {
+    if (consoleCtx?.urlSearch === undefined) return;
+    syncArticleFromCurrentUrl();
+  }, [consoleCtx?.urlSearch, syncArticleFromCurrentUrl]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onPopState = () => {
+      syncArticleFromCurrentUrl();
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [syncArticleFromCurrentUrl]);
 
   // Refetch articles ONLY when status/tag filters actually change (never wipes editor or aborts stream)
   useEffect(() => {
@@ -672,6 +890,38 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   }, [hasActiveBatchJob]);
 
+  // Reusable publish records loader (also called by StudioDistributionDrawer after L1 publish / L3 register)
+  const reloadPublishRecords = useCallback(async (articleId: string) => {
+    pubRecordsCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    pubRecordsCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
+    setPublishRecordsLoading(true);
+    try {
+      const res = await fetchPublishRecords(articleId, { signal: ctrl.signal });
+      if (
+        ctrl.signal.aborted ||
+        seq !== contextSeqRef.current ||
+        artSeq !== articleSeqRef.current
+      ) {
+        return;
+      }
+      setPublishRecords(res.items);
+    } catch {
+      // Silent fallback on empty/aborted fetch
+    } finally {
+      if (
+        pubRecordsCtrlRef.current === ctrl &&
+        !ctrl.signal.aborted &&
+        seq === contextSeqRef.current &&
+        artSeq === articleSeqRef.current
+      ) {
+        setPublishRecordsLoading(false);
+      }
+    }
+  }, []);
+
   // Load publish records whenever active article changes
   const activeArticleId = activeArticle?.id ?? null;
   useEffect(() => {
@@ -686,26 +936,33 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       return;
     }
 
-    const seq = contextSeqRef.current;
-    const ctrl = new AbortController();
-    pubRecordsCtrlRef.current = ctrl;
-    setPublishRecordsLoading(true);
-    void fetchPublishRecords(activeArticleId, { signal: ctrl.signal })
-      .then((res) => {
-        if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-        setPublishRecords(res.items);
-      })
-      .catch(() => {
-        // Silent fallback on empty/aborted fetch
-      })
-      .finally(() => {
-        if (seq === contextSeqRef.current && !ctrl.signal.aborted) {
-          setPublishRecordsLoading(false);
-        }
-      });
+    void reloadPublishRecords(activeArticleId);
 
-    return () => ctrl.abort();
-  }, [activeArticleId, activeBrandId, activeBrandMarketId]);
+    return () => {
+      pubRecordsCtrlRef.current?.abort();
+    };
+  }, [activeArticleId, activeBrandId, activeBrandMarketId, reloadPublishRecords]);
+
+  const skipNextSelfPublishRecordsRefreshRef = useRef(false);
+
+  const broadcastSelfPublishRecordsFreshness = useCallback((...domains: FreshnessDomain[]) => {
+    skipNextSelfPublishRecordsRefreshRef.current = true;
+    try {
+      invalidateFreshness(...domains);
+    } finally {
+      skipNextSelfPublishRecordsRefreshRef.current = false;
+    }
+  }, []);
+
+  const handlePublishRecordUpdated = useCallback((updated: GeoPublishRecordDto) => {
+    setPublishRecords((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+    // StudioPublishRetest broadcasts invalidateFreshness('publish-records') right after this callback
+    // so other tabs (e.g. /home) refresh; skip redundant self-reload within the same tick.
+    skipNextSelfPublishRecordsRefreshRef.current = true;
+    queueMicrotask(() => {
+      skipNextSelfPublishRecordsRefreshRef.current = false;
+    });
+  }, []);
 
   // Poll pending retest run until afterMetrics writeback or terminal status
   useTaskPolling({
@@ -725,7 +982,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (matched?.afterMetrics && matched.latestRetestRunId === currentPending.runId) {
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
           return;
         }
@@ -738,7 +995,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         if (detail.status === 'FAILED' || detail.status === 'CANCELLED') {
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           feedback.notifyWarning('本次复测未成功完成，已按规则退还异常引擎点数');
           return;
         }
@@ -749,7 +1006,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           const recheckMatched = recheck.items.find((r) => r.id === currentPending.recordId);
           setPendingRetest(null);
           void consoleCtx?.refreshWallet();
-          invalidateFreshness('publish-records', 'visibility-runs', 'points');
+          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
           if (
             recheckMatched?.afterMetrics &&
             recheckMatched.latestRetestRunId === currentPending.runId
@@ -767,9 +1024,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     },
   });
 
-  // Cross-tab freshness sync
+  // Cross-tab freshness sync (briefs/articles/brand-facts/brand-media)
   useTabFreshness({
-    domains: ['briefs', 'articles', 'brand-facts', 'brand-media', 'publish-records'],
+    domains: ['briefs', 'articles', 'brand-facts', 'brand-media'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     refreshOnActivate: false,
     onRefresh: () => {
@@ -777,6 +1034,24 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       void loadWorkspaceData(activeBrandId, activeMarket, contextSeqRef.current, {
         preserveSelection: true,
       });
+    },
+  });
+
+  // Dedicated 'publish-records' freshness sync: reload active article's publish records on external changes
+  useTabFreshness({
+    domains: ['publish-records'],
+    active: Boolean(activeBrandId && activeBrandMarket && !streaming),
+    refreshOnActivate: false,
+    onRefresh: () => {
+      if (skipNextSelfPublishRecordsRefreshRef.current) {
+        skipNextSelfPublishRecordsRefreshRef.current = false;
+        return;
+      }
+      if (!activeBrandId || !activeBrandMarket || streaming) return;
+      const openArticleId = activeArticleIdRef.current;
+      if (openArticleId) {
+        void reloadPublishRecords(openArticleId);
+      }
     },
   });
 
@@ -1467,7 +1742,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       );
       setArticles((prev) => prev.map((a) => (a.id === nextArticle.id ? nextArticle : a)));
       feedback.notifySuccess('已登记发布链接并标记文章为「已发布」');
-      invalidateFreshness('publish-records', 'articles');
+      broadcastSelfPublishRecordsFreshness('publish-records', 'articles');
       return true;
     } catch (err) {
       if (isStale()) return false;
@@ -1479,6 +1754,126 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       }
     }
   };
+
+  const handleDistributionPublishRecordsSynced = useCallback(
+    async (articleId: string) => {
+      if (activeArticleIdRef.current !== articleId) return;
+      await reloadPublishRecords(articleId);
+      setActiveArticle((prev) =>
+        prev && prev.id === articleId ? { ...prev, status: 'PUBLISHED' } : prev,
+      );
+      setArticles((prev) =>
+        prev.map((a) => (a.id === articleId ? { ...a, status: 'PUBLISHED' } : a)),
+      );
+      broadcastSelfPublishRecordsFreshness('publish-records', 'articles', 'distributions');
+      void consoleCtx?.refreshWallet();
+    },
+    [broadcastSelfPublishRecordsFreshness, consoleCtx, reloadPublishRecords],
+  );
+
+  const handleReturnToEditorForFix = useCallback(
+    (code?: PreflightItemCode, locateTerm?: string) => {
+      setDistributionDrawerOpen(false);
+      if (returnFocusTimerRef.current) {
+        clearTimeout(returnFocusTimerRef.current);
+      }
+      if (editorFocusTimerRef.current) {
+        clearTimeout(editorFocusTimerRef.current);
+        editorFocusTimerRef.current = null;
+      }
+      const trimmedTerm = locateTerm?.trim() || '';
+      returnFocusTimerRef.current = setTimeout(() => {
+        returnFocusTimerRef.current = null;
+        const pane = centerPaneRef.current;
+        if (!pane) return;
+        const missingPill = pane.querySelector<HTMLElement>('[data-testid="missing-fact-pill"]');
+        const missingBar = pane.querySelector<HTMLElement>(
+          '[data-testid="studio-missing-fact-bar"]',
+        );
+        if ((code === 'MISSING_FACT_SLOTS' || (!code && !trimmedTerm)) && missingPill) {
+          if (missingBar && typeof missingBar.scrollIntoView === 'function') {
+            missingBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          missingPill.focus();
+          feedback.notifyWarning('已定位到待补充事实胶囊，点击即可行内补填');
+          return;
+        }
+        const focusAndSelect = (target: HTMLTextAreaElement | HTMLInputElement | null): boolean => {
+          if (!target) return false;
+          if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          target.focus();
+          if (trimmedTerm && typeof target.setSelectionRange === 'function') {
+            const idx = target.value.toLowerCase().indexOf(trimmedTerm.toLowerCase());
+            if (idx >= 0) {
+              target.setSelectionRange(idx, idx + trimmedTerm.length);
+              return true;
+            }
+          }
+          return false;
+        };
+        const focusBestField = (currentPane: HTMLElement) => {
+          const textarea = currentPane.querySelector<HTMLTextAreaElement>(
+            'textarea[aria-label="文章 Markdown 正文"]',
+          );
+          const titleInput = currentPane.querySelector<HTMLInputElement>(
+            'input[aria-label="文章标题"]',
+          );
+          if (trimmedTerm) {
+            if (textarea && textarea.value.toLowerCase().includes(trimmedTerm.toLowerCase())) {
+              focusAndSelect(textarea);
+              return;
+            }
+            if (titleInput && titleInput.value.toLowerCase().includes(trimmedTerm.toLowerCase())) {
+              focusAndSelect(titleInput);
+              return;
+            }
+          }
+          focusAndSelect(textarea ?? titleInput);
+        };
+        const textarea = pane.querySelector<HTMLTextAreaElement>(
+          'textarea[aria-label="文章 Markdown 正文"]',
+        );
+        if (textarea) {
+          focusBestField(pane);
+        } else {
+          const editLabel = Array.from(
+            pane.querySelectorAll<HTMLElement>('.ant-segmented-item'),
+          ).find((el) => el.textContent?.includes('编辑 Markdown'));
+          if (editLabel) {
+            editLabel.click();
+            if (editorFocusTimerRef.current) {
+              clearTimeout(editorFocusTimerRef.current);
+            }
+            editorFocusTimerRef.current = setTimeout(() => {
+              editorFocusTimerRef.current = null;
+              const currentPane = centerPaneRef.current;
+              if (!currentPane) return;
+              focusBestField(currentPane);
+            }, 40);
+          } else {
+            focusBestField(pane);
+          }
+        }
+        feedback.notifyWarning(
+          trimmedTerm
+            ? `已返回编辑器并定位到「${trimmedTerm}」，请修改后重新体检`
+            : '已返回编辑器，请修正发布前体检阻断项后再推送',
+        );
+      }, 50);
+    },
+    [feedback],
+  );
+
+  const brandNames = useMemo(() => {
+    const names = [
+      activeBrand?.name,
+      activeBrandMarket?.localBrandName,
+      ...(activeBrandMarket?.aliases ?? []),
+    ].filter((v): v is string => Boolean(v && v.trim()));
+    return [...new Set(names)];
+  }, [activeBrand?.name, activeBrandMarket?.aliases, activeBrandMarket?.localBrandName]);
 
   const loadRetestEngines = useCallback(async (brandId: string, market: typeof activeMarket) => {
     retestEnginesCtrlRef.current?.abort();
@@ -1688,6 +2083,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
         {/* Center Pane: 3-Item Prewrite Bar + Live SSE Editor & Preview */}
         <main
+          ref={centerPaneRef}
           className="gm-studio-pane"
           aria-label="GEO 流式精写画布"
           data-testid="studio-center-pane"
@@ -1792,10 +2188,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 category={activeBrand.category}
                 localCategory={activeBrandMarket.localCategory}
                 ownedDomains={activeBrandMarket.ownedDomains}
+                brandNames={brandNames}
+                matchedFactCount={
+                  matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length
+                }
+                readOnly={readOnly}
                 article={activeArticle}
                 evaluation={evaluation}
                 linkedBriefChannels={linkedBrief?.recommendedChannels}
                 streaming={streaming}
+                onOpenDistributionDrawer={() => setDistributionDrawerOpen(true)}
               />
             )
           }
@@ -1811,11 +2213,35 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 readOnly={readOnly}
                 onCreatePublishRecord={handleCreatePublishRecord}
                 onTriggerRetest={handleOpenRetestModal}
+                onPublishRecordUpdated={handlePublishRecordUpdated}
               />
             )
           }
         />
       </div>
+
+      <StudioDistributionDrawer
+        open={distributionDrawerOpen}
+        brandId={activeBrand.id}
+        brandMarketId={activeBrandMarket.id}
+        market={activeMarket}
+        contextEpoch={state.contextEpoch}
+        article={activeArticle}
+        draftTitle={draftTitle}
+        draftMarkdown={draftMarkdown}
+        brandNames={brandNames}
+        matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
+        evaluation={evaluation}
+        linkedBrief={linkedBrief}
+        readOnly={readOnly}
+        walletAvailable={consoleCtx?.wallet?.available ?? null}
+        onClose={() => setDistributionDrawerOpen(false)}
+        onReturnToEditor={handleReturnToEditorForFix}
+        onNavigateBrands={() => consoleCtx?.navigateWorkspace('/brands')}
+        onRefreshWallet={() => consoleCtx?.refreshWallet()}
+        onPublishRecordsSynced={handleDistributionPublishRecordsSynced}
+        onCreatePublishRecord={handleCreatePublishRecord}
+      />
 
       <CitationCounterModal
         open={counterModalOpen}

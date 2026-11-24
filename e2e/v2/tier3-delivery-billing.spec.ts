@@ -512,7 +512,12 @@ v2Describe(
         const tag = uniqueTag(testInfo, 't318');
         const pricingItems = await getAdminPricing();
         const actions = pricingItems.map((i) => i.action).sort();
-        expect(actions).toEqual(['geo_write', 'inline_image_gen', 'visibility_check']);
+        expect(actions).toEqual([
+          'geo_variant',
+          'geo_write',
+          'inline_image_gen',
+          'visibility_check',
+        ]);
         expect(actions).not.toContain('kb_addon');
 
         const originalPrice = pricingItems.find((i) => i.action === 'geo_write')?.unitPoints ?? 10;

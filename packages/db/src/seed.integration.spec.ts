@@ -26,7 +26,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
 
     const first = await applySeed(prisma, { now: new Date('2026-11-16T00:00:00.000Z') });
     expect(first).toEqual({
-      pricing: 3,
+      pricing: 4,
       tenants: 2,
       wallets: 2,
       quotas: 12,
@@ -89,7 +89,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')('seed against Postgre
     expect(price.unitPoints).toBe(10);
     expect(price.enabled).toBe(true);
     expect(await prisma.pricingItem.findUnique({ where: { action: 'kb_addon' } })).toBeNull();
-    expect(await prisma.pricingItem.count()).toBe(3);
+    expect(await prisma.pricingItem.count()).toBe(4);
     expect(await prisma.user.count()).toBe(2);
     expect(
       (await prisma.wallet.findUniqueOrThrow({ where: { tenantId: PLATFORM_TENANT_ID } })).points,

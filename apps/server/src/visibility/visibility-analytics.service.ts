@@ -115,6 +115,23 @@ export class VisibilityAnalyticsService {
     }
   }
 
+  private async resolveBrandOwnedDomains(
+    brandId: string,
+    currentDomains: readonly string[],
+  ): Promise<string[]> {
+    const findMany = this.prisma.scoped.brandMarket?.findMany;
+    if (typeof findMany !== 'function') {
+      return Array.from(new Set(currentDomains));
+    }
+    const markets = await findMany({
+      where: { brandId },
+      select: { ownedDomains: true },
+    });
+    return Array.from(
+      new Set([...currentDomains, ...markets.flatMap((m) => m.ownedDomains ?? [])]),
+    );
+  }
+
   async overview(
     brandId: string,
     query: VisibilityV2OverviewQuery,
@@ -125,7 +142,11 @@ export class VisibilityAnalyticsService {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
     assertMarketEngine(query.engine, market.market);
 
-    const overviewCtx = buildSingleMarketOverviewContext(market);
+    const ownedDomains = await this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []);
+    const overviewCtx = buildSingleMarketOverviewContext({
+      ...market,
+      ownedDomains,
+    });
     const window = shanghaiWindowFromQuery({
       days: query.days,
       from: query.from,
@@ -178,7 +199,7 @@ export class VisibilityAnalyticsService {
     assertMarketEngine(query.engine, market.market);
 
     const competitors = parseProfileCompetitors(market.competitors);
-    const ownedDomains = market.ownedDomains ?? [];
+    const ownedDomains = await this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []);
     const competitorDomains = competitors.flatMap((comp) => comp.domains ?? []);
 
     const window = shanghaiWindowFromQuery({
