@@ -7,25 +7,36 @@ import {
   QUOTA_DEFAULTS,
   QUOTA_MEASURE,
   STORAGE_QUOTA_BYTES,
+  ZERO_ALLOWED_PRICING_ACTIONS,
+  isZeroAllowedPricingAction,
 } from './catalog';
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
-describe('GeoMix 2.0 catalog', () => {
-  it('keeps strictly the 3 v2 paid pricing defaults (zero legacy kb_addon/distill actions)', () => {
+describe('GeoMix v2.1 catalog', () => {
+  it('keeps the 4 v2.1 paid pricing defaults, zero-allowed actions, and 7 free rate-limited actions', () => {
     expect(PRICING_DEFAULTS.map((item) => [item.action, item.unitPoints])).toEqual([
       ['geo_write', 10],
       ['visibility_check', 2],
       ['inline_image_gen', 5],
+      ['geo_variant', 2],
     ]);
     expect(unique(PRICING_DEFAULTS.map((item) => item.action))).toBe(true);
+    expect(ZERO_ALLOWED_PRICING_ACTIONS).toEqual(['geo_variant']);
+    expect(isZeroAllowedPricingAction('geo_variant')).toBe(true);
+    expect(isZeroAllowedPricingAction('geo_write')).toBe(false);
+    expect(isZeroAllowedPricingAction('visibility_check')).toBe(false);
+    expect(isZeroAllowedPricingAction('inline_image_gen')).toBe(false);
     expect(FREE_RATE_LIMITED_ACTIONS).toEqual([
       'geo_brief',
       'brand_fact_extract',
       'geo_evaluate',
       'rewrite_section',
+      'distribution_preflight',
+      'crawl_probe',
+      'pr_packet_share',
     ]);
   });
 
@@ -44,6 +55,8 @@ describe('GeoMix 2.0 catalog', () => {
       QUESTION: 'stock',
       STORAGE_BYTES: 'stock',
       AI_WRITE: 'cumulative',
+      PUBLISH: 'cumulative',
+      SOCIAL_AUTH: 'stock',
     });
   });
 

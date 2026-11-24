@@ -8,6 +8,7 @@ import {
   evaluateLedger,
   isChargeAction,
   isReservationRefType,
+  isValidUnitPoints,
   ledgerTitle,
   quoteGeoWrite,
   quotaReleasePolicy,
@@ -15,27 +16,46 @@ import {
   resolveTenantBillingMode,
 } from './billing';
 
-describe('GeoMix 2.0 billing rules', () => {
-  it('registers v2 reservation refTypes and 3 paid charge actions', () => {
+describe('GeoMix v2.1 billing rules', () => {
+  it('registers v2.1 reservation refTypes, 4 charge actions, and per-action unit point rules', () => {
     expect(RESERVATION_REF_TYPES).toEqual([
       'geo_article',
       'geo_batch',
       'inline_image_gen',
       'visibility_run',
+      'geo_variant',
+      'geo_distribution',
     ]);
-    expect(CHARGE_ACTIONS).toEqual(['geo_write', 'visibility_check', 'inline_image_gen']);
+    expect(CHARGE_ACTIONS).toEqual([
+      'geo_write',
+      'visibility_check',
+      'inline_image_gen',
+      'geo_variant',
+    ]);
 
     expect(isReservationRefType('geo_article')).toBe(true);
     expect(isReservationRefType('geo_batch')).toBe(true);
     expect(isReservationRefType('inline_image_gen')).toBe(true);
     expect(isReservationRefType('visibility_run')).toBe(true);
+    expect(isReservationRefType('geo_variant')).toBe(true);
+    expect(isReservationRefType('geo_distribution')).toBe(true);
     expect(isReservationRefType('ai_task')).toBe(false);
 
     expect(isChargeAction('geo_write')).toBe(true);
     expect(isChargeAction('visibility_check')).toBe(true);
     expect(isChargeAction('inline_image_gen')).toBe(true);
+    expect(isChargeAction('geo_variant')).toBe(true);
     expect(isChargeAction('kb_addon')).toBe(false);
     expect(isChargeAction('ai_write')).toBe(false);
+
+    expect(isValidUnitPoints('geo_variant', 0)).toBe(true);
+    expect(isValidUnitPoints('geo_variant', 2)).toBe(true);
+    expect(isValidUnitPoints('geo_variant', -1)).toBe(false);
+    expect(isValidUnitPoints('geo_variant', 1.5)).toBe(false);
+    expect(isValidUnitPoints('geo_write', 0)).toBe(false);
+    expect(isValidUnitPoints('geo_write', 10)).toBe(true);
+    expect(isValidUnitPoints('visibility_check', 0)).toBe(false);
+    expect(isValidUnitPoints('inline_image_gen', 0)).toBe(false);
 
     expect(ledgerTitle('AI可见性监测-核心词巡检', true)).toBe('AI可见性监测-核心词巡检（免费期）');
   });
@@ -138,13 +158,13 @@ describe('GeoMix 2.0 billing rules', () => {
     expect(articleQuotaEffect('GEO_BATCH', 'delete')).toEqual({ aiWrite: 0, publish: 0 });
   });
 
-  it('releases stock quotas only, and leaves unconfirmed quotas alone', () => {
+  it('releases stock quotas only and keeps cumulative quotas non-releasable', () => {
     expect(quotaReleasePolicy('MAIN_KEYWORD')).toBe('stock');
     expect(quotaReleasePolicy('QUESTION')).toBe('stock');
     expect(quotaReleasePolicy('STORAGE_BYTES')).toBe('stock');
     expect(quotaReleasePolicy('AI_WRITE')).toBe('cumulative');
-    expect(quotaReleasePolicy('PUBLISH')).toBe('unconfirmed');
-    expect(quotaReleasePolicy('SOCIAL_AUTH')).toBe('unconfirmed');
+    expect(quotaReleasePolicy('PUBLISH')).toBe('cumulative');
+    expect(quotaReleasePolicy('SOCIAL_AUTH')).toBe('stock');
   });
 
   it('holds the ledger identity for strict partial settle, refund release, and shadow no-op', () => {

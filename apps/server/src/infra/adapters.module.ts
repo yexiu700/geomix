@@ -5,6 +5,7 @@ import { ComplianceService, type AuditWriter } from './compliance';
 import { EmbeddingService } from './embedding';
 import { ImageService } from './image';
 import { LlmService, type LlmCostSink } from './llm';
+import { OUTBOUND_HTTP_DEPS, OutboundHttpClient, type OutboundHttpDeps } from './outbound-http';
 import { fetchPublicPage, type FetchDeps } from './public-fetch';
 import { SearchService } from './search';
 import { StorageService } from './storage';
@@ -90,6 +91,11 @@ export class PublicFetchService {
         });
       },
     },
+    {
+      provide: OutboundHttpClient,
+      inject: [{ token: OUTBOUND_HTTP_DEPS, optional: true }],
+      useFactory: (deps?: OutboundHttpDeps) => new OutboundHttpClient(deps),
+    },
   ],
   exports: [
     ComplianceService,
@@ -99,6 +105,7 @@ export class PublicFetchService {
     SearchService,
     PublicFetchService,
     ImageService,
+    OutboundHttpClient,
   ],
 })
 export class AdaptersModule {}

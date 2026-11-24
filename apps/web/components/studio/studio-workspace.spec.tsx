@@ -7,12 +7,14 @@ import {
   type GeoArticleRecord,
   type GeoBatchJobRecord,
   type GeoBriefRecord,
+  type GeoPublishRecordDto,
   type PromptPreferenceRecord,
 } from '@geomix/shared';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
+import * as distributionApi from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
 import { invalidateFreshness } from '../../lib/tab-freshness';
@@ -2473,5 +2475,293 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(screen.getByTestId('studio-copy-partial-draft-btn')).toBeTruthy();
     const previewBody = screen.getByTestId('studio-preview-body');
     expect(previewBody.textContent).toContain('星辰存储 DXP4800');
+  });
+
+  it('opens Distribution Drawer from Delivery Pack CTA, returns to editor on missing-fact jump, and auto-closes on market context switch (M6A #354)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(distributionApi, 'runArticlePreflight').mockResolvedValue({
+      ok: false,
+      blockers: [
+        {
+          code: 'MISSING_FACT_SLOTS',
+          severity: 'blocker',
+          message: '检测到 1 处未补全的待补充事实占位符',
+          details: ['[待补充：如待机功耗 W]'],
+        },
+      ],
+      warnings: [],
+    });
+    vi.spyOn(distributionApi, 'listArticleDistributions').mockResolvedValue({ items: [] });
+    vi.spyOn(distributionApi, 'listChannelConnections').mockResolvedValue({ items: [] });
+    vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_1);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Select article so CTA becomes enabled
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    const openBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    expect(openBtn.disabled).toBe(false);
+
+    // Open drawer
+    fireEvent.click(openBtn);
+    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
+    expect(await screen.findByTestId('distribution-preflight-blockers')).toBeTruthy();
+
+    // Return to editor closes drawer and notifies user
+    fireEvent.click(screen.getByTestId('distribution-back-to-editor-btn'));
+    await waitFor(() => {
+      expect(mockNotifyWarning).toHaveBeenCalledWith('已定位到待补充事实胶囊，点击即可行内补填');
+    });
+
+    // Re-open drawer, then switch market CN -> GLOBAL -> drawer auto-closes immediately
+    fireEvent.click(screen.getByTestId('studio-open-distribution-btn'));
+    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    await waitFor(() => {
+      const openDrawer = document.querySelector('.ant-drawer-open');
+      expect(openDrawer).toBeNull();
+    });
+  });
+
+  it('guards GLOBAL copy/export in StudioDeliveryPack using unified evaluateDistributionPreflight (GLOBAL_CJK_LEAK blocker confirm)', async () => {
+    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
+    const leakedGlobalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_gl_leak',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      title: 'Best 4-Bay Quiet NAS 2026',
+      contentMarkdown: 'AstraVault DXP4800 runs at 18.5dB with 静音散热设计.',
+      contentHtml: '<p>AstraVault DXP4800 runs at 18.5dB with 静音散热设计.</p>',
+      geoScore: 86,
+      complianceFlags: [],
+    };
+
+    render(
+      <StudioDeliveryPack
+        activeMarket="GLOBAL"
+        localBrandName="AstraVault"
+        brandNames={['AstraVault']}
+        matchedFactCount={1}
+        article={leakedGlobalArticle}
+        evaluation={null}
+        streaming={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('delivery-copy-md'));
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    expect(copySpy).not.toHaveBeenCalled();
+
+    // Confirming override proceeds with copy
+    const onOk = mockConfirm.mock.calls[0]?.[0]?.onOk as (() => void) | undefined;
+    act(() => {
+      onOk?.();
+    });
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('W-02: preserves CrawlProbe and 3x sampling edits across instant retest start and reloads publishRecords on external publish-records freshness invalidation', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=${SAMPLE_ARTICLE.id}`,
+    );
+    const globalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+    };
+    const initialRecord: GeoPublishRecordDto = {
+      id: 'pub_w02_1',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_gl_1',
+      articleId: globalArticle.id,
+      publishedUrl: 'https://blog.example.com/nas-2026-review',
+      channel: 'Shopify 博客',
+      publishedAt: '2026-11-20T08:00:00.000Z',
+      baselineRunId: null,
+      latestRetestRunId: null,
+      beforeMetrics: null,
+      afterMetrics: null,
+      distributionTaskId: null,
+      crawlStatus: 'PENDING',
+      crawlCheckedAt: null,
+      crawlReportJson: null,
+      indexNowSubmitted: false,
+      retestSchedules: [
+        {
+          id: 'sched_w02_7',
+          publishRecordId: 'pub_w02_1',
+          milestoneDay: 7,
+          sampleCount: 1,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'PENDING',
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-20T08:00:00.000Z',
+        },
+        {
+          id: 'sched_w02_14',
+          publishRecordId: 'pub_w02_1',
+          milestoneDay: 14,
+          sampleCount: 1,
+          dueAt: '2026-12-04T08:00:00.000Z',
+          status: 'PENDING',
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          skipReason: null,
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-20T08:00:00.000Z',
+        },
+      ],
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [globalArticle],
+      total: 1,
+    });
+    const fetchPubSpy = vi
+      .spyOn(studioApi, 'fetchPublishRecords')
+      .mockResolvedValue({ items: [initialRecord] });
+
+    const probedRecord: GeoPublishRecordDto = {
+      ...initialRecord,
+      crawlStatus: 'OK',
+      crawlCheckedAt: '2026-11-23T10:00:00.000Z',
+      crawlReportJson: {
+        checkedUrl: initialRecord.publishedUrl,
+        httpStatus: 200,
+        robotsTxtFound: true,
+        robotsMatrix: [
+          { bot: '*', allowed: true },
+          { bot: 'GPTBot', allowed: true },
+          { bot: 'OAI-SearchBot', allowed: true },
+          { bot: 'PerplexityBot', allowed: true },
+          { bot: 'Googlebot', allowed: true },
+        ],
+        metaNoindex: false,
+        jsonLdTypes: ['Article'],
+        jsonLdParseErrors: [],
+        canonicalUrl: initialRecord.publishedUrl,
+        canonicalMatches: true,
+        issues: [],
+      },
+    };
+    const probeSpy = vi.spyOn(distributionApi, 'triggerCrawlProbe').mockResolvedValue(probedRecord);
+
+    const updatedSchedules = initialRecord.retestSchedules!.map((s) => ({
+      ...s,
+      sampleCount: 3 as const,
+    }));
+    const schedSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValue({
+      publishRecordId: initialRecord.id,
+      items: updatedSchedules,
+    });
+
+    vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValue({
+      id: 'run_instant_w02',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      name: '即时复测',
+      engines: ['perplexity'],
+      prompts: ['test'],
+      triggerType: 'RETEST',
+      retestArticleId: globalArticle.id,
+      status: 'QUEUED',
+      totalChecks: 1,
+      doneCount: 0,
+      failCount: 0,
+      unitPrice: 2,
+      settledPoints: 0,
+      releasedPoints: 0,
+      lastError: null,
+      createdAt: '2026-11-23T10:01:00.000Z',
+      finishedAt: null,
+    } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1');
+    expect(crawlBadges.textContent).toContain('待体检');
+
+    // 1. Trigger CrawlProbe -> updates to OK + HTTP 200 without redundant self-reload
+    const fetchCountAfterMount = fetchPubSpy.mock.calls.length;
+    fireEvent.click(screen.getByTestId('publish-crawl-recheck-btn-pub_w02_1'));
+    await waitFor(() => {
+      expect(probeSpy).toHaveBeenCalledTimes(1);
+      expect(crawlBadges.textContent).toContain('HTTP 200');
+      expect(crawlBadges.textContent).toContain('可抓取');
+    });
+    expect(fetchPubSpy).toHaveBeenCalledTimes(fetchCountAfterMount);
+
+    // 2. Switch sampling to 3x -> budget reflects 3 次采样 without redundant self-reload
+    const sampleToggle = screen.getByTestId('publish-retest-sample-toggle-pub_w02_1');
+    fireEvent.click(within(sampleToggle).getByRole('button', { name: '3 次高置信' }));
+    await waitFor(() => {
+      expect(schedSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('publish-retest-budget-pub_w02_1').textContent).toContain(
+        '3 次采样',
+      );
+    });
+    expect(fetchPubSpy).toHaveBeenCalledTimes(fetchCountAfterMount);
+
+    // 3. Trigger instant retest ("一键立刻复测") -> confirm modal -> CrawlProbe & 3x sampling MUST NOT revert!
+    fireEvent.click(screen.getByTestId('publish-retest-btn'));
+    const confirmRetestBtn = (await screen.findByTestId(
+      'publish-retest-confirm-btn',
+    )) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(confirmRetestBtn.disabled).toBe(false);
+    });
+    fireEvent.click(confirmRetestBtn);
+
+    await waitFor(() => {
+      expect(studioApi.triggerPublishRetest).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByTestId('publish-crawl-badges-pub_w02_1').textContent).toContain('HTTP 200');
+    expect(screen.getByTestId('publish-crawl-badges-pub_w02_1').textContent).toContain('可抓取');
+    expect(screen.getByTestId('publish-retest-budget-pub_w02_1').textContent).toContain('3 次采样');
+
+    // 4. External invalidateFreshness('publish-records') reloads fetchPublishRecords for the active article
+    const countBeforeExternal = fetchPubSpy.mock.calls.length;
+    act(() => {
+      invalidateFreshness('publish-records');
+    });
+    await waitFor(() => {
+      expect(fetchPubSpy.mock.calls.length).toBeGreaterThan(countBeforeExternal);
+    });
   });
 });

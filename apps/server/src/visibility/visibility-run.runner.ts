@@ -35,7 +35,7 @@ export type VisibilityRunCompleteEvent = {
   runId: string;
   triggerType: VisibilityTriggerType;
   retestArticleId: string | null;
-  status: 'COMPLETED' | 'PARTIAL';
+  status: 'COMPLETED' | 'PARTIAL' | 'FAILED' | 'CANCELLED';
   successCount: number;
 };
 
@@ -753,12 +753,17 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       }
     }
 
-    if (
+    const isTerminalTransition =
       summary.transitioned &&
-      (summary.status === 'COMPLETED' || summary.status === 'PARTIAL') &&
-      summary.successCount > 0 &&
-      this.completeHooks.length > 0
-    ) {
+      (summary.status === 'COMPLETED' ||
+        summary.status === 'PARTIAL' ||
+        summary.status === 'FAILED');
+    const isCancelledRetestDrain =
+      summary.status === 'CANCELLED' &&
+      summary.closeReservation &&
+      summary.triggerType === 'RETEST';
+
+    if ((isTerminalTransition || isCancelledRetestDrain) && this.completeHooks.length > 0) {
       const event: VisibilityRunCompleteEvent = {
         tenantId,
         brandId: summary.brandId,
@@ -766,7 +771,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         runId,
         triggerType: summary.triggerType,
         retestArticleId: summary.retestArticleId,
-        status: summary.status,
+        status: summary.status as VisibilityRunCompleteEvent['status'],
         successCount: summary.successCount,
       };
 

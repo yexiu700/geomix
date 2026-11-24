@@ -45,6 +45,10 @@
       "types": "./dist/crud.d.ts",
       "default": "./dist/crud.js"
     },
+    "./distribution": {
+      "types": "./dist/distribution.d.ts",
+      "default": "./dist/distribution.js"
+    },
     "./geo-briefs": {
       "types": "./dist/geo-briefs.d.ts",
       "default": "./dist/geo-briefs.js"

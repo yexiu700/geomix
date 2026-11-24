@@ -7,6 +7,7 @@ import { BillingModule } from './billing/billing.module';
 import { BrandsModule } from './brands/brands.module';
 import { BriefsModule } from './briefs/briefs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { DistributionModule } from './distribution/distribution.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { AdaptersModule } from './infra/adapters.module';
@@ -31,6 +32,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     VisibilityModule,
     BriefsModule,
     StudioModule,
+    DistributionModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

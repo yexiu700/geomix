@@ -50,7 +50,8 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm test
+        # Serialize package-level Vitest suites on CI runners to prevent multi-package CPU oversubscription during linear-time specs
+        run: pnpm exec turbo run test --concurrency=1
 
   e2e:
     uses: ./.github/workflows/e2e.yml

@@ -259,4 +259,104 @@ describe('Pricing defaults backfill (#99)', () => {
       expect(title.length).toBeLessThanOrEqual(80);
     }
   });
+
+  it('BillingService.unitPrice allows 0 strictly for geo_variant while rejecting 0 for geo_write and negative/disabled geo_variant', async () => {
+    const findUnique = vi.fn();
+    const prisma = {
+      base: {
+        pricingItem: {
+          findUnique,
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new BillingService(prisma, {
+      globalMode: () => 'SHADOW',
+      orphanAfterMs: 60_000,
+      now: () => new Date('2026-11-23T00:00:00.000Z'),
+    });
+
+    // geo_variant = 0 is allowed
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_variant',
+      unitPoints: 0,
+      enabled: true,
+    });
+    expect(await service.unitPrice('geo_variant')).toBe(0);
+
+    // geo_variant falls back to default 2 when row is absent
+    findUnique.mockResolvedValueOnce(null);
+    expect(await service.unitPrice('geo_variant')).toBe(2);
+
+    // geo_variant negative is rejected
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_variant',
+      unitPoints: -1,
+      enabled: true,
+    });
+    await expect(service.unitPrice('geo_variant')).rejects.toMatchObject({
+      status: 400,
+      message: '渠道变体改写单价配置不正确',
+    });
+
+    // geo_variant disabled is rejected
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_variant',
+      unitPoints: 2,
+      enabled: false,
+    });
+    await expect(service.unitPrice('geo_variant')).rejects.toMatchObject({
+      status: 400,
+      message: '渠道变体改写价格未启用',
+    });
+
+    // geo_write = 0 is still strictly rejected
+    findUnique.mockResolvedValueOnce({
+      action: 'geo_write',
+      unitPoints: 0,
+      enabled: true,
+    });
+    await expect(service.unitPrice('geo_write')).rejects.toMatchObject({
+      status: 400,
+      message: 'GEO写作单价配置不正确',
+    });
+  });
+
+  it('BillingService.listPrices backfills missing geo_variant on existing v2.0 databases', async () => {
+    const v20Rows = PRICING_DEFAULTS.filter((item) => item.action !== 'geo_variant').map(
+      (item) => ({
+        action: item.action,
+        unitPoints: item.unitPoints,
+        enabled: true,
+        updatedAt: new Date('2026-11-20T00:00:00.000Z'),
+      }),
+    );
+    const createMany = vi.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      base: {
+        pricingItem: {
+          findMany: vi.fn().mockResolvedValue(v20Rows),
+          createMany,
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new BillingService(prisma, {
+      globalMode: () => 'SHADOW',
+      orphanAfterMs: 60_000,
+      now: () => new Date('2026-11-23T00:00:00.000Z'),
+    });
+
+    const prices = await service.listPrices();
+    expect(prices.find((item) => item.action === 'geo_variant')).toEqual({
+      action: 'geo_variant',
+      unitPoints: 2,
+      enabled: true,
+      label: '渠道变体改写',
+    });
+    expect(createMany).toHaveBeenCalledWith({
+      data: [{ action: 'geo_variant', unitPoints: 2, enabled: true }],
+      skipDuplicates: true,
+    });
+  });
 });

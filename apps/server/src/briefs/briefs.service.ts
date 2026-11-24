@@ -236,6 +236,7 @@ export class BriefsService {
           domain: c.domain,
           title: c.title,
           sourceKind: toCitationSourceKind(c.sourceKind),
+          ...(typeof c.position === 'number' ? { position: c.position } : {}),
         })),
       }));
     } else if (citationUrl) {
@@ -261,6 +262,7 @@ export class BriefsService {
           domain: c.domain,
           title: c.title,
           sourceKind: toCitationSourceKind(c.sourceKind),
+          ...(typeof c.position === 'number' ? { position: c.position } : {}),
         }));
         const obsMap = new Map<string, BriefSignalObservation>();
         for (const item of storedCitations) {
@@ -285,6 +287,7 @@ export class BriefsService {
             domain: item.domain,
             title: item.title,
             sourceKind: toCitationSourceKind(item.sourceKind),
+            ...(typeof item.position === 'number' ? { position: item.position } : {}),
           });
         }
         observations = [...obsMap.values()];
@@ -445,6 +448,7 @@ export class BriefsService {
       targetFanOuts: mergedFanOuts,
       observations,
       citations: allCitations,
+      ownedDomains: market.ownedDomains,
       matchedFacts,
       presentFactSlots,
     };
@@ -504,8 +508,20 @@ export class BriefsService {
         const parsedPublicUrl = assertPublicUrl(rawCitationUrl, {
           allowlist: parseSsrfAllowlist('', { includeDefaults: false }),
         });
-        const host = parsedPublicUrl.hostname.trim().toLowerCase().replace(/\.$/, '');
-        if (!host.includes('.') && !host.includes(':')) {
+        let host = parsedPublicUrl.hostname.trim().toLowerCase();
+        if (!host || host.length > 255) {
+          throw new UrlPolicyError('internal_host');
+        }
+        while (host.endsWith('.')) {
+          host = host.slice(0, -1);
+        }
+        if (
+          !host ||
+          host.length > 255 ||
+          host.startsWith('.') ||
+          host.includes('..') ||
+          (!host.includes('.') && !host.includes(':'))
+        ) {
           throw new UrlPolicyError('internal_host');
         }
       } catch (error) {
@@ -653,6 +669,7 @@ export class BriefsService {
           domain: c.domain,
           title: c.title,
           sourceKind: toCitationSourceKind(c.sourceKind),
+          ...(typeof c.position === 'number' ? { position: c.position } : {}),
         }));
         const obsMap = new Map<string, BriefSignalObservation>();
         for (const item of storedCitations) {
@@ -677,6 +694,7 @@ export class BriefsService {
             domain: item.domain,
             title: item.title,
             sourceKind: toCitationSourceKind(item.sourceKind),
+            ...(typeof item.position === 'number' ? { position: item.position } : {}),
           });
         }
         observations = [...obsMap.values()];
@@ -810,6 +828,7 @@ export class BriefsService {
       targetFanOuts: mergedFanOuts,
       observations,
       citations: allCitations,
+      ownedDomains: market.ownedDomains,
       matchedFacts,
       presentFactSlots,
     };

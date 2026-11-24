@@ -29,8 +29,10 @@ export {
   FREE_RATE_LIMITED_ACTIONS,
   QUOTA_MEASURE,
   STORAGE_QUOTA_BYTES,
+  ZERO_ALLOWED_PRICING_ACTIONS,
+  isZeroAllowedPricingAction,
 } from './catalog';
-export type { FreeRateLimitedAction, PricingAction } from './catalog';
+export type { FreeRateLimitedAction, PricingAction, ZeroAllowedPricingAction } from './catalog';
 export {
   BILLING_ERROR,
   BillingRuleError,
@@ -45,6 +47,7 @@ export {
   isChargeAction,
   isPositivePoints,
   isReservationRefType,
+  isValidUnitPoints,
   ledgerTitle,
   PRICING_DEFAULTS,
   quoteGeoWrite,
@@ -217,3 +220,4 @@ export * from './ops';
 export * from './ux-foundation';
 export * from './account-costs-ux';
 export * from './shanghai-time';
+export * from './distribution';

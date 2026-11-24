@@ -29,7 +29,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
     if (mapped.retryAfterSeconds !== undefined) {
       response.setHeader('Retry-After', String(mapped.retryAfterSeconds));
     }
-    response.status(mapped.status).json({ code: mapped.code, msg: mapped.msg, data: null });
+    response
+      .status(mapped.status)
+      .json({ code: mapped.code, msg: mapped.msg, data: mapped.data ?? null });
   }
 }
 
@@ -38,6 +40,7 @@ function mapException(exception: unknown): {
   code: number;
   msg: string;
   retryAfterSeconds?: number;
+  data?: unknown;
 } {
   if (exception instanceof ApiError) {
     return {
@@ -45,6 +48,7 @@ function mapException(exception: unknown): {
       code: exception.code,
       msg: exception.message,
       retryAfterSeconds: exception.retryAfterSeconds,
+      data: exception.data,
     };
   }
   if (isNotFound(exception)) {

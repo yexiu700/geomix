@@ -66,6 +66,10 @@ export type LoadedRunRow = Prisma.VisibilityRunGetPayload<{
   };
 }>;
 
+export type VisibilityRunCreateWithSamplingInput = ParsedVisibilityRunV2CreateInput & {
+  sampleCount?: 1 | 3;
+};
+
 @Injectable()
 export class VisibilityRunLifecycleService {
   private readonly config: VisibilityConfig;
@@ -275,7 +279,7 @@ export class VisibilityRunLifecycleService {
 
   async createRun(
     brandId: string,
-    input: ParsedVisibilityRunV2CreateInput,
+    input: VisibilityRunCreateWithSamplingInput,
     idempotencyKey: string,
     userId: string,
     queryMarket?: GeoMarket,
@@ -306,6 +310,13 @@ export class VisibilityRunLifecycleService {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少提供一条有效的监测问题');
     }
 
+    const rawSampleCount = input.sampleCount ?? 1;
+    if (rawSampleCount !== 1 && rawSampleCount !== 3) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, '采样次数仅支持 1 次或 3 次');
+    }
+    const sampleCount: 1 | 3 = rawSampleCount;
+    const expectedTotalChecks = promptList.length * engines.length * sampleCount;
+
     const triggerType: VisibilityTriggerType = input.triggerType ?? 'MANUAL';
     const retestArticleId = input.retestArticleId ?? null;
 
@@ -316,6 +327,7 @@ export class VisibilityRunLifecycleService {
       prompts: string[];
       triggerType: VisibilityTriggerType;
       retestArticleId: string | null;
+      totalChecks?: number;
     }) => {
       if (
         row.brandId !== brand.id ||
@@ -323,7 +335,8 @@ export class VisibilityRunLifecycleService {
         row.engines.join(',') !== engines.join(',') ||
         row.prompts.join('\n') !== promptList.join('\n') ||
         row.triggerType !== triggerType ||
-        (row.retestArticleId ?? null) !== retestArticleId
+        (row.retestArticleId ?? null) !== retestArticleId ||
+        (typeof row.totalChecks === 'number' && row.totalChecks !== expectedTotalChecks)
       ) {
         throw new ApiError(409, BILLING_ERROR.CONFLICT, '幂等键已被不同参数的监测任务占用');
       }
@@ -339,6 +352,7 @@ export class VisibilityRunLifecycleService {
         prompts: true,
         triggerType: true,
         retestArticleId: true,
+        totalChecks: true,
       },
     });
     if (existing) {
@@ -380,7 +394,7 @@ export class VisibilityRunLifecycleService {
     });
 
     const unitPrice = await this.billing.unitPrice('visibility_check');
-    const totalChecks = promptList.length * engines.length;
+    const totalChecks = expectedTotalChecks;
     const totalPoints = totalChecks * unitPrice;
 
     const reservation = await this.billing.reserve({
@@ -400,6 +414,7 @@ export class VisibilityRunLifecycleService {
         prompts: true,
         triggerType: true,
         retestArticleId: true,
+        totalChecks: true,
       },
     });
     if (replayedByReservation) {
@@ -439,18 +454,22 @@ export class VisibilityRunLifecycleService {
           },
         });
 
+        const sampleIndices = Array.from({ length: sampleCount }, (_, idx) => idx + 1);
         await tx.visibilityObservation.createMany({
           data: promptList.flatMap((promptText) =>
-            engines.map((engine) => ({
-              tenantId,
-              runId,
-              brandId: brand.id,
-              brandMarketId: market.id,
-              promptText,
-              engine,
-              status: 'PENDING' as const,
-              collectorKind: this.config.collector,
-            })),
+            engines.flatMap((engine) =>
+              sampleIndices.map((sampleIndex) => ({
+                tenantId,
+                runId,
+                brandId: brand.id,
+                brandMarketId: market.id,
+                promptText,
+                engine,
+                sampleIndex,
+                status: 'PENDING' as const,
+                collectorKind: this.config.collector,
+              })),
+            ),
           ),
         });
       }, TX_OPTIONS);
@@ -468,6 +487,7 @@ export class VisibilityRunLifecycleService {
             prompts: true,
             triggerType: true,
             retestArticleId: true,
+            totalChecks: true,
           },
         });
         if (!winner) {
@@ -599,6 +619,18 @@ export class VisibilityRunLifecycleService {
       await tx.visibilityObservation.updateMany({
         where: { runId, tenantId, status: 'PENDING' },
         data: { status: 'SKIPPED', checkedAt: now },
+      });
+      await tx.geoRetestSchedule.updateMany({
+        where: {
+          tenantId,
+          visibilityRunId: runId,
+          status: { in: ['PENDING', 'RUNNING'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          executedAt: now,
+          skipReason: '关联复测任务已取消',
+        },
       });
       return tx.visibilityObservation.count({
         where: { runId, tenantId, status: 'RUNNING' },

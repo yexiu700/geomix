@@ -6,9 +6,11 @@ export type FreshnessDomain =
   | 'brands'
   | 'brand-facts'
   | 'brand-media'
+  | 'channel-connections'
   | 'visibility-runs'
   | 'briefs'
   | 'articles'
+  | 'distributions'
   | 'publish-records'
   | 'points';
 

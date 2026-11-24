@@ -48,11 +48,18 @@ describe('queue rules', () => {
     expect(runProgress({ total: 0, done: 0, fail: 0, skip: 0 })).toBe(0);
   });
 
-  it('registers the 4 v2 queues and caps per-tenant concurrency', () => {
-    expect(QUEUE_NAMES).toEqual(['fact-index', 'geo-batch', 'visibility-check', 'maintenance']);
+  it('registers the 5 v2.1 queues and caps per-tenant concurrency', () => {
+    expect(QUEUE_NAMES).toEqual([
+      'fact-index',
+      'geo-batch',
+      'visibility-check',
+      'distribution',
+      'maintenance',
+    ]);
     expect(QUEUE_TENANT_LIMIT['fact-index']).toBe(2);
     expect(QUEUE_TENANT_LIMIT['geo-batch']).toBe(2);
     expect(QUEUE_TENANT_LIMIT['visibility-check']).toBe(2);
+    expect(QUEUE_TENANT_LIMIT.distribution).toBe(2);
     expect(QUEUE_TENANT_LIMIT.maintenance).toBe(1);
   });
 
@@ -66,6 +73,7 @@ describe('queue rules', () => {
     expect(config.concurrency['fact-index']).toBe(2);
     expect(config.concurrency['geo-batch']).toBe(2);
     expect(config.concurrency['visibility-check']).toBe(2);
+    expect(config.concurrency.distribution).toBe(2);
     expect(readQueueConfig({ QUEUE_FACT_INDEX_CONCURRENCY: '4' }).concurrency['fact-index']).toBe(
       4,
     );
@@ -73,6 +81,9 @@ describe('queue rules', () => {
     expect(
       readQueueConfig({ QUEUE_VISIBILITY_CONCURRENCY: '6' }).concurrency['visibility-check'],
     ).toBe(6);
+    expect(readQueueConfig({ QUEUE_DISTRIBUTION_CONCURRENCY: '4' }).concurrency.distribution).toBe(
+      4,
+    );
     expect(config.concurrency.maintenance).toBe(1);
   });
 

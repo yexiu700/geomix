@@ -14,6 +14,12 @@ import {
   type FactIndexHandler,
 } from '../brands/brand-fact-index.runner';
 import {
+  DISTRIBUTION_ENQUEUER,
+  DISTRIBUTION_HANDLER,
+  type DistributionHandler,
+  type DistributionJobData,
+} from '../distribution/distribution.runner';
+import {
   GEO_BATCH_ENQUEUER,
   GEO_BATCH_HANDLER,
   type GeoBatchHandler,
@@ -34,6 +40,8 @@ import { QueueProducer } from './queue.producer';
 import { RetryableStepError, WorkDriver } from './work-driver';
 
 export {
+  DISTRIBUTION_ENQUEUER,
+  DISTRIBUTION_HANDLER,
   FACT_INDEX_ENQUEUER,
   FACT_INDEX_HANDLER,
   GEO_BATCH_ENQUEUER,
@@ -68,6 +76,9 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(GEO_BATCH_HANDLER)
     private readonly geoBatchRunner?: GeoBatchHandler,
+    @Optional()
+    @Inject(DISTRIBUTION_HANDLER)
+    private readonly distributionRunner?: DistributionHandler,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -86,30 +97,7 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       const worker = new Worker(
         name,
         async (job) => {
-          if (name === 'visibility-check' && job.name === 'visibility-check') {
-            const visData = readPayload(job.data);
-            if (visData && this.visibilityRunner) {
-              await this.visibilityRunner.process(visData);
-            }
-            return;
-          }
-          if (name === 'fact-index' && job.name === 'fact-index') {
-            const factData = readFactIndexPayload(job.data);
-            if (factData && this.factIndexer) {
-              await this.factIndexer.process(factData);
-            }
-            return;
-          }
-          if (name === 'geo-batch' && job.name === 'geo-batch') {
-            const batchData = readGeoBatchPayload(job.data);
-            if (batchData && this.geoBatchRunner) {
-              await this.geoBatchRunner.process(batchData);
-            }
-            return;
-          }
-          const data = readPayload(job.data);
-          if (!data) return;
-          await this.driver.handle(data);
+          await this.dispatchJob(name, job);
         },
         {
           connection: this.producer.duplicate(),
@@ -153,6 +141,41 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async dispatchJob(name: string, job: { name: string; data: unknown }): Promise<void> {
+    if (name === 'visibility-check' && job.name === 'visibility-check') {
+      const visData = readPayload(job.data);
+      if (visData && this.visibilityRunner) {
+        await this.visibilityRunner.process(visData);
+      }
+      return;
+    }
+    if (name === 'fact-index' && job.name === 'fact-index') {
+      const factData = readFactIndexPayload(job.data);
+      if (factData && this.factIndexer) {
+        await this.factIndexer.process(factData);
+      }
+      return;
+    }
+    if (name === 'geo-batch' && job.name === 'geo-batch') {
+      const batchData = readGeoBatchPayload(job.data);
+      if (batchData && this.geoBatchRunner) {
+        await this.geoBatchRunner.process(batchData);
+      }
+      return;
+    }
+    if (name === 'distribution') {
+      if (job.name !== 'distribution') return;
+      const distData = readDistributionPayload(job.data);
+      if (distData && this.distributionRunner) {
+        await this.distributionRunner.process(distData);
+      }
+      return;
+    }
+    const data = readPayload(job.data);
+    if (!data) return;
+    await this.driver.handle(data);
+  }
+
   async stop(): Promise<void> {
     await Promise.all(this.workers.map((worker) => worker.close()));
     this.workers.length = 0;
@@ -188,6 +211,16 @@ export class QueueRuntime implements OnModuleInit, OnModuleDestroy {
       'orphan-files',
       { kind: 'orphan-files' },
       { repeat: { pattern: '30 3 * * *' }, jobId: 'orphan-files' },
+    );
+    await queue.add(
+      'crawl-probe-sweep',
+      { kind: 'crawl-probe-sweep' },
+      { repeat: { pattern: '*/30 * * * *' }, jobId: 'crawl-probe-sweep' },
+    );
+    await queue.add(
+      'retest-schedule-sweep',
+      { kind: 'retest-schedule-sweep' },
+      { repeat: { pattern: '*/15 * * * *' }, jobId: 'retest-schedule-sweep' },
     );
   }
 }
@@ -246,6 +279,16 @@ function readGeoBatchPayload(data: unknown): GeoBatchJobData | null {
       ? { targetFormat: raw.targetFormat as GeoBatchJobData['targetFormat'] }
       : {}),
   };
+}
+
+function readDistributionPayload(data: unknown): DistributionJobData | null {
+  if (!data || typeof data !== 'object') return null;
+  const tenantId = (data as { tenantId?: unknown }).tenantId;
+  const taskId = (data as { taskId?: unknown }).taskId;
+  if (typeof tenantId !== 'string' || typeof taskId !== 'string') return null;
+  if (!ID.test(tenantId) || !ID.test(taskId)) return null;
+  if (tenantId === 'system' || taskId === 'system') return null;
+  return { tenantId, taskId };
 }
 
 function readKind(name: string, data: unknown): string {

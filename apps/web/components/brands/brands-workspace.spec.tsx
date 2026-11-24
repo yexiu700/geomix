@@ -37,6 +37,16 @@ vi.mock('../../lib/brands', () => ({
   resolveMediaUrl: (u: string | null | undefined) => u ?? '',
 }));
 
+const listChannelConnectionsMock = vi.fn();
+
+vi.mock('../../lib/distribution', () => ({
+  listChannelConnections: (...args: unknown[]) => listChannelConnectionsMock(...args),
+  createChannelConnection: vi.fn(),
+  updateChannelConnection: vi.fn(),
+  deleteChannelConnection: vi.fn(),
+  testChannelConnection: vi.fn(),
+}));
+
 const confirmMock = vi.fn();
 const notifySuccessMock = vi.fn();
 const notifyWarningMock = vi.fn();
@@ -181,6 +191,7 @@ beforeEach(() => {
   window.sessionStorage.clear();
   useWorkspaceStore.getState().reset(window.localStorage);
   vi.clearAllMocks();
+  listChannelConnectionsMock.mockResolvedValue({ items: [] });
 });
 
 afterEach(async () => {
@@ -244,14 +255,18 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
 
     renderWorkspace();
 
-    // All 4 core fact slots and dropzone render cleanly
+    // All 4 core fact slots, dropzone, and Section 4 channel connections render cleanly
     await waitFor(() => {
       expect(screen.getByTestId('fact-slot-PRODUCT_SPECS')).toBeTruthy();
       expect(screen.getByTestId('fact-slot-DIFFERENTIATORS')).toBeTruthy();
       expect(screen.getByTestId('fact-slot-CREDENTIALS')).toBeTruthy();
       expect(screen.getByTestId('fact-slot-CASE_STUDIES')).toBeTruthy();
       expect(screen.getByTestId('brand-media-dropzone')).toBeTruthy();
+      expect(screen.getByTestId('brand-channel-connections')).toBeTruthy();
     });
+    expect(screen.getByRole('link', { name: '发布渠道' }).getAttribute('href')).toBe(
+      '#brand-section-connections',
+    );
 
     // AI extract modal: switch to 粘贴资料, run extract, apply to cards
     fireEvent.click(screen.getByTestId('fact-ai-extract-btn'));
@@ -335,6 +350,9 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       (screen.getByRole('button', { name: '保存品牌事实卡' }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect((screen.getByTestId('fact-ai-extract-btn') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId('add-channel-connection-btn') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it('renders competitor name, aliases, and normalized domain tags as visible text and isolates them on brand switch', async () => {

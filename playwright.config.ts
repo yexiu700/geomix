@@ -44,7 +44,12 @@ const sharedEnv: Record<string, string> = {
   SEARCH_PROVIDER: process.env.SEARCH_PROVIDER || 'link_list',
   FEATURE_AI_IMAGE: process.env.FEATURE_AI_IMAGE || 'true',
   FEATURE_VISIBILITY: process.env.FEATURE_VISIBILITY || 'true',
+  CREDENTIAL_ENCRYPTION_KEY:
+    process.env.CREDENTIAL_ENCRYPTION_KEY ||
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  PUBLIC_APP_URL: process.env.PUBLIC_APP_URL || baseURL,
   E2E_PUBLIC_FIXTURE_HOST: process.env.E2E_PUBLIC_FIXTURE_HOST || 'public.e2e.example',
+  E2E_FIXTURE_PORT: process.env.E2E_FIXTURE_PORT || '3099',
   E2E_MEMORY_MAX_OBJECTS: process.env.E2E_MEMORY_MAX_OBJECTS || '2000',
 };
 
