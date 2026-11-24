@@ -2,7 +2,9 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import MarketingRootPage, { metadata as rootMetadata } from '../app/(marketing)/page';
+import MarketingRootPage, {
+  generateMetadata as generateRootMetadata,
+} from '../app/(marketing)/page';
 import { HomePanel } from './home-panel';
 
 const pushMock = vi.fn();
@@ -37,6 +39,7 @@ describe('Root entry and HomePanel (#127, #380)', () => {
     const demoCta = screen.getByTestId('hero-primary-cta');
     expect(demoCta.getAttribute('href')).toBe('/demo');
 
+    const rootMetadata = generateRootMetadata();
     expect(rootMetadata.alternates?.canonical).toBeTruthy();
     const languages = rootMetadata.alternates?.languages as Record<string, string> | undefined;
     expect(languages?.en).toBeTruthy();

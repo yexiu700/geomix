@@ -57,6 +57,7 @@ jobs:
       E2E_FIXTURE_PORT: '3099'
       E2E_V2: '1'
       AUTH_CAPTCHA_MAX: '100'
+      MARKETING_LEAD_IP_RATE_LIMIT_MAX: '100'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

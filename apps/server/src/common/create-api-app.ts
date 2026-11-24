@@ -21,6 +21,7 @@ export async function createApiApp(): Promise<INestApplication> {
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0),
     credentials: true,
+    exposedHeaders: ['Retry-After'],
   });
   app.useGlobalFilters(new ApiExceptionFilter());
   app.enableShutdownHooks();

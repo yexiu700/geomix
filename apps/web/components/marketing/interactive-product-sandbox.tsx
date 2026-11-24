@@ -223,8 +223,8 @@ function AttributionSvgChart({ locale }: { locale: MarketingLocale }) {
 
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        height="auto"
+        width={width}
+        height={height}
         role="img"
         aria-label={
           isZh

@@ -2,7 +2,9 @@
 
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import MarketingZhHomePage, { metadata as zhMetadata } from '../../app/(marketing)/zh/page';
+import MarketingZhHomePage, {
+  generateMetadata as generateZhMetadata,
+} from '../../app/(marketing)/zh/page';
 import { HOME_FAQ_ITEMS } from './marketing-home-data';
 import { MarketingHomePage } from './marketing-home-page';
 
@@ -87,6 +89,7 @@ describe('MarketingHomePage (EN & ZH)', () => {
     expect(screen.getByTestId('v22-roadmap-banner').textContent).toContain('即将上线 v2.2');
 
     // Reciprocal hreflang metadata
+    const zhMetadata = generateZhMetadata();
     expect(zhMetadata.alternates?.canonical).toMatch(/\/zh$/);
     const languages = zhMetadata.alternates?.languages as Record<string, string> | undefined;
     expect(languages?.en).toMatch(/\/$/);
