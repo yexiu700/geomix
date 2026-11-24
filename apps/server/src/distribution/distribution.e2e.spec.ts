@@ -177,6 +177,7 @@ type BrandMarketRow = {
   brandId: string;
   market: 'CN' | 'GLOBAL';
   locale: string;
+  supportedLocales?: string[];
   region: string;
   localBrandName: string;
   aliases: string[];
@@ -235,6 +236,7 @@ type GeoArticleRow = {
   targetPrompt: string;
   recipe: string;
   targetFormat: string;
+  targetLocale?: string | null;
   contentMarkdown: string;
   contentHtml: string;
   schemaJsonLd: Prisma.JsonValue;
@@ -283,6 +285,7 @@ type TaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   targetUrlHint: string | null;
   variantTitle: string;
   variantSlug: string | null;
@@ -1643,6 +1646,7 @@ class InMemoryDistributionStore {
             provider: String(args.data.provider),
             mode: String(args.data.mode),
             channelLabel: String(args.data.channelLabel ?? ''),
+            targetLocale: args.data.targetLocale ?? null,
             targetUrlHint: args.data.targetUrlHint ?? null,
             variantTitle: String(args.data.variantTitle ?? ''),
             variantSlug: args.data.variantSlug ?? null,

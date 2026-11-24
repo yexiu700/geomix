@@ -9,6 +9,7 @@ import {
   evaluateGeoArticle,
   markdownToSanitizedHtml,
   replaceComplianceInTextSegments,
+  resolveEffectiveLocale,
   sanitizeRichArticleHtml,
   stripHtmlToText,
   targetFormatsForMarket,
@@ -30,6 +31,7 @@ import {
   type GeoTargetFormat,
   type PromptPreferenceInput,
   type PromptPreferenceRecord,
+  type SupportedLocale,
 } from '@geomix/shared';
 import type { RetrievedBrandFactSnippet } from '../brands/brand-fact-index.runner';
 import { BrandsService } from '../brands/brands.service';
@@ -59,6 +61,7 @@ import {
   presentGeoArticle,
   presentGeoBatchJob,
   presentPromptPreference,
+  resolveStudioTargetLocale,
 } from './studio.mapper';
 
 export type StudioAuthContext = {
@@ -106,6 +109,7 @@ export type PreparedStudioStream =
       markedBriefWriting: boolean;
       recipe: GeoRecipe;
       targetFormat: GeoTargetFormat;
+      targetLocale: SupportedLocale;
       targetPrompt: string;
       title?: string;
       outlineH2: GeoOutlineHeading[];
@@ -297,7 +301,7 @@ export class StudioService {
       });
       const evaluation = evaluateGeoArticle({
         market,
-        locale: existing.brandMarket.locale,
+        locale: existing.targetLocale ?? existing.brandMarket.locale,
         localBrandName: existing.brandMarket.localBrandName,
         category: existing.brand.category,
         localCategory: existing.brandMarket.localCategory,
@@ -374,6 +378,12 @@ export class StudioService {
     if (!targetFormatsForMarket(market).includes(targetFormat)) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标阵地形态与所选市场不匹配');
     }
+    const targetLocale = resolveStudioTargetLocale({
+      market,
+      requestedLocale: input.targetLocale,
+      brandMarketLocale: resolved.market.locale,
+      supportedLocales: resolved.market.supportedLocales,
+    });
 
     let brief: {
       id: string;
@@ -453,12 +463,17 @@ export class StudioService {
       include: { brandMarket: { select: { market: true } } },
     });
     if (existing) {
+      const existingLocale = resolveEffectiveLocale(
+        existing.targetLocale ?? resolved.market.locale,
+        market,
+      );
       if (
         existing.brandId !== resolved.brand.id ||
         existing.brandMarketId !== resolved.market.id ||
         existing.recipe !== input.recipe ||
         existing.targetFormat !== targetFormat ||
-        existing.targetPrompt !== input.targetPrompt
+        existing.targetPrompt !== input.targetPrompt ||
+        existingLocale !== targetLocale
       ) {
         throw new ApiError(
           409,
@@ -550,6 +565,7 @@ export class StudioService {
         markedBriefWriting,
         recipe: input.recipe,
         targetFormat,
+        targetLocale,
         targetPrompt: input.targetPrompt,
         title: input.title ?? brief?.suggestedTitle,
         outlineH2,
@@ -686,6 +702,7 @@ export class StudioService {
         market: prepared.market,
         recipe: prepared.recipe,
         targetFormat: prepared.targetFormat,
+        targetLocale: prepared.targetLocale,
         targetPrompt: prepared.targetPrompt,
         title: prepared.title,
         outlineH2: prepared.outlineH2,
@@ -719,6 +736,7 @@ export class StudioService {
           briefId: prepared.briefId,
           recipe: prepared.recipe,
           targetFormat: prepared.targetFormat,
+          targetLocale: prepared.targetLocale,
           title: generated.title,
           targetPrompt: prepared.targetPrompt,
           outlineJson: prepared.outlineH2 as unknown as Prisma.InputJsonValue,
@@ -869,6 +887,10 @@ export class StudioService {
           ownedDomains: article.brandMarket.ownedDomains,
           competitors: extractCompetitorNames(article.brandMarket.competitors),
         },
+        targetLocale: resolveEffectiveLocale(
+          article.targetLocale ?? article.brandMarket.locale,
+          market,
+        ),
         action: input.action,
         selectedText: input.selectedText,
         instruction: input.instruction,
@@ -905,6 +927,12 @@ export class StudioService {
     if (input.targetFormat && !targetFormatsForMarket(market).includes(input.targetFormat)) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标阵地形态与所选市场不匹配');
     }
+    const targetLocale = resolveStudioTargetLocale({
+      market,
+      requestedLocale: input.targetLocale,
+      brandMarketLocale: resolved.market.locale,
+      supportedLocales: resolved.market.supportedLocales,
+    });
 
     const assertMatchingBatchReplay = (row: {
       brandId: string;
@@ -1027,6 +1055,7 @@ export class StudioService {
           jobId: createdRow.id,
           recipe: input.recipe,
           targetFormat: input.targetFormat,
+          targetLocale,
         });
       }
       return presentGeoBatchJob(createdRow, market);

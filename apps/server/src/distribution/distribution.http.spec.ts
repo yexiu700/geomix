@@ -63,6 +63,8 @@ type BrandMarketRow = {
   tenantId: string;
   brandId: string;
   market: 'CN' | 'GLOBAL';
+  locale?: string;
+  supportedLocales?: string[];
   localBrandName: string | null;
   aliases: string[];
 };
@@ -71,6 +73,7 @@ type ArticleRow = {
   tenantId: string;
   brandId: string;
   brandMarketId: string;
+  targetLocale?: string | null;
   title: string;
   contentMarkdown: string;
   geoScore: number | null;
@@ -85,6 +88,7 @@ type ConnectionRow = {
   provider: string;
   displayName: string;
   siteBaseUrl: string;
+  targetLocale?: string | null;
   status: string;
 };
 type TaskRow = {
@@ -97,6 +101,7 @@ type TaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   targetUrlHint: string | null;
   variantTitle: string;
   variantSlug: string | null;
@@ -535,6 +540,7 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
       article: articles.get(row.articleId) ?? null,
       brand: brands.get(row.brandId) ?? null,
       brandMarket: markets.get(row.brandMarketId) ?? null,
+      connection: row.connectionId ? (connections.get(row.connectionId) ?? null) : null,
       publishRecords: [...publishRecords.values()]
         .filter((r) => r.tenantId === row.tenantId && r.distributionTaskId === row.id)
         .map((r) => ({
@@ -1491,5 +1497,317 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     expect(res.body.data.ok).toBe(false);
     expect(res.body.data.blockers.some((b) => b.code === 'COMPLIANCE_BLOCKED')).toBe(true);
     expect(res.body.data.warnings.some((w) => w.code === 'GLOBAL_CLAIM_WARNING')).toBe(true);
+  });
+
+  it('M3B (#370): runs locale-aware preflight, PATCH targetLocale + WeChat HTML re-render, and ja-JP vs Latin CJK publish gating', async () => {
+    const bmGlobal = markets.get('bm_global')!;
+    bmGlobal.locale = 'en-US';
+    bmGlobal.supportedLocales = ['en-US', 'de-DE', 'ja-JP'];
+
+    // 1. POST /articles/:id/preflight with targetLocale='ja-JP' -> Kanji+Kana passes with 0 false positives!
+    const jaPreflightOk = await req<DistributionPreflightResult>(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      {
+        targetLocale: 'ja-JP',
+        title: 'Acme ポータブル電源 2026年 検証レビュー',
+        contentMarkdown:
+          'Acme は 1200Wh の大容量と LiFePO4 バッテリーを備え、静音性と安全性を検証済みです。',
+      },
+    );
+    expect(jaPreflightOk.status).toBe(200);
+    expect(jaPreflightOk.body.data.ok).toBe(true);
+    expect(jaPreflightOk.body.data.blockers).toEqual([]);
+
+    // ja-JP with Simplified Chinese leak -> blocked with GLOBAL_CJK_LEAK
+    const jaPreflightLeak = await req<DistributionPreflightResult>(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      {
+        targetLocale: 'ja-JP',
+        title: 'Acme 评测结论',
+        contentMarkdown: '这里混入了简体中文评测结论，请尽快修正。',
+      },
+    );
+    expect(jaPreflightLeak.status).toBe(200);
+    expect(jaPreflightLeak.body.data.ok).toBe(false);
+    expect(jaPreflightLeak.body.data.blockers.some((b) => b.code === 'GLOBAL_CJK_LEAK')).toBe(true);
+
+    // de-DE with German diacritics passes, with Chinese leak blocks; cross-market zh-CN override returns 400
+    const dePreflightOk = await req<DistributionPreflightResult>(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      {
+        targetLocale: 'de-DE',
+        title: 'Acme Übersicht für Stromspeicher',
+        contentMarkdown: 'Geprüfte Kapazität von 1200Wh für zuverlässige Leistung.',
+      },
+    );
+    expect(dePreflightOk.status).toBe(200);
+    expect(dePreflightOk.body.data.ok).toBe(true);
+
+    const crossMarketPreflight = await req('POST', '/api/v2/articles/art_clean/preflight', tokenA, {
+      targetLocale: 'zh-CN',
+    });
+    expect(crossMarketPreflight.status).toBe(400);
+
+    // 2. Seed ja-JP L1 task + de-DE leaked L1 task + WeChat task
+    const now = new Date();
+    tasks.set('task_ja_ok', {
+      id: 'task_ja_ok',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_global',
+      articleId: 'art_clean',
+      connectionId: 'conn_wp_ok',
+      provider: 'WORDPRESS',
+      mode: 'L1_API',
+      channelLabel: 'WP JP',
+      targetLocale: 'ja-JP',
+      targetUrlHint: null,
+      variantTitle: 'Acme ポータブル電源 実測レビュー',
+      variantSlug: 'acme-power-station-jp',
+      variantMetaDesc:
+        'Acme ポータブル電源の検証済みスペック（1200Wh）と安全性・静音性を実測データに基づき分かりやすく解説します。',
+      variantMarkdown: 'Acme は 1200Wh の大容量と LiFePO4 バッテリーを採用しています。',
+      variantHtml: '<p>Acme は 1200Wh の大容量と LiFePO4 バッテリーを採用しています。</p>',
+      variantExtrasJson: { templateKey: 'OWNED_BLOG_SEO_GEO', targetLocale: 'ja-JP' },
+      preflightJson: { ok: true, blockers: [], warnings: [] },
+      status: 'DRAFT_VARIANT',
+      publishAsDraft: true,
+      remotePostId: null,
+      remoteAdminUrl: null,
+      remotePublishedUrl: null,
+      indexNowStatus: null,
+      lastError: null,
+      shareTokenHash: null,
+      shareExpiresAt: null,
+      shareRevokedAt: null,
+      publishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    tasks.set('task_de_leak', {
+      id: 'task_de_leak',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_global',
+      articleId: 'art_clean',
+      connectionId: 'conn_wp_ok',
+      provider: 'WORDPRESS',
+      mode: 'L1_API',
+      channelLabel: 'WP DE',
+      targetLocale: 'de-DE',
+      targetUrlHint: null,
+      variantTitle: 'Acme Testbericht',
+      variantSlug: 'acme-testbericht-de',
+      variantMetaDesc: 'Geprüfte Kapazität 1200Wh.',
+      variantMarkdown: 'Geprüfte Leistung 1200Wh. 这里混入了中文字符。',
+      variantHtml: '<p>Geprüfte Leistung 1200Wh. 这里混入了中文字符。</p>',
+      variantExtrasJson: { templateKey: 'OWNED_BLOG_SEO_GEO', targetLocale: 'de-DE' },
+      preflightJson: null,
+      status: 'DRAFT_VARIANT',
+      publishAsDraft: true,
+      remotePostId: null,
+      remoteAdminUrl: null,
+      remotePublishedUrl: null,
+      indexNowStatus: null,
+      lastError: null,
+      shareTokenHash: null,
+      shareExpiresAt: null,
+      shareRevokedAt: null,
+      publishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    markets.set('bm_cn', {
+      id: 'bm_cn',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      market: 'CN',
+      locale: 'zh-CN',
+      supportedLocales: ['zh-CN'],
+      localBrandName: 'Acme 中文',
+      aliases: [],
+    });
+    articles.set('art_cn', {
+      id: 'art_cn',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_cn',
+      targetLocale: 'zh-CN',
+      title: 'Acme 储能实测',
+      contentMarkdown: '实测容量 1200Wh。',
+      geoScore: 86,
+      complianceFlags: [],
+      brief: { matchedFactIds: ['fact_1'] },
+    });
+    tasks.set('task_wechat_edit', {
+      id: 'task_wechat_edit',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'bm_cn',
+      articleId: 'art_cn',
+      connectionId: null,
+      provider: 'WECHAT_OFFICIAL',
+      mode: 'L1_API',
+      channelLabel: '公众号草稿',
+      targetLocale: 'zh-CN',
+      targetUrlHint: null,
+      variantTitle: 'Acme 户外电源实测',
+      variantSlug: null,
+      variantMetaDesc: '实测容量 1200Wh，安全耐用。',
+      variantMarkdown: '## 初版\n\n实测容量 1200Wh。',
+      variantHtml: '<p>初版</p>',
+      variantExtrasJson: { templateKey: 'WECHAT_OFFICIAL_ARTICLE', targetLocale: 'zh-CN' },
+      preflightJson: null,
+      status: 'DRAFT_VARIANT',
+      publishAsDraft: true,
+      remotePostId: null,
+      remoteAdminUrl: null,
+      remotePublishedUrl: null,
+      indexNowStatus: null,
+      lastError: null,
+      shareTokenHash: null,
+      shareExpiresAt: null,
+      shareRevokedAt: null,
+      publishedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // 3. POST /distributions/task_ja_ok/publish -> passes preflight & enters PUBLISHING (NOT 422!)
+    const pubJa = await req<GeoDistributionTaskDto>(
+      'POST',
+      '/api/v2/distributions/task_ja_ok/publish',
+      tokenA,
+      { publishAsDraft: true },
+    );
+    expect(pubJa.status).toBe(200);
+    expect(pubJa.body.data.status).toBe('PUBLISHING');
+    expect(pubJa.body.data.targetLocale).toBe('ja-JP');
+
+    // 4. POST /distributions/task_de_leak/publish -> blocked with HTTP 422 GLOBAL_CJK_LEAK
+    const pubDeLeak = await req<{
+      ok: boolean;
+      blockers: Array<{ code: string }>;
+    }>('POST', '/api/v2/distributions/task_de_leak/publish', tokenA, { publishAsDraft: true });
+    expect(pubDeLeak.status).toBe(422);
+    expect(pubDeLeak.body.data.blockers.some((b) => b.code === 'GLOBAL_CJK_LEAK')).toBe(true);
+
+    // 5. PATCH /distributions/task_de_leak -> cleans German markdown & switches targetLocale -> passes preflight; invalid locale -> 400
+    const badPatch = await req('PATCH', '/api/v2/distributions/task_de_leak', tokenA, {
+      targetLocale: 'zh-CN',
+    });
+    expect(badPatch.status).toBe(400);
+
+    const goodPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_de_leak',
+      tokenA,
+      {
+        targetLocale: 'de-DE',
+        variantMarkdown: 'Geprüfte Leistung 1200Wh mit stabiler LiFePO4-Technik.',
+      },
+    );
+    expect(goodPatch.status).toBe(200);
+    expect(goodPatch.body.data.targetLocale).toBe('de-DE');
+    expect(goodPatch.body.data.preflightJson?.ok).toBe(true);
+
+    // 6. PATCH WeChat markdown re-renders mobile inline-styled HTML and keeps publishAsDraft=true
+    const wechatPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wechat_edit',
+      tokenA,
+      {
+        variantMarkdown: '> **核心结论**：实测 1200Wh。\n\n## 参数明细\n\n安全耐用。',
+        publishAsDraft: false,
+      },
+    );
+    expect(wechatPatch.status).toBe(200);
+    expect(wechatPatch.body.data.publishAsDraft).toBe(true);
+    expect(wechatPatch.body.data.variantHtml).toContain('<section style=');
+    expect(wechatPatch.body.data.variantHtml).toContain('<blockquote style=');
+    expect(wechatPatch.body.data.variantHtml).toContain('<h2 style=');
+
+    // 7. Iter 2 Fix 2: PATCH WeChat variantMetaDesc & variantTitle syncs variantExtrasJson.digest and clamps UTF-16 safely
+    tasks.get('task_wechat_edit')!.variantExtrasJson = {
+      templateKey: 'WECHAT_OFFICIAL_ARTICLE',
+      targetLocale: 'zh-CN',
+      digest: '旧版 AI 摘要',
+    };
+    const wechatDigestPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wechat_edit',
+      tokenA,
+      {
+        variantMetaDesc: '人工修订后的微信摘要内容',
+      },
+    );
+    expect(wechatDigestPatch.status).toBe(200);
+    expect(wechatDigestPatch.body.data.variantMetaDesc).toBe('人工修订后的微信摘要内容');
+    expect(wechatDigestPatch.body.data.variantExtrasJson.digest).toBe('人工修订后的微信摘要内容');
+
+    // Surrogate-boundary title (>64 UTF-16 units) and digest (>120 UTF-16 units) clamp without lone surrogates
+    const wechatClampPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wechat_edit',
+      tokenA,
+      {
+        variantTitle: '测'.repeat(63) + '🔥',
+        variantMetaDesc: '摘'.repeat(119) + '🔥',
+      },
+    );
+    expect(wechatClampPatch.status).toBe(200);
+    expect(wechatClampPatch.body.data.variantTitle.length).toBeLessThanOrEqual(64);
+    expect(wechatClampPatch.body.data.variantTitle).toBe('测'.repeat(63));
+    expect(wechatClampPatch.body.data.variantMetaDesc!.length).toBeLessThanOrEqual(120);
+    expect(wechatClampPatch.body.data.variantMetaDesc).toBe('摘'.repeat(119));
+    expect(wechatClampPatch.body.data.variantExtrasJson.digest).toBe('摘'.repeat(119));
+
+    // Clearing variantMetaDesc to null removes stale variantExtrasJson.digest
+    const wechatClearDigestPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wechat_edit',
+      tokenA,
+      {
+        variantMetaDesc: null,
+      },
+    );
+    expect(wechatClearDigestPatch.status).toBe(200);
+    expect(wechatClearDigestPatch.body.data.variantMetaDesc).toBeNull();
+    expect(wechatClearDigestPatch.body.data.variantExtrasJson.digest).toBeUndefined();
+    expect('digest' in wechatClearDigestPatch.body.data.variantExtrasJson).toBe(false);
+
+    // 8. Iter 2 Fix 7: supportedLocales: [] on GLOBAL (locale: 'en-US') rejects de-DE on preflight and PATCH while allowing en-US
+    bmGlobal.supportedLocales = [];
+    const emptySupportedRejectPreflight = await req(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      { targetLocale: 'de-DE' },
+    );
+    expect(emptySupportedRejectPreflight.status).toBe(400);
+
+    const emptySupportedRejectPatch = await req(
+      'PATCH',
+      '/api/v2/distributions/task_wp_clean',
+      tokenA,
+      { targetLocale: 'de-DE' },
+    );
+    expect(emptySupportedRejectPatch.status).toBe(400);
+
+    const emptySupportedAllowDefault = await req<DistributionPreflightResult>(
+      'POST',
+      '/api/v2/articles/art_clean/preflight',
+      tokenA,
+      { targetLocale: 'en-US' },
+    );
+    expect(emptySupportedAllowDefault.status).toBe(200);
   });
 });

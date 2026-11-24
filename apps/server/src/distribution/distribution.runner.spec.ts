@@ -59,6 +59,7 @@ type TaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   variantTitle: string;
   variantSlug: string | null;
   variantMetaDesc: string | null;
@@ -90,6 +91,7 @@ type ConnectionRow = {
   configJson: Record<string, unknown>;
   status: string;
   authType: string;
+  targetLocale?: string | null;
 };
 
 type PublishRecordRow = {
@@ -843,5 +845,163 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
       startSpy.mockRestore();
       stopSpy.mockRestore();
     }
+  });
+
+  it('merges variantExtrasJson.tags ahead of article.tags (deduped) and forwards targetLocale in ConnectorPublishPayload (#370)', async () => {
+    const h = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        targetLocale: 'de-DE',
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          tags: ['architecture', 'benchmarks', 'battery'],
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+        targetLocale: 'de-DE',
+      },
+    });
+    h.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_123',
+      remoteAdminUrl: 'https://dev.to/dashboard/123',
+      publishedAsDraft: true,
+    });
+
+    await h.runner.process({ tenantId: h.tenantId, taskId: 'task_1' });
+
+    expect(h.task.status).toBe('DRAFT_PUSHED');
+    const payload = h.publishMock.mock.calls[0]?.[2] as {
+      tags?: string[];
+      targetLocale?: string | null;
+    };
+    expect(payload.targetLocale).toBe('de-DE');
+    expect(payload.tags).toEqual(['architecture', 'benchmarks', 'battery', 'review']);
+  });
+
+  it('Iter 2 Fix 3: strips private/loopback/metadata SSRF canonicalUrl candidates in DistributionRunner', async () => {
+    // All candidates unsafe -> canonicalUrl resolves to null
+    const hBlocked = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://127.0.0.1/admin',
+          canonicalGuideHint: 'http://[::1]/secret',
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    (hBlocked.task as { targetUrlHint?: string | null }).targetUrlHint =
+      'http://169.254.169.254/latest/meta-data/';
+    hBlocked.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_1',
+      publishedAsDraft: true,
+    });
+
+    await hBlocked.runner.process({ tenantId: hBlocked.tenantId, taskId: 'task_1' });
+    const blockedPayload = hBlocked.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(blockedPayload.canonicalUrl).toBeNull();
+
+    // Unsafe primary canonicalUrl falls back to safe public canonicalGuideHint
+    const hFallback = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://localhost:3000/internal',
+          canonicalGuideHint: 'https://blog.acme.example/guides/battery-benchmarks',
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    hFallback.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_2',
+      publishedAsDraft: true,
+    });
+
+    await hFallback.runner.process({ tenantId: hFallback.tenantId, taskId: 'task_1' });
+    const fallbackPayload = hFallback.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(fallbackPayload.canonicalUrl).toBe(
+      'https://blog.acme.example/guides/battery-benchmarks',
+    );
+    expect(fallbackPayload.extras).not.toHaveProperty('canonicalUrl');
+    expect(fallbackPayload.extras?.canonicalGuideHint).toBe(
+      'https://blog.acme.example/guides/battery-benchmarks',
+    );
+  });
+
+  it('Iter 3 Fix 2: scrubs unsafe SSRF URL fields from publishPayload.extras before connector.publish', async () => {
+    const hBlocked = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://127.0.0.1/admin',
+          contentSourceUrl: 'http://169.254.169.254/latest/meta-data/',
+          canonicalGuideHint: 'See http://10.0.0.1/internal',
+          coverImageUrl: 'http://127.0.0.1:8080/cover.png',
+          targetThreadUrls: ['http://[::1]/x', 'https://docs.example.com/thread'],
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    hBlocked.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_extras_1',
+      publishedAsDraft: true,
+    });
+
+    await hBlocked.runner.process({ tenantId: hBlocked.tenantId, taskId: 'task_1' });
+
+    const blockedPayload = hBlocked.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(blockedPayload.canonicalUrl).toBeNull();
+    expect(blockedPayload.extras).not.toHaveProperty('canonicalUrl');
+    expect(blockedPayload.extras).not.toHaveProperty('contentSourceUrl');
+    expect(blockedPayload.extras).not.toHaveProperty('canonicalGuideHint');
+    expect(blockedPayload.extras).not.toHaveProperty('coverImageUrl');
+    expect(blockedPayload.extras?.targetThreadUrls).toEqual(['https://docs.example.com/thread']);
+
+    // Safe public URLs and safe prose hints pass through cleanly
+    const hSafe = makeRunnerHarness({
+      task: {
+        provider: 'WECHAT_OFFICIAL',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'WECHAT_OFFICIAL_ARTICLE',
+          contentSourceUrl: 'https://docs.example.com/original-guide',
+          canonicalGuideHint: 'Read full guide at https://docs.example.com/original-guide.',
+          coverImageUrl: 'https://cdn.example.com/cover.png',
+          targetThreadUrls: ['https://docs.example.com/thread-1'],
+        },
+      },
+      connection: {
+        provider: 'WECHAT_OFFICIAL',
+      },
+    });
+    hSafe.publishMock.mockResolvedValueOnce({
+      remotePostId: 'wx_safe_1',
+      publishedAsDraft: true,
+    });
+
+    await hSafe.runner.process({ tenantId: hSafe.tenantId, taskId: 'task_1' });
+
+    const safePayload = hSafe.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(safePayload.canonicalUrl).toBe('https://docs.example.com/original-guide');
+    expect(safePayload.extras?.contentSourceUrl).toBe('https://docs.example.com/original-guide');
+    expect(safePayload.extras?.canonicalGuideHint).toBe(
+      'Read full guide at https://docs.example.com/original-guide.',
+    );
+    expect(safePayload.extras?.coverImageUrl).toBe('https://cdn.example.com/cover.png');
+    expect(safePayload.extras?.targetThreadUrls).toEqual(['https://docs.example.com/thread-1']);
   });
 });

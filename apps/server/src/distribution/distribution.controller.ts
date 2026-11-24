@@ -17,6 +17,7 @@ import {
   API_ERROR,
   AccountQueryError,
   CHANNEL_PROVIDERS,
+  SUPPORTED_LOCALE_CODES,
   createDistributionVariantsSchema,
   createPrShareLinkSchema,
   ok,
@@ -39,6 +40,7 @@ const articlePreflightBodySchema = z
     title: z.string().trim().max(300).optional(),
     contentMarkdown: z.string().max(150_000).optional(),
     provider: z.enum(CHANNEL_PROVIDERS).nullable().optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).nullable().optional(),
     variantSlug: z.string().trim().max(160).nullable().optional(),
     variantMetaDesc: z.string().trim().max(320).nullable().optional(),
   })

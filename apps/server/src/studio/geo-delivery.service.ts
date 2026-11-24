@@ -217,7 +217,7 @@ export class GeoDeliveryService {
 
     const evaluation = evaluateGeoArticle({
       market,
-      locale: article.brandMarket.locale,
+      locale: article.targetLocale || article.brandMarket.locale,
       localBrandName: article.brandMarket.localBrandName,
       category: article.brand.category,
       localCategory: article.brandMarket.localCategory,
@@ -277,6 +277,7 @@ export class GeoDeliveryService {
       contentText: stripHtmlToText(article.contentHtml || article.contentMarkdown),
       contentMarkdown: article.contentMarkdown,
       locale:
+        article.targetLocale ||
         article.brandMarket?.locale ||
         (article.brandMarket?.market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
       createdAt: article.createdAt.toISOString(),

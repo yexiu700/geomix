@@ -1,11 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import {
-  isL1ChannelProvider,
-  isSafeDistributionHttpUrl,
-  type ChannelConnectionConfig,
-  type GeoMarket,
-} from '@geomix/shared';
+import { isL1ChannelProvider, type ChannelConnectionConfig, type GeoMarket } from '@geomix/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeoDeliveryService } from '../studio/geo-delivery.service';
 import { runInTenant } from '../tenant/tenant-context';
@@ -19,6 +14,7 @@ import {
   type ConnectorSecrets,
 } from './connectors/types';
 import { IndexNowService } from './indexnow.service';
+import { isSafePublicDistributionUrl, sanitizeCanonicalGuideHint } from './variant-templates';
 
 export const DISTRIBUTION_HANDLER = Symbol('DISTRIBUTION_HANDLER');
 export const DISTRIBUTION_ENQUEUER = Symbol('DISTRIBUTION_ENQUEUER');
@@ -58,6 +54,42 @@ function stripInternalExtras(raw: Record<string, unknown>): Record<string, unkno
     out[key] = value;
   }
   return out;
+}
+
+function sanitizeDistributionExtras(raw: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = stripInternalExtras(raw);
+
+  for (const urlField of ['canonicalUrl', 'contentSourceUrl', 'coverImageUrl'] as const) {
+    if (urlField in sanitized) {
+      const value = sanitized[urlField];
+      if (typeof value === 'string' && isSafePublicDistributionUrl(value.trim())) {
+        sanitized[urlField] = value.trim();
+      } else {
+        delete sanitized[urlField];
+      }
+    }
+  }
+
+  if ('canonicalGuideHint' in sanitized) {
+    const safeHint = sanitizeCanonicalGuideHint(sanitized.canonicalGuideHint);
+    if (safeHint) {
+      sanitized.canonicalGuideHint = safeHint;
+    } else {
+      delete sanitized.canonicalGuideHint;
+    }
+  }
+
+  if ('targetThreadUrls' in sanitized) {
+    if (Array.isArray(sanitized.targetThreadUrls)) {
+      sanitized.targetThreadUrls = sanitized.targetThreadUrls
+        .filter((u): u is string => typeof u === 'string' && isSafePublicDistributionUrl(u.trim()))
+        .map((u) => u.trim());
+    } else {
+      delete sanitized.targetThreadUrls;
+    }
+  }
+
+  return sanitized;
 }
 
 /**
@@ -147,7 +179,7 @@ export class DistributionRunner implements DistributionHandler {
         };
 
         const rawExtras = asPlainObject(task.variantExtrasJson);
-        const sanitizedExtras = stripInternalExtras(rawExtras);
+        const sanitizedExtras = sanitizeDistributionExtras(rawExtras);
         const schemaJsonLd =
           asNonEmptyPlainObject(rawExtras.schemaJsonLd) ??
           asNonEmptyPlainObject(task.article.schemaJsonLd);
@@ -156,14 +188,27 @@ export class DistributionRunner implements DistributionHandler {
             ? rawExtras.llmsTxtSnippet
             : (task.article.llmsTxtSnippet ?? null);
         const canonicalUrl =
-          [rawExtras.canonicalUrl, task.targetUrlHint, rawExtras.canonicalGuideHint]
+          [
+            sanitizedExtras.canonicalUrl,
+            task.targetUrlHint,
+            sanitizedExtras.contentSourceUrl,
+            sanitizedExtras.canonicalGuideHint,
+          ]
             .find(
               (candidate): candidate is string =>
-                typeof candidate === 'string' && isSafeDistributionHttpUrl(candidate.trim()),
+                typeof candidate === 'string' && isSafePublicDistributionUrl(candidate.trim()),
             )
             ?.trim() ?? null;
         const effectivePublishAsDraft =
           task.provider === 'WECHAT_OFFICIAL' ? true : task.publishAsDraft;
+
+        const extraTags = Array.isArray(rawExtras.tags)
+          ? rawExtras.tags.filter(
+              (item): item is string => typeof item === 'string' && item.trim().length > 0,
+            )
+          : [];
+        const articleTags = Array.isArray(task.article.tags) ? task.article.tags : [];
+        const mergedTags = [...new Set([...extraTags, ...articleTags])];
 
         const publishPayload: ConnectorPublishPayload = {
           taskId: task.id,
@@ -176,7 +221,7 @@ export class DistributionRunner implements DistributionHandler {
           markdown: task.variantMarkdown,
           html: task.variantHtml,
           publishAsDraft: effectivePublishAsDraft,
-          tags: Array.isArray(task.article.tags) ? task.article.tags : [],
+          tags: mergedTags,
           targetId: typeof rawExtras.targetId === 'string' ? rawExtras.targetId : null,
           schemaJsonLd,
           llmsTxtSnippet,

@@ -6,16 +6,21 @@ import {
   AUTH_ERROR,
   BILLING_ERROR,
   DEFAULT_PR_SHARE_TTL_DAYS,
+  DISTRIBUTION_TEMPLATE_KEYS,
+  defaultTemplateKeyForProvider,
   evaluateDistributionPreflight,
   extractPlainTextFromHtml,
   isL1ChannelProvider,
-  markdownToSanitizedHtml,
+  isSupportedLocale,
   parseEnv,
+  resolveEffectiveLocale,
   sanitizeRichArticleHtml,
+  supportedLocalesForMarket,
   type ChannelProvider,
   type CreateDistributionVariantsInput,
   type CreatePrShareLinkInput,
   type DistributionPreflightResult,
+  type DistributionTemplateKey,
   type GeoComplianceFlag,
   type GeoDistributionTaskDto,
   type GeoMarket,
@@ -24,6 +29,7 @@ import {
   type GeoVariantJobDto,
   type PublishDistributionTaskInput,
   type RetestScheduleConfigInput,
+  type SupportedLocale,
   type UpdateDistributionTaskInput,
 } from '@geomix/shared';
 import { QuotaService } from '../billing/quota.service';
@@ -47,6 +53,12 @@ import {
   presentDistributionTask,
   type GenerateVariantsResult,
 } from './variant-generator.service';
+import {
+  WECHAT_DIGEST_MAX_LEN,
+  WECHAT_TITLE_MAX_LEN,
+  renderVariantHtml,
+  sliceUtf16Safe,
+} from './variant-templates';
 
 const DEFAULT_DISTRIBUTION_PREFLIGHT_MAX = 60;
 
@@ -73,9 +85,65 @@ export type ArticlePreflightOverrides = {
   title?: string;
   contentMarkdown?: string;
   provider?: ChannelProvider | null;
+  targetLocale?: SupportedLocale | null;
   variantSlug?: string | null;
   variantMetaDesc?: string | null;
 };
+
+const TEMPLATE_KEY_SET = new Set<string>(DISTRIBUTION_TEMPLATE_KEYS);
+
+function validateLocaleForBrandMarket(
+  locale: string,
+  market: GeoMarket,
+  brandMarketLocale?: string | null,
+  supportedLocales?: readonly string[] | null,
+): SupportedLocale {
+  const trimmed = locale.trim();
+  const marketAllowed = supportedLocalesForMarket(market);
+  const marketAllowedSet = new Set<string>(marketAllowed);
+  if (!isSupportedLocale(trimmed)) {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, `不支持的目标语种：${trimmed}`);
+  }
+  const normalizedLocale = trimmed as SupportedLocale;
+  if (!marketAllowedSet.has(normalizedLocale)) {
+    throw new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      `目标语种 ${normalizedLocale} 与当前市场（${market}）不匹配`,
+    );
+  }
+  const brandMarketDefaultLocale = resolveEffectiveLocale(brandMarketLocale, market);
+  const configured: SupportedLocale[] = [];
+  for (const loc of supportedLocales ?? []) {
+    if (isSupportedLocale(loc)) {
+      const normalized = loc.trim() as SupportedLocale;
+      if (marketAllowedSet.has(normalized) && !configured.includes(normalized)) {
+        configured.push(normalized);
+      }
+    }
+  }
+  const effectiveSupportedLocales: SupportedLocale[] =
+    configured.length > 0 ? configured : [brandMarketDefaultLocale];
+  if (!effectiveSupportedLocales.includes(normalizedLocale)) {
+    throw new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      `目标语种 ${normalizedLocale} 未在当前品牌市场支持的语种范围内`,
+    );
+  }
+  return normalizedLocale;
+}
+
+function resolveStoredTemplateKey(
+  rawExtras: Prisma.JsonValue | null | undefined,
+  provider: ChannelProvider,
+): DistributionTemplateKey {
+  const rec = asJsonRecord(rawExtras);
+  if (typeof rec.templateKey === 'string' && TEMPLATE_KEY_SET.has(rec.templateKey)) {
+    return rec.templateKey as DistributionTemplateKey;
+  }
+  return defaultTemplateKeyForProvider(provider);
+}
 
 export type GeoDistributionTaskWithRecordsDto = GeoDistributionTaskDto & {
   publishRecords: GeoPublishRecordDto[];
@@ -263,6 +331,8 @@ export class DistributionService {
         brandMarket: {
           select: {
             market: true,
+            locale: true,
+            supportedLocales: true,
             localBrandName: true,
             aliases: true,
           },
@@ -280,6 +350,19 @@ export class DistributionService {
     }
 
     const market: GeoMarket = article.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+    const overrideLocale = overrides?.targetLocale
+      ? validateLocaleForBrandMarket(
+          overrides.targetLocale,
+          market,
+          article.brandMarket.locale,
+          article.brandMarket.supportedLocales,
+        )
+      : null;
+    const effectiveTargetLocale = resolveEffectiveLocale(
+      overrideLocale ?? article.targetLocale ?? article.brandMarket.locale,
+      market,
+    );
+
     const title = overrides?.title !== undefined ? overrides.title : article.title;
     const contentMarkdown =
       overrides?.contentMarkdown !== undefined
@@ -314,6 +397,7 @@ export class DistributionService {
 
     return evaluateDistributionPreflight({
       market,
+      targetLocale: effectiveTargetLocale,
       title,
       contentMarkdown,
       brandNames,
@@ -396,6 +480,7 @@ export class DistributionService {
         article: {
           select: {
             geoScore: true,
+            targetLocale: true,
             complianceFlags: true,
             brief: { select: { matchedFactIds: true } },
           },
@@ -409,8 +494,15 @@ export class DistributionService {
         brandMarket: {
           select: {
             market: true,
+            locale: true,
+            supportedLocales: true,
             localBrandName: true,
             aliases: true,
+          },
+        },
+        connection: {
+          select: {
+            targetLocale: true,
           },
         },
       },
@@ -441,35 +533,93 @@ export class DistributionService {
       }
     }
 
-    if (input.connectionId !== undefined && input.connectionId !== null) {
-      if (!isL1ChannelProvider(existing.provider)) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '仅 L1 API 渠道任务可绑定站点连接');
-      }
-      const conn = await this.prisma.scoped.channelConnection.findFirst({
-        where: { id: input.connectionId },
-      });
-      if (!conn) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '渠道连接不存在或无权访问');
-      }
-      if (conn.brandId !== existing.brandId || conn.brandMarketId !== existing.brandMarketId) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接与当前文章的品牌市场不匹配');
-      }
-      if (conn.provider !== existing.provider) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与分发任务渠道不一致');
-      }
-      if (conn.status !== 'ACTIVE') {
-        throw new ApiError(
-          400,
-          API_ERROR.BAD_REQUEST,
-          '该渠道连接当前不可用，请先在品牌管理中测试并启用连接',
-        );
+    let nextConnLocale: string | null | undefined = existing.connection?.targetLocale;
+    if (input.connectionId !== undefined) {
+      if (input.connectionId === null) {
+        nextConnLocale = null;
+      } else {
+        if (!isL1ChannelProvider(existing.provider)) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '仅 L1 API 渠道任务可绑定站点连接');
+        }
+        const conn = await this.prisma.scoped.channelConnection.findFirst({
+          where: { id: input.connectionId },
+        });
+        if (!conn) {
+          throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '渠道连接不存在或无权访问');
+        }
+        if (conn.brandId !== existing.brandId || conn.brandMarketId !== existing.brandMarketId) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接与当前文章的品牌市场不匹配');
+        }
+        if (conn.provider !== existing.provider) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与分发任务渠道不一致');
+        }
+        if (conn.status !== 'ACTIVE') {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            '该渠道连接当前不可用，请先在品牌管理中测试并启用连接',
+          );
+        }
+        nextConnLocale = conn.targetLocale ?? null;
       }
     }
 
-    const nextTitle = input.variantTitle !== undefined ? input.variantTitle : existing.variantTitle;
+    const market: GeoMarket = existing.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+    let validatedInputLocale: SupportedLocale | null | undefined = undefined;
+    if (input.targetLocale !== undefined) {
+      validatedInputLocale =
+        input.targetLocale === null
+          ? null
+          : validateLocaleForBrandMarket(
+              input.targetLocale,
+              market,
+              existing.brandMarket.locale,
+              existing.brandMarket.supportedLocales,
+            );
+    }
+
+    const nextTargetLocale =
+      validatedInputLocale !== undefined ? validatedInputLocale : (existing.targetLocale ?? null);
+    const effectiveTargetLocale = resolveEffectiveLocale(
+      nextTargetLocale ??
+        nextConnLocale ??
+        existing.article.targetLocale ??
+        existing.brandMarket.locale,
+      market,
+    );
+
+    const storedTemplateKey = resolveStoredTemplateKey(
+      existing.variantExtrasJson,
+      existing.provider as ChannelProvider,
+    );
+    const isWechatTask =
+      existing.provider === 'WECHAT_OFFICIAL' || storedTemplateKey === 'WECHAT_OFFICIAL_ARTICLE';
+
+    let normalizedInputTitle: string | undefined;
+    if (input.variantTitle !== undefined) {
+      normalizedInputTitle = isWechatTask
+        ? sliceUtf16Safe(input.variantTitle.trim(), WECHAT_TITLE_MAX_LEN).trim() ||
+          existing.variantTitle
+        : input.variantTitle;
+    }
+
+    let normalizedInputMetaDesc: string | null | undefined;
+    if (input.variantMetaDesc !== undefined) {
+      if (input.variantMetaDesc === null) {
+        normalizedInputMetaDesc = null;
+      } else if (isWechatTask) {
+        const clamped = sliceUtf16Safe(input.variantMetaDesc.trim(), WECHAT_DIGEST_MAX_LEN).trim();
+        normalizedInputMetaDesc = clamped.length > 0 ? clamped : null;
+      } else {
+        normalizedInputMetaDesc = input.variantMetaDesc;
+      }
+    }
+
+    const nextTitle =
+      normalizedInputTitle !== undefined ? normalizedInputTitle : existing.variantTitle;
     const nextSlug = input.variantSlug !== undefined ? input.variantSlug : existing.variantSlug;
     const nextMetaDesc =
-      input.variantMetaDesc !== undefined ? input.variantMetaDesc : existing.variantMetaDesc;
+      normalizedInputMetaDesc !== undefined ? normalizedInputMetaDesc : existing.variantMetaDesc;
     const nextMarkdown =
       input.variantMarkdown !== undefined ? input.variantMarkdown : existing.variantMarkdown;
 
@@ -477,10 +627,9 @@ export class DistributionService {
     if (input.variantHtml !== undefined) {
       nextHtml = sanitizeRichArticleHtml(input.variantHtml).contentHtml;
     } else if (input.variantMarkdown !== undefined) {
-      nextHtml = markdownToSanitizedHtml(input.variantMarkdown);
+      nextHtml = renderVariantHtml(input.variantMarkdown, storedTemplateKey);
     }
 
-    const market: GeoMarket = existing.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
     const brandNames = collectBrandNames(
       existing.brand.name,
       existing.brandMarket.localBrandName,
@@ -503,6 +652,7 @@ export class DistributionService {
 
     const preflight = evaluateDistributionPreflight({
       market,
+      targetLocale: effectiveTargetLocale,
       title: nextTitle,
       contentMarkdown: nextMarkdown,
       variantHtml: effectiveHtml,
@@ -519,14 +669,28 @@ export class DistributionService {
       preflightJson: preflight as unknown as Prisma.InputJsonValue,
     };
 
-    if (input.variantTitle !== undefined) data.variantTitle = input.variantTitle;
+    if (normalizedInputTitle !== undefined) data.variantTitle = normalizedInputTitle;
     if (input.variantSlug !== undefined) data.variantSlug = input.variantSlug;
-    if (input.variantMetaDesc !== undefined) data.variantMetaDesc = input.variantMetaDesc;
+    if (normalizedInputMetaDesc !== undefined) {
+      data.variantMetaDesc = normalizedInputMetaDesc;
+      if (isWechatTask) {
+        const nextExtras = { ...asJsonRecord(existing.variantExtrasJson) };
+        if (normalizedInputMetaDesc !== null) {
+          nextExtras.digest = normalizedInputMetaDesc;
+        } else {
+          delete nextExtras.digest;
+        }
+        data.variantExtrasJson = nextExtras as Prisma.InputJsonValue;
+      }
+    }
     if (input.variantMarkdown !== undefined) data.variantMarkdown = input.variantMarkdown;
     if (nextHtml !== undefined) data.variantHtml = nextHtml;
     if (input.channelLabel !== undefined) data.channelLabel = input.channelLabel;
     if (input.targetUrlHint !== undefined) data.targetUrlHint = input.targetUrlHint;
-    if (input.publishAsDraft !== undefined) data.publishAsDraft = input.publishAsDraft;
+    if (validatedInputLocale !== undefined) data.targetLocale = validatedInputLocale;
+    if (input.publishAsDraft !== undefined) {
+      data.publishAsDraft = existing.provider === 'WECHAT_OFFICIAL' ? true : input.publishAsDraft;
+    }
     if (input.connectionId !== undefined) data.connectionId = input.connectionId;
     if (input.status !== undefined) data.status = input.status;
     if (input.status === 'ARCHIVED' && existing.shareTokenHash && existing.shareRevokedAt == null) {
@@ -553,6 +717,7 @@ export class DistributionService {
         article: {
           select: {
             geoScore: true,
+            targetLocale: true,
             complianceFlags: true,
             brief: { select: { matchedFactIds: true } },
           },
@@ -566,6 +731,7 @@ export class DistributionService {
         brandMarket: {
           select: {
             market: true,
+            locale: true,
             localBrandName: true,
             aliases: true,
           },
@@ -648,6 +814,13 @@ export class DistributionService {
 
     // 4. 实时发布前硬校验（默认 422 阻断，附带结构化 blockers/warnings/preflight）
     const market: GeoMarket = task.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+    const effectiveTargetLocale = resolveEffectiveLocale(
+      task.targetLocale ??
+        conn.targetLocale ??
+        task.article.targetLocale ??
+        task.brandMarket.locale,
+      market,
+    );
     const brandNames = collectBrandNames(
       task.brand.name,
       task.brandMarket.localBrandName,
@@ -671,6 +844,7 @@ export class DistributionService {
 
     const preflight = evaluateDistributionPreflight({
       market,
+      targetLocale: effectiveTargetLocale,
       title: task.variantTitle,
       contentMarkdown: task.variantMarkdown,
       variantHtml: task.variantHtml,

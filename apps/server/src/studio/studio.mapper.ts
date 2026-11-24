@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
+  API_ERROR,
   CHANNEL_PROVIDERS,
   CONFIDENCE_LEVELS,
   CRAWL_PROBE_STATUSES,
@@ -8,6 +9,8 @@ import {
   computeWilsonInterval,
   crawlProbeReportSchema,
   differenceInDifferencesSchema,
+  isSupportedLocale,
+  supportedLocalesForMarket,
   wilsonIntervalSchema,
   type ChannelProvider,
   type ConfidenceLevel,
@@ -30,8 +33,67 @@ import {
   type RetestMetricSnapshot,
   type RetestSampleCount,
   type RetestScheduleStatus,
+  type SupportedLocale,
   type TaskStatusName,
 } from '@geomix/shared';
+import { ApiError } from '../common/api-error';
+
+export function resolveStudioTargetLocale(params: {
+  market: GeoMarket;
+  requestedLocale?: string | null;
+  brandMarketLocale?: string | null;
+  supportedLocales?: readonly string[] | null;
+}): SupportedLocale {
+  const marketAllowed = supportedLocalesForMarket(params.market);
+  const marketAllowedSet = new Set<string>(marketAllowed);
+
+  const fallbackLocale: SupportedLocale =
+    params.market === 'CN'
+      ? 'zh-CN'
+      : isSupportedLocale(params.brandMarketLocale) &&
+          marketAllowedSet.has(params.brandMarketLocale.trim())
+        ? (params.brandMarketLocale.trim() as SupportedLocale)
+        : 'en-US';
+
+  const dedupedSupported: SupportedLocale[] = [];
+  for (const item of params.supportedLocales ?? []) {
+    if (isSupportedLocale(item)) {
+      const normalized = item.trim() as SupportedLocale;
+      if (marketAllowedSet.has(normalized) && !dedupedSupported.includes(normalized)) {
+        dedupedSupported.push(normalized);
+      }
+    }
+  }
+  const effectiveSupportedLocales: SupportedLocale[] =
+    dedupedSupported.length > 0 ? dedupedSupported : [fallbackLocale];
+
+  const requestedRaw =
+    typeof params.requestedLocale === 'string' ? params.requestedLocale.trim() : '';
+  if (requestedRaw.length > 0) {
+    if (!isSupportedLocale(requestedRaw)) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, `不支持的目标语种：${requestedRaw}`);
+    }
+    if (!marketAllowedSet.has(requestedRaw)) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `目标语种 ${requestedRaw} 与当前市场（${params.market}）不匹配`,
+      );
+    }
+    if (!effectiveSupportedLocales.includes(requestedRaw)) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `该品牌市场尚未开启目标语种 ${requestedRaw}，请先在品牌设置中启用`,
+      );
+    }
+    return requestedRaw;
+  }
+
+  return effectiveSupportedLocales.includes(fallbackLocale)
+    ? fallbackLocale
+    : (effectiveSupportedLocales[0] ?? fallbackLocale);
+}
 
 export function deriveGeoArticleId(tenantId: string, idempotencyKey: string): string {
   const hash = createHash('sha256').update(`${tenantId}::article::${idempotencyKey}`).digest('hex');
@@ -124,6 +186,7 @@ export type GeoArticleRowWithMarket = {
   batchJobId: string | null;
   recipe: string;
   targetFormat: string;
+  targetLocale?: string | null;
   title: string;
   targetPrompt: string;
   outlineJson: Prisma.JsonValue;
@@ -159,6 +222,9 @@ export function presentGeoArticle(
     batchJobId: row.batchJobId,
     recipe: row.recipe as GeoRecipe,
     targetFormat: row.targetFormat as GeoTargetFormat,
+    targetLocale: isSupportedLocale(row.targetLocale)
+      ? (row.targetLocale.trim() as SupportedLocale)
+      : null,
     title: row.title,
     targetPrompt: row.targetPrompt,
     outlineJson: normalizeOutlineJson(row.outlineJson),
