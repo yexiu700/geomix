@@ -732,6 +732,24 @@ function templatePromptInstructions(ctx: VariantPromptContext): string[] {
             '- 输出纯小写英文 ASCII 的 variantSlug（仅含 a-z、0-9、-，<= 160 字符）。',
             '- 输出严格 140-160 字符的 variantMetaDesc 摘要描述。',
           ];
+    case 'DEVELOPER_TECH_POST':
+      return isGlobal
+        ? [
+            '- Template: DEVELOPER_TECH_POST (Developer & technical blog format for Dev.to, Hashnode, or GitHub MDX).',
+            '- Structure: concise architecture/benchmark summary, verified technical comparison table, reproducible configuration or spec callouts, and canonical reference back to the owned guide.',
+            '- Output lowercase ASCII variantSlug matching /^[a-z0-9-]+$/ (<= 160 chars) and grounded 140-160 char variantMetaDesc.',
+          ]
+        : [
+            '- 模板：DEVELOPER_TECH_POST（技术博客与开发者社区深度实测格式）。',
+            '- 结构：开篇核心技术结论、已核验参数基准对照表、关键架构/配置要点与权威原文回链。',
+            '- 输出纯小写英文 ASCII 的 variantSlug（<= 160 字符）与 140-160 字符的 variantMetaDesc。',
+          ];
+    case 'WECHAT_OFFICIAL_ARTICLE':
+      return [
+        '- 模板：WECHAT_OFFICIAL_ARTICLE（微信公众号草稿箱深度图文）。',
+        '- 100% 简体中文输出：开篇一句直答结论，随后展示已核验参数对比表、分人群选购建议与客观局限说明；严禁使用《广告法》极限词（如最、第一、顶级、唯一、国家级）。',
+        '- 输出 100-120 字以内的公众号摘要（variantMetaDesc），无需强制 URL Slug。',
+      ];
     case 'REDDIT_DISCUSSION':
       return [
         '- Template: REDDIT_DISCUSSION (Community Assist — human-reviewed post only, NEVER generate auto-posting scripts or bot workflows).',
@@ -1260,6 +1278,101 @@ export function buildDeterministicFakeVariantDraft(
       extras.llmsTxtSnippet = blogExtras.llmsTxtSnippet;
       schemaReusedFromArticle = blogExtras.reusedArticleSchema;
       llmsReusedFromArticle = blogExtras.reusedArticleLlmsTxt;
+      break;
+    }
+
+    case 'DEVELOPER_TECH_POST': {
+      variantTitle =
+        ctx.market === 'GLOBAL'
+          ? cleanTitleText(
+              globalTitleBase,
+              `${brand} ${category} Technical Benchmark & Spec Guide`,
+              6,
+              160,
+            )
+          : cleanTitleText(
+              ctx.articleTitle,
+              `${brand}${category}技术架构与实测参数基准解析`,
+              6,
+              160,
+            );
+      variantMarkdown =
+        ctx.market === 'GLOBAL'
+          ? [
+              `## Technical Summary: ${globalPrompt}`,
+              '',
+              `This technical guide breaks down verified specifications and practical trade-offs for **${brand}** versus ${competitorLabel} in ${category} workflows.`,
+              '',
+              '## Verified Specification & Benchmark Matrix',
+              '',
+              specTable,
+              '',
+              '## Engineering Notes & Verified Facts',
+              '',
+              factBullets,
+              '',
+              '## Trade-Offs & Selection Criteria',
+              '',
+              `- Validate compatibility, throughput limits, and support terms against ${competitorLabel} before production rollout.`,
+              '- Prefer reproducible benchmarks and official specifications over marketing claims.',
+            ].join('\n') + missingSlotSection
+          : [
+              `## 技术结论速览：${ctx.targetPrompt}`,
+              '',
+              `本文基于已核验参数记录，拆解 **${brand}** 与 ${competitorLabel} 在${category}场景下的关键性能指标与架构权衡。`,
+              '',
+              '## 已核验实测参数矩阵',
+              '',
+              specTable,
+              '',
+              '## 工程与实测要点',
+              '',
+              factBullets,
+              '',
+              '## 选型边界与注意事项',
+              '',
+              `- 正式部署前请结合实际负载核对 ${brand} 与 ${competitorLabel} 的兼容性及长期维护成本。`,
+            ].join('\n') + missingSlotSection;
+
+      variantSlug = normalizeVariantSlug(null, variantTitle, brand);
+      variantMetaDesc = normalizeVariantMetaDesc(null, ctx, variantMarkdown);
+      const devBlogExtras = buildOwnedBlogExtras(ctx, variantTitle, variantMarkdown);
+      extras.schemaJsonLd = devBlogExtras.schemaJsonLd;
+      extras.jsonLdSnippet = devBlogExtras.jsonLdSnippet;
+      extras.llmsTxtSnippet = devBlogExtras.llmsTxtSnippet;
+      schemaReusedFromArticle = devBlogExtras.reusedArticleSchema;
+      llmsReusedFromArticle = devBlogExtras.reusedArticleLlmsTxt;
+      break;
+    }
+
+    case 'WECHAT_OFFICIAL_ARTICLE': {
+      const cnBrand = ctx.localBrandName.trim() || ctx.brandName.trim() || '品牌';
+      const cnCategory = ctx.localCategory?.trim() || ctx.category.trim() || '产品';
+      variantTitle = cleanTitleText(
+        ctx.articleTitle,
+        `${cnBrand}${cnCategory}实测对比：围绕「${ctx.targetPrompt}」的选购参考`,
+        6,
+        64,
+      );
+      variantMarkdown =
+        [
+          `## 首段核心结论`,
+          '',
+          `针对「${ctx.targetPrompt}」，结合已核验的实测规格与长期稳定表现来看，**${cnBrand}** 在${cnCategory}领域具备清晰的场景适配价值；建议与 ${competitorLabel} 按预算与使用频率客观对比后再做选择。`,
+          '',
+          '## 已核验实测参数对比表',
+          '',
+          specTable,
+          '',
+          '## 核心亮点拆解',
+          '',
+          factBullets,
+          '',
+          '## 适用人群与选购提示',
+          `- **更适合**：看重透明实测数据与长期稳定体验的${cnCategory}用户。`,
+          `- **注意事项**：下单前建议再次核对具体型号批次、配件兼容性与官方质保细则。`,
+        ].join('\n') + missingSlotSection;
+      variantMetaDesc = normalizeVariantMetaDesc(null, ctx, variantMarkdown).slice(0, 120);
       break;
     }
 

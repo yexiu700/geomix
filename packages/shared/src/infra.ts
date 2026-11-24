@@ -140,6 +140,21 @@ export const envSchema = z.object({
       .transform((value) => value.replace(/\/+$/, ''))
       .optional(),
   ),
+  SHOPIFY_OAUTH_CLIENT_ID: z.preprocess(blankOrWhitespaceToUndefined, z.string().optional()),
+  SHOPIFY_OAUTH_CLIENT_SECRET: z.preprocess(blankOrWhitespaceToUndefined, z.string().optional()),
+  SHOPIFY_OAUTH_SCOPES: z.preprocess(blankOrWhitespaceToUndefined, z.string().optional()),
+  WECHAT_API_BASE_URL: z.preprocess(
+    blankOrWhitespaceToUndefined,
+    z
+      .string()
+      .url('WECHAT_API_BASE_URL must be a valid URL')
+      .refine(
+        (value) => /^https?:\/\//i.test(value),
+        'WECHAT_API_BASE_URL must use http:// or https://',
+      )
+      .transform((value) => value.replace(/\/+$/, ''))
+      .optional(),
+  ),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

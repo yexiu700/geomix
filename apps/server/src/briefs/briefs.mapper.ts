@@ -1035,6 +1035,12 @@ function buildChineseDiagnosisSummary(
       const fanLabel = ctx.targetFanOuts.slice(0, 3).join('、') || displayPrompt;
       return `监测发现 AI 在回答时高频拆解「${fanLabel}」等长尾子词，当前缺少聚合覆盖这些细分意图的专题权威稿。${citationNote}`;
     }
+    case 'NEAR_MISS_BOOST': {
+      const targetHint = ctx.sourceCitationUrl
+        ? `既有页面（${safeHostFromUrl(ctx.sourceCitationUrl)}）`
+        : '候选相关页面';
+      return `在「${displayPrompt}」问题下，${engineLabel}已检索或读取 ${targetHint} 但尚未纳入最终引文，需补充首段直答、量化实测对比表与结构化 FAQ 完成临门一脚补强。${citationNote}`;
+    }
     case 'MANUAL':
     default:
       return `围绕「${displayPrompt}」定向策划 ${ctx.localBrandName}（${ctx.category}）GEO 权威内容，强化首段直答与品牌事实密度。${citationNote}`;

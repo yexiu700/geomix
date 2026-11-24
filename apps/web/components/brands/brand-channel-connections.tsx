@@ -93,6 +93,16 @@ function providerSitePlaceholder(provider: L1ChannelProvider): string {
       return 'https://www.example.com';
     case 'WEBHOOK':
       return 'https://hooks.example.com/geomix';
+    case 'GHOST':
+      return 'https://blog.example.com';
+    case 'DEVTO':
+      return 'https://dev.to';
+    case 'HASHNODE':
+      return 'https://hashnode.com';
+    case 'GITHUB_MDX':
+      return 'https://github.com/org/repo';
+    case 'WECHAT_OFFICIAL':
+      return 'https://mp.weixin.qq.com';
   }
 }
 
@@ -106,6 +116,16 @@ function providerSiteHint(provider: L1ChannelProvider): string {
       return '填写 Webflow 站点公网域名，保存并测试后可级联拉取站点、集合与字段映射。';
     case 'WEBHOOK':
       return '填写接收推送事件的 HTTPS Webhook 地址，请求头附带 X-GeoMix-Signature HMAC-SHA256 签名。';
+    case 'GHOST':
+      return '填写 Ghost 站点根地址，使用 Ghost Admin API v5 短期 HS256 JWT 直推文章与 JSON-LD。';
+    case 'DEVTO':
+      return '填写 Dev.to 社区地址（https://dev.to），支持 Forem REST v1 推送 Markdown 与 Canonical URL。';
+    case 'HASHNODE':
+      return '填写 Hashnode 站点或主页地址，支持 GraphQL 草稿/发布与 Canonical URL 回指。';
+    case 'GITHUB_MDX':
+      return '填写目标 GitHub 仓库地址，草稿模式自动新建分支提交 MDX 并发起 PR 审阅。';
+    case 'WECHAT_OFFICIAL':
+      return '仅调用微信官方草稿箱接口（不自动群发），需提前在公众号后台配置服务器出口 IP 白名单。';
   }
 }
 
@@ -466,6 +486,8 @@ export function BrandChannelConnections({
         if (secret.length < 8) return { ok: false, error: 'Webhook 签名密钥长度至少为 8 位' };
         return { ok: true, credentials: { signingSecret: secret } };
       }
+      default:
+        return { ok: false, error: '该渠道暂未在当前面板完成表单配置' };
     }
   };
 

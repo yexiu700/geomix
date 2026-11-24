@@ -2,10 +2,17 @@ import { z } from 'zod';
 import { GEO_MARKETS, containsCjk, type GeoMarket } from './brands';
 import type { GeoComplianceFlag } from './compliance';
 import { extractMissingFactSlots } from './geo-studio';
+import {
+  SUPPORTED_LOCALE_CODES,
+  detectLocaleLeakage,
+  resolveEffectiveLocale,
+  type SupportedLocale,
+} from './locales';
+import type { ConfidenceLevel, DifferenceInDifferencesResult, WilsonInterval } from './stats';
 
 /**
- * GeoMix v2.1 全球多渠道分发、L1 站点连接、发布前硬校验（Preflight）、
- * 外部 PR/KOL 协同包、T+1 爬虫体检与 T+7/14/30 定时复测契约（Issue #349）。
+ * GeoMix v2.1 / v2.2 全球多渠道分发、L1 站点连接、L2 Chrome 扩展桥接、发布前硬校验（Preflight）、
+ * 外部 PR/KOL 协同包、T+1 爬虫体检与 T+7/14/30 定时复测契约（Issue #349 / #367）。
  */
 
 export const CHANNEL_PROVIDERS = [
@@ -13,6 +20,14 @@ export const CHANNEL_PROVIDERS = [
   'WORDPRESS',
   'WEBFLOW',
   'WEBHOOK',
+  'GHOST',
+  'DEVTO',
+  'HASHNODE',
+  'GITHUB_MDX',
+  'WECHAT_OFFICIAL',
+  'ZHIHU_EXT',
+  'TOUTIAO_EXT',
+  'SMZDM_EXT',
   'REDDIT_ASSIST',
   'QUORA_ASSIST',
   'SOCIAL_THREAD_ASSIST',
@@ -21,7 +36,17 @@ export const CHANNEL_PROVIDERS = [
 ] as const;
 export type ChannelProvider = (typeof CHANNEL_PROVIDERS)[number];
 
-export const L1_CHANNEL_PROVIDERS = ['SHOPIFY', 'WORDPRESS', 'WEBFLOW', 'WEBHOOK'] as const;
+export const L1_CHANNEL_PROVIDERS = [
+  'SHOPIFY',
+  'WORDPRESS',
+  'WEBFLOW',
+  'WEBHOOK',
+  'GHOST',
+  'DEVTO',
+  'HASHNODE',
+  'GITHUB_MDX',
+  'WECHAT_OFFICIAL',
+] as const;
 export type L1ChannelProvider = (typeof L1_CHANNEL_PROVIDERS)[number];
 
 const L1_PROVIDER_SET = new Set<string>(L1_CHANNEL_PROVIDERS);
@@ -30,14 +55,29 @@ export function isL1ChannelProvider(value: string): value is L1ChannelProvider {
   return L1_PROVIDER_SET.has(value);
 }
 
+export const L2_EXTENSION_PROVIDERS = ['ZHIHU_EXT', 'TOUTIAO_EXT', 'SMZDM_EXT'] as const;
+export type L2ExtensionProvider = (typeof L2_EXTENSION_PROVIDERS)[number];
+
+const L2_EXTENSION_PROVIDER_SET = new Set<string>(L2_EXTENSION_PROVIDERS);
+
+export function isL2ExtensionProvider(value: string): value is L2ExtensionProvider {
+  return L2_EXTENSION_PROVIDER_SET.has(value);
+}
+
 export const CHANNEL_CONNECTION_STATUSES = ['ACTIVE', 'INVALID', 'DISABLED'] as const;
 export type ChannelConnectionStatus = (typeof CHANNEL_CONNECTION_STATUSES)[number];
 
-export const DISTRIBUTION_MODES = ['L1_API', 'L3_COMMUNITY_ASSIST', 'L3_PR_PACKET'] as const;
+export const DISTRIBUTION_MODES = [
+  'L1_API',
+  'L2_EXTENSION',
+  'L3_COMMUNITY_ASSIST',
+  'L3_PR_PACKET',
+] as const;
 export type DistributionMode = (typeof DISTRIBUTION_MODES)[number];
 
 export function defaultDistributionModeForProvider(provider: ChannelProvider): DistributionMode {
   if (isL1ChannelProvider(provider)) return 'L1_API';
+  if (isL2ExtensionProvider(provider)) return 'L2_EXTENSION';
   if (provider === 'PR_PACKET') return 'L3_PR_PACKET';
   return 'L3_COMMUNITY_ASSIST';
 }
@@ -69,6 +109,8 @@ export type RetestScheduleStatus = (typeof RETEST_SCHEDULE_STATUSES)[number];
 
 export const DISTRIBUTION_TEMPLATE_KEYS = [
   'OWNED_BLOG_SEO_GEO',
+  'DEVELOPER_TECH_POST',
+  'WECHAT_OFFICIAL_ARTICLE',
   'REDDIT_DISCUSSION',
   'QUORA_ANSWER',
   'SOCIAL_THREAD',
@@ -83,7 +125,19 @@ export function defaultTemplateKeyForProvider(provider: ChannelProvider): Distri
     case 'WORDPRESS':
     case 'WEBFLOW':
     case 'WEBHOOK':
+    case 'GHOST':
       return 'OWNED_BLOG_SEO_GEO';
+    case 'DEVTO':
+    case 'HASHNODE':
+    case 'GITHUB_MDX':
+      return 'DEVELOPER_TECH_POST';
+    case 'WECHAT_OFFICIAL':
+      return 'WECHAT_OFFICIAL_ARTICLE';
+    case 'ZHIHU_EXT':
+    case 'TOUTIAO_EXT':
+    case 'SMZDM_EXT':
+    case 'CN_COMMUNITY_ASSIST':
+      return 'CN_COMMUNITY_QA';
     case 'REDDIT_ASSIST':
       return 'REDDIT_DISCUSSION';
     case 'QUORA_ASSIST':
@@ -92,8 +146,6 @@ export function defaultTemplateKeyForProvider(provider: ChannelProvider): Distri
       return 'SOCIAL_THREAD';
     case 'PR_PACKET':
       return 'PR_MEDIA_PACKET';
-    case 'CN_COMMUNITY_ASSIST':
-      return 'CN_COMMUNITY_QA';
   }
 }
 
@@ -117,6 +169,14 @@ export const CHANNEL_PROVIDER_LABELS: Record<ChannelProvider, string> = {
   WORDPRESS: 'WordPress 站点',
   WEBFLOW: 'Webflow CMS',
   WEBHOOK: '通用签名 Webhook',
+  GHOST: 'Ghost 博客',
+  DEVTO: 'Dev.to 技术社区',
+  HASHNODE: 'Hashnode 博客',
+  GITHUB_MDX: 'GitHub MDX 仓库',
+  WECHAT_OFFICIAL: '微信公众号草稿箱',
+  ZHIHU_EXT: '知乎（Chrome 扩展）',
+  TOUTIAO_EXT: '今日头条（Chrome 扩展）',
+  SMZDM_EXT: '什么值得买（Chrome 扩展）',
   REDDIT_ASSIST: 'Reddit 社区讨论',
   QUORA_ASSIST: 'Quora 专业问答',
   SOCIAL_THREAD_ASSIST: '社媒长帖（X / LinkedIn）',
@@ -129,6 +189,14 @@ export const CHANNEL_PROVIDER_EN_LABELS: Record<ChannelProvider, string> = {
   WORDPRESS: 'WordPress Site',
   WEBFLOW: 'Webflow CMS',
   WEBHOOK: 'Signed Webhook',
+  GHOST: 'Ghost Blog',
+  DEVTO: 'Dev.to Community',
+  HASHNODE: 'Hashnode Blog',
+  GITHUB_MDX: 'GitHub MDX Repo',
+  WECHAT_OFFICIAL: 'WeChat Official Drafts',
+  ZHIHU_EXT: 'Zhihu (Chrome Extension)',
+  TOUTIAO_EXT: 'Toutiao (Chrome Extension)',
+  SMZDM_EXT: 'SMZDM (Chrome Extension)',
   REDDIT_ASSIST: 'Reddit Discussion',
   QUORA_ASSIST: 'Quora Q&A',
   SOCIAL_THREAD_ASSIST: 'Social Thread (X / LinkedIn)',
@@ -238,6 +306,17 @@ export const channelConnectionConfigSchema = z
     siteId: z.string().trim().min(1).max(200).optional(),
     collectionId: z.string().trim().min(1).max(200).optional(),
     fieldMap: webflowFieldMapSchema.optional(),
+    publicationId: z.string().trim().min(1).max(200).optional(),
+    repoOwner: z.string().trim().min(1).max(120).optional(),
+    repoName: z.string().trim().min(1).max(120).optional(),
+    branch: z.string().trim().min(1).max(120).optional(),
+    contentDir: z.string().trim().min(1).max(240).optional(),
+    fileExtension: z.enum(['mdx', 'md']).optional(),
+    publicUrlTemplate: z.string().trim().min(1).max(512).optional(),
+    author: z.string().trim().min(1).max(80).optional(),
+    defaultCoverMediaId: z.string().trim().min(1).max(200).optional(),
+    needOpenComment: z.boolean().optional(),
+    tags: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
     defaultPublishAsDraft: z.boolean().optional(),
     inlineJsonLd: z.boolean().optional(),
     indexNowKey: z.string().trim().min(8).max(128).optional(),
@@ -266,6 +345,7 @@ export const createChannelConnectionSchema = z
     ),
     configJson: channelConnectionConfigSchema.optional().default({}),
     authType: z.enum(['API_KEY', 'OAUTH']).optional().default('API_KEY'),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).nullable().optional(),
   })
   .superRefine((value, ctx) => {
     const creds = value.credentials;
@@ -301,6 +381,30 @@ export const createChannelConnectionSchema = z
         }
         break;
       }
+      case 'GHOST': {
+        const key = creds.adminApiKey?.trim() ?? '';
+        if (!/^[^:\s]+:(?:[0-9a-fA-F]{2}){8,}$/.test(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['credentials', 'adminApiKey'],
+            message: '请填写有效的 Ghost Admin API Key（格式为 id:hex_secret）',
+          });
+        }
+        break;
+      }
+      case 'DEVTO':
+        requireField('apiKey', '请填写 Dev.to API Key');
+        break;
+      case 'HASHNODE':
+        requireField('apiToken', '请填写 Hashnode Personal Access Token');
+        break;
+      case 'GITHUB_MDX':
+        requireField('token', '请填写 GitHub Personal Access Token');
+        break;
+      case 'WECHAT_OFFICIAL':
+        requireField('appId', '请填写微信公众号 AppID');
+        requireField('appSecret', '请填写微信公众号 AppSecret');
+        break;
     }
   });
 
@@ -320,6 +424,7 @@ export const updateChannelConnectionSchema = z
     credentials: z.record(z.string().min(1).max(64), z.string().max(4096)).optional(),
     configJson: channelConnectionConfigSchema.optional(),
     status: z.enum(CHANNEL_CONNECTION_STATUSES).optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: '至少修改一项连接配置',
@@ -343,6 +448,7 @@ export const distributionVariantTargetSchema = z.object({
   provider: z.enum(CHANNEL_PROVIDERS),
   connectionId: z.string().trim().min(1).max(64).optional(),
   channelLabel: z.string().trim().min(1, '请填写渠道名称').max(80),
+  targetLocale: z.enum(SUPPORTED_LOCALE_CODES).optional(),
   targetUrlHint: z
     .string()
     .trim()
@@ -379,6 +485,7 @@ export const updateDistributionTaskSchema = z
     variantMarkdown: z.string().max(100_000).optional(),
     variantHtml: z.string().max(150_000).optional(),
     channelLabel: z.string().trim().min(1).max(80).optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).nullable().optional(),
     targetUrlHint: z
       .string()
       .trim()
@@ -468,6 +575,7 @@ export const retestScheduleConfigSchema = z
       .transform((days) => [...new Set(days)].sort((a, b) => a - b))
       .optional(),
     sampleCount: z.union([z.literal(1), z.literal(3)]).optional(),
+    includeControlPrompts: z.boolean().optional(),
     cancelMilestoneDays: z.array(z.number().int().min(1).max(365)).max(6).optional(),
   })
   .refine(
@@ -475,6 +583,7 @@ export const retestScheduleConfigSchema = z
       value.enabled !== undefined ||
       value.milestones !== undefined ||
       value.sampleCount !== undefined ||
+      value.includeControlPrompts !== undefined ||
       value.cancelMilestoneDays !== undefined,
     { message: '至少修改一项复测计划配置' },
   );
@@ -580,6 +689,8 @@ export type ChannelConnectionDto = {
   configJson: Record<string, unknown>;
   status: ChannelConnectionStatus;
   authType: string;
+  targetLocale?: SupportedLocale | null;
+  externalShopDomain?: string | null;
   lastTestedAt: string | null;
   lastError: string | null;
   createdAt: string;
@@ -611,6 +722,7 @@ export type GeoDistributionTaskDto = {
   provider: ChannelProvider;
   mode: DistributionMode;
   channelLabel: string;
+  targetLocale?: SupportedLocale | null;
   targetUrlHint: string | null;
   variantTitle: string;
   variantSlug: string | null;
@@ -640,6 +752,18 @@ export type GeoRetestMetricsSnapshot = {
   citationHit: boolean;
   sampleCount?: number;
   hitCount?: number;
+  wilson?: WilsonInterval;
+  confidenceLevel?: ConfidenceLevel;
+};
+
+export type GeoRetestControlMetricsSnapshot = {
+  controlPrompts: string[];
+  baselineMentionRate: number | null;
+  currentMentionRate: number;
+  sampleCount: number;
+  hitCount: number;
+  wilson?: WilsonInterval;
+  did?: DifferenceInDifferencesResult | null;
 };
 
 export type GeoRetestScheduleDto = {
@@ -647,10 +771,12 @@ export type GeoRetestScheduleDto = {
   publishRecordId: string;
   milestoneDay: number;
   sampleCount: RetestSampleCount;
+  includeControlPrompts?: boolean;
   dueAt: string;
   status: RetestScheduleStatus;
   visibilityRunId: string | null;
   metricsSnapshot: GeoRetestMetricsSnapshot | null;
+  controlMetricsJson?: GeoRetestControlMetricsSnapshot | null;
   skipReason: string | null;
   executedAt: string | null;
   createdAt: string;
@@ -688,6 +814,7 @@ export type DistributionChannelAttributionItem = {
   completedRetestCount: number;
   citationHitCount: number;
   citationHitRate: number | null;
+  citationHitWilson?: WilsonInterval | null;
   avgMentionRateDelta: number | null;
   avgPosition: number | null;
   avgPositionDelta: number | null;
@@ -738,6 +865,7 @@ export type GlobalPreflightClaimRule = {
 
 export type EvaluateDistributionPreflightInput = {
   market: GeoMarket;
+  targetLocale?: SupportedLocale | string | null;
   title: string;
   contentMarkdown: string;
   variantHtml?: string | null;
@@ -751,7 +879,6 @@ export type EvaluateDistributionPreflightInput = {
   globalClaimRules?: readonly GlobalPreflightClaimRule[];
 };
 
-const CJK_RUN_RE = /[\u3400-\u9fff\uf900-\ufaff]+/g;
 const HTML_ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+);?|#(\d+);?|([a-zA-Z]{2,12});)/g;
 
 const HTML_BLOCK_TAGS = new Set([
@@ -938,24 +1065,6 @@ export function extractPlainTextFromHtml(html: string | null | undefined): strin
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function stripBrandProperNouns(text: string, brandNames: readonly string[]): string {
-  const cjkNames = [
-    ...new Set(
-      brandNames.map((name) => name.trim()).filter((name) => name.length > 0 && containsCjk(name)),
-    ),
-  ].sort((a, b) => b.length - a.length);
-
-  let stripped = text;
-  for (const name of cjkNames) {
-    stripped = stripped.replace(new RegExp(escapeRegExp(name), 'gi'), ' ');
-  }
-  return stripped;
 }
 
 const GLOBAL_CLAIM_CATEGORY_LABELS: Record<GlobalPreflightClaimCategory, string> = {
@@ -1229,16 +1338,19 @@ export function evaluateDistributionPreflight(
     });
   }
 
-  // 2. Hard Blocker: Non-brand CJK leakage in GLOBAL market
-  if (input.market === 'GLOBAL') {
-    const stripped = stripBrandProperNouns(combinedText, input.brandNames ?? []);
-    if (containsCjk(stripped)) {
-      const samples = [...new Set(stripped.match(CJK_RUN_RE) ?? [])].slice(0, 5);
+  // 2. Hard Blocker: Locale-aware CJK/script leakage check (supports ja-JP without false positives)
+  const effectiveLocale = resolveEffectiveLocale(input.targetLocale, input.market);
+  if (input.market === 'GLOBAL' || effectiveLocale !== 'zh-CN') {
+    const leakage = detectLocaleLeakage(combinedText, effectiveLocale, input.brandNames ?? []);
+    if (leakage.leaked) {
       blockers.push({
         code: 'GLOBAL_CJK_LEAK',
         severity: 'blocker',
-        message: '海外（GLOBAL）稿件中检测到非品牌专有名词的中文字符，请翻译清理后再发布',
-        details: samples,
+        message:
+          effectiveLocale === 'ja-JP'
+            ? '日语（ja-JP）稿件中检测到疑似简体中文字符或缺失假名特征，请核验修正后再发布'
+            : '海外（GLOBAL）稿件中检测到非品牌专有名词的中文字符，请翻译清理后再发布',
+        details: leakage.samples,
       });
     }
   }
@@ -1335,7 +1447,7 @@ export function evaluateDistributionPreflight(
         message: '自有站点分发缺少摘要描述（Meta Description），可能影响搜索引擎与 AI 摘要展示',
       });
     }
-    if (!input.variantSlug?.trim()) {
+    if (input.provider !== 'WECHAT_OFFICIAL' && !input.variantSlug?.trim()) {
       warnings.push({
         code: 'MISSING_SLUG',
         severity: 'warning',

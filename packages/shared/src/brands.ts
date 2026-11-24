@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IMAGE_MAX_INPUT_BYTES, IMAGE_WARN_WIDTH } from './adapters';
+import { SUPPORTED_LOCALE_CODES, type SupportedLocale } from './locales';
 
 /**
  * GeoMix 2.0 品牌与双市场资产契约（Issue #326 / #328）。
@@ -661,6 +662,58 @@ const optionalLocalCategorySchema = z.preprocess(
     .optional(),
 );
 
+export const BRAND_MAX_CONTROL_PROMPTS = 5 as const;
+export const BRAND_DEFAULT_RETEST_CONTROL_PROMPTS = 2 as const;
+
+function normalizePromptComparisonKey(raw: string): string {
+  return raw.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+export function validateControlPromptsAgainstSeeds(
+  controlPrompts: readonly string[],
+  seedPrompts: readonly string[],
+): { ok: true } | { ok: false; duplicates: string[] } {
+  const seedKeys = new Set(
+    seedPrompts.map(normalizePromptComparisonKey).filter((item) => item.length > 0),
+  );
+  const duplicates: string[] = [];
+  for (const prompt of controlPrompts) {
+    const key = normalizePromptComparisonKey(prompt);
+    if (key && seedKeys.has(key)) {
+      duplicates.push(prompt.trim());
+    }
+  }
+  return duplicates.length > 0 ? { ok: false, duplicates } : { ok: true };
+}
+
+function brandSupportedLocalesSchema() {
+  return z
+    .array(z.enum(SUPPORTED_LOCALE_CODES, { message: '不支持的目标语种' }))
+    .max(SUPPORTED_LOCALE_CODES.length, `最多配置 ${SUPPORTED_LOCALE_CODES.length} 个语种`)
+    .transform((items) => [...new Set(items)]);
+}
+
+function brandControlPromptArraySchema() {
+  return z
+    .array(z.string().trim().min(2, '对照组问句至少 2 个字').max(300, '对照组问句最多 300 字'))
+    .max(50, '对照组问句单次提交不能超过 50 条')
+    .transform((items) => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const item of items) {
+        const key = normalizePromptComparisonKey(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(item);
+      }
+      return out;
+    })
+    .refine(
+      (items) => items.length <= BRAND_MAX_CONTROL_PROMPTS,
+      `最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`,
+    );
+}
+
 export const brandMarketConfigSchema = z.object({
   market: z.enum(GEO_MARKETS),
   locale: z.string().trim().min(2).max(16).optional(),
@@ -674,6 +727,8 @@ export const brandMarketConfigSchema = z.object({
     .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
     .default([]),
   seedPrompts: brandSeedPromptArraySchema().default([]),
+  supportedLocales: brandSupportedLocalesSchema().optional(),
+  controlPrompts: brandControlPromptArraySchema().optional(),
 });
 
 const brandMarketEntrySchema = z.union([
@@ -735,6 +790,8 @@ export const updateBrandMarketSchema = z
       .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
       .optional(),
     seedPrompts: brandSeedPromptArraySchema().optional(),
+    supportedLocales: brandSupportedLocalesSchema().optional(),
+    controlPrompts: brandControlPromptArraySchema().optional(),
   })
   .refine((val) => Object.keys(val).length > 0, '至少修改一项市场配置');
 
@@ -823,6 +880,8 @@ export type BrandMarketRecord = {
   ownedDomains: string[];
   competitors: BrandCompetitor[];
   seedPrompts: string[];
+  supportedLocales?: SupportedLocale[];
+  controlPrompts?: string[];
   createdAt: string;
   updatedAt: string;
 };

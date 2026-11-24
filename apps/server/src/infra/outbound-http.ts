@@ -25,7 +25,7 @@ export const PUBLIC_ONLY_ALLOWLIST: SsrfAllowlist = parseSsrfAllowlist('', {
 
 export const OUTBOUND_HTTP_DEPS = Symbol('OUTBOUND_HTTP_DEPS');
 
-export type OutboundHttpMethod = 'GET' | 'POST';
+export type OutboundHttpMethod = 'GET' | 'POST' | 'PUT';
 
 export type OutboundHttpRequest = {
   url: string | URL;
@@ -62,6 +62,7 @@ const CROSS_ORIGIN_STRIPPED_HEADERS = new Set([
   'x-shopify-access-token',
   'x-geomix-signature',
   'x-api-key',
+  'api-key',
 ]);
 
 /**
@@ -237,12 +238,19 @@ export class OutboundHttpClient {
         }
 
         if (next.origin !== current.origin) {
+          if (currentMethod === 'PUT' && (response.status === 307 || response.status === 308)) {
+            throw new ProviderError(
+              PROVIDER_KIND.SSRF,
+              '目标地址不允许访问',
+              'cross_origin_put_redirect',
+            );
+          }
           currentHeaders = stripHeaders(currentHeaders, CROSS_ORIGIN_STRIPPED_HEADERS);
         }
 
         if (
           (response.status === 301 || response.status === 302 || response.status === 303) &&
-          currentMethod === 'POST'
+          (currentMethod === 'POST' || currentMethod === 'PUT')
         ) {
           currentMethod = 'GET';
           currentBody = undefined;

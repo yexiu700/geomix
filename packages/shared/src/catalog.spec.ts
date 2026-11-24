@@ -15,8 +15,8 @@ function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
-describe('GeoMix v2.1 catalog', () => {
-  it('keeps the 4 v2.1 paid pricing defaults, zero-allowed actions, and 7 free rate-limited actions', () => {
+describe('GeoMix v2.2 catalog', () => {
+  it('keeps the 4 paid pricing defaults, zero-allowed actions, and 12 free rate-limited actions', () => {
     expect(PRICING_DEFAULTS.map((item) => [item.action, item.unitPoints])).toEqual([
       ['geo_write', 10],
       ['visibility_check', 2],
@@ -37,6 +37,11 @@ describe('GeoMix v2.1 catalog', () => {
       'distribution_preflight',
       'crawl_probe',
       'pr_packet_share',
+      'near_miss_boost',
+      'roi_report_export',
+      'roi_report_share',
+      'extension_token_issue',
+      'extension_sync',
     ]);
   });
 

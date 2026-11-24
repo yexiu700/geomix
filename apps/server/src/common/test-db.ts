@@ -228,5 +228,30 @@ function adminSql(base: string, sql: string): void {
     { env, encoding: 'utf8' },
   );
   if (psql.status === 0) return;
-  throw new Error(`postgres admin command failed: ${psql.stderr || psql.stdout}`);
+
+  const container = process.env.GEOMIX_POSTGRES_CONTAINER?.trim() || 'geomix-postgres';
+  const docker = spawnSync(
+    'docker',
+    [
+      'exec',
+      '-e',
+      `PGPASSWORD=${password}`,
+      container,
+      'psql',
+      '-U',
+      user,
+      '-d',
+      'postgres',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-c',
+      sql,
+    ],
+    { encoding: 'utf8' },
+  );
+  if (docker.status === 0) return;
+
+  const psqlErr = psql.stderr || psql.stdout || psql.error?.message || '';
+  const dockerErr = docker.stderr || docker.stdout || docker.error?.message || '';
+  throw new Error(`postgres admin command failed\npsql: ${psqlErr}\ndocker: ${dockerErr}`);
 }

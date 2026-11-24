@@ -106,6 +106,7 @@ enum GeoBriefSource {
   SENTIMENT_RISK
   FANOUT_CLUSTER
   CITATION_COUNTER
+  NEAR_MISS_BOOST
   MANUAL
 }
 
@@ -150,6 +151,14 @@ enum ChannelProvider {
   WORDPRESS
   WEBFLOW
   WEBHOOK
+  GHOST
+  DEVTO
+  HASHNODE
+  GITHUB_MDX
+  WECHAT_OFFICIAL
+  ZHIHU_EXT
+  TOUTIAO_EXT
+  SMZDM_EXT
   REDDIT_ASSIST
   QUORA_ASSIST
   SOCIAL_THREAD_ASSIST
@@ -165,6 +174,7 @@ enum ChannelConnectionStatus {
 
 enum DistributionMode {
   L1_API
+  L2_EXTENSION
   L3_COMMUNITY_ASSIST
   L3_PR_PACKET
 }
@@ -233,7 +243,10 @@ model Tenant {
   channelConnections     ChannelConnection[]
   geoDistributionTasks   GeoDistributionTask[]
   geoRetestSchedules     GeoRetestSchedule[]
-  geoVariantJobs         GeoVariantJob[]
+  geoVariantJobs             GeoVariantJob[]
+  visibilityRetrievedSources VisibilityRetrievedSource[]
+  geoRoiReports              GeoRoiReport[]
+  extensionAccessTokens      ExtensionAccessToken[]
 }
 
 model User {
@@ -464,7 +477,9 @@ model Brand {
   channelConnections     ChannelConnection[]
   geoDistributionTasks   GeoDistributionTask[]
   geoRetestSchedules     GeoRetestSchedule[]
-  geoVariantJobs         GeoVariantJob[]
+  geoVariantJobs             GeoVariantJob[]
+  visibilityRetrievedSources VisibilityRetrievedSource[]
+  geoRoiReports              GeoRoiReport[]
 
   @@unique([tenantId, name])
   @@index([tenantId, createdAt])
@@ -484,20 +499,24 @@ model BrandMarket {
   aliases        String[]  @default([])
   ownedDomains   String[]  @default([])
   competitors    Json      @default("[]")
-  seedPrompts    String[]  @default([])
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  seedPrompts      String[]  @default([])
+  supportedLocales String[]  @default([])
+  controlPrompts   String[]  @default([])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  visibilityRuns         VisibilityRun[]
-  visibilityObservations VisibilityObservation[]
-  geoBriefs              GeoBrief[]
-  geoArticles            GeoArticle[]
-  geoPublishRecords      GeoPublishRecord[]
-  geoBatchJobs           GeoBatchJob[]
-  channelConnections     ChannelConnection[]
-  geoDistributionTasks   GeoDistributionTask[]
-  geoRetestSchedules     GeoRetestSchedule[]
-  geoVariantJobs         GeoVariantJob[]
+  visibilityRuns             VisibilityRun[]
+  visibilityObservations     VisibilityObservation[]
+  geoBriefs                  GeoBrief[]
+  geoArticles                GeoArticle[]
+  geoPublishRecords          GeoPublishRecord[]
+  geoBatchJobs               GeoBatchJob[]
+  channelConnections         ChannelConnection[]
+  geoDistributionTasks       GeoDistributionTask[]
+  geoRetestSchedules         GeoRetestSchedule[]
+  geoVariantJobs             GeoVariantJob[]
+  visibilityRetrievedSources VisibilityRetrievedSource[]
+  geoRoiReports              GeoRoiReport[]
 
   @@unique([brandId, market])
   @@index([tenantId, brandId])
@@ -625,6 +644,7 @@ model VisibilityObservation {
   brandPassage   String?
   competitorHits Json?
   fanOutQueries  String[]             @default([])
+  rawMetaJson    Json?
   judgeModel     String?
   tokensIn       Int?
   tokensOut      Int?
@@ -632,7 +652,8 @@ model VisibilityObservation {
   checkedAt      DateTime?
   createdAt      DateTime             @default(now())
 
-  citations VisibilityCitation[]
+  citations        VisibilityCitation[]
+  retrievedSources VisibilityRetrievedSource[]
 
   @@unique([runId, promptText, engine, sampleIndex])
   @@index([tenantId, brandMarketId, checkedAt])
@@ -709,6 +730,7 @@ model GeoArticle {
   batchJob        GeoBatchJob?     @relation(fields: [batchJobId], references: [id], onDelete: SetNull)
   recipe          GeoRecipe
   targetFormat    GeoTargetFormat
+  targetLocale    String?
   title           String
   targetPrompt    String
   outlineJson     Json             @default("[]")
@@ -833,6 +855,8 @@ model ChannelConnection {
   authType                   String                  @default("API_KEY")
   oauthAccessTokenCiphertext String?
   oauthExpiresAt             DateTime?
+  targetLocale               String?
+  externalShopDomain         String?
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
 
@@ -840,6 +864,7 @@ model ChannelConnection {
 
   @@index([tenantId, brandMarketId, provider])
   @@index([tenantId, brandId])
+  @@index([provider, externalShopDomain])
 }
 
 model GeoDistributionTask {
@@ -857,6 +882,7 @@ model GeoDistributionTask {
   provider           ChannelProvider
   mode               DistributionMode
   channelLabel       String
+  targetLocale       String?
   targetUrlHint      String?
   variantTitle       String
   variantSlug        String?
@@ -896,13 +922,15 @@ model GeoRetestSchedule {
   brandMarket         BrandMarket          @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
   publishRecordId     String
   publishRecord       GeoPublishRecord     @relation(fields: [publishRecordId], references: [id], onDelete: Cascade)
-  milestoneDay        Int
-  sampleCount         Int                  @default(1)
-  dueAt               DateTime
-  status              RetestScheduleStatus @default(PENDING)
-  visibilityRunId     String?
-  metricsSnapshotJson Json?
-  skipReason          String?
+  milestoneDay          Int
+  sampleCount           Int                  @default(1)
+  includeControlPrompts Boolean              @default(false)
+  dueAt                 DateTime
+  status                RetestScheduleStatus @default(PENDING)
+  visibilityRunId       String?
+  metricsSnapshotJson   Json?
+  controlMetricsJson    Json?
+  skipReason            String?
   executedAt          DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -946,4 +974,73 @@ model GeoVariantJob {
   @@unique([tenantId, articleId, idempotencyKey])
   @@index([tenantId, articleId, createdAt])
   @@index([tenantId, articleId, status])
+}
+
+// ===================== Near-Miss、ROI 报告与扩展桥接（GeoMix v2.2） =====================
+model VisibilityRetrievedSource {
+  id            String                @id @default(cuid())
+  tenantId      String
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId       String
+  brand         Brand                 @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId String
+  brandMarket   BrandMarket           @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  observationId String
+  observation   VisibilityObservation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  engine        String
+  url           String
+  domain        String
+  title         String?
+  snippet       String?
+  sourceKind    CitationSourceKind    @default(OTHER)
+  wasOpened     Boolean               @default(false)
+  wasCited      Boolean               @default(false)
+  rank          Int?
+  createdAt     DateTime              @default(now())
+
+  @@index([tenantId, brandMarketId, wasCited, wasOpened, createdAt], map: "VisibilityRetrievedSource_near_miss_lookup_idx")
+  @@index([observationId])
+  @@index([tenantId, domain])
+}
+
+model GeoRoiReport {
+  id              String      @id @default(cuid())
+  tenantId        String
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId         String
+  brand           Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandMarketId   String
+  brandMarket     BrandMarket @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  title           String
+  periodStart     DateTime
+  periodEnd       DateTime
+  locale          String      @default("en-US")
+  whiteLabelOrg   String?
+  summaryJson     Json
+  shareTokenHash  String?     @unique
+  shareExpiresAt  DateTime?
+  shareRevokedAt  DateTime?
+  createdByUserId String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([tenantId, brandMarketId, createdAt])
+}
+
+model ExtensionAccessToken {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  label       String
+  tokenPrefix String
+  tokenHash   String    @unique
+  scopes      String[]  @default(["extension:distribution"])
+  lastUsedAt  DateTime?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, revokedAt])
+  @@index([userId, createdAt])
 }

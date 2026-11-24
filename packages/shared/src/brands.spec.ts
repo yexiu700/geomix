@@ -6,6 +6,7 @@ import {
   BRAND_FACT_FULL_INJECT_MAX,
   BRAND_FACT_SLOTS,
   BRAND_MAX_COMPETITORS,
+  BRAND_MAX_CONTROL_PROMPTS,
   GEO_MARKETS,
   buildStorageSummary,
   checkImageWidthWarning,
@@ -28,6 +29,7 @@ import {
   updateBrandSchema,
   upsertBrandFactsSchema,
   validateClientUploadFile,
+  validateControlPromptsAgainstSeeds,
 } from './brands';
 
 describe('brands v2 contracts and extracted utilities', () => {
@@ -122,6 +124,65 @@ describe('brands v2 contracts and extracted utilities', () => {
     expect(partial.ownedDomains).toBeUndefined();
     expect(partial.competitors).toBeUndefined();
     expect(partial.seedPrompts).toBeUndefined();
+    expect(partial.supportedLocales).toBeUndefined();
+    expect(partial.controlPrompts).toBeUndefined();
+
+    const withLocalesAndControls = updateBrandMarketSchema.parse({
+      supportedLocales: ['en-US', 'de-DE', 'ja-JP', 'de-DE'],
+      controlPrompts: ['  Best budget NAS  ', 'best budget nas', 'Quiet home server'],
+    });
+    expect(withLocalesAndControls.supportedLocales).toEqual(['en-US', 'de-DE', 'ja-JP']);
+    expect(withLocalesAndControls.controlPrompts).toEqual(['Best budget NAS', 'Quiet home server']);
+
+    expect(
+      updateBrandMarketSchema.safeParse({
+        supportedLocales: ['xx-YY'],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      updateBrandMarketSchema.safeParse({
+        controlPrompts: Array.from(
+          { length: BRAND_MAX_CONTROL_PROMPTS + 1 },
+          (_, i) => `Control prompt ${i + 1}`,
+        ),
+      }).success,
+    ).toBe(false);
+
+    // 6+ raw items with duplicates deduping to <= 5 pass, while >50 raw items are rejected pre-dedupe
+    const dedupedToFive = updateBrandMarketSchema.parse({
+      controlPrompts: [
+        'Control A',
+        'control a',
+        'Control B',
+        'Control C',
+        'Control D',
+        'Control E',
+        'CONTROL E',
+      ],
+    });
+    expect(dedupedToFive.controlPrompts).toEqual([
+      'Control A',
+      'Control B',
+      'Control C',
+      'Control D',
+      'Control E',
+    ]);
+    expect(
+      updateBrandMarketSchema.safeParse({
+        controlPrompts: Array.from({ length: 51 }, () => 'Repeated control prompt'),
+      }).success,
+    ).toBe(false);
+
+    expect(
+      validateControlPromptsAgainstSeeds(
+        ['Best   4-Bay NAS', 'Unrelated topic'],
+        ['best 4-bay nas'],
+      ),
+    ).toEqual({ ok: false, duplicates: ['Best   4-Bay NAS'] });
+    expect(validateControlPromptsAgainstSeeds(['Control query A'], ['Seed query B'])).toEqual({
+      ok: true,
+    });
 
     const withCompetitors = updateBrandMarketSchema.parse({
       ownedDomains: ['https://WWW.Brand.io:8443/docs'],

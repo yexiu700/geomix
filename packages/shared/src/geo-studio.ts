@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { FAKE_MARK } from './adapters';
 import { GEO_MARKETS, type GeoMarket } from './brands';
 import type { GeoComplianceFlag } from './compliance';
+import { SUPPORTED_LOCALE_CODES, type SupportedLocale } from './locales';
 import type { TaskStatusName } from './task-status';
 
 /**
@@ -1056,6 +1057,7 @@ export const geoArticleStreamSchema = z
     briefId: z.string().trim().min(1).max(64).optional(),
     recipe: z.enum(GEO_RECIPES),
     targetFormat: z.enum(GEO_TARGET_FORMATS).optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).optional(),
     targetPrompt: z.string().trim().min(2, '目标问题至少 2 字').max(300),
     title: z.string().trim().min(1).max(120).optional(),
     outlineH2: z.array(geoOutlineHeadingSchema).max(15).optional(),
@@ -1129,6 +1131,7 @@ export const geoBatchCreateSchema = z
       .refine((ids) => new Set(ids).size === ids.length, '批量生成的意见卡不能重复'),
     recipe: z.enum(GEO_RECIPES).optional(),
     targetFormat: z.enum(GEO_TARGET_FORMATS).optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).optional(),
   })
   .refine(
     (val) => !val.targetFormat || targetFormatsForMarket(val.market).includes(val.targetFormat),
@@ -1157,6 +1160,7 @@ export type GeoArticleRecord = {
   batchJobId: string | null;
   recipe: GeoRecipe;
   targetFormat: GeoTargetFormat;
+  targetLocale?: SupportedLocale | null;
   title: string;
   targetPrompt: string;
   outlineJson: GeoOutlineHeading[];

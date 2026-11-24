@@ -8,6 +8,7 @@ import {
   CHANNEL_PROVIDERS,
   DISTRIBUTION_MODES,
   DISTRIBUTION_TASK_STATUSES,
+  DISTRIBUTION_TEMPLATE_KEYS,
   GEO_VARIANT_JOB_STATUSES,
   createDistributionVariantsSchema,
   defaultDistributionModeForProvider,
@@ -607,18 +608,13 @@ function readConnectionDefaultDraft(
     : undefined;
 }
 
+const DISTRIBUTION_TEMPLATE_KEY_SET = new Set<string>(DISTRIBUTION_TEMPLATE_KEYS);
+
 function readStoredTemplateKey(row: GeoDistributionTaskRow): DistributionTemplateKey {
   const extras = asJsonRecord(row.variantExtrasJson);
   const raw = extras.templateKey;
-  if (
-    raw === 'OWNED_BLOG_SEO_GEO' ||
-    raw === 'REDDIT_DISCUSSION' ||
-    raw === 'QUORA_ANSWER' ||
-    raw === 'SOCIAL_THREAD' ||
-    raw === 'PR_MEDIA_PACKET' ||
-    raw === 'CN_COMMUNITY_QA'
-  ) {
-    return raw;
+  if (typeof raw === 'string' && DISTRIBUTION_TEMPLATE_KEY_SET.has(raw)) {
+    return raw as DistributionTemplateKey;
   }
   return defaultTemplateKeyForProvider(toChannelProvider(row.provider));
 }

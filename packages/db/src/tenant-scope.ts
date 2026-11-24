@@ -39,6 +39,9 @@ export const REQUIRED_TENANT_MODELS = [
   'GeoDistributionTask',
   'GeoRetestSchedule',
   'GeoVariantJob',
+  'VisibilityRetrievedSource',
+  'GeoRoiReport',
+  'ExtensionAccessToken',
 ] as const;
 
 export const NULLABLE_TENANT_MODELS = [] as const;

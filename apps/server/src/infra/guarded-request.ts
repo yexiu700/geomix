@@ -20,7 +20,7 @@ export type DnsResolver = {
 
 export type TransportRequest = {
   url: URL;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT';
   headers: Record<string, string>;
   body?: string;
   pinned: ResolvedAddress[];
@@ -95,7 +95,7 @@ export function createDnsResolver(): DnsResolver {
 
 export async function requestOnce(input: {
   url: string | URL;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT';
   headers?: Record<string, string>;
   body?: string;
   timeoutMs: number;

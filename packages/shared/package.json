@@ -49,6 +49,10 @@
       "types": "./dist/distribution.d.ts",
       "default": "./dist/distribution.js"
     },
+    "./extension-bridge": {
+      "types": "./dist/extension-bridge.d.ts",
+      "default": "./dist/extension-bridge.js"
+    },
     "./geo-briefs": {
       "types": "./dist/geo-briefs.d.ts",
       "default": "./dist/geo-briefs.js"
@@ -65,6 +69,10 @@
       "types": "./dist/infra.d.ts",
       "default": "./dist/infra.js"
     },
+    "./locales": {
+      "types": "./dist/locales.d.ts",
+      "default": "./dist/locales.js"
+    },
     "./ops": {
       "types": "./dist/ops.d.ts",
       "default": "./dist/ops.js"
@@ -77,9 +85,17 @@
       "types": "./dist/queue.d.ts",
       "default": "./dist/queue.js"
     },
+    "./roi-report": {
+      "types": "./dist/roi-report.d.ts",
+      "default": "./dist/roi-report.js"
+    },
     "./shanghai-time": {
       "types": "./dist/shanghai-time.d.ts",
       "default": "./dist/shanghai-time.js"
+    },
+    "./stats": {
+      "types": "./dist/stats.d.ts",
+      "default": "./dist/stats.js"
     },
     "./task-status": {
       "types": "./dist/task-status.d.ts",

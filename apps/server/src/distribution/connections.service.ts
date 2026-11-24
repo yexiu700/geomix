@@ -584,6 +584,44 @@ export class ConnectionsService {
         }
         break;
       }
+      case 'GHOST': {
+        const key = credentials.adminApiKey?.trim() ?? '';
+        if (!/^[^:\s]+:[0-9a-fA-F]{16,}$/.test(key)) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            '请填写有效的 Ghost Admin API Key（格式为 id:hex_secret）',
+          );
+        }
+        break;
+      }
+      case 'DEVTO': {
+        if (!credentials.apiKey?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 Dev.to API Key');
+        }
+        break;
+      }
+      case 'HASHNODE': {
+        if (!credentials.apiToken?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 Hashnode Personal Access Token');
+        }
+        break;
+      }
+      case 'GITHUB_MDX': {
+        if (!credentials.token?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 GitHub Personal Access Token');
+        }
+        break;
+      }
+      case 'WECHAT_OFFICIAL': {
+        if (!credentials.appId?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写微信公众号 AppID');
+        }
+        if (!credentials.appSecret?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写微信公众号 AppSecret');
+        }
+        break;
+      }
     }
   }
 
@@ -601,6 +639,21 @@ export class ConnectionsService {
         break;
       case 'WEBHOOK':
         primarySecret = credentials.signingSecret ?? '';
+        break;
+      case 'GHOST':
+        primarySecret = credentials.adminApiKey ?? '';
+        break;
+      case 'DEVTO':
+        primarySecret = credentials.apiKey ?? '';
+        break;
+      case 'HASHNODE':
+        primarySecret = credentials.apiToken ?? '';
+        break;
+      case 'GITHUB_MDX':
+        primarySecret = credentials.token ?? '';
+        break;
+      case 'WECHAT_OFFICIAL':
+        primarySecret = credentials.appSecret ?? credentials.appId ?? '';
         break;
     }
     return this.secretBox.maskSecret(primarySecret) || '****';

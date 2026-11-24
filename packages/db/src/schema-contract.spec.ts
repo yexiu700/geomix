@@ -38,6 +38,9 @@ const SCHEMA_MODELS = [
   'GeoDistributionTask',
   'GeoRetestSchedule',
   'GeoVariantJob',
+  'VisibilityRetrievedSource',
+  'GeoRoiReport',
+  'ExtensionAccessToken',
 ];
 
 describe('schema migrations contract', () => {
@@ -61,6 +64,7 @@ describe('schema migrations contract', () => {
       '20261122090000_brand_market_local_category',
       '20261123090000_geomix_v2_1_distribution',
       '20261124090000_geomix_v2_1_variant_jobs',
+      '20261125090000_geomix_v2_2_roi_connectors',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -186,6 +190,22 @@ describe('schema migrations contract', () => {
     expect(variantJobSql).toContain('GeoVariantJob_tenantId_articleId_idempotencyKey_key');
     expect(variantJobSql.toLowerCase()).not.toContain('drop table');
     expect(variantJobSql.toLowerCase()).not.toContain('create extension');
+    const v22Sql = readFileSync(
+      resolve(migrationsDir, '20261125090000_geomix_v2_2_roi_connectors', 'migration.sql'),
+      'utf8',
+    );
+    expect(v22Sql).toContain('CREATE TABLE IF NOT EXISTS "VisibilityRetrievedSource"');
+    expect(v22Sql).toContain('CREATE TABLE IF NOT EXISTS "GeoRoiReport"');
+    expect(v22Sql).toContain('CREATE TABLE IF NOT EXISTS "ExtensionAccessToken"');
+    expect(v22Sql).toContain("ADD VALUE IF NOT EXISTS 'NEAR_MISS_BOOST'");
+    expect(v22Sql).toContain("ADD VALUE IF NOT EXISTS 'L2_EXTENSION'");
+    expect(v22Sql).toContain("ADD VALUE IF NOT EXISTS 'WECHAT_OFFICIAL'");
+    expect(v22Sql).toContain("ADD VALUE IF NOT EXISTS 'ZHIHU_EXT'");
+    expect(v22Sql).toContain('VisibilityRetrievedSource_near_miss_lookup_idx');
+    expect(v22Sql).toContain('GeoRoiReport_shareTokenHash_key');
+    expect(v22Sql).toContain('ExtensionAccessToken_tokenHash_key');
+    expect(v22Sql.toLowerCase()).not.toContain('drop table');
+    expect(v22Sql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(SCHEMA_MODELS);

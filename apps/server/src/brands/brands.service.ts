@@ -4,9 +4,13 @@ import {
   API_ERROR,
   AUTH_ERROR,
   BILLING_ERROR,
+  BRAND_MAX_CONTROL_PROMPTS,
   GEO_MARKET_DEFAULTS,
   generateBrandSeedPrompts,
+  isSupportedLocale,
   normalizeBrandDomain,
+  supportedLocalesForMarket,
+  validateControlPromptsAgainstSeeds,
   type BrandCompetitor,
   type BrandDeleteResponse,
   type BrandListResponse,
@@ -16,6 +20,7 @@ import {
   type ParsedCreateBrandInput,
   type ParsedUpdateBrandMarketInput,
   type ParsedUpsertBrandMarketInput,
+  type SupportedLocale,
   type UpdateBrandInput,
 } from '@geomix/shared';
 import { isUniqueViolation, TX_OPTIONS } from '../billing/billing.sql';
@@ -50,6 +55,8 @@ type BrandMarketRow = {
   ownedDomains: string[];
   competitors: Prisma.JsonValue;
   seedPrompts: string[];
+  supportedLocales?: string[];
+  controlPrompts?: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -124,8 +131,11 @@ export class BrandsService {
         ownedDomains: string[];
         competitors: BrandCompetitor[];
         seedPrompts: string[];
+        supportedLocales?: string[];
+        controlPrompts?: string[];
       };
       const defaults = GEO_MARKET_DEFAULTS[entry.market];
+      const locale = entry.locale?.trim() || defaults.locale;
       const localBrandName = entry.localBrandName?.trim() || name;
       const localCategory = entry.localCategory?.trim() || null;
       const aliases = dedupeStrings(entry.aliases.length > 0 ? entry.aliases : fallbackAliases);
@@ -146,10 +156,20 @@ export class BrandsService {
               localCategory,
               competitors,
             });
+      const supportedLocales = normalizeSupportedLocales(
+        entry.market,
+        entry.supportedLocales,
+        locale,
+        { allowEmptyFallback: true },
+      );
+      const controlPrompts = normalizeAndValidateControlPrompts(
+        entry.controlPrompts ?? [],
+        seedPrompts,
+      );
 
       return {
         market: entry.market,
-        locale: entry.locale?.trim() || defaults.locale,
+        locale,
         region: entry.region?.trim() || defaults.region,
         localBrandName,
         localCategory,
@@ -157,6 +177,8 @@ export class BrandsService {
         ownedDomains,
         competitors,
         seedPrompts,
+        supportedLocales,
+        controlPrompts,
       };
     });
 
@@ -169,6 +191,7 @@ export class BrandsService {
         ...m.aliases,
         ...m.competitors.flatMap((c) => [c.name, ...c.aliases]),
         ...m.seedPrompts,
+        ...m.controlPrompts,
       ]),
     ].join('\n');
 
@@ -202,6 +225,8 @@ export class BrandsService {
               ownedDomains: m.ownedDomains,
               competitors: m.competitors as unknown as Prisma.InputJsonValue,
               seedPrompts: m.seedPrompts,
+              supportedLocales: m.supportedLocales,
+              controlPrompts: m.controlPrompts,
             })),
           },
         },
@@ -371,6 +396,7 @@ export class BrandsService {
     }
 
     const defaults = GEO_MARKET_DEFAULTS[market];
+    const locale = input.locale?.trim() || defaults.locale;
     const localBrandName = input.localBrandName?.trim() || brand.name;
     const localCategory = input.localCategory?.trim() || null;
     const aliases = dedupeStrings(input.aliases);
@@ -387,6 +413,13 @@ export class BrandsService {
             localCategory,
             competitors,
           });
+    const supportedLocales = normalizeSupportedLocales(market, input.supportedLocales, locale, {
+      allowEmptyFallback: true,
+    });
+    const controlPrompts = normalizeAndValidateControlPrompts(
+      input.controlPrompts ?? [],
+      seedPrompts,
+    );
 
     const complianceText = [
       localBrandName,
@@ -394,6 +427,7 @@ export class BrandsService {
       ...aliases,
       ...competitors.flatMap((c) => [c.name, ...c.aliases]),
       ...seedPrompts,
+      ...controlPrompts,
     ].join('\n');
 
     await this.compliance.assertAllowed({
@@ -409,7 +443,7 @@ export class BrandsService {
           tenantId,
           brandId: brand.id,
           market,
-          locale: input.locale?.trim() || defaults.locale,
+          locale,
           region: input.region?.trim() || defaults.region,
           localBrandName,
           localCategory,
@@ -417,6 +451,8 @@ export class BrandsService {
           ownedDomains,
           competitors: competitors as unknown as Prisma.InputJsonValue,
           seedPrompts,
+          supportedLocales,
+          controlPrompts,
         },
       });
     } catch (error) {
@@ -496,6 +532,30 @@ export class BrandsService {
           })
         : rawSeedPrompts;
 
+    const existingSupportedLocales =
+      Array.isArray(existingMarket.supportedLocales) && existingMarket.supportedLocales.length > 0
+        ? existingMarket.supportedLocales
+        : undefined;
+    const nextSupportedLocales =
+      input.supportedLocales !== undefined
+        ? normalizeSupportedLocales(market, input.supportedLocales, nextLocale, {
+            allowEmptyFallback: false,
+          })
+        : normalizeSupportedLocales(market, existingSupportedLocales, nextLocale, {
+            allowEmptyFallback: true,
+          });
+
+    const existingControlPrompts = Array.isArray(existingMarket.controlPrompts)
+      ? existingMarket.controlPrompts
+      : [];
+    const nextControlPrompts =
+      input.controlPrompts !== undefined
+        ? normalizeAndValidateControlPrompts(input.controlPrompts, nextSeedPrompts)
+        : (input.seedPrompts !== undefined || nextSeedPrompts !== existingMarket.seedPrompts) &&
+            existingControlPrompts.length > 0
+          ? normalizeAndValidateControlPrompts(existingControlPrompts, nextSeedPrompts)
+          : existingControlPrompts;
+
     const complianceText = [
       brand.name,
       brand.category,
@@ -504,6 +564,7 @@ export class BrandsService {
       ...nextAliases,
       ...nextCompetitors.flatMap((c) => [c.name, ...c.aliases]),
       ...nextSeedPrompts,
+      ...nextControlPrompts,
     ].join('\n');
 
     await this.compliance.assertAllowed({
@@ -524,6 +585,8 @@ export class BrandsService {
         ownedDomains: nextOwnedDomains,
         competitors: nextCompetitors as unknown as Prisma.InputJsonValue,
         seedPrompts: nextSeedPrompts,
+        supportedLocales: nextSupportedLocales,
+        controlPrompts: nextControlPrompts,
       },
     });
 
@@ -620,11 +683,109 @@ function parseStoredCompetitors(raw: Prisma.JsonValue): BrandCompetitor[] {
   return out;
 }
 
+function normalizeSupportedLocales(
+  market: GeoMarket,
+  raw: readonly string[] | undefined,
+  primaryLocale: string,
+  options: { allowEmptyFallback: boolean },
+): SupportedLocale[] {
+  const allowed = supportedLocalesForMarket(market);
+  const allowedSet = new Set<string>(allowed);
+  const fallbackLocale: SupportedLocale =
+    market === 'CN'
+      ? 'zh-CN'
+      : isSupportedLocale(primaryLocale) && allowedSet.has(primaryLocale)
+        ? primaryLocale
+        : 'en-US';
+
+  if (raw === undefined) {
+    return [fallbackLocale];
+  }
+
+  const out: SupportedLocale[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    if (!isSupportedLocale(trimmed)) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, `不支持的目标语种：${trimmed}`);
+    }
+    if (!allowedSet.has(trimmed)) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        market === 'CN'
+          ? `国内市场仅支持简体中文（zh-CN），不支持 ${trimmed}`
+          : `海外市场不支持语种 ${trimmed}`,
+      );
+    }
+    if (!seen.has(trimmed)) {
+      seen.add(trimmed);
+      out.push(trimmed);
+    }
+  }
+
+  if (out.length === 0) {
+    if (options.allowEmptyFallback) {
+      return [fallbackLocale];
+    }
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少保留 1 个支持语种');
+  }
+
+  return out;
+}
+
+function normalizeAndValidateControlPrompts(
+  raw: readonly string[],
+  seedPrompts: readonly string[],
+): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const item of raw) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const key = trimmed.replace(/\s+/g, ' ').toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(trimmed);
+  }
+  if (deduped.length > BRAND_MAX_CONTROL_PROMPTS) {
+    throw new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      `最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`,
+    );
+  }
+  const overlap = validateControlPromptsAgainstSeeds(deduped, seedPrompts);
+  if (!overlap.ok) {
+    throw new ApiError(
+      400,
+      API_ERROR.BAD_REQUEST,
+      `对照组问句不能与种子监控问句重复：${overlap.duplicates[0]}`,
+    );
+  }
+  return deduped;
+}
+
 function presentMarket(row: BrandMarketRow): BrandMarketRecord {
+  const market: GeoMarket = row.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+  const allowedSet = new Set<string>(supportedLocalesForMarket(market));
+  const storedLocales = Array.isArray(row.supportedLocales)
+    ? row.supportedLocales.filter(
+        (item): item is SupportedLocale => isSupportedLocale(item) && allowedSet.has(item),
+      )
+    : [];
+  const defaultLocale: SupportedLocale =
+    market === 'GLOBAL'
+      ? isSupportedLocale(row.locale) && allowedSet.has(row.locale)
+        ? row.locale
+        : 'en-US'
+      : 'zh-CN';
+
   return {
     id: row.id,
     brandId: row.brandId,
-    market: row.market === 'GLOBAL' ? 'GLOBAL' : 'CN',
+    market,
     locale: row.locale,
     region: row.region,
     localBrandName: row.localBrandName,
@@ -633,6 +794,8 @@ function presentMarket(row: BrandMarketRow): BrandMarketRecord {
     ownedDomains: row.ownedDomains,
     competitors: parseStoredCompetitors(row.competitors),
     seedPrompts: row.seedPrompts,
+    supportedLocales: storedLocales.length > 0 ? storedLocales : [defaultLocale],
+    controlPrompts: Array.isArray(row.controlPrompts) ? row.controlPrompts : [],
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
