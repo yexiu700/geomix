@@ -405,6 +405,41 @@ const PUBLIC_FREE_ACTION_META: Record<FreeRateLimitedAction, Omit<PublicFreeActi
     descriptionEn:
       'Generate 30-day read-only briefing links for external journalists and KOLs without sharing workspace logins',
   },
+  near_miss_boost: {
+    labelZh: 'Near-Miss 一键补强意见卡',
+    labelEn: 'One-Click Near-Miss Boost Brief',
+    descriptionZh: '针对 AI 已点开或召回但未引用的高潜页面自动诊断缺口并生成靶向补强意见卡',
+    descriptionEn:
+      'Diagnose citation gaps on retrieved-but-uncited pages and generate targeted boost briefs at 0 points',
+  },
+  roi_report_export: {
+    labelZh: '月度 GEO ROI 报告导出',
+    labelEn: 'Monthly GEO ROI Report Export',
+    descriptionZh: '导出零外链可打印月度 GEO ROI 证明报告（含 Wilson 95% 置信区间与 DiD 净提升）',
+    descriptionEn:
+      'Export self-contained print-ready monthly GEO ROI reports with Wilson 95% CI and DiD net lift',
+  },
+  roi_report_share: {
+    labelZh: '白标 ROI 报告只读分享',
+    labelEn: 'White-Label ROI Report Sharing',
+    descriptionZh: '生成 30 天可撤销的免登录白标只读复盘链接，安全脱敏租户与点数成本信息',
+    descriptionEn:
+      'Issue revocable 30-day login-free white-label ROI report links with internal billing fields stripped',
+  },
+  extension_token_issue: {
+    labelZh: 'Chrome 扩展配对令牌颁发',
+    labelEn: 'Chrome Extension Pairing Token',
+    descriptionZh: '颁发最小权限一次性扩展配对令牌（gmext_），支持随时即时吊销与租户隔离',
+    descriptionEn:
+      'Issue scoped one-time pairing tokens for the companion Chrome extension with instant revocation',
+  },
+  extension_sync: {
+    labelZh: 'Chrome 扩展草稿箱同步与回传',
+    labelEn: 'Extension Draft Sync & URL Callback',
+    descriptionZh: '将待发变体安全同步至国内创作平台草稿箱，并在人工发布后回传公开 URL 触发复测',
+    descriptionEn:
+      'Sync channel variants to creator draft boxes and record manually published URLs to trigger retests',
+  },
 };
 
 export const PUBLIC_PRICING_FALLBACK: PublicPricingPayload = {

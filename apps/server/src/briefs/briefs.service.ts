@@ -128,6 +128,9 @@ function assertSafePublicBriefUrl(raw: string): { rawUrl: string; canonicalUrl: 
 
 function mapNonSsrfFetchFallbackReason(error: unknown): string {
   if (error instanceof ProviderError) {
+    if (error.kind === PROVIDER_KIND.SSRF && error.reason === 'dns_empty') {
+      return '目标域名暂时无法解析';
+    }
     switch (error.kind) {
       case PROVIDER_KIND.TIMEOUT:
         return '目标网页访问超时';
@@ -1017,7 +1020,11 @@ export class BriefsService {
         if (error instanceof ApiError) {
           throw error;
         }
-        if (error instanceof ProviderError && error.kind === PROVIDER_KIND.SSRF) {
+        if (
+          error instanceof ProviderError &&
+          error.kind === PROVIDER_KIND.SSRF &&
+          error.reason !== 'dns_empty'
+        ) {
           throw new ApiError(400, API_ERROR.BAD_REQUEST, '目标地址不允许访问');
         }
         diagnosis = {

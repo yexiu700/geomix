@@ -388,7 +388,7 @@ describe('listMarketingLeadsQuerySchema', () => {
 });
 
 describe('PUBLIC_PRICING_FALLBACK and buildPublicPricingPayload', () => {
-  it('stays 1:1 aligned with catalog PRICING_DEFAULTS, 7 FREE_RATE_LIMITED_ACTIONS, and Demo quota', () => {
+  it('stays 1:1 aligned with catalog PRICING_DEFAULTS, 12 FREE_RATE_LIMITED_ACTIONS, and Demo quota', () => {
     expect(PUBLIC_PRICING_FALLBACK.items.map((item) => item.action)).toEqual(
       PRICING_DEFAULTS.map((item) => item.action),
     );
@@ -398,7 +398,7 @@ describe('PUBLIC_PRICING_FALLBACK and buildPublicPricingPayload', () => {
     expect(PUBLIC_PRICING_FALLBACK.freeActions.map((item) => item.action)).toEqual([
       ...FREE_RATE_LIMITED_ACTIONS,
     ]);
-    expect(PUBLIC_PRICING_FALLBACK.freeActions).toHaveLength(7);
+    expect(PUBLIC_PRICING_FALLBACK.freeActions).toHaveLength(12);
     expect(PUBLIC_PRICING_FALLBACK.demoTrial).toEqual({
       points: DEMO_TENANT_POINTS,
       validDays: DEMO_TENANT_VALID_DAYS,
@@ -422,7 +422,7 @@ describe('PUBLIC_PRICING_FALLBACK and buildPublicPricingPayload', () => {
       geo_variant: 0,
     });
     expect(merged.items).toHaveLength(4);
-    expect(merged.freeActions).toHaveLength(7);
+    expect(merged.freeActions).toHaveLength(12);
     expect(merged.demoTrial).toEqual({ points: 1000, validDays: 365 });
 
     const normalized = buildPublicPricingPayload([

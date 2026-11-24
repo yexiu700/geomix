@@ -176,7 +176,7 @@ export function VisibilityNearMissPanel({
       {
         title: '分层与机会分',
         key: 'tier',
-        width: 196,
+        width: 148,
         render: (_v, row) => {
           const score = Number.isFinite(row.opportunityScore)
             ? Math.round(row.opportunityScore)
@@ -213,7 +213,6 @@ export function VisibilityNearMissPanel({
       {
         title: '候选页面与目标问题',
         key: 'page',
-        width: 240,
         ellipsis: true,
         render: (_v, row) => {
           const trimmedUrl = row.url?.trim() ?? '';
@@ -257,7 +256,7 @@ export function VisibilityNearMissPanel({
       {
         title: '信源归属',
         key: 'sourceKind',
-        width: 112,
+        width: 92,
         render: (_v, row) => (
           <div
             style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}
@@ -275,7 +274,7 @@ export function VisibilityNearMissPanel({
       {
         title: '涉及引擎与最近出现',
         key: 'engines',
-        width: 148,
+        width: 120,
         render: (_v, row) => (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
             {row.engines.length > 0 ? (
@@ -292,7 +291,7 @@ export function VisibilityNearMissPanel({
       {
         title: '补强动作',
         key: 'actions',
-        width: 156,
+        width: 144,
         render: (_v, row) => (
           <Button
             size="small"
@@ -300,6 +299,7 @@ export function VisibilityNearMissPanel({
             data-testid={`near-miss-boost-btn-${row.id}`}
             disabled={readOnly || boostingItemId !== null}
             loading={boostingItemId === row.id}
+            style={{ whiteSpace: 'nowrap' }}
             onClick={() => onBoostItem(row)}
           >
             一键生成补强意见卡
@@ -419,7 +419,6 @@ export function VisibilityNearMissPanel({
             rowKey="id"
             size="small"
             tableLayout="fixed"
-            scroll={{ x: 852 }}
             loading={loading}
             columns={columns}
             dataSource={visibleItems}

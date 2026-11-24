@@ -640,7 +640,14 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
         brandMarketId="bm_cn_2"
         market="CN"
         contextEpoch={2}
-        article={{ ...GLOBAL_ARTICLE, id: 'art_cn_2', market: 'CN', briefId: null }}
+        article={{
+          ...GLOBAL_ARTICLE,
+          id: 'art_cn_2',
+          brandId: 'brand_2',
+          brandMarketId: 'bm_cn_2',
+          market: 'CN',
+          briefId: null,
+        }}
         draftTitle="国内评测稿"
         draftMarkdown="正文"
         readOnly={false}
@@ -733,7 +740,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
         brandMarketId="bm_a"
         market="GLOBAL"
         contextEpoch={1}
-        article={GLOBAL_ARTICLE}
+        article={{ ...GLOBAL_ARTICLE, brandId: 'brand_a', brandMarketId: 'bm_a' }}
         draftTitle={GLOBAL_ARTICLE.title}
         draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
         readOnly={false}
@@ -1980,5 +1987,101 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       );
     });
     expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
+  });
+
+  it('Defect R1-01 regression: fires ZERO distribution/preflight API calls during transient GLOBAL->CN or cross-brand stale article renders before parent closes drawer', async () => {
+    const getBriefSpy = vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_WITH_CITATIONS);
+    runArticlePreflightMock.mockResolvedValue({ ok: true, blockers: [], warnings: [] });
+    listChannelConnectionsMock.mockResolvedValue({ items: [SHOPIFY_CONN] });
+    listArticleDistributionsMock.mockResolvedValue({ items: [makeTask({ id: 'task_gl_init' })] });
+    listDistributionVariantJobsMock.mockResolvedValue({ items: [] });
+
+    const { rerender } = render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(runArticlePreflightMock).toHaveBeenCalledTimes(1);
+      expect(listArticleDistributionsMock).toHaveBeenCalledTimes(1);
+      expect(listChannelConnectionsMock).toHaveBeenCalledTimes(1);
+      expect(listDistributionVariantJobsMock).toHaveBeenCalledTimes(1);
+    });
+
+    runArticlePreflightMock.mockClear();
+    listArticleDistributionsMock.mockClear();
+    listChannelConnectionsMock.mockClear();
+    listDistributionVariantJobsMock.mockClear();
+    getBriefSpy.mockClear();
+
+    // Transient render 1: market switches GLOBAL -> CN while open=true and stale GLOBAL article is still mounted
+    rerender(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_cn_1"
+        market="CN"
+        contextEpoch={2}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(runArticlePreflightMock).not.toHaveBeenCalled();
+    expect(listArticleDistributionsMock).not.toHaveBeenCalled();
+    expect(listChannelConnectionsMock).not.toHaveBeenCalled();
+    expect(listDistributionVariantJobsMock).not.toHaveBeenCalled();
+    expect(getBriefSpy).not.toHaveBeenCalled();
+
+    // Transient render 2: brand switches brand_1 -> brand_2 on GLOBAL while open=true and stale brand_1 article is still mounted
+    rerender(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_2"
+        brandMarketId="bm_gl_2"
+        market="GLOBAL"
+        contextEpoch={3}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={vi.fn()}
+        onReturnToEditor={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(runArticlePreflightMock).not.toHaveBeenCalled();
+    expect(listArticleDistributionsMock).not.toHaveBeenCalled();
+    expect(listChannelConnectionsMock).not.toHaveBeenCalled();
+    expect(listDistributionVariantJobsMock).not.toHaveBeenCalled();
+    expect(getBriefSpy).not.toHaveBeenCalled();
+
+    getBriefSpy.mockRestore();
   });
 });

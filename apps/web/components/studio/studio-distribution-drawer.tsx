@@ -416,6 +416,9 @@ export function StudioDistributionDrawer({
   onCreatePublishRecord,
 }: StudioDistributionDrawerProps): JSX.Element {
   const feedback = useUxFeedback();
+  const articleMatchesContext = Boolean(
+    article && article.market === market && (!brandId || article.brandId === brandId),
+  );
 
   const effectiveSupportedLocales = useMemo<SupportedLocale[]>(() => {
     if (market !== 'GLOBAL') return ['zh-CN'];
@@ -634,7 +637,7 @@ export function StudioDistributionDrawer({
   ]);
 
   const reloadConnections = useCallback(async () => {
-    if (!open || !brandId || !brandMarketId) return;
+    if (!open || !articleMatchesContext || !brandId || !brandMarketId) return;
     const seq = sessionSeqRef.current;
     const ctrl = new AbortController();
     taskActionCtrlsRef.current.add(ctrl);
@@ -650,7 +653,7 @@ export function StudioDistributionDrawer({
     } finally {
       taskActionCtrlsRef.current.delete(ctrl);
     }
-  }, [brandId, brandMarketId, market, open]);
+  }, [articleMatchesContext, brandId, brandMarketId, market, open]);
 
   // Ensure unmount always invalidates active session and aborts all in-flight work
   useEffect(() => {
@@ -679,7 +682,12 @@ export function StudioDistributionDrawer({
 
   // Full reset whenever context or article changes, or drawer closes
   useEffect(() => {
-    if (!open || !article) {
+    if (
+      !open ||
+      !article ||
+      article.market !== market ||
+      (brandId && article.brandId !== brandId)
+    ) {
       resetAllDrawerState();
       return undefined;
     }
@@ -799,10 +807,19 @@ export function StudioDistributionDrawer({
     };
     // Hydrate strictly when drawer opens or article/context identity changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, brandId, brandMarketId, market, contextEpoch, article?.id]);
+  }, [
+    open,
+    brandId,
+    brandMarketId,
+    market,
+    contextEpoch,
+    article?.id,
+    article?.market,
+    article?.brandId,
+  ]);
 
   useTabFreshness({
-    active: open && Boolean(brandId && brandMarketId),
+    active: open && articleMatchesContext && Boolean(brandId && brandMarketId),
     domains: ['channel-connections'],
     refreshOnActivate: false,
     onRefresh: () => {
@@ -817,8 +834,8 @@ export function StudioDistributionDrawer({
   );
 
   useTaskPolling({
-    enabled: open && Boolean(article?.id) && isVariantJobRunning,
-    active: open,
+    enabled: open && articleMatchesContext && Boolean(article?.id) && isVariantJobRunning,
+    active: open && articleMatchesContext,
     intervalMs: 1_500,
     onPoll: async () => {
       if (!article || !activeVariantJob) return;
@@ -872,8 +889,8 @@ export function StudioDistributionDrawer({
   );
 
   useTaskPolling({
-    enabled: open && Boolean(article?.id) && hasPublishingTask,
-    active: open,
+    enabled: open && articleMatchesContext && Boolean(article?.id) && hasPublishingTask,
+    active: open && articleMatchesContext,
     intervalMs: 2_500,
     onPoll: async () => {
       if (!article) return;
@@ -1054,7 +1071,7 @@ export function StudioDistributionDrawer({
   };
 
   const handleRerunPreflight = async () => {
-    if (!article) return;
+    if (!article || !articleMatchesContext) return;
     setPublishBlockedNoticeByTask({});
     if (readOnly) {
       const fallback = buildLocalPreflightFallback();
@@ -1102,7 +1119,14 @@ export function StudioDistributionDrawer({
   };
 
   const handleConfirmGenerateVariants = async () => {
-    if (!article || selectedTargets.length === 0 || readOnly || generatingRef.current) return;
+    if (
+      !article ||
+      !articleMatchesContext ||
+      selectedTargets.length === 0 ||
+      readOnly ||
+      generatingRef.current
+    )
+      return;
     generatingRef.current = true;
     const ctrl = new AbortController();
     actionCtrlRef.current = ctrl;

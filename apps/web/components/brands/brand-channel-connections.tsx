@@ -1757,6 +1757,7 @@ export function BrandChannelConnections({
               data-testid="channel-provider-select"
               aria-label="渠道类型"
               style={{ width: '100%' }}
+              listHeight={360}
               disabled={Boolean(editingConn)}
               value={provider}
               options={availableProviders.map((p) => ({

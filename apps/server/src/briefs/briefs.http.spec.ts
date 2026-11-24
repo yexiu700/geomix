@@ -1147,6 +1147,9 @@ describe('Briefs HTTP API & ApiModule/WorkerModule DI boot checks', () => {
       if (url.includes('/non-ssrf-robots')) {
         throw new ProviderError(PROVIDER_KIND.ROBOTS, 'robots 禁止', 'robots_disallow');
       }
+      if (url.includes('/non-ssrf-dns-empty')) {
+        throw new ProviderError(PROVIDER_KIND.SSRF, '目标地址不允许访问', 'dns_empty');
+      }
       if (url.includes('nebulanas.example')) {
         return {
           url,
@@ -1236,8 +1239,13 @@ describe('Briefs HTTP API & ApiModule/WorkerModule DI boot checks', () => {
       expect(noUrlRes.body.data.sourceCitationUrl).toBeNull();
       expect(noUrlRes.body.data.diagnosisSummary).toContain('提及未引官网');
 
-      // 4. Non-SSRF external fetch failures (timeout / 403 / robots) -> graceful 200 fallback
-      for (const path of ['/non-ssrf-timeout', '/non-ssrf-403', '/non-ssrf-robots']) {
+      // 4. Non-SSRF external fetch failures (timeout / 403 / robots / dns_empty) -> graceful 200 fallback
+      for (const path of [
+        '/non-ssrf-timeout',
+        '/non-ssrf-403',
+        '/non-ssrf-robots',
+        '/non-ssrf-dns-empty',
+      ]) {
         const fallbackRes = await req<GeoBriefRecord>(
           'POST',
           '/api/v2/brands/brand_dual/briefs/from-near-miss',
@@ -1252,6 +1260,9 @@ describe('Briefs HTTP API & ApiModule/WorkerModule DI boot checks', () => {
         expect(fallbackRes.status).toBe(200);
         expect(fallbackRes.body.data.sourceType).toBe('NEAR_MISS_BOOST');
         expect(fallbackRes.body.data.diagnosisSummary).toContain('未能直连解析');
+        if (path === '/non-ssrf-dns-empty') {
+          expect(fallbackRes.body.data.diagnosisSummary).toContain('目标域名暂时无法解析');
+        }
         rateLimiter.reset();
       }
 

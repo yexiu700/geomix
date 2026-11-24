@@ -387,9 +387,10 @@ export function StudioPublishRetest({
 
   // Fetch live visibility_check price & online engine count strictly scoped to [articleBrandId, activeMarket]
   const articleBrandId = article?.brandId ?? null;
+  const articleMatchesMarket = Boolean(article && article.market === activeMarket);
   useEffect(() => {
     setOnlineEngineCount(enginesForMarket(activeMarket).length);
-    if (!articleBrandId) {
+    if (!articleBrandId || !articleMatchesMarket) {
       return;
     }
     const ctrl = new AbortController();
@@ -416,7 +417,7 @@ export function StudioPublishRetest({
     return () => {
       ctrl.abort();
     };
-  }, [articleBrandId, activeMarket]);
+  }, [articleBrandId, articleMatchesMarket, activeMarket]);
 
   const effectiveEntries = useMemo(() => {
     return publishRecords.map((raw) => {
@@ -458,7 +459,7 @@ export function StudioPublishRetest({
   }, [effectiveEntries]);
 
   useEffect(() => {
-    if (effectiveEntries.length === 0) {
+    if (effectiveEntries.length === 0 || (article && !articleMatchesMarket)) {
       setLiveBudgets({});
       return;
     }
@@ -502,7 +503,7 @@ export function StudioPublishRetest({
       ctrl.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [budgetQueryKey, activeMarket, article?.id]);
+  }, [budgetQueryKey, activeMarket, article?.id, articleMatchesMarket]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();

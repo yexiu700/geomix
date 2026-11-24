@@ -960,6 +960,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   // Load publish records whenever active article changes
   const activeArticleId = activeArticle?.id ?? null;
+  const activeArticleMatchesContext = Boolean(
+    activeArticle &&
+    activeArticle.market === activeMarket &&
+    activeArticle.brandId === activeBrandId,
+  );
   useEffect(() => {
     pubRecordsCtrlRef.current?.abort();
     pubRecordsCtrlRef.current = null;
@@ -967,7 +972,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setPublishRecords([]);
     setPendingRetest((prev) => (prev && prev.articleId === activeArticleId ? prev : null));
 
-    if (!activeArticleId || !activeBrandId || !activeBrandMarketId) {
+    if (
+      !activeArticleId ||
+      !activeBrandId ||
+      !activeBrandMarketId ||
+      !activeArticleMatchesContext
+    ) {
       setPublishRecordsLoading(false);
       return;
     }
@@ -977,7 +987,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     return () => {
       pubRecordsCtrlRef.current?.abort();
     };
-  }, [activeArticleId, activeBrandId, activeBrandMarketId, reloadPublishRecords]);
+  }, [
+    activeArticleId,
+    activeArticleMatchesContext,
+    activeBrandId,
+    activeBrandMarketId,
+    reloadPublishRecords,
+  ]);
 
   const skipNextSelfPublishRecordsRefreshRef = useRef(false);
 
@@ -2246,8 +2262,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             slots?.publishRetestSlot ?? (
               <StudioPublishRetest
                 activeMarket={activeMarket}
-                article={activeArticle}
-                publishRecords={publishRecords}
+                article={activeArticleMatchesContext ? activeArticle : null}
+                publishRecords={activeArticleMatchesContext ? publishRecords : []}
                 recordsLoading={publishRecordsLoading}
                 retestingRecordId={retestingRecordId}
                 pollingRetestRecordId={pendingRetest?.recordId ?? null}
@@ -2262,7 +2278,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       </div>
 
       <StudioDistributionDrawer
-        open={distributionDrawerOpen}
+        open={
+          distributionDrawerOpen &&
+          activeArticle !== null &&
+          activeArticle.market === activeMarket &&
+          activeArticle.brandId === activeBrand.id
+        }
         brandId={activeBrand.id}
         brandMarketId={activeBrandMarket.id}
         market={activeMarket}
