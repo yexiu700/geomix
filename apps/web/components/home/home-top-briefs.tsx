@@ -29,6 +29,8 @@ function getSourceBadge(sourceType: string): { label: string; tone: SignalTone }
       return { label: '高频拆解词缺口', tone: 'info' };
     case 'CITATION_COUNTER':
       return { label: '竞品高引用反制', tone: 'competitor' };
+    case 'NEAR_MISS_BOOST':
+      return { label: '差一步被引用补强', tone: 'warning' };
     default:
       return { label: '定向写作建议', tone: 'neutral' };
   }

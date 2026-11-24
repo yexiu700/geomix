@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from './api';
 import {
   createBriefFromCitationUrl,
+  createBriefFromNearMiss,
   deriveObservationBriefSource,
   dismissBrief,
   fetchBriefs,
@@ -147,5 +148,37 @@ describe('apps/web/lib/briefs v2 client', () => {
     ).toBe(false);
     expect(isCitationCounterFallbackError(new GatewayApiError(429, 42901, '限流'))).toBe(false);
     expect(isCitationCounterFallbackError(new Error('network'))).toBe(false);
+  });
+
+  it('calls POST /brands/:id/briefs/from-near-miss with Near-Miss boost payload and AbortSignal', async () => {
+    const controller = new AbortController();
+    spy.mockResolvedValueOnce({ id: 'b_nm_1', sourceType: 'NEAR_MISS_BOOST' });
+
+    await createBriefFromNearMiss(
+      'brand/1',
+      {
+        market: 'GLOBAL',
+        tier: 'OPENED_NOT_CITED',
+        targetPrompt: 'Best quiet 4-bay NAS 2026',
+        sourceUrl: 'https://astravault.example.com/nas',
+        sourceTitle: 'AstraVault Benchmark',
+        observationIds: ['obs_1'],
+      },
+      { signal: controller.signal },
+    );
+
+    expect(spy).toHaveBeenCalledWith('/brands/brand%2F1/briefs/from-near-miss', {
+      method: 'POST',
+      body: {
+        market: 'GLOBAL',
+        tier: 'OPENED_NOT_CITED',
+        targetPrompt: 'Best quiet 4-bay NAS 2026',
+        sourceUrl: 'https://astravault.example.com/nas',
+        sourceTitle: 'AstraVault Benchmark',
+        observationIds: ['obs_1'],
+      },
+      storage: undefined,
+      signal: controller.signal,
+    });
   });
 });

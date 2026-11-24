@@ -8,6 +8,9 @@ import type {
   GeoBriefSource,
   GeoBriefUpdateInput,
   GeoMarket,
+  NearMissItemDto,
+  NearMissListResponse,
+  NearMissTier,
   TaskStatusName,
   VisibilityCitationListResponse,
   VisibilityEngineAvailabilityItem,
@@ -25,6 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
 import {
   createBriefFromCitationUrl,
+  createBriefFromNearMiss,
   deriveObservationBriefSource,
   dismissBrief,
   fetchBriefs,
@@ -43,6 +47,7 @@ import {
   deleteVisibilityRun,
   fetchVisibilityCitations,
   fetchVisibilityEngines,
+  fetchVisibilityNearMiss,
   fetchVisibilityOpportunities,
   fetchVisibilityOverview,
   fetchVisibilityRunDetail,
@@ -65,6 +70,11 @@ import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { VisibilityCitationsTab, type RankedCitationRow } from './visibility-citations-tab';
+import {
+  VisibilityNearMissPanel,
+  buildNearMissBoostInput,
+  type NearMissOwnershipFilter,
+} from './visibility-near-miss-panel';
 import { VisibilityOverviewTab } from './visibility-overview-tab';
 import { VisibilityRunsTab } from './visibility-runs-tab';
 
@@ -193,6 +203,14 @@ export function VisibilityWorkspace(): JSX.Element {
   const [opportunitiesError, setOpportunitiesError] = useState<string | null>(null);
   const [selectedFanOuts, setSelectedFanOuts] = useState<string[]>([]);
 
+  // v2.2 Near-Miss state
+  const [nearMiss, setNearMiss] = useState<NearMissListResponse | null>(null);
+  const [nearMissLoading, setNearMissLoading] = useState(false);
+  const [nearMissError, setNearMissError] = useState<string | null>(null);
+  const [nearMissTierFilter, setNearMissTierFilter] = useState<NearMissTier | undefined>(undefined);
+  const [nearMissOwnershipFilter, setNearMissOwnershipFilter] =
+    useState<NearMissOwnershipFilter>('ALL');
+
   // M3 GeoBrief list, drawer & BrandFact lookup state
   const [briefs, setBriefs] = useState<GeoBriefRecord[]>([]);
   const [briefsTotal, setBriefsTotal] = useState(0);
@@ -221,6 +239,7 @@ export function VisibilityWorkspace(): JSX.Element {
   const runDetailCtrlRef = useRef<AbortController | null>(null);
   const citationsCtrlRef = useRef<AbortController | null>(null);
   const opportunitiesCtrlRef = useRef<AbortController | null>(null);
+  const nearMissCtrlRef = useRef<AbortController | null>(null);
   const briefsCtrlRef = useRef<AbortController | null>(null);
   const briefGenCtrlRef = useRef<AbortController | null>(null);
   const factsCtrlRef = useRef<AbortController | null>(null);
@@ -229,6 +248,11 @@ export function VisibilityWorkspace(): JSX.Element {
   const hadLiveRunsRef = useRef(false);
   const daysRef = useRef(days);
   daysRef.current = days;
+  const nearMissFilterRef = useRef<{
+    tier: NearMissTier | undefined;
+    ownership: NearMissOwnershipFilter;
+  }>({ tier: nearMissTierFilter, ownership: nearMissOwnershipFilter });
+  nearMissFilterRef.current = { tier: nearMissTierFilter, ownership: nearMissOwnershipFilter };
   const briefFilterRef = useRef<{
     status: BriefStatusFilterValue;
     sourceType: GeoBriefSource | '';
@@ -242,6 +266,7 @@ export function VisibilityWorkspace(): JSX.Element {
     runDetailCtrlRef.current?.abort();
     citationsCtrlRef.current?.abort();
     opportunitiesCtrlRef.current?.abort();
+    nearMissCtrlRef.current?.abort();
     briefsCtrlRef.current?.abort();
     briefGenCtrlRef.current?.abort();
     factsCtrlRef.current?.abort();
@@ -458,6 +483,49 @@ export function VisibilityWorkspace(): JSX.Element {
     [],
   );
 
+  const loadNearMiss = useCallback(
+    async (
+      brandId: string,
+      market: GeoMarket,
+      seq: number,
+      windowDays: number,
+      tier?: NearMissTier,
+      ownership: NearMissOwnershipFilter = 'ALL',
+    ) => {
+      nearMissCtrlRef.current?.abort();
+      const ctrl = new AbortController();
+      nearMissCtrlRef.current = ctrl;
+      setNearMissLoading(true);
+      setNearMissError(null);
+      try {
+        // Backend Zod only accepts CitationSourceKind ('OWNED' | ...), never 'THIRD_PARTY'.
+        // For THIRD_PARTY, omit sourceKind & tier so client filters !isOwned and recomputes all 4 tierCounts accurately.
+        const queryParams =
+          ownership === 'THIRD_PARTY'
+            ? { days: windowDays, limit: 100 }
+            : {
+                days: windowDays,
+                ...(tier ? { tier } : {}),
+                ...(ownership === 'OWNED' ? { sourceKind: 'OWNED' as const } : {}),
+                limit: 50,
+              };
+        const res = await fetchVisibilityNearMiss(brandId, market, queryParams, {
+          signal: ctrl.signal,
+        });
+        if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+        setNearMiss(res);
+      } catch (err) {
+        if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
+        setNearMissError(extractErrorMessage(err, '加载差一步被引用（Near-Miss）机会失败'));
+      } finally {
+        if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+          setNearMissLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
   const loadBriefs = useCallback(
     async (
       brandId: string,
@@ -561,6 +629,11 @@ export function VisibilityWorkspace(): JSX.Element {
     setOpportunitiesError(null);
     setSelectedFanOuts([]);
 
+    setNearMiss(null);
+    setNearMissError(null);
+    setNearMissTierFilter(undefined);
+    setNearMissOwnershipFilter('ALL');
+
     // Reset all M3 brief & drawer states synchronously to prevent stale cross-brand leakage
     setBriefs([]);
     setBriefsTotal(0);
@@ -584,6 +657,7 @@ export function VisibilityWorkspace(): JSX.Element {
       setRunsLoading(false);
       setCitationsLoading(false);
       setOpportunitiesLoading(false);
+      setNearMissLoading(false);
       setBriefsLoading(false);
       return;
     }
@@ -594,6 +668,7 @@ export function VisibilityWorkspace(): JSX.Element {
     void loadRuns(activeBrandId, activeMarket, seq, { page: 1, status: '', keyword: '' }, false);
     void loadCitations(activeBrandId, activeMarket, seq, windowDays, undefined);
     void loadOpportunities(activeBrandId, activeMarket, seq, windowDays);
+    void loadNearMiss(activeBrandId, activeMarket, seq, windowDays, undefined, 'ALL');
     void loadBriefs(activeBrandId, activeMarket, seq, { status: 'OPEN', sourceType: '' }, false);
   }, [
     abortAllControllers,
@@ -603,6 +678,7 @@ export function VisibilityWorkspace(): JSX.Element {
     loadBriefs,
     loadCitations,
     loadEngines,
+    loadNearMiss,
     loadOpportunities,
     loadOverview,
     loadRuns,
@@ -651,7 +727,7 @@ export function VisibilityWorkspace(): JSX.Element {
     };
   }, [activeBrandId, activeMarket, activeRunId, loadRunDetail]);
 
-  // Refetch overview/citations/opportunities when time window or engine/source filters change
+  // Refetch overview/citations/opportunities/near-miss when time window or engine/source filters change
   const handleDaysChange = (nextDays: number) => {
     setDays(nextDays);
     if (!activeBrandId) return;
@@ -659,6 +735,14 @@ export function VisibilityWorkspace(): JSX.Element {
     void loadOverview(activeBrandId, activeMarket, seq, nextDays, selectedEngine);
     void loadCitations(activeBrandId, activeMarket, seq, nextDays, sourceFilter);
     void loadOpportunities(activeBrandId, activeMarket, seq, nextDays);
+    void loadNearMiss(
+      activeBrandId,
+      activeMarket,
+      seq,
+      nextDays,
+      nearMissTierFilter,
+      nearMissOwnershipFilter,
+    );
   };
 
   const handleSelectEngine = (nextEngine: VisibilityEngineKey | undefined) => {
@@ -673,6 +757,21 @@ export function VisibilityWorkspace(): JSX.Element {
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
     void loadCitations(activeBrandId, activeMarket, seq, days, nextKind);
+  };
+
+  const handleNearMissTierChange = (nextTier: NearMissTier | undefined) => {
+    setNearMissTierFilter(nextTier);
+    if (!activeBrandId) return;
+    if (nearMissOwnershipFilter === 'THIRD_PARTY') return;
+    const seq = contextSeqRef.current;
+    void loadNearMiss(activeBrandId, activeMarket, seq, days, nextTier, nearMissOwnershipFilter);
+  };
+
+  const handleNearMissOwnershipChange = (nextOwnership: NearMissOwnershipFilter) => {
+    setNearMissOwnershipFilter(nextOwnership);
+    if (!activeBrandId) return;
+    const seq = contextSeqRef.current;
+    void loadNearMiss(activeBrandId, activeMarket, seq, days, nearMissTierFilter, nextOwnership);
   };
 
   const handleRunsFilterChange = (next: {
@@ -742,6 +841,14 @@ export function VisibilityWorkspace(): JSX.Element {
       void loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine);
       void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter);
       void loadOpportunities(activeBrandId, activeMarket, seq, days);
+      void loadNearMiss(
+        activeBrandId,
+        activeMarket,
+        seq,
+        days,
+        nearMissFilterRef.current.tier,
+        nearMissFilterRef.current.ownership,
+      );
       void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
       if (typeof window !== 'undefined') {
         if (postRunBriefTimerRef.current !== null) {
@@ -763,6 +870,7 @@ export function VisibilityWorkspace(): JSX.Element {
     hasLiveRuns,
     loadBriefs,
     loadCitations,
+    loadNearMiss,
     loadOpportunities,
     loadOverview,
     selectedEngine,
@@ -790,7 +898,7 @@ export function VisibilityWorkspace(): JSX.Element {
 
   useTabFreshness({
     active: true,
-    domains: ['visibility-runs', 'brands', 'briefs'],
+    domains: ['visibility-runs', 'brands', 'briefs', 'publish-records'],
     onRefresh: async () => {
       if (!activeBrandId) return;
       const seq = contextSeqRef.current;
@@ -805,6 +913,14 @@ export function VisibilityWorkspace(): JSX.Element {
         ),
         loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter),
         loadOpportunities(activeBrandId, activeMarket, seq, days),
+        loadNearMiss(
+          activeBrandId,
+          activeMarket,
+          seq,
+          days,
+          nearMissFilterRef.current.tier,
+          nearMissFilterRef.current.ownership,
+        ),
         loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true),
       ]);
     },
@@ -990,6 +1106,14 @@ export function VisibilityWorkspace(): JSX.Element {
           void loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine);
           void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter);
           void loadOpportunities(activeBrandId, activeMarket, seq, days);
+          void loadNearMiss(
+            activeBrandId,
+            activeMarket,
+            seq,
+            days,
+            nearMissFilterRef.current.tier,
+            nearMissFilterRef.current.ownership,
+          );
         } catch (err) {
           if (seq !== contextSeqRef.current) return;
           feedback.notifyError(extractErrorMessage(err, '删除监测任务失败'));
@@ -1145,6 +1269,33 @@ export function VisibilityWorkspace(): JSX.Element {
       },
       { clearFanOuts: true },
     );
+  };
+
+  const handleBoostFromNearMiss = async (item: NearMissItemDto) => {
+    if (!activeBrandId || readOnly || generatingBriefKey !== null) return;
+    briefGenCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    briefGenCtrlRef.current = ctrl;
+    const seq = contextSeqRef.current;
+    setGeneratingBriefKey(`near-miss:${item.id}`);
+    try {
+      const payload = buildNearMissBoostInput(item, activeMarket);
+      const created = await createBriefFromNearMiss(activeBrandId, payload, {
+        signal: ctrl.signal,
+      });
+      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
+      invalidateFreshness('briefs');
+      feedback.notifySuccess('已生成补强意见卡（免费），正在前往 GEO 写作台');
+      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      handleNavigateToStudioWithBrief(created);
+    } catch (err) {
+      if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
+      feedback.notifyError(extractErrorMessage(err, '生成补强意见卡失败，请稍后重试'));
+    } finally {
+      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
+        setGeneratingBriefKey(null);
+      }
+    }
   };
 
   const handleSaveBrief = async (
@@ -1510,6 +1661,33 @@ export function VisibilityWorkspace(): JSX.Element {
               合并生成专题意见（{selectedQueries.length}）
             </Button>
           )}
+          nearMissSlot={
+            <VisibilityNearMissPanel
+              data={nearMiss}
+              loading={nearMissLoading}
+              error={nearMissError}
+              tierFilter={nearMissTierFilter}
+              onTierFilterChange={handleNearMissTierChange}
+              ownershipFilter={nearMissOwnershipFilter}
+              onOwnershipFilterChange={handleNearMissOwnershipChange}
+              onRetry={() => {
+                if (!activeBrandId) return;
+                void loadNearMiss(
+                  activeBrandId,
+                  activeMarket,
+                  contextSeqRef.current,
+                  days,
+                  nearMissTierFilter,
+                  nearMissOwnershipFilter,
+                );
+              }}
+              readOnly={readOnly}
+              boostingItemId={
+                generatingBriefKey?.startsWith('near-miss:') ? generatingBriefKey.slice(10) : null
+              }
+              onBoostItem={(item) => void handleBoostFromNearMiss(item)}
+            />
+          }
         />
       ),
     },

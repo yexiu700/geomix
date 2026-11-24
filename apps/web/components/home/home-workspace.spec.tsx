@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
 import * as homeApi from '../../lib/home';
+import * as reportsApi from '../../lib/reports';
 import * as studioApi from '../../lib/studio';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
@@ -772,5 +773,53 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
 
     fireEvent.click(within(summary).getByRole('button', { name: '查看点数' }));
     expect(navigateWorkspace).toHaveBeenCalledWith('/account?tab=points');
+  });
+
+  it('opens Monthly GEO ROI Report modal from /home and renders NEAR_MISS_BOOST badge cleanly (#372)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [BRAND_A],
+      activeBrandId: BRAND_A.id,
+      activeMarket: 'CN',
+    });
+
+    const baseData = makeHomeData(BRAND_A.id, 'CN', 1);
+    const dataWithNearMissBrief: ActionHomeResponse = {
+      ...baseData,
+      topBriefs: [
+        {
+          ...baseData.topBriefs[0]!,
+          sourceType: 'NEAR_MISS_BOOST',
+          suggestedTitle: '差一步被引用补强专题',
+        },
+      ],
+    };
+
+    vi.spyOn(homeApi, 'fetchActionHome').mockResolvedValueOnce(dataWithNearMissBrief);
+    const listReportsSpy = vi
+      .spyOn(reportsApi, 'fetchGeoRoiReports')
+      .mockResolvedValueOnce({ items: [] });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <HomeWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const workspace = await screen.findByTestId('home-workspace');
+    expect(workspace.textContent).toContain('差一步被引用补强');
+    expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
+
+    fireEvent.click(screen.getByTestId('home-open-roi-report-btn'));
+
+    expect(await screen.findByTestId('home-roi-report-modal')).toBeTruthy();
+    await waitFor(() => {
+      expect(listReportsSpy).toHaveBeenCalledWith(
+        BRAND_A.id,
+        { market: 'CN', limit: 20 },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
   });
 });

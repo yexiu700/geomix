@@ -31,6 +31,7 @@ import { useConsoleContext } from '../shell/console-context';
 import { HomeDistributionSummary } from './home-distribution-summary';
 import { HomeHealthStrip } from './home-health-strip';
 import { HomeRecentArticles } from './home-recent-articles';
+import { HomeRoiReportModal } from './home-roi-report-modal';
 import { HomeTopBriefs } from './home-top-briefs';
 
 function formatHomeError(err: unknown, fallback: string): string {
@@ -66,6 +67,9 @@ export function HomeWorkspace(): JSX.Element {
   const [pendingRetestRuns, setPendingRetestRuns] = useState<
     Array<{ recordId: string; runId: string }>
   >([]);
+
+  // Monthly GEO ROI Report modal state
+  const [roiModalOpen, setRoiModalOpen] = useState(false);
 
   const contextSeqRef = useRef(0);
   const loadCtrlRef = useRef<AbortController | null>(null);
@@ -119,6 +123,7 @@ export function HomeWorkspace(): JSX.Element {
     setBrandFactsLoading(false);
     setRetestingRecordId(null);
     setPendingRetestRuns([]);
+    setRoiModalOpen(false);
 
     if (factsBrandRef.current !== activeBrandId) {
       setBrandFacts([]);
@@ -511,15 +516,25 @@ export function HomeWorkspace(): JSX.Element {
           <span className="gm-home-context-category">{activeBrand.category}</span>
         </div>
 
-        {missingMarket ? (
+        <div style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           <Button
             size="small"
-            disabled={readOnly}
-            onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
+            type="primary"
+            data-testid="home-open-roi-report-btn"
+            onClick={() => setRoiModalOpen(true)}
           >
-            + 开启{missingMarket === 'GLOBAL' ? '海外' : '国内'}市场
+            生成月度 GEO ROI 报告
           </Button>
-        ) : null}
+          {missingMarket ? (
+            <Button
+              size="small"
+              disabled={readOnly}
+              onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
+            >
+              + 开启{missingMarket === 'GLOBAL' ? '海外' : '国内'}市场
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {/* Block 1: Brand Health Signal Strip */}
@@ -555,14 +570,25 @@ export function HomeWorkspace(): JSX.Element {
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
       />
 
-      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355) */}
+      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355 + v2.2 #372 CI/DiD) */}
       <HomeDistributionSummary
         summary={resolvedData.distributionSummary}
+        recentArticles={resolvedData.recentArticles}
         onOpenArticle={(articleId) =>
           consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
         }
         onOpenPoints={() => consoleCtx?.navigateWorkspace('/account?tab=points')}
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
+        onOpenRoiReportModal={() => setRoiModalOpen(true)}
+      />
+
+      <HomeRoiReportModal
+        open={roiModalOpen}
+        brandId={activeBrand.id}
+        brandName={activeBrandMarket.localBrandName}
+        market={activeMarket}
+        readOnly={readOnly}
+        onClose={() => setRoiModalOpen(false)}
       />
 
       <GeoBriefDrawer

@@ -5690,3 +5690,120 @@ input:not([class*='ant-']):hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* v2.2 Near-Miss table wrap (isolated from .gm-vis-table-wrap invariant) */
+.gm-near-miss-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.gm-near-miss-table-wrap .ant-table table {
+  table-layout: fixed;
+}
+
+/* v2.2 Standalone public ROI report layout & print-to-PDF rules */
+.gm-public-roi-report {
+  min-height: 100vh;
+  background: var(--gm-bg-base);
+  color: var(--gm-fg-1);
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+.gm-roi-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+
+  html,
+  body,
+  .gm-public-roi-report {
+    --gm-bg-base: #ffffff;
+    --gm-bg-surface: #ffffff;
+    --gm-bg-elevated: #f8fafc;
+    --gm-line-1: #cbd5e1;
+    --gm-line-2: #94a3b8;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .gm-print-hide {
+    display: none !important;
+  }
+
+  .gm-public-roi-report,
+  .gm-public-roi-report *,
+  .gm-public-roi-report div,
+  .gm-public-roi-report a,
+  .gm-public-roi-report h1,
+  .gm-public-roi-report h2,
+  .gm-public-roi-report h3,
+  .gm-public-roi-report strong,
+  .gm-public-roi-report th,
+  .gm-public-roi-report td,
+  .gm-public-roi-report p,
+  .gm-public-roi-report span {
+    color: #0f172a !important;
+  }
+
+  .gm-public-roi-report .gm-panel,
+  .gm-public-roi-report .gm-roi-print-section,
+  .gm-public-roi-report .gm-roi-print-card {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: none !important;
+  }
+
+  .gm-public-roi-report .gm-roi-print-card,
+  .gm-public-roi-report .gm-roi-print-keep {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .gm-public-roi-report .gm-roi-print-table-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .gm-public-roi-report .ant-tag,
+  .gm-public-roi-report .gm-pill,
+  .gm-public-roi-report .ant-alert,
+  .gm-public-roi-report [data-testid='public-roi-low-sample-hint'] {
+    background: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+  }
+
+  .gm-public-roi-report table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  .gm-public-roi-report thead {
+    display: table-header-group;
+  }
+
+  .gm-public-roi-report th,
+  .gm-public-roi-report td {
+    border-bottom: 1px solid #cbd5e1 !important;
+    background: transparent !important;
+  }
+
+  .gm-public-roi-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

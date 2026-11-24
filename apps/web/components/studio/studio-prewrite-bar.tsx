@@ -139,7 +139,7 @@ export function StudioPrewriteBar({
               {linkedBrief.sourceCitationUrl &&
               /^https?:\/\//i.test(linkedBrief.sourceCitationUrl) ? (
                 <Tag color="gold" style={{ margin: 0 }} title={linkedBrief.sourceCitationUrl}>
-                  反制信源 ·{' '}
+                  {linkedBrief.sourceType === 'NEAR_MISS_BOOST' ? '补强页面 · ' : '反制信源 · '}
                   {linkedBrief.sourceCitationUrl.length > 36
                     ? `${linkedBrief.sourceCitationUrl.slice(0, 36)}…`
                     : linkedBrief.sourceCitationUrl}

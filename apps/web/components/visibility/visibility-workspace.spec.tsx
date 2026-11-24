@@ -16,6 +16,7 @@ import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
+import * as freshnessLib from '../../lib/tab-freshness';
 import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
@@ -494,6 +495,20 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     mockNotifyError.mockReset();
     window.history.replaceState(null, '', '/visibility');
     vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(visibilityApi, 'fetchVisibilityNearMiss').mockResolvedValue({
+      brandId: 'brand_dual_1',
+      market: 'CN',
+      days: 14,
+      total: 0,
+      tierCounts: {
+        OPENED_NOT_CITED: 0,
+        RETRIEVED_NOT_CITED: 0,
+        CRAWLED_NOT_CITED: 0,
+        MENTIONED_NOT_OWNED: 0,
+      },
+      hasRawRetrievalSignals: false,
+      items: [],
+    });
     vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
       brandId: 'brand_dual_1',
       truthAgreementSignedAt: '2026-11-18T00:00:00.000Z',
@@ -1282,5 +1297,152 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     expect(screen.getByText('品牌服务暂时不可用')).toBeTruthy();
     expect(screen.getByRole('button', { name: /重\s*试/ })).toBeTruthy();
     expect(screen.queryByText('尚未创建品牌资产')).toBeNull();
+  });
+
+  it('integrates Near-Miss panel in Citations tab, filters THIRD_PARTY client-side without leaking sourceKind=THIRD_PARTY, and navigates to /studio after boost-brief (#372)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+
+    const nearMissSpy = vi.spyOn(visibilityApi, 'fetchVisibilityNearMiss').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      market: 'CN',
+      days: 14,
+      total: 2,
+      tierCounts: {
+        OPENED_NOT_CITED: 1,
+        RETRIEVED_NOT_CITED: 1,
+        CRAWLED_NOT_CITED: 0,
+        MENTIONED_NOT_OWNED: 0,
+      },
+      hasRawRetrievalSignals: true,
+      items: [
+        {
+          id: 'nm_owned_1',
+          tier: 'OPENED_NOT_CITED',
+          opportunityScore: 93,
+          url: 'https://aurora-nas.cn/quiet-benchmark',
+          domain: 'aurora-nas.cn',
+          title: '极光NAS 静音实测参数页',
+          snippet: '实测 18dB 低噪表现',
+          sourceKind: 'OWNED',
+          isOwned: true,
+          engines: ['deepseek'],
+          prompts: ['静音四盘位家用NAS推荐'],
+          observationIds: ['obs_1'],
+          openedCount: 2,
+          retrievedCount: 4,
+          lastSeenAt: '2026-11-23T08:00:00.000Z',
+        },
+        {
+          id: 'nm_third_1',
+          tier: 'RETRIEVED_NOT_CITED',
+          opportunityScore: 80,
+          url: 'https://zhihu.com/question/999',
+          domain: 'zhihu.com',
+          title: '知乎 NAS 选型讨论',
+          snippet: '第三方检索候选页面',
+          sourceKind: 'SOCIAL',
+          isOwned: false,
+          engines: ['deepseek'],
+          prompts: ['家用NAS选型指南'],
+          observationIds: ['obs_2'],
+          openedCount: 0,
+          retrievedCount: 3,
+          lastSeenAt: '2026-11-23T07:00:00.000Z',
+        },
+      ],
+    });
+
+    const createdBoostBrief: GeoBriefRecord = {
+      id: 'brief_near_miss_1',
+      brandId: DUAL_BRAND.id,
+      brandMarketId: 'bm_cn_1',
+      market: 'CN',
+      sourceType: 'NEAR_MISS_BOOST',
+      sourceRunId: null,
+      sourceObservationIds: ['obs_1'],
+      sourceCitationUrl: 'https://aurora-nas.cn/quiet-benchmark',
+      targetPrompt: '静音四盘位家用NAS推荐',
+      priorityScore: 93,
+      diagnosisSummary: 'AI 已点开官网页但尚未正式引用，建议补充首段直答与参数对比表。',
+      recommendedRecipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'CN_DEEP_REVIEW',
+      suggestedTitle: '极光NAS 四盘位静音实测补强指南',
+      outlineH2: [{ heading: '首段直接结论', intent: '补充可引用结论' }],
+      targetFanOuts: ['静音NAS'],
+      competitorFocus: ['群晖'],
+      matchedFactIds: ['fact_1'],
+      missingFactHints: [],
+      recommendedChannels: [{ channel: '官网博客 / 文档', reason: '承接直连引用' }],
+      status: 'OPEN',
+      createdAt: '2026-11-23T09:00:00.000Z',
+      updatedAt: '2026-11-23T09:00:00.000Z',
+    };
+
+    const boostSpy = vi
+      .spyOn(briefsApi, 'createBriefFromNearMiss')
+      .mockResolvedValueOnce(createdBoostBrief);
+    const invalidateSpy = vi.spyOn(freshnessLib, 'invalidateFreshness');
+    const navigateWorkspace = vi.fn();
+
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    const nmPanel = await screen.findByTestId('visibility-near-miss-panel');
+    expect(nmPanel.textContent).toContain('差一步被引用（Near-Miss）');
+    expect(await screen.findByTestId('near-miss-boost-btn-nm_owned_1')).toBeTruthy();
+
+    // Switch to THIRD_PARTY -> MUST NOT pass sourceKind='THIRD_PARTY' to backend!
+    fireEvent.click(screen.getByTestId('near-miss-ownership-THIRD_PARTY'));
+    await waitFor(() => {
+      const lastCallParams = nearMissSpy.mock.calls.at(-1)?.[2];
+      expect(lastCallParams?.sourceKind).toBeUndefined();
+      expect(screen.queryByTestId('near-miss-boost-btn-nm_owned_1')).toBeNull();
+      expect(screen.getByTestId('near-miss-boost-btn-nm_third_1')).toBeTruthy();
+    });
+
+    // Switch to OWNED -> passes sourceKind='OWNED'
+    fireEvent.click(screen.getByTestId('near-miss-ownership-OWNED'));
+    await waitFor(() => {
+      const lastCallParams = nearMissSpy.mock.calls.at(-1)?.[2];
+      expect(lastCallParams?.sourceKind).toBe('OWNED');
+    });
+
+    // One-click boost -> POST /briefs/from-near-miss + invalidateFreshness('briefs') + navigate /studio
+    fireEvent.click(await screen.findByTestId('near-miss-boost-btn-nm_owned_1'));
+    await waitFor(() => {
+      expect(boostSpy).toHaveBeenCalledWith(
+        DUAL_BRAND.id,
+        expect.objectContaining({
+          market: 'CN',
+          tier: 'OPENED_NOT_CITED',
+          targetPrompt: '静音四盘位家用NAS推荐',
+          sourceUrl: 'https://aurora-nas.cn/quiet-benchmark',
+        }),
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      expect(invalidateSpy).toHaveBeenCalledWith('briefs');
+      expect(navigateWorkspace).toHaveBeenCalledWith(
+        '/studio?brandId=brand_dual_1&market=CN&briefId=brief_near_miss_1',
+      );
+    });
   });
 });

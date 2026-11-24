@@ -2,6 +2,7 @@
 
 import {
   API_ERROR,
+  type CreateNearMissBoostBriefInput,
   type GeoBriefFromCitationUrlInput,
   type GeoBriefGenerateInput,
   type GeoBriefListResponse,
@@ -99,6 +100,22 @@ export async function createBriefFromCitationUrl(
 ): Promise<GeoBriefRecord> {
   return authorizedV2Request<GeoBriefRecord>(
     `/brands/${encodeURIComponent(brandId)}/briefs/from-citation-url`,
+    {
+      method: 'POST',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function createBriefFromNearMiss(
+  brandId: string,
+  input: CreateNearMissBoostBriefInput,
+  options?: BriefClientOptions,
+): Promise<GeoBriefRecord> {
+  return authorizedV2Request<GeoBriefRecord>(
+    `/brands/${encodeURIComponent(brandId)}/briefs/from-near-miss`,
     {
       method: 'POST',
       body: input,
