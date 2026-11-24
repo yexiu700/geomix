@@ -13,6 +13,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的 GEO 内容创作与 AI 可见度�
 - [已确认决策（docs/decisions.md）](./docs/decisions.md)：产品与合规决策及后续演进补充。
 - [v2.1 分发与写作打通需求与架构设计（docs/v2.1分发与写作打通需求与架构设计.md）](./docs/v2.1分发与写作打通需求与架构设计.md)：Global-First v2.1 PRD、领域模型与 Batch 0–3 拆分规范（对应 Epic #357 / Issues #349–#356）。
 - [v2.2 可证明 ROI 与渠道扩容需求与架构设计（docs/v2.2可证明ROI与渠道扩容需求与架构设计.md）](./docs/v2.2可证明ROI与渠道扩容需求与架构设计.md)：v2.2 PRD、Near-Miss/ROI/多语种/L1 扩容/L2 扩展桥接架构与 Batch 0–4 拆分规范（对应 Epic #375 / Issues #367–#374，伴生仓 `yexiu700/geomix-extension`）。
+- [品牌官网需求与架构设计（docs/GeoMix品牌官网需求与架构设计.md）](./docs/GeoMix品牌官网需求与架构设计.md)：Global-First 中英双语品牌官网 PRD、交互沙盒、点数计算器、试用线索闭环与 Batch 0–3 拆分规范（对应 Epic #382 / Issues #378–#381）。
 - [运维与部署手册（docs/运维与部署手册.md）](./docs/运维与部署手册.md) & [CD 部署指南（docs/CD部署指南.md）](./docs/CD部署指南.md)：生产/预发 Compose、备份恢复、LLM 成本日报与 Runner 部署。
 
 ### 基线与归档文档（按需查阅，日常开发无需通读）
