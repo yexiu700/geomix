@@ -267,6 +267,8 @@ type ConnectionRow = {
   authType: string;
   oauthAccessTokenCiphertext: string | null;
   oauthExpiresAt: Date | null;
+  targetLocale?: string | null;
+  externalShopDomain?: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -1538,6 +1540,8 @@ class InMemoryDistributionStore {
             authType: String(args.data.authType ?? 'API_KEY'),
             oauthAccessTokenCiphertext: args.data.oauthAccessTokenCiphertext ?? null,
             oauthExpiresAt: args.data.oauthExpiresAt ?? null,
+            targetLocale: args.data.targetLocale ?? null,
+            externalShopDomain: args.data.externalShopDomain ?? null,
             createdAt: now,
             updatedAt: now,
           };

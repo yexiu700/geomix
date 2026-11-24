@@ -27,7 +27,7 @@ export function createUndiciTransport(): HttpTransport {
       const response = await undiciFetch(request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.rawBody ?? request.body,
         dispatcher: agent,
         signal: request.signal,
         redirect: 'manual',
@@ -76,7 +76,7 @@ export function createUndiciStreamTransport(): HttpStreamTransport {
       const response = await undiciFetch(request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.rawBody ?? request.body,
         dispatcher: agent,
         signal: request.signal,
         redirect: 'manual',

@@ -577,7 +577,8 @@ export class DistributionService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '分发任务不存在或无权访问');
     }
 
-    const effectivePublishAsDraft = input.publishAsDraft ?? task.publishAsDraft;
+    const effectivePublishAsDraft =
+      task.provider === 'WECHAT_OFFICIAL' ? true : (input.publishAsDraft ?? task.publishAsDraft);
     const effectiveConnectionId =
       input.connectionId !== undefined ? input.connectionId : task.connectionId;
 

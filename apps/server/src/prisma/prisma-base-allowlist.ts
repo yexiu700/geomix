@@ -52,6 +52,7 @@ export const PRISMA_BASE_ALLOWLIST: Readonly<Record<string, PrismaBaseAllowance>
   'distribution/crawl-probe.service.ts': { category: 'worker', direct: 1, txOrRaw: 0 },
   'distribution/public-pr-packet.service.ts': { category: 'public', direct: 1, txOrRaw: 0 },
   'distribution/retest-scheduler.service.ts': { category: 'worker', direct: 2, txOrRaw: 0 },
+  'distribution/shopify-oauth.service.ts': { category: 'public', direct: 1, txOrRaw: 0 },
   'infra/adapters.module.ts': { category: 'infra', direct: 2, txOrRaw: 0 },
   'me/me.service.ts': { category: 'merchant-debt', direct: 16, txOrRaw: 0 },
   'queue/active-work.ts': { category: 'worker', direct: 3, txOrRaw: 0 },

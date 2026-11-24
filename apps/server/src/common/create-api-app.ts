@@ -9,7 +9,7 @@ import { ApiExceptionFilter } from './api-exception.filter';
 export async function createApiApp(): Promise<INestApplication> {
   loadRootEnv();
   const env = parseEnv();
-  const app = await NestFactory.create(ApiModule, { logger: false });
+  const app = await NestFactory.create(ApiModule, { logger: false, rawBody: true });
   app.setGlobalPrefix('api');
   app.enableVersioning({
     type: VersioningType.URI,

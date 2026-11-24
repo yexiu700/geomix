@@ -23,6 +23,7 @@ export type TransportRequest = {
   method: 'GET' | 'POST' | 'PUT';
   headers: Record<string, string>;
   body?: string;
+  rawBody?: Buffer | Uint8Array;
   pinned: ResolvedAddress[];
   signal: AbortSignal;
   maxBytes: number;
@@ -98,6 +99,7 @@ export async function requestOnce(input: {
   method: 'GET' | 'POST' | 'PUT';
   headers?: Record<string, string>;
   body?: string;
+  rawBody?: Buffer | Uint8Array;
   timeoutMs: number;
   maxBytes: number;
   signal?: AbortSignal;
@@ -128,7 +130,8 @@ export async function requestOnce(input: {
       url,
       method: input.method,
       headers,
-      body: input.body,
+      body: input.body ?? (input.rawBody as unknown as string | undefined),
+      rawBody: input.rawBody,
       pinned,
       signal,
       maxBytes: input.maxBytes,

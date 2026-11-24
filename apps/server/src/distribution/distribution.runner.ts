@@ -1,6 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import { isL1ChannelProvider, type ChannelConnectionConfig, type GeoMarket } from '@geomix/shared';
+import {
+  isL1ChannelProvider,
+  isSafeDistributionHttpUrl,
+  type ChannelConnectionConfig,
+  type GeoMarket,
+} from '@geomix/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { GeoDeliveryService } from '../studio/geo-delivery.service';
 import { runInTenant } from '../tenant/tenant-context';
@@ -137,6 +142,8 @@ export class DistributionRunner implements DistributionHandler {
           siteBaseUrl: task.connection.siteBaseUrl,
           configJson: connConfig,
           authType: task.connection.authType,
+          targetLocale: task.connection.targetLocale ?? null,
+          externalShopDomain: task.connection.externalShopDomain ?? null,
         };
 
         const rawExtras = asPlainObject(task.variantExtrasJson);
@@ -148,6 +155,15 @@ export class DistributionRunner implements DistributionHandler {
           typeof rawExtras.llmsTxtSnippet === 'string' && rawExtras.llmsTxtSnippet.trim()
             ? rawExtras.llmsTxtSnippet
             : (task.article.llmsTxtSnippet ?? null);
+        const canonicalUrl =
+          [rawExtras.canonicalUrl, task.targetUrlHint, rawExtras.canonicalGuideHint]
+            .find(
+              (candidate): candidate is string =>
+                typeof candidate === 'string' && isSafeDistributionHttpUrl(candidate.trim()),
+            )
+            ?.trim() ?? null;
+        const effectivePublishAsDraft =
+          task.provider === 'WECHAT_OFFICIAL' ? true : task.publishAsDraft;
 
         const publishPayload: ConnectorPublishPayload = {
           taskId: task.id,
@@ -159,19 +175,23 @@ export class DistributionRunner implements DistributionHandler {
           metaDesc: task.variantMetaDesc,
           markdown: task.variantMarkdown,
           html: task.variantHtml,
-          publishAsDraft: task.publishAsDraft,
+          publishAsDraft: effectivePublishAsDraft,
           tags: Array.isArray(task.article.tags) ? task.article.tags : [],
           targetId: typeof rawExtras.targetId === 'string' ? rawExtras.targetId : null,
           schemaJsonLd,
           llmsTxtSnippet,
           extras: sanitizedExtras,
           deliveryId: `dist_${task.id}`,
+          canonicalUrl,
+          remotePostId: task.remotePostId ?? null,
+          targetLocale:
+            task.targetLocale ?? task.connection.targetLocale ?? task.brandMarket.locale ?? null,
         };
 
         const connector = this.connectors.get(task.provider);
         const result = await connector.publish(connContext, credentials, publishPayload);
 
-        if (result.publishedAsDraft) {
+        if (result.publishedAsDraft || task.provider === 'WECHAT_OFFICIAL') {
           await this.prisma.scoped.geoDistributionTask.update({
             where: { id: task.id },
             data: {

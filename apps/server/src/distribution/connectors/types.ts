@@ -18,6 +18,8 @@ export type ConnectorConnectionContext = {
   siteBaseUrl: string;
   configJson: ChannelConnectionConfig;
   authType?: string;
+  targetLocale?: string | null;
+  externalShopDomain?: string | null;
 };
 
 export type ConnectorSecrets = Record<string, string>;
@@ -39,6 +41,9 @@ export type ConnectorPublishPayload = {
   llmsTxtSnippet?: string | null;
   extras?: Record<string, unknown>;
   deliveryId?: string;
+  canonicalUrl?: string | null;
+  remotePostId?: string | null;
+  targetLocale?: string | null;
 };
 
 export type ConnectorTestResult = {
@@ -268,6 +273,15 @@ export function collectSecretCandidates(
     }
   }
 
+  const adminApiKey = secrets.adminApiKey?.trim();
+  if (adminApiKey && adminApiKey.includes(':')) {
+    const colonIdx = adminApiKey.indexOf(':');
+    const hexSecret = adminApiKey.slice(colonIdx + 1).trim();
+    if (hexSecret.length >= 8) {
+      add(hexSecret);
+    }
+  }
+
   return [...set].sort((a, b) => b.length - a.length);
 }
 
@@ -393,14 +407,19 @@ function applySecretRedactionPass(input: string, matcher: PreparedRedactionMatch
   }
 
   text = text
-    .replace(/(authorization\s*[:=]\s*(?:bearer|basic)\s+)[^\s"',;]+/gi, '$1[REDACTED]')
-    .replace(/\b(bearer|basic)\s+(?:[A-Za-z0-9._~+/=-]|\\\/){8,}/gi, '$1 [REDACTED]')
+    .replace(/(authorization\s*[:=]\s*(?:bearer|basic|ghost|token)\s+)[^\s"',;]+/gi, '$1[REDACTED]')
+    .replace(/\b(bearer|basic|ghost|token)\s+(?:[A-Za-z0-9._~+/=-]|\\\/){8,}/gi, '$1 [REDACTED]')
     .replace(/(x-shopify-access-token\s*[:=]\s*)[^\s"',;]+/gi, '$1[REDACTED]')
+    .replace(/(api-key\s*[:=]\s*)[^\s"',;]+/gi, '$1[REDACTED]')
     .replace(/(x-geomix-signature\s*[:=]\s*)sha256=[0-9a-fA-F]+/gi, '$1[REDACTED]')
-    .replace(/\b(shpat|shpca|shppa|shpss|whsec|wf)_[A-Za-z0-9_-]{4,}\b/gi, '$1_[REDACTED]')
+    .replace(/([?&]access_token=)[^&\s"',;]+/gi, '$1[REDACTED]')
+    .replace(
+      /\b(shpat|shpca|shppa|shpss|whsec|wf|ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_-]{4,}\b/gi,
+      '$1_[REDACTED]',
+    )
     .replace(/\bsha256=[0-9a-fA-F]{32,}\b/gi, 'sha256=[REDACTED]')
     .replace(
-      /("(?:access_?token|oauth_?access_?token|api_?token|app_?password|application_?password|signing_?secret|password|secret|authorization|index_?now_?key|key)"\s*:\s*)"[^"]*"/gi,
+      /("(?:access_?token|oauth_?access_?token|admin_?api_?key|api_?key|api_?token|app_?secret|app_?password|application_?password|signing_?secret|password|secret|token|authorization|index_?now_?key|key)"\s*:\s*)"[^"]*"/gi,
       '$1"[REDACTED]"',
     );
 

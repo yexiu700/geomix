@@ -2,7 +2,12 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GeoPublishRecordDto } from '@geomix/shared';
+import {
+  L1_CHANNEL_PROVIDERS,
+  type GeoPublishRecordDto,
+  type L1ChannelProvider,
+} from '@geomix/shared';
+import { ApiModule } from '../api.module';
 import type { QuotaService } from '../billing/quota.service';
 import { SecretBox } from '../common/secret-box';
 import type { OutboundHttpClient } from '../infra/outbound-http';
@@ -16,13 +21,25 @@ import { currentTenantId } from '../tenant/tenant-context';
 import { WorkerModule } from '../worker.module';
 import type { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { ConnectionsService } from './connections.service';
-import { CmsConnectorRegistry, WebhookConnector } from './connectors';
+import {
+  CmsConnectorRegistry,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
+  ShopifyConnector,
+  WebflowConnector,
+  WebhookConnector,
+  WechatOfficialConnector,
+  WordPressConnector,
+} from './connectors';
 import {
   ConnectorError,
   type CmsConnector,
   type ConnectorPublishPayload,
   type ConnectorPublishResult,
 } from './connectors/types';
+import { ShopifyOAuthService } from './shopify-oauth.service';
 import { CrawlProbeService } from './crawl-probe.service';
 import {
   DISTRIBUTION_ENQUEUER,
@@ -780,22 +797,48 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
     expect(opts).not.toHaveProperty('jobId');
   });
 
-  it('boots WorkerModule offline with full DistributionRunner DI chain wired', async () => {
+  it('boots both ApiModule (DistributionModule) and WorkerModule (QueueModule.forWorker) offline and resolves all 9 L1 connectors', async () => {
     const startSpy = vi.spyOn(QueueRuntime.prototype, 'start').mockResolvedValue(undefined);
     const stopSpy = vi.spyOn(QueueRuntime.prototype, 'stop').mockResolvedValue(undefined);
     const workerCtx = await NestFactory.createApplicationContext(WorkerModule, { logger: false });
+    const apiCtx = await NestFactory.createApplicationContext(ApiModule, { logger: false });
     try {
-      const runner = workerCtx.get(DistributionRunner);
-      expect(runner).toBeInstanceOf(DistributionRunner);
-      expect(workerCtx.get(DISTRIBUTION_HANDLER)).toBe(runner);
+      const expectedClasses: Record<L1ChannelProvider, new (...args: never[]) => CmsConnector> = {
+        SHOPIFY: ShopifyConnector,
+        WORDPRESS: WordPressConnector,
+        WEBFLOW: WebflowConnector,
+        WEBHOOK: WebhookConnector,
+        GHOST: GhostConnector,
+        DEVTO: DevtoConnector,
+        HASHNODE: HashnodeConnector,
+        GITHUB_MDX: GithubMdxConnector,
+        WECHAT_OFFICIAL: WechatOfficialConnector,
+      };
+
+      expect(L1_CHANNEL_PROVIDERS).toHaveLength(9);
+
+      for (const ctx of [apiCtx, workerCtx]) {
+        const registry = ctx.get(CmsConnectorRegistry);
+        expect(registry).toBeInstanceOf(CmsConnectorRegistry);
+        for (const provider of L1_CHANNEL_PROVIDERS) {
+          const connector = registry.get(provider);
+          expect(connector).toBeInstanceOf(expectedClasses[provider]);
+          expect(connector.provider).toBe(provider);
+        }
+        expect(ctx.get(DistributionRunner)).toBeInstanceOf(DistributionRunner);
+        expect(ctx.get(ConnectionsService)).toBeInstanceOf(ConnectionsService);
+        expect(ctx.get(IndexNowService)).toBeInstanceOf(IndexNowService);
+        expect(ctx.get(GeoDeliveryService)).toBeInstanceOf(GeoDeliveryService);
+        expect(ctx.get(CrawlProbeService)).toBeInstanceOf(CrawlProbeService);
+        expect(ctx.get(RetestSchedulerService)).toBeInstanceOf(RetestSchedulerService);
+      }
+
+      const workerRunner = workerCtx.get(DistributionRunner);
+      expect(workerCtx.get(DISTRIBUTION_HANDLER)).toBe(workerRunner);
       expect(workerCtx.get(DISTRIBUTION_ENQUEUER)).toBe(workerCtx.get(QueueProducer));
-      expect(workerCtx.get(ConnectionsService)).toBeInstanceOf(ConnectionsService);
-      expect(workerCtx.get(CmsConnectorRegistry)).toBeInstanceOf(CmsConnectorRegistry);
-      expect(workerCtx.get(IndexNowService)).toBeInstanceOf(IndexNowService);
-      expect(workerCtx.get(GeoDeliveryService)).toBeInstanceOf(GeoDeliveryService);
-      expect(workerCtx.get(CrawlProbeService)).toBeInstanceOf(CrawlProbeService);
-      expect(workerCtx.get(RetestSchedulerService)).toBeInstanceOf(RetestSchedulerService);
+      expect(apiCtx.get(ShopifyOAuthService)).toBeInstanceOf(ShopifyOAuthService);
     } finally {
+      await apiCtx.close();
       await workerCtx.close();
       startSpy.mockRestore();
       stopSpy.mockRestore();

@@ -7,9 +7,14 @@ import { parseSsrfAllowlist } from '../../infra/ssrf';
 import {
   CmsConnectorRegistry,
   ConnectorError,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
   ShopifyConnector,
   WebflowConnector,
   WebhookConnector,
+  WechatOfficialConnector,
   WordPressConnector,
   collectSecretCandidates,
   joinBasePath,
@@ -147,17 +152,37 @@ describe('L1 CMS Connectors (Shopify, WordPress, Webflow, Webhook)', () => {
     ).toBe('http://127.0.0.1:4100/wp/wp-json/wp/v2/categories?per_page=100');
   });
 
-  it('CmsConnectorRegistry resolves all 4 L1 connectors', () => {
+  it('CmsConnectorRegistry resolves all 9 L1 connectors', () => {
     const shopify = new ShopifyConnector(positiveClient);
     const wordpress = new WordPressConnector(positiveClient);
     const webflow = new WebflowConnector(positiveClient);
     const webhook = new WebhookConnector(positiveClient);
-    const registry = new CmsConnectorRegistry(shopify, wordpress, webflow, webhook);
+    const ghost = new GhostConnector(positiveClient);
+    const devto = new DevtoConnector(positiveClient);
+    const hashnode = new HashnodeConnector(positiveClient);
+    const githubMdx = new GithubMdxConnector(positiveClient);
+    const wechatOfficial = new WechatOfficialConnector(positiveClient);
+    const registry = new CmsConnectorRegistry(
+      shopify,
+      wordpress,
+      webflow,
+      webhook,
+      ghost,
+      devto,
+      hashnode,
+      githubMdx,
+      wechatOfficial,
+    );
 
     expect(registry.get('SHOPIFY')).toBe(shopify);
     expect(registry.get('WORDPRESS')).toBe(wordpress);
     expect(registry.get('WEBFLOW')).toBe(webflow);
     expect(registry.get('WEBHOOK')).toBe(webhook);
+    expect(registry.get('GHOST')).toBe(ghost);
+    expect(registry.get('DEVTO')).toBe(devto);
+    expect(registry.get('HASHNODE')).toBe(hashnode);
+    expect(registry.get('GITHUB_MDX')).toBe(githubMdx);
+    expect(registry.get('WECHAT_OFFICIAL')).toBe(wechatOfficial);
   });
 
   describe('ShopifyConnector', () => {

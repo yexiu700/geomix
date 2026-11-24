@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   DnsResolver,
@@ -458,5 +460,93 @@ describe('OutboundHttpClient', () => {
       kind: PROVIDER_KIND.SSRF,
       reason: 'cross_origin_put_redirect',
     });
+  });
+
+  it('forwards binary rawBody Buffer intact (including non-UTF-8 bytes) and clears it on 302 downgrade', async () => {
+    const binaryPayload = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x80,
+    ]);
+
+    // 1. Mock transport + 302 downgrade clears both rawBody and body
+    const seen: TransportRequest[] = [];
+    const transport: HttpTransport = async (req): Promise<TransportResponse> => {
+      seen.push(req);
+      if (req.url.pathname === '/upload-redirect') {
+        return {
+          status: 302,
+          headers: { location: 'https://cdn.example.com/done' },
+          body: Buffer.alloc(0),
+        };
+      }
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+        body: req.rawBody ? Buffer.from(req.rawBody) : Buffer.from('done'),
+      };
+    };
+
+    const mockClient = new OutboundHttpClient({
+      resolver: makeResolver({
+        'upload.example.com': [PUBLIC_IP],
+        'cdn.example.com': [PUBLIC_IP],
+      }),
+      transport,
+    });
+
+    const direct = await mockClient.request({
+      url: 'https://upload.example.com/media',
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      rawBody: binaryPayload,
+    });
+    expect(direct.status).toBe(200);
+    expect(direct.rawBody.equals(binaryPayload)).toBe(true);
+    expect(Buffer.isBuffer(seen[0]?.rawBody)).toBe(true);
+    expect((seen[0]?.rawBody as Buffer).equals(binaryPayload)).toBe(true);
+
+    seen.length = 0;
+    const redirected = await mockClient.request({
+      url: 'https://upload.example.com/upload-redirect',
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      rawBody: binaryPayload,
+    });
+    expect(redirected.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.method).toBe('GET');
+    expect(seen[1]?.rawBody).toBeUndefined();
+    expect(seen[1]?.body).toBeUndefined();
+    expect(seen[1]?.headers['Content-Type']).toBeUndefined();
+
+    // 2. Real undici transport against local HTTP server preserves exact non-UTF-8 bytes
+    let receivedRaw = Buffer.alloc(0);
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        receivedRaw = Buffer.concat(chunks);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ bytes: receivedRaw.length }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const realClient = new OutboundHttpClient({
+        defaultAllowlist: parseSsrfAllowlist(`127.0.0.1:${port}`, { includeDefaults: false }),
+      });
+      const res = await realClient.request({
+        url: `http://127.0.0.1:${port}/binary`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        rawBody: binaryPayload,
+      });
+      expect(res.status).toBe(200);
+      expect(receivedRaw.equals(binaryPayload)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });

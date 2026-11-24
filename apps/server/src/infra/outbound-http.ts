@@ -32,6 +32,7 @@ export type OutboundHttpRequest = {
   method: OutboundHttpMethod;
   headers?: Record<string, string>;
   body?: string;
+  rawBody?: Buffer | Uint8Array;
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
@@ -194,6 +195,7 @@ export class OutboundHttpClient {
     let currentMethod: OutboundHttpMethod = opts.method;
     let currentHeaders: Record<string, string> = { ...(opts.headers ?? {}) };
     let currentBody = opts.body;
+    let currentRawBody = opts.rawBody;
     const timeoutMs = opts.timeoutMs ?? this.defaultTimeoutMs;
     const maxBytes = opts.maxBytes ?? this.defaultMaxBytes;
     const maxRedirects = opts.maxRedirects ?? this.defaultMaxRedirects;
@@ -211,6 +213,7 @@ export class OutboundHttpClient {
         method: currentMethod,
         headers: currentHeaders,
         body: currentBody,
+        rawBody: currentRawBody,
         timeoutMs,
         maxBytes,
         signal: opts.signal,
@@ -254,6 +257,7 @@ export class OutboundHttpClient {
         ) {
           currentMethod = 'GET';
           currentBody = undefined;
+          currentRawBody = undefined;
           currentHeaders = stripHeaders(
             currentHeaders,
             new Set(['content-type', 'content-length']),
