@@ -103,4 +103,92 @@ describe('MarketingHeader', () => {
     expect(menuBtn.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+
+  it('ignores whitespace-only and expired JWT tokens, and accepts valid future-exp JWTs', async () => {
+    const makeJwt = (expOffsetSec: number) => {
+      const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+      const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + expOffsetSec }));
+      return `${header}.${payload}.sig`;
+    };
+
+    // 1. Whitespace-only token -> stays Sign In
+    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, '   \t\n  ');
+    const view1 = render(<MarketingHeader />);
+    expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Sign In');
+    expect(screen.getByTestId('marketing-auth-cta').getAttribute('href')).toBe('/login');
+    view1.unmount();
+
+    // 2. Expired access JWT (no refresh) -> stays Sign In
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, makeJwt(-3600));
+    const view2 = render(<MarketingHeader />);
+    expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Sign In');
+    expect(screen.getByTestId('marketing-auth-cta').getAttribute('href')).toBe('/login');
+    view2.unmount();
+
+    // 3. Both access and refresh JWTs expired -> stays Sign In
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, makeJwt(-3600));
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, makeJwt(-1800));
+    window.sessionStorage.setItem(REFRESH_TOKEN_KEY, makeJwt(-1800));
+    const view3 = render(<MarketingHeader />);
+    expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Sign In');
+    expect(screen.getByTestId('marketing-auth-cta').getAttribute('href')).toBe('/login');
+    view3.unmount();
+
+    // 4. Valid future-exp JWT in localStorage -> switches to Enter Console without mutating sessionStorage
+    window.sessionStorage.clear();
+    window.localStorage.clear();
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, makeJwt(3600));
+    render(<MarketingHeader />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Enter Console');
+      expect(screen.getByTestId('marketing-auth-cta').getAttribute('href')).toBe('/home');
+    });
+    expect(window.sessionStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+  });
+
+  it('reverts to Sign In on real cross-tab logout StorageEvent even when sessionStorage was previously populated', async () => {
+    const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }));
+    const validJwt = `${header}.${payload}.sig`;
+
+    // Simulate Tab A having previously visited /home (both localStorage & sessionStorage populated)
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, validJwt);
+    window.localStorage.setItem(REFRESH_TOKEN_KEY, validJwt);
+    window.sessionStorage.setItem(ACCESS_TOKEN_KEY, validJwt);
+    window.sessionStorage.setItem(REFRESH_TOKEN_KEY, validJwt);
+
+    render(<MarketingHeader />);
+    await waitFor(() => {
+      expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Enter Console');
+    });
+
+    // Simulate Tab B calling clearSession() (only localStorage is shared across tabs)
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    fireEvent(
+      window,
+      new StorageEvent('storage', {
+        key: ACCESS_TOKEN_KEY,
+        oldValue: validJwt,
+        newValue: null,
+      }),
+    );
+    fireEvent(
+      window,
+      new StorageEvent('storage', {
+        key: REFRESH_TOKEN_KEY,
+        oldValue: validJwt,
+        newValue: null,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('marketing-auth-cta').textContent).toBe('Sign In');
+      expect(screen.getByTestId('marketing-auth-cta').getAttribute('href')).toBe('/login');
+    });
+    expect(window.sessionStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
+  });
 });

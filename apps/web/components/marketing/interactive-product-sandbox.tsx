@@ -5,6 +5,7 @@ import {
   evaluateGeoArticle,
   scanDualTrackCompliance,
   type DistributionPreflightItem,
+  type GeoComplianceFlag,
 } from '@geomix/shared';
 import { useId, useMemo, useRef, useState } from 'react';
 import { GM } from '../../lib/design-tokens';
@@ -102,7 +103,48 @@ function statusBadgeClass(status: 'CITED' | 'MENTIONED' | 'COMPETITOR' | 'ABSENT
   }
 }
 
-function formatPreflightDetails(item: DistributionPreflightItem, isZh: boolean): string[] {
+function formatPreflightDetails(
+  item: DistributionPreflightItem,
+  isZh: boolean,
+  complianceFlags: readonly GeoComplianceFlag[],
+): string[] {
+  if (item.code === 'COMPLIANCE_BLOCKED') {
+    const formatted: string[] = [];
+    const severeFlags = complianceFlags.filter(
+      (flag) => flag.severity === 'blocked' || flag.code === 'PROHIBITED_INDUSTRY',
+    );
+    for (const flag of severeFlags) {
+      formatted.push(
+        isZh
+          ? `${flag.term}：${flag.message}`
+          : `Prohibited claim blocked: "${flag.term}" (${flag.code})`,
+      );
+    }
+    if (item.matches && item.matches.length > 0) {
+      for (const match of item.matches) {
+        formatted.push(
+          isZh
+            ? `第 ${match.line} 行 · 「${match.matchedText}」(${match.category})`
+            : `Line ${match.line} · "${match.matchedText}" (${match.category})`,
+        );
+      }
+    }
+    if (formatted.length > 0) {
+      return formatted.slice(0, 6);
+    }
+    if (item.details && item.details.length > 0) {
+      return item.details.slice(0, 4).map((raw) => {
+        if (isZh) return raw;
+        const colonIdx = raw.indexOf(':');
+        const term = colonIdx > 0 ? raw.slice(0, colonIdx).trim() : '';
+        return term
+          ? `Prohibited claim blocked: "${term}"`
+          : 'Prohibited high-risk claim blocked by compliance gate';
+      });
+    }
+    return [];
+  }
+
   if (item.matches && item.matches.length > 0) {
     return item.matches.map((match) =>
       isZh
@@ -661,8 +703,17 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
                   <h3 className="gm-mkt-sb-card-title">
                     {isZh ? '点击注入 / 修复典型风险项' : 'Toggle Edge Cases to Test the Gate'}
                   </h3>
-                  <span className="gm-mono gm-mkt-muted">
-                    {preflightMarket === 'GLOBAL' ? 'EN · FTC / Global' : 'ZH · 广告法 / 双轨'}
+                  <span
+                    className="gm-mono gm-mkt-muted"
+                    data-testid="sandbox-preflight-track-badge"
+                  >
+                    {preflightMarket === 'GLOBAL'
+                      ? isZh
+                        ? 'EN · FTC / 海外轨'
+                        : 'EN · FTC / Global'
+                      : isZh
+                        ? 'ZH · 广告法 / 双轨'
+                        : 'ZH · CN Ad Law / Dual-Track'}
                   </span>
                 </div>
 
@@ -831,7 +882,11 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
 
                   {preflightState.preflight.blockers.map((item) => {
                     const meta = codeLabels[item.code];
-                    const details = formatPreflightDetails(item, isZh);
+                    const details = formatPreflightDetails(
+                      item,
+                      isZh,
+                      preflightState.compliance.flags,
+                    );
                     return (
                       <div
                         key={`blocker-${item.code}`}
@@ -845,8 +900,8 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
                         <p>{meta.summary}</p>
                         {details.length > 0 ? (
                           <ul className="gm-mkt-finding-details gm-mono">
-                            {details.map((detail) => (
-                              <li key={detail}>{detail}</li>
+                            {details.map((detail, idx) => (
+                              <li key={`${item.code}-${idx}-${detail}`}>{detail}</li>
                             ))}
                           </ul>
                         ) : null}
@@ -856,7 +911,11 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
 
                   {preflightState.preflight.warnings.map((item) => {
                     const meta = codeLabels[item.code];
-                    const details = formatPreflightDetails(item, isZh);
+                    const details = formatPreflightDetails(
+                      item,
+                      isZh,
+                      preflightState.compliance.flags,
+                    );
                     return (
                       <div
                         key={`warning-${item.code}`}
@@ -870,8 +929,8 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
                         <p>{meta.summary}</p>
                         {details.length > 0 ? (
                           <ul className="gm-mkt-finding-details gm-mono">
-                            {details.map((detail) => (
-                              <li key={detail}>{detail}</li>
+                            {details.map((detail, idx) => (
+                              <li key={`${item.code}-${idx}-${detail}`}>{detail}</li>
                             ))}
                           </ul>
                         ) : null}

@@ -121,6 +121,26 @@ describe('InteractiveProductSandbox', () => {
     expect(screen.getByTestId('sandbox-gate-status').textContent).toContain('PASS');
   });
 
+  it('localizes Tab 2 CN track badge and COMPLIANCE_BLOCKED findings cleanly on locale="en"', () => {
+    render(<InteractiveProductSandbox locale="en" />);
+
+    const [, tab1] = screen.getAllByRole('tab');
+    if (!tab1) throw new Error('Expected Tab 2');
+    fireEvent.click(tab1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'CN · WordPress' }));
+    const trackBadge = screen.getByTestId('sandbox-preflight-track-badge');
+    expect(trackBadge.textContent).toBe('ZH · CN Ad Law / Dual-Track');
+    expect(trackBadge.textContent).not.toContain('广告法');
+
+    fireEvent.click(screen.getByTestId('sandbox-toggle-hype'));
+    const findingsText = screen.getByTestId('sandbox-preflight-findings').textContent ?? '';
+    expect(findingsText).toContain('COMPLIANCE_BLOCKED');
+    expect(findingsText).toContain('Prohibited claim blocked:');
+    expect(findingsText).not.toContain('命中禁做行业词');
+    expect(findingsText).not.toMatch(/命中|禁做|广告法/);
+  });
+
   it('switches 1->N distribution channel previews and renders T+1 CrawlProbe & SVG attribution chart in Tab 3', () => {
     render(<InteractiveProductSandbox locale="en" />);
 

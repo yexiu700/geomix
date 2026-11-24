@@ -9,8 +9,45 @@ import {
   switchMarketingPathLocale,
   type MarketingLocale,
 } from '../../lib/marketing-i18n';
-import { readAccessToken, readRefreshToken } from '../../lib/session';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, decodeJwtClaims } from '../../lib/session';
 import { MarketingBrandMark } from './marketing-brand-mark';
+
+function isActiveSessionToken(token: string | null): boolean {
+  if (!token) return false;
+  const trimmed = token.trim();
+  if (!trimmed) return false;
+  const claims = decodeJwtClaims(trimmed);
+  if (claims?.exp !== undefined && claims.exp * 1000 <= Date.now()) {
+    return false;
+  }
+  return true;
+}
+
+function readStorageItemSafe(kind: 'sessionStorage' | 'localStorage', key: string): string | null {
+  try {
+    const storage = window[kind];
+    return storage ? storage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function removeSessionStorageKeySafe(key: string): void {
+  try {
+    window.sessionStorage?.removeItem(key);
+  } catch {
+    // Ignore storage SecurityError / restricted private browsing
+  }
+}
+
+function hasActiveSession(): boolean {
+  return (
+    isActiveSessionToken(readStorageItemSafe('sessionStorage', ACCESS_TOKEN_KEY)) ||
+    isActiveSessionToken(readStorageItemSafe('sessionStorage', REFRESH_TOKEN_KEY)) ||
+    isActiveSessionToken(readStorageItemSafe('localStorage', ACCESS_TOKEN_KEY)) ||
+    isActiveSessionToken(readStorageItemSafe('localStorage', REFRESH_TOKEN_KEY))
+  );
+}
 
 interface NavLinkItem {
   label: string;
@@ -61,19 +98,25 @@ export function MarketingHeader() {
 
   useEffect(() => {
     const syncAuth = () => {
-      try {
-        const loggedIn =
-          Boolean(readAccessToken(window.sessionStorage)) ||
-          Boolean(readRefreshToken(window.sessionStorage));
-        setHasSession(loggedIn);
-      } catch {
-        setHasSession(false);
+      setHasSession(hasActiveSession());
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null) {
+        removeSessionStorageKeySafe(ACCESS_TOKEN_KEY);
+        removeSessionStorageKeySafe(REFRESH_TOKEN_KEY);
+      } else if (
+        (event.key === ACCESS_TOKEN_KEY || event.key === REFRESH_TOKEN_KEY) &&
+        event.newValue === null
+      ) {
+        removeSessionStorageKeySafe(event.key);
       }
+      syncAuth();
     };
 
     syncAuth();
-    window.addEventListener('storage', syncAuth);
-    return () => window.removeEventListener('storage', syncAuth);
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   useEffect(() => {

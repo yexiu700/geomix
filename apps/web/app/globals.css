@@ -5958,7 +5958,7 @@ input:not([class*='ant-']):hover {
 .gm-mkt-header {
   position: sticky;
   top: 0;
-  z-index: 40;
+  z-index: 47;
   width: 100%;
   background: rgba(10, 12, 11, 0.96);
   border-bottom: 1px solid var(--gm-line-1);
@@ -6074,7 +6074,10 @@ input:not([class*='ant-']):hover {
 
 .gm-mkt-mobile-backdrop {
   position: fixed;
-  inset: 0;
+  top: 60px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 45;
   background: var(--gm-mask);
 }

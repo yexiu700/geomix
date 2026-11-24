@@ -6,6 +6,8 @@ import {
   getMarketingSiteUrl,
 } from '../lib/marketing-i18n';
 
+export const dynamic = 'force-dynamic';
+
 const STATIC_LAST_MODIFIED = new Date('2026-11-24T00:00:00.000Z');
 
 export default function sitemap(): MetadataRoute.Sitemap {

@@ -1,6 +1,8 @@
 import type { MetadataRoute } from 'next';
 import { buildMarketingCanonical, getMarketingSiteUrl } from '../lib/marketing-i18n';
 
+export const dynamic = 'force-dynamic';
+
 const ALLOWED_CRAWLERS = [
   '*',
   'Googlebot',

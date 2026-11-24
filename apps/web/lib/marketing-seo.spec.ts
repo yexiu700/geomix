@@ -1,8 +1,9 @@
 import { MARKETING_GUIDES, PUBLIC_PRICING_FALLBACK, SITE_NAME } from '@geomix/shared';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GET as getLlmsTxt, buildLlmsTxt } from '../app/llms.txt/route';
-import robots from '../app/robots';
-import sitemap from '../app/sitemap';
+import { GET as getLlmsTxt, dynamic as llmsDynamic } from '../app/llms.txt/route';
+import robots, { dynamic as robotsDynamic } from '../app/robots';
+import sitemap, { dynamic as sitemapDynamic } from '../app/sitemap';
+import { buildLlmsTxt } from '../components/marketing/llms-txt';
 
 const ORIGINAL_PUBLIC_APP_URL = process.env.PUBLIC_APP_URL;
 
@@ -108,5 +109,14 @@ describe('Self-GEO endpoints (robots.ts, sitemap.ts, llms.txt/route.ts)', () => 
       expect(text).toContain(`https://geomix.example/guides/${guide.slug}`);
       expect(text).toContain(`https://geomix.example/zh/guides/${guide.slug}`);
     }
+  });
+
+  it('marks robots.ts, sitemap.ts, and llms.txt/route.ts as force-dynamic for runtime PUBLIC_APP_URL resolution', async () => {
+    expect(robotsDynamic).toBe('force-dynamic');
+    expect(sitemapDynamic).toBe('force-dynamic');
+    expect(llmsDynamic).toBe('force-dynamic');
+
+    const llmsRouteModule = await import('../app/llms.txt/route');
+    expect(Object.keys(llmsRouteModule).sort()).toEqual(['GET', 'dynamic']);
   });
 });
