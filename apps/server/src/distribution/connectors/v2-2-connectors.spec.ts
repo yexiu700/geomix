@@ -291,6 +291,90 @@ describe('v2.2 Official L1 Connectors', () => {
         expect(msg).toContain('[REDACTED]');
       }
     });
+
+    it('Tier 5 regression: evaluates created.url lazily so bare-hostname primaryDomain does not crash after live publish, and throws ConnectorError instead of TypeError when created.url is absent', async () => {
+      const connector = new GhostConnector(positiveClient);
+
+      // 1. Bare-hostname primaryDomain with valid created.url returned by Ghost -> MUST succeed cleanly
+      routeHandler = (req) => {
+        if (req.method === 'POST' && req.url.includes('/ghost/api/admin/posts/?source=html')) {
+          const parsed = JSON.parse(req.rawBody);
+          const post = parsed.posts[0];
+          return {
+            status: 201,
+            body: JSON.stringify({
+              posts: [
+                {
+                  id: 'ghost_post_bare_1',
+                  slug: post.slug,
+                  status: 'published',
+                  url: `${mockBaseUrl}/ghost-site/${post.slug}/`,
+                },
+              ],
+            }),
+          };
+        }
+        return { status: 404, body: '{}' };
+      };
+
+      const resWithCreatedUrl = await connector.publish(
+        makeConn({ configJson: { primaryDomain: 'blog.example.com' } }),
+        { adminApiKey },
+        makePayload(),
+      );
+      expect(resWithCreatedUrl.remotePostId).toBe('ghost_post_bare_1');
+      expect(resWithCreatedUrl.publishedAsDraft).toBe(false);
+      expect(resWithCreatedUrl.remotePublishedUrl).toBe(
+        `${mockBaseUrl}/ghost-site/geomix-v22-architecture-guide/`,
+      );
+
+      // 2. Bare-hostname or unsafe-scheme primaryDomain when Ghost omits created.url -> clean ConnectorError (NOT uncaught TypeError)
+      routeHandler = (req) => {
+        if (req.method === 'POST' && req.url.includes('/ghost/api/admin/posts/?source=html')) {
+          const parsed = JSON.parse(req.rawBody);
+          const post = parsed.posts[0];
+          return {
+            status: 201,
+            body: JSON.stringify({
+              posts: [
+                {
+                  id: 'ghost_post_bare_2',
+                  slug: post.slug,
+                  status: 'published',
+                },
+              ],
+            }),
+          };
+        }
+        return { status: 404, body: '{}' };
+      };
+
+      for (const badPrimary of ['blog.example.com', 'javascript:alert(1)']) {
+        await expect(
+          connector.publish(
+            makeConn({ configJson: { primaryDomain: badPrimary } }),
+            { adminApiKey },
+            makePayload(),
+          ),
+        ).rejects.toSatisfy((err: unknown) => {
+          expect(err).toBeInstanceOf(ConnectorError);
+          expect(err).not.toBeInstanceOf(TypeError);
+          expect((err as ConnectorError).provider).toBe('GHOST');
+          expect((err as ConnectorError).code).toBe('CONFIG_ERROR');
+          return true;
+        });
+      }
+
+      // 3. Valid http(s) primaryDomain when Ghost omits created.url -> builds fallback URL cleanly
+      const resWithValidPrimary = await connector.publish(
+        makeConn({ configJson: { primaryDomain: `${mockBaseUrl}/custom-blog` } }),
+        { adminApiKey },
+        makePayload(),
+      );
+      expect(resWithValidPrimary.remotePublishedUrl).toBe(
+        `${mockBaseUrl}/custom-blog/geomix-v22-architecture-guide/`,
+      );
+    });
   });
 
   // ── 2. Dev.to / Forem REST API v1 ──

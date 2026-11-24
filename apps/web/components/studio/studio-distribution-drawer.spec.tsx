@@ -1709,14 +1709,13 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     );
 
     // 1. ja-JP preflight passes locally with ZERO GLOBAL_CJK_LEAK blockers
-    await waitFor(() => {
-      expect(runArticlePreflightMock).toHaveBeenCalledWith(
-        jaArticle.id,
-        expect.objectContaining({ targetLocale: 'ja-JP' }),
-        expect.anything(),
-      );
-      expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
-    });
+    await screen.findByTestId('distribution-preflight-card');
+    expect(runArticlePreflightMock).toHaveBeenCalledWith(
+      jaArticle.id,
+      expect.objectContaining({ targetLocale: 'ja-JP' }),
+      expect.anything(),
+    );
+    expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
 
     // 2. Step 2 shows conditional variant locale selector & submits targetLocale on variant job
     expect(await screen.findByTestId('distribution-target-locale-select')).toBeTruthy();
@@ -1747,7 +1746,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(screen.getByTestId('distribution-task-locale-tag').textContent).toContain('ja-JP');
 
     // 4. Switch to DEVTO tab -> shows canonical URL & tags preview
-    fireEvent.click(screen.getByRole('tab', { name: /Dev\.to Official/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: /Dev\.to Official/ }));
     const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
     expect(canonicalBox.textContent).toContain('https://astravault.example.com/guides/nas-2026');
     expect(canonicalBox.textContent).toContain('#homelab');
@@ -1849,7 +1848,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(screen.queryByLabelText('URL Slug')).toBeNull();
 
     // 3. Switch to ZHIHU_EXT L2 Extension tab -> panel, mark-ready, anti-ban checklist & pairing links
-    fireEvent.click(screen.getByRole('tab', { name: /知乎（Chrome 扩展）/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: /知乎（Chrome 扩展）/ }));
     const l2Panel = await screen.findByTestId('distribution-l2-extension-panel');
     expect(l2Panel.textContent).toContain('等待 Chrome 扩展拉取');
     expect(l2Panel.textContent).toContain('确认已移除营销诱导话术');
@@ -1926,18 +1925,24 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
-    await waitFor(() => expect(listArticleDistributionsMock).toHaveBeenCalledTimes(1));
+    const unsafeGhTab = await screen.findByRole('tab', { name: /Unsafe GitHub PR/ });
+    expect(listArticleDistributionsMock).toHaveBeenCalledTimes(1);
+    expect(unsafeGhTab.getAttribute('aria-selected')).toBe('true');
     // Active tab 1: GITHUB_MDX with 127.0.0.1 / 169.254.169.254 -> zero clickable links
     expect(screen.queryByTestId('distribution-github-pr-link')).toBeNull();
     expect(screen.queryByRole('link', { name: /查看已上线公开文章/ })).toBeNull();
 
     // Tab 2: GITHUB_MDX with plain http://github.com & single-integer 2130706433 -> zero clickable links
-    fireEvent.click(screen.getByRole('tab', { name: /HTTP GitHub PR/ }));
+    const httpGhTab = await screen.findByRole('tab', { name: /HTTP GitHub PR/ });
+    fireEvent.click(httpGhTab);
+    await waitFor(() => {
+      expect(httpGhTab.getAttribute('aria-selected')).toBe('true');
+    });
     expect(screen.queryByTestId('distribution-github-pr-link')).toBeNull();
     expect(screen.queryByRole('link', { name: /查看已上线公开文章/ })).toBeNull();
 
     // Tab 3: DEVTO with hex IPv4 canonicalUrl & ::ffff:127.0.0.1 / localhost -> rendered as plain text only, zero <a> tags
-    fireEvent.click(screen.getByRole('tab', { name: /Unsafe Dev\.to/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: /Unsafe Dev\.to/ }));
     const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
     expect(canonicalBox.querySelector('a')).toBeNull();
     expect(screen.queryByRole('link', { name: /打开站点后台草稿/ })).toBeNull();
@@ -1979,13 +1984,12 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(runArticlePreflightMock).toHaveBeenCalledWith(
-        cnArticle.id,
-        expect.objectContaining({ targetLocale: 'zh-CN' }),
-        expect.anything(),
-      );
-    });
+    await screen.findByTestId('distribution-preflight-card');
+    expect(runArticlePreflightMock).toHaveBeenCalledWith(
+      cnArticle.id,
+      expect.objectContaining({ targetLocale: 'zh-CN' }),
+      expect.anything(),
+    );
     expect(screen.queryByTestId('distribution-preflight-blockers')).toBeNull();
   });
 
@@ -2013,6 +2017,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
+    await screen.findByTestId('distribution-preflight-card');
     await waitFor(() => {
       expect(runArticlePreflightMock).toHaveBeenCalledTimes(1);
       expect(listArticleDistributionsMock).toHaveBeenCalledTimes(1);

@@ -305,6 +305,16 @@ function hasCrawlDiagnostics(
   );
 }
 
+function resolveFallbackSchedule(
+  schedules: GeoRetestScheduleDto[],
+): GeoRetestScheduleDto | undefined {
+  return (
+    schedules.find((s) => s.status === 'PENDING') ??
+    schedules.find((s) => s.status === 'CANCELLED') ??
+    schedules[0]
+  );
+}
+
 export function StudioPublishRetest({
   activeMarket,
   article,
@@ -445,10 +455,9 @@ export function StudioPublishRetest({
       .map(({ rec }) => {
         const schedules = rec.retestSchedules ?? [];
         const pending = schedules.filter((s) => s.status === 'PENDING');
-        const sampleCount = pending[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
-        const includeControlPrompts = Boolean(
-          pending[0]?.includeControlPrompts ?? schedules[0]?.includeControlPrompts,
-        );
+        const fallbackSchedule = resolveFallbackSchedule(schedules);
+        const sampleCount = fallbackSchedule?.sampleCount ?? 1;
+        const includeControlPrompts = Boolean(fallbackSchedule?.includeControlPrompts);
         const days = pending
           .map((s) => s.milestoneDay)
           .sort((a, b) => a - b)
@@ -471,11 +480,9 @@ export function StudioPublishRetest({
       effectiveEntries.map(async ({ rec }) => {
         const schedules = rec.retestSchedules ?? [];
         const pending = schedules.filter((s) => s.status === 'PENDING');
-        const sampleCount: RetestSampleCount =
-          pending[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
-        const includeControlPrompts = Boolean(
-          pending[0]?.includeControlPrompts ?? schedules[0]?.includeControlPrompts,
-        );
+        const fallbackSchedule = resolveFallbackSchedule(schedules);
+        const sampleCount: RetestSampleCount = fallbackSchedule?.sampleCount ?? 1;
+        const includeControlPrompts = Boolean(fallbackSchedule?.includeControlPrompts);
         const pendingDays = pending.map((s) => s.milestoneDay).sort((a, b) => a - b);
         const res = await getRetestBudget(
           rec.id,
@@ -852,11 +859,10 @@ export function StudioPublishRetest({
 
                 const activePendingSchedules = schedules.filter((s) => s.status === 'PENDING');
                 const hasPendingSchedules = activePendingSchedules.length > 0;
-                const currentSampleCount: RetestSampleCount =
-                  activePendingSchedules[0]?.sampleCount ?? schedules[0]?.sampleCount ?? 1;
+                const fallbackSchedule = resolveFallbackSchedule(schedules);
+                const currentSampleCount: RetestSampleCount = fallbackSchedule?.sampleCount ?? 1;
                 const currentIncludeControlPrompts = Boolean(
-                  activePendingSchedules[0]?.includeControlPrompts ??
-                  schedules[0]?.includeControlPrompts,
+                  fallbackSchedule?.includeControlPrompts,
                 );
                 const liveBudget = liveBudgets[rec.id] ?? null;
                 const cardBudgetText = liveBudget
@@ -1456,7 +1462,17 @@ export function StudioPublishRetest({
                                     size="small"
                                     type="link"
                                     disabled={readOnly || Boolean(updatingScheduleRecordId)}
-                                    onClick={() =>
+                                    onClick={() => {
+                                      const nextSampleCount: RetestSampleCount = hasPendingSchedules
+                                        ? currentSampleCount
+                                        : (sched?.sampleCount ?? currentSampleCount);
+                                      const nextIncludeControlPrompts = hasPendingSchedules
+                                        ? currentIncludeControlPrompts
+                                        : Boolean(
+                                            sched
+                                              ? sched.includeControlPrompts
+                                              : currentIncludeControlPrompts,
+                                          );
                                       void handleUpdateSchedules(
                                         raw,
                                         rec,
@@ -1465,11 +1481,12 @@ export function StudioPublishRetest({
                                           milestones: Array.from(
                                             new Set([...activePendingDays, day]),
                                           ).sort((a, b) => a - b),
-                                          sampleCount: currentSampleCount,
+                                          sampleCount: nextSampleCount,
+                                          includeControlPrompts: nextIncludeControlPrompts,
                                         },
                                         `已开启 T+${day} 自动复测节点`,
-                                      )
-                                    }
+                                      );
+                                    }}
                                     style={{
                                       padding: '0 4px',
                                       height: 20,

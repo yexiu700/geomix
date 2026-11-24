@@ -925,6 +925,22 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
           Object.assign(t, args.data, { updatedAt: new Date() });
           return { ...t };
         },
+        updateMany: async (args: {
+          where: { id?: string; tenantId?: string; status?: { not?: string } };
+          data: Partial<DistributionTaskRow>;
+        }) => {
+          const tid = requireTenantAls();
+          let count = 0;
+          for (const t of distributionTasks.values()) {
+            if (t.tenantId !== tid) continue;
+            if (args.where.tenantId && t.tenantId !== args.where.tenantId) continue;
+            if (args.where.id && t.id !== args.where.id) continue;
+            if (args.where.status?.not && t.status === args.where.status.not) continue;
+            Object.assign(t, args.data, { updatedAt: new Date() });
+            count += 1;
+          }
+          return { count };
+        },
       },
       geoArticle: {
         findFirst: async (args: { where: { id: string } }) => {
@@ -1046,6 +1062,18 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
           }
           return { count };
         },
+        deleteMany: async (args: { where: { id?: string; tenantId?: string } }) => {
+          const tid = requireTenantAls();
+          const before = publishRecords.length;
+          for (let i = publishRecords.length - 1; i >= 0; i -= 1) {
+            const row = publishRecords[i]!;
+            if (row.tenantId !== tid) continue;
+            if (args.where.tenantId && row.tenantId !== args.where.tenantId) continue;
+            if (args.where.id && row.id !== args.where.id) continue;
+            publishRecords.splice(i, 1);
+          }
+          return { count: before - publishRecords.length };
+        },
       },
       geoRetestSchedule: {
         createMany: async (args: {
@@ -1098,6 +1126,20 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
           return retestSchedules
             .filter((s) => s.tenantId === tid && s.publishRecordId === args.where.publishRecordId)
             .sort((a, b) => a.milestoneDay - b.milestoneDay);
+        },
+        deleteMany: async (args: { where: { publishRecordId?: string; tenantId?: string } }) => {
+          const tid = requireTenantAls();
+          const before = retestSchedules.length;
+          for (let i = retestSchedules.length - 1; i >= 0; i -= 1) {
+            const row = retestSchedules[i]!;
+            if (row.tenantId !== tid) continue;
+            if (args.where.tenantId && row.tenantId !== args.where.tenantId) continue;
+            if (args.where.publishRecordId && row.publishRecordId !== args.where.publishRecordId) {
+              continue;
+            }
+            retestSchedules.splice(i, 1);
+          }
+          return { count: before - retestSchedules.length };
         },
       },
     };
@@ -2220,6 +2262,160 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
         antiBanChecklist: ['人工复核'],
         extensionConfirmNote: '关联已有手动发布记录',
       });
+    });
+
+    it('Tier 5 regression: serializes concurrent confirm-published across different L2 tasks on same articleId+URL (1 record + 1 409) and cleans up orphans on concurrent ARCHIVED transition', async () => {
+      const { plainToken } = createExtensionTokenRow('tenant_a', 'user_a');
+      const now = new Date();
+
+      // Seed two unpublished L2 tasks sharing article art_a1
+      distributionTasks.set('task_l2_race_a', {
+        id: 'task_l2_race_a',
+        tenantId: 'tenant_a',
+        brandId: 'brand_a_cn',
+        brandMarketId: 'bm_a_cn',
+        articleId: 'art_a1',
+        provider: 'ZHIHU_EXT',
+        mode: 'L2_EXTENSION',
+        channelLabel: '知乎专栏',
+        status: 'READY_TO_PUBLISH',
+        variantTitle: '竞态测试 A',
+        variantMarkdown: '# A',
+        variantHtml: '<h1>A</h1>',
+        targetUrlHint: 'https://zhuanlan.zhihu.com/write',
+        variantExtrasJson: null,
+        remotePublishedUrl: null,
+        publishedAt: null,
+        lastError: null,
+        updatedAt: now,
+      });
+      distributionTasks.set('task_l2_race_b', {
+        id: 'task_l2_race_b',
+        tenantId: 'tenant_a',
+        brandId: 'brand_a_cn',
+        brandMarketId: 'bm_a_cn',
+        articleId: 'art_a1',
+        provider: 'TOUTIAO_EXT',
+        mode: 'L2_EXTENSION',
+        channelLabel: '头条号',
+        status: 'READY_TO_PUBLISH',
+        variantTitle: '竞态测试 B',
+        variantMarkdown: '# B',
+        variantHtml: '<h1>B</h1>',
+        targetUrlHint: 'https://mp.toutiao.com/profile_v4/graphic/publish',
+        variantExtrasJson: null,
+        remotePublishedUrl: null,
+        publishedAt: null,
+        lastError: null,
+        updatedAt: now,
+      });
+
+      const prismaSvc = app.get(PrismaService) as unknown as {
+        scoped: {
+          geoPublishRecord: {
+            findFirst: (...args: unknown[]) => Promise<unknown>;
+            create: (...args: unknown[]) => Promise<unknown>;
+          };
+        };
+      };
+
+      // Inject 25ms DB latency on geoPublishRecord.findFirst to maximize overlap between task A & B
+      const origFindFirst = prismaSvc.scoped.geoPublishRecord.findFirst;
+      prismaSvc.scoped.geoPublishRecord.findFirst = async (...args: unknown[]) => {
+        await new Promise((r) => setTimeout(r, 25));
+        return origFindFirst(...args);
+      };
+
+      const sharedUrl = 'https://zhuanlan.zhihu.com/p/concurrent-race-999';
+      let rA!: Response;
+      let rB!: Response;
+      try {
+        [rA, rB] = await Promise.all([
+          fetch(`${baseUrl}/api/v2/extension/tasks/task_l2_race_a/confirm-published`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${plainToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ publishedUrl: sharedUrl }),
+          }),
+          fetch(`${baseUrl}/api/v2/extension/tasks/task_l2_race_b/confirm-published`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${plainToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ publishedUrl: sharedUrl }),
+          }),
+        ]);
+      } finally {
+        prismaSvc.scoped.geoPublishRecord.findFirst = origFindFirst;
+      }
+
+      const statuses = [rA.status, rB.status].sort((a, b) => a - b);
+      expect(statuses).toEqual([200, 409]);
+
+      const matchingRecords = publishRecords.filter((r) => r.publishedUrl === sharedUrl);
+      expect(matchingRecords).toHaveLength(1);
+      const matchingRetests = retestSchedules.filter(
+        (s) => s.publishRecordId === matchingRecords[0]!.id,
+      );
+      expect(matchingRetests).toHaveLength(3);
+
+      // Part 2: Concurrent ARCHIVED transition mid-flight inside createPublishRecord -> 409 & ZERO orphaned records
+      distributionTasks.set('task_l2_archive_race', {
+        id: 'task_l2_archive_race',
+        tenantId: 'tenant_a',
+        brandId: 'brand_a_cn',
+        brandMarketId: 'bm_a_cn',
+        articleId: 'art_a1',
+        provider: 'SMZDM_EXT',
+        mode: 'L2_EXTENSION',
+        channelLabel: '什么值得买',
+        status: 'READY_TO_PUBLISH',
+        variantTitle: '归档竞态测试',
+        variantMarkdown: '# Archive Race',
+        variantHtml: '<h1>Archive Race</h1>',
+        targetUrlHint: 'https://post.smzdm.com/tougao/',
+        variantExtrasJson: null,
+        remotePublishedUrl: null,
+        publishedAt: null,
+        lastError: null,
+        updatedAt: now,
+      });
+
+      const origCreate = prismaSvc.scoped.geoPublishRecord.create;
+      prismaSvc.scoped.geoPublishRecord.create = async (...args: unknown[]) => {
+        const created = await origCreate(...args);
+        // Simulate concurrent archive occurring after GeoPublishRecord insert, before task update
+        distributionTasks.get('task_l2_archive_race')!.status = 'ARCHIVED';
+        return created;
+      };
+
+      const archiveRaceUrl = 'https://post.smzdm.com/p/archive-race-777/';
+      let archiveRes!: Response;
+      try {
+        archiveRes = await fetch(
+          `${baseUrl}/api/v2/extension/tasks/task_l2_archive_race/confirm-published`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${plainToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ publishedUrl: archiveRaceUrl }),
+          },
+        );
+      } finally {
+        prismaSvc.scoped.geoPublishRecord.create = origCreate;
+      }
+
+      expect(archiveRes.status).toBe(409);
+      expect(distributionTasks.get('task_l2_archive_race')!.status).toBe('ARCHIVED');
+      expect(publishRecords.filter((r) => r.publishedUrl === archiveRaceUrl)).toHaveLength(0);
+      expect(
+        retestSchedules.filter((s) => !publishRecords.some((r) => r.id === s.publishRecordId)),
+      ).toHaveLength(0);
     });
   });
 

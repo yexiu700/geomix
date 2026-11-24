@@ -675,17 +675,36 @@ export class ShopifyOAuthService implements OnModuleDestroy {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '不支持的 Shopify Webhook 事件类型');
     }
 
-    const headerShop = readSingleHeader(headers, 'x-shopify-shop-domain');
-    let rawShop: unknown = headerShop;
-    if (!rawShop) {
-      const parsedBody = parseJsonSafe<Record<string, unknown>>(rawBody.toString('utf8'));
-      rawShop = parsedBody?.myshopify_domain ?? parsedBody?.domain;
+    const parsedBody = parseJsonSafe<Record<string, unknown>>(rawBody.toString('utf8'));
+    const bodyObj =
+      parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)
+        ? parsedBody
+        : undefined;
+    const rawBodyShop =
+      typeof bodyObj?.myshopify_domain === 'string' && bodyObj.myshopify_domain.trim()
+        ? bodyObj.myshopify_domain
+        : bodyObj?.domain;
+    const bodyShop = normalizeShopifyShopDomain(rawBodyShop, { allowHttpsUrl: false });
+    if (!bodyShop) {
+      throw new ApiError(400, API_ERROR.BAD_REQUEST, 'Webhook 签名载荷缺少有效的 Shopify 店铺域名');
     }
 
-    const shopDomain = normalizeShopifyShopDomain(rawShop, { allowHttpsUrl: false });
-    if (!shopDomain) {
-      throw new ApiError(400, API_ERROR.BAD_REQUEST, '缺少有效的 Shopify 店铺域名');
+    const hasShopHeader = Object.entries(headers).some(
+      ([key, val]) => key.toLowerCase() === 'x-shopify-shop-domain' && val !== undefined,
+    );
+    if (hasShopHeader) {
+      const rawHeaderShop = readSingleHeader(headers, 'x-shopify-shop-domain');
+      const headerShop = normalizeShopifyShopDomain(rawHeaderShop, { allowHttpsUrl: false });
+      if (!headerShop || headerShop !== bodyShop) {
+        throw new ApiError(
+          401,
+          AUTH_ERROR.UNAUTHORIZED,
+          'Shopify Webhook 店铺域名与签名载荷不一致',
+        );
+      }
     }
+
+    const shopDomain = bodyShop;
 
     // 唯一 prisma.base 查询：通过店铺域名定位受影响连接及其归属 tenantId，随后立即切入 runInTenant + prisma.scoped
     const matched = await this.prisma.base.channelConnection.findMany({

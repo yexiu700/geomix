@@ -148,6 +148,8 @@ export function HomeRoiReportModal({
   const [cachedShares, setCachedShares] = useState<Record<string, GeoRoiReportShareCreatedDto>>({});
 
   const seqRef = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
   const listCtrlRef = useRef<AbortController | null>(null);
 
   // Sync default locale and reset state when brandId / market changes
@@ -163,7 +165,12 @@ export function HomeRoiReportModal({
     setFormError(null);
     setReports([]);
     setSelectedReportId(null);
+    setLoading(false);
     setLoadError(null);
+    setGenerating(false);
+    setExportingKey(null);
+    setSharingReportId(null);
+    setRevokingReportId(null);
     setCachedShares({});
   }, [brandId, market]);
 
@@ -195,7 +202,15 @@ export function HomeRoiReportModal({
 
   useEffect(() => {
     if (!open) {
+      seqRef.current += 1;
       listCtrlRef.current?.abort();
+      setCachedShares({});
+      setGenerating(false);
+      setSharingReportId(null);
+      setRevokingReportId(null);
+      setExportingKey(null);
+      setLoading(false);
+      setFormError(null);
       return;
     }
     void loadReports();
@@ -264,9 +279,11 @@ export function HomeRoiReportModal({
   const handleDownloadHtml = async (report: GeoRoiReportRecordDto) => {
     if (exportingKey) return;
     const key = `dl:${report.id}`;
+    const seq = seqRef.current;
     setExportingKey(key);
     try {
       const file = await exportGeoRoiReportHtml(report.id);
+      if (seq !== seqRef.current || !openRef.current) return;
       const ok = triggerBlobDownload({
         filename: file.filename,
         mime: file.mime,
@@ -278,18 +295,23 @@ export function HomeRoiReportModal({
         feedback.notifyWarning('浏览器未允许自动下载，请稍后重试');
       }
     } catch (err) {
+      if (seq !== seqRef.current || !openRef.current) return;
       feedback.notifyError(formatErrorMessage(err, '导出独立 HTML 报告失败'));
     } finally {
-      setExportingKey((curr) => (curr === key ? null : curr));
+      if (seq === seqRef.current) {
+        setExportingKey((curr) => (curr === key ? null : curr));
+      }
     }
   };
 
   const handlePrintPdf = async (report: GeoRoiReportRecordDto) => {
     if (exportingKey) return;
     const key = `print:${report.id}`;
+    const seq = seqRef.current;
     setExportingKey(key);
     try {
       const file = await exportGeoRoiReportHtml(report.id);
+      if (seq !== seqRef.current || !openRef.current) return;
       const ok = printStandaloneReportHtml(file.html);
       if (ok) {
         feedback.notifySuccess('已打开打印预览，可在弹窗中选择「另存为 PDF」');
@@ -297,9 +319,12 @@ export function HomeRoiReportModal({
         feedback.notifyWarning('打印窗口被浏览器拦截，请先下载 HTML 文件后使用浏览器打印保存 PDF');
       }
     } catch (err) {
+      if (seq !== seqRef.current || !openRef.current) return;
       feedback.notifyError(formatErrorMessage(err, '加载打印视图失败'));
     } finally {
-      setExportingKey((curr) => (curr === key ? null : curr));
+      if (seq === seqRef.current) {
+        setExportingKey((curr) => (curr === key ? null : curr));
+      }
     }
   };
 
@@ -309,7 +334,7 @@ export function HomeRoiReportModal({
     const seq = seqRef.current;
     try {
       const share = await createGeoRoiReportShare(report.id, { ttlDays: 30 });
-      if (seq !== seqRef.current) return;
+      if (seq !== seqRef.current || !openRef.current) return;
       setCachedShares((prev) => ({ ...prev, [report.id]: share }));
       setReports((prev) =>
         prev.map((item) =>
@@ -321,13 +346,14 @@ export function HomeRoiReportModal({
       invalidateFreshness('roi-reports');
       const resolvedUrl = resolveShareAbsoluteUrl(share);
       const copied = await copyTextToClipboard(resolvedUrl);
+      if (seq !== seqRef.current || !openRef.current) return;
       if (copied) {
         feedback.notifySuccess('已生成对外分享链接并复制到剪贴板（有效期 30 天）');
       } else {
         feedback.notifySuccess('已生成对外分享链接，请点击下方按钮复制或打开');
       }
     } catch (err) {
-      if (seq !== seqRef.current) return;
+      if (seq !== seqRef.current || !openRef.current) return;
       feedback.notifyError(formatErrorMessage(err, '生成分享链接失败'));
     } finally {
       if (seq === seqRef.current) {

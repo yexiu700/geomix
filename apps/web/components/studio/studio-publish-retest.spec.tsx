@@ -1213,4 +1213,180 @@ describe('StudioPublishRetest (M6B #355)', () => {
     const didEl = screen.getByTestId('publish-retest-did-pub_unknown_enum-T7');
     expect(didEl.textContent).toContain('无显著净差');
   });
+
+  it('Tier 5 regression: reopening a CANCELLED milestone when no PENDING schedules remain forwards includeControlPrompts=true to updateRetestSchedules', async () => {
+    vi.spyOn(distributionApi, 'getRetestBudget').mockRejectedValue(new Error('offline'));
+    const rec = makeRecord({
+      id: 'pub_reopen_did',
+      retestSchedules: [
+        {
+          id: 'sch_reopen_t7',
+          publishRecordId: 'pub_reopen_did',
+          milestoneDay: 7,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'COMPLETED',
+          sampleCount: 3,
+          includeControlPrompts: true,
+          visibilityRunId: 'run_t7',
+          metricsSnapshot: {
+            mentionRate: 60,
+            avgPosition: 2,
+            sentiment: 'positive',
+            citationHit: true,
+            sampleCount: 3,
+            hitCount: 2,
+          },
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: '2026-11-27T09:00:00.000Z',
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-27T09:00:00.000Z',
+        },
+        {
+          id: 'sch_reopen_t14',
+          publishRecordId: 'pub_reopen_did',
+          milestoneDay: 14,
+          dueAt: '2026-12-04T08:00:00.000Z',
+          status: 'CANCELLED',
+          sampleCount: 3,
+          includeControlPrompts: true,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: '用户已取消该节点复测',
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-28T08:00:00.000Z',
+        },
+      ],
+    });
+
+    const patchSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValueOnce({
+      publishRecordId: 'pub_reopen_did',
+      items: rec.retestSchedules!.map((s) =>
+        s.milestoneDay === 14 ? { ...s, status: 'PENDING', skipReason: null } : s,
+      ),
+    });
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[rec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    const t14Node = await screen.findByTestId('publish-retest-node-pub_reopen_did-T14');
+    fireEvent.click(within(t14Node).getByRole('button', { name: '重新开启' }));
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(
+        'pub_reopen_did',
+        {
+          enabled: true,
+          milestones: [14],
+          sampleCount: 3,
+          includeControlPrompts: true,
+        },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+  });
+
+  it('Tier 5 iter2 regression: reopening CANCELLED T+14 (3x, DiD=true) when T+7 is COMPLETED (1x, DiD=false) preserves T+14 settings instead of stale T+7 values', async () => {
+    vi.spyOn(distributionApi, 'getRetestBudget').mockRejectedValue(new Error('offline'));
+    const rec = makeRecord({
+      id: 'pub_mixed_reopen_ui',
+      retestSchedules: [
+        {
+          id: 'sch_mixed_t7',
+          publishRecordId: 'pub_mixed_reopen_ui',
+          milestoneDay: 7,
+          dueAt: '2026-11-27T08:00:00.000Z',
+          status: 'COMPLETED',
+          sampleCount: 1,
+          includeControlPrompts: false,
+          visibilityRunId: 'run_mixed_t7',
+          metricsSnapshot: {
+            mentionRate: 40,
+            avgPosition: 2,
+            sentiment: 'neutral',
+            citationHit: false,
+            sampleCount: 1,
+            hitCount: 1,
+          },
+          controlMetricsJson: null,
+          skipReason: null,
+          executedAt: '2026-11-27T09:00:00.000Z',
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-27T09:00:00.000Z',
+        },
+        {
+          id: 'sch_mixed_t14',
+          publishRecordId: 'pub_mixed_reopen_ui',
+          milestoneDay: 14,
+          dueAt: '2026-12-04T08:00:00.000Z',
+          status: 'CANCELLED',
+          sampleCount: 3,
+          includeControlPrompts: true,
+          visibilityRunId: null,
+          metricsSnapshot: null,
+          controlMetricsJson: null,
+          skipReason: '用户已暂停自动复测',
+          executedAt: null,
+          createdAt: '2026-11-20T08:00:00.000Z',
+          updatedAt: '2026-11-28T08:00:00.000Z',
+        },
+      ],
+    });
+
+    const patchSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValueOnce({
+      publishRecordId: 'pub_mixed_reopen_ui',
+      items: rec.retestSchedules!.map((s) =>
+        s.milestoneDay === 14 ? { ...s, status: 'PENDING', skipReason: null } : s,
+      ),
+    });
+
+    render(
+      <StudioPublishRetest
+        activeMarket="GLOBAL"
+        article={SAMPLE_ARTICLE}
+        publishRecords={[rec]}
+        recordsLoading={false}
+        retestingRecordId={null}
+        pollingRetestRecordId={null}
+        readOnly={false}
+        onCreatePublishRecord={vi.fn()}
+        onTriggerRetest={vi.fn()}
+      />,
+    );
+
+    // Control checkbox reflects CANCELLED fallback (true), not stale COMPLETED T+7 (false)
+    const controlCheckbox = screen.getByTestId(
+      'publish-retest-control-toggle-pub_mixed_reopen_ui',
+    ) as HTMLInputElement;
+    expect(controlCheckbox.checked).toBe(true);
+
+    const t14Node = await screen.findByTestId('publish-retest-node-pub_mixed_reopen_ui-T14');
+    fireEvent.click(within(t14Node).getByRole('button', { name: '重新开启' }));
+
+    await waitFor(() => {
+      expect(patchSpy).toHaveBeenCalledWith(
+        'pub_mixed_reopen_ui',
+        {
+          enabled: true,
+          milestones: [14],
+          sampleCount: 3,
+          includeControlPrompts: true,
+        },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+  });
 });

@@ -322,17 +322,12 @@ export class ExtensionBridgeService {
     return runInTenant(auth.tenantId, async () => {
       const initialTask = await this.findAndValidateL2Task(taskId, auth.tenantId);
 
-      const lockKey = `${auth.tenantId}\0${initialTask.id}`;
-      while (this.inFlightConfirms.has(lockKey)) {
-        await this.inFlightConfirms.get(lockKey);
-      }
-      let releaseLock!: () => void;
-      const lockPromise = new Promise<void>((resolve) => {
-        releaseLock = resolve;
-      });
-      this.inFlightConfirms.set(lockKey, lockPromise);
+      const lockKeys = [
+        `task:${auth.tenantId}\0${initialTask.id}`,
+        `url:${auth.tenantId}\0${initialTask.articleId}\0${publishedUrl}`,
+      ];
 
-      try {
+      return this.withConfirmLocks(lockKeys, async () => {
         const task = await this.findAndValidateL2Task(initialTask.id, auth.tenantId);
 
         if (
@@ -375,6 +370,7 @@ export class ExtensionBridgeService {
             );
           }
 
+          let claimedUnlinkedRecord = false;
           if (existing.distributionTaskId === null) {
             const claimed = await this.prisma.scoped.geoPublishRecord.updateMany({
               where: {
@@ -393,6 +389,7 @@ export class ExtensionBridgeService {
                 '该发布链接已关联其他分发任务，无法重复绑定',
               );
             }
+            claimedUnlinkedRecord = true;
           }
 
           const mergedExtras = mergeConfirmNoteIntoVariantExtras(
@@ -404,20 +401,35 @@ export class ExtensionBridgeService {
             task.remotePublishedUrl !== existing.publishedUrl ||
             mergedExtras !== undefined
           ) {
-            await this.prisma.scoped.geoDistributionTask.update({
-              where: {
-                id: task.id,
-                tenantId: auth.tenantId,
-                status: { not: 'ARCHIVED' },
-              },
-              data: {
-                status: 'PUBLISHED',
-                remotePublishedUrl: existing.publishedUrl,
-                publishedAt: existing.publishedAt,
-                lastError: null,
-                ...(mergedExtras !== undefined ? { variantExtrasJson: mergedExtras } : {}),
-              },
-            });
+            let updatedCount = 0;
+            try {
+              const updated = await this.prisma.scoped.geoDistributionTask.updateMany({
+                where: {
+                  id: task.id,
+                  tenantId: auth.tenantId,
+                  status: { not: 'ARCHIVED' },
+                },
+                data: {
+                  status: 'PUBLISHED',
+                  remotePublishedUrl: existing.publishedUrl,
+                  publishedAt: existing.publishedAt,
+                  lastError: null,
+                  ...(mergedExtras !== undefined ? { variantExtrasJson: mergedExtras } : {}),
+                },
+              });
+              updatedCount = updated.count;
+            } catch (err) {
+              if (claimedUnlinkedRecord) {
+                await this.revertClaimedPublishRecord(existing.id, task.id, auth.tenantId);
+              }
+              throw err;
+            }
+            if (updatedCount === 0) {
+              if (claimedUnlinkedRecord) {
+                await this.revertClaimedPublishRecord(existing.id, task.id, auth.tenantId);
+              }
+              throw new ApiError(409, BILLING_ERROR.CONFLICT, '该分发任务已归档，无法确认发布');
+            }
           }
 
           return {
@@ -449,20 +461,32 @@ export class ExtensionBridgeService {
 
         const mergedExtras = mergeConfirmNoteIntoVariantExtras(task.variantExtrasJson, input.note);
 
-        await this.prisma.scoped.geoDistributionTask.update({
-          where: {
-            id: task.id,
-            tenantId: auth.tenantId,
-            status: { not: 'ARCHIVED' },
-          },
-          data: {
-            status: 'PUBLISHED',
-            remotePublishedUrl: record.publishedUrl,
-            publishedAt: new Date(record.publishedAt),
-            lastError: null,
-            ...(mergedExtras !== undefined ? { variantExtrasJson: mergedExtras } : {}),
-          },
-        });
+        let updatedCount = 0;
+        try {
+          const updated = await this.prisma.scoped.geoDistributionTask.updateMany({
+            where: {
+              id: task.id,
+              tenantId: auth.tenantId,
+              status: { not: 'ARCHIVED' },
+            },
+            data: {
+              status: 'PUBLISHED',
+              remotePublishedUrl: record.publishedUrl,
+              publishedAt: new Date(record.publishedAt),
+              lastError: null,
+              ...(mergedExtras !== undefined ? { variantExtrasJson: mergedExtras } : {}),
+            },
+          });
+          updatedCount = updated.count;
+        } catch (err) {
+          await this.cleanupOrphanedPublishRecord(record.id, auth.tenantId);
+          throw err;
+        }
+
+        if (updatedCount === 0) {
+          await this.cleanupOrphanedPublishRecord(record.id, auth.tenantId);
+          throw new ApiError(409, BILLING_ERROR.CONFLICT, '该分发任务已归档，无法确认发布');
+        }
 
         return {
           accepted: true,
@@ -473,13 +497,60 @@ export class ExtensionBridgeService {
           alreadyRecorded: false,
           retestScheduledCount: record.retestSchedules?.length ?? 0,
         };
-      } finally {
-        if (this.inFlightConfirms.get(lockKey) === lockPromise) {
-          this.inFlightConfirms.delete(lockKey);
-        }
-        releaseLock();
-      }
+      });
     });
+  }
+
+  private async withConfirmLocks<T>(rawKeys: readonly string[], fn: () => Promise<T>): Promise<T> {
+    const keys = Array.from(new Set(rawKeys)).sort();
+    const acquired: Array<{ key: string; promise: Promise<void>; release: () => void }> = [];
+    try {
+      for (const key of keys) {
+        while (this.inFlightConfirms.has(key)) {
+          await this.inFlightConfirms.get(key);
+        }
+        let release!: () => void;
+        const promise = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        this.inFlightConfirms.set(key, promise);
+        acquired.push({ key, promise, release });
+      }
+      return await fn();
+    } finally {
+      for (let i = acquired.length - 1; i >= 0; i -= 1) {
+        const entry = acquired[i]!;
+        if (this.inFlightConfirms.get(entry.key) === entry.promise) {
+          this.inFlightConfirms.delete(entry.key);
+        }
+        entry.release();
+      }
+    }
+  }
+
+  private async cleanupOrphanedPublishRecord(
+    publishRecordId: string,
+    tenantId: string,
+  ): Promise<void> {
+    await this.prisma.scoped.geoRetestSchedule
+      .deleteMany({ where: { publishRecordId, tenantId } })
+      .catch(() => undefined);
+    await this.prisma.scoped.geoPublishRecord
+      .deleteMany({ where: { id: publishRecordId, tenantId } })
+      .catch(() => undefined);
+  }
+
+  private async revertClaimedPublishRecord(
+    publishRecordId: string,
+    taskId: string,
+    tenantId: string,
+  ): Promise<void> {
+    await this.prisma.scoped.geoPublishRecord
+      .updateMany({
+        where: { id: publishRecordId, tenantId, distributionTaskId: taskId },
+        data: { distributionTaskId: null },
+      })
+      .catch(() => undefined);
   }
 
   private async findAndValidateL2Task(taskId: string, tenantId: string) {

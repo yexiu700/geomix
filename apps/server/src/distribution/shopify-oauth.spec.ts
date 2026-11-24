@@ -1337,5 +1337,146 @@ describe('Shopify OAuth 2.0 & app/uninstalled Webhook', () => {
       expect(afterRow.authType).toBe('API_KEY');
       expect(afterRow.credentialsCiphertext).toBe(migratedCiphertext);
     });
+
+    it('Tier 5 regression: rejects forged X-Shopify-Shop-Domain header mismatch and missing signed-body domain without wiping victim shop, while accepting valid signed-body-only uninstall', async () => {
+      const tokenA = tokenForUser(db.users[0]!);
+      const tokenB = tokenForUser(db.users[1]!);
+
+      // Connect victim shop (tenant_a) and attacker shop (tenant_b) via OAuth
+      const connectOAuth = async (brandId: string, token: string, shop: string, code: string) => {
+        const startRes = await fetch(
+          `${apiBaseUrl}/api/v2/brands/${brandId}/connections/shopify/oauth/start`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+            body: JSON.stringify({ shop, market: 'GLOBAL' }),
+          },
+        );
+        expect(startRes.status).toBe(200);
+        const startJson = (await startRes.json()) as Envelope<{ state: string }>;
+        const cbQs = signShopifyQuery(
+          {
+            code,
+            shop,
+            state: startJson.data.state,
+            timestamp: String(Math.floor(nowMs / 1000)),
+          },
+          TEST_CLIENT_SECRET,
+        );
+        const cbRes = await fetch(`${apiBaseUrl}/api/v2/integrations/shopify/callback?${cbQs}`, {
+          headers: { accept: 'application/json' },
+        });
+        expect(cbRes.status).toBe(200);
+        return ((await cbRes.json()) as Envelope<{ connection: ChannelConnectionDto }>).data
+          .connection.id;
+      };
+
+      const victimConnId = await connectOAuth(
+        'brand_a',
+        tokenA,
+        'victim-shop.myshopify.com',
+        'code_victim_1',
+      );
+      const attackerConnId = await connectOAuth(
+        'brand_b',
+        tokenB,
+        'attacker-shop.myshopify.com',
+        'code_attacker_1',
+      );
+      const victimBefore = { ...db.connections.find((c) => c.id === victimConnId)! };
+      const attackerBefore = { ...db.connections.find((c) => c.id === attackerConnId)! };
+      expect(victimBefore.status).toBe('ACTIVE');
+      expect(victimBefore.credentialsCiphertext.length).toBeGreaterThan(10);
+
+      // (a) Valid HMAC-signed body for attacker-shop paired with forged unsigned header for victim-shop -> 401, ZERO wipe
+      const attackerBody = Buffer.from(
+        JSON.stringify({
+          id: 9999,
+          myshopify_domain: 'attacker-shop.myshopify.com',
+          domain: 'attacker-shop.myshopify.com',
+        }),
+        'utf8',
+      );
+      const forgedHeaderRes = await fetch(
+        `${apiBaseUrl}/api/v2/integrations/shopify/webhooks/app-uninstalled`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-shopify-topic': 'app/uninstalled',
+            'x-shopify-shop-domain': 'victim-shop.myshopify.com',
+            'x-shopify-hmac-sha256': signWebhookBody(attackerBody, TEST_CLIENT_SECRET),
+          },
+          body: attackerBody,
+        },
+      );
+      expect(forgedHeaderRes.status).toBe(401);
+
+      const victimAfterForged = db.connections.find((c) => c.id === victimConnId)!;
+      const attackerAfterForged = db.connections.find((c) => c.id === attackerConnId)!;
+      expect(victimAfterForged.status).toBe('ACTIVE');
+      expect(victimAfterForged.credentialsCiphertext).toBe(victimBefore.credentialsCiphertext);
+      expect(victimAfterForged.oauthAccessTokenCiphertext).toBe(
+        victimBefore.oauthAccessTokenCiphertext,
+      );
+      expect(attackerAfterForged.status).toBe('ACTIVE');
+      expect(attackerAfterForged.credentialsCiphertext).toBe(attackerBefore.credentialsCiphertext);
+
+      // (b) Valid HMAC-signed body missing myshopify_domain/domain (even with victim header) -> 400, ZERO wipe
+      const missingDomainBody = Buffer.from(JSON.stringify({ id: 9998 }), 'utf8');
+      const missingDomainRes = await fetch(
+        `${apiBaseUrl}/api/v2/integrations/shopify/webhooks/app-uninstalled`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-shopify-topic': 'app/uninstalled',
+            'x-shopify-shop-domain': 'victim-shop.myshopify.com',
+            'x-shopify-hmac-sha256': signWebhookBody(missingDomainBody, TEST_CLIENT_SECRET),
+          },
+          body: missingDomainBody,
+        },
+      );
+      expect(missingDomainRes.status).toBe(400);
+      expect(db.connections.find((c) => c.id === victimConnId)!.status).toBe('ACTIVE');
+      expect(db.connections.find((c) => c.id === victimConnId)!.credentialsCiphertext).toBe(
+        victimBefore.credentialsCiphertext,
+      );
+
+      // (c) Valid HMAC-signed body alone (no x-shopify-shop-domain header) cleanly disables & wipes target shop
+      const victimBody = Buffer.from(
+        JSON.stringify({ id: 7777, myshopify_domain: 'victim-shop.myshopify.com' }),
+        'utf8',
+      );
+      const bodyOnlyRes = await fetch(
+        `${apiBaseUrl}/api/v2/integrations/shopify/webhooks/app-uninstalled`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-shopify-topic': 'app/uninstalled',
+            'x-shopify-hmac-sha256': signWebhookBody(victimBody, TEST_CLIENT_SECRET),
+          },
+          body: victimBody,
+        },
+      );
+      expect(bodyOnlyRes.status).toBe(200);
+      const bodyOnlyJson = (await bodyOnlyRes.json()) as Envelope<{
+        received: true;
+        shop: string;
+        disabledCount: number;
+      }>;
+      expect(bodyOnlyJson.data).toEqual({
+        received: true,
+        shop: 'victim-shop.myshopify.com',
+        disabledCount: 1,
+      });
+      const victimAfterValid = db.connections.find((c) => c.id === victimConnId)!;
+      expect(victimAfterValid.status).toBe('DISABLED');
+      expect(victimAfterValid.credentialsCiphertext).toBe('');
+      expect(victimAfterValid.oauthAccessTokenCiphertext).toBeNull();
+      // Attacker shop remains completely untouched
+      expect(db.connections.find((c) => c.id === attackerConnId)!.status).toBe('ACTIVE');
+    });
   });
 });

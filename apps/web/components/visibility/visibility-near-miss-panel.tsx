@@ -37,6 +37,7 @@ export type VisibilityNearMissPanelProps = {
   onTierFilterChange: (tier: NearMissTier | undefined) => void;
   ownershipFilter: NearMissOwnershipFilter;
   onOwnershipFilterChange: (next: NearMissOwnershipFilter) => void;
+  onResetFilters?: () => void;
   onRetry: () => void;
   readOnly: boolean;
   boostingItemId: string | null;
@@ -121,6 +122,7 @@ export function VisibilityNearMissPanel({
   onTierFilterChange,
   ownershipFilter,
   onOwnershipFilterChange,
+  onResetFilters,
   onRetry,
   readOnly,
   boostingItemId,
@@ -407,8 +409,12 @@ export function VisibilityNearMissPanel({
           onAction={
             tierFilter || ownershipFilter !== 'ALL'
               ? () => {
-                  onTierFilterChange(undefined);
-                  onOwnershipFilterChange('ALL');
+                  if (onResetFilters) {
+                    onResetFilters();
+                  } else {
+                    onTierFilterChange(undefined);
+                    onOwnershipFilterChange('ALL');
+                  }
                 }
               : undefined
           }

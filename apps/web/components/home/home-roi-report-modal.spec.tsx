@@ -371,4 +371,138 @@ describe('HomeRoiReportModal (#372)', () => {
     expect(detail.textContent).toContain('已建补强卡 — 张');
     expect(detail.textContent).toContain('— 篇');
   });
+
+  it('Tier 5 regression: clears cached plaintext share URL on modal close/reopen and resets in-flight generating lock on brandId/market switch', async () => {
+    const baseRep = makeReport({ id: 'rep_secret_1', shareActive: false, shareExpiresAt: null });
+    const sharedRep = makeReport({
+      id: 'rep_secret_1',
+      shareActive: true,
+      shareExpiresAt: '2026-12-23T08:00:00.000Z',
+    });
+
+    const fetchSpy = vi
+      .spyOn(reportsApi, 'fetchGeoRoiReports')
+      .mockResolvedValueOnce({ items: [baseRep] })
+      .mockResolvedValueOnce({ items: [sharedRep] })
+      .mockResolvedValueOnce({ items: [] });
+
+    vi.spyOn(reportsApi, 'createGeoRoiReportShare').mockResolvedValueOnce({
+      reportId: 'rep_secret_1',
+      token: 'tok_once_only_secret_999',
+      sharePath: '/share/report/tok_once_only_secret_999',
+      shareUrl: 'https://app.geomix.example/share/report/tok_once_only_secret_999',
+      expiresAt: '2026-12-23T08:00:00.000Z',
+    });
+    vi.spyOn(studioLib, 'copyTextToClipboard').mockResolvedValue(true);
+
+    let resolvePendingCreate!: (val: GeoRoiReportRecordDto) => void;
+    vi.spyOn(reportsApi, 'createGeoRoiReport').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePendingCreate = resolve;
+        }),
+    );
+
+    let resolvePendingExport!: (val: {
+      filename: string;
+      mime: string;
+      html: string;
+      blob: Blob;
+    }) => void;
+    vi.spyOn(reportsApi, 'exportGeoRoiReportHtml').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePendingExport = resolve;
+        }),
+    );
+    const downloadSpy = vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
+
+    const { rerender } = render(
+      <HomeRoiReportModal
+        open
+        brandId="brand_1"
+        brandName="AstraVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByTestId('roi-report-detail-card');
+
+    // (a) Generate one-time plaintext share link, then close and reopen on same brand/market
+    fireEvent.click(screen.getByTestId('roi-report-share-btn'));
+    expect(await screen.findByTestId('roi-report-share-url')).toBeTruthy();
+
+    // Also start an in-flight HTML export before closing
+    fireEvent.click(screen.getByTestId('roi-report-download-html-btn'));
+
+    rerender(
+      <HomeRoiReportModal
+        open={false}
+        brandId="brand_1"
+        brandName="AstraVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Resolve stale export while modal is closed -> MUST NOT trigger download
+    resolvePendingExport({
+      filename: 'stale.html',
+      mime: 'text/html; charset=utf-8',
+      html: '<html>stale</html>',
+      blob: new Blob(['<html>stale</html>']),
+    });
+    await Promise.resolve();
+    expect(downloadSpy).not.toHaveBeenCalled();
+
+    // Reopen on same brand/market -> plaintext URL MUST be cleared and active notice shown
+    rerender(
+      <HomeRoiReportModal
+        open
+        brandId="brand_1"
+        brandName="AstraVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByTestId('roi-report-share-active-notice')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('roi-report-share-box')).toBeNull();
+    expect(screen.queryByTestId('roi-report-share-url')).toBeNull();
+
+    // (b) Start createGeoRoiReport on brand_1, switch to brand_2 while pending -> button MUST NOT stay disabled
+    fireEvent.click(screen.getByTestId('roi-report-generate-btn'));
+    expect((screen.getByTestId('roi-report-generate-btn') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    rerender(
+      <HomeRoiReportModal
+        open
+        brandId="brand_2"
+        brandName="NordVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Resolve stale brand_1 create after switching to brand_2
+    resolvePendingCreate(makeReport({ id: 'rep_stale_brand1' }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect((screen.getByTestId('roi-report-generate-btn') as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    });
+    expect(screen.queryByTestId('roi-report-item-rep_stale_brand1')).toBeNull();
+  });
 });

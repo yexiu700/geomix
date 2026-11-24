@@ -1445,4 +1445,98 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       );
     });
   });
+
+  it('Tier 5 regression: clicking 重置 Near-Miss 筛选 dispatches a single non-aborted unfiltered request and restores Near-Miss items', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+
+    const allItem = {
+      id: 'nm_reset_1',
+      tier: 'OPENED_NOT_CITED' as const,
+      opportunityScore: 91,
+      url: 'https://aurora-nas.cn/reset-test',
+      domain: 'aurora-nas.cn',
+      title: '极光NAS 静音对比',
+      snippet: '高潜候选页',
+      sourceKind: 'OWNED' as const,
+      isOwned: true,
+      engines: ['deepseek' as const],
+      prompts: ['家用四盘位NAS推荐'],
+      observationIds: ['obs_1'],
+      openedCount: 2,
+      retrievedCount: 3,
+      lastSeenAt: '2026-11-23T08:00:00.000Z',
+    };
+
+    const recordedCalls: Array<{
+      tier?: string;
+      sourceKind?: string;
+      signal?: AbortSignal;
+    }> = [];
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityNearMiss').mockImplementation(
+      async (_brandId, _market, params, options) => {
+        recordedCalls.push({
+          tier: params?.tier,
+          sourceKind: params?.sourceKind,
+          signal: options?.signal,
+        });
+        const items = params?.tier && params.tier !== 'OPENED_NOT_CITED' ? [] : [allItem];
+        return {
+          brandId: DUAL_BRAND.id,
+          market: 'CN',
+          days: 30,
+          total: items.length,
+          tierCounts: {
+            OPENED_NOT_CITED: 1,
+            RETRIEVED_NOT_CITED: 0,
+            CRAWLED_NOT_CITED: 0,
+            MENTIONED_NOT_OWNED: 0,
+          },
+          hasRawRetrievalSignals: true,
+          items,
+        };
+      },
+    );
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    expect(await screen.findByTestId('near-miss-boost-btn-nm_reset_1')).toBeTruthy();
+
+    // Select an empty tier -> renders empty state with reset CTA
+    fireEvent.click(screen.getByTestId('near-miss-tier-CRAWLED_NOT_CITED'));
+    const resetBtn = await screen.findByRole('button', { name: '重置 Near-Miss 筛选' });
+    expect(screen.queryByTestId('near-miss-boost-btn-nm_reset_1')).toBeNull();
+
+    const callsBeforeReset = recordedCalls.length;
+    fireEvent.click(resetBtn);
+
+    // Must restore all items with a SINGLE non-aborted unfiltered request
+    expect(await screen.findByTestId('near-miss-boost-btn-nm_reset_1')).toBeTruthy();
+    const resetCalls = recordedCalls.slice(callsBeforeReset);
+    expect(resetCalls).toHaveLength(1);
+    expect(resetCalls[0]?.tier).toBeUndefined();
+    expect(resetCalls[0]?.sourceKind).toBeUndefined();
+    expect(resetCalls[0]?.signal?.aborted).toBe(false);
+  });
 });

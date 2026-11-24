@@ -760,18 +760,31 @@ export function VisibilityWorkspace(): JSX.Element {
   };
 
   const handleNearMissTierChange = (nextTier: NearMissTier | undefined) => {
+    const currentOwnership = nearMissFilterRef.current.ownership;
+    nearMissFilterRef.current = { tier: nextTier, ownership: currentOwnership };
     setNearMissTierFilter(nextTier);
     if (!activeBrandId) return;
-    if (nearMissOwnershipFilter === 'THIRD_PARTY') return;
+    if (currentOwnership === 'THIRD_PARTY') return;
     const seq = contextSeqRef.current;
-    void loadNearMiss(activeBrandId, activeMarket, seq, days, nextTier, nearMissOwnershipFilter);
+    void loadNearMiss(activeBrandId, activeMarket, seq, days, nextTier, currentOwnership);
   };
 
   const handleNearMissOwnershipChange = (nextOwnership: NearMissOwnershipFilter) => {
+    const currentTier = nearMissFilterRef.current.tier;
+    nearMissFilterRef.current = { tier: currentTier, ownership: nextOwnership };
     setNearMissOwnershipFilter(nextOwnership);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadNearMiss(activeBrandId, activeMarket, seq, days, nearMissTierFilter, nextOwnership);
+    void loadNearMiss(activeBrandId, activeMarket, seq, days, currentTier, nextOwnership);
+  };
+
+  const handleResetNearMissFilters = () => {
+    nearMissFilterRef.current = { tier: undefined, ownership: 'ALL' };
+    setNearMissTierFilter(undefined);
+    setNearMissOwnershipFilter('ALL');
+    if (!activeBrandId) return;
+    const seq = contextSeqRef.current;
+    void loadNearMiss(activeBrandId, activeMarket, seq, days, undefined, 'ALL');
   };
 
   const handleRunsFilterChange = (next: {
@@ -1670,6 +1683,7 @@ export function VisibilityWorkspace(): JSX.Element {
               onTierFilterChange={handleNearMissTierChange}
               ownershipFilter={nearMissOwnershipFilter}
               onOwnershipFilterChange={handleNearMissOwnershipChange}
+              onResetFilters={handleResetNearMissFilters}
               onRetry={() => {
                 if (!activeBrandId) return;
                 void loadNearMiss(
@@ -1677,8 +1691,8 @@ export function VisibilityWorkspace(): JSX.Element {
                   activeMarket,
                   contextSeqRef.current,
                   days,
-                  nearMissTierFilter,
-                  nearMissOwnershipFilter,
+                  nearMissFilterRef.current.tier,
+                  nearMissFilterRef.current.ownership,
                 );
               }}
               readOnly={readOnly}

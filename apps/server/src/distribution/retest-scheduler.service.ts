@@ -343,16 +343,28 @@ export class RetestSchedulerService {
       orderBy: [{ milestoneDay: 'asc' }, { id: 'asc' }],
     });
 
+    const activePending = existing.find((s) => s.status === 'PENDING');
+    const cancelSet = new Set(input.cancelMilestoneDays ?? []);
+    const requestedMilestonesSet =
+      input.milestones !== undefined
+        ? new Set(normalizeMilestoneDays(input.milestones).filter((day) => !cancelSet.has(day)))
+        : null;
+    const fallbackSchedule =
+      activePending ??
+      (requestedMilestonesSet
+        ? existing.find(
+            (s) => s.status === 'CANCELLED' && requestedMilestonesSet.has(s.milestoneDay),
+          )
+        : undefined) ??
+      existing.find((s) => s.status === 'CANCELLED') ??
+      existing[0];
     const effectiveSampleCount: RetestSampleCount =
-      input.sampleCount ??
-      (existing.find((s) => s.status === 'PENDING')?.sampleCount === 3 ? 3 : 1);
+      input.sampleCount ?? (fallbackSchedule?.sampleCount === 3 ? 3 : 1);
     const effectiveIncludeControlPrompts: boolean =
       input.includeControlPrompts ??
       Boolean(
-        (
-          existing.find((s) => s.status === 'PENDING') as
-            { includeControlPrompts?: boolean } | undefined
-        )?.includeControlPrompts,
+        (fallbackSchedule as { includeControlPrompts?: boolean } | undefined)
+          ?.includeControlPrompts,
       );
 
     if (input.enabled === false) {
@@ -361,7 +373,6 @@ export class RetestSchedulerService {
         data: { status: 'CANCELLED', skipReason: '用户已暂停自动复测' },
       });
     } else {
-      const cancelSet = new Set(input.cancelMilestoneDays ?? []);
       if (cancelSet.size > 0) {
         await this.prisma.scoped.geoRetestSchedule.updateMany({
           where: {
@@ -414,8 +425,12 @@ export class RetestSchedulerService {
             data: {
               status: 'PENDING',
               skipReason: null,
-              sampleCount: effectiveSampleCount,
-              includeControlPrompts: effectiveIncludeControlPrompts,
+              ...(input.sampleCount !== undefined || activePending
+                ? { sampleCount: effectiveSampleCount }
+                : {}),
+              ...(input.includeControlPrompts !== undefined || activePending
+                ? { includeControlPrompts: effectiveIncludeControlPrompts }
+                : {}),
             },
           });
         }

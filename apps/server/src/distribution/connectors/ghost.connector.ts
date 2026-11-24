@@ -245,12 +245,22 @@ export class GhostConnector implements CmsConnector {
 
     let remotePublishedUrl: string | undefined;
     if (!publishedAsDraft) {
-      const createdSlug = created?.slug?.trim() || slug;
-      const baseDomain = conn.configJson.primaryDomain?.trim() || conn.siteBaseUrl;
-      const fallbackUrl = joinBasePath(baseDomain, `/${encodeURIComponent(createdSlug)}/`);
-      const candidateUrl =
-        typeof created?.url === 'string' && created.url.trim() ? created.url.trim() : fallbackUrl;
-      remotePublishedUrl = await validatePublishedUrl(this.http, this.provider, candidateUrl);
+      const directUrl = typeof created?.url === 'string' ? created.url.trim() : '';
+      if (directUrl) {
+        remotePublishedUrl = await validatePublishedUrl(this.http, this.provider, directUrl);
+      } else {
+        const createdSlug = created?.slug?.trim() || slug;
+        const baseDomain = conn.configJson.primaryDomain?.trim() || conn.siteBaseUrl;
+        if (!isSafeDistributionHttpUrl(baseDomain)) {
+          throw new ConnectorError(
+            this.provider,
+            'CONFIG_ERROR',
+            'Ghost 站点主域名（primaryDomain）格式无效，请填写以 http:// 或 https:// 开头的公网地址',
+          );
+        }
+        const fallbackUrl = joinBasePath(baseDomain, `/${encodeURIComponent(createdSlug)}/`);
+        remotePublishedUrl = await validatePublishedUrl(this.http, this.provider, fallbackUrl);
+      }
     }
 
     return {

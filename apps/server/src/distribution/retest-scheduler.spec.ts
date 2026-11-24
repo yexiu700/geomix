@@ -1741,4 +1741,179 @@ describe('RetestSchedulerService.runDueSweep', () => {
       }),
     });
   });
+
+  it('Tier 5 regression: preserves includeControlPrompts and sampleCount when reopening a CANCELLED milestone with zero PENDING schedules remaining', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_reopen_did',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14],
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+
+      // Mark T+7 COMPLETED and T+14 CANCELLED so ZERO PENDING schedules remain
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+        } else if (sched.milestoneDay === 14) {
+          sched.status = 'CANCELLED';
+        }
+      }
+
+      // Reopen T+14 without explicitly passing includeControlPrompts or sampleCount
+      const updated = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [14],
+      });
+
+      const t14 = updated.find((s) => s.milestoneDay === 14)!;
+      expect(t14.status).toBe('PENDING');
+      expect(t14.includeControlPrompts).toBe(true);
+      expect(t14.sampleCount).toBe(3);
+    });
+  });
+
+  it('Tier 5 iter2 regression: reopening CANCELLED milestones with stale COMPLETED T+7 preserves CANCELLED sampleCount & includeControlPrompts across full resume, single milestone reopen, and distinct per-milestone settings', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_mixed_reopen',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      // Seed T+7, T+14, T+30 at (1, false)
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14, 30],
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      // T+7 completes at (1, false); user upgrades remaining PENDING rows to (3, true), then pauses all
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+        }
+      }
+      await h.service.updateSchedulesForPublishRecord(rec.id, {
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+
+      // Resume all via { enabled: true }: must preserve (3, true) on T+14 & T+30 (not clobber with T+7's 1/false)
+      const resumedAll = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 7)).toMatchObject({
+        status: 'COMPLETED',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+
+      // Pause again and give T+30 distinct persisted settings (1, false) while T+14 remains (3, true)
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 30) {
+          sched.sampleCount = 1;
+          sched.includeControlPrompts = false;
+        }
+      }
+
+      // Reopen T+14 only via { enabled: true, milestones: [14] }
+      const reopenedT14 = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [14],
+      });
+      expect(reopenedT14.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(reopenedT14.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'CANCELLED',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      // Pause T+14 again so zero PENDING rows exist, then resume all: each CANCELLED row keeps its own settings
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+      const resumedDistinct = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+      });
+      expect(resumedDistinct.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(resumedDistinct.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+    });
+  });
+
+  it('Tier 5 iter2 regression: creating a brand-new missing milestone inherits from CANCELLED (3, true) rather than stale COMPLETED T+7 (1, false)', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_mixed_create_missing',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14],
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+          sched.sampleCount = 1;
+          sched.includeControlPrompts = false;
+        } else if (sched.milestoneDay === 14) {
+          sched.status = 'CANCELLED';
+          sched.sampleCount = 3;
+          sched.includeControlPrompts = true;
+        }
+      }
+
+      // Create brand-new T+30 when T+7 is COMPLETED (1, false) and T+14 is CANCELLED (3, true)
+      const updated = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [30],
+      });
+
+      expect(updated.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      // T+14 was not requested, remains CANCELLED (3, true)
+      expect(updated.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'CANCELLED',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+    });
+  });
 });
