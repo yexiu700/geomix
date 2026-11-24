@@ -38,6 +38,7 @@ const SCHEMA_MODELS = [
   'GeoDistributionTask',
   'GeoRetestSchedule',
   'GeoVariantJob',
+  'MarketingLead',
   'VisibilityRetrievedSource',
   'GeoRoiReport',
   'ExtensionAccessToken',
@@ -64,6 +65,7 @@ describe('schema migrations contract', () => {
       '20261122090000_brand_market_local_category',
       '20261123090000_geomix_v2_1_distribution',
       '20261124090000_geomix_v2_1_variant_jobs',
+      '20261124120000_marketing_lead',
       '20261125090000_geomix_v2_2_roi_connectors',
     ]);
     const sql = readFileSync(
@@ -190,6 +192,17 @@ describe('schema migrations contract', () => {
     expect(variantJobSql).toContain('GeoVariantJob_tenantId_articleId_idempotencyKey_key');
     expect(variantJobSql.toLowerCase()).not.toContain('drop table');
     expect(variantJobSql.toLowerCase()).not.toContain('create extension');
+    const marketingLeadSql = readFileSync(
+      resolve(migrationsDir, '20261124120000_marketing_lead', 'migration.sql'),
+      'utf8',
+    );
+    expect(marketingLeadSql).toContain('CREATE TYPE "MarketingLeadStatus" AS ENUM');
+    expect(marketingLeadSql).toContain('CREATE TYPE "MarketingLeadMarket" AS ENUM');
+    expect(marketingLeadSql).toContain('CREATE TABLE IF NOT EXISTS "MarketingLead"');
+    expect(marketingLeadSql).toContain('MarketingLead_status_createdAt_idx');
+    expect(marketingLeadSql).toContain('MarketingLead_email_createdAt_idx');
+    expect(marketingLeadSql.toLowerCase()).not.toContain('drop table');
+    expect(marketingLeadSql.toLowerCase()).not.toContain('create extension');
     const v22Sql = readFileSync(
       resolve(migrationsDir, '20261125090000_geomix_v2_2_roi_connectors', 'migration.sql'),
       'utf8',

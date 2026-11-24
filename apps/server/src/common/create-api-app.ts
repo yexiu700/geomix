@@ -21,7 +21,6 @@ export async function createApiApp(): Promise<INestApplication> {
     defaultVersion: '1',
     prefix: 'v',
   });
-
   const webOrigins = env.WEB_ORIGIN.split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
@@ -31,7 +30,7 @@ export async function createApiApp(): Promise<INestApplication> {
   app.enableCors((req: CorsRequestLike, callback) => {
     const origin = readSingleOriginHeader(req);
     if (origin && webOriginSet.has(origin)) {
-      callback(null, { origin, credentials: true });
+      callback(null, { origin, credentials: true, exposedHeaders: ['Retry-After'] });
       return;
     }
     callback(null, { origin: false });

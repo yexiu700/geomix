@@ -73,6 +73,10 @@
       "types": "./dist/locales.d.ts",
       "default": "./dist/locales.js"
     },
+    "./marketing": {
+      "types": "./dist/marketing.d.ts",
+      "default": "./dist/marketing.js"
+    },
     "./ops": {
       "types": "./dist/ops.d.ts",
       "default": "./dist/ops.js"

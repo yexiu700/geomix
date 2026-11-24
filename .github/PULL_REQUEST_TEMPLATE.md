@@ -12,7 +12,7 @@
 - [ ] `pnpm typecheck` (including `e2e/tsconfig.json`)
 - [ ] `pnpm test`
 - [ ] DB / Redis integration tests (`GEOMIX_DB_INTEGRATION=1` / `GEOMIX_REDIS_INTEGRATION=1`, if applicable)
-- [ ] Playwright E2E (`pnpm test:e2e`, if UI / API contract changed)
+- [ ] Playwright E2E (`E2E_V2=1 pnpm test:e2e`, if UI / API contract changed)
 
 ## Guardrails & Compliance Checklist
 

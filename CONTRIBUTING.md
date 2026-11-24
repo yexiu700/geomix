@@ -32,8 +32,8 @@ Thank you for your interest in contributing to **GeoMix**! This guide summarizes
 - Recommended branch prefixes: `feat/`, `fix/`, `refactor/`, `perf/`, `docs/`, `chore/`.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages and PR titles, e.g.:
   - `feat(visibility): add citation domain breakdown filter`
-  - `fix(web): pause background tab polling on single rewrite screen`
-  - `refactor(writing): split article manage screen into helpers and modals`
+  - `fix(studio): guard SSE stream cleanup when switching active brand`
+  - `refactor(visibility): extract overview analytics helpers from workspace`
   - `docs: update deployment runbook and architecture index`
 - **Never push directly to `main`.** All changes must go through a Pull Request.
 
@@ -50,7 +50,7 @@ pnpm test       # Vitest unit & contract test suite
 Tip: Run `pnpm format` to auto-fix Prettier formatting issues. For fast single-file unit test runs under pnpm 10, pass the path directly without `--`:
 
 ```bash
-pnpm --filter @geomix/web test components/rewrite/rewrite-single-screen.spec.tsx
+pnpm --filter @geomix/web test components/studio/studio-workspace.spec.tsx
 pnpm --filter @geomix/server test src/visibility/visibility.http.spec.ts
 ```
 

@@ -1,14 +1,18 @@
 import type {
   AnnouncementInput,
   CreateTenantInput,
+  ListMarketingLeadsQuery,
   LlmDailyCostReport,
+  MarketingLeadDto,
   PricingAction,
   PricingBatchUpdateInput,
   PricingUpdateInput,
   QuotaUpdateInput,
+  UpdateMarketingLeadStatusInput,
   UpdateTenantInput,
 } from '@geomix/shared';
-import { authorizedRequest, type Envelope } from './api';
+import { authorizedRequest } from './api';
+import { unwrapEnvelope } from './envelope';
 import type { SessionStorageLike } from './session';
 
 export type TenantRow = {
@@ -44,6 +48,15 @@ export type AnnouncementRow = {
   operatorName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+};
+
+export type AdminLeadsQuery = Partial<ListMarketingLeadsQuery>;
+
+export type MarketingLeadListResult = {
+  items: MarketingLeadDto[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
 export class AdminApiError extends Error {
@@ -125,6 +138,29 @@ export function httpAdmin(storage: SessionStorageLike) {
         qs ? `/admin/llm-costs?${qs}` : '/admin/llm-costs',
       );
     },
+    listAdminLeads: (query?: AdminLeadsQuery) => {
+      const params = new URLSearchParams();
+      if (query?.page !== undefined) params.set('page', String(query.page));
+      if (query?.pageSize !== undefined) params.set('pageSize', String(query.pageSize));
+      if (query?.status) params.set('status', query.status);
+      if (query?.targetMarket) params.set('targetMarket', query.targetMarket);
+      const keyword = query?.keyword?.trim();
+      if (keyword) params.set('keyword', keyword);
+      const qs = params.toString();
+      return readJson<MarketingLeadListResult>(
+        storage,
+        'GET',
+        qs ? `/admin/leads?${qs}` : '/admin/leads',
+      );
+    },
+    updateAdminLead: (id: string, input: UpdateMarketingLeadStatusInput) =>
+      readJson<MarketingLeadDto>(
+        storage,
+        'PATCH',
+        `/admin/leads/${encodeURIComponent(id)}`,
+        input,
+        freshKey(),
+      ),
   };
 }
 
@@ -149,11 +185,7 @@ async function readJson<T>(
   } catch {
     throw new AdminApiError(0, '无法连接接口');
   }
-  const text = await response.text();
-  if (!text) throw new AdminApiError(0, '接口没有返回内容');
-  const payload = JSON.parse(text) as Envelope<T>;
-  if (!response.ok || payload.code !== 0) {
-    throw new AdminApiError(payload.code, payload.msg || '请求失败');
-  }
-  return payload.data;
+  return unwrapEnvelope<T>(response, {
+    createError: (_status, code, message) => new AdminApiError(code, message),
+  });
 }

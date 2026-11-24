@@ -44,6 +44,7 @@ export const ADMIN_ROUTES = {
   pricing: '/admin/pricing',
   announcements: '/admin/announcements',
   llmCosts: '/admin/llm-costs',
+  leads: '/admin/leads',
 } as const;
 
 export const MODEL_INCLUSION_CARDS = [

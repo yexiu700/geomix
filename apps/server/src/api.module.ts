@@ -12,6 +12,7 @@ import { ExtensionModule } from './extension/extension.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { AdaptersModule } from './infra/adapters.module';
+import { MarketingModule } from './marketing/marketing.module';
 import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
@@ -36,6 +37,7 @@ import { VisibilityModule } from './visibility/visibility.module';
     StudioModule,
     DistributionModule,
     ExtensionModule,
+    MarketingModule,
     ReportsModule,
   ],
   controllers: [HealthController],
