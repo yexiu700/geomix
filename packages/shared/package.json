@@ -65,6 +65,10 @@
       "types": "./dist/infra.d.ts",
       "default": "./dist/infra.js"
     },
+    "./marketing": {
+      "types": "./dist/marketing.d.ts",
+      "default": "./dist/marketing.js"
+    },
     "./ops": {
       "types": "./dist/ops.d.ts",
       "default": "./dist/ops.js"

@@ -73,6 +73,7 @@ const ADMIN_ROUTES = new Set([
   '/admin/pricing',
   '/admin/announcements',
   '/admin/llm-costs',
+  '/admin/leads',
 ]);
 
 /** 登录后的 next 只允许回到本工作台合法站内路由，避免跳到站外或已下线旧路由。 */

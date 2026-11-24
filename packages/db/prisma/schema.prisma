@@ -197,6 +197,19 @@ enum RetestScheduleStatus {
   CANCELLED
 }
 
+enum MarketingLeadStatus {
+  NEW
+  CONTACTED
+  TRIAL_PROVISIONED
+  ARCHIVED
+}
+
+enum MarketingLeadMarket {
+  GLOBAL
+  CN
+  BOTH
+}
+
 // ===================== 底座 =====================
 model Tenant {
   id          String       @id @default(cuid())
@@ -946,4 +959,27 @@ model GeoVariantJob {
   @@unique([tenantId, articleId, idempotencyKey])
   @@index([tenantId, articleId, createdAt])
   @@index([tenantId, articleId, status])
+}
+
+// ===================== 品牌官网线索（全平台级，不按租户隔离） =====================
+model MarketingLead {
+  id           String              @id @default(cuid())
+  locale       String              @default("en") // "en" | "zh-CN"
+  name         String
+  email        String
+  companyBrand String
+  websiteUrl   String?
+  targetMarket MarketingLeadMarket @default(GLOBAL)
+  monthlyGoal  String?
+  estimatedPts Int?
+  notes        String?
+  sourcePage   String? // "/demo" | "/zh/demo" | "/pricing"
+  status       MarketingLeadStatus @default(NEW)
+  adminNote    String?
+  sourceIpHash String? // SHA-256(ip + salt) 仅作反垃圾审计，不存明文 IP
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([status, createdAt])
+  @@index([email, createdAt])
 }

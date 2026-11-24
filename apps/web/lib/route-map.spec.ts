@@ -1,3 +1,4 @@
+import { ADMIN_ROUTES } from '@geomix/shared';
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 import { middleware } from '../middleware';
@@ -63,13 +64,24 @@ describe('GeoMix 2.0 route-map & legacy redirects', () => {
     expect(safeAdminHref('/admin/pricing')).toBe('/admin/pricing');
     expect(safeAdminHref('/admin/announcements')).toBe('/admin/announcements');
     expect(safeAdminHref('/admin/llm-costs')).toBe('/admin/llm-costs');
+    expect(safeAdminHref('/admin/leads')).toBe('/admin/leads');
+    expect(safeAdminHref('/admin/leads/')).toBe('/admin/leads');
     expect(safeAdminHref('/admin/templates')).toBeNull();
     expect(safeAdminHref('//evil.example/admin/tenants')).toBeNull();
 
     expect(safePostLoginHref('/brands?market=CN')).toBe('/brands?market=CN');
     expect(safePostLoginHref('/admin/pricing')).toBe('/admin/pricing');
+    expect(safePostLoginHref('/admin/leads')).toBe('/admin/leads');
     expect(safePostLoginHref('/admin/templates')).toBeNull();
     expect(safePostLoginHref('/dashboard')).toBeNull();
+  });
+
+  it('keeps safeAdminHref in sync with @geomix/shared ADMIN_ROUTES', () => {
+    expect(ADMIN_ROUTES.leads).toBe('/admin/leads');
+    for (const route of Object.values(ADMIN_ROUTES)) {
+      expect(safeAdminHref(route)).toBe(route);
+      expect(safePostLoginHref(route)).toBe(route);
+    }
   });
 
   it('redirects trailing-slash legacy paths to clean canonical paths while preserving query parameters', () => {
