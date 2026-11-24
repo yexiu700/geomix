@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import HomePage from '../app/page';
+import MarketingRootPage, { metadata as rootMetadata } from '../app/(marketing)/page';
 import { HomePanel } from './home-panel';
 
 const pushMock = vi.fn();
@@ -12,6 +12,7 @@ const redirectMock = vi.fn((url: string) => {
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
+  usePathname: () => '/',
   redirect: (url: string) => redirectMock(url),
 }));
 
@@ -21,10 +22,26 @@ afterEach(() => {
   redirectMock.mockClear();
 });
 
-describe('Root entry and HomePanel (#127)', () => {
-  it('redirects root path / directly to /login without an intermediate landing card', () => {
-    expect(() => HomePage()).toThrow('NEXT_REDIRECT:/login');
-    expect(redirectMock).toHaveBeenCalledWith('/login');
+describe('Root entry and HomePanel (#127, #380)', () => {
+  it('renders the Global-First EN brand homepage at / without redirecting to /login and exports hreflang metadata', () => {
+    render(<MarketingRootPage />);
+
+    expect(redirectMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('heading', {
+        level: 1,
+        name: /Make Your Brand the Source AI Cites/i,
+      }),
+    ).toBeTruthy();
+
+    const demoCta = screen.getByTestId('hero-primary-cta');
+    expect(demoCta.getAttribute('href')).toBe('/demo');
+
+    expect(rootMetadata.alternates?.canonical).toBeTruthy();
+    const languages = rootMetadata.alternates?.languages as Record<string, string> | undefined;
+    expect(languages?.en).toBeTruthy();
+    expect(languages?.['zh-CN']).toBeTruthy();
+    expect(languages?.['x-default']).toBe(languages?.en);
   });
 
   it('does not nest interactive elements (<a><button>) in HomePanel and navigates cleanly', () => {
