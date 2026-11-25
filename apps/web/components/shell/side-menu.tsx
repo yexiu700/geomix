@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import type { AccountProfile } from '../../lib/api';
 import { HOME_ROUTE, buildMenu, menuSelection } from '../../lib/routes';
 import { displayName } from '../../lib/shell-copy';
+import { GeoMixIcon, GeoMixLockup } from '../brand/geomix-logo';
 
 export type SideMenuProps = {
   activePath: string;
@@ -47,8 +48,8 @@ export function SideMenu({
           aria-label={`返回${SITE_NAME}行动首页`}
           onClick={() => onNavigate(HOME_ROUTE)}
         >
-          <BrandMark />
-          <span>{SITE_NAME}</span>
+          <GeoMixLockup height={22} className="gm-brand-lockup" />
+          <span className="gm-sr-only">{SITE_NAME}</span>
         </button>
       </div>
       <nav className="gm-sider-nav" aria-label="主导航">
@@ -117,11 +118,5 @@ export function SideMenu({
 }
 
 export function BrandMark() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="9" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="6" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="3" fill="var(--gm-phosphor)" />
-    </svg>
-  );
+  return <GeoMixIcon size={20} className="gm-brand-mark" />;
 }

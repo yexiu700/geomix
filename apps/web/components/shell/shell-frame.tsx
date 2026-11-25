@@ -33,9 +33,10 @@ import type { AccountProfile } from '../../lib/api';
 import type { ExtractBrandFactsRequest } from '../../lib/brands';
 import { HOME_ROUTE, matchRoute } from '../../lib/routes';
 import { useWorkspaceStore } from '../../lib/workspace-store';
+import { GeoMixLockup } from '../brand/geomix-logo';
 import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { BrandMark, SideMenu } from './side-menu';
+import { SideMenu } from './side-menu';
 
 const PasswordForm = dynamic(() => import('../password-form').then((m) => m.PasswordForm));
 const CommandPalette = dynamic(() => import('./command-palette').then((m) => m.CommandPalette));
@@ -372,8 +373,8 @@ export function ShellFrame({
                 aria-label={`返回${SITE_NAME}行动首页`}
                 onClick={() => handleNavigate(HOME_ROUTE)}
               >
-                <BrandMark />
-                <span>{SITE_NAME}</span>
+                <GeoMixLockup height={20} className="gm-brand-lockup" />
+                <span className="gm-sr-only">{SITE_NAME}</span>
               </button>
             ) : null}
 
