@@ -28,6 +28,7 @@ const loadAccountMock = vi.fn();
 const logoutSessionMock = vi.fn();
 const saveAccountUiPrefsMock = vi.fn();
 const listBrandsMock = vi.fn();
+const listBrandProductLinesMock = vi.fn();
 const httpWalletMock = vi.fn();
 const httpAnnouncementsMock = vi.fn();
 
@@ -43,6 +44,7 @@ vi.mock('../../lib/api', async (importOriginal) => {
 
 vi.mock('../../lib/brands', () => ({
   listBrands: (...args: unknown[]) => listBrandsMock(...args),
+  listBrandProductLines: (...args: unknown[]) => listBrandProductLinesMock(...args),
   createBrand: vi.fn(),
   enableBrandMarket: vi.fn(),
   extractBrandFacts: vi.fn(),
@@ -111,6 +113,7 @@ beforeEach(() => {
   logoutSessionMock.mockReset().mockResolvedValue(undefined);
   saveAccountUiPrefsMock.mockReset().mockResolvedValue(true);
   listBrandsMock.mockReset().mockResolvedValue({ items: [sampleBrand] });
+  listBrandProductLinesMock.mockReset().mockResolvedValue({ items: [] });
   httpWalletMock.mockReset().mockResolvedValue({
     points: 1000,
     pointsReserved: 0,
@@ -319,5 +322,51 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     expect(await screen.findByText('行动首页内容')).toBeTruthy();
     expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
     expect(useWorkspaceStore.getState().menuCollapsed).toBe(false);
+  });
+
+  it('does not fetch product lines for a stale/foreign brandId before brandsLoaded reconciles to an owned brand', async () => {
+    mockPathname = '/home';
+    mockSearchParams = new URLSearchParams('brandId=nonexistent_brand_123&market=CN');
+    window.history.replaceState(null, '', '/home?brandId=nonexistent_brand_123&market=CN');
+    window.localStorage.setItem(WORKSPACE_USER_KEY, merchantAccount.id);
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({
+        activeBrandId: 'nonexistent_brand_123',
+        activeMarket: 'CN',
+        menuCollapsed: false,
+      }),
+    );
+
+    let resolveBrands!: (value: { items: BrandRecord[] }) => void;
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+    listBrandsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBrands = resolve;
+      }),
+    );
+
+    render(
+      <ConsoleShell>
+        <div>首页内容</div>
+      </ConsoleShell>,
+    );
+
+    await waitFor(() => {
+      expect(listBrandsMock).toHaveBeenCalledTimes(1);
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveBrands({ items: [sampleBrand] });
+    });
+
+    await waitFor(() => {
+      expect(listBrandProductLinesMock).toHaveBeenCalledTimes(1);
+      expect(listBrandProductLinesMock).toHaveBeenCalledWith(
+        'b-1',
+        expect.objectContaining({ storage: window.sessionStorage }),
+      );
+    });
   });
 });

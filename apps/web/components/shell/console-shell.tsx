@@ -204,10 +204,15 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
     },
   });
 
+  const brandsLoaded = workspace.brandsLoaded;
   const activeBrandId = workspace.activeBrandId;
+  const hasOwnedActiveBrand =
+    brandsLoaded &&
+    Boolean(activeBrandId) &&
+    workspace.brands.some((brand) => brand.id === activeBrandId);
 
   useEffect(() => {
-    if (!accountId || !activeBrandId) return undefined;
+    if (!accountId || !hasOwnedActiveBrand || !activeBrandId) return undefined;
     const ctrl = new AbortController();
     void useWorkspaceStore.getState().loadProductLines(activeBrandId, {
       storage: window.sessionStorage,
@@ -216,16 +221,22 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
     return () => {
       ctrl.abort();
     };
-  }, [accountId, activeBrandId]);
+  }, [accountId, hasOwnedActiveBrand, activeBrandId]);
 
   useTabFreshness({
-    active: Boolean(accountId && activeBrandId),
+    active: Boolean(accountId && hasOwnedActiveBrand && activeBrandId),
     domains: ['product-lines'],
     refreshOnActivate: false,
     onRefresh: () => {
-      const currentBrandId = useWorkspaceStore.getState().activeBrandId;
-      if (!currentBrandId) return;
-      void useWorkspaceStore.getState().loadProductLines(currentBrandId, {
+      const state = useWorkspaceStore.getState();
+      if (
+        !state.brandsLoaded ||
+        !state.activeBrandId ||
+        !state.brands.some((brand) => brand.id === state.activeBrandId)
+      ) {
+        return;
+      }
+      void state.loadProductLines(state.activeBrandId, {
         storage: window.sessionStorage,
       });
     },
