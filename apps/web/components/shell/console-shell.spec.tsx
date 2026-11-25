@@ -291,4 +291,33 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     fireEvent.click(screen.getByRole('button', { name: '回首页' }));
     expect(pushMock).toHaveBeenCalledWith('/home');
   });
+
+  it('auto-collapses /studio into 72px rail without overwriting persisted menuCollapsed and restores /home expanded', async () => {
+    mockPathname = '/studio';
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+
+    const { rerender } = render(
+      <ConsoleShell>
+        <div>写作台内容</div>
+      </ConsoleShell>,
+    );
+
+    expect(await screen.findByText('写作台内容')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '展开菜单' }));
+    expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
+    expect(saveAccountUiPrefsMock).not.toHaveBeenCalled();
+
+    mockPathname = '/home';
+    rerender(
+      <ConsoleShell>
+        <div>行动首页内容</div>
+      </ConsoleShell>,
+    );
+
+    expect(await screen.findByText('行动首页内容')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
+    expect(useWorkspaceStore.getState().menuCollapsed).toBe(false);
+  });
 });

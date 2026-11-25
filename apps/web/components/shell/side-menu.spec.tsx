@@ -47,6 +47,12 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
       '可见度诊断',
       'GEO 写作台',
     ]);
+    const navIcons = Array.from(document.querySelectorAll('.ant-menu-item svg'));
+    expect(navIcons).toHaveLength(4);
+    for (const icon of navIcons) {
+      expect(icon.classList.contains('gm-sider-nav-icon')).toBe(true);
+      expect(icon.classList.contains('ant-menu-item-icon')).toBe(true);
+    }
     expect(document.querySelectorAll('.ant-menu-submenu')).toHaveLength(0);
     expect(screen.queryByText(/敬请期待|更多规划功能|余额明细/)).toBeNull();
 
@@ -60,7 +66,7 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
     expect(onNavigate).toHaveBeenCalledWith('/account');
   });
 
-  it('hides /visibility when visibilityEnabled=false and returns null when collapsed', () => {
+  it('hides /visibility when visibilityEnabled=false and returns null only when mobileClosed=true', () => {
     const { rerender, container } = render(
       <SideMenu
         activePath="/home"
@@ -80,6 +86,7 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
       <SideMenu
         activePath="/home"
         collapsed={true}
+        mobileClosed={true}
         account={account}
         onNavigate={vi.fn()}
         onChangePassword={vi.fn()}
@@ -87,5 +94,88 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
       />,
     );
     expect(container.innerHTML).toBe('');
+  });
+
+  it('renders 72px icon rail with full accessible names, 2-char visible short labels, and 180-deg bottom toggle', () => {
+    const onToggleCollapse = vi.fn();
+    render(
+      <SideMenu
+        activePath="/studio"
+        collapsed={true}
+        showCollapseToggle={true}
+        onToggleCollapse={onToggleCollapse}
+        account={account}
+        onNavigate={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    const root = screen.getByTestId('side-menu-root');
+    expect(root.className).toContain('gm-sider-wrap-rail');
+    expect(root.textContent).toContain('GeoMix');
+
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(4);
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      '行动首页',
+      '品牌资产',
+      '可见度诊断',
+      'GEO 写作台',
+    ]);
+    expect(screen.getByRole('menuitem', { name: '行动首页' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '品牌资产' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '可见度诊断' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'GEO 写作台' })).toBeTruthy();
+
+    const shortLabels = Array.from(document.querySelectorAll('.gm-sider-rail-short')).map((el) =>
+      el.textContent?.trim(),
+    );
+    expect(shortLabels).toEqual(['首页', '品牌', '诊断', '写作']);
+
+    expect(screen.getByTestId('sider-account-entry')).toBeTruthy();
+    const toggleBtn = screen.getByTestId('sider-collapse-toggle');
+    expect(toggleBtn.getAttribute('aria-controls')).toBe('gm-sider-nav');
+    expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+    expect(toggleBtn.getAttribute('aria-label')).toBe('展开菜单');
+    expect(toggleBtn.querySelector('.gm-sider-collapse-icon.is-collapsed')).toBeTruthy();
+
+    fireEvent.click(toggleBtn);
+    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders quiet 运营后台 link for ADMIN outside <Menu> above account entry and omits it for MERCHANT', () => {
+    const adminAccount: AccountProfile = { ...account, role: 'ADMIN' };
+    const { rerender } = render(
+      <SideMenu
+        activePath="/home"
+        collapsed={false}
+        account={adminAccount}
+        onNavigate={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+    const adminLink = screen.getByRole('link', { name: '运营后台' });
+    expect(adminLink.getAttribute('href')).toBe('/admin/tenants');
+    expect(adminLink.closest('.ant-menu')).toBeNull();
+    const accountEntry = screen.getByTestId('sider-account-entry');
+    expect(
+      adminLink.compareDocumentPosition(accountEntry) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    rerender(
+      <SideMenu
+        activePath="/home"
+        collapsed={false}
+        account={account}
+        onNavigate={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('link', { name: '运营后台' })).toBeNull();
   });
 });

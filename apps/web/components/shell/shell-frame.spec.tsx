@@ -2,6 +2,7 @@
 
 import type { BrandRecord } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
@@ -340,5 +341,260 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     expect(screen.queryByText('+ 创建首个品牌')).toBeNull();
     fireEvent.click(retryBtn);
     expect(onRetryBrands).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges desktop topbar to <= 5 elements with zero breadcrumb/header admin/header collapse and bell modal', async () => {
+    const dual = makeBrand('b-1', 'NordicAudio', ['CN', 'GLOBAL']);
+    const adminAccount: AccountProfile = { ...merchantAccount, role: 'ADMIN' };
+
+    const { rerender } = render(
+      <ShellFrame
+        account={adminAccount}
+        activePath="/home"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        announcement="  本周三 02:00 进行引擎升级  "
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>行动首页</div>
+      </ShellFrame>,
+    );
+
+    const header = document.querySelector('header.gm-header');
+    expect(header).toBeTruthy();
+    const leftChildren = header!.querySelectorAll(':scope > .gm-header-left > *');
+    const rightChildren = header!.querySelectorAll(':scope > .gm-header-right > *');
+    expect(leftChildren.length + rightChildren.length).toBeLessThanOrEqual(5);
+    expect(leftChildren.length).toBe(2);
+    expect(rightChildren.length).toBe(3);
+
+    expect(header!.querySelector('nav[aria-label="面包屑"]')).toBeNull();
+    expect(within(header as HTMLElement).queryByRole('link', { name: '运营后台' })).toBeNull();
+    expect(
+      within(header as HTMLElement).queryByRole('button', { name: /收起菜单|展开菜单/ }),
+    ).toBeNull();
+    expect(header!.querySelector('.gm-avatar')).toBeNull();
+
+    const sider = document.querySelector('aside.ant-layout-sider');
+    expect(sider).toBeTruthy();
+    expect(within(sider as HTMLElement).getByRole('link', { name: '运营后台' })).toBeTruthy();
+
+    const bellBtn = screen.getByTestId('header-announcement-bell');
+    expect(bellBtn.querySelector('.gm-announce-bell-dot')).toBeTruthy();
+    fireEvent.click(bellBtn);
+    const dialog = await screen.findByRole('dialog', { name: '系统公告' });
+    expect(dialog.textContent).toContain('本周三 02:00 进行引擎升级');
+    fireEvent.click(within(dialog).getByRole('button', { name: '知道了' }));
+
+    rerender(
+      <ShellFrame
+        account={adminAccount}
+        activePath="/home"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        announcement={null}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>行动首页</div>
+      </ShellFrame>,
+    );
+
+    expect(
+      screen.getByTestId('header-announcement-bell').querySelector('.gm-announce-bell-dot'),
+    ).toBeNull();
+    fireEvent.click(screen.getByTestId('header-announcement-bell'));
+    const emptyDialog = await screen.findByRole('dialog', { name: '系统公告' });
+    expect(emptyDialog.textContent).toContain('当前暂无系统公告');
+  });
+
+  it('auto-collapses /studio to 72px rail, expands locally without calling onToggleMenu, and applies route-typed containers', () => {
+    const dual = makeBrand('b-1', 'NordicAudio', ['CN', 'GLOBAL']);
+    const onToggleMenu = vi.fn();
+
+    const { rerender } = render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/home"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>内容</div>
+      </ShellFrame>,
+    );
+
+    expect(document.querySelector('.gm-workspace-main--wide')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/brands"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>品牌资产</div>
+      </ShellFrame>,
+    );
+    expect(document.querySelector('.gm-workspace-main--form')).toBeTruthy();
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/studio"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>GEO 写作台</div>
+      </ShellFrame>,
+    );
+    expect(document.querySelector('.gm-workspace-main--studio')).toBeTruthy();
+    expect(document.querySelector('.gm-content--studio')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
+
+    const toggleBtn = screen.getByTestId('sider-collapse-toggle');
+    expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggleBtn);
+    expect(onToggleMenu).not.toHaveBeenCalled();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
+    expect(screen.getByTestId('sider-collapse-toggle').getAttribute('aria-expanded')).toBe('true');
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/home"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>行动首页</div>
+      </ShellFrame>,
+    );
+    expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
+    expect(document.querySelector('.gm-workspace-main--wide')).toBeTruthy();
+
+    // Re-entering /studio after previously expanding locally must render gm-sider-rail on Commit 1 (no 1-frame flash)
+    const commit1Classes: string[] = [];
+    function LayoutCommitSpy({ marker }: { marker: string }) {
+      useLayoutEffect(() => {
+        const aside = document.querySelector('aside.ant-layout-sider');
+        commit1Classes.push(`${marker}:${aside?.className ?? ''}`);
+      }, [marker]);
+      return <div>GEO 写作台再进入</div>;
+    }
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/studio"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <LayoutCommitSpy marker="reenter-studio" />
+      </ShellFrame>,
+    );
+    expect(commit1Classes[0]).toContain('gm-sider-rail');
+    expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
   });
 });

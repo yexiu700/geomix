@@ -152,8 +152,8 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 1255,
-  inlineFontSize: 358,
+  inlineStyleBlocks: 1202,
+  inlineFontSize: 348,
 } as const;
 
 const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
@@ -165,7 +165,6 @@ const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/home/home-distribution-summary.tsx': 1,
   'components/home/home-roi-report-modal.tsx': 7,
   'components/reports/public-roi-report-view.tsx': 13,
-  'components/shell/command-palette.tsx': 3,
   'components/studio/studio-delivery-pack.tsx': 1,
   'components/studio/studio-distribution-drawer.tsx': 3,
   'components/studio/studio-editor-canvas.tsx': 2,
@@ -191,7 +190,6 @@ const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/home/home-top-briefs.tsx': 2,
   'components/home/home-workspace.tsx': 1,
   'components/reports/public-roi-report-view.tsx': 3,
-  'components/shell/workspace-placeholder.tsx': 2,
   'components/studio/studio-delivery-pack.tsx': 5,
   'components/studio/studio-distribution-drawer.tsx': 15,
   'components/studio/studio-geo-evaluator.tsx': 1,
@@ -450,13 +448,17 @@ describe('Sonar Ink 2.0 visual-debt ratchet (#390)', () => {
     expect(violations).toEqual([]);
   });
 
-  it('enforces zero visual debt inside apps/web/components/ui/** primitives', () => {
+  it('enforces zero visual debt inside apps/web/components/ui/** and components/shell/**', () => {
     expect(existsSync(uiDir)).toBe(true);
+    const shellDir = join(COMPONENTS_DIR, 'shell');
+    expect(existsSync(shellDir)).toBe(true);
     const uiFiles = collectProductionSourceFiles(uiDir);
+    const shellFiles = collectProductionSourceFiles(shellDir);
     expect(uiFiles.length).toBeGreaterThanOrEqual(8);
+    expect(shellFiles.length).toBeGreaterThanOrEqual(7);
 
     const violations: string[] = [];
-    for (const file of uiFiles) {
+    for (const file of [...uiFiles, ...shellFiles]) {
       const rel = toPosixRel(file);
       const content = readFileSync(file, 'utf8');
       const styleBlocks = countInlineStyleBlocks(content);

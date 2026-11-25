@@ -2,7 +2,6 @@
 
 import {
   GEO_MARKET_DEFAULTS,
-  SITE_NAME,
   normalizeBrandDomain,
   type BrandCompetitor,
   type BrandFactsResponse,
@@ -31,11 +30,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { WalletSummary } from '../../lib/account-client';
 import type { AccountProfile } from '../../lib/api';
 import type { ExtractBrandFactsRequest } from '../../lib/brands';
-import { HOME_ROUTE, matchRoute } from '../../lib/routes';
+import { matchRoute } from '../../lib/routes';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { BrandMark, SideMenu } from './side-menu';
+import { SideMenu } from './side-menu';
 
 const PasswordForm = dynamic(() => import('../password-form').then((m) => m.PasswordForm));
 const CommandPalette = dynamic(() => import('./command-palette').then((m) => m.CommandPalette));
@@ -49,6 +48,14 @@ type EnableMarketFormValues = {
   ownedDomainsText?: string;
   competitorsText?: string;
 };
+
+type WorkspaceContainerVariant = 'wide' | 'form' | 'studio';
+
+function resolveContainerVariant(routePath: string | undefined): WorkspaceContainerVariant {
+  if (routePath === '/studio') return 'studio';
+  if (routePath === '/brands' || routePath === '/account') return 'form';
+  return 'wide';
+}
 
 function parseDomainLines(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -172,11 +179,21 @@ export function ShellFrame({
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
   );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [studioRailExpanded, setStudioRailExpanded] = useState(false);
   const [enableForm] = Form.useForm<EnableMarketFormValues>();
 
   const isCreateOpen = createBrandModalOpen ?? internalCreateOpen;
   const enableTarget =
     enableMarketModalTarget !== undefined ? enableMarketModalTarget : internalEnableMarket;
+
+  const matchedRoute = matchRoute(activePath);
+  const isStudioRoute = matchedRoute?.path === '/studio';
+  const isAccountPath = matchedRoute?.path === '/account';
+  const containerVariant = resolveContainerVariant(matchedRoute?.path);
+
+  useEffect(() => {
+    setStudioRailExpanded(false);
+  }, [isStudioRoute]);
 
   const openCreateModal = () => {
     if (onOpenCreateBrandModal) {
@@ -277,16 +294,24 @@ export function ShellFrame({
   }, [activeBrand, enableForm, enableTarget]);
 
   const visibilityEnabled = account.features?.visibility !== false;
-  const siderCollapsed = isMobile ? !mobileMenuOpen : menuCollapsed;
-  const menuToggleLabel = siderCollapsed ? '展开菜单' : '收起菜单';
-  const matchedRoute = matchRoute(activePath);
-  const currentTitle = matchedRoute?.title ?? '行动首页';
-  const isAccountPath = matchedRoute?.path === '/account';
+  const desktopRailCollapsed = isStudioRoute ? !studioRailExpanded : menuCollapsed;
+  const siderCollapsed = isMobile ? !mobileMenuOpen : desktopRailCollapsed;
+  const railMode = !isMobile && desktopRailCollapsed;
+  const mobileClosed = isMobile && !mobileMenuOpen;
+  const siderClassName = mobileClosed
+    ? 'gm-sider gm-sider-collapsed'
+    : railMode
+      ? 'gm-sider gm-sider-rail'
+      : 'gm-sider';
   const trimmedAnnouncement = announcement?.trim() || '';
 
   const toggleMenu = () => {
     if (isMobile) {
       setMobileMenuOpen((open) => !open);
+      return;
+    }
+    if (isStudioRoute) {
+      setStudioRailExpanded((expanded) => !expanded);
       return;
     }
     onToggleMenu();
@@ -330,7 +355,7 @@ export function ShellFrame({
   const enableDefaults = enableTarget ? GEO_MARKET_DEFAULTS[enableTarget] : null;
 
   return (
-    <Layout style={{ minHeight: '100vh', overflowX: 'clip' }}>
+    <Layout className="gm-shell-layout">
       {isMobile && mobileMenuOpen ? (
         <div
           className="gm-sider-mask"
@@ -340,21 +365,19 @@ export function ShellFrame({
       ) : null}
       <Sider
         id="gm-sider-nav"
-        className={siderCollapsed ? 'gm-sider gm-sider-collapsed' : 'gm-sider'}
+        className={siderClassName}
         width={220}
         collapsed={siderCollapsed}
-        collapsedWidth={0}
+        collapsedWidth={isMobile ? 0 : 72}
         trigger={null}
         theme="dark"
-        style={{
-          background: 'var(--gm-bg-base)',
-          borderRight: siderCollapsed ? 'none' : '1px solid var(--gm-line-1)',
-          overflow: 'hidden',
-        }}
       >
         <SideMenu
           activePath={activePath}
-          collapsed={siderCollapsed}
+          collapsed={railMode}
+          mobileClosed={mobileClosed}
+          showCollapseToggle={!isMobile}
+          onToggleCollapse={toggleMenu}
           account={account}
           visibilityEnabled={visibilityEnabled}
           onNavigate={handleNavigate}
@@ -362,18 +385,19 @@ export function ShellFrame({
           onLogout={onLogout}
         />
       </Sider>
-      <Layout style={{ minWidth: 0, overflow: 'hidden' }}>
+      <Layout className="gm-shell-body">
         <Header className="gm-header">
           <div className="gm-header-left">
-            {siderCollapsed ? (
+            {isMobile ? (
               <button
                 type="button"
-                className="gm-header-brand"
-                aria-label={`返回${SITE_NAME}行动首页`}
-                onClick={() => handleNavigate(HOME_ROUTE)}
+                className="gm-mobile-menu-btn"
+                aria-label={mobileMenuOpen ? '关闭菜单' : '打开菜单'}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="gm-sider-nav"
+                onClick={toggleMenu}
               >
-                <BrandMark />
-                <span>{SITE_NAME}</span>
+                <MobileMenuIcon />
               </button>
             ) : null}
 
@@ -383,12 +407,13 @@ export function ShellFrame({
                 data-testid="global-brand-switcher-loading"
                 aria-busy="true"
               >
-                <Skeleton.Input active size="small" style={{ width: 148, height: 28 }} />
+                <Skeleton.Input active size="small" className="gm-skel-brand" />
               </span>
             ) : brandsError && brands.length === 0 ? (
               <Button
                 size="small"
                 danger
+                className="gm-shell-noshrink"
                 data-testid="global-brand-switcher-retry"
                 onClick={() => {
                   if (onRetryBrands) {
@@ -400,23 +425,23 @@ export function ShellFrame({
                     });
                   }
                 }}
-                style={{ flexShrink: 0 }}
               >
                 重新加载品牌
               </Button>
             ) : brands.length === 0 ? (
               <Button
-                type="primary"
+                type="default"
                 size="small"
+                className="gm-shell-noshrink gm-brand-create-btn"
                 data-testid="global-brand-switcher"
                 disabled={account.tenant.readOnly}
                 onClick={openCreateModal}
-                style={{ flexShrink: 0 }}
               >
                 + 创建首个品牌
               </Button>
             ) : (
               <Select<string>
+                variant="borderless"
                 data-testid="global-brand-switcher"
                 aria-label="切换当前品牌"
                 size="small"
@@ -435,8 +460,8 @@ export function ShellFrame({
                 popupRender={(menu) => (
                   <div>
                     {menu}
-                    <Divider style={{ margin: '6px 0' }} />
-                    <div style={{ padding: '0 6px 6px' }}>
+                    <Divider className="gm-brand-popup-divider" />
+                    <div className="gm-brand-popup-footer">
                       <Button
                         type="text"
                         size="small"
@@ -454,8 +479,8 @@ export function ShellFrame({
             )}
 
             {brandsLoading ? (
-              <span aria-busy="true" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <Skeleton.Button active size="small" style={{ width: 112, height: 28 }} />
+              <span className="gm-header-switcher-skeleton" aria-busy="true">
+                <Skeleton.Button active size="small" className="gm-skel-market" />
               </span>
             ) : activeBrand ? (
               <div
@@ -472,7 +497,7 @@ export function ShellFrame({
                       aria-pressed={activeMarket === 'CN'}
                       onClick={() => onSelectMarket('CN')}
                     >
-                      🇨🇳 国内
+                      CN 国内
                     </button>
                     <button
                       type="button"
@@ -482,7 +507,7 @@ export function ShellFrame({
                       aria-pressed={activeMarket === 'GLOBAL'}
                       onClick={() => onSelectMarket('GLOBAL')}
                     >
-                      🌐 海外
+                      海外 GLOBAL
                     </button>
                   </>
                 ) : (
@@ -493,7 +518,7 @@ export function ShellFrame({
                       aria-pressed="true"
                       onClick={() => onSelectMarket(activeMarket)}
                     >
-                      {activeMarket === 'CN' ? '🇨🇳 国内' : '🌐 海外'}
+                      {activeMarket === 'CN' ? 'CN 国内' : '海外 GLOBAL'}
                     </button>
                     {missingMarket ? (
                       <button
@@ -510,47 +535,36 @@ export function ShellFrame({
                 )}
               </div>
             ) : null}
-
-            <nav aria-label="面包屑" className="gm-breadcrumb">
-              <span className="gm-breadcrumb-sep" aria-hidden="true">
-                /
-              </span>
-              <span className="gm-breadcrumb-current">{currentTitle}</span>
-            </nav>
           </div>
 
           <div className="gm-header-right">
-            {trimmedAnnouncement ? (
-              <Tooltip title={trimmedAnnouncement}>
-                <button
-                  type="button"
-                  className="gm-announce-btn"
-                  aria-label="查看公告全文"
-                  onClick={() => setAnnouncementOpen(true)}
-                >
-                  {trimmedAnnouncement}
-                </button>
-              </Tooltip>
-            ) : null}
-
             <button
               type="button"
               className="gm-cmd-trigger"
               aria-label="打开指令面板"
               onClick={() => setPaletteOpen(true)}
             >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="gm-cmd-trigger-lead">
                 <SearchIcon />
                 <span className="gm-cmd-trigger-text">搜索</span>
               </span>
               <kbd className="gm-cmd-trigger-kbd">{isWindows ? 'Ctrl K' : '⌘K'}</kbd>
             </button>
 
-            {account.role === 'ADMIN' ? (
-              <Link className="gm-admin-link" href="/admin/tenants">
-                运营后台
-              </Link>
-            ) : null}
+            <Tooltip title={trimmedAnnouncement || '系统公告'}>
+              <button
+                type="button"
+                className="gm-announce-bell"
+                data-testid="header-announcement-bell"
+                aria-label="查看系统公告"
+                onClick={() => setAnnouncementOpen(true)}
+              >
+                <BellIcon />
+                {trimmedAnnouncement ? (
+                  <span className="gm-announce-bell-dot" aria-hidden="true" />
+                ) : null}
+              </button>
+            </Tooltip>
 
             {walletLoading || wallet === null ? (
               <span
@@ -558,7 +572,7 @@ export function ShellFrame({
                 data-testid="header-points-loading"
                 aria-busy="true"
               >
-                <Skeleton.Button active size="small" style={{ width: 72, height: 26 }} />
+                <Skeleton.Button active size="small" className="gm-skel-points" />
               </span>
             ) : (
               <Link
@@ -571,48 +585,39 @@ export function ShellFrame({
                 <span>点</span>
               </Link>
             )}
-
-            <Button
-              size="small"
-              aria-label={menuToggleLabel}
-              aria-expanded={!siderCollapsed}
-              aria-controls="gm-sider-nav"
-              onClick={toggleMenu}
-              style={{ flexShrink: 0 }}
-            >
-              {menuToggleLabel}
-            </Button>
           </div>
         </Header>
 
-        <Content className="gm-content" style={{ padding: isMobile ? 12 : 20 }}>
-          {account.tenant.readOnly ? (
-            <Alert
-              type="warning"
-              showIcon
-              message="账号已到期，当前只读"
-              style={{ marginBottom: 12 }}
-            />
-          ) : null}
-          {!brandsLoading &&
-          brandsLoaded &&
-          brands.length === 0 &&
-          !brandsError &&
-          !isAccountPath ? (
-            <section className="gm-onboarding-banner" aria-label="首次建档引导">
-              <div className="gm-onboarding-banner-copy">
-                <strong>60 秒创建首个品牌，开启双市场 AI 可见度与 GEO 写作闭环</strong>
-                <span>
-                  填写品牌名、品类与目标市场（🇨🇳 国内 / 🌐
-                  海外）后，全站看板、监测与写作台立即自动锁定该品牌上下文。
-                </span>
-              </div>
-              <Button type="primary" disabled={account.tenant.readOnly} onClick={openCreateModal}>
-                60 秒创建首个品牌
-              </Button>
-            </section>
-          ) : null}
-          <div className="gm-workspace-main">{children}</div>
+        <Content className={isStudioRoute ? 'gm-content gm-content--studio' : 'gm-content'}>
+          <div className={`gm-workspace-main gm-workspace-main--${containerVariant}`}>
+            {account.tenant.readOnly ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="账号已到期，当前只读"
+                className="gm-shell-readonly-alert"
+              />
+            ) : null}
+            {!brandsLoading &&
+            brandsLoaded &&
+            brands.length === 0 &&
+            !brandsError &&
+            !isAccountPath ? (
+              <section className="gm-onboarding-banner" aria-label="首次建档引导">
+                <div className="gm-onboarding-banner-copy">
+                  <strong>60 秒创建首个品牌，开启双市场 AI 可见度与 GEO 写作闭环</strong>
+                  <span>
+                    填写品牌名、品类与目标市场（CN 国内 / 海外
+                    GLOBAL）后，全站看板、监测与写作台立即自动锁定该品牌上下文。
+                  </span>
+                </div>
+                <Button type="primary" disabled={account.tenant.readOnly} onClick={openCreateModal}>
+                  60 秒创建首个品牌
+                </Button>
+              </section>
+            ) : null}
+            {children}
+          </div>
         </Content>
       </Layout>
 
@@ -639,7 +644,7 @@ export function ShellFrame({
         onOk={() => enableForm.submit()}
       >
         {enableDefaults ? (
-          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--gm-fg-2)', fontSize: 12 }}>
+          <p className="gm-modal-hint">
             默认语种与区域：{enableDefaults.locale} / {enableDefaults.region}
             。开启后将与现有市场共享核心品牌事实卡，但引擎组、可见度看板与成稿严格隔离。
           </p>
@@ -694,7 +699,7 @@ export function ShellFrame({
             />
           </Form.Item>
           {enableError ? (
-            <Alert type="error" showIcon message={enableError} style={{ marginBottom: 8 }} />
+            <Alert type="error" showIcon message={enableError} className="gm-modal-alert" />
           ) : null}
         </Form>
       </Modal>
@@ -711,11 +716,7 @@ export function ShellFrame({
           </Button>,
         ]}
       >
-        <p
-          style={{ margin: 0, color: 'var(--gm-fg-1)', lineHeight: '22px', whiteSpace: 'pre-wrap' }}
-        >
-          {trimmedAnnouncement}
-        </p>
+        <p className="gm-announce-modal-body">{trimmedAnnouncement || '当前暂无系统公告'}</p>
       </Modal>
 
       {paletteOpen ? (
@@ -761,6 +762,38 @@ function SearchIcon() {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <circle cx="7" cy="7" r="4.8" stroke="currentColor" strokeWidth="1.4" />
       <path d="M10.6 10.6L14 14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M8 2.2C5.9 2.2 4.4 3.8 4.4 6V8.9L3.2 10.8C3 11.1 3.2 11.5 3.6 11.5H12.4C12.8 11.5 13 11.1 12.8 10.8L11.6 8.9V6C11.6 3.8 10.1 2.2 8 2.2Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.6 12.8C6.9 13.4 7.4 13.8 8 13.8C8.6 13.8 9.1 13.4 9.4 12.8"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function MobileMenuIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 4.2H13.5M2.5 8H13.5M2.5 11.8H13.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

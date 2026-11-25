@@ -14,28 +14,28 @@ export function ConsoleBootSkeleton(): JSX.Element {
       <aside className="gm-boot-sider" aria-hidden="true">
         <div className="gm-boot-sider-brand">
           <Skeleton.Avatar active size="small" shape="circle" />
-          <Skeleton.Input active size="small" style={{ width: 96, height: 18 }} />
+          <Skeleton.Input active size="small" className="gm-boot-skel-brand" />
         </div>
         <div className="gm-boot-sider-nav">
-          <Skeleton.Input active size="small" block style={{ height: 32 }} />
-          <Skeleton.Input active size="small" block style={{ height: 32 }} />
-          <Skeleton.Input active size="small" block style={{ height: 32 }} />
-          <Skeleton.Input active size="small" block style={{ height: 32 }} />
+          <Skeleton.Input active size="small" block className="gm-boot-skel-nav" />
+          <Skeleton.Input active size="small" block className="gm-boot-skel-nav" />
+          <Skeleton.Input active size="small" block className="gm-boot-skel-nav" />
+          <Skeleton.Input active size="small" block className="gm-boot-skel-nav" />
         </div>
         <div className="gm-boot-sider-footer">
           <Skeleton.Avatar active size="small" shape="circle" />
-          <Skeleton.Input active size="small" style={{ width: 120, height: 22 }} />
+          <Skeleton.Input active size="small" className="gm-boot-skel-footer" />
         </div>
       </aside>
 
       <div className="gm-boot-main">
         <header className="gm-boot-header" aria-hidden="true">
           <div className="gm-boot-header-group">
-            <Skeleton.Input active size="small" style={{ width: 148, height: 28 }} />
-            <Skeleton.Button active size="small" style={{ width: 112, height: 28 }} />
+            <Skeleton.Input active size="small" className="gm-boot-skel-switcher" />
+            <Skeleton.Button active size="small" className="gm-boot-skel-market" />
           </div>
           <div className="gm-boot-header-group">
-            <Skeleton.Button active size="small" style={{ width: 72, height: 26 }} />
+            <Skeleton.Button active size="small" className="gm-boot-skel-points" />
           </div>
         </header>
 
