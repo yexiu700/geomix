@@ -7,7 +7,7 @@ import { SignalSkeleton } from '../geo/primitives';
 
 function AdminLoading() {
   return (
-    <div style={{ padding: '16px 0' }} role="status" aria-label="正在加载管理模块">
+    <div className="gm-admin-loading" role="status" aria-label="正在加载管理模块">
       <SignalSkeleton variant="block" height={240} />
     </div>
   );

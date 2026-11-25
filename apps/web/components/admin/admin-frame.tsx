@@ -85,15 +85,11 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   if (phase === 'boot') {
-    return (
-      <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>
-        正在确认登录
-      </main>
-    );
+    return <main className="gm-boot gm-boot-muted">正在确认登录</main>;
   }
   if (phase === 'offline') {
     return (
-      <main className="gm-boot" style={{ color: 'var(--gm-danger)' }}>
+      <main className="gm-boot gm-boot-danger">
         <p>无法连接接口</p>
         <Button
           type="primary"
@@ -109,8 +105,8 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }
   if (phase === 'deny' || !account) {
     return (
-      <main className="gm-boot" style={{ color: 'var(--gm-fg-2)' }}>
-        <p style={{ color: 'var(--gm-fg-1)' }}>没有这个页面</p>
+      <main className="gm-boot gm-boot-muted">
+        <p className="gm-boot-title">没有这个页面</p>
         <Button type="primary" onClick={() => router.push('/home')}>
           回首页
         </Button>
@@ -119,24 +115,26 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="gm-admin" style={{ color: 'var(--gm-fg-1)' }}>
+    <div className="gm-admin">
       <header className="gm-admin-bar">
-        <strong style={{ color: 'var(--gm-fg-1)' }}>{SITE_NAME} 管理</strong>
+        <strong className="gm-admin-brand">{SITE_NAME} 管理</strong>
         <nav aria-label="管理菜单">
           {LINKS.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               aria-current={pathname === link.href ? 'page' : undefined}
-              style={{
-                color: pathname === link.href ? 'var(--gm-phosphor)' : 'var(--gm-fg-2)',
-              }}
+              className={
+                pathname === link.href
+                  ? 'gm-admin-nav-link gm-admin-nav-link--active'
+                  : 'gm-admin-nav-link'
+              }
             >
               {link.title}
             </Link>
           ))}
         </nav>
-        <Link href="/home" style={{ color: 'var(--gm-info)' }}>
+        <Link href="/home" className="gm-admin-back-link">
           返回后台
         </Link>
         <Button

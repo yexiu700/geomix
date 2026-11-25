@@ -45,26 +45,9 @@ export function GeoSignalStrip({
 
   return (
     <div data-testid="geo-signal-strip">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 8,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 500,
-            letterSpacing: '0.06em',
-            color: 'var(--gm-fg-3)',
-          }}
-        >
-          AI 可见度信号 · 近 14 日
-        </span>
-        <Button type="link" size="small" style={{ padding: 0 }} onClick={onOpenOverview}>
+      <div className="gm-signal-strip-head">
+        <span className="gm-signal-strip-title">AI 可见度信号 · 近 14 日</span>
+        <Button type="link" size="small" className="gm-signal-strip-link" onClick={onOpenOverview}>
           进入 AI 数据看板 →
         </Button>
       </div>
@@ -81,24 +64,10 @@ export function GeoSignalStrip({
         </div>
       ) : !metrics || metrics.completedChecks === 0 ? (
         compactEmpty ? (
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '8px 16px',
-              padding: '12px 16px',
-              border: '1px solid var(--gm-line-1)',
-              borderRadius: 'var(--gm-radius-md)',
-              background: 'var(--gm-bg-surface)',
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                还没有 AI 可见度数据
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 2 }}>
+          <div className="gm-signal-strip-empty-compact">
+            <div className="gm-signal-strip-empty-copy">
+              <div className="gm-signal-strip-empty-title">还没有 AI 可见度数据</div>
+              <div className="gm-signal-strip-empty-desc">
                 创建品牌档案并发起一次监测，即可在这里看到你在各大 AI 引擎中的提及率
               </div>
             </div>
@@ -109,14 +78,7 @@ export function GeoSignalStrip({
             )}
           </div>
         ) : (
-          <div
-            style={{
-              marginBottom: 16,
-              border: '1px solid var(--gm-line-1)',
-              borderRadius: 'var(--gm-radius-md)',
-              background: 'var(--gm-bg-surface)',
-            }}
-          >
+          <div className="gm-signal-strip-empty-card">
             <SignalEmpty
               title="还没有 AI 可见度数据"
               description="创建品牌档案并发起一次监测，即可在这里看到你在各大 AI 引擎中的提及率"

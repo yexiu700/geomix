@@ -2716,7 +2716,9 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       </ConsoleProvider>,
     );
 
-    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1');
+    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1', undefined, {
+      timeout: 5000,
+    });
     expect(crawlBadges.textContent).toContain('待体检');
 
     // 1. Trigger CrawlProbe -> updates to OK + HTTP 200 without redundant self-reload

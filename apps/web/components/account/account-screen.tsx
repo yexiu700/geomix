@@ -78,7 +78,7 @@ export function AccountScreen({
   };
 
   return (
-    <section aria-label="点数与权益">
+    <section className="gm-account-shell" aria-label="点数与权益">
       <Tabs
         activeKey={activeTab}
         onChange={handleTabChange}

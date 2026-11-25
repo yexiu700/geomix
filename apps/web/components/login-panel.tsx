@@ -372,7 +372,7 @@ export function LoginPanel() {
       >
         <Typography.Paragraph className="gm-login-helper">账号由管理员开通。</Typography.Paragraph>
         {checking ? <Typography.Paragraph>正在确认登录</Typography.Paragraph> : null}
-        {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}
+        {error ? <Alert type="error" message={error} className="gm-login-alert" /> : null}
         {checking ? null : (
           <Form layout="vertical" onFinish={onLogin}>
             <Form.Item

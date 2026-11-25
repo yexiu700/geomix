@@ -1642,30 +1642,10 @@ export function StudioDistributionDrawer({
     };
 
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-          minWidth: 0,
-          maxWidth: '100%',
-        }}
-      >
+      <div className="gm-dist-task-body">
         {/* Task Header Status Bar */}
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 8,
-            padding: '8px 12px',
-            borderRadius: 'var(--gm-radius-sm)',
-            border: '1px solid var(--gm-line-1)',
-            background: 'var(--gm-bg-base)',
-          }}
-        >
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <div className="gm-dist-status-bar">
+          <div className="gm-dist-row">
             <Tag className="gm-studio-tag-nowrap">
               {CHANNEL_PROVIDER_LABELS[task.provider] ?? task.provider}
             </Tag>
@@ -1688,9 +1668,7 @@ export function StudioDistributionDrawer({
             ) : null}
           </div>
           {task.publishedAt ? (
-            <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-              发布于 {formatShanghaiDateTime(task.publishedAt)}
-            </span>
+            <span className="gm-dist-muted">发布于 {formatShanghaiDateTime(task.publishedAt)}</span>
           ) : null}
         </div>
 
@@ -1722,7 +1700,7 @@ export function StudioDistributionDrawer({
                 ? `${task.lastError}（处理指引：前往微信公众平台「设置与开发 → 基本配置 → IP 白名单」添加服务器出口 IP 后重试）`
                 : task.lastError
             }
-            style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+            className="gm-dist-wrap"
           />
         ) : null}
 
@@ -1732,11 +1710,11 @@ export function StudioDistributionDrawer({
             showIcon
             message="推送被发布前体检门禁拦截"
             description={taskPublishBlockedNotice}
-            style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+            className="gm-dist-wrap"
             action={
               <Button
                 size="small"
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => {
                   const first = preflight?.blockers[0];
                   const term = first?.matches?.[0]?.matchedText;
@@ -1752,30 +1730,14 @@ export function StudioDistributionDrawer({
 
         {/* WeChat Official Draft media_id Display */}
         {isWechatTask && task.status === 'DRAFT_PUSHED' && task.remotePostId ? (
-          <div
-            data-testid="distribution-wechat-media-id"
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              padding: '8px 12px',
-              borderRadius: 'var(--gm-radius-sm)',
-              border: '1px solid var(--gm-line-2)',
-              background: 'var(--gm-bg-base)',
-              fontSize: 12,
-            }}
-          >
-            <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
-              <span style={{ color: 'var(--gm-fg-2)' }}>公众号草稿 media_id：</span>
-              <code className="gm-mono" style={{ color: 'var(--gm-fg-1)' }}>
-                {task.remotePostId}
-              </code>
+          <div data-testid="distribution-wechat-media-id" className="gm-dist-info-bar">
+            <div className="gm-dist-min0 gm-dist-wrap">
+              <span className="gm-dist-text-secondary">公众号草稿 media_id：</span>
+              <code className="gm-mono gm-dist-text-primary">{task.remotePostId}</code>
             </div>
             <Button
               size="small"
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-dist-nowrap"
               onClick={() => {
                 if (!task.remotePostId) return;
                 void copyTextToClipboard(task.remotePostId).then((ok) => {
@@ -1790,43 +1752,27 @@ export function StudioDistributionDrawer({
 
         {/* Dev.to / Hashnode Canonical URL & Tags Preview */}
         {isDevtoOrHashnode && (canonicalUrlRaw || extraTags.length > 0) ? (
-          <div
-            data-testid="distribution-canonical-preview"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              padding: '8px 12px',
-              borderRadius: 'var(--gm-radius-sm)',
-              border: '1px solid var(--gm-line-2)',
-              background: 'var(--gm-bg-base)',
-              fontSize: 12,
-              minWidth: 0,
-            }}
-          >
+          <div data-testid="distribution-canonical-preview" className="gm-dist-info-stack">
             {canonicalUrlRaw ? (
-              <div style={{ overflowWrap: 'anywhere' }}>
-                <span style={{ color: 'var(--gm-fg-2)' }}>Canonical URL 回指：</span>
+              <div className="gm-dist-wrap">
+                <span className="gm-dist-text-secondary">Canonical URL 回指：</span>
                 {safeCanonicalUrl ? (
                   <a
                     href={safeCanonicalUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="gm-mono"
-                    style={{ color: 'var(--gm-info)', overflowWrap: 'anywhere' }}
+                    className="gm-mono gm-dist-link-info"
                   >
                     {safeCanonicalUrl} ↗
                   </a>
                 ) : (
-                  <span className="gm-mono" style={{ color: 'var(--gm-fg-1)' }}>
-                    {canonicalUrlRaw}
-                  </span>
+                  <span className="gm-mono gm-dist-text-primary">{canonicalUrlRaw}</span>
                 )}
               </div>
             ) : null}
             {extraTags.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-                <span style={{ color: 'var(--gm-fg-2)' }}>规范化标签：</span>
+              <div className="gm-dist-row gm-dist-row--tight">
+                <span className="gm-dist-text-secondary">规范化标签：</span>
                 {extraTags.map((tag) => (
                   <Tag key={tag} className="gm-studio-tag-reset">
                     #{tag}
@@ -1839,25 +1785,14 @@ export function StudioDistributionDrawer({
 
         {/* Remote Links (Admin Draft / GitHub PR Review Link & Published URL) */}
         {safeRemoteAdminUrl || safeRemotePublishedUrl ? (
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 12,
-              padding: '8px 12px',
-              borderRadius: 'var(--gm-radius-sm)',
-              border: '1px solid var(--gm-line-2)',
-              background: 'var(--gm-bg-elevated)',
-              fontSize: 12,
-            }}
-          >
+          <div className="gm-dist-remote-links">
             {safeRemoteAdminUrl ? (
               <a
                 href={safeRemoteAdminUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid={isGithubMdxTask ? 'distribution-github-pr-link' : undefined}
-                style={{ color: 'var(--gm-info)', overflowWrap: 'anywhere' }}
+                className="gm-dist-link-info"
               >
                 {isGithubMdxTask
                   ? `查看 GitHub PR 审核链接${task.remotePostId ? ` (${task.remotePostId})` : ''} ↗`
@@ -1871,7 +1806,7 @@ export function StudioDistributionDrawer({
                 href={safeRemotePublishedUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: 'var(--gm-success)', overflowWrap: 'anywhere' }}
+                className="gm-dist-link-success"
               >
                 查看已上线公开文章 ↗
               </a>
@@ -1880,8 +1815,8 @@ export function StudioDistributionDrawer({
         ) : null}
 
         {/* Editable Variant Fields */}
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>变体标题</div>
+        <div className="gm-dist-min0">
+          <div className="gm-dist-label">变体标题</div>
           <Input
             aria-label="变体标题"
             disabled={isTaskLocked}
@@ -1891,18 +1826,10 @@ export function StudioDistributionDrawer({
         </div>
 
         {task.mode === 'L1_API' ? (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-              gap: 10,
-            }}
-          >
+          <div className="gm-dist-grid-2">
             {!isWechatTask ? (
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  URL Slug（英文短链）
-                </div>
+              <div className="gm-dist-min0">
+                <div className="gm-dist-label">URL Slug（英文短链）</div>
                 <Input
                   aria-label="URL Slug"
                   disabled={isTaskLocked}
@@ -1913,13 +1840,11 @@ export function StudioDistributionDrawer({
               </div>
             ) : null}
 
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                目标站点连接
-              </div>
+            <div className="gm-dist-min0">
+              <div className="gm-dist-label">目标站点连接</div>
               <Select
                 aria-label="目标站点连接"
-                style={{ width: '100%' }}
+                className="gm-dist-full"
                 disabled={isTaskLocked || matchingL1Connections.length === 0}
                 placeholder={
                   missingBoundConn ? '原绑定连接已删除，请重新选择可用连接' : '选择已绑定的站点连接'
@@ -1940,20 +1865,12 @@ export function StudioDistributionDrawer({
         ) : null}
 
         {task.mode === 'L1_API' ? (
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 12,
-                color: 'var(--gm-fg-2)',
-                marginBottom: 4,
-              }}
-            >
+          <div className="gm-dist-min0">
+            <div className="gm-dist-label-row">
               <span>
                 {isWechatTask ? '公众号摘要（Digest，≤120 字）' : '摘要描述（Meta Description）'}
               </span>
-              <span className="gm-num" style={{ color: 'var(--gm-fg-3)' }}>
+              <span className="gm-num gm-dist-muted">
                 {draft.variantMetaDesc.length} / {isWechatTask ? 120 : 160} 字
               </span>
             </div>
@@ -1973,10 +1890,8 @@ export function StudioDistributionDrawer({
           </div>
         ) : null}
 
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-            变体正文（Markdown）
-          </div>
+        <div className="gm-dist-min0">
+          <div className="gm-dist-label">变体正文（Markdown）</div>
           <Input.TextArea
             aria-label="变体正文 Markdown"
             rows={7}
@@ -1988,13 +1903,13 @@ export function StudioDistributionDrawer({
 
         {/* Save Variant Button + Provider-Specific Actions */}
         {task.mode === 'L1_API' ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <div className="gm-dist-col">
+            <div className="gm-dist-row">
               <Button
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
                 保存变体修改
@@ -2009,7 +1924,7 @@ export function StudioDistributionDrawer({
                   task.status === 'PUBLISHED' ||
                   task.status === 'ARCHIVED'
                 }
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handlePublishL1(task, true)}
               >
                 {isWechatTask
@@ -2029,7 +1944,7 @@ export function StudioDistributionDrawer({
                     task.status === 'PUBLISHED' ||
                     task.status === 'ARCHIVED'
                   }
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => void handlePublishL1(task, false)}
                 >
                   {isGithubMdxTask ? '直接提交至目标分支' : '立即上线发布'}
@@ -2038,24 +1953,14 @@ export function StudioDistributionDrawer({
             </div>
 
             {isWechatTask && task.status === 'DRAFT_PUSHED' && onCreatePublishRecord ? (
-              <div
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                  padding: 10,
-                  borderRadius: 'var(--gm-radius-sm)',
-                  border: '1px solid var(--gm-line-1)',
-                  background: 'var(--gm-bg-base)',
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+              <div className="gm-dist-subcard">
+                <div className="gm-dist-subhead">
                   在公众号后台人工群发后，可在此登记文章链接以开启自动复测
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div className="gm-dist-row">
                   <Input
                     aria-label="已发布公众号链接"
-                    style={{ flex: '1 1 240px', minWidth: 0 }}
+                    className="gm-dist-flex-input"
                     disabled={readOnly}
                     placeholder="粘贴公众号已群发文章链接，例如 https://mp.weixin.qq.com/s/..."
                     value={quickRegisterUrls[task.id] ?? ''}
@@ -2068,7 +1973,7 @@ export function StudioDistributionDrawer({
                     type="primary"
                     loading={quickRegisteringTaskId === task.id}
                     disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-dist-nowrap"
                     onClick={() => void handleQuickRegisterUrl(task)}
                   >
                     登记已发链接
@@ -2080,18 +1985,7 @@ export function StudioDistributionDrawer({
         ) : null}
 
         {task.mode === 'L2_EXTENSION' ? (
-          <div
-            data-testid="distribution-l2-extension-panel"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              padding: 12,
-              borderRadius: 'var(--gm-radius-md)',
-              border: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-base)',
-            }}
-          >
+          <div data-testid="distribution-l2-extension-panel" className="gm-dist-panel-box">
             <Alert
               type={task.status === 'PUBLISHED' ? 'success' : 'info'}
               showIcon
@@ -2107,12 +2001,12 @@ export function StudioDistributionDrawer({
               }
             />
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="gm-dist-row">
               <Button
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
                 保存变体修改
@@ -2123,7 +2017,7 @@ export function StudioDistributionDrawer({
                   data-testid="distribution-l2-mark-ready-btn"
                   loading={savingTaskId === task.id}
                   disabled={readOnly}
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => void handleMarkExtensionTaskReady(task)}
                 >
                   标记待扩展拉取
@@ -2131,7 +2025,7 @@ export function StudioDistributionDrawer({
               ) : null}
               <Button
                 data-testid="distribution-l2-copy-btn"
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => {
                   void copyTextToClipboard(draft.variantMarkdown).then((ok) => {
                     if (ok) feedback.notifySuccess('已复制国内平台变体正文');
@@ -2145,7 +2039,7 @@ export function StudioDistributionDrawer({
                 <Button
                   size="small"
                   data-testid="distribution-l2-pair-brands-btn"
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => {
                     onClose();
                     (onNavigateExtensionPairing ?? onNavigateBrands)?.();
@@ -2158,7 +2052,7 @@ export function StudioDistributionDrawer({
                 <Button
                   size="small"
                   data-testid="distribution-l2-pair-account-btn"
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => {
                     onClose();
                     onNavigateAccount();
@@ -2170,24 +2064,16 @@ export function StudioDistributionDrawer({
             </div>
 
             {targetThreadUrls.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  参考高频被引原帖
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">参考高频被引原帖</div>
+                <div className="gm-dist-row">
                   {targetThreadUrls.map((url, idx) => (
                     <a
                       key={url}
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="gm-mono"
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--gm-info)',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
+                      className="gm-mono gm-dist-thread-link"
                     >
                       参考原帖 #{idx + 1} ↗
                     </a>
@@ -2197,10 +2083,8 @@ export function StudioDistributionDrawer({
             ) : null}
 
             {antiBanChecklist.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  平台合规防封自检清单
-                </div>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">平台合规防封自检清单</div>
                 {antiBanChecklist.map((item) => {
                   const isChecked = checkedItems.includes(item);
                   return (
@@ -2219,7 +2103,7 @@ export function StudioDistributionDrawer({
                         });
                       }}
                     >
-                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>{item}</span>
+                      <span className="gm-dist-check-label">{item}</span>
                     </Checkbox>
                   );
                 })}
@@ -2227,14 +2111,14 @@ export function StudioDistributionDrawer({
             ) : null}
 
             {onCreatePublishRecord ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">
                   手动回传已发链接（也可直接在 Chrome 扩展内一键回传）
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div className="gm-dist-row">
                   <Input
                     aria-label="已发布平台链接"
-                    style={{ flex: '1 1 240px', minWidth: 0 }}
+                    className="gm-dist-flex-input"
                     disabled={readOnly}
                     placeholder="粘贴平台发布后的公网链接，自动开启 T+7/14/30 复测"
                     value={quickRegisterUrls[task.id] ?? ''}
@@ -2247,7 +2131,7 @@ export function StudioDistributionDrawer({
                     data-testid="distribution-quick-register-btn"
                     loading={quickRegisteringTaskId === task.id}
                     disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-dist-nowrap"
                     onClick={() => void handleQuickRegisterUrl(task)}
                   >
                     登记已发链接
@@ -2259,23 +2143,13 @@ export function StudioDistributionDrawer({
         ) : null}
 
         {task.mode === 'L3_COMMUNITY_ASSIST' ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              padding: 12,
-              borderRadius: 'var(--gm-radius-md)',
-              border: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-base)',
-            }}
-          >
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div className="gm-dist-panel-box">
+            <div className="gm-dist-row">
               <Button
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
                 保存变体修改
@@ -2283,7 +2157,7 @@ export function StudioDistributionDrawer({
               <Button
                 type="primary"
                 data-testid="distribution-copy-community-btn"
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => {
                   void copyTextToClipboard(draft.variantMarkdown).then((ok) => {
                     if (ok) feedback.notifySuccess('已复制去营销讨论稿');
@@ -2296,24 +2170,16 @@ export function StudioDistributionDrawer({
             </div>
 
             {targetThreadUrls.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  打开高频被引原帖（人工参与讨论）
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">打开高频被引原帖（人工参与讨论）</div>
+                <div className="gm-dist-row">
                   {targetThreadUrls.map((url, idx) => (
                     <a
                       key={url}
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="gm-mono"
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--gm-info)',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
+                      className="gm-mono gm-dist-thread-link"
                     >
                       打开高频被引原帖 #{idx + 1} ↗
                     </a>
@@ -2323,40 +2189,14 @@ export function StudioDistributionDrawer({
             ) : null}
 
             {threadPosts.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  分条社媒长帖（共 {threadPosts.length} 条）
-                </div>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">分条社媒长帖（共 {threadPosts.length} 条）</div>
                 {threadPosts.map((post, idx) => (
-                  <div
-                    key={`${idx}-${post.slice(0, 16)}`}
-                    style={{
-                      padding: 8,
-                      borderRadius: 'var(--gm-radius-sm)',
-                      border: '1px solid var(--gm-line-1)',
-                      background: 'var(--gm-bg-elevated)',
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      gap: 8,
-                    }}
-                  >
-                    <div
-                      style={{
-                        flex: '1 1 240px',
-                        minWidth: 0,
-                        fontSize: 12,
-                        color: 'var(--gm-fg-2)',
-                        whiteSpace: 'pre-wrap',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
-                      {post}
-                    </div>
+                  <div key={`${idx}-${post.slice(0, 16)}`} className="gm-dist-thread-post">
+                    <div className="gm-dist-thread-text">{post}</div>
                     <Button
                       size="small"
-                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                      className="gm-dist-nowrap"
                       onClick={() => {
                         void copyTextToClipboard(post).then((ok) => {
                           if (ok) feedback.notifySuccess(`已复制第 ${idx + 1} 条分帖`);
@@ -2371,10 +2211,8 @@ export function StudioDistributionDrawer({
             ) : null}
 
             {antiBanChecklist.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  社区合规防封自检清单
-                </div>
+              <div className="gm-dist-col gm-dist-col--sm">
+                <div className="gm-dist-subhead">社区合规防封自检清单</div>
                 {antiBanChecklist.map((item) => {
                   const isChecked = checkedItems.includes(item);
                   return (
@@ -2393,7 +2231,7 @@ export function StudioDistributionDrawer({
                         });
                       }}
                     >
-                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>{item}</span>
+                      <span className="gm-dist-check-label">{item}</span>
                     </Checkbox>
                   );
                 })}
@@ -2401,14 +2239,14 @@ export function StudioDistributionDrawer({
             ) : null}
 
             {/* Quick Register Published URL */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+            <div className="gm-dist-col gm-dist-col--sm">
+              <div className="gm-dist-subhead">
                 发布后快速登记链接（自动开启 T+7/14/30 定时复测）
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="gm-dist-row">
                 <Input
                   aria-label="已发布社区链接"
-                  style={{ flex: '1 1 240px', minWidth: 0 }}
+                  className="gm-dist-flex-input"
                   disabled={readOnly}
                   placeholder="粘贴人工发帖后的公开链接，例如 https://www.reddit.com/r/..."
                   value={quickRegisterUrls[task.id] ?? ''}
@@ -2421,7 +2259,7 @@ export function StudioDistributionDrawer({
                   data-testid="distribution-quick-register-btn"
                   loading={quickRegisteringTaskId === task.id}
                   disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => void handleQuickRegisterUrl(task)}
                 >
                   登记已发链接
@@ -2432,24 +2270,12 @@ export function StudioDistributionDrawer({
         ) : null}
 
         {task.mode === 'L3_PR_PACKET' ? (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              padding: 12,
-              borderRadius: 'var(--gm-radius-md)',
-              border: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-base)',
-            }}
-          >
+          <div className="gm-dist-panel-box">
             {factSheet ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  结构化媒体 Fact Sheet 预览
-                </div>
+              <div className="gm-dist-col gm-dist-col--md gm-dist-min0">
+                <div className="gm-dist-subhead">结构化媒体 Fact Sheet 预览</div>
                 {factSheet.keyAngles.length > 0 ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
+                  <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
                     {factSheet.keyAngles.map((angle) => (
                       <Tag key={angle} className="gm-studio-tag-wrap">
                         {angle}
@@ -2458,19 +2284,10 @@ export function StudioDistributionDrawer({
                   </div>
                 ) : null}
                 {factSheet.verifiedFacts.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                  <div className="gm-dist-col gm-dist-col--xs gm-dist-min0">
                     {factSheet.verifiedFacts.map((fact) => (
-                      <div
-                        key={fact.title}
-                        style={{
-                          fontSize: 12,
-                          color: 'var(--gm-fg-2)',
-                          minWidth: 0,
-                          overflowWrap: 'anywhere',
-                          wordBreak: 'break-word',
-                        }}
-                      >
-                        <strong style={{ color: 'var(--gm-fg-1)' }}>{fact.title}：</strong>
+                      <div key={fact.title} className="gm-dist-fact-row">
+                        <strong className="gm-dist-text-primary">{fact.title}：</strong>
                         {fact.summary}
                       </div>
                     ))}
@@ -2479,12 +2296,12 @@ export function StudioDistributionDrawer({
               </div>
             ) : null}
 
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className="gm-dist-row">
               <Button
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
                 保存变体修改
@@ -2494,7 +2311,7 @@ export function StudioDistributionDrawer({
                 data-testid="distribution-pr-share-btn"
                 loading={prActionTaskId === task.id}
                 disabled={readOnly || task.status === 'ARCHIVED'}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-dist-nowrap"
                 onClick={() => void handleCreatePrShare(task)}
               >
                 {task.shareLinkActive || generatedShare
@@ -2507,7 +2324,7 @@ export function StudioDistributionDrawer({
                   data-testid="distribution-pr-revoke-btn"
                   loading={prActionTaskId === task.id}
                   disabled={readOnly}
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                  className="gm-dist-nowrap"
                   onClick={() => handleRevokePrShare(task)}
                 >
                   撤销链接
@@ -2516,46 +2333,19 @@ export function StudioDistributionDrawer({
             </div>
 
             {generatedShare ? (
-              <div
-                style={{
-                  padding: 10,
-                  borderRadius: 'var(--gm-radius-sm)',
-                  border: '1px solid var(--gm-phosphor-a40)',
-                  background: 'var(--gm-phosphor-a08)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                }}
-              >
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+              <div className="gm-dist-pr-share-box">
+                <div className="gm-dist-check-label">
                   免登录外部供稿链接（仅生成时明文展示一次，有效期至{' '}
                   {formatShanghaiDateTime(generatedShare.expiresAt)}）：
                 </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    gap: 8,
-                  }}
-                >
-                  <code
-                    data-testid="distribution-pr-share-url"
-                    className="gm-mono"
-                    style={{
-                      flex: '1 1 240px',
-                      minWidth: 0,
-                      color: 'var(--gm-fg-1)',
-                      overflowWrap: 'anywhere',
-                      wordBreak: 'break-word',
-                    }}
-                  >
+                <div className="gm-dist-row">
+                  <code data-testid="distribution-pr-share-url" className="gm-mono gm-dist-pr-code">
                     {generatedShare.shareUrl}
                   </code>
                   <Button
                     size="small"
                     type="primary"
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-dist-nowrap"
                     onClick={() => {
                       void copyTextToClipboard(generatedShare.shareUrl).then((ok) => {
                         if (ok) feedback.notifySuccess('已复制 30 天免登录供稿链接');
@@ -2601,46 +2391,18 @@ export function StudioDistributionDrawer({
           },
         }}
       >
-        <div
-          data-testid="studio-distribution-drawer"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            height: '100%',
-            minWidth: 0,
-            maxWidth: '100%',
-            overflowX: 'hidden',
-            background: 'var(--gm-bg-surface)',
-            color: 'var(--gm-fg-1)',
-          }}
-        >
+        <div data-testid="studio-distribution-drawer" className="gm-dist-drawer-root">
           {/* Pinned Header */}
-          <div
-            style={{
-              padding: '14px 16px',
-              borderBottom: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-elevated)',
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <div style={{ minWidth: 0, flex: '1 1 280px' }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  多渠道分发与变体工作台
-                </span>
+          <div className="gm-dist-drawer-head">
+            <div className="gm-dist-drawer-head-col">
+              <div className="gm-dist-row">
+                <span className="gm-dist-drawer-title">多渠道分发与变体工作台</span>
                 <StatusBadge tone="active" className="gm-studio-nowrap">
                   {market === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[market]}
                 </StatusBadge>
               </div>
               {article ? (
-                <div
-                  className="gm-clamp-1"
-                  style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginTop: 4 }}
-                >
+                <div className="gm-clamp-1 gm-dist-drawer-subtitle">
                   当前成稿：{draftTitle || article.title}
                 </div>
               ) : null}
@@ -2648,7 +2410,7 @@ export function StudioDistributionDrawer({
             <Button
               size="small"
               aria-label="关闭分发工作台"
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-dist-nowrap"
               onClick={onClose}
             >
               关闭
@@ -2656,19 +2418,7 @@ export function StudioDistributionDrawer({
           </div>
 
           {/* Scrollable Body */}
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              padding: 16,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 16,
-              boxSizing: 'border-box',
-            }}
-          >
+          <div className="gm-dist-drawer-body">
             {drawerError ? (
               <Alert
                 type="error"
@@ -2676,7 +2426,7 @@ export function StudioDistributionDrawer({
                 closable
                 onClose={() => setDrawerError(null)}
                 message={drawerError}
-                style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                className="gm-dist-wrap"
               />
             ) : null}
 
@@ -2685,36 +2435,10 @@ export function StudioDistributionDrawer({
             ) : (
               <>
                 {/* Step 1: Preflight Health Card */}
-                <div
-                  data-testid="distribution-preflight-card"
-                  style={{
-                    padding: 14,
-                    borderRadius: 'var(--gm-radius-md)',
-                    border: '1px solid var(--gm-line-2)',
-                    background: 'var(--gm-bg-elevated)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                    minWidth: 0,
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <div
-                      style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}
-                    >
-                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                        Step 1 · 发布前硬校验（Preflight）
-                      </span>
+                <div data-testid="distribution-preflight-card" className="gm-dist-section-card">
+                  <div className="gm-dist-row gm-dist-row--between">
+                    <div className="gm-dist-row">
+                      <span className="gm-dist-card-title">Step 1 · 发布前硬校验（Preflight）</span>
                       {preflight ? (
                         preflight.ok ? (
                           preflight.warnings.length > 0 ? (
@@ -2730,7 +2454,7 @@ export function StudioDistributionDrawer({
                     <Button
                       size="small"
                       loading={preflightLoading}
-                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                      className="gm-dist-nowrap"
                       onClick={() => void handleRerunPreflight()}
                     >
                       重新体检
@@ -2740,38 +2464,13 @@ export function StudioDistributionDrawer({
                   {preflight && preflight.blockers.length > 0 ? (
                     <div
                       data-testid="distribution-preflight-blockers"
-                      style={{
-                        padding: 12,
-                        borderRadius: 'var(--gm-radius-sm)',
-                        border: '1px solid var(--gm-danger)',
-                        background: 'rgba(240, 96, 93, 0.08)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                      }}
+                      className="gm-dist-preflight-blockers"
                     >
                       {preflight.blockers.map((blocker) => (
-                        <div key={blocker.code} style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: 'var(--gm-danger)',
-                              overflowWrap: 'anywhere',
-                              wordBreak: 'break-word',
-                            }}
-                          >
-                            {blocker.message}
-                          </div>
+                        <div key={blocker.code} className="gm-dist-min0">
+                          <div className="gm-dist-preflight-blocker-msg">{blocker.message}</div>
                           {blocker.details && blocker.details.length > 0 ? (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                gap: 6,
-                                marginTop: 4,
-                              }}
-                            >
+                            <div className="gm-dist-details-row">
                               {blocker.details.map((detail) => (
                                 <StatusBadge
                                   key={detail}
@@ -2786,22 +2485,13 @@ export function StudioDistributionDrawer({
                         </div>
                       ))}
 
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 10,
-                          marginTop: 4,
-                        }}
-                      >
+                      <div className="gm-dist-preflight-actions">
                         <Button
                           size="small"
                           type="primary"
                           danger
                           data-testid="distribution-back-to-editor-btn"
-                          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                          className="gm-dist-nowrap"
                           onClick={() => {
                             const first = preflight.blockers[0];
                             const term = first?.matches?.[0]?.matchedText;
@@ -2816,7 +2506,7 @@ export function StudioDistributionDrawer({
                           checked={ackWarnings}
                           onChange={(e) => setAckWarnings(e.target.checked)}
                         >
-                          <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                          <span className="gm-dist-check-label">
                             我已确认风险，仍要强制继续推送
                           </span>
                         </Checkbox>
@@ -2827,43 +2517,17 @@ export function StudioDistributionDrawer({
                   {preflight && preflight.warnings.length > 0 ? (
                     <div
                       data-testid="distribution-preflight-warnings"
-                      style={{
-                        padding: 10,
-                        borderRadius: 'var(--gm-radius-sm)',
-                        border: '1px solid var(--gm-warning)',
-                        background: 'rgba(242, 184, 75, 0.08)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 6,
-                      }}
+                      className="gm-dist-preflight-warnings"
                     >
                       {preflight.warnings.map((w) => (
-                        <div key={w.code} style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 12,
-                                color: 'var(--gm-warning)',
-                                overflowWrap: 'anywhere',
-                                wordBreak: 'break-word',
-                                flex: '1 1 220px',
-                              }}
-                            >
-                              • {w.message}
-                            </div>
+                        <div key={w.code} className="gm-dist-min0">
+                          <div className="gm-dist-row gm-dist-row--between">
+                            <div className="gm-dist-preflight-warning-msg">• {w.message}</div>
                             {w.code === 'GLOBAL_CLAIM_WARNING' ? (
                               <Button
                                 size="small"
                                 data-testid="distribution-warning-locate-btn"
-                                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                                className="gm-dist-nowrap"
                                 onClick={() =>
                                   onReturnToEditor(
                                     'GLOBAL_CLAIM_WARNING',
@@ -2876,14 +2540,7 @@ export function StudioDistributionDrawer({
                             ) : null}
                           </div>
                           {w.details && w.details.length > 0 ? (
-                            <div
-                              style={{
-                                display: 'flex',
-                                flexWrap: 'wrap',
-                                gap: 6,
-                                marginTop: 4,
-                              }}
-                            >
+                            <div className="gm-dist-details-row">
                               {w.details.map((detail) => (
                                 <StatusBadge
                                   key={detail}
@@ -2901,37 +2558,16 @@ export function StudioDistributionDrawer({
                   ) : null}
 
                   {preflight && preflight.ok && preflight.warnings.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                    <div className="gm-dist-check-label">
                       未发现缺失事实占位符、跨市场语言泄露或严重合规风险，可直接生成变体并推送。
                     </div>
                   ) : null}
                 </div>
 
                 {/* Step 2: Citation-Driven Channel Selector */}
-                <div
-                  style={{
-                    padding: 14,
-                    borderRadius: 'var(--gm-radius-md)',
-                    border: '1px solid var(--gm-line-2)',
-                    background: 'var(--gm-bg-elevated)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
+                <div className="gm-dist-section-card gm-dist-section-card--spacious">
+                  <div className="gm-dist-row gm-dist-row--between">
+                    <span className="gm-dist-card-title">
                       Step 2 · 引用驱动目标渠道选择（1 → N 变体改写）
                     </span>
                     <Button
@@ -2944,7 +2580,7 @@ export function StudioDistributionDrawer({
                         generating ||
                         isVariantJobRunning
                       }
-                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                      className="gm-dist-nowrap"
                       onClick={() => {
                         pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
                         setPointsConfirmOpen(true);
@@ -2957,26 +2593,13 @@ export function StudioDistributionDrawer({
                   </div>
 
                   {showVariantLocaleSelector ? (
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '8px 10px',
-                        borderRadius: 'var(--gm-radius-sm)',
-                        border: '1px solid var(--gm-line-1)',
-                        background: 'var(--gm-bg-base)',
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: 'var(--gm-fg-2)', whiteSpace: 'nowrap' }}>
-                        变体目标语种：
-                      </span>
+                    <div className="gm-dist-locale-bar">
+                      <span className="gm-dist-locale-label">变体目标语种：</span>
                       <Select<SupportedLocale>
                         size="small"
                         aria-label="变体目标语种"
                         data-testid="distribution-target-locale-select"
-                        style={{ minWidth: 200 }}
+                        className="gm-dist-locale-select"
                         disabled={readOnly || generating || isVariantJobRunning}
                         value={variantTargetLocale}
                         options={effectiveSupportedLocales.map((code) => {
@@ -2995,39 +2618,16 @@ export function StudioDistributionDrawer({
                   {activeVariantJob ? (
                     <div
                       data-testid="distribution-variant-job-progress"
-                      style={{
-                        padding: 12,
-                        borderRadius: 'var(--gm-radius-sm)',
-                        border:
-                          activeVariantJob.status === 'FAILED'
-                            ? '1px solid var(--gm-danger)'
-                            : activeVariantJob.status === 'PARTIAL'
-                              ? '1px solid var(--gm-warning)'
-                              : '1px solid var(--gm-line-2)',
-                        background: 'var(--gm-bg-base)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
+                      className={`gm-dist-job-card${
+                        activeVariantJob.status === 'FAILED'
+                          ? ' gm-dist-job-card--failed'
+                          : activeVariantJob.status === 'PARTIAL'
+                            ? ' gm-dist-job-card--partial'
+                            : ''
+                      }`}
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            alignItems: 'center',
-                            gap: 8,
-                          }}
-                        >
+                      <div className="gm-dist-row gm-dist-row--between">
+                        <div className="gm-dist-row">
                           <SignalPill
                             tone={
                               activeVariantJob.status === 'COMPLETED'
@@ -3049,9 +2649,9 @@ export function StudioDistributionDrawer({
                                     ? '部分渠道生成完成'
                                     : '渠道变体生成失败'}
                           </SignalPill>
-                          <span style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+                          <span className="gm-dist-check-label">
                             成功{' '}
-                            <strong className="gm-num" style={{ color: 'var(--gm-fg-1)' }}>
+                            <strong className="gm-num gm-dist-text-primary">
                               {activeVariantJob.doneCount}
                             </strong>{' '}
                             / <span className="gm-num">{activeVariantJob.total}</span> 个渠道
@@ -3059,7 +2659,7 @@ export function StudioDistributionDrawer({
                               <>
                                 {' '}
                                 · 失败{' '}
-                                <strong className="gm-num" style={{ color: 'var(--gm-danger)' }}>
+                                <strong className="gm-num gm-dist-text-danger">
                                   {activeVariantJob.failCount}
                                 </strong>{' '}
                                 个
@@ -3069,7 +2669,7 @@ export function StudioDistributionDrawer({
                               <>
                                 {' '}
                                 · 已自动退还{' '}
-                                <strong className="gm-num" style={{ color: 'var(--gm-success)' }}>
+                                <strong className="gm-num gm-dist-text-success">
                                   {activeVariantJob.refundedPoints}
                                 </strong>{' '}
                                 点
@@ -3081,7 +2681,7 @@ export function StudioDistributionDrawer({
                           <Button
                             size="small"
                             type="text"
-                            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                            className="gm-dist-nowrap"
                             onClick={() => setActiveVariantJob(null)}
                           >
                             收起进度
@@ -3115,22 +2715,17 @@ export function StudioDistributionDrawer({
                       />
 
                       {isVariantJobRunning ? (
-                        <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                        <div className="gm-dist-muted">
                           刷新页面或关闭抽屉后任务仍会在后台继续，重新打开即可恢复进度；单渠道失败将自动退还对应点数。
                         </div>
                       ) : null}
 
                       {activeVariantJob.failures.length > 0 ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div className="gm-dist-col gm-dist-col--xs">
                           {activeVariantJob.failures.map((item) => (
                             <div
                               key={`${item.index}-${item.provider}`}
-                              style={{
-                                fontSize: 12,
-                                color: 'var(--gm-danger)',
-                                overflowWrap: 'anywhere',
-                                wordBreak: 'break-word',
-                              }}
+                              className="gm-dist-job-failure-item"
                             >
                               • 「{item.channelLabel}」生成失败：{item.error}
                             </div>
@@ -3142,63 +2737,17 @@ export function StudioDistributionDrawer({
 
                   {/* Citation-Driven Highlights */}
                   {effectiveRecommendedChannels.length > 0 ? (
-                    <div
-                      style={{
-                        padding: 10,
-                        borderRadius: 'var(--gm-radius-sm)',
-                        border: '1px solid var(--gm-line-1)',
-                        background: 'var(--gm-bg-base)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-phosphor)' }}>
-                        AI 高频被引阵地推荐
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))',
-                          gap: 8,
-                        }}
-                      >
+                    <div className="gm-dist-rec-box">
+                      <div className="gm-dist-rec-title">AI 高频被引阵地推荐</div>
+                      <div className="gm-dist-grid-rec">
                         {effectiveRecommendedChannels.map((rec) => {
                           const safeUrls = (rec.citedExampleUrls ?? [])
                             .filter((u) => isSafePublicExternalHttpUrl(u))
                             .slice(0, 3);
                           return (
-                            <div
-                              key={rec.channel}
-                              style={{
-                                padding: 8,
-                                borderRadius: 'var(--gm-radius-xs)',
-                                border: '1px solid var(--gm-line-1)',
-                                background: 'var(--gm-bg-elevated)',
-                                minWidth: 0,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  marginBottom: 4,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    color: 'var(--gm-fg-1)',
-                                    minWidth: 0,
-                                    overflowWrap: 'anywhere',
-                                    wordBreak: 'break-word',
-                                  }}
-                                >
-                                  {rec.channel}
-                                </span>
+                            <div key={rec.channel} className="gm-dist-rec-item">
+                              <div className="gm-dist-rec-item-head">
+                                <span className="gm-dist-rec-name">{rec.channel}</span>
                                 {rec.priority ? (
                                   <StatusBadge
                                     tone={rec.priority === 'HIGH' ? 'warning' : 'active'}
@@ -3284,13 +2833,7 @@ export function StudioDistributionDrawer({
                         ) : null}
                       </div>
                     ) : (
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
-                          gap: 8,
-                        }}
-                      >
+                      <div className="gm-dist-grid-cards">
                         {l1Options.map((opt) => {
                           const selected = selectedTargetKeys.includes(opt.key);
                           return (
@@ -3301,24 +2844,12 @@ export function StudioDistributionDrawer({
                               onClick={() => {
                                 if (!readOnly) toggleTargetKey(opt.key);
                               }}
-                              style={{
-                                padding: 10,
-                                borderRadius: 'var(--gm-radius-sm)',
-                                border: selected
-                                  ? '1px solid var(--gm-phosphor)'
-                                  : '1px solid var(--gm-line-2)',
-                                background: selected
-                                  ? 'var(--gm-bg-selected)'
-                                  : 'var(--gm-bg-base)',
-                                cursor: readOnly ? 'not-allowed' : 'pointer',
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: 8,
-                                minWidth: 0,
-                                boxSizing: 'border-box',
-                              }}
+                              className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
                             >
-                              <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                              <span
+                                className="gm-dist-target-check"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <Checkbox
                                   checked={selected}
                                   disabled={readOnly}
@@ -3326,31 +2857,10 @@ export function StudioDistributionDrawer({
                                   onChange={() => toggleTargetKey(opt.key)}
                                 />
                               </span>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    minWidth: 0,
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontSize: 13,
-                                      fontWeight: 600,
-                                      color: 'var(--gm-fg-1)',
-                                      minWidth: 0,
-                                      overflowWrap: 'anywhere',
-                                      wordBreak: 'break-word',
-                                    }}
-                                  >
-                                    {opt.channelLabel}
-                                  </span>
-                                  <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                    {opt.description}
-                                  </Tag>
+                              <div className="gm-dist-target-content">
+                                <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                                  <span className="gm-dist-target-name">{opt.channelLabel}</span>
+                                  <Tag className="gm-studio-tag-nowrap">{opt.description}</Tag>
                                   {opt.targetLocale ? (
                                     <StatusBadge tone="active" className="gm-studio-nowrap">
                                       {opt.targetLocale}
@@ -3379,25 +2889,17 @@ export function StudioDistributionDrawer({
                   {l2ExtensionOptions.length > 0 ? (
                     <div
                       data-testid="distribution-l2-extension-group"
-                      style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                      className="gm-dist-col gm-dist-col--md"
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
-                      >
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-2)' }}>
+                      <div className="gm-dist-row gm-dist-row--between">
+                        <span className="gm-dist-group-title">
                           国内平台浏览器扩展队列（L2 Chrome 扩展 · 写入草稿箱人工确认，不自动发布）
                         </span>
                         {onNavigateExtensionPairing || onNavigateBrands ? (
                           <Button
                             size="small"
                             type="link"
-                            style={{ padding: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                            className="gm-dist-link-btn"
                             onClick={() => {
                               onClose();
                               (onNavigateExtensionPairing ?? onNavigateBrands)?.();
@@ -3407,13 +2909,7 @@ export function StudioDistributionDrawer({
                           </Button>
                         ) : null}
                       </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
-                          gap: 8,
-                        }}
-                      >
+                      <div className="gm-dist-grid-cards">
                         {l2ExtensionOptions.map((opt) => {
                           const selected = selectedTargetKeys.includes(opt.key);
                           return (
@@ -3424,24 +2920,12 @@ export function StudioDistributionDrawer({
                               onClick={() => {
                                 if (!readOnly) toggleTargetKey(opt.key);
                               }}
-                              style={{
-                                padding: 10,
-                                borderRadius: 'var(--gm-radius-sm)',
-                                border: selected
-                                  ? '1px solid var(--gm-phosphor)'
-                                  : '1px solid var(--gm-line-2)',
-                                background: selected
-                                  ? 'var(--gm-bg-selected)'
-                                  : 'var(--gm-bg-base)',
-                                cursor: readOnly ? 'not-allowed' : 'pointer',
-                                display: 'flex',
-                                alignItems: 'flex-start',
-                                gap: 8,
-                                minWidth: 0,
-                                boxSizing: 'border-box',
-                              }}
+                              className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
                             >
-                              <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                              <span
+                                className="gm-dist-target-check"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 <Checkbox
                                   checked={selected}
                                   disabled={readOnly}
@@ -3449,28 +2933,9 @@ export function StudioDistributionDrawer({
                                   onChange={() => toggleTargetKey(opt.key)}
                                 />
                               </span>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    minWidth: 0,
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontSize: 13,
-                                      fontWeight: 600,
-                                      color: 'var(--gm-fg-1)',
-                                      minWidth: 0,
-                                      overflowWrap: 'anywhere',
-                                      wordBreak: 'break-word',
-                                    }}
-                                  >
-                                    {opt.channelLabel}
-                                  </span>
+                              <div className="gm-dist-target-content">
+                                <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                                  <span className="gm-dist-target-name">{opt.channelLabel}</span>
                                   <StatusBadge tone="active" className="gm-studio-nowrap">
                                     Chrome 扩展
                                   </StatusBadge>
@@ -3490,7 +2955,7 @@ export function StudioDistributionDrawer({
                   ) : null}
 
                   {/* Group 2: L3 Community Assist */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div className="gm-dist-col gm-dist-col--md">
                     <div className="gm-studio-publish-subcard-title">
                       <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Community}>
                         <span className="gm-studio-glossary-trigger">
@@ -3498,13 +2963,7 @@ export function StudioDistributionDrawer({
                         </span>
                       </Tooltip>
                     </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(min(260px, 100%), 1fr))',
-                        gap: 8,
-                      }}
-                    >
+                    <div className="gm-dist-grid-cards">
                       {communityOptions.map((opt) => {
                         const selected = selectedTargetKeys.includes(opt.key);
                         return (
@@ -3515,22 +2974,12 @@ export function StudioDistributionDrawer({
                             onClick={() => {
                               if (!readOnly) toggleTargetKey(opt.key);
                             }}
-                            style={{
-                              padding: 10,
-                              borderRadius: 'var(--gm-radius-sm)',
-                              border: selected
-                                ? '1px solid var(--gm-phosphor)'
-                                : '1px solid var(--gm-line-2)',
-                              background: selected ? 'var(--gm-bg-selected)' : 'var(--gm-bg-base)',
-                              cursor: readOnly ? 'not-allowed' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'flex-start',
-                              gap: 8,
-                              minWidth: 0,
-                              boxSizing: 'border-box',
-                            }}
+                            className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
                           >
-                            <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                            <span
+                              className="gm-dist-target-check"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <Checkbox
                                 checked={selected}
                                 disabled={readOnly}
@@ -3538,28 +2987,9 @@ export function StudioDistributionDrawer({
                                 onChange={() => toggleTargetKey(opt.key)}
                               />
                             </span>
-                            <div style={{ minWidth: 0, flex: 1 }}>
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  minWidth: 0,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: 'var(--gm-fg-1)',
-                                    minWidth: 0,
-                                    overflowWrap: 'anywhere',
-                                    wordBreak: 'break-word',
-                                  }}
-                                >
-                                  {opt.channelLabel}
-                                </span>
+                            <div className="gm-dist-target-content">
+                              <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                                <span className="gm-dist-target-name">{opt.channelLabel}</span>
                                 {opt.recommendedPriority === 'HIGH' ? (
                                   <StatusBadge tone="warning" className="gm-studio-nowrap">
                                     高频被引
@@ -3575,7 +3005,7 @@ export function StudioDistributionDrawer({
                   </div>
 
                   {/* Group 3: L3 PR Packet */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div className="gm-dist-col gm-dist-col--md">
                     <div className="gm-studio-publish-subcard-title">
                       <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Pr}>
                         <span className="gm-studio-glossary-trigger">
@@ -3593,22 +3023,12 @@ export function StudioDistributionDrawer({
                           onClick={() => {
                             if (!readOnly) toggleTargetKey(opt.key);
                           }}
-                          style={{
-                            padding: 10,
-                            borderRadius: 'var(--gm-radius-sm)',
-                            border: selected
-                              ? '1px solid var(--gm-phosphor)'
-                              : '1px solid var(--gm-line-2)',
-                            background: selected ? 'var(--gm-bg-selected)' : 'var(--gm-bg-base)',
-                            cursor: readOnly ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 8,
-                            minWidth: 0,
-                            boxSizing: 'border-box',
-                          }}
+                          className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
                         >
-                          <span style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                          <span
+                            className="gm-dist-target-check"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <Checkbox
                               checked={selected}
                               disabled={readOnly}
@@ -3616,29 +3036,9 @@ export function StudioDistributionDrawer({
                               onChange={() => toggleTargetKey(opt.key)}
                             />
                           </span>
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <div
-                              style={{
-                                fontSize: 13,
-                                fontWeight: 600,
-                                color: 'var(--gm-fg-1)',
-                                overflowWrap: 'anywhere',
-                                wordBreak: 'break-word',
-                              }}
-                            >
-                              {opt.channelLabel}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 12,
-                                color: 'var(--gm-fg-3)',
-                                marginTop: 4,
-                                overflowWrap: 'anywhere',
-                                wordBreak: 'break-word',
-                              }}
-                            >
-                              {opt.description}
-                            </div>
+                          <div className="gm-dist-target-content">
+                            <div className="gm-dist-target-name">{opt.channelLabel}</div>
+                            <div className="gm-dist-target-desc">{opt.description}</div>
                           </div>
                         </div>
                       );
@@ -3647,24 +3047,8 @@ export function StudioDistributionDrawer({
                 </div>
 
                 {/* Step 3: Multi-Channel Variant Tab Editor */}
-                <div
-                  data-testid="distribution-variant-tabs"
-                  style={{
-                    padding: 14,
-                    borderRadius: 'var(--gm-radius-md)',
-                    border: '1px solid var(--gm-line-2)',
-                    background: 'var(--gm-bg-elevated)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                    minWidth: 0,
-                    maxWidth: '100%',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                    Step 3 · 多渠道变体编辑与一键分发
-                  </div>
+                <div data-testid="distribution-variant-tabs" className="gm-dist-section-card">
+                  <div className="gm-dist-card-title">Step 3 · 多渠道变体编辑与一键分发</div>
 
                   {tasks.length === 0 ? (
                     <SignalEmpty
@@ -3680,25 +3064,9 @@ export function StudioDistributionDrawer({
                       items={tasks.map((task) => ({
                         key: task.id,
                         label: (
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              maxWidth: 220,
-                            }}
-                          >
-                            <span
-                              style={{
-                                maxWidth: 140,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {task.channelLabel}
-                            </span>
-                            <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          <span className="gm-dist-tab-label">
+                            <span className="gm-dist-tab-name">{task.channelLabel}</span>
+                            <Tag className="gm-studio-tag-nowrap">
                               {DISTRIBUTION_TASK_STATUS_LABELS[task.status]}
                             </Tag>
                           </span>
@@ -3789,22 +3157,13 @@ export function StudioDistributionDrawer({
           </Space>
         }
       >
-        <div
-          data-testid="distribution-points-confirm-modal"
-          style={{
-            minWidth: 0,
-            maxWidth: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-          }}
-        >
-          <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+        <div data-testid="distribution-points-confirm-modal" className="gm-dist-confirm-modal">
+          <div className="gm-dist-confirm-summary">
             即将为当前成稿并行生成 <strong className="gm-num">{selectedTargets.length}</strong>{' '}
             个目标渠道的专属变体：
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
+          <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
             {selectedTargets.map((opt) => (
               <Tag key={opt.key} className="gm-studio-tag-wrap">
                 {opt.channelLabel}
@@ -3812,26 +3171,13 @@ export function StudioDistributionDrawer({
             ))}
           </div>
 
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 'var(--gm-radius-sm)',
-              border: '1px solid var(--gm-line-1)',
-              background: 'var(--gm-bg-base)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              fontSize: 13,
-            }}
-          >
+          <div className="gm-dist-confirm-box">
             {unitPrice === 0 ? (
-              <div style={{ color: 'var(--gm-success)', fontWeight: 600 }}>
-                限时免费（0 积分，不扣减点数）
-              </div>
+              <div className="gm-dist-confirm-free">限时免费（0 积分，不扣减点数）</div>
             ) : (
               <div>
                 预计消耗：
-                <strong className="gm-num" style={{ color: 'var(--gm-phosphor)' }}>
+                <strong className="gm-num gm-dist-text-phosphor">
                   {selectedTargets.length} × {unitPrice} = {totalEstimatedPoints} 点
                 </strong>
                 （单价 <span className="gm-num">{unitPrice}</span>{' '}
@@ -3840,7 +3186,7 @@ export function StudioDistributionDrawer({
             )}
 
             {typeof walletAvailable === 'number' ? (
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+              <div className="gm-dist-check-label">
                 当前可用余额：
                 {walletAvailable > 0 ? (
                   <strong className="gm-num">{walletAvailable} 点</strong>

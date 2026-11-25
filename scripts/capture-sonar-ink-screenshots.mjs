@@ -26,6 +26,15 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 const ALLOWED_PAGES = new Set(['home', 'brands', 'visibility', 'studio', 'account', 'login']);
+const PAGE_READY_SELECTORS = {
+  home: '[data-testid="home-workspace"], [data-testid="home-onboarding"]',
+  brands:
+    '#brand-section-identity, .gm-brands-page .gm-ui-page-header, .gm-brands-page .gm-ui-empty',
+  visibility: '[data-testid="visibility-workspace"], .gm-vis-page .gm-ui-empty',
+  studio: '[data-testid="studio-workspace"], .gm-studio-page--empty',
+  account: '.gm-account-shell',
+  login: '.gm-login-card',
+};
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const EXTERNAL_FONT_CDN_RE = /fonts\.googleapis\.com|fonts\.gstatic\.com/i;
 
@@ -67,42 +76,42 @@ function parseArgs(argv) {
     const next = argv[i + 1];
     switch (arg) {
       case '--out-dir':
-        if (!next) throw new Error('--out-dir requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--out-dir requires a value');
         opts.outDir = next;
         i += 1;
         break;
       case '--base-url':
-        if (!next) throw new Error('--base-url requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--base-url requires a value');
         opts.baseUrl = next.replace(/\/$/, '');
         i += 1;
         break;
       case '--api-base':
-        if (!next) throw new Error('--api-base requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--api-base requires a value');
         opts.apiBase = next.replace(/\/$/, '');
         i += 1;
         break;
       case '--pages':
-        if (!next) throw new Error('--pages requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--pages requires a value');
         opts.pages = next;
         i += 1;
         break;
       case '--viewports':
-        if (!next) throw new Error('--viewports requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--viewports requires a value');
         opts.viewports = next;
         i += 1;
         break;
       case '--user':
-        if (!next) throw new Error('--user requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--user requires a value');
         opts.user = next;
         i += 1;
         break;
       case '--access-token':
-        if (!next) throw new Error('--access-token requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--access-token requires a value');
         opts.accessToken = next;
         i += 1;
         break;
       case '--refresh-token':
-        if (!next) throw new Error('--refresh-token requires a value');
+        if (!next || next.startsWith('-')) throw new Error('--refresh-token requires a value');
         opts.refreshToken = next;
         i += 1;
         break;
@@ -410,6 +419,39 @@ function resolveChromiumLaunchOptions() {
       };
 }
 
+async function waitForLoadingIndicatorsToClear(page, pageKey, timeoutMs = 15_000) {
+  const selectors = [
+    `[data-testid="${pageKey}-loading"]`,
+    '[aria-busy="true"]',
+    '.ant-spin-spinning',
+  ];
+  if (pageKey === 'account') {
+    selectors.push('[data-testid="points-kpi-skeleton"]', '[data-testid="points-table-skeleton"]');
+  }
+  const combinedSelector = selectors.join(', ');
+  await page.waitForFunction(
+    (selector) => {
+      const nodes = document.querySelectorAll(selector);
+      for (const el of nodes) {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        const isVisible =
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          Number.parseFloat(style.opacity || '1') > 0 &&
+          rect.width > 0 &&
+          rect.height > 0;
+        if (isVisible) {
+          return false;
+        }
+      }
+      return true;
+    },
+    combinedSelector,
+    { timeout: timeoutMs },
+  );
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
@@ -512,40 +554,8 @@ async function main() {
     const externalFontRequests = [];
     let totalBytes = 0;
 
-    for (const vp of viewports) {
-      const context = await browser.newContext({
-        viewport: { width: vp.width, height: vp.height },
-        deviceScaleFactor: 1,
-      });
-
-      await context.addInitScript(
-        ({ accessToken, refreshToken, brandId, market }) => {
-          window.sessionStorage.setItem('geomix.accessToken', accessToken);
-          window.sessionStorage.setItem('geomix.refreshToken', refreshToken);
-          window.localStorage.setItem('geomix.accessToken', accessToken);
-          window.localStorage.setItem('geomix.refreshToken', refreshToken);
-          if (brandId) {
-            window.localStorage.setItem(
-              'geomix.workspace.v2',
-              JSON.stringify({
-                activeBrandId: brandId,
-                activeMarket: market,
-                menuCollapsed: false,
-              }),
-            );
-          }
-        },
-        {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          brandId: activeBrandId,
-          market: activeMarket,
-        },
-      );
-
-      const page = await context.newPage();
-
-      page.on('response', (response) => {
+    const attachFontResponseListener = (targetPage) => {
+      targetPage.on('response', (response) => {
         const url = response.url();
         if (/\/fonts\/[^/?#]+\.woff2(?:$|\?)/i.test(url)) {
           const status = response.status();
@@ -561,82 +571,196 @@ async function main() {
           externalFontRequests.push({ url, status: response.status() });
         }
       });
+    };
 
-      for (const pageKey of pages) {
-        const consoleErrors = [];
-        const pageErrors = [];
-        const onConsole = (msg) => {
-          if (msg.type() === 'error') {
-            consoleErrors.push(msg.text());
-          }
-        };
-        const onPageError = (err) => {
-          pageErrors.push(String(err));
-        };
-        page.on('console', onConsole);
-        page.on('pageerror', onPageError);
+    const needsAuthContext = pages.some((p) => p !== 'login');
 
-        const route = `/${pageKey}${pageKey === 'login' ? '' : brandQuery}`;
-        const targetUrl = `${baseUrl}${route}`;
+    for (const vp of viewports) {
+      let authContext = null;
+      let authPage = null;
 
-        try {
-          const response = await page.goto(targetUrl, {
-            waitUntil: 'domcontentloaded',
-            timeout: 30_000,
-          });
-          if (!response || response.status() >= 400) {
-            throw new Error(
-              `Failed to load ${targetUrl}: HTTP ${response ? response.status() : 'no response'}`,
-            );
-          }
-
-          // Wait for workspace loading sentinel to clear if present.
-          const loadingLocator = page.locator(`[data-testid="${pageKey}-loading"]`);
-          await loadingLocator.waitFor({ state: 'hidden', timeout: 15_000 }).catch(() => {});
-
-          // Best-effort network idle & font readiness settle.
-          await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
-          await page.evaluate(async () => {
-            if (document.fonts && document.fonts.ready) {
-              await document.fonts.ready;
-            }
-            window.scrollTo(0, 0);
-          });
-          await page.waitForTimeout(300);
-
-          const metrics = await page.evaluate(() => ({
-            scrollWidth: document.documentElement.scrollWidth,
-            innerWidth: window.innerWidth,
-            scrollHeight: document.documentElement.scrollHeight,
-          }));
-
-          const fileName = `${pageKey}-${vp.label}.png`;
-          const filePath = path.join(outDir, fileName);
-          await page.screenshot({ path: filePath, fullPage: true });
-          const pngMeta = validatePngFile(filePath);
-          totalBytes += pngMeta.bytes;
-
-          screenshots.push({
-            page: pageKey,
-            route,
+      try {
+        if (needsAuthContext) {
+          authContext = await browser.newContext({
             viewport: { width: vp.width, height: vp.height },
-            file: fileName,
-            bytes: pngMeta.bytes,
-            pngWidth: pngMeta.pngWidth,
-            pngHeight: pngMeta.pngHeight,
-            scrollWidth: metrics.scrollWidth,
-            innerWidth: metrics.innerWidth,
-            hasHorizontalOverflow: metrics.scrollWidth > metrics.innerWidth,
-            consoleErrors,
-            pageErrors,
+            deviceScaleFactor: 1,
           });
-        } finally {
-          page.off('console', onConsole);
-          page.off('pageerror', onPageError);
+
+          await authContext.addInitScript(
+            ({ accessToken, refreshToken, brandId, market }) => {
+              window.sessionStorage.setItem('geomix.accessToken', accessToken);
+              window.sessionStorage.setItem('geomix.refreshToken', refreshToken);
+              window.localStorage.setItem('geomix.accessToken', accessToken);
+              window.localStorage.setItem('geomix.refreshToken', refreshToken);
+              if (brandId) {
+                window.localStorage.setItem(
+                  'geomix.workspace.v2',
+                  JSON.stringify({
+                    activeBrandId: brandId,
+                    activeMarket: market,
+                    menuCollapsed: false,
+                  }),
+                );
+              }
+            },
+            {
+              accessToken: tokens.accessToken,
+              refreshToken: tokens.refreshToken,
+              brandId: activeBrandId,
+              market: activeMarket,
+            },
+          );
+
+          authPage = await authContext.newPage();
+          attachFontResponseListener(authPage);
+        }
+
+        for (const pageKey of pages) {
+          const isUnauthLogin = pageKey === 'login';
+          let isolatedContext = null;
+          let targetPage = authPage;
+          let listenersAttached = false;
+
+          const consoleErrors = [];
+          const pageErrors = [];
+          const onConsole = (msg) => {
+            if (msg.type() === 'error') {
+              consoleErrors.push(msg.text());
+            }
+          };
+          const onPageError = (err) => {
+            pageErrors.push(String(err));
+          };
+
+          const route = `/${pageKey}${isUnauthLogin ? '' : brandQuery}`;
+          const targetUrl = `${baseUrl}${route}`;
+
+          try {
+            if (isUnauthLogin) {
+              isolatedContext = await browser.newContext({
+                viewport: { width: vp.width, height: vp.height },
+                deviceScaleFactor: 1,
+              });
+              targetPage = await isolatedContext.newPage();
+              attachFontResponseListener(targetPage);
+            }
+
+            targetPage.on('console', onConsole);
+            targetPage.on('pageerror', onPageError);
+            listenersAttached = true;
+
+            const response = await targetPage.goto(targetUrl, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30_000,
+            });
+            if (!response || response.status() >= 400) {
+              throw new Error(
+                `Failed to load ${targetUrl}: HTTP ${response ? response.status() : 'no response'}`,
+              );
+            }
+
+            const readySelector = PAGE_READY_SELECTORS[pageKey];
+            try {
+              await targetPage.locator(readySelector).first().waitFor({
+                state: 'visible',
+                timeout: 20_000,
+              });
+            } catch (err) {
+              const currentUrl = targetPage.url();
+              const currentPathname = new URL(currentUrl).pathname;
+              if (!isUnauthLogin && currentPathname.startsWith('/login')) {
+                throw new Error(
+                  `Expected authenticated /${pageKey} capture to stay authenticated, but redirected to ${currentUrl}`,
+                );
+              }
+              throw new Error(
+                `Timed out waiting for hydrated ready selector (${readySelector}) on /${pageKey} (url=${currentUrl}): ${err?.message ?? err}`,
+              );
+            }
+
+            // Best-effort network idle & font readiness settle.
+            await targetPage.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {});
+            await targetPage.evaluate(async () => {
+              if (document.fonts && document.fonts.ready) {
+                await document.fonts.ready;
+              }
+            });
+
+            // Explicitly wait for all workspace/skeleton/spinner loading indicators to clear.
+            await waitForLoadingIndicatorsToClear(targetPage, pageKey, 15_000);
+
+            // Reset scroll and wait 2 animation frames so layout and fonts paint cleanly.
+            await targetPage.evaluate(async () => {
+              window.scrollTo(0, 0);
+              await new Promise((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+              );
+            });
+
+            const finalUrl = targetPage.url();
+            const finalPathname = new URL(finalUrl).pathname;
+            if (isUnauthLogin) {
+              if (!finalPathname.startsWith('/login')) {
+                throw new Error(
+                  `Expected unauthenticated /login capture to stay on /login, but redirected to ${finalUrl}`,
+                );
+              }
+            } else if (finalPathname.startsWith('/login')) {
+              throw new Error(
+                `Expected authenticated /${pageKey} capture to stay authenticated, but redirected to ${finalUrl}`,
+              );
+            }
+
+            const metrics = await targetPage.evaluate(() => ({
+              scrollWidth: document.documentElement.scrollWidth,
+              innerWidth: window.innerWidth,
+              scrollHeight: document.documentElement.scrollHeight,
+            }));
+
+            const fileName = `${pageKey}-${vp.label}.png`;
+            const filePath = path.join(outDir, fileName);
+            await targetPage.screenshot({ path: filePath, fullPage: true });
+            const pngMeta = validatePngFile(filePath);
+            totalBytes += pngMeta.bytes;
+
+            screenshots.push({
+              page: pageKey,
+              route,
+              finalUrl,
+              viewport: { width: vp.width, height: vp.height },
+              file: fileName,
+              bytes: pngMeta.bytes,
+              pngWidth: pngMeta.pngWidth,
+              pngHeight: pngMeta.pngHeight,
+              scrollWidth: metrics.scrollWidth,
+              innerWidth: metrics.innerWidth,
+              hasHorizontalOverflow: metrics.scrollWidth > metrics.innerWidth,
+              consoleErrors,
+              pageErrors,
+            });
+          } finally {
+            if (listenersAttached && targetPage) {
+              targetPage.off('console', onConsole);
+              targetPage.off('pageerror', onPageError);
+            }
+            if (isolatedContext) {
+              try {
+                await isolatedContext.close();
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+      } finally {
+        if (authContext) {
+          try {
+            await authContext.close();
+          } catch {
+            /* ignore */
+          }
         }
       }
-
-      await context.close();
     }
 
     const fontRequests = Array.from(fontRequestsMap.values());

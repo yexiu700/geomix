@@ -16,10 +16,11 @@ import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
 import type { FormEvent, JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GM, GM_ANTD_THEME } from '../../lib/design-tokens';
+import { GM_ANTD_THEME } from '../../lib/design-tokens';
 import { fetchPublicPrPacket, submitPublicPrPacket } from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
 import { copyTextToClipboard } from '../../lib/studio';
+import { StatusBadge } from '../ui';
 
 export type PrSharePacketViewProps = {
   token: string;
@@ -397,70 +398,21 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
       button={{ autoInsertSpace: false }}
     >
       <App>
-        <main
-          data-testid="pr-share-page"
-          style={{
-            minHeight: '100vh',
-            background: 'var(--gm-bg-base, #0A0C0B)',
-            color: 'var(--gm-fg-1, #E8ECEA)',
-            padding: '28px 20px 64px',
-            boxSizing: 'border-box',
-            overflowX: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 1040,
-              margin: '0 auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 20,
-              minWidth: 0,
-            }}
-          >
+        <main data-testid="pr-share-page" className="gm-pr-share-page">
+          <div className="gm-pr-share-inner">
             {loading ? (
               <section
-                className="gm-panel"
+                className="gm-panel gm-pr-share-loading"
                 aria-busy="true"
                 data-testid="pr-share-loading"
-                style={{
-                  padding: 24,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 20,
-                }}
               >
                 <Skeleton active title={{ width: '42%' }} paragraph={{ rows: 2 }} />
                 <Skeleton active title={{ width: '28%' }} paragraph={{ rows: 4 }} />
                 <Skeleton active title={{ width: '32%' }} paragraph={{ rows: 5 }} />
               </section>
             ) : loadError || !packet ? (
-              <section
-                className="gm-panel"
-                data-testid="pr-share-error-state"
-                style={{
-                  padding: '36px 28px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  gap: 14,
-                  maxWidth: 680,
-                  margin: '40px auto 0',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 12,
-                    color: GM.fg.f3,
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                  }}
-                >
+              <section className="gm-panel gm-pr-share-error" data-testid="pr-share-error-state">
+                <div className="gm-pr-share-eyebrow">
                   <span>{SITE_NAME}</span>
                   <span>·</span>
                   <span>PR / KOL Media Brief</span>
@@ -468,53 +420,51 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
 
                 {loadError === 'not_found' ? (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
+                    <h1 className="gm-pr-share-error-title">
                       Collaboration Link Unavailable · 协作链接已失效
                     </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <p className="gm-pr-share-error-copy">
                       This collaboration link is invalid, expired, or has been revoked by the brand
                       team. Please request a fresh share link from your contact.
                     </p>
-                    <p style={{ margin: 0, color: GM.fg.f3, lineHeight: 1.65 }}>
+                    <p className="gm-pr-share-error-copy-sub">
                       该外部协作链接不存在、已过期或已被品牌方撤销。请联系品牌对接人重新生成分享链接。
                     </p>
                   </>
                 ) : loadError === 'rate_limited' ? (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
-                      Too Many Requests · 访问过于频繁
-                    </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <h1 className="gm-pr-share-error-title">Too Many Requests · 访问过于频繁</h1>
+                    <p className="gm-pr-share-error-copy">
                       We received too many requests in a short period. Please wait a moment and try
                       reloading this media brief.
                     </p>
-                    <p style={{ margin: 0, color: GM.fg.f3, lineHeight: 1.65 }}>
+                    <p className="gm-pr-share-error-copy-sub">
                       当前访问频率过高，请稍候片刻后点击下方按钮重新加载。
                     </p>
                     <Button
                       type="primary"
                       onClick={() => setReloadNonce((n) => n + 1)}
-                      style={{ marginTop: 4 }}
+                      className="gm-pr-share-retry-btn"
                     >
                       Retry / 重新加载
                     </Button>
                   </>
                 ) : (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
+                    <h1 className="gm-pr-share-error-title">
                       Unable to Load Media Brief · 暂时无法加载协作包
                     </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <p className="gm-pr-share-error-copy">
                       We encountered a temporary issue while loading this brief. Please check your
                       network connection and try again.
                     </p>
-                    <p style={{ margin: 0, color: GM.fg.f3, lineHeight: 1.65 }}>
+                    <p className="gm-pr-share-error-copy-sub">
                       加载外部协作包时遇到临时网络异常，请稍后重试。
                     </p>
                     <Button
                       type="primary"
                       onClick={() => setReloadNonce((n) => n + 1)}
-                      style={{ marginTop: 4 }}
+                      className="gm-pr-share-retry-btn"
                     >
                       Retry / 重新加载
                     </Button>
@@ -524,121 +474,43 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
             ) : (
               <>
                 {/* 1. Header Card */}
-                <header
-                  className="gm-panel"
-                  style={{
-                    padding: '22px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: GM.phosphor,
-                          letterSpacing: '0.04em',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {SITE_NAME}
-                      </span>
-                      <span style={{ color: GM.fg.f4 }}>·</span>
-                      <span style={{ fontSize: 12, color: GM.fg.f2, whiteSpace: 'nowrap' }}>
-                        {copy.badgeLabel}
-                      </span>
-                      <Tag
-                        color={isGlobal ? 'blue' : 'cyan'}
-                        style={{ margin: 0, whiteSpace: 'nowrap' }}
-                      >
-                        {copy.marketLabel}
-                      </Tag>
+                <header className="gm-panel gm-pr-share-header">
+                  <div className="gm-pr-share-meta-row">
+                    <div className="gm-pr-share-badge-group">
+                      <span className="gm-pr-share-site-mark">{SITE_NAME}</span>
+                      <span className="gm-pr-share-sep">·</span>
+                      <span className="gm-pr-share-badge-text">{copy.badgeLabel}</span>
+                      <StatusBadge tone="active">{copy.marketLabel}</StatusBadge>
                       {packet.channelLabel ? (
-                        <Tag color="geekblue" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                        <StatusBadge tone="neutral">
                           {localizePublicChannelLabel(
                             packet.channelLabel,
                             packet.market,
                             'PR_PACKET',
                           )}
-                        </Tag>
+                        </StatusBadge>
                       ) : null}
                     </div>
 
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: GM.fg.f3,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                    <div className="gm-pr-share-expires">
                       {copy.expiresPrefix}:{' '}
-                      <span className="gm-num" style={{ color: GM.fg.f2 }}>
+                      <span className="gm-num gm-pr-share-expires-date">
                         {formatShanghaiDate(packet.expiresAt)}
                       </span>
                     </div>
                   </div>
 
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'baseline',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: '1 1 320px' }}>
-                      <h1
-                        style={{
-                          margin: 0,
-                          fontSize: 24,
-                          fontWeight: 600,
-                          color: GM.fg.f1,
-                          lineHeight: 1.3,
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {packet.brandName}
-                      </h1>
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontSize: 13,
-                          color: GM.fg.f2,
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: 10,
-                          alignItems: 'center',
-                        }}
-                      >
+                  <div className="gm-pr-share-title-row">
+                    <div className="gm-pr-share-title-col">
+                      <h1 className="gm-pr-share-title">{packet.brandName}</h1>
+                      <div className="gm-pr-share-subtitle">
                         {packet.category ? (
                           <>
                             <span>{packet.category}</span>
-                            <span style={{ color: GM.fg.f4 }}>•</span>
+                            <span className="gm-pr-share-sep">•</span>
                           </>
                         ) : null}
-                        <span style={{ color: GM.fg.f3 }}>{copy.readOnlyNotice}</span>
+                        <span className="gm-pr-share-readonly">{copy.readOnlyNotice}</span>
                       </div>
                     </div>
                   </div>
@@ -646,119 +518,32 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
 
                 {/* 2. Verified Core Fact Spec Table */}
                 <section
-                  className="gm-panel"
+                  className="gm-panel gm-pr-share-section"
                   aria-label={copy.factSectionTitle}
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
                 >
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.factSectionTitle}
-                    </h2>
-                    <p style={{ margin: '4px 0 0', fontSize: 13, color: GM.fg.f3 }}>
-                      {copy.factSectionDesc}
-                    </p>
+                    <h2 className="gm-pr-share-section-title">{copy.factSectionTitle}</h2>
+                    <p className="gm-pr-share-section-desc">{copy.factSectionDesc}</p>
                   </div>
 
                   {packet.verifiedFacts.length === 0 ? (
-                    <div
-                      data-testid="pr-share-fact-table"
-                      style={{
-                        padding: '14px 16px',
-                        borderRadius: 8,
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        color: GM.fg.f3,
-                        fontSize: 13,
-                      }}
-                    >
+                    <div data-testid="pr-share-fact-table" className="gm-pr-share-fact-empty">
                       {copy.factEmpty}
                     </div>
                   ) : (
-                    <div
-                      style={{
-                        width: '100%',
-                        overflowX: 'auto',
-                        borderRadius: 8,
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                      }}
-                    >
-                      <table
-                        data-testid="pr-share-fact-table"
-                        style={{
-                          width: '100%',
-                          borderCollapse: 'collapse',
-                          fontSize: 13,
-                          textAlign: 'left',
-                        }}
-                      >
+                    <div className="gm-pr-share-table-shell">
+                      <table data-testid="pr-share-fact-table" className="gm-pr-share-table">
                         <thead>
-                          <tr
-                            style={{
-                              background: 'var(--gm-bg-elevated, #171B1A)',
-                              borderBottom: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                            }}
-                          >
-                            <th
-                              style={{
-                                padding: '10px 14px',
-                                fontWeight: 600,
-                                color: GM.fg.f2,
-                                width: '28%',
-                                minWidth: 160,
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {copy.factColTitle}
-                            </th>
-                            <th
-                              style={{
-                                padding: '10px 14px',
-                                fontWeight: 600,
-                                color: GM.fg.f2,
-                              }}
-                            >
-                              {copy.factColSummary}
-                            </th>
+                          <tr>
+                            <th className="gm-pr-share-th-title">{copy.factColTitle}</th>
+                            <th>{copy.factColSummary}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {packet.verifiedFacts.map((fact, idx) => (
-                            <tr
-                              key={`${fact.title}-${idx}`}
-                              style={{
-                                borderBottom:
-                                  idx < packet.verifiedFacts.length - 1
-                                    ? '1px solid var(--gm-line-1, rgba(255,255,255,0.06))'
-                                    : undefined,
-                              }}
-                            >
-                              <td
-                                style={{
-                                  padding: '10px 14px',
-                                  fontWeight: 500,
-                                  color: GM.fg.f1,
-                                  verticalAlign: 'top',
-                                  overflowWrap: 'anywhere',
-                                }}
-                              >
-                                {fact.title}
-                              </td>
-                              <td
-                                style={{
-                                  padding: '10px 14px',
-                                  color: GM.fg.f2,
-                                  lineHeight: 1.6,
-                                  verticalAlign: 'top',
-                                  overflowWrap: 'anywhere',
-                                }}
-                              >
-                                {fact.summary}
-                              </td>
+                            <tr key={`${fact.title}-${idx}`}>
+                              <td className="gm-pr-share-td-title">{fact.title}</td>
+                              <td className="gm-pr-share-td-summary">{fact.summary}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -769,109 +554,32 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
 
                 {/* 3. Topic Brief & Suggested Angles */}
                 <section
-                  className="gm-panel"
+                  className="gm-panel gm-pr-share-section gm-pr-share-section--spacious"
                   aria-label={copy.briefSectionTitle}
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                    minWidth: 0,
-                  }}
                 >
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.briefSectionTitle}
-                    </h2>
-                    <p style={{ margin: '4px 0 0', fontSize: 13, color: GM.fg.f3 }}>
-                      {copy.briefSectionDesc}
-                    </p>
+                    <h2 className="gm-pr-share-section-title">{copy.briefSectionTitle}</h2>
+                    <p className="gm-pr-share-section-desc">{copy.briefSectionDesc}</p>
                   </div>
 
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                      gap: 14,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: '12px 14px',
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3, marginBottom: 6 }}>
-                        {copy.suggestedTitleLabel}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 15,
-                          fontWeight: 600,
-                          color: GM.fg.f1,
-                          lineHeight: 1.45,
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {packet.suggestedTitle}
-                      </div>
+                  <div className="gm-pr-share-brief-grid">
+                    <div className="gm-pr-share-brief-box">
+                      <div className="gm-pr-share-brief-label">{copy.suggestedTitleLabel}</div>
+                      <div className="gm-pr-share-brief-headline">{packet.suggestedTitle}</div>
                     </div>
 
-                    <div
-                      style={{
-                        padding: '12px 14px',
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3, marginBottom: 6 }}>
-                        {copy.targetPromptLabel}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          color: GM.fg.f2,
-                          lineHeight: 1.5,
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {packet.targetPrompt}
-                      </div>
+                    <div className="gm-pr-share-brief-box">
+                      <div className="gm-pr-share-brief-label">{copy.targetPromptLabel}</div>
+                      <div className="gm-pr-share-brief-prompt">{packet.targetPrompt}</div>
                     </div>
                   </div>
 
                   {packet.keyAngles.length > 0 ? (
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: GM.fg.f2,
-                          marginBottom: 8,
-                        }}
-                      >
-                        {copy.keyAnglesLabel}
-                      </div>
-                      <ul
-                        style={{
-                          margin: 0,
-                          paddingLeft: 18,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                          color: GM.fg.f2,
-                          fontSize: 13,
-                          lineHeight: 1.6,
-                        }}
-                      >
+                    <div className="gm-pr-share-block">
+                      <div className="gm-pr-share-sublabel">{copy.keyAnglesLabel}</div>
+                      <ul className="gm-pr-share-angle-list">
                         {packet.keyAngles.map((angle, idx) => (
-                          <li key={`${angle}-${idx}`} style={{ overflowWrap: 'anywhere' }}>
+                          <li key={`${angle}-${idx}`} className="gm-pr-share-angle-item">
                             {angle}
                           </li>
                         ))}
@@ -880,29 +588,11 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                   ) : null}
 
                   {packet.targetFanOuts.length > 0 ? (
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: GM.fg.f2,
-                          marginBottom: 8,
-                        }}
-                      >
-                        {copy.targetFanOutsLabel}
-                      </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <div className="gm-pr-share-block">
+                      <div className="gm-pr-share-sublabel">{copy.targetFanOutsLabel}</div>
+                      <div className="gm-pr-share-fanout-wrap">
                         {packet.targetFanOuts.map((fanOut, idx) => (
-                          <Tag
-                            key={`${fanOut}-${idx}`}
-                            style={{
-                              margin: 0,
-                              whiteSpace: 'normal',
-                              overflowWrap: 'anywhere',
-                              lineHeight: 1.45,
-                              padding: '2px 10px',
-                            }}
-                          >
+                          <Tag key={`${fanOut}-${idx}`} className="gm-pr-share-fanout-tag">
                             {fanOut}
                           </Tag>
                         ))}
@@ -913,42 +603,20 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
 
                 {/* 4. Reference Draft Body */}
                 <section
-                  className="gm-panel"
+                  className="gm-panel gm-pr-share-section gm-pr-share-section--spacious"
                   aria-label={copy.draftSectionTitle}
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                    minWidth: 0,
-                  }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                        {copy.draftSectionTitle}
-                      </h2>
-                      <p style={{ margin: '4px 0 0', fontSize: 13, color: GM.fg.f3 }}>
-                        {copy.draftSectionDesc}
-                      </p>
+                  <div className="gm-pr-share-draft-head">
+                    <div className="gm-pr-share-block">
+                      <h2 className="gm-pr-share-section-title">{copy.draftSectionTitle}</h2>
+                      <p className="gm-pr-share-section-desc">{copy.draftSectionDesc}</p>
                     </div>
 
-                    <div
-                      style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}
-                    >
+                    <div className="gm-pr-share-draft-controls">
                       <div
                         role="tablist"
                         aria-label={copy.draftSectionTitle}
-                        style={{ display: 'inline-flex', gap: 4 }}
+                        className="gm-pr-share-tablist"
                       >
                         {(
                           [
@@ -964,7 +632,7 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                             role="tab"
                             aria-selected={viewMode === mode}
                             onClick={() => setViewMode(mode)}
-                            style={{ whiteSpace: 'nowrap' }}
+                            className="gm-pr-share-nowrap-btn"
                           >
                             {label}
                           </Button>
@@ -974,14 +642,14 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                       <Button
                         size="small"
                         onClick={() => void handleCopy('markdown')}
-                        style={{ whiteSpace: 'nowrap' }}
+                        className="gm-pr-share-nowrap-btn"
                       >
                         {copiedTarget === 'markdown' ? copy.copied : copy.copyMarkdown}
                       </Button>
                       <Button
                         size="small"
                         onClick={() => void handleCopy('html')}
-                        style={{ whiteSpace: 'nowrap' }}
+                        className="gm-pr-share-nowrap-btn"
                       >
                         {copiedTarget === 'html' ? copy.copied : copy.copyHtml}
                       </Button>
@@ -993,40 +661,19 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                   ) : null}
 
                   {viewMode === 'preview' ? (
-                    <div
-                      data-testid="pr-share-draft-preview"
-                      style={{
-                        padding: '18px 20px',
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        color: GM.fg.f1,
-                        lineHeight: 1.75,
-                        fontSize: 14,
-                        overflowWrap: 'anywhere',
-                        minWidth: 0,
-                      }}
-                      dangerouslySetInnerHTML={{ __html: safeDraftHtml }}
-                    />
+                    <div className="gm-pr-share-preview-shell">
+                      <div
+                        data-testid="pr-share-draft-preview"
+                        className="gm-pr-share-preview"
+                        dangerouslySetInnerHTML={{ __html: safeDraftHtml }}
+                      />
+                    </div>
                   ) : (
                     <pre
                       data-testid={
                         viewMode === 'markdown' ? 'pr-share-draft-markdown' : 'pr-share-draft-html'
                       }
-                      style={{
-                        margin: 0,
-                        padding: '16px 18px',
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        color: GM.fg.f2,
-                        fontSize: 12.5,
-                        lineHeight: 1.65,
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        overflowX: 'auto',
-                        fontFamily: 'var(--gm-font-mono, monospace)',
-                      }}
+                      className="gm-pr-share-code"
                     >
                       {viewMode === 'markdown' ? packet.draftMarkdown : safeDraftHtml}
                     </pre>
@@ -1035,66 +682,36 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
 
                 {/* 5. Submit Published URL Card */}
                 <section
-                  className="gm-panel"
+                  className="gm-panel gm-pr-share-section gm-pr-share-submit"
                   aria-label={copy.submitSectionTitle}
                   data-testid="pr-share-submit-form"
-                  style={{
-                    padding: '22px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 16,
-                    minWidth: 0,
-                  }}
                 >
                   <div>
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.submitSectionTitle}
-                    </h2>
-                    <p style={{ margin: '4px 0 0', fontSize: 13, color: GM.fg.f3 }}>
-                      {copy.submitSectionDesc}
-                    </p>
+                    <h2 className="gm-pr-share-section-title">{copy.submitSectionTitle}</h2>
+                    <p className="gm-pr-share-section-desc">{copy.submitSectionDesc}</p>
                   </div>
 
                   {activeReceiptUrl ? (
-                    <div
-                      data-testid="pr-share-receipt"
-                      style={{
-                        padding: '14px 16px',
-                        borderRadius: 8,
-                        background: 'rgba(61, 224, 200, 0.08)',
-                        border: '1px solid rgba(61, 224, 200, 0.3)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
-                      >
-                        <Tag color="green" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                    <div data-testid="pr-share-receipt" className="gm-pr-share-receipt">
+                      <div className="gm-pr-share-receipt-head">
+                        <StatusBadge tone="success">
                           {submitReceipt
                             ? submitReceipt.alreadyRecorded
                               ? copy.receiptAlreadyRecordedTitle
                               : copy.receiptTitle
                             : copy.receiptInitialTitle}
-                        </Tag>
+                        </StatusBadge>
                         {submitReceipt?.submittedAt ? (
-                          <span style={{ fontSize: 12, color: GM.fg.f3 }}>
+                          <span className="gm-pr-share-receipt-time">
                             {copy.receiptTimeLabel}:{' '}
-                            <span className="gm-num" style={{ color: GM.fg.f2 }}>
+                            <span className="gm-num gm-pr-share-expires-date">
                               {formatShanghaiDateTime(submitReceipt.submittedAt)}
                             </span>
                           </span>
                         ) : null}
                       </div>
 
-                      <div style={{ fontSize: 13, color: GM.fg.f2, lineHeight: 1.55 }}>
+                      <div className="gm-pr-share-receipt-body">
                         {submitReceipt
                           ? submitReceipt.alreadyRecorded
                             ? copy.receiptAlreadyRecordedBody
@@ -1102,18 +719,8 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                           : copy.receiptInitialBody}
                       </div>
 
-                      <div
-                        style={{
-                          fontSize: 13,
-                          color: GM.fg.f2,
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: 6,
-                          alignItems: 'baseline',
-                          minWidth: 0,
-                        }}
-                      >
-                        <span style={{ color: GM.fg.f3, whiteSpace: 'nowrap' }}>
+                      <div className="gm-pr-share-receipt-url-row">
+                        <span className="gm-pr-share-receipt-url-label">
                           {copy.receiptUrlLabel}:
                         </span>
                         {safeReceiptHref ? (
@@ -1121,39 +728,24 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                             href={safeReceiptHref}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{
-                              color: GM.sig.cited,
-                              textDecoration: 'underline',
-                              overflowWrap: 'anywhere',
-                            }}
+                            className="gm-pr-share-receipt-link"
                           >
                             {activeReceiptUrl}
                           </a>
                         ) : (
-                          <span style={{ overflowWrap: 'anywhere' }}>{activeReceiptUrl}</span>
+                          <span className="gm-pr-share-receipt-raw">{activeReceiptUrl}</span>
                         )}
                       </div>
                     </div>
                   ) : null}
 
-                  <form
-                    onSubmit={(e) => void handleSubmit(e)}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
-                  >
+                  <form onSubmit={(e) => void handleSubmit(e)} className="gm-pr-share-form">
                     {activeReceiptUrl ? (
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.updateUrlHint}</div>
+                      <div className="gm-pr-share-update-hint">{copy.updateUrlHint}</div>
                     ) : null}
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <label
-                        htmlFor="pr-share-url-input"
-                        style={{ fontSize: 13, fontWeight: 500, color: GM.fg.f1 }}
-                      >
+                    <div className="gm-pr-share-field">
+                      <label htmlFor="pr-share-url-input" className="gm-pr-share-label">
                         {copy.urlLabel}
                       </label>
                       <Input
@@ -1171,10 +763,10 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                       />
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="gm-pr-share-field">
                       <label
                         htmlFor="pr-share-note-input"
-                        style={{ fontSize: 13, fontWeight: 500, color: GM.fg.f2 }}
+                        className="gm-pr-share-label gm-pr-share-label--secondary"
                       >
                         {copy.noteLabel}
                       </label>
@@ -1195,14 +787,14 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                       <Alert type="error" showIcon message={submitError} role="alert" />
                     ) : null}
 
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <div className="gm-pr-share-submit-actions">
                       <Button
                         type="primary"
                         htmlType="submit"
                         data-testid="pr-share-submit-btn"
                         loading={submitting}
                         disabled={submitting}
-                        style={{ whiteSpace: 'nowrap' }}
+                        className="gm-pr-share-nowrap-btn"
                       >
                         {submitting ? copy.submittingBtn : copy.submitBtn}
                       </Button>

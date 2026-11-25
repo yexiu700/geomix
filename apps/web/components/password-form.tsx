@@ -50,9 +50,9 @@ export function PasswordForm({
           .finally(() => setBusy(false));
       }}
     >
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-account-alert" /> : null}
       {notice ? (
-        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={notice} className="gm-account-alert" />
       ) : null}
       <Form.Item
         label="当前密码"
@@ -90,7 +90,7 @@ export function PasswordForm({
       >
         <Input.Password placeholder="请再次输入新密码" autoComplete="new-password" />
       </Form.Item>
-      <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+      <Space className="gm-password-actions">
         {onCancel ? (
           <Button
             onClick={() => {
