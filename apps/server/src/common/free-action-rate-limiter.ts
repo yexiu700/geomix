@@ -35,6 +35,8 @@ const DEFAULT_EXTENSION_TOKEN_ISSUE_MAX = 10;
 const DEFAULT_EXTENSION_TOKEN_ISSUE_WINDOW_SECONDS = 60;
 const DEFAULT_EXTENSION_SYNC_MAX = 60;
 const DEFAULT_EXTENSION_SYNC_WINDOW_SECONDS = 60;
+const DEFAULT_MARKET_AI_SUGGEST_MAX = 15;
+const DEFAULT_MARKET_AI_SUGGEST_WINDOW_SECONDS = 60;
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
@@ -140,6 +142,17 @@ export function readExtensionSyncRateLimit(
   const windowSeconds = readPositiveInt(
     env.EXTENSION_SYNC_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_EXTENSION_SYNC_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readMarketAiSuggestRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.MARKET_AI_SUGGEST_RATE_LIMIT_MAX, DEFAULT_MARKET_AI_SUGGEST_MAX);
+  const windowSeconds = readPositiveInt(
+    env.MARKET_AI_SUGGEST_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_MARKET_AI_SUGGEST_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }

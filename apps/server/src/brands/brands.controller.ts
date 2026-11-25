@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  brandMarketAiSuggestSchema,
   createBrandSchema,
   ok,
   updateBrandMarketSchema,
@@ -22,13 +23,18 @@ import { AuthGuard } from '../auth/auth.guard';
 import { clientAddress } from '../auth/client-address';
 import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { parseBody } from '../common/parse-body';
+import { BrandMarketAiSuggestService } from './brand-market-ai-suggest.service';
 import { parseBrandId, parseMarket, requireAuth } from './brands.http-utils';
 import { BrandsService } from './brands.service';
 
 @Controller({ path: 'brands', version: '2' })
 @UseGuards(AuthGuard)
 export class BrandsController {
-  constructor(@Inject(BrandsService) private readonly brands: BrandsService) {}
+  constructor(
+    @Inject(BrandsService) private readonly brands: BrandsService,
+    @Inject(BrandMarketAiSuggestService)
+    private readonly marketAiSuggest: BrandMarketAiSuggestService,
+  ) {}
 
   @Get()
   async list() {
@@ -99,5 +105,24 @@ export class BrandsController {
     const market = parseMarket(rawMarket);
     const input = parseBody(updateBrandMarketSchema, body);
     return ok(await this.brands.updateMarket(auth.tenantId, auth.userId, brandId, market, input));
+  }
+
+  @Post(':id/markets/:market/ai-suggest')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async suggestMarketConfig(
+    @Req() request: unknown,
+    @Param('id') id: string,
+    @Param('market') rawMarket: string,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(request);
+    const brandId = parseBrandId(id);
+    const market = parseMarket(rawMarket);
+    const normalizedBody = body && typeof body === 'object' ? body : {};
+    const input = parseBody(brandMarketAiSuggestSchema, normalizedBody);
+    return ok(
+      await this.marketAiSuggest.suggest(auth.tenantId, auth.userId, brandId, market, input),
+    );
   }
 }

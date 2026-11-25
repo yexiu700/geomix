@@ -10,12 +10,15 @@ import {
   BRAND_TRUTH_CHECKBOX_LABEL,
   type BrandFactCoreSlot,
   type BrandFactsResponse,
+  type BrandMarketAiSuggestInput,
+  type BrandMarketAiSuggestResponse,
   type BrandRecord,
   type CreateBrandInput,
   type ExtractBrandFactsResponse,
   type ExtractedBrandFactDraft,
   type FactSourceType,
   type GeoMarket,
+  type UpdateBrandMarketInput,
   type UpsertBrandFactsInput,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Form, Input, Modal, Space, Tag } from 'antd';
@@ -25,11 +28,14 @@ import { useUxFeedback } from '../crud/ux-feedback';
 import {
   CORE_FACT_SLOTS,
   FACT_EXTRACT_ACCEPT,
+  mergeAiMarketSuggestions,
   serializeCompetitorRows,
   validateDomainListInput,
   validateFactUploadFile,
+  type BrandMarketAiSuggestSelection,
   type CompetitorDraftRow,
 } from './brand-form-helpers';
+import { BrandMarketAiSuggestModal } from './brand-market-ai-suggest-modal';
 
 type Step1FormValues = {
   name: string;
@@ -54,6 +60,16 @@ export type BrandQuickCreateModalProps = {
   ) => Promise<ExtractBrandFactsResponse>;
   onSaveFacts?: (brandId: string, input: UpsertBrandFactsInput) => Promise<BrandFactsResponse>;
   onBrandFactsSaved?: (brandId: string, signedAt: string | null) => void;
+  onSuggestMarketConfig?: (
+    brandId: string,
+    market: GeoMarket,
+    input?: BrandMarketAiSuggestInput,
+  ) => Promise<BrandMarketAiSuggestResponse>;
+  onSaveMarketConfig?: (
+    brandId: string,
+    market: GeoMarket,
+    input: UpdateBrandMarketInput,
+  ) => Promise<BrandRecord>;
 };
 
 let rowSeq = 1;
@@ -92,12 +108,15 @@ export function BrandQuickCreateModal({
   onExtractFacts,
   onSaveFacts,
   onBrandFactsSaved,
+  onSuggestMarketConfig,
+  onSaveMarketConfig,
 }: BrandQuickCreateModalProps) {
   const feedback = useUxFeedback();
   const [form] = Form.useForm<Step1FormValues>();
   const watchedMarkets = Form.useWatch('markets', form);
   const hasGlobalSelected = Array.isArray(watchedMarkets) && watchedMarkets.includes('GLOBAL');
-  const [step, setStep] = useState<'create' | 'extract'>('create');
+  const hasPrefillStep = Boolean(onSuggestMarketConfig && onSaveMarketConfig);
+  const [step, setStep] = useState<'create' | 'extract' | 'prefill'>('create');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,8 +141,23 @@ export function BrandQuickCreateModal({
   const [termsOpen, setTermsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Step 3 state: automatic AI market config prefill after saving facts
+  const [prefillMarket, setPrefillMarket] = useState<GeoMarket>('CN');
+  const [prefillLoading, setPrefillLoading] = useState(false);
+  const [prefillSaving, setPrefillSaving] = useState(false);
+  const [prefillError, setPrefillError] = useState<string | null>(null);
+  const [prefillSuggestion, setPrefillSuggestion] = useState<BrandMarketAiSuggestResponse | null>(
+    null,
+  );
+  const [prefillSourceUrl, setPrefillSourceUrl] = useState('');
+  const prefillSeqRef = useRef(0);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      prefillSeqRef.current += 1;
+      return;
+    }
+    prefillSeqRef.current += 1;
     setStep('create');
     setSubmitting(false);
     setError(null);
@@ -141,6 +175,12 @@ export function BrandQuickCreateModal({
     setTruthAgreed(false);
     setSavingFacts(false);
     setTermsOpen(false);
+    setPrefillMarket('CN');
+    setPrefillLoading(false);
+    setPrefillSaving(false);
+    setPrefillError(null);
+    setPrefillSuggestion(null);
+    setPrefillSourceUrl('');
     form.setFieldsValue({
       name: '',
       category: '',
@@ -152,7 +192,7 @@ export function BrandQuickCreateModal({
     });
   }, [form, open]);
 
-  const busy = submitting || extracting || savingFacts;
+  const busy = submitting || extracting || savingFacts || prefillSaving;
 
   const handleClose = () => {
     if (busy) return;
@@ -319,6 +359,36 @@ export function BrandQuickCreateModal({
     }
   };
 
+  const runMarketPrefill = async (brandId: string, targetMarket: GeoMarket, sourceUrl?: string) => {
+    if (!onSuggestMarketConfig) return;
+    const seq = ++prefillSeqRef.current;
+    setPrefillLoading(true);
+    setPrefillError(null);
+    setPrefillSuggestion(null);
+    const trimmedUrl = sourceUrl?.trim() || '';
+    try {
+      const response = await onSuggestMarketConfig(
+        brandId,
+        targetMarket,
+        trimmedUrl ? { sourceUrl: trimmedUrl } : {},
+      );
+      if (seq !== prefillSeqRef.current) return;
+      setPrefillSuggestion(response);
+      setPrefillError(null);
+    } catch (reason: unknown) {
+      if (seq !== prefillSeqRef.current) return;
+      setPrefillError(
+        reason instanceof Error && reason.message
+          ? reason.message
+          : 'AI 市场配置建议生成失败，您可以跳过直接进入工作区',
+      );
+    } finally {
+      if (seq === prefillSeqRef.current) {
+        setPrefillLoading(false);
+      }
+    }
+  };
+
   const handleSaveExtractedFacts = async () => {
     if (!createdBrand || !onSaveFacts || !drafts) return;
     setExtractError(null);
@@ -341,7 +411,15 @@ export function BrandQuickCreateModal({
       });
       onBrandFactsSaved?.(createdBrand.id, saved.truthAgreementSignedAt);
       feedback.notifySuccess('已保存 4 块品牌事实卡');
-      onClose();
+
+      if (hasPrefillStep) {
+        const targetMarket: GeoMarket = createdBrand.markets[0]?.market ?? 'CN';
+        setPrefillMarket(targetMarket);
+        setStep('prefill');
+        void runMarketPrefill(createdBrand.id, targetMarket);
+      } else {
+        onClose();
+      }
     } catch (reason: unknown) {
       setExtractError(
         reason instanceof Error && reason.message ? reason.message : '保存品牌事实卡失败',
@@ -351,10 +429,51 @@ export function BrandQuickCreateModal({
     }
   };
 
+  const handleConfirmMarketPrefill = async (selection: BrandMarketAiSuggestSelection) => {
+    if (!createdBrand || !onSaveMarketConfig) return;
+    const existingMarket = createdBrand.markets.find((m) => m.market === prefillMarket);
+    const merged = mergeAiMarketSuggestions({
+      market: prefillMarket,
+      current: {
+        localBrandName: existingMarket?.localBrandName ?? createdBrand.name,
+        localCategory: existingMarket?.localCategory ?? '',
+        aliases: existingMarket?.aliases ?? [],
+        competitors: existingMarket?.competitors ?? [],
+        seedPrompts: existingMarket?.seedPrompts ?? [],
+        controlPrompts: existingMarket?.controlPrompts ?? [],
+      },
+      selection,
+    });
+
+    setPrefillSaving(true);
+    setPrefillError(null);
+    try {
+      await onSaveMarketConfig(createdBrand.id, prefillMarket, {
+        localBrandName: merged.localBrandName.trim() || createdBrand.name,
+        localCategory: merged.localCategory.trim() || null,
+        aliases: merged.aliases,
+        competitors: merged.competitors,
+        seedPrompts: merged.seedPrompts,
+        controlPrompts: merged.controlPrompts,
+      });
+      feedback.notifySuccess('已保存市场配置，可前往「可见度诊断」一键填入种子问句发起首轮监测');
+      onClose();
+    } catch (reason: unknown) {
+      setPrefillError(
+        reason instanceof Error && reason.message ? reason.message : '保存市场配置失败，请重试',
+      );
+    } finally {
+      setPrefillSaving(false);
+    }
+  };
+
+  const activePrefillMarketRecord =
+    createdBrand?.markets.find((m) => m.market === prefillMarket) ?? null;
+
   return (
     <>
       <Modal
-        open={open}
+        open={open && step !== 'prefill'}
         title="60 秒创建品牌"
         width={660}
         onCancel={handleClose}
@@ -373,9 +492,25 @@ export function BrandQuickCreateModal({
             <span className="gm-brand-step-sep" aria-hidden="true">
               →
             </span>
-            <span className={step === 'extract' ? 'gm-brand-step is-active' : 'gm-brand-step'}>
+            <span
+              className={
+                step === 'extract'
+                  ? 'gm-brand-step is-active'
+                  : step === 'prefill'
+                    ? 'gm-brand-step is-done'
+                    : 'gm-brand-step'
+              }
+            >
               2. AI 提炼 4 块事实卡（可选 · 免费）
             </span>
+            {hasPrefillStep ? (
+              <>
+                <span className="gm-brand-step-sep" aria-hidden="true">
+                  →
+                </span>
+                <span className="gm-brand-step">3. AI 补全市场配置（可选 · 免费）</span>
+              </>
+            ) : null}
           </div>
 
           {step === 'create' ? (
@@ -808,6 +943,33 @@ export function BrandQuickCreateModal({
           )}
         </div>
       </Modal>
+
+      <BrandMarketAiSuggestModal
+        open={open && step === 'prefill'}
+        market={prefillMarket}
+        mode="full"
+        loading={prefillLoading}
+        saving={prefillSaving}
+        error={prefillError}
+        suggestion={prefillSuggestion}
+        currentLocalBrandName={
+          activePrefillMarketRecord?.localBrandName ?? createdBrand?.name ?? ''
+        }
+        currentLocalCategory={activePrefillMarketRecord?.localCategory ?? ''}
+        sourceUrl={prefillSourceUrl}
+        allowSourceUrl={true}
+        confirmLabel="保存市场配置并完成"
+        cancelLabel="跳过，直接进入"
+        footerHint="勾选确认后直接保存市场配置，随后可在可见度诊断页一键填入种子问句发起首轮监测。"
+        onSourceUrlChange={setPrefillSourceUrl}
+        onRegenerate={(url) => {
+          if (createdBrand) {
+            void runMarketPrefill(createdBrand.id, prefillMarket, url);
+          }
+        }}
+        onConfirm={handleConfirmMarketPrefill}
+        onCancel={handleClose}
+      />
 
       <Modal
         open={termsOpen}
