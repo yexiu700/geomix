@@ -3,6 +3,8 @@ import {
   type BrandDeleteResponse,
   type BrandFactsResponse,
   type BrandListResponse,
+  type BrandMarketAiSuggestInput,
+  type BrandMarketAiSuggestResponse,
   type BrandMediaAssetRecord,
   type BrandMediaDeleteResponse,
   type BrandMediaListResponse,
@@ -25,6 +27,8 @@ import { apiBase, type SessionStorageLike } from './session';
 export type {
   BrandDeleteResponse,
   BrandFactsResponse,
+  BrandMarketAiSuggestInput,
+  BrandMarketAiSuggestResponse,
   BrandMediaDeleteResponse,
   BrandMediaListResponse,
   BrandMediaUploadResponse,
@@ -144,6 +148,23 @@ export function updateBrandMarket(
     `/brands/${encodeURIComponent(brandId)}/markets/${encodeURIComponent(market)}`,
     {
       method: 'PATCH',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function suggestBrandMarketConfig(
+  brandId: string,
+  market: GeoMarket,
+  input: BrandMarketAiSuggestInput = {},
+  options?: BrandClientOptions,
+): Promise<BrandMarketAiSuggestResponse> {
+  return authorizedV2Request<BrandMarketAiSuggestResponse>(
+    `/brands/${encodeURIComponent(brandId)}/markets/${encodeURIComponent(market)}/ai-suggest`,
+    {
+      method: 'POST',
       body: input,
       storage: options?.storage,
       signal: options?.signal,

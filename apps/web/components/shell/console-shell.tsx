@@ -3,8 +3,10 @@
 import {
   SITE_NAME,
   replaceUxJargon,
+  type BrandMarketAiSuggestInput,
   type CreateBrandInput,
   type GeoMarket,
+  type UpdateBrandMarketInput,
   type UpsertBrandFactsInput,
   type UpsertBrandMarketInput,
 } from '@geomix/shared';
@@ -38,6 +40,8 @@ import {
   enableBrandMarket,
   extractBrandFacts,
   saveBrandFacts,
+  suggestBrandMarketConfig,
+  updateBrandMarket,
   type ExtractBrandFactsRequest,
 } from '../../lib/brands';
 import { safeConsoleHref } from '../../lib/route-map';
@@ -393,6 +397,29 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
             useWorkspaceStore.getState().markBrandTruthSigned(brandId, signedAt);
           }
           invalidateFreshness('brand-facts');
+        }}
+        onSuggestBrandMarketConfig={(
+          brandId: string,
+          market: GeoMarket,
+          input?: BrandMarketAiSuggestInput,
+        ) =>
+          suggestBrandMarketConfig(brandId, market, input ?? {}, { storage: window.sessionStorage })
+        }
+        onSaveBrandMarketConfig={async (
+          brandId: string,
+          market: GeoMarket,
+          input: UpdateBrandMarketInput,
+        ) => {
+          const updated = await updateBrandMarket(brandId, market, input, {
+            storage: window.sessionStorage,
+          });
+          useWorkspaceStore.getState().upsertBrand(updated, {
+            activate: true,
+            market,
+            persistStorage: window.localStorage,
+          });
+          invalidateFreshness('brands');
+          return updated;
         }}
         onEnableMarket={handleEnableMarket}
         onToggleMenu={handleToggleMenu}

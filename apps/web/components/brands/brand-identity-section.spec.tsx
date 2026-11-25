@@ -7,10 +7,12 @@ import { BrandIdentitySection } from './brand-identity-section';
 
 const updateBrandMock = vi.fn();
 const updateBrandMarketMock = vi.fn();
+const suggestBrandMarketConfigMock = vi.fn();
 
 vi.mock('../../lib/brands', () => ({
   updateBrand: (...args: unknown[]) => updateBrandMock(...args),
   updateBrandMarket: (...args: unknown[]) => updateBrandMarketMock(...args),
+  suggestBrandMarketConfig: (...args: unknown[]) => suggestBrandMarketConfigMock(...args),
 }));
 
 const notifySuccessMock = vi.fn();
@@ -458,5 +460,234 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(localInput.value).toBe('青松存储');
     expect(screen.queryByLabelText('市场竞品名称 2')).toBeNull();
     expect(notifySuccessMock).toHaveBeenCalledWith('已保存国内市场配置');
+  });
+
+  it('opens grouped AI prefill modal with optional URL regenerate, supports uncheck & inline edit, appends without overwriting, and never silently saves (#405)', async () => {
+    const brand = makeDualMarketBrand();
+    suggestBrandMarketConfigMock
+      .mockResolvedValueOnce({
+        market: 'CN',
+        aliases: ['DXP4800', 'PV-600', 'PV-800'],
+        competitors: [
+          { name: '群晖', aliases: [], domains: ['synology.com'] },
+          { name: '极光盘盒', aliases: ['AuroraBox'], domains: ['aurorabox.example.com'] },
+        ],
+        seedPrompts: [
+          { prompt: '2026年家用 NAS哪个品牌好？', intent: 'BUYING_GUIDE' },
+          { prompt: '四盘位静音家用 NAS 避坑指南', intent: 'BUYING_GUIDE' },
+          { prompt: '青松存储 PV-600 功耗与噪音实测', intent: 'SKU_REVIEW' },
+        ],
+        controlPrompts: ['家用路由器如何选择？', 'NAS 硬盘 RAID1 与 RAID5 差异'],
+        fallbackUsed: false,
+      })
+      .mockResolvedValueOnce({
+        market: 'CN',
+        aliases: ['PV-900'],
+        competitors: [],
+        seedPrompts: [{ prompt: '青松存储 PV-900 六盘位评测', intent: 'SKU_REVIEW' }],
+        controlPrompts: [],
+        fallbackUsed: false,
+      });
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="CN"
+        activeBrandMarket={brand.markets[0]!}
+        readOnly={false}
+        onBrandUpdated={vi.fn()}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    // Manually add a custom alias before opening AI prefill to verify zero overwrite
+    fireEvent.change(screen.getByLabelText('添加市场别名'), { target: { value: '手工保留词' } });
+    fireEvent.click(screen.getAllByRole('button', { name: '+ 添加' })[0]!);
+    expect(screen.getByText('手工保留词')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
+
+    await waitFor(() => {
+      expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
+        'b-id-1',
+        'CN',
+        {},
+        expect.anything(),
+      );
+    });
+
+    // All groups render and default checked
+    expect(await screen.findByTestId('ai-suggest-group-aliases')).toBeTruthy();
+    expect(screen.getByTestId('ai-suggest-group-competitors')).toBeTruthy();
+    expect(screen.getByTestId('ai-suggest-group-seedPrompts')).toBeTruthy();
+    expect(screen.getByTestId('ai-suggest-group-controlPrompts')).toBeTruthy();
+
+    // Uncheck PV-800 (3rd alias) and inline-edit PV-600 -> PV-600 Pro
+    fireEvent.click(screen.getByLabelText('勾选别名建议 3'));
+    fireEvent.change(screen.getByLabelText('编辑别名建议 2'), {
+      target: { value: 'PV-600 Pro' },
+    });
+
+    // Adopt selected items
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    // Never silently writes to DB
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+    expect(updateBrandMock).not.toHaveBeenCalled();
+
+    // Preserved user items + appended edited items + excluded unchecked item
+    expect(screen.getByText('手工保留词')).toBeTruthy();
+    expect(screen.getByText('DXP4800')).toBeTruthy();
+    expect(screen.getByText('PV-600 Pro')).toBeTruthy();
+    expect(screen.queryByText('PV-800')).toBeNull();
+    expect(screen.getByDisplayValue('极光盘盒')).toBeTruthy();
+    expect(screen.getByDisplayValue('群晖')).toBeTruthy();
+    expect(screen.getByText('四盘位静音家用 NAS 避坑指南')).toBeTruthy();
+    expect(screen.getByText('青松存储 PV-600 功耗与噪音实测')).toBeTruthy();
+    expect(screen.getByText('NAS 硬盘 RAID1 与 RAID5 差异')).toBeTruthy();
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+
+    // Re-open and test optional product page URL regenerate
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
+    await screen.findByTestId('brand-ai-suggest-modal');
+    fireEvent.change(screen.getByLabelText('补充商品页链接（选填）'), {
+      target: { value: 'https://pinevault.example.com/pv-900' },
+    });
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'CN',
+      aliases: ['PV-900'],
+      competitors: [],
+      seedPrompts: [{ prompt: '青松存储 PV-900 六盘位评测', intent: 'SKU_REVIEW' }],
+      controlPrompts: [],
+      fallbackUsed: false,
+    });
+    fireEvent.click(screen.getByRole('button', { name: '结合链接重新生成' }));
+    await waitFor(() => {
+      expect(suggestBrandMarketConfigMock).toHaveBeenLastCalledWith(
+        'b-id-1',
+        'CN',
+        { sourceUrl: 'https://pinevault.example.com/pv-900' },
+        expect.anything(),
+      );
+    });
+  });
+
+  it('enforces field caps (5 control prompts) with truncation warning when adopting AI suggestions', async () => {
+    const brand = makeDualMarketBrand();
+    brand.markets[0]!.controlPrompts = ['已有对照 1', '已有对照 2', '已有对照 3', '已有对照 4'];
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'CN',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [],
+      controlPrompts: ['新增对照 A', '新增对照 B', '新增对照 C'],
+      fallbackUsed: false,
+    });
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="CN"
+        activeBrandMarket={brand.markets[0]!}
+        readOnly={false}
+        onBrandUpdated={vi.fn()}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
+    await screen.findByTestId('ai-suggest-group-controlPrompts');
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    // Only 1 slot remaining out of 5 -> 2 truncated with warning
+    expect(screen.getByText('新增对照 A')).toBeTruthy();
+    expect(screen.queryByText('新增对照 B')).toBeNull();
+    expect(notifyWarningMock).toHaveBeenCalledWith(expect.stringContaining('对照组截断 2 条'));
+  });
+
+  it('upgrades 按当前品类重新生成种子问句 to AI suggest and falls back to static templates on error without overwriting existing seeds', async () => {
+    const brand = makeDualMarketBrand();
+    suggestBrandMarketConfigMock.mockRejectedValueOnce(new Error('网络超时'));
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="CN"
+        activeBrandMarket={brand.markets[0]!}
+        readOnly={false}
+        onBrandUpdated={vi.fn()}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '按当前品类重新生成种子问句' }));
+
+    await waitFor(() => {
+      expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
+        'b-id-1',
+        'CN',
+        { fields: ['seedPrompts'] },
+        expect.anything(),
+      );
+    });
+
+    // Fallback notice shown inside preview modal with static template prompts
+    expect(await screen.findByTestId('brand-ai-suggest-fallback-notice')).toBeTruthy();
+    expect(screen.getByTestId('ai-suggest-group-seedPrompts')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    // Existing seed prompt preserved (append-only, never overwritten)
+    expect(screen.getByText('2026年家用 NAS哪个品牌好？')).toBeTruthy();
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+  });
+
+  it('provides AI 一键英文本地化 inside GLOBAL localization warning banner and updates English identity on adopt', async () => {
+    const brand = makeDualMarketBrand();
+    // Simulate CJK localBrandName & empty localCategory on GLOBAL market
+    brand.markets[1]!.localBrandName = '青松存储';
+    brand.markets[1]!.localCategory = null;
+
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'GLOBAL',
+      localBrandName: 'PineVault',
+      localCategory: 'Home NAS',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [],
+      controlPrompts: [],
+      fallbackUsed: false,
+    });
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={brand.markets[1]!}
+        readOnly={false}
+        onBrandUpdated={vi.fn()}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('global-localization-guide')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('global-ai-localize-btn'));
+
+    await waitFor(() => {
+      expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
+        'b-id-1',
+        'GLOBAL',
+        { fields: ['localIdentity'] },
+        expect.anything(),
+      );
+    });
+
+    expect(await screen.findByTestId('ai-suggest-group-localIdentity')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    expect((screen.getByLabelText('当地品牌名') as HTMLInputElement).value).toBe('PineVault');
+    expect((screen.getByLabelText('当地品类名称') as HTMLInputElement).value).toBe('Home NAS');
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
   });
 });

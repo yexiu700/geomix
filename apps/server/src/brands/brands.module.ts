@@ -7,6 +7,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { BrandFactIndexRunner } from './brand-fact-index.runner';
 import { BrandFactsController } from './brand-facts.controller';
 import { BrandFactsService } from './brand-facts.service';
+import { BrandMarketAiSuggestService } from './brand-market-ai-suggest.service';
 import { BrandMediaController, BrandMediaPublicController } from './brand-media.controller';
 import { BrandMediaService } from './brand-media.service';
 import { BrandProductLinesController } from './brand-product-lines.controller';
@@ -30,6 +31,7 @@ import { BrandsService } from './brands.service';
     FreeActionRateLimiter,
     BrandFactIndexRunner,
     BrandFactsService,
+    BrandMarketAiSuggestService,
     {
       provide: GALLERY_MAX_INPUT_BYTES_TOKEN,
       useFactory: () => () => readGalleryMaxInputBytes(process.env),
@@ -41,6 +43,7 @@ import { BrandsService } from './brands.service';
     BrandProductLinesService,
     BrandFactsService,
     BrandFactIndexRunner,
+    BrandMarketAiSuggestService,
     BrandMediaService,
     FreeActionRateLimiter,
   ],
