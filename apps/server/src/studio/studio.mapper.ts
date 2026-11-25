@@ -182,6 +182,7 @@ export type GeoArticleRowWithMarket = {
   id: string;
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
   briefId: string | null;
   batchJobId: string | null;
   recipe: string;
@@ -217,6 +218,7 @@ export function presentGeoArticle(
     id: row.id,
     brandId: row.brandId,
     brandMarketId: row.brandMarketId,
+    productLineId: row.productLineId ?? null,
     market,
     briefId: row.briefId,
     batchJobId: row.batchJobId,

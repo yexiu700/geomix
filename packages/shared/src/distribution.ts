@@ -102,6 +102,7 @@ export const RETEST_SCHEDULE_STATUSES = [
   'COMPLETED',
   'SKIPPED_INSUFFICIENT_POINTS',
   'SKIPPED_NO_ENGINE',
+  'SKIPPED_BUDGET_CAP',
   'FAILED',
   'CANCELLED',
 ] as const;
@@ -266,6 +267,7 @@ export const RETEST_SCHEDULE_STATUS_LABELS: Record<RetestScheduleStatus, string>
   COMPLETED: '已完成',
   SKIPPED_INSUFFICIENT_POINTS: '点数不足已跳过',
   SKIPPED_NO_ENGINE: '无可用引擎已跳过',
+  SKIPPED_BUDGET_CAP: '超出月度预算上限已跳过',
   FAILED: '复测失败',
   CANCELLED: '已取消',
 };
@@ -820,6 +822,14 @@ export type DistributionChannelAttributionItem = {
   avgPositionDelta: number | null;
   positiveSentimentRate: number | null;
   sentimentSummary: string | null;
+};
+
+export type RetestBudgetSummaryDto = {
+  monthKey: string;
+  capPoints: number | null;
+  usedPoints: number;
+  remainingPoints: number | null;
+  skippedCount: number;
 };
 
 export type DistributionSummaryDto = {

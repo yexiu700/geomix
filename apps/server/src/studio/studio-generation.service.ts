@@ -8,14 +8,16 @@ import {
   LLM_STREAM_IDLE_TIMEOUT_MS,
   LLM_STREAM_TIMEOUT_MS,
   cleanTitleText,
+  containsCjk,
   detectLocaleLeakage,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
   normalizeMissingFactPlaceholdersForMarket,
   postProcessArticleMarkdown,
+  resolveEffectiveCategory,
   resolveEffectiveLocale,
-  resolveGlobalCategoryLabel,
   resolveLocaleWritingDirective,
+  resolveProductLineLocalName,
   stripInlineJsonLdBlocks,
   type GeoComplianceFlag,
   type GeoEvaluationResult,
@@ -64,11 +66,21 @@ export type StudioMarketContext = {
   competitors: readonly string[];
 };
 
+export type StudioProductLineContext = {
+  id?: string;
+  name?: string | null;
+  localNamesJson?: unknown;
+  category?: string | null;
+  localCategoriesJson?: unknown;
+  competitorsJson?: unknown;
+};
+
 export type StudioGenerateArticleParams = {
   tenantId: string;
   articleId: string;
   brand: StudioBrandContext;
   market: StudioMarketContext;
+  productLine?: StudioProductLineContext | null;
   recipe: GeoRecipe;
   targetFormat: GeoTargetFormat;
   targetLocale?: SupportedLocale;
@@ -106,6 +118,8 @@ export type StudioRewriteSectionParams = {
   articleId: string;
   market: StudioMarketContext;
   brand: StudioBrandContext;
+  productLineId?: string | null;
+  productLine?: StudioProductLineContext | null;
   targetLocale?: SupportedLocale;
   action: GeoRewriteAction;
   selectedText: string;
@@ -139,12 +153,14 @@ export class StudioGenerationService {
     tenantId: string,
     brandId: string,
     query: string,
+    productLineId?: string | null,
   ): Promise<RetrievedBrandFactSnippet[]> {
     return this.factIndexRunner.retrieveRelevantBrandFacts(
       tenantId,
       brandId,
       query,
       BRAND_FACT_TOP_K_CHUNKS,
+      productLineId,
     );
   }
 
@@ -154,7 +170,12 @@ export class StudioGenerationService {
       params.targetLocale ?? params.market.locale,
       params.market.market,
     );
-    const allowedTerms = collectAllowedTerms(params.brand, params.market);
+    const effectiveCategory = resolveEffectiveCategory(
+      params.brand,
+      params.market,
+      params.productLine,
+    );
+    const allowedTerms = collectAllowedTerms(params.brand, params.market, params.productLine);
     const usesFakePrimary = this.llm.usesFakePrimary('geo_write');
     let rawText = '';
     let suggestedTitle = params.title ?? '';
@@ -184,10 +205,7 @@ export class StudioGenerationService {
         recipe: params.recipe,
         targetFormat: params.targetFormat,
         localBrandName: params.market.localBrandName,
-        category:
-          params.market.market === 'GLOBAL'
-            ? resolveGlobalCategoryLabel(params.brand.category, params.market.localCategory)
-            : params.market.localCategory?.trim() || params.brand.category,
+        category: effectiveCategory,
         competitors: params.market.competitors,
         targetPrompt: params.targetPrompt,
         title: params.title,
@@ -320,8 +338,8 @@ export class StudioGenerationService {
       market: params.market.market,
       locale: effectiveLocale,
       localBrandName: params.market.localBrandName,
-      category: params.brand.category,
-      localCategory: params.market.localCategory,
+      category: effectiveCategory,
+      localCategory: effectiveCategory,
       ownedDomains: params.market.ownedDomains,
       title: finalTitle,
       targetPrompt: params.targetPrompt,
@@ -359,11 +377,12 @@ export class StudioGenerationService {
       params.targetLocale ?? params.market.locale,
       params.market.market,
     );
-    const allowedTerms = collectAllowedTerms(params.brand, params.market);
+    const allowedTerms = collectAllowedTerms(params.brand, params.market, params.productLine);
     const factSnippets = await this.retrieveFacts(
       params.tenantId,
       params.brand.id,
       params.selectedText.slice(0, 300),
+      params.productLineId ?? params.productLine?.id ?? null,
     );
     const usesFakePrimary = this.llm.usesFakePrimary('geo_rewrite');
     let rawRewritten = '';
@@ -448,10 +467,23 @@ export class StudioGenerationService {
   }
 }
 
-function collectAllowedTerms(brand: StudioBrandContext, market: StudioMarketContext): string[] {
-  return [brand.name, market.localBrandName, ...market.aliases, ...market.competitors].filter(
-    (term) => term.trim().length > 0,
-  );
+function collectAllowedTerms(
+  brand: StudioBrandContext,
+  market: StudioMarketContext,
+  productLine?: StudioProductLineContext | null,
+): string[] {
+  const lineLocalName = resolveProductLineLocalName(productLine, market.market);
+  const rawLineName = typeof productLine?.name === 'string' ? productLine.name.trim() : '';
+  const safeLineName =
+    rawLineName && (market.market === 'CN' || !containsCjk(rawLineName)) ? rawLineName : null;
+  return [
+    brand.name,
+    market.localBrandName,
+    ...market.aliases,
+    ...market.competitors,
+    ...(safeLineName ? [safeLineName] : []),
+    ...(lineLocalName ? [lineLocalName] : []),
+  ].filter((term) => term.trim().length > 0);
 }
 
 function formatLocaleLeakageError(locale: SupportedLocale): string {
@@ -525,7 +557,6 @@ function mergeComplianceFlags(
 }
 
 function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[] {
-  const isGlobal = params.market.market === 'GLOBAL';
   const effectiveLocale = resolveEffectiveLocale(
     params.targetLocale ?? params.market.locale,
     params.market.market,
@@ -538,9 +569,11 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
 
   const formatDesc = GEO_TARGET_FORMAT_LABELS[params.targetFormat];
   const recipeDesc = GEO_RECIPE_LABELS[params.recipe];
-  const effectiveCategory = isGlobal
-    ? resolveGlobalCategoryLabel(params.brand.category, params.market.localCategory)
-    : params.market.localCategory?.trim() || params.brand.category;
+  const effectiveCategory = resolveEffectiveCategory(
+    params.brand,
+    params.market,
+    params.productLine,
+  );
 
   const placeholderExample =
     effectiveLocale !== 'zh-CN' ? '[TBD: e.g., Standby Power Draw W]' : '[待补充：如待机功耗 W]';

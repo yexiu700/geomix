@@ -7,12 +7,15 @@ import {
   computeAvgPosition,
   computeSentimentSummary,
   computeVisibilityPct,
+  containsCjk,
   isCitationSourceKind,
   isVisibilityEngine,
   isVisibilitySentiment,
   normalizeFanOutQueries,
   normalizeVisibilityDomain,
+  readProductLineMarketCompetitors,
   recomputeRunMetrics,
+  resolveProductLineLocalName,
   toShanghaiDateKey,
   type CitationSourceKind,
   type CompetitorHit,
@@ -243,10 +246,50 @@ export function isEffectiveBrandMention(
 
 export type ReservationPointsSnapshot = { frozen: number; settled: number; released: number };
 
+export type ProductLineVisibilityContext = {
+  id?: string;
+  name?: string | null;
+  localNamesJson?: unknown;
+  competitorsJson?: unknown;
+};
+
+export function mergeProductLineBrandAliases(
+  baseAliases: readonly string[],
+  productLine: ProductLineVisibilityContext | null | undefined,
+  market: GeoMarket,
+): string[] {
+  const extra: string[] = [];
+  if (productLine) {
+    const rawName = typeof productLine.name === 'string' ? productLine.name.trim() : '';
+    if (rawName && (market === 'CN' || !containsCjk(rawName))) {
+      extra.push(rawName);
+    }
+    const localName = resolveProductLineLocalName(productLine, market);
+    if (localName) extra.push(localName);
+  }
+  return dedupeStringsCaseInsensitive([...baseAliases, ...extra]);
+}
+
+export function resolveEffectiveVisibilityCompetitors(
+  marketCompetitorsRaw: unknown,
+  productLine: ProductLineVisibilityContext | null | undefined,
+  market: GeoMarket,
+): VisibilityCompetitor[] {
+  if (productLine) {
+    const lineComps = readProductLineMarketCompetitors(productLine.competitorsJson, market);
+    if (lineComps.length > 0) {
+      return parseProfileCompetitors(lineComps);
+    }
+  }
+  return parseProfileCompetitors(marketCompetitorsRaw);
+}
+
 export type RunRowForMapper = {
   id: string;
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
+  productLine?: ProductLineVisibilityContext | null;
   name: string;
   engines: string[];
   prompts: string[];
@@ -283,10 +326,20 @@ export function presentRunRecord(
   row: RunRowForMapper,
   reservation?: ReservationPointsSnapshot,
 ): VisibilityRunRecord {
-  const competitorNames = parseProfileCompetitors(row.brandMarket.competitors).map((c) => c.name);
+  const effectiveCompetitors = resolveEffectiveVisibilityCompetitors(
+    row.brandMarket.competitors,
+    row.productLine,
+    row.brandMarket.market,
+  );
+  const competitorNames = effectiveCompetitors.map((c) => c.name);
+  const brandAliases = mergeProductLineBrandAliases(
+    row.brandMarket.aliases ?? [],
+    row.productLine,
+    row.brandMarket.market,
+  );
   const relevanceCtx: RelevanceBrandContext = {
     brandName: row.brandMarket.localBrandName,
-    brandAliases: row.brandMarket.aliases ?? [],
+    brandAliases,
     competitorNames,
   };
   const completedObs = row.observations.filter((obs) => obs.status === 'SUCCESS');
@@ -299,6 +352,7 @@ export function presentRunRecord(
     profileName: `${row.brandMarket.brand.name} (${row.brandMarket.market})`,
     brandId: row.brandId,
     brandMarketId: row.brandMarketId,
+    productLineId: row.productLineId ?? null,
     market: row.brandMarket.market,
     brandName: row.brandMarket.localBrandName,
     keywordId: null,

@@ -57,6 +57,7 @@ type BrandMarketRow = {
   seedPrompts: string[];
   supportedLocales?: string[];
   controlPrompts?: string[];
+  monthlyRetestPointCap?: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -133,6 +134,7 @@ export class BrandsService {
         seedPrompts: string[];
         supportedLocales?: string[];
         controlPrompts?: string[];
+        monthlyRetestPointCap?: number | null;
       };
       const defaults = GEO_MARKET_DEFAULTS[entry.market];
       const locale = entry.locale?.trim() || defaults.locale;
@@ -179,6 +181,7 @@ export class BrandsService {
         seedPrompts,
         supportedLocales,
         controlPrompts,
+        monthlyRetestPointCap: entry.monthlyRetestPointCap ?? null,
       };
     });
 
@@ -227,6 +230,7 @@ export class BrandsService {
               seedPrompts: m.seedPrompts,
               supportedLocales: m.supportedLocales,
               controlPrompts: m.controlPrompts,
+              monthlyRetestPointCap: m.monthlyRetestPointCap,
             })),
           },
         },
@@ -453,6 +457,7 @@ export class BrandsService {
           seedPrompts,
           supportedLocales,
           controlPrompts,
+          monthlyRetestPointCap: input.monthlyRetestPointCap ?? null,
         },
       });
     } catch (error) {
@@ -574,6 +579,11 @@ export class BrandsService {
       userId,
     });
 
+    const nextMonthlyRetestPointCap =
+      input.monthlyRetestPointCap !== undefined
+        ? input.monthlyRetestPointCap
+        : (existingMarket.monthlyRetestPointCap ?? null);
+
     await this.prisma.scoped.brandMarket.update({
       where: { id: existingMarket.id },
       data: {
@@ -587,6 +597,7 @@ export class BrandsService {
         seedPrompts: nextSeedPrompts,
         supportedLocales: nextSupportedLocales,
         controlPrompts: nextControlPrompts,
+        monthlyRetestPointCap: nextMonthlyRetestPointCap,
       },
     });
 
@@ -796,6 +807,7 @@ function presentMarket(row: BrandMarketRow): BrandMarketRecord {
     seedPrompts: row.seedPrompts,
     supportedLocales: storedLocales.length > 0 ? storedLocales : [defaultLocale],
     controlPrompts: Array.isArray(row.controlPrompts) ? row.controlPrompts : [],
+    monthlyRetestPointCap: row.monthlyRetestPointCap ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

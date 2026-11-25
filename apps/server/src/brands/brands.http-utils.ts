@@ -60,6 +60,30 @@ export function parseMediaId(raw: unknown): string {
   return trimmed;
 }
 
+export function parseProductLineId(raw: unknown): string {
+  if (typeof raw !== 'string') {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '产品线编号不正确');
+  }
+  const trimmed = raw.trim();
+  if (!BRAND_ID_PATTERN.test(trimmed)) {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '产品线编号不正确');
+  }
+  return trimmed;
+}
+
+export function parseOptionalProductLineId(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'string') {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '产品线编号不正确');
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!BRAND_ID_PATTERN.test(trimmed)) {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, '产品线编号不正确');
+  }
+  return trimmed;
+}
+
 export function parseMarket(raw: unknown): GeoMarket {
   if (typeof raw !== 'string') {
     throw new ApiError(400, API_ERROR.BAD_REQUEST, '市场参数仅支持 CN 或 GLOBAL');

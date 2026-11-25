@@ -10,6 +10,7 @@ import {
   DISTRIBUTION_TASK_STATUSES,
   DISTRIBUTION_TEMPLATE_KEYS,
   GEO_VARIANT_JOB_STATUSES,
+  containsCjk,
   createDistributionVariantsSchema,
   defaultDistributionModeForProvider,
   defaultTemplateKeyForProvider,
@@ -20,7 +21,10 @@ import {
   isL1ChannelProvider,
   isSafeDistributionHttpUrl,
   isSupportedLocale,
+  readProductLineMarketCompetitors,
+  resolveEffectiveCategory,
   resolveEffectiveLocale,
+  resolveProductLineLocalName,
   supportedLocalesForMarket,
   type BrandFactSlot,
   type ChannelProvider,
@@ -724,6 +728,7 @@ export class VariantGeneratorService {
     const article = await this.prisma.scoped.geoArticle.findFirst({
       where: { id: articleId },
       include: {
+        productLine: true,
         brand: {
           select: {
             id: true,
@@ -861,11 +866,18 @@ export class VariantGeneratorService {
       }
     }
 
-    // 4. 加载品牌事实卡与租户写作偏好
+    // 4. 加载品牌事实卡与租户写作偏好（按产品线隔离且优先产品线专属事实）
+    const articleProductLineId =
+      (article as { productLineId?: string | null }).productLineId ?? null;
     const [factRows, promptPreference] = await Promise.all([
       this.prisma.scoped.brandFact.findMany({
-        where: { brandId: article.brandId },
-        select: { id: true, slot: true, title: true, content: true },
+        where: articleProductLineId
+          ? {
+              brandId: article.brandId,
+              OR: [{ productLineId: null }, { productLineId: articleProductLineId }],
+            }
+          : { brandId: article.brandId },
+        select: { id: true, slot: true, title: true, content: true, productLineId: true },
         orderBy: [{ slot: 'asc' }, { updatedAt: 'desc' }],
       }),
       this.prisma.scoped.promptPreference.findFirst({
@@ -874,7 +886,17 @@ export class VariantGeneratorService {
       }),
     ]);
 
-    const facts: VariantBrandFactInput[] = factRows
+    const scopedFactRows = articleProductLineId
+      ? factRows
+          .filter((row) => row.productLineId == null || row.productLineId === articleProductLineId)
+          .sort((a, b) => {
+            const aScope = a.productLineId === articleProductLineId ? 0 : 1;
+            const bScope = b.productLineId === articleProductLineId ? 0 : 1;
+            return aScope - bScope;
+          })
+      : factRows;
+
+    const facts: VariantBrandFactInput[] = scopedFactRows
       .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
       .map((row) => ({
         id: row.id,
@@ -915,12 +937,37 @@ export class VariantGeneratorService {
 
     const market: GeoMarket = article.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
     const locale = article.brandMarket.locale || (market === 'GLOBAL' ? 'en-US' : 'zh-CN');
+    const articleProductLine =
+      (
+        article as {
+          productLine?: {
+            name?: string | null;
+            localNamesJson?: unknown;
+            category?: string | null;
+            localCategoriesJson?: unknown;
+            competitorsJson?: unknown;
+          } | null;
+        }
+      ).productLine ?? null;
+    const lineLocalName = resolveProductLineLocalName(articleProductLine, market);
+    const rawLineName =
+      typeof articleProductLine?.name === 'string' ? articleProductLine.name.trim() : '';
+    const safeLineName =
+      rawLineName && (market === 'CN' || !containsCjk(rawLineName)) ? rawLineName : null;
     const brandNames = [
       article.brand.name,
       article.brandMarket.localBrandName,
       ...(article.brandMarket.aliases ?? []),
+      ...(safeLineName ? [safeLineName] : []),
+      ...(lineLocalName ? [lineLocalName] : []),
     ].filter((name) => typeof name === 'string' && name.trim().length > 0);
-    const marketCompetitors = parseCompetitorNames(article.brandMarket.competitors);
+    const lineCompetitors = articleProductLine
+      ? readProductLineMarketCompetitors(articleProductLine.competitorsJson, market)
+      : [];
+    const marketCompetitors =
+      lineCompetitors.length > 0
+        ? lineCompetitors.map((c) => c.name)
+        : parseCompetitorNames(article.brandMarket.competitors);
     const competitorFocus =
       article.brief?.competitorFocus && article.brief.competitorFocus.length > 0
         ? article.brief.competitorFocus
@@ -1271,6 +1318,7 @@ export class VariantGeneratorService {
       const article = await this.prisma.scoped.geoArticle.findFirst({
         where: { id: job.articleId },
         include: {
+          productLine: true,
           brand: {
             select: {
               id: true,
@@ -1318,10 +1366,17 @@ export class VariantGeneratorService {
         return;
       }
 
+      const articleProductLineId =
+        (article as { productLineId?: string | null }).productLineId ?? null;
       const [factRows, promptPreference] = await Promise.all([
         this.prisma.scoped.brandFact.findMany({
-          where: { brandId: article.brandId },
-          select: { id: true, slot: true, title: true, content: true },
+          where: articleProductLineId
+            ? {
+                brandId: article.brandId,
+                OR: [{ productLineId: null }, { productLineId: articleProductLineId }],
+              }
+            : { brandId: article.brandId },
+          select: { id: true, slot: true, title: true, content: true, productLineId: true },
           orderBy: [{ slot: 'asc' }, { updatedAt: 'desc' }],
         }),
         this.prisma.scoped.promptPreference.findFirst({
@@ -1330,7 +1385,19 @@ export class VariantGeneratorService {
         }),
       ]);
 
-      const facts: VariantBrandFactInput[] = factRows
+      const scopedFactRows = articleProductLineId
+        ? factRows
+            .filter(
+              (row) => row.productLineId == null || row.productLineId === articleProductLineId,
+            )
+            .sort((a, b) => {
+              const aScope = a.productLineId === articleProductLineId ? 0 : 1;
+              const bScope = b.productLineId === articleProductLineId ? 0 : 1;
+              return aScope - bScope;
+            })
+        : factRows;
+
+      const facts: VariantBrandFactInput[] = scopedFactRows
         .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
         .map((row) => ({
           id: row.id,
@@ -1341,12 +1408,37 @@ export class VariantGeneratorService {
 
       const market: GeoMarket = article.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
       const locale = article.brandMarket.locale || (market === 'GLOBAL' ? 'en-US' : 'zh-CN');
+      const articleProductLine =
+        (
+          article as {
+            productLine?: {
+              name?: string | null;
+              localNamesJson?: unknown;
+              category?: string | null;
+              localCategoriesJson?: unknown;
+              competitorsJson?: unknown;
+            } | null;
+          }
+        ).productLine ?? null;
+      const lineLocalName = resolveProductLineLocalName(articleProductLine, market);
+      const rawLineName =
+        typeof articleProductLine?.name === 'string' ? articleProductLine.name.trim() : '';
+      const safeLineName =
+        rawLineName && (market === 'CN' || !containsCjk(rawLineName)) ? rawLineName : null;
       const brandNames = [
         article.brand.name,
         article.brandMarket.localBrandName,
         ...(article.brandMarket.aliases ?? []),
+        ...(safeLineName ? [safeLineName] : []),
+        ...(lineLocalName ? [lineLocalName] : []),
       ].filter((name) => typeof name === 'string' && name.trim().length > 0);
-      const marketCompetitors = parseCompetitorNames(article.brandMarket.competitors);
+      const lineCompetitors = articleProductLine
+        ? readProductLineMarketCompetitors(articleProductLine.competitorsJson, market)
+        : [];
+      const marketCompetitors =
+        lineCompetitors.length > 0
+          ? lineCompetitors.map((c) => c.name)
+          : parseCompetitorNames(article.brandMarket.competitors);
       const competitorFocus =
         article.brief?.competitorFocus && article.brief.competitorFocus.length > 0
           ? article.brief.competitorFocus
@@ -1690,6 +1782,15 @@ export class VariantGeneratorService {
         ownedDomains: string[];
         competitors: Prisma.JsonValue;
       };
+      productLineId?: string | null;
+      productLine?: {
+        id?: string;
+        name?: string | null;
+        localNamesJson?: unknown;
+        category?: string | null;
+        localCategoriesJson?: unknown;
+        competitorsJson?: unknown;
+      } | null;
       brief: {
         id: string;
         targetFanOuts: string[];
@@ -1832,6 +1933,22 @@ export class VariantGeneratorService {
               articleLocale ??
               resolveEffectiveLocale(locale, market));
 
+        const effectiveCategory = resolveEffectiveCategory(
+          article.brand,
+          { market, localCategory: article.brandMarket.localCategory },
+          article.productLine ?? null,
+        );
+        const lineLocalName = resolveProductLineLocalName(article.productLine ?? null, market);
+        const rawLineName =
+          typeof article.productLine?.name === 'string' ? article.productLine.name.trim() : '';
+        const safeLineName =
+          rawLineName && (market === 'CN' || !containsCjk(rawLineName)) ? rawLineName : null;
+        const effectiveBrandAliases = [
+          ...(article.brandMarket.aliases ?? []),
+          ...(safeLineName ? [safeLineName] : []),
+          ...(lineLocalName ? [lineLocalName] : []),
+        ].filter((item) => typeof item === 'string' && item.trim().length > 0);
+
         const promptCtx: VariantPromptContext = {
           market,
           locale: effectiveTargetLocale,
@@ -1839,9 +1956,9 @@ export class VariantGeneratorService {
           articleTargetLocale: article.targetLocale ?? article.brandMarket.locale,
           brandName: article.brand.name,
           localBrandName: article.brandMarket.localBrandName || article.brand.name,
-          brandAliases: article.brandMarket.aliases ?? [],
-          category: article.brand.category,
-          localCategory: article.brandMarket.localCategory ?? null,
+          brandAliases: effectiveBrandAliases,
+          category: effectiveCategory,
+          localCategory: effectiveCategory,
           ownedDomains: article.brandMarket.ownedDomains ?? [],
           competitors: marketCompetitors,
           articleTitle: article.title,

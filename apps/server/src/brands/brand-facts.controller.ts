@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UploadedFiles,
   UseFilters,
@@ -29,6 +30,7 @@ import {
   BrandUploadExceptionFilter,
   decodeUploadFilename,
   parseBrandId,
+  parseOptionalProductLineId,
   requireAuth,
   type UploadedFileLike,
 } from './brands.http-utils';
@@ -39,9 +41,10 @@ export class BrandFactsController {
   constructor(@Inject(BrandFactsService) private readonly brandFacts: BrandFactsService) {}
 
   @Get(':id/facts')
-  async list(@Param('id') id: string) {
+  async list(@Param('id') id: string, @Query('productLineId') rawProductLineId?: string) {
     const brandId = parseBrandId(id);
-    return ok(await this.brandFacts.getFacts(brandId));
+    const productLineId = parseOptionalProductLineId(rawProductLineId);
+    return ok(await this.brandFacts.getFacts(brandId, productLineId));
   }
 
   @Put(':id/facts')

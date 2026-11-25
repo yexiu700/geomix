@@ -7,6 +7,7 @@ import {
   VISIBILITY_ENGINE_LABELS,
   escapeLikeLiteral,
   findDisallowedMarketEngines,
+  readProductLineMarketSeedPrompts,
   recomputeRunMetrics,
   toShanghaiDateKey,
   type GeoMarket,
@@ -33,9 +34,10 @@ import {
 import {
   dedupeStringsCaseInsensitive,
   deriveVisibilityRunId,
-  parseProfileCompetitors,
+  mergeProductLineBrandAliases,
   presentObservationRecord,
   presentRunRecord,
+  resolveEffectiveVisibilityCompetitors,
 } from './visibility.mapper';
 import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VISIBILITY_RUN_ENQUEUER, type VisibilityRunEnqueuer } from './visibility-run.runner';
@@ -118,6 +120,7 @@ export class VisibilityRunLifecycleService {
     const where: Prisma.VisibilityRunWhereInput = {
       brandId: brand.id,
       brandMarketId: market.id,
+      ...(query.productLineId ? { productLineId: query.productLineId } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
     if (query.keyword) {
@@ -138,6 +141,7 @@ export class VisibilityRunLifecycleService {
         skip,
         take: query.pageSize,
         include: {
+          productLine: true,
           brandMarket: {
             select: {
               id: true,
@@ -194,6 +198,7 @@ export class VisibilityRunLifecycleService {
         ...(scope?.brandMarketId ? { brandMarketId: scope.brandMarketId } : {}),
       },
       include: {
+        productLine: true,
         brandMarket: {
           include: {
             brand: {
@@ -220,7 +225,16 @@ export class VisibilityRunLifecycleService {
 
     const [baseRecord] = await this.presentRuns([row]);
 
-    const competitors = parseProfileCompetitors(row.brandMarket.competitors);
+    const competitors = resolveEffectiveVisibilityCompetitors(
+      row.brandMarket.competitors,
+      row.productLine,
+      row.brandMarket.market,
+    );
+    const brandAliases = mergeProductLineBrandAliases(
+      row.brandMarket.aliases,
+      row.productLine,
+      row.brandMarket.market,
+    );
     const siblingMarkets =
       (row.brandMarket.brand as { markets?: Array<{ ownedDomains?: string[] }> } | null)?.markets ??
       [];
@@ -250,7 +264,7 @@ export class VisibilityRunLifecycleService {
       })),
       {
         brandName: row.brandMarket.localBrandName,
-        brandAliases: row.brandMarket.aliases,
+        brandAliases,
         ownedDomains,
         competitors,
       },
@@ -258,7 +272,7 @@ export class VisibilityRunLifecycleService {
 
     const relevanceCtx = {
       brandName: row.brandMarket.localBrandName,
-      brandAliases: row.brandMarket.aliases,
+      brandAliases,
       competitorNames: competitors.map((comp) => comp.name),
     };
     const citationContext = { ownedDomains, competitorDomains };
@@ -305,7 +319,52 @@ export class VisibilityRunLifecycleService {
       );
     }
 
-    const promptList = dedupeStringsCaseInsensitive(input.prompts);
+    const triggerType: VisibilityTriggerType = input.triggerType ?? 'MANUAL';
+    const retestArticleId = input.retestArticleId ?? null;
+
+    let resolvedProductLine: { id: string; seedPromptsJson: unknown } | null = null;
+    if (input.productLineId) {
+      const foundLine = await this.prisma.scoped.brandProductLine.findFirst({
+        where: { id: input.productLineId, brandId: brand.id },
+        select: { id: true, seedPromptsJson: true },
+      });
+      if (!foundLine) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '产品线不存在或不属于当前品牌');
+      }
+      resolvedProductLine = foundLine;
+    }
+
+    let inheritedRetestProductLineId: string | null = null;
+    if (retestArticleId) {
+      const retestArticle = await this.prisma.scoped.geoArticle.findFirst({
+        where: { id: retestArticleId, brandId: brand.id, brandMarketId: market.id },
+        select: { id: true, productLineId: true },
+      });
+      if (!retestArticle) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或不属于当前品牌市场');
+      }
+      inheritedRetestProductLineId =
+        (retestArticle as { productLineId?: string | null }).productLineId ?? null;
+      if (!resolvedProductLine && inheritedRetestProductLineId) {
+        const inheritedLine = await this.prisma.scoped.brandProductLine?.findFirst?.({
+          where: { id: inheritedRetestProductLineId, brandId: brand.id },
+          select: { id: true, seedPromptsJson: true },
+        });
+        if (inheritedLine) {
+          resolvedProductLine = inheritedLine;
+        }
+      }
+    }
+
+    const effectiveProductLineId = resolvedProductLine?.id ?? null;
+
+    const rawPrompts =
+      input.prompts && input.prompts.length > 0
+        ? input.prompts
+        : resolvedProductLine
+          ? readProductLineMarketSeedPrompts(resolvedProductLine.seedPromptsJson, market.market)
+          : [];
+    const promptList = dedupeStringsCaseInsensitive(rawPrompts);
     if (promptList.length === 0) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '请至少提供一条有效的监测问题');
     }
@@ -317,12 +376,10 @@ export class VisibilityRunLifecycleService {
     const sampleCount: 1 | 3 = rawSampleCount;
     const expectedTotalChecks = promptList.length * engines.length * sampleCount;
 
-    const triggerType: VisibilityTriggerType = input.triggerType ?? 'MANUAL';
-    const retestArticleId = input.retestArticleId ?? null;
-
     const assertMatchingReplay = (row: {
       brandId: string;
       brandMarketId: string;
+      productLineId?: string | null;
       engines: string[];
       prompts: string[];
       triggerType: VisibilityTriggerType;
@@ -332,6 +389,7 @@ export class VisibilityRunLifecycleService {
       if (
         row.brandId !== brand.id ||
         row.brandMarketId !== market.id ||
+        (row.productLineId ?? null) !== effectiveProductLineId ||
         row.engines.join(',') !== engines.join(',') ||
         row.prompts.join('\n') !== promptList.join('\n') ||
         row.triggerType !== triggerType ||
@@ -348,6 +406,7 @@ export class VisibilityRunLifecycleService {
         id: true,
         brandId: true,
         brandMarketId: true,
+        productLineId: true,
         engines: true,
         prompts: true,
         triggerType: true,
@@ -358,16 +417,6 @@ export class VisibilityRunLifecycleService {
     if (existing) {
       assertMatchingReplay(existing);
       return this.detailInScope(existing.id, { brandId: brand.id, brandMarketId: market.id });
-    }
-
-    if (retestArticleId) {
-      const retestArticle = await this.prisma.scoped.geoArticle.findFirst({
-        where: { id: retestArticleId, brandId: brand.id, brandMarketId: market.id },
-        select: { id: true },
-      });
-      if (!retestArticle) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或不属于当前品牌市场');
-      }
     }
 
     if (this.engineHealth) {
@@ -410,6 +459,7 @@ export class VisibilityRunLifecycleService {
         id: true,
         brandId: true,
         brandMarketId: true,
+        productLineId: true,
         engines: true,
         prompts: true,
         triggerType: true,
@@ -440,6 +490,7 @@ export class VisibilityRunLifecycleService {
             tenantId,
             brandId: brand.id,
             brandMarketId: market.id,
+            productLineId: effectiveProductLineId,
             name: runName,
             engines,
             prompts: promptList,
@@ -483,6 +534,7 @@ export class VisibilityRunLifecycleService {
             id: true,
             brandId: true,
             brandMarketId: true,
+            productLineId: true,
             engines: true,
             prompts: true,
             triggerType: true,

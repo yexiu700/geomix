@@ -3093,6 +3093,7 @@ const optionalGeoMarketSchema = z
 export const visibilityRunV2CreateSchema = z
   .object({
     market: z.enum(GEO_MARKETS).optional(),
+    productLineId: optionalVisibilityIdSchema,
     name: z
       .string()
       .trim()
@@ -3106,13 +3107,20 @@ export const visibilityRunV2CreateSchema = z
       .transform((items) => [...new Set(items)]),
     prompts: z
       .array(z.string().trim().min(2, '监测问题至少 2 个字').max(300, '监测问题最多 300 字'))
-      .min(1, '请至少填写一条监测问题')
       .max(100, '单次最多输入 100 个监测问题')
-      .transform((items) => dedupeTrimmedStrings(items)),
+      .transform((items) => dedupeTrimmedStrings(items))
+      .optional(),
     triggerType: z.enum(VISIBILITY_TRIGGER_TYPES).default('MANUAL'),
     retestArticleId: optionalVisibilityIdSchema,
   })
   .superRefine((data, ctx) => {
+    if (!data.productLineId && (!data.prompts || data.prompts.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['prompts'],
+        message: '请至少填写一条监测问题',
+      });
+    }
     if (!data.market) return;
     const disallowed = findDisallowedMarketEngines(data.engines, data.market);
     if (disallowed.length > 0) {
@@ -3182,6 +3190,7 @@ export type VisibilityRunRecord = {
   profileName: string;
   brandId?: string;
   brandMarketId?: string;
+  productLineId?: string | null;
   market?: GeoMarket;
   brandName: string;
   keywordId: string | null;
@@ -3338,6 +3347,7 @@ export type VisibilityOverviewResponse = {
   profileId: string | null;
   brandId?: string | null;
   brandMarketId?: string | null;
+  productLineId?: string | null;
   market?: GeoMarket | null;
   metrics: RecomputedRunMetrics;
   trend: VisibilityTrendPoint[];
@@ -3542,6 +3552,7 @@ export type VisibilityV2EnginesQuery = z.output<typeof visibilityV2EnginesQueryS
 
 export const visibilityV2OverviewQuerySchema = z.object({
   market: optionalGeoMarketSchema,
+  productLineId: optionalVisibilityIdSchema,
   engine: z
     .string()
     .trim()
@@ -3555,6 +3566,7 @@ export const visibilityV2OverviewQuerySchema = z.object({
 
 export type VisibilityV2OverviewQuery = {
   market?: GeoMarket;
+  productLineId?: string;
   engine?: VisibilityEngineKey;
   days: number;
   from?: string;
@@ -3570,6 +3582,9 @@ export function parseVisibilityV2OverviewQuery(
   }
   return {
     ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    ...(parsed.data.productLineId !== undefined
+      ? { productLineId: parsed.data.productLineId }
+      : {}),
     engine: parsed.data.engine as VisibilityEngineKey | undefined,
     days: parsed.data.days,
     ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),
@@ -3579,6 +3594,7 @@ export function parseVisibilityV2OverviewQuery(
 
 export const visibilityV2RunListQuerySchema = z.object({
   market: optionalGeoMarketSchema,
+  productLineId: optionalVisibilityIdSchema,
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   pageSize: z.coerce
     .number()
@@ -3606,6 +3622,7 @@ export const visibilityV2RunListQuerySchema = z.object({
 
 export type VisibilityV2RunListQuery = {
   market?: GeoMarket;
+  productLineId?: string;
   page: number;
   pageSize: CrudPageSize;
   status?: TaskStatusName;
@@ -3621,6 +3638,9 @@ export function parseVisibilityV2RunListQuery(
   }
   return {
     ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    ...(parsed.data.productLineId !== undefined
+      ? { productLineId: parsed.data.productLineId }
+      : {}),
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
@@ -3630,6 +3650,7 @@ export function parseVisibilityV2RunListQuery(
 
 export const visibilityV2CitationQuerySchema = z.object({
   market: optionalGeoMarketSchema,
+  productLineId: optionalVisibilityIdSchema,
   engine: z
     .string()
     .trim()
@@ -3657,6 +3678,7 @@ export const visibilityV2CitationQuerySchema = z.object({
 
 export type VisibilityV2CitationQuery = {
   market?: GeoMarket;
+  productLineId?: string;
   engine?: VisibilityEngineKey;
   sourceKind?: CitationSourceKind;
   days: number;
@@ -3675,6 +3697,9 @@ export function parseVisibilityV2CitationQuery(
   }
   return {
     ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    ...(parsed.data.productLineId !== undefined
+      ? { productLineId: parsed.data.productLineId }
+      : {}),
     engine: parsed.data.engine as VisibilityEngineKey | undefined,
     sourceKind: parsed.data.sourceKind as CitationSourceKind | undefined,
     days: parsed.data.days,
@@ -3687,6 +3712,7 @@ export function parseVisibilityV2CitationQuery(
 
 export const visibilityV2OpportunitiesQuerySchema = z.object({
   market: optionalGeoMarketSchema,
+  productLineId: optionalVisibilityIdSchema,
   engine: z
     .string()
     .trim()
@@ -3701,6 +3727,7 @@ export const visibilityV2OpportunitiesQuerySchema = z.object({
 
 export type VisibilityV2OpportunitiesQuery = {
   market?: GeoMarket;
+  productLineId?: string;
   engine?: VisibilityEngineKey;
   days: number;
   from?: string;
@@ -3717,6 +3744,9 @@ export function parseVisibilityV2OpportunitiesQuery(
   }
   return {
     ...(parsed.data.market !== undefined ? { market: parsed.data.market } : {}),
+    ...(parsed.data.productLineId !== undefined
+      ? { productLineId: parsed.data.productLineId }
+      : {}),
     engine: parsed.data.engine as VisibilityEngineKey | undefined,
     days: parsed.data.days,
     ...(parsed.data.from !== undefined ? { from: parsed.data.from } : {}),

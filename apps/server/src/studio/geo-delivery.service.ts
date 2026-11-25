@@ -10,6 +10,7 @@ import {
   htmlToExportDocument,
   htmlToExportMarkdown,
   isEngineAllowedForMarket,
+  resolveEffectiveCategory,
   stripHtmlToText,
   type ActionHomeQueryInput,
   type ActionHomeResponse,
@@ -42,6 +43,7 @@ import {
 } from '../common/free-action-rate-limiter';
 import {
   RetestSchedulerService,
+  computeMonthlyRetestBudgetUsage,
   ensureRetestSchedulesForPublishRecord,
 } from '../distribution/retest-scheduler.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -178,10 +180,11 @@ export class GeoDeliveryService {
     const article = await this.prisma.scoped.geoArticle.findFirst({
       where: { id: articleId },
       include: {
+        productLine: true,
         brand: {
           include: {
             facts: {
-              select: { id: true, title: true, content: true },
+              select: { id: true, title: true, content: true, productLineId: true },
             },
           },
         },
@@ -210,17 +213,32 @@ export class GeoDeliveryService {
     const evalTitle = input.title?.trim() || article.title;
     const evalMarkdown = input.contentMarkdown ?? article.contentMarkdown;
     const evalFanOuts = input.targetFanOuts ?? article.brief?.targetFanOuts ?? [];
+    const articleProductLineId = article.productLineId ?? null;
+    const scopedFacts = articleProductLineId
+      ? article.brand.facts.filter(
+          (f) => f.productLineId == null || f.productLineId === articleProductLineId,
+        )
+      : article.brand.facts;
     const matchedFactIds = article.brief?.matchedFactIds?.length
       ? article.brief.matchedFactIds
-      : article.brand.facts.map((f) => f.id);
-    const brandFactTexts = article.brand.facts.map((f) => `${f.title} ${f.content}`);
+      : scopedFacts.map((f) => f.id);
+    const brandFactTexts = scopedFacts.map((f) => `${f.title} ${f.content}`);
+    const effectiveCategory = resolveEffectiveCategory(
+      article.brand,
+      { market, localCategory: article.brandMarket.localCategory },
+      (
+        article as {
+          productLine?: { category?: string | null; localCategoriesJson?: unknown } | null;
+        }
+      ).productLine ?? null,
+    );
 
     const evaluation = evaluateGeoArticle({
       market,
       locale: article.targetLocale || article.brandMarket.locale,
       localBrandName: article.brandMarket.localBrandName,
-      category: article.brand.category,
-      localCategory: article.brandMarket.localCategory,
+      category: effectiveCategory,
+      localCategory: effectiveCategory,
       ownedDomains: article.brandMarket.ownedDomains,
       title: evalTitle,
       targetPrompt: article.targetPrompt,
@@ -354,27 +372,48 @@ export class GeoDeliveryService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在');
     }
 
-    // Prefer latest completed/partial MANUAL run as baseline; fall back to any completed/partial run
-    let baselineRun = await this.prisma.scoped.visibilityRun.findFirst({
-      where: {
-        brandId: article.brandId,
-        brandMarketId: article.brandMarketId,
-        triggerType: 'MANUAL',
-        status: { in: ['COMPLETED', 'PARTIAL'] },
-      },
-      include: {
-        observations: {
-          where: { status: 'SUCCESS' },
-          include: {
-            citations: {
-              orderBy: { position: 'asc' },
-            },
+    const articleProductLineId =
+      (article as { productLineId?: string | null }).productLineId ?? null;
+    const baselineInclude = {
+      observations: {
+        where: { status: 'SUCCESS' as const },
+        include: {
+          citations: {
+            orderBy: { position: 'asc' as const },
           },
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         },
+        orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
       },
-      orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
-    });
+    };
+
+    // Prefer latest completed/partial MANUAL run (scoped to article productLineId if present),
+    // then fall back to brandMarket-wide MANUAL / any completed/partial run.
+    let baselineRun = articleProductLineId
+      ? await this.prisma.scoped.visibilityRun.findFirst({
+          where: {
+            brandId: article.brandId,
+            brandMarketId: article.brandMarketId,
+            productLineId: articleProductLineId,
+            triggerType: 'MANUAL',
+            status: { in: ['COMPLETED', 'PARTIAL'] },
+          },
+          include: baselineInclude,
+          orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
+        })
+      : null;
+
+    if (!baselineRun) {
+      baselineRun = await this.prisma.scoped.visibilityRun.findFirst({
+        where: {
+          brandId: article.brandId,
+          brandMarketId: article.brandMarketId,
+          triggerType: 'MANUAL',
+          status: { in: ['COMPLETED', 'PARTIAL'] },
+        },
+        include: baselineInclude,
+        orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
+      });
+    }
 
     if (!baselineRun) {
       baselineRun = await this.prisma.scoped.visibilityRun.findFirst({
@@ -383,17 +422,7 @@ export class GeoDeliveryService {
           brandMarketId: article.brandMarketId,
           status: { in: ['COMPLETED', 'PARTIAL'] },
         },
-        include: {
-          observations: {
-            where: { status: 'SUCCESS' },
-            include: {
-              citations: {
-                orderBy: { position: 'asc' },
-              },
-            },
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          },
-        },
+        include: baselineInclude,
         orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
       });
     }
@@ -461,6 +490,7 @@ export class GeoDeliveryService {
             id: true,
             title: true,
             targetPrompt: true,
+            productLineId: true,
           },
         },
         brandMarket: true,
@@ -499,11 +529,14 @@ export class GeoDeliveryService {
       promptCandidate.length >= 2
         ? promptCandidate.slice(0, 300)
         : record.article.title.trim().slice(0, 300) || record.brandMarket.localBrandName;
+    const articleProductLineId =
+      (record.article as { productLineId?: string | null }).productLineId ?? undefined;
 
     const run = await this.visibility.createRun(
       record.brandId,
       {
         market,
+        ...(articleProductLineId ? { productLineId: articleProductLineId } : {}),
         name: `复测：${record.article.title.slice(0, 40)}`,
         engines,
         prompts: [prompt],
@@ -534,6 +567,7 @@ export class GeoDeliveryService {
   async getActionHome(brandId: string, query: ActionHomeQueryInput): Promise<ActionHomeResponse> {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
     const days = query.days ?? 14;
+    const productLineId = query.productLineId;
 
     let health: ActionHomeResponse['health'] = {
       days,
@@ -548,6 +582,7 @@ export class GeoDeliveryService {
       const overview = await this.visibility.overview(brand.id, {
         market: market.market,
         days,
+        ...(productLineId ? { productLineId } : {}),
       });
       health = {
         days,
@@ -563,12 +598,13 @@ export class GeoDeliveryService {
       }
     }
 
-    const [topBriefRows, recentArticleRows, distributionSummary] = await Promise.all([
+    const [topBriefRows, recentArticleRows, distributionSummary, retestBudget] = await Promise.all([
       this.prisma.scoped.geoBrief.findMany({
         where: {
           brandId: brand.id,
           brandMarketId: market.id,
           status: 'OPEN',
+          ...(productLineId ? { productLineId } : {}),
         },
         orderBy: [{ priorityScore: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: 3,
@@ -577,6 +613,7 @@ export class GeoDeliveryService {
         where: {
           brandId: brand.id,
           brandMarketId: market.id,
+          ...(productLineId ? { productLineId } : {}),
         },
         include: {
           publishRecords: {
@@ -592,16 +629,23 @@ export class GeoDeliveryService {
         orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: 5,
       }),
-      this.buildDistributionSummary(brand.id, market.id),
+      this.buildDistributionSummary(brand.id, market.id, productLineId),
+      computeMonthlyRetestBudgetUsage(this.prisma.scoped, {
+        brandId: brand.id,
+        brandMarketId: market.id,
+        capPoints: market.monthlyRetestPointCap ?? null,
+      }),
     ]);
 
     return {
       brandId: brand.id,
       brandMarketId: market.id,
+      productLineId: productLineId ?? null,
       market: market.market,
       health,
       topBriefs: topBriefRows.map((row) => ({
         id: row.id,
+        productLineId: (row as { productLineId?: string | null }).productLineId ?? null,
         sourceType: row.sourceType,
         priorityScore: row.priorityScore,
         diagnosisSummary: row.diagnosisSummary,
@@ -613,6 +657,7 @@ export class GeoDeliveryService {
       })),
       recentArticles: recentArticleRows.map((row) => ({
         id: row.id,
+        productLineId: (row as { productLineId?: string | null }).productLineId ?? null,
         title: row.title,
         recipe: row.recipe as GeoRecipe,
         geoScore: row.geoScore,
@@ -621,12 +666,14 @@ export class GeoDeliveryService {
         publishRecord: row.publishRecords[0] ? presentPublishRecord(row.publishRecords[0]) : null,
       })),
       distributionSummary,
+      retestBudget,
     };
   }
 
   private async buildDistributionSummary(
     brandId: string,
     brandMarketId: string,
+    productLineId?: string,
   ): Promise<DistributionSummaryDto> {
     const now = new Date();
     const sevenDaysAhead = new Date(now.getTime() + 7 * DAY_MS);
@@ -642,6 +689,7 @@ export class GeoDeliveryService {
           brandId,
           brandMarketId,
           crawlStatus,
+          ...(productLineId ? { article: { productLineId } } : {}),
         },
         include: {
           article: { select: { title: true } },
@@ -660,9 +708,13 @@ export class GeoDeliveryService {
               where: {
                 brandId,
                 brandMarketId,
+                ...(productLineId ? { publishRecord: { article: { productLineId } } } : {}),
                 OR: [
                   { status: { in: ['PENDING', 'RUNNING'] }, dueAt: { lte: sevenDaysAhead } },
-                  { status: 'SKIPPED_INSUFFICIENT_POINTS', updatedAt: { gte: fourteenDaysAgo } },
+                  {
+                    status: { in: ['SKIPPED_INSUFFICIENT_POINTS', 'SKIPPED_BUDGET_CAP'] },
+                    updatedAt: { gte: fourteenDaysAgo },
+                  },
                 ],
               },
               include: {
@@ -683,6 +735,7 @@ export class GeoDeliveryService {
           where: {
             brandId,
             brandMarketId,
+            ...(productLineId ? { article: { productLineId } } : {}),
           },
           include: {
             retestSchedules: {

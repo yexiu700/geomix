@@ -714,6 +714,14 @@ function brandControlPromptArraySchema() {
     );
 }
 
+const optionalMonthlyRetestPointCapSchema = z
+  .number({ message: '月度自动复测点数上限必须为正整数' })
+  .int('月度自动复测点数上限必须为正整数')
+  .min(1, '月度自动复测点数上限至少为 1 点')
+  .max(1_000_000, '月度自动复测点数上限不能超过 1,000,000 点')
+  .nullable()
+  .optional();
+
 export const brandMarketConfigSchema = z.object({
   market: z.enum(GEO_MARKETS),
   locale: z.string().trim().min(2).max(16).optional(),
@@ -729,6 +737,7 @@ export const brandMarketConfigSchema = z.object({
   seedPrompts: brandSeedPromptArraySchema().default([]),
   supportedLocales: brandSupportedLocalesSchema().optional(),
   controlPrompts: brandControlPromptArraySchema().optional(),
+  monthlyRetestPointCap: optionalMonthlyRetestPointCapSchema,
 });
 
 const brandMarketEntrySchema = z.union([
@@ -792,6 +801,7 @@ export const updateBrandMarketSchema = z
     seedPrompts: brandSeedPromptArraySchema().optional(),
     supportedLocales: brandSupportedLocalesSchema().optional(),
     controlPrompts: brandControlPromptArraySchema().optional(),
+    monthlyRetestPointCap: optionalMonthlyRetestPointCapSchema,
   })
   .refine((val) => Object.keys(val).length > 0, '至少修改一项市场配置');
 
@@ -803,8 +813,24 @@ const optionalSourceUrlSchema = z.preprocess(
   z.string().trim().url('来源链接格式不正确').max(2048).nullable().optional(),
 );
 
+const optionalBrandFactProductLineIdSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号格式不正确').nullable().optional(),
+);
+
+export const brandFactsListQuerySchema = z.object({
+  productLineId: z.preprocess(
+    (value) =>
+      value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+    z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号格式不正确').optional(),
+  ),
+});
+
+export type BrandFactsListQuery = z.output<typeof brandFactsListQuerySchema>;
+
 export const brandFactItemInputSchema = z.object({
   id: z.string().trim().regex(BRAND_ID_PATTERN, '事实卡编号不正确').optional(),
+  productLineId: optionalBrandFactProductLineIdSchema,
   slot: z.enum(BRAND_FACT_SLOTS),
   title: z.string().trim().max(120, '事实卡标题不超过 120 字').optional(),
   content: z.string().trim().max(BRAND_FACT_CARD_MAX),
@@ -813,7 +839,7 @@ export const brandFactItemInputSchema = z.object({
 });
 
 export const upsertBrandFactsSchema = z.object({
-  facts: z.array(brandFactItemInputSchema).min(1, '请至少保存一条事实卡').max(20),
+  facts: z.array(brandFactItemInputSchema).min(1, '请至少保存一条事实卡').max(120),
   truthAgreed: z.boolean().optional(),
   agreeTruthTerms: z.boolean().optional(),
 });
@@ -882,6 +908,7 @@ export type BrandMarketRecord = {
   seedPrompts: string[];
   supportedLocales?: SupportedLocale[];
   controlPrompts?: string[];
+  monthlyRetestPointCap?: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -889,6 +916,7 @@ export type BrandMarketRecord = {
 export type BrandFactRecord = {
   id: string;
   brandId: string;
+  productLineId?: string | null;
   slot: BrandFactSlot;
   title: string;
   content: string;

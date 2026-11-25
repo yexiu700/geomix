@@ -23,6 +23,10 @@ import {
   sanitizeObservationRawMeta,
   type ParsedRetrievedSource,
 } from './visibility-raw-meta';
+import {
+  mergeProductLineBrandAliases,
+  resolveEffectiveVisibilityCompetitors,
+} from './visibility.mapper';
 
 export const VISIBILITY_RUN_HANDLER = Symbol('VISIBILITY_RUN_HANDLER');
 export const VISIBILITY_RUN_ENQUEUER = Symbol('VISIBILITY_RUN_ENQUEUER');
@@ -268,6 +272,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
       this.prisma.base.visibilityRun.findFirst({
         where: { id: runId, tenantId },
         include: {
+          productLine: true,
           brandMarket: {
             include: {
               brand: {
@@ -296,7 +301,16 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
     }
 
     const reservationId = await this.resolveReservationId(tenantId, run.id, run.reservationId);
-    const competitors = parseProfileCompetitors(run.brandMarket.competitors);
+    const competitors = resolveEffectiveVisibilityCompetitors(
+      run.brandMarket.competitors,
+      run.productLine,
+      run.brandMarket.market,
+    );
+    const brandAliases = mergeProductLineBrandAliases(
+      run.brandMarket.aliases,
+      run.productLine,
+      run.brandMarket.market,
+    );
     const siblingMarkets =
       (run.brandMarket as { brand?: { markets?: Array<{ ownedDomains?: string[] }> } }).brand
         ?.markets ?? [];
@@ -316,7 +330,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         engine: obs.engine,
         promptText: obs.promptText,
         brandName: run.brandMarket.localBrandName,
-        brandAliases: run.brandMarket.aliases,
+        brandAliases,
         ownedDomains,
         competitors,
         market: run.brandMarket.market,
@@ -369,7 +383,7 @@ export class VisibilityRunRunner implements VisibilityRunHandler {
         })),
         profile: {
           brandName: run.brandMarket.localBrandName,
-          brandAliases: run.brandMarket.aliases,
+          brandAliases,
           ownedDomains,
           competitors,
         },

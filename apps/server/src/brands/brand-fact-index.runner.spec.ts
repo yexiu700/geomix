@@ -196,4 +196,144 @@ describe('BrandFactIndexRunner', () => {
     expect(fallbackHits).toHaveLength(2);
     expect(fallbackHits.every((item) => item.source === 'direct')).toBe(true);
   });
+
+  it('isolates product-line facts with zero cross-line bleed and prioritizes line-specific facts ahead of general facts (direct + vector)', async () => {
+    const now = new Date();
+    const findMany = vi.fn(async () => [
+      {
+        id: 'fact_general_specs',
+        slot: 'PRODUCT_SPECS',
+        title: '通用参数',
+        content: 'Brand-wide UL2743 certification',
+        productLineId: null,
+        indexStatus: 'NONE',
+        updatedAt: now,
+      },
+      {
+        id: 'fact_lineA_case',
+        slot: 'CASE_STUDIES',
+        title: 'Line A Case',
+        content: 'HeliosPower 2048Wh camping runtime',
+        productLineId: 'pl_lineA',
+        indexStatus: 'NONE',
+        updatedAt: now,
+      },
+      {
+        id: 'fact_lineB_secret',
+        slot: 'PRODUCT_SPECS',
+        title: 'Line B Secret',
+        content: 'LINEB_SECRET_NAS_4BAY_NEVER_LEAK',
+        productLineId: 'pl_lineB',
+        indexStatus: 'NONE',
+        updatedAt: now,
+      },
+    ]);
+
+    const queryRaw = vi.fn(async (..._args: unknown[]) => [
+      {
+        factId: 'fact_general_cred',
+        slot: 'CREDENTIALS',
+        title: 'Brand Cert',
+        productLineId: null,
+        seq: 0,
+        content: 'General ISO9001 cert',
+        distance: 0.09,
+      },
+      {
+        factId: 'fact_lineA_doc',
+        slot: 'EXTRA_DOC',
+        title: 'Line A Doc',
+        productLineId: 'pl_lineA',
+        seq: 0,
+        content: 'Line A solar inverter efficiency 95%',
+        distance: 0.11,
+      },
+      {
+        factId: 'fact_lineB_vector',
+        slot: 'EXTRA_DOC',
+        title: 'Line B Vector Doc',
+        productLineId: 'pl_lineB',
+        seq: 0,
+        content: 'LINEB_VECTOR_SECRET_MUST_BE_FILTERED',
+        distance: 0.05,
+      },
+    ]);
+
+    const prisma = {
+      base: {
+        brandFact: { findMany },
+        $queryRaw: queryRaw,
+      },
+    } as unknown as PrismaService;
+
+    const embedding = {
+      embed: vi.fn(async () => ({
+        provider: 'fake',
+        model: 'fake-bge-m3',
+        fake: true,
+        dimensions: DB_EMBEDDING_DIMENSIONS,
+        vectors: [fakeEmbedding('portable power station')],
+        note: '',
+      })),
+    } as unknown as EmbeddingService;
+
+    const runner = new BrandFactIndexRunner(prisma, embedding);
+
+    // 1. Direct fallback path: Line A prioritized ahead of general even if general has earlier slot, 0 Line B bleed
+    const directHits = await runner.retrieveRelevantBrandFacts(
+      'tenant_1',
+      'brand_1',
+      'portable power station',
+      5,
+      'pl_lineA',
+    );
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          tenantId: 'tenant_1',
+          brandId: 'brand_1',
+          OR: [{ productLineId: null }, { productLineId: 'pl_lineA' }],
+        },
+      }),
+    );
+    expect(directHits.map((h) => h.factId)).toEqual(['fact_lineA_case', 'fact_general_specs']);
+    expect(directHits.some((h) => h.content.includes('LINEB_SECRET'))).toBe(false);
+
+    // 2. Vector pgvector path: SQL includes productLineId filter + boost, defensive JS filter strips Line B, Line A sorted first
+    findMany.mockResolvedValueOnce([
+      {
+        id: 'fact_general_cred',
+        slot: 'CREDENTIALS',
+        title: 'Brand Cert',
+        content: 'General ISO9001 cert',
+        productLineId: null,
+        indexStatus: 'READY',
+        updatedAt: now,
+      },
+      {
+        id: 'fact_lineA_doc',
+        slot: 'EXTRA_DOC',
+        title: 'Line A Doc',
+        content: 'Line A solar inverter efficiency 95%',
+        productLineId: 'pl_lineA',
+        indexStatus: 'READY',
+        updatedAt: now,
+      },
+    ]);
+
+    const vectorHits = await runner.retrieveRelevantBrandFacts(
+      'tenant_1',
+      'brand_1',
+      'portable power station',
+      5,
+      'pl_lineA',
+    );
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const sqlStrings =
+      (queryRaw.mock.calls[0]?.[0] as TemplateStringsArray | undefined)?.join(' ') ?? '';
+    expect(sqlStrings).toContain('f."productLineId"');
+    expect(sqlStrings).toContain('0.08');
+    expect(vectorHits.map((h) => h.factId)).toEqual(['fact_lineA_doc', 'fact_general_cred']);
+    expect(vectorHits.some((h) => h.content.includes('LINEB_VECTOR_SECRET'))).toBe(false);
+  });
 });

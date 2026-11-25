@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { FAKE_MARK } from './adapters';
-import { GEO_MARKETS, type GeoMarket } from './brands';
+import { BRAND_ID_PATTERN, GEO_MARKETS, type GeoMarket } from './brands';
 import type { GeoComplianceFlag } from './compliance';
 import { SUPPORTED_LOCALE_CODES, type SupportedLocale } from './locales';
 import type { TaskStatusName } from './task-status';
@@ -1051,9 +1051,21 @@ export const geoOutlineHeadingSchema = z.object({
 
 export type GeoOutlineHeading = z.infer<typeof geoOutlineHeadingSchema>;
 
+const optionalStudioProductLineBodySchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号不合法').nullable().optional(),
+);
+
+const optionalStudioProductLineQuerySchema = z.preprocess(
+  (value) =>
+    value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+  z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号不合法').optional(),
+);
+
 export const geoArticleStreamSchema = z
   .object({
     market: z.enum(GEO_MARKETS),
+    productLineId: optionalStudioProductLineBodySchema,
     briefId: z.string().trim().min(1).max(64).optional(),
     recipe: z.enum(GEO_RECIPES),
     targetFormat: z.enum(GEO_TARGET_FORMATS).optional(),
@@ -1093,6 +1105,7 @@ export type GeoArticleUpdateInput = z.infer<typeof geoArticleUpdateSchema>;
 
 export const geoArticleListQuerySchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: optionalStudioProductLineQuerySchema,
   status: z.enum(GEO_ARTICLE_STATUSES).optional(),
   tag: z.string().trim().min(1).max(40).optional(),
   briefId: z.string().trim().min(1).max(64).optional(),
@@ -1155,6 +1168,7 @@ export type GeoArticleRecord = {
   id: string;
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
   market: GeoMarket;
   briefId: string | null;
   batchJobId: string | null;
@@ -1231,6 +1245,7 @@ export type GeoStreamMetaEvent = {
   market: GeoMarket;
   recipe: GeoRecipe;
   targetFormat: GeoTargetFormat;
+  productLineId?: string | null;
   matchedFactIds: string[];
 };
 

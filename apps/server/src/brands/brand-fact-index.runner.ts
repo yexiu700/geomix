@@ -36,6 +36,7 @@ export type RetrievedBrandFactSnippet = {
   slot: BrandFactSlot;
   title: string;
   content: string;
+  productLineId?: string | null;
   source: 'direct' | 'vector';
   distance?: number;
 };
@@ -62,6 +63,7 @@ type VectorChunkRow = {
   factId: string;
   slot: string;
   title: string;
+  productLineId?: string | null;
   seq: number;
   content: string;
   distance: number;
@@ -215,25 +217,46 @@ export class BrandFactIndexRunner implements FactIndexHandler {
     brandId: string,
     query: string,
     topK: number = BRAND_FACT_TOP_K_CHUNKS,
+    productLineId?: string | null,
   ): Promise<RetrievedBrandFactSnippet[]> {
+    const normalizedProductLineId = productLineId?.trim() || null;
+
     const facts = await this.prisma.base.brandFact.findMany({
-      where: { tenantId, brandId },
+      where: normalizedProductLineId
+        ? {
+            tenantId,
+            brandId,
+            OR: [{ productLineId: null }, { productLineId: normalizedProductLineId }],
+          }
+        : { tenantId, brandId },
       select: {
         id: true,
         slot: true,
         title: true,
         content: true,
+        productLineId: true,
         indexStatus: true,
         updatedAt: true,
       },
       orderBy: [{ slot: 'asc' }, { updatedAt: 'desc' }],
     });
 
-    if (facts.length === 0) {
+    const scopedFacts = normalizedProductLineId
+      ? facts.filter(
+          (fact) => fact.productLineId == null || fact.productLineId === normalizedProductLineId,
+        )
+      : facts;
+
+    if (scopedFacts.length === 0) {
       return [];
     }
 
-    const sortedFacts = [...facts].sort((a, b) => {
+    const sortedFacts = [...scopedFacts].sort((a, b) => {
+      if (normalizedProductLineId) {
+        const aScope = a.productLineId === normalizedProductLineId ? 0 : 1;
+        const bScope = b.productLineId === normalizedProductLineId ? 0 : 1;
+        if (aScope !== bScope) return aScope - bScope;
+      }
       const slotDiff = slotPriority(a.slot) - slotPriority(b.slot);
       if (slotDiff !== 0) return slotDiff;
       return b.updatedAt.getTime() - a.updatedAt.getTime();
@@ -253,20 +276,34 @@ export class BrandFactIndexRunner implements FactIndexHandler {
           const literal = `[${vector.join(',')}]`;
           const safeTopK = Math.max(1, Math.min(20, Math.floor(topK)));
           const rows = await this.prisma.base.$queryRaw<VectorChunkRow[]>`
-            SELECT c."factId", f."slot"::text AS "slot", f."title", c."seq", c."content",
+            SELECT c."factId", f."slot"::text AS "slot", f."title", f."productLineId", c."seq", c."content",
                    (c."embedding" <=> ${literal}::vector)::float8 AS "distance"
             FROM "BrandFactChunk" c
             INNER JOIN "BrandFact" f ON f."id" = c."factId"
             WHERE c."tenantId" = ${tenantId}
               AND c."brandId" = ${brandId}
               AND f."tenantId" = ${tenantId}
+              AND f."brandId" = ${brandId}
               AND c."embedding" IS NOT NULL
-            ORDER BY c."embedding" <=> ${literal}::vector ASC
+              AND (${normalizedProductLineId}::text IS NULL OR f."productLineId" IS NULL OR f."productLineId" = ${normalizedProductLineId}::text)
+            ORDER BY
+              ((c."embedding" <=> ${literal}::vector)::float8 - CASE WHEN ${normalizedProductLineId}::text IS NOT NULL AND f."productLineId" = ${normalizedProductLineId}::text THEN 0.08 ELSE 0.0 END) ASC,
+              (c."embedding" <=> ${literal}::vector)::float8 ASC
             LIMIT ${safeTopK}
           `;
-          if (rows.length > 0) {
-            return [...rows]
+          const scopedRows = normalizedProductLineId
+            ? rows.filter(
+                (row) => row.productLineId == null || row.productLineId === normalizedProductLineId,
+              )
+            : rows;
+          if (scopedRows.length > 0) {
+            return [...scopedRows]
               .sort((a, b) => {
+                if (normalizedProductLineId) {
+                  const aScope = a.productLineId === normalizedProductLineId ? 0 : 1;
+                  const bScope = b.productLineId === normalizedProductLineId ? 0 : 1;
+                  if (aScope !== bScope) return aScope - bScope;
+                }
                 const slotDiff = slotPriority(a.slot) - slotPriority(b.slot);
                 if (slotDiff !== 0) return slotDiff;
                 return a.seq - b.seq;
@@ -276,6 +313,7 @@ export class BrandFactIndexRunner implements FactIndexHandler {
                 slot: toBrandFactSlot(row.slot),
                 title: row.title,
                 content: row.content,
+                productLineId: row.productLineId ?? null,
                 source: 'vector' as const,
                 distance: Number(row.distance),
               }));
@@ -298,6 +336,7 @@ function buildDirectFallbackSnippets(
     slot: string;
     title: string;
     content: string;
+    productLineId?: string | null;
   }>,
 ): RetrievedBrandFactSnippet[] {
   const out: RetrievedBrandFactSnippet[] = [];
@@ -314,6 +353,7 @@ function buildDirectFallbackSnippets(
       slot: toBrandFactSlot(fact.slot),
       title: fact.title,
       content: clipped,
+      productLineId: fact.productLineId ?? null,
       source: 'direct',
     });
     remaining -= clipped.length;

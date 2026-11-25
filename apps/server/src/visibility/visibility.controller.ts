@@ -126,6 +126,7 @@ export class VisibilityController {
     const parsed = parseBody(visibilityV2RunListQuerySchema, flattenQuery(query));
     const normalized: VisibilityV2RunListQuery = {
       ...(parsed.market !== undefined ? { market: parsed.market } : {}),
+      ...(parsed.productLineId !== undefined ? { productLineId: parsed.productLineId } : {}),
       page: parsed.page,
       pageSize: parsed.pageSize,
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
@@ -242,6 +243,7 @@ export class VisibilityController {
     const parsed = parseBody(visibilityV2OverviewQuerySchema, flattenQuery(query));
     const normalized: VisibilityV2OverviewQuery = {
       ...(parsed.market !== undefined ? { market: parsed.market } : {}),
+      ...(parsed.productLineId !== undefined ? { productLineId: parsed.productLineId } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       days: parsed.days,
       ...(parsed.from !== undefined ? { from: parsed.from } : {}),
@@ -256,6 +258,7 @@ export class VisibilityController {
     const parsed = parseBody(visibilityV2CitationQuerySchema, flattenQuery(query));
     const normalized: VisibilityV2CitationQuery = {
       ...(parsed.market !== undefined ? { market: parsed.market } : {}),
+      ...(parsed.productLineId !== undefined ? { productLineId: parsed.productLineId } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       sourceKind: parsed.sourceKind as CitationSourceKind | undefined,
       days: parsed.days,
@@ -276,6 +279,7 @@ export class VisibilityController {
     const parsed = parseBody(visibilityV2OpportunitiesQuerySchema, flattenQuery(query));
     const normalized: VisibilityV2OpportunitiesQuery = {
       ...(parsed.market !== undefined ? { market: parsed.market } : {}),
+      ...(parsed.productLineId !== undefined ? { productLineId: parsed.productLineId } : {}),
       engine: parsed.engine as VisibilityEngineKey | undefined,
       days: parsed.days,
       ...(parsed.from !== undefined ? { from: parsed.from } : {}),

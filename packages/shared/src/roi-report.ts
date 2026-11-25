@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GEO_MARKETS, type GeoMarket } from './brands';
+import { BRAND_ID_PATTERN, GEO_MARKETS, type GeoMarket } from './brands';
 import {
   isSafeDistributionHttpUrl,
   type ChannelProvider,
@@ -48,8 +48,20 @@ export const NEAR_MISS_TIER_EN_LABELS: Record<NearMissTier, string> = {
   MENTIONED_NOT_OWNED: 'Mentioned, Owned Not Cited (Tier 3B)',
 };
 
+const optionalNearMissProductLineIdQuerySchema = z.preprocess(
+  (value) =>
+    value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+  z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号格式不正确').optional(),
+);
+
+const optionalNearMissProductLineIdBodySchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号格式不正确').nullable().optional(),
+);
+
 export const nearMissQuerySchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: optionalNearMissProductLineIdQuerySchema,
   days: z.coerce.number().int().min(1).max(90).default(30),
   tier: z.enum(NEAR_MISS_TIERS).optional(),
   sourceKind: z.enum(CITATION_SOURCE_KINDS).optional(),
@@ -89,6 +101,7 @@ export type NearMissListResponse = {
 
 export const createNearMissBoostBriefSchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: optionalNearMissProductLineIdBodySchema,
   tier: z.enum(NEAR_MISS_TIERS),
   targetPrompt: z.string().trim().min(2, '目标问题至少 2 字').max(300),
   sourceUrl: z

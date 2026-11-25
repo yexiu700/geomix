@@ -8,6 +8,8 @@ import {
   compareGeoBriefPriority,
   computeGeoBriefPriorityScore,
   normalizeFanOutQueries,
+  readProductLineMarketCompetitors,
+  resolveEffectiveCategory,
   type BrandFactSlot,
   type CitationSourceKind,
   type GeoBriefSource,
@@ -521,13 +523,14 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
       const run = await this.prisma.base.visibilityRun.findFirst({
         where: { id: event.runId, tenantId: event.tenantId },
         include: {
+          productLine: true,
           brand: {
             select: {
               id: true,
               name: true,
               category: true,
               facts: {
-                select: { slot: true, content: true },
+                select: { slot: true, content: true, productLineId: true },
               },
               markets: {
                 select: { ownedDomains: true },
@@ -539,6 +542,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
               id: true,
               market: true,
               localBrandName: true,
+              localCategory: true,
               competitors: true,
               ownedDomains: true,
             },
@@ -569,7 +573,19 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
       }
 
       const market: GeoMarket = run.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
-      const fallbackCompetitors = parseCompetitorNamesFromJson(run.brandMarket.competitors);
+      const effectiveProductLineId = run.productLineId ?? null;
+      const effectiveCategory = resolveEffectiveCategory(
+        run.brand,
+        { market, localCategory: run.brandMarket.localCategory ?? null },
+        run.productLine ?? null,
+      );
+      const lineCompetitors = run.productLine
+        ? readProductLineMarketCompetitors(run.productLine.competitorsJson, market)
+        : [];
+      const fallbackCompetitors =
+        lineCompetitors.length > 0
+          ? lineCompetitors.map((c) => c.name)
+          : parseCompetitorNamesFromJson(run.brandMarket.competitors);
       const ownedDomains = dedupeTrimmed(
         [
           ...(Array.isArray(run.brandMarket.ownedDomains) ? run.brandMarket.ownedDomains : []),
@@ -581,8 +597,13 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
         ],
         30,
       );
+      const scopedBrandFacts = effectiveProductLineId
+        ? run.brand.facts.filter(
+            (f) => f.productLineId == null || f.productLineId === effectiveProductLineId,
+          )
+        : run.brand.facts;
       const presentFactSlots = new Set<BrandFactSlot>(
-        run.brand.facts
+        scopedBrandFacts
           .filter((f) => typeof f.content === 'string' && f.content.trim().length > 0)
           .map((f) => toBrandFactSlot(f.slot)),
       );
@@ -631,6 +652,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
           run.brandId,
           queryText,
           BRAND_FACT_TOP_K_CHUNKS,
+          effectiveProductLineId,
         );
         const matchedFacts: BriefMatchedFact[] = retrieved.map((r) => ({
           factId: r.factId,
@@ -643,7 +665,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
           market,
           brandName: run.brand.name,
           localBrandName: run.brandMarket.localBrandName || run.brand.name,
-          category: run.brand.category,
+          category: effectiveCategory,
           sourceType: candidate.sourceType,
           priorityScore: candidate.priorityScore,
           targetPrompt: candidate.targetPrompt,
@@ -700,6 +722,7 @@ export class BriefsAutoGeneratorService implements OnVisibilityRunCompleteHook {
               tenantId: event.tenantId,
               brandId: run.brandId,
               brandMarketId: run.brandMarketId,
+              productLineId: effectiveProductLineId,
               sourceType: candidate.sourceType,
               sourceRunId: run.id,
               sourceObservationIds: candidate.sourceObservationIds,

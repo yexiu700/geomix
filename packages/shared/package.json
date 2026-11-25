@@ -81,6 +81,10 @@
       "types": "./dist/ops.d.ts",
       "default": "./dist/ops.js"
     },
+    "./product-lines": {
+      "types": "./dist/product-lines.d.ts",
+      "default": "./dist/product-lines.js"
+    },
     "./qa": {
       "types": "./dist/qa.d.ts",
       "default": "./dist/qa.js"
