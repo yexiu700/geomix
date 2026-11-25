@@ -152,8 +152,8 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 776,
-  inlineFontSize: 227,
+  inlineStyleBlocks: 600,
+  inlineFontSize: 158,
 } as const;
 
 const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
@@ -162,11 +162,6 @@ const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/geo/citation-trace.tsx': 1,
   'components/geo/geo-signal-strip.tsx': 1,
   'components/reports/public-roi-report-view.tsx': 13,
-  'components/studio/studio-delivery-pack.tsx': 1,
-  'components/studio/studio-distribution-drawer.tsx': 3,
-  'components/studio/studio-editor-canvas.tsx': 2,
-  'components/studio/studio-media-popover.tsx': 3,
-  'components/studio/studio-publish-retest.tsx': 38,
 };
 
 const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
@@ -174,12 +169,6 @@ const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/admin/llm-cost-admin.tsx': 1,
   'components/distribution/pr-share-packet-view.tsx': 3,
   'components/reports/public-roi-report-view.tsx': 3,
-  'components/studio/studio-delivery-pack.tsx': 5,
-  'components/studio/studio-distribution-drawer.tsx': 15,
-  'components/studio/studio-geo-evaluator.tsx': 1,
-  'components/studio/studio-prewrite-bar.tsx': 2,
-  'components/studio/studio-publish-retest.tsx': 11,
-  'components/studio/studio-right-pane.tsx': 3,
 };
 
 const ANTD_PRESET_TAG_COLORS = [

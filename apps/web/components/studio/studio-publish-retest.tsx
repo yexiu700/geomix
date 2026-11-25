@@ -4,6 +4,8 @@ import {
   CRAWL_PROBE_STATUS_LABELS,
   DEFAULT_RETEST_MILESTONE_DAYS,
   RETEST_SCHEDULE_STATUS_LABELS,
+  UX_GLOSSARY_TOOLTIPS,
+  UX_TERMS,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   VISIBILITY_SENTIMENT_LABELS,
   enginesForMarket,
@@ -25,11 +27,11 @@ import {
   type VisibilitySentiment,
   type WilsonInterval,
 } from '@geomix/shared';
-import { Button, Checkbox, Input, Spin, Tag } from 'antd';
+import { Button, Checkbox, Input, Spin, Tag, Tooltip } from 'antd';
 import type { FormEvent, JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authorizedRequest } from '../../lib/api';
-import { GM, truncateMiddle } from '../../lib/design-tokens';
+import { truncateMiddle } from '../../lib/design-tokens';
 import {
   getRetestBudget,
   triggerCrawlProbe,
@@ -42,6 +44,7 @@ import { invalidateFreshness } from '../../lib/tab-freshness';
 import { fetchVisibilityEngines, filterEnginesForMarket } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalPill, type SignalTone } from '../geo/primitives';
+import { StatusBadge, type StatusTone } from '../ui';
 
 export type StudioPublishRetestProps = {
   activeMarket: GeoMarket;
@@ -125,35 +128,35 @@ async function fetchLiveVisibilityUnitPrice(signal?: AbortSignal): Promise<numbe
   return VISIBILITY_DEFAULT_UNIT_POINTS;
 }
 
-function crawlStatusTagColor(status: CrawlProbeStatus): string {
+function crawlStatusTone(status: CrawlProbeStatus): StatusTone {
   switch (status) {
     case 'OK':
-      return 'green';
+      return 'success';
     case 'WARNING':
-      return 'gold';
+      return 'warning';
     case 'BLOCKED':
     case 'FAILED':
-      return 'red';
+      return 'danger';
     default:
-      return 'default';
+      return 'neutral';
   }
 }
 
-function scheduleStatusTagColor(status: RetestScheduleStatus): string {
+function scheduleStatusTone(status: RetestScheduleStatus): StatusTone {
   switch (status) {
     case 'COMPLETED':
-      return 'green';
+      return 'success';
     case 'RUNNING':
-      return 'blue';
     case 'PENDING':
-      return 'cyan';
+      return 'active';
     case 'SKIPPED_INSUFFICIENT_POINTS':
     case 'SKIPPED_NO_ENGINE':
-      return 'gold';
+    case 'SKIPPED_BUDGET_CAP':
+      return 'warning';
     case 'FAILED':
-      return 'red';
+      return 'danger';
     default:
-      return 'default';
+      return 'neutral';
   }
 }
 
@@ -688,9 +691,9 @@ export function StudioPublishRetest({
       <div className="gm-studio-delivery-subhead">
         <span className="gm-studio-section-label">发布登记与效果追踪</span>
         {effectiveEntries.length > 0 ? (
-          <Tag color="green" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+          <StatusBadge tone="success" className="gm-studio-nowrap">
             已登记 {effectiveEntries.length} 条
-          </Tag>
+          </StatusBadge>
         ) : null}
       </div>
 
@@ -725,8 +728,7 @@ export function StudioPublishRetest({
             <div className="gm-studio-publish-row">
               <select
                 aria-label="发布渠道"
-                className="gm-select"
-                style={{ flex: 1, minWidth: 0 }}
+                className="gm-select gm-studio-publish-channel-select"
                 value={channel}
                 disabled={readOnly || submitting}
                 onChange={(e) => setChannel(e.target.value)}
@@ -739,80 +741,64 @@ export function StudioPublishRetest({
               </select>
               <Button
                 size="small"
-                type="primary"
+                type="default"
                 htmlType="submit"
                 loading={submitting}
                 disabled={readOnly || !urlInput.trim()}
-                style={{ whiteSpace: 'nowrap' }}
+                className="gm-studio-nowrap"
               >
                 登记发布
               </Button>
             </div>
 
             {/* Auto-retest checkbox & PRD D3 explicit budget ceiling disclosure */}
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-                padding: '8px 10px',
-                borderRadius: 6,
-                background: 'var(--gm-bg-elevated, #171B1A)',
-                border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                minWidth: 0,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 6,
-                }}
-              >
+            <div className="gm-studio-publish-subcard">
+              <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
                 <Checkbox
                   data-testid="publish-auto-retest-checkbox"
                   checked={autoRetestEnabled}
                   disabled={readOnly || submitting}
                   onChange={(e) => setAutoRetestEnabled(e.target.checked)}
-                  style={{ fontSize: 12, color: GM.fg.f1 }}
+                  className="gm-studio-publish-checkbox"
                 >
                   开启 T+7/T+14/T+30 自动追踪
                 </Checkbox>
 
                 {autoRetestEnabled ? (
-                  <div style={{ display: 'inline-flex', gap: 4 }}>
-                    {([1, 3] as const).map((cnt) => (
-                      <Button
-                        key={cnt}
-                        size="small"
-                        type={formSampleCount === cnt ? 'primary' : 'default'}
-                        disabled={readOnly || submitting}
-                        onClick={() => setFormSampleCount(cnt)}
-                        style={{
-                          fontSize: 11,
-                          height: 22,
-                          padding: '0 7px',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {cnt === 1 ? '1 次' : '3 次高置信'}
-                      </Button>
-                    ))}
+                  <div className="gm-studio-sample-toggle-group">
+                    {([1, 3] as const).map((cnt) => {
+                      const selected = formSampleCount === cnt;
+                      const btn = (
+                        <Button
+                          key={cnt}
+                          size="small"
+                          type="default"
+                          aria-pressed={selected}
+                          disabled={readOnly || submitting}
+                          onClick={() => setFormSampleCount(cnt)}
+                          className={`gm-studio-sample-btn${selected ? ' gm-studio-sample-btn--selected' : ''}`}
+                        >
+                          {cnt === 1 ? '1 次' : '3 次高置信'}
+                        </Button>
+                      );
+                      return cnt === 3 ? (
+                        <Tooltip
+                          key={cnt}
+                          placement="topRight"
+                          destroyOnHidden
+                          title={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling}
+                        >
+                          {btn}
+                        </Tooltip>
+                      ) : (
+                        btn
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
 
-              <div
-                data-testid="publish-form-budget-ceiling"
-                style={{
-                  fontSize: 11.5,
-                  color: GM.fg.f3,
-                  lineHeight: 1.5,
-                  overflowWrap: 'anywhere',
-                }}
-              >
+              <div data-testid="publish-form-budget-ceiling" className="gm-studio-text-muted">
                 {autoRetestEnabled
                   ? formBudgetText
                   : '已关闭自动追踪，登记后不创建定时复测计划，后续可随时在下方重新开启。'}
@@ -879,24 +865,9 @@ export function StudioPublishRetest({
                     key={rec.id}
                     className="gm-studio-publish-item"
                     data-testid={`publish-record-item-${rec.id}`}
-                    style={{ minWidth: 0 }}
                   >
-                    <div
-                      className="gm-studio-delivery-subhead"
-                      style={{ flexWrap: 'wrap', gap: 6, minWidth: 0 }}
-                    >
-                      <Tag
-                        color="blue"
-                        style={{
-                          margin: 0,
-                          maxWidth: '100%',
-                          whiteSpace: 'normal',
-                          overflowWrap: 'anywhere',
-                          wordBreak: 'break-word',
-                        }}
-                      >
-                        {rec.channel}
-                      </Tag>
+                    <div className="gm-studio-delivery-subhead">
+                      <Tag className="gm-studio-tag-wrap">{rec.channel}</Tag>
                       <span className="gm-studio-item-meta">
                         {formatShanghaiDateTime(rec.publishedAt)}
                       </span>
@@ -909,12 +880,11 @@ export function StudioPublishRetest({
                         target="_blank"
                         rel="noopener noreferrer"
                         title={rec.publishedUrl}
-                        style={{ overflowWrap: 'anywhere' }}
                       >
                         {truncateMiddle(rec.publishedUrl, 34)}
                       </a>
                     ) : (
-                      <span className="gm-studio-item-meta" style={{ overflowWrap: 'anywhere' }}>
+                      <span className="gm-studio-item-meta">
                         {truncateMiddle(rec.publishedUrl, 34)}
                       </span>
                     )}
@@ -922,46 +892,30 @@ export function StudioPublishRetest({
                     {/* T+1 Crawl & Schema Probe Badges */}
                     <div
                       data-testid={`publish-crawl-badges-${rec.id}`}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 6,
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
+                      className="gm-studio-publish-subcard"
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 6,
-                        }}
-                      >
-                        <span style={{ fontSize: 11.5, fontWeight: 600, color: GM.fg.f2 }}>
-                          抓取与 Schema 体检
-                        </span>
-                        <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+                      <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
+                        <Tooltip
+                          placement="topRight"
+                          destroyOnHidden
+                          title={UX_GLOSSARY_TOOLTIPS.crawlSchemaProbe}
+                        >
+                          <span className="gm-studio-publish-subcard-title gm-studio-glossary-trigger">
+                            {UX_TERMS.crawlSchemaProbe}
+                          </span>
+                        </Tooltip>
+                        <div className="gm-studio-row gm-studio-row--wrap">
                           {report ? (
                             <Button
                               size="small"
                               type="link"
+                              className="gm-studio-link-compact"
                               onClick={() =>
                                 setExpandedCrawlIds((prev) => ({
                                   ...prev,
                                   [rec.id]: !prev[rec.id],
                                 }))
                               }
-                              style={{
-                                padding: '0 4px',
-                                height: 22,
-                                fontSize: 11,
-                                whiteSpace: 'nowrap',
-                              }}
                             >
                               {isDiagExpanded ? '收起诊断' : hasDiag ? '查看告警' : '诊断详情'}
                             </Button>
@@ -972,121 +926,79 @@ export function StudioPublishRetest({
                             loading={isProbingThis}
                             disabled={readOnly || Boolean(probingRecordId)}
                             onClick={() => void handleCrawlRecheck(raw)}
-                            style={{
-                              fontSize: 11,
-                              height: 22,
-                              padding: '0 7px',
-                              whiteSpace: 'nowrap',
-                            }}
+                            className="gm-studio-sample-btn"
                           >
                             立即重新检测
                           </Button>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 0 }}>
-                        <Tag
-                          color={crawlStatusTagColor(crawlStatus)}
-                          style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                        >
+                      <div className="gm-studio-row gm-studio-row--wrap">
+                        <StatusBadge tone={crawlStatusTone(crawlStatus)}>
                           {CRAWL_PROBE_STATUS_LABELS[crawlStatus]}
-                        </Tag>
+                        </StatusBadge>
 
                         {report ? (
-                          <Tag
-                            color={
+                          <StatusBadge
+                            tone={
                               report.httpStatus !== null &&
                               report.httpStatus >= 200 &&
                               report.httpStatus < 300
-                                ? 'green'
+                                ? 'success'
                                 : report.httpStatus !== null && report.httpStatus < 400
-                                  ? 'gold'
-                                  : 'red'
+                                  ? 'warning'
+                                  : 'danger'
                             }
-                            style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
                           >
                             {report.httpStatus !== null ? `HTTP ${report.httpStatus}` : 'HTTP 异常'}
-                          </Tag>
+                          </StatusBadge>
                         ) : null}
 
                         {gptBot ? (
-                          <Tag
-                            color={gptBot.allowed ? 'green' : 'red'}
-                            style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                          >
+                          <StatusBadge tone={gptBot.allowed ? 'success' : 'danger'}>
                             {gptBot.allowed ? 'GPTBot 允许' : 'GPTBot 拦截'}
-                          </Tag>
+                          </StatusBadge>
                         ) : null}
 
                         {perplexityBot ? (
-                          <Tag
-                            color={perplexityBot.allowed ? 'green' : 'red'}
-                            style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                          >
+                          <StatusBadge tone={perplexityBot.allowed ? 'success' : 'danger'}>
                             {perplexityBot.allowed ? 'PerplexityBot 允许' : 'PerplexityBot 拦截'}
-                          </Tag>
+                          </StatusBadge>
                         ) : null}
 
                         {report && report.metaNoindex ? (
-                          <Tag
-                            color="red"
-                            style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                          >
-                            meta noindex
-                          </Tag>
+                          <StatusBadge tone="danger">meta noindex</StatusBadge>
                         ) : null}
 
                         {report ? (
                           report.jsonLdParseErrors.length > 0 ? (
-                            <Tag
-                              color="red"
-                              style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                            >
-                              JSON-LD 解析异常
-                            </Tag>
+                            <StatusBadge tone="danger">JSON-LD 解析异常</StatusBadge>
                           ) : report.jsonLdTypes.length > 0 ? (
                             report.jsonLdTypes.slice(0, 3).map((schemaType) => (
-                              <Tag
+                              <StatusBadge
                                 key={schemaType}
-                                color="cyan"
-                                style={{
-                                  margin: 0,
-                                  fontSize: 11,
-                                  maxWidth: '100%',
-                                  whiteSpace: 'normal',
-                                  overflowWrap: 'anywhere',
-                                  wordBreak: 'break-word',
-                                }}
+                                tone="active"
+                                className="gm-studio-tag-wrap"
                               >
                                 JSON-LD: {schemaType}
-                              </Tag>
+                              </StatusBadge>
                             ))
                           ) : (
-                            <Tag
-                              color="red"
-                              style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                            >
-                              缺少 JSON-LD
-                            </Tag>
+                            <StatusBadge tone="danger">缺少 JSON-LD</StatusBadge>
                           )
                         ) : null}
 
                         {rec.indexNowSubmitted ? (
-                          <Tag
-                            color="blue"
-                            style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                          >
-                            IndexNow 已提交
-                          </Tag>
+                          <StatusBadge tone="active">IndexNow 已提交</StatusBadge>
                         ) : null}
                       </div>
 
                       {rec.crawlCheckedAt ? (
-                        <div style={{ fontSize: 11, color: GM.fg.f3 }}>
+                        <div className="gm-studio-text-muted">
                           最近体检：{formatShanghaiDateTime(rec.crawlCheckedAt)}（免费体检）
                         </div>
                       ) : (
-                        <div style={{ fontSize: 11, color: GM.fg.f3 }}>
+                        <div className="gm-studio-text-muted">
                           尚未完成体检，可点击上方「立即重新检测」（免费体检）。
                         </div>
                       )}
@@ -1094,41 +1006,18 @@ export function StudioPublishRetest({
                       {isDiagExpanded && report ? (
                         <div
                           data-testid={`publish-crawl-diagnostics-${rec.id}`}
-                          style={{
-                            marginTop: 2,
-                            padding: '8px 10px',
-                            borderRadius: 6,
-                            background: 'var(--gm-bg-surface, #111413)',
-                            border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 6,
-                            fontSize: 11.5,
-                            minWidth: 0,
-                          }}
+                          className="gm-studio-crawl-diag"
                         >
                           {report.errorMessage ? (
-                            <div style={{ color: GM.status.danger, overflowWrap: 'anywhere' }}>
+                            <div className="gm-studio-text-danger">
                               请求异常：{report.errorMessage}
                             </div>
                           ) : null}
 
                           {report.issues.length > 0 ? (
-                            <ul
-                              style={{
-                                margin: 0,
-                                paddingLeft: 16,
-                                color: GM.status.danger,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 3,
-                              }}
-                            >
+                            <ul className="gm-studio-crawl-issues">
                               {report.issues.map((issue, issueIdx) => (
-                                <li
-                                  key={`${issue}-${issueIdx}`}
-                                  style={{ overflowWrap: 'anywhere' }}
-                                >
+                                <li key={`${issue}-${issueIdx}`} className="gm-studio-text-danger">
                                   {issue}
                                 </li>
                               ))}
@@ -1136,36 +1025,27 @@ export function StudioPublishRetest({
                           ) : null}
 
                           {report.jsonLdParseErrors.length > 0 ? (
-                            <div style={{ color: GM.status.danger, overflowWrap: 'anywhere' }}>
+                            <div className="gm-studio-text-danger">
                               JSON-LD 错误：{report.jsonLdParseErrors.join('；')}
                             </div>
                           ) : null}
 
                           {report.canonicalMatches === false ? (
-                            <div style={{ color: GM.status.danger, overflowWrap: 'anywhere' }}>
+                            <div className="gm-studio-text-danger">
                               Canonical 不一致：{report.canonicalUrl || '未声明'}
                             </div>
                           ) : null}
 
                           {report.robotsMatrix.length > 0 ? (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, minWidth: 0 }}>
+                            <div className="gm-studio-row gm-studio-row--wrap">
                               {report.robotsMatrix.map((botRow) => (
                                 <span
                                   key={botRow.bot}
-                                  style={{
-                                    fontSize: 11,
-                                    padding: '1px 6px',
-                                    borderRadius: 4,
-                                    background: botRow.allowed
-                                      ? 'rgba(61,224,200,0.12)'
-                                      : 'rgba(240,96,93,0.14)',
-                                    color: botRow.allowed ? GM.sig.cited : GM.status.danger,
-                                    whiteSpace: 'normal',
-                                    maxWidth: '100%',
-                                    overflowWrap: 'anywhere',
-                                    wordBreak: 'break-word',
-                                    boxSizing: 'border-box',
-                                  }}
+                                  className={`gm-studio-bot-chip ${
+                                    botRow.allowed
+                                      ? 'gm-studio-bot-chip--allowed'
+                                      : 'gm-studio-bot-chip--blocked'
+                                  }`}
                                 >
                                   {botRow.bot}: {botRow.allowed ? '允许' : '拦截'}
                                   {!botRow.allowed && botRow.matchedRule
@@ -1182,81 +1062,64 @@ export function StudioPublishRetest({
                     {/* Stepped Auto-Retest Timeline: T+0 Baseline -> T+7 -> T+14 -> T+30 */}
                     <div
                       data-testid={`publish-retest-timeline-${rec.id}`}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
+                      className="gm-studio-publish-subcard"
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 6,
-                        }}
-                      >
-                        <span style={{ fontSize: 11.5, fontWeight: 600, color: GM.fg.f2 }}>
-                          阶梯自动复测时间线
-                        </span>
+                      <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
+                        <span className="gm-studio-publish-subcard-title">阶梯自动复测时间线</span>
                         <div
                           data-testid={`publish-retest-sample-toggle-${rec.id}`}
-                          style={{ display: 'inline-flex', gap: 4 }}
+                          className="gm-studio-sample-toggle-group"
                         >
-                          {([1, 3] as const).map((cnt) => (
-                            <Button
-                              key={cnt}
-                              size="small"
-                              type={currentSampleCount === cnt ? 'primary' : 'default'}
-                              loading={isUpdatingSchedThis && currentSampleCount !== cnt}
-                              disabled={
-                                readOnly ||
-                                Boolean(updatingScheduleRecordId) ||
-                                !hasPendingSchedules
-                              }
-                              title={
-                                !hasPendingSchedules
-                                  ? '当前无待执行复测节点，请先开启至少一个节点后再切换采样模式'
-                                  : undefined
-                              }
-                              onClick={() => {
-                                if (!hasPendingSchedules || cnt === currentSampleCount) return;
-                                void handleUpdateSchedules(
-                                  raw,
-                                  rec,
-                                  { sampleCount: cnt },
-                                  `已切换为 ${cnt === 1 ? '1 次标准采样' : '3 次高置信采样'}`,
-                                );
-                              }}
-                              style={{
-                                fontSize: 11,
-                                height: 22,
-                                padding: '0 7px',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {cnt === 1 ? '1 次' : '3 次高置信'}
-                            </Button>
-                          ))}
+                          {([1, 3] as const).map((cnt) => {
+                            const selected = currentSampleCount === cnt;
+                            const btn = (
+                              <Button
+                                key={cnt}
+                                size="small"
+                                type="default"
+                                aria-pressed={selected}
+                                loading={isUpdatingSchedThis && currentSampleCount !== cnt}
+                                disabled={
+                                  readOnly ||
+                                  Boolean(updatingScheduleRecordId) ||
+                                  !hasPendingSchedules
+                                }
+                                title={
+                                  !hasPendingSchedules
+                                    ? '当前无待执行复测节点，请先开启至少一个节点后再切换采样模式'
+                                    : undefined
+                                }
+                                onClick={() => {
+                                  if (!hasPendingSchedules || cnt === currentSampleCount) return;
+                                  void handleUpdateSchedules(
+                                    raw,
+                                    rec,
+                                    { sampleCount: cnt },
+                                    `已切换为 ${cnt === 1 ? '1 次标准采样' : '3 次高置信采样'}`,
+                                  );
+                                }}
+                                className={`gm-studio-sample-btn${selected ? ' gm-studio-sample-btn--selected' : ''}`}
+                              >
+                                {cnt === 1 ? '1 次' : '3 次高置信'}
+                              </Button>
+                            );
+                            return cnt === 3 && hasPendingSchedules ? (
+                              <Tooltip
+                                key={cnt}
+                                placement="topRight"
+                                destroyOnHidden
+                                title={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling}
+                              >
+                                {btn}
+                              </Tooltip>
+                            ) : (
+                              btn
+                            );
+                          })}
                         </div>
                       </div>
 
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 6,
-                          minWidth: 0,
-                        }}
-                      >
+                      <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
                         <Checkbox
                           data-testid={`publish-retest-control-toggle-${rec.id}`}
                           checked={currentIncludeControlPrompts}
@@ -1275,29 +1138,21 @@ export function StudioPublishRetest({
                                 : '已关闭对照组 DiD 归因复测',
                             );
                           }}
-                          style={{ fontSize: 11.5, color: GM.fg.f2 }}
+                          className="gm-studio-publish-checkbox gm-studio-publish-checkbox--muted"
                         >
                           开启对照组 DiD 归因
                         </Checkbox>
                         {liveBudget?.includeControlPrompts &&
                         liveBudget.effectiveControlPromptCount > 0 ? (
-                          <Tag
-                            color="cyan"
-                            style={{ margin: 0, fontSize: 10.5, whiteSpace: 'nowrap' }}
-                          >
+                          <StatusBadge tone="active">
                             含 {liveBudget.effectiveControlPromptCount} 条对照
-                          </Tag>
+                          </StatusBadge>
                         ) : null}
                       </div>
 
                       <div
                         data-testid={`publish-retest-budget-${rec.id}`}
-                        style={{
-                          fontSize: 11,
-                          color: GM.fg.f3,
-                          lineHeight: 1.5,
-                          overflowWrap: 'anywhere',
-                        }}
+                        className="gm-studio-text-muted"
                       >
                         {cardBudgetText}
                       </div>
@@ -1306,12 +1161,7 @@ export function StudioPublishRetest({
                       liveBudget.configuredControlPromptCount === 0 ? (
                         <div
                           data-testid={`publish-retest-zero-controls-hint-${rec.id}`}
-                          style={{
-                            fontSize: 11,
-                            color: GM.status.warning,
-                            lineHeight: 1.45,
-                            overflowWrap: 'anywhere',
-                          }}
+                          className="gm-studio-text-warning"
                         >
                           当前品牌市场尚未配置对照组问句，本次将仅监测目标问句；可前往品牌设置添加最多
                           5 条对照组问句以计算 DiD 净增益。
@@ -1324,50 +1174,23 @@ export function StudioPublishRetest({
                       !liveBudget.sufficientForNextRun ? (
                         <div
                           data-testid={`publish-retest-insufficient-hint-${rec.id}`}
-                          style={{
-                            fontSize: 11,
-                            color: GM.status.warning,
-                            lineHeight: 1.45,
-                            overflowWrap: 'anywhere',
-                          }}
+                          className="gm-studio-text-warning"
                         >
                           当前可用余额低于下次复测上限（{liveBudget.perRunPoints}{' '}
                           点），到期时将自动温和跳过且不产生扣费。
                         </div>
                       ) : null}
 
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                          minWidth: 0,
-                        }}
-                      >
+                      <div className="gm-studio-stack">
                         {/* T+0 Baseline Node */}
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 6,
-                            padding: '6px 8px',
-                            borderRadius: 5,
-                            background: 'var(--gm-bg-surface, #111413)',
-                            border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                            fontSize: 11.5,
-                          }}
-                        >
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                            <Tag style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}>
-                              T+0 基准
-                            </Tag>
-                            <span className="gm-num" style={{ color: GM.fg.f3 }}>
+                        <div className="gm-studio-milestone-node gm-studio-milestone-node--inline">
+                          <div className="gm-studio-row">
+                            <Tag className="gm-studio-tag-nowrap">T+0 基准</Tag>
+                            <span className="gm-num gm-studio-text-muted">
                               {formatShanghaiDate(rec.publishedAt)}
                             </span>
                           </div>
-                          <span className="gm-num" style={{ color: GM.fg.f2 }}>
+                          <span className="gm-num gm-studio-text-secondary">
                             {rec.beforeMetrics
                               ? `提及率 ${formatPercent(rec.beforeMetrics.mentionRate)}`
                               : '待建立基准'}
@@ -1385,52 +1208,17 @@ export function StudioPublishRetest({
                             <div
                               key={day}
                               data-testid={`publish-retest-node-${rec.id}-T${day}`}
-                              style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 4,
-                                padding: '6px 8px',
-                                borderRadius: 5,
-                                background: 'var(--gm-bg-surface, #111413)',
-                                border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                                fontSize: 11.5,
-                                minWidth: 0,
-                              }}
+                              className="gm-studio-milestone-node"
                             >
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  gap: 6,
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display: 'inline-flex',
-                                    flexWrap: 'wrap',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                  }}
-                                >
-                                  <span
-                                    className="gm-num"
-                                    style={{ fontWeight: 600, color: GM.fg.f1 }}
-                                  >
-                                    T+{day}
-                                  </span>
+                              <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
+                                <div className="gm-studio-row gm-studio-row--wrap">
+                                  <span className="gm-num gm-studio-milestone-day">T+{day}</span>
                                   {sched ? (
-                                    <Tag
-                                      color={scheduleStatusTagColor(sched.status)}
-                                      style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}
-                                    >
+                                    <StatusBadge tone={scheduleStatusTone(sched.status)}>
                                       {RETEST_SCHEDULE_STATUS_LABELS[sched.status]}
-                                    </Tag>
+                                    </StatusBadge>
                                   ) : (
-                                    <Tag style={{ margin: 0, fontSize: 11, whiteSpace: 'nowrap' }}>
-                                      未启用
-                                    </Tag>
+                                    <Tag className="gm-studio-tag-nowrap">未启用</Tag>
                                   )}
                                 </div>
 
@@ -1439,6 +1227,7 @@ export function StudioPublishRetest({
                                     size="small"
                                     type="link"
                                     danger
+                                    className="gm-studio-link-compact"
                                     disabled={readOnly || Boolean(updatingScheduleRecordId)}
                                     onClick={() =>
                                       void handleUpdateSchedules(
@@ -1448,12 +1237,6 @@ export function StudioPublishRetest({
                                         `已取消 T+${day} 自动复测节点`,
                                       )
                                     }
-                                    style={{
-                                      padding: '0 4px',
-                                      height: 20,
-                                      fontSize: 11,
-                                      whiteSpace: 'nowrap',
-                                    }}
                                   >
                                     取消
                                   </Button>
@@ -1461,6 +1244,7 @@ export function StudioPublishRetest({
                                   <Button
                                     size="small"
                                     type="link"
+                                    className="gm-studio-link-compact"
                                     disabled={readOnly || Boolean(updatingScheduleRecordId)}
                                     onClick={() => {
                                       const nextSampleCount: RetestSampleCount = hasPendingSchedules
@@ -1487,12 +1271,6 @@ export function StudioPublishRetest({
                                         `已开启 T+${day} 自动复测节点`,
                                       );
                                     }}
-                                    style={{
-                                      padding: '0 4px',
-                                      height: 20,
-                                      fontSize: 11,
-                                      whiteSpace: 'nowrap',
-                                    }}
                                   >
                                     {sched ? '重新开启' : '开启'}
                                   </Button>
@@ -1500,7 +1278,7 @@ export function StudioPublishRetest({
                               </div>
 
                               {sched?.status === 'PENDING' ? (
-                                <div style={{ color: GM.fg.f3, fontSize: 11 }}>
+                                <div className="gm-studio-text-muted">
                                   预计执行：
                                   <span className="gm-num">{formatShanghaiDate(sched.dueAt)}</span>
                                   {' · '}
@@ -1509,15 +1287,7 @@ export function StudioPublishRetest({
                               ) : null}
 
                               {sched?.status === 'COMPLETED' && sched.metricsSnapshot ? (
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: '4px 10px',
-                                    color: GM.fg.f2,
-                                    fontSize: 11,
-                                  }}
-                                >
+                                <div className="gm-studio-milestone-metrics">
                                   <span className="gm-num">
                                     提及率 {formatPercent(sched.metricsSnapshot.mentionRate)}
                                     {(() => {
@@ -1529,11 +1299,11 @@ export function StudioPublishRetest({
                                     })()}
                                   </span>
                                   <span
-                                    style={{
-                                      color: sched.metricsSnapshot.citationHit
-                                        ? GM.sig.cited
-                                        : GM.fg.f3,
-                                    }}
+                                    className={
+                                      sched.metricsSnapshot.citationHit
+                                        ? 'gm-studio-milestone-cited'
+                                        : 'gm-studio-text-muted'
+                                    }
                                   >
                                     {sched.metricsSnapshot.citationHit ? '引文命中' : '未命中引文'}
                                   </span>
@@ -1550,7 +1320,7 @@ export function StudioPublishRetest({
                                     </span>
                                   ) : null}
                                   {sched.executedAt ? (
-                                    <span style={{ color: GM.fg.f3 }}>
+                                    <span className="gm-studio-text-muted">
                                       {formatShanghaiDateTime(sched.executedAt)}
                                     </span>
                                   ) : null}
@@ -1561,17 +1331,9 @@ export function StudioPublishRetest({
                               isValidWilson(sched.metricsSnapshot?.wilson) ? (
                                 <div
                                   data-testid={`publish-retest-wilson-${rec.id}-T${day}`}
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    fontSize: 10.5,
-                                    color: GM.fg.f3,
-                                    minWidth: 0,
-                                  }}
+                                  className="gm-studio-milestone-stats-row"
                                 >
-                                  <span className="gm-num" style={{ overflowWrap: 'anywhere' }}>
+                                  <span className="gm-num">
                                     95% CI [{(sched.metricsSnapshot.wilson.lower * 100).toFixed(1)}
                                     %, {(sched.metricsSnapshot.wilson.upper * 100).toFixed(1)}%]（n=
                                     {sched.metricsSnapshot.wilson.trials}）
@@ -1587,7 +1349,7 @@ export function StudioPublishRetest({
                                   </SignalPill>
                                   {sched.metricsSnapshot.wilson.confidenceLevel === 'LOW' ||
                                   sched.metricsSnapshot.wilson.trials < 5 ? (
-                                    <span style={{ color: GM.status.warning }}>
+                                    <span className="gm-studio-text-warning">
                                       样本较少，建议开启 3× 采样
                                     </span>
                                   ) : null}
@@ -1601,15 +1363,7 @@ export function StudioPublishRetest({
                               isFiniteNumber(sched.controlMetricsJson.did.controlDelta) ? (
                                 <div
                                   data-testid={`publish-retest-did-${rec.id}-T${day}`}
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    alignItems: 'center',
-                                    gap: 4,
-                                    fontSize: 10.5,
-                                    color: GM.fg.f2,
-                                    minWidth: 0,
-                                  }}
+                                  className="gm-studio-milestone-stats-row gm-studio-milestone-stats-row--did"
                                 >
                                   <SignalPill
                                     tone={resolveDidDirectionTone(
@@ -1621,10 +1375,7 @@ export function StudioPublishRetest({
                                       sched.controlMetricsJson.did.direction,
                                     )}
                                   </SignalPill>
-                                  <span
-                                    className="gm-num"
-                                    style={{ color: GM.fg.f3, overflowWrap: 'anywhere' }}
-                                  >
+                                  <span className="gm-num gm-studio-text-muted">
                                     处理组 Δ{' '}
                                     {formatDidPp(sched.controlMetricsJson.did.treatmentDelta)} ·
                                     对照组 Δ{' '}
@@ -1638,14 +1389,11 @@ export function StudioPublishRetest({
                                 sched?.status === 'FAILED') &&
                                 sched.skipReason) ? (
                                 <div
-                                  style={{
-                                    color:
-                                      sched.status === 'FAILED'
-                                        ? GM.status.danger
-                                        : GM.status.warning,
-                                    fontSize: 11,
-                                    overflowWrap: 'anywhere',
-                                  }}
+                                  className={
+                                    sched.status === 'FAILED'
+                                      ? 'gm-studio-inline-error'
+                                      : 'gm-studio-text-warning'
+                                  }
                                 >
                                   {sched.skipReason ?? '余额不足，已自动温和跳过本次复测（未扣费）'}
                                 </div>
@@ -1657,7 +1405,7 @@ export function StudioPublishRetest({
                     </div>
 
                     {/* Demoted Instant Retest Secondary Button + Gentle Hint */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div className="gm-studio-stack gm-studio-stack--sm">
                       <Button
                         size="small"
                         type="default"
@@ -1670,11 +1418,11 @@ export function StudioPublishRetest({
                           readOnly || Boolean(retestingRecordId) || Boolean(pollingRetestRecordId)
                         }
                         onClick={() => void onTriggerRetest(rec)}
-                        style={{ whiteSpace: 'nowrap' }}
+                        className="gm-studio-nowrap"
                       >
                         {isPollingThis ? '复测进行中…' : '一键立刻复测'}
                       </Button>
-                      <div style={{ fontSize: 11, color: GM.fg.f3, lineHeight: 1.45 }}>
+                      <div className="gm-studio-text-muted">
                         新发内容通常需 7–14 天进入 AI 检索，建议启用上方自动追踪。
                       </div>
                     </div>

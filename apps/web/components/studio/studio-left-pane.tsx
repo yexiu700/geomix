@@ -24,6 +24,7 @@ import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
 export type StudioLeftPaneProps = {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  hideCollapseToggle?: boolean;
   briefs: readonly GeoBriefRecord[];
   briefsLoading: boolean;
   activeBriefId: string | null;
@@ -51,6 +52,7 @@ export type StudioLeftPaneProps = {
 export function StudioLeftPane({
   collapsed,
   onToggleCollapse,
+  hideCollapseToggle = false,
   briefs,
   briefsLoading,
   activeBriefId,
@@ -115,29 +117,45 @@ export function StudioLeftPane({
 
   if (collapsed) {
     return (
-      <aside className="gm-studio-pane" aria-label="选题与待办队列">
+      <aside className="gm-studio-pane gm-studio-pane--left" aria-label="选题与待办队列">
         <div className="gm-studio-collapsed-rail">
           <Button
             size="small"
             type="text"
+            icon={
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M2.5 3.5H13.5M2.5 8H9.5M2.5 12.5H13.5M11 6L13.5 8L11 10"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            }
             aria-label="展开队列"
+            title="展开队列"
             aria-expanded={false}
             onClick={onToggleCollapse}
-          >
-            »
-          </Button>
+          />
         </div>
       </aside>
     );
   }
 
   return (
-    <aside className="gm-studio-pane" aria-label="选题与待办队列" data-testid="studio-left-pane">
+    <aside
+      className="gm-studio-pane gm-studio-pane--left"
+      aria-label="选题与待办队列"
+      data-testid="studio-left-pane"
+    >
       <div className="gm-studio-pane-head">
         <span className="gm-studio-pane-title">选题与成稿队列</span>
-        <Button size="small" type="text" aria-expanded={true} onClick={onToggleCollapse}>
-          收起队列
-        </Button>
+        {!hideCollapseToggle ? (
+          <Button size="small" type="text" aria-expanded={true} onClick={onToggleCollapse}>
+            收起队列
+          </Button>
+        ) : null}
       </div>
 
       <div className="gm-studio-pane-body">
@@ -192,7 +210,7 @@ export function StudioLeftPane({
                 已完成 {visibleBatchJob.doneCount} / {visibleBatchJob.total}
               </span>
               {visibleBatchJob.failCount > 0 ? (
-                <span style={{ color: 'var(--gm-danger)' }}>
+                <span className="gm-studio-text-danger">
                   失败 {visibleBatchJob.failCount}（已退点）
                 </span>
               ) : null}
@@ -205,15 +223,20 @@ export function StudioLeftPane({
         <div className="gm-studio-section-label">
           <span>待写意见卡 ({openBriefs.length})</span>
           {openBriefs.length > 0 && !readOnly ? (
-            <div style={{ display: 'flex', gap: 4 }}>
-              <Button size="small" type="link" style={{ padding: 0 }} onClick={handleSelectAllOpen}>
+            <div className="gm-studio-row">
+              <Button
+                size="small"
+                type="link"
+                className="gm-studio-link-compact"
+                onClick={handleSelectAllOpen}
+              >
                 全选
               </Button>
               {selectedBriefIds.length > 0 ? (
                 <Button
                   size="small"
                   type="link"
-                  style={{ padding: 0 }}
+                  className="gm-studio-link-compact"
                   onClick={() => onSelectedBriefIdsChange([])}
                 >
                   清空
@@ -262,7 +285,7 @@ export function StudioLeftPane({
             })}
 
             <Button
-              type="primary"
+              type="default"
               size="small"
               block
               data-testid="studio-batch-btn"
@@ -280,15 +303,14 @@ export function StudioLeftPane({
         )}
 
         {/* Section 2: Historical GeoArticles (always visible, zero legacy columns!) */}
-        <div className="gm-studio-section-label" style={{ marginTop: 4 }}>
+        <div className="gm-studio-section-label gm-studio-section-label--spaced">
           <span>历史成稿 ({articles.length})</span>
         </div>
 
-        <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+        <div className="gm-studio-row">
           <select
             aria-label="按状态筛选历史成稿"
-            className="gm-select"
-            style={{ width: 108, minWidth: 104, flexShrink: 0, whiteSpace: 'nowrap' }}
+            className="gm-select gm-studio-filter-select"
             value={articleStatusFilter}
             onChange={(e) => onArticleStatusFilterChange(e.target.value as GeoArticleStatus | '')}
           >
@@ -321,12 +343,16 @@ export function StudioLeftPane({
                   key={article.id}
                   className={`gm-studio-article-item${isActive ? ' gm-studio-article-item-active' : ''}`}
                   data-testid={`studio-article-item-${article.id}`}
+                  onClick={() => onSelectArticle(article)}
                 >
                   <div className="gm-studio-article-row">
                     <button
                       type="button"
                       className="gm-studio-queue-btn"
-                      onClick={() => onSelectArticle(article)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectArticle(article);
+                      }}
                     >
                       <span className="gm-studio-item-title">{safeTitle}</span>
                     </button>
@@ -336,14 +362,19 @@ export function StudioLeftPane({
                         type="text"
                         danger
                         aria-label={`删除文章-${safeTitle}`}
-                        onClick={() => handleConfirmDelete(article)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleConfirmDelete(article);
+                        }}
                       >
                         删除
                       </Button>
                     ) : null}
                   </div>
                   <div className="gm-studio-item-meta">
-                    <Tag style={{ margin: 0 }}>{GEO_ARTICLE_STATUS_LABELS[article.status]}</Tag>
+                    <Tag className="gm-studio-tag-reset">
+                      {GEO_ARTICLE_STATUS_LABELS[article.status]}
+                    </Tag>
                     <span>{GEO_RECIPE_LABELS[article.recipe]}</span>
                     {article.geoScore > 0 ? <span>GEO {article.geoScore}</span> : null}
                     <span>{formatShanghaiDateTime(article.updatedAt)}</span>

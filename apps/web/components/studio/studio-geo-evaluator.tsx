@@ -2,12 +2,15 @@
 
 import {
   GEO_SCORE_DIMENSION_KEYS,
+  UX_GLOSSARY_TOOLTIPS,
+  UX_TERMS,
   type GeoArticleRecord,
   type GeoEvaluationResult,
   type GeoScoreDetail,
 } from '@geomix/shared';
-import { Button, Tag } from 'antd';
+import { Button, Tooltip } from 'antd';
 import type { JSX } from 'react';
+import { StatusBadge } from '../ui';
 
 export type StudioGeoEvaluatorProps = {
   article: GeoArticleRecord | null;
@@ -51,7 +54,11 @@ export function StudioGeoEvaluator({
     for (const key of GEO_SCORE_DIMENSION_KEYS) {
       const dim = detail.dimensions[key];
       if (dim && !dim.passed && dim.hints.length > 0) {
-        hints.push({ key, label: dim.label, hint: dim.hints[0]! });
+        hints.push({
+          key,
+          label: key === 'fanOutCoverage' ? UX_TERMS.fanOutCoverage : dim.label,
+          hint: dim.hints[0]!,
+        });
       }
     }
   }
@@ -85,25 +92,20 @@ export function StudioGeoEvaluator({
       {coveredFanOuts.length > 0 || missingFanOuts.length > 0 ? (
         <div className="gm-studio-fanout-box" data-testid="studio-fanout-coverage">
           <span className="gm-studio-section-label">
-            Fan-Out 拆解词覆盖（{coveredFanOuts.length} /{' '}
-            {coveredFanOuts.length + missingFanOuts.length}）
+            <Tooltip title={UX_GLOSSARY_TOOLTIPS.fanOutCoverage}>
+              <span className="gm-studio-glossary-trigger">
+                {UX_TERMS.fanOutCoverage}（{coveredFanOuts.length} /{' '}
+                {coveredFanOuts.length + missingFanOuts.length}）
+              </span>
+            </Tooltip>
           </span>
 
           {coveredFanOuts.length > 0 ? (
             <div className="gm-studio-chip-group">
               {coveredFanOuts.map((term) => (
-                <Tag
-                  key={term}
-                  color="green"
-                  style={{
-                    margin: 0,
-                    maxWidth: '100%',
-                    whiteSpace: 'normal',
-                    overflowWrap: 'anywhere',
-                  }}
-                >
+                <StatusBadge key={term} tone="success" className="gm-studio-tag-wrap">
                   ✓ {term}
-                </Tag>
+                </StatusBadge>
               ))}
             </div>
           ) : null}
@@ -116,7 +118,7 @@ export function StudioGeoEvaluator({
                   <Button
                     size="small"
                     type="link"
-                    style={{ padding: '0 4px', height: 'auto', flexShrink: 0 }}
+                    className="gm-studio-link-compact"
                     data-testid="fanout-supplement-btn"
                     aria-label={`一键补写小节-${term}`}
                     loading={supplementingTerm === term}

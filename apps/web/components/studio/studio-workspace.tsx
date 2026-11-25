@@ -7,6 +7,7 @@ import {
   GLOBAL_SUPPORTED_LOCALES,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   defaultTargetFormatForMarket,
+  extractMissingFactSlots,
   resolveEffectiveLocale,
   targetFormatsForMarket,
   type BrandFactRecord,
@@ -30,7 +31,7 @@ import {
   type VisibilityEngineAvailabilityItem,
   type VisibilityEngineKey,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Modal, Skeleton, Space, Tooltip } from 'antd';
+import { Alert, Button, Checkbox, Drawer, Modal, Skeleton, Space, Tooltip } from 'antd';
 import type { JSX, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts, listBrandMedia, saveBrandFacts } from '../../lib/brands';
@@ -165,10 +166,19 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const readOnly = consoleCtx?.readOnly ?? false;
   const feedback = useUxFeedback();
 
-  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => {
+  const [isCompactRailViewport, setIsCompactRailViewport] = useState<boolean>(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-    return window.matchMedia('(min-width: 900px) and (max-width: 1199px)').matches;
+    return window.matchMedia('(min-width: 921px) and (max-width: 1359px)').matches;
   });
+  const [isNarrowDrawerViewport, setIsNarrowDrawerViewport] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+    return window.matchMedia('(max-width: 920px)').matches;
+  });
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
+  const [prewriteExpanded, setPrewriteExpanded] = useState<boolean>(false);
+  const [focusMode, setFocusMode] = useState<boolean>(false);
+  const [mobileLeftDrawerOpen, setMobileLeftDrawerOpen] = useState<boolean>(false);
+  const [mobileRightDrawerOpen, setMobileRightDrawerOpen] = useState<boolean>(false);
   const leftCollapseManualRef = useRef(false);
 
   // Queue & History Data
@@ -320,6 +330,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setOutlineH2(brief.outlineH2 ?? []);
       setTargetFanOuts(brief.targetFanOuts ?? []);
       setMatchedFactIds(brief.matchedFactIds ?? []);
+      setPrewriteExpanded(true);
+      setMobileLeftDrawerOpen(false);
       replaceStudioUrlParam('briefId', brief.id);
     },
     [activeMarket],
@@ -343,15 +355,35 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
-    const mq = window.matchMedia('(min-width: 900px) and (max-width: 1199px)');
-    const syncNarrowRail = () => {
-      if (!leftCollapseManualRef.current) {
-        setLeftCollapsed(mq.matches);
+    const compactMq = window.matchMedia('(min-width: 921px) and (max-width: 1359px)');
+    const narrowMq = window.matchMedia('(max-width: 920px)');
+    const syncBreakpoints = () => {
+      setIsCompactRailViewport(compactMq.matches);
+      setIsNarrowDrawerViewport(narrowMq.matches);
+      if (narrowMq.matches) {
+        setFocusMode(false);
+      } else {
+        setMobileLeftDrawerOpen(false);
+        setMobileRightDrawerOpen(false);
       }
     };
-    mq.addEventListener('change', syncNarrowRail);
-    return () => mq.removeEventListener('change', syncNarrowRail);
+    syncBreakpoints();
+    compactMq.addEventListener('change', syncBreakpoints);
+    narrowMq.addEventListener('change', syncBreakpoints);
+    return () => {
+      compactMq.removeEventListener('change', syncBreakpoints);
+      narrowMq.removeEventListener('change', syncBreakpoints);
+    };
   }, []);
+
+  useEffect(() => {
+    if (leftCollapseManualRef.current) return;
+    if (isCompactRailViewport && activeArticle !== null) {
+      setLeftCollapsed(true);
+    } else if (!isCompactRailViewport) {
+      setLeftCollapsed(false);
+    }
+  }, [isCompactRailViewport, activeArticle]);
 
   const resetActiveArticleContext = useCallback(
     (nextArticleId: string | null) => {
@@ -363,11 +395,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       pendingUsedMediaIdsRef.current = [];
       setSavingArticle(false);
       setEvaluating(false);
+      setEvaluation(null);
+      setPublishRecords([]);
       setSupplementingTerm(null);
       setRetestingRecordId(null);
       setRetestModalRecord(null);
       if (nextArticleId === null) {
         setDistributionDrawerOpen(false);
+      } else {
+        setPrewriteExpanded(false);
       }
     },
     [clearArticleActionControllers],
@@ -384,6 +420,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       }
       setStreamError(null);
       setPartialDraft(null);
+      setMobileLeftDrawerOpen(false);
       replaceStudioUrlParam('articleId', article.id);
     },
     [resetActiveArticleContext],
@@ -647,6 +684,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setOutlineH2([]);
     setTargetFanOuts([]);
     setActiveArticle(null);
+    setPrewriteExpanded(false);
+    setFocusMode(false);
+    setMobileLeftDrawerOpen(false);
+    setMobileRightDrawerOpen(false);
     setDraftTitle('');
     setDraftMarkdown('');
     setStreaming(false);
@@ -1111,6 +1152,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     resetActiveArticleContext(null);
     setLinkedBrief(null);
     setActiveArticle(null);
+    setPrewriteExpanded(true);
+    setMobileLeftDrawerOpen(false);
     setDraftTitle('');
     setDraftMarkdown('');
     setOutlineH2([]);
@@ -1204,6 +1247,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             if (seq !== contextSeqRef.current) return;
             completedArticle = complete.article;
             setPartialDraft(null);
+            setPrewriteExpanded(false);
             applyArticleToCanvas(complete.article);
             setArticles((prev) => [
               complete.article,
@@ -2049,7 +2093,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   if (state.brandsError) {
     return (
-      <section className="gm-studio-page" aria-label="GEO 写作台">
+      <section className="gm-studio-page gm-studio-page--empty" aria-label="GEO 写作台">
         <SignalError
           message={state.brandsError}
           onRetry={() =>
@@ -2066,7 +2110,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   // Zero-brand onboarding state
   if (!activeBrand || !activeBrandMarket) {
     return (
-      <section className="gm-studio-page" aria-label="GEO 写作台">
+      <section className="gm-studio-page gm-studio-page--empty" aria-label="GEO 写作台">
         <div className="gm-panel">
           <SignalEmpty
             title="尚未创建品牌资产"
@@ -2084,61 +2128,170 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     (draftTitle !== activeArticle.title || draftMarkdown !== activeArticle.contentMarkdown),
   );
 
+  const isPrewriteCollapsed = Boolean(activeArticle) && !streaming && !prewriteExpanded;
+  const missingSlotCount =
+    streaming || !activeArticle ? 0 : extractMissingFactSlots(draftMarkdown).length;
+  const scopedPublishRecords =
+    activeArticleMatchesContext && activeArticle
+      ? publishRecords.filter((rec) => rec.articleId === activeArticle.id)
+      : [];
+  const hasCrawlAlert = scopedPublishRecords.some(
+    (rec) => rec.crawlStatus === 'BLOCKED' || rec.crawlStatus === 'FAILED',
+  );
+
   const onlineRetestEngineKeys = retestEngines.filter((eng) => eng.available).map((eng) => eng.key);
   const validRetestCheckedEngines = retestCheckedEngines.filter((key) =>
     onlineRetestEngineKeys.includes(key),
   );
   const retestEstimatedPoints = validRetestCheckedEngines.length * VISIBILITY_DEFAULT_UNIT_POINTS;
 
+  const counterEntryNode = slots?.counterEntrySlot ?? (
+    <Button
+      size="small"
+      data-testid="studio-counter-url-btn"
+      disabled={readOnly || streaming}
+      onClick={() => {
+        setMobileLeftDrawerOpen(false);
+        setCounterModalOpen(true);
+      }}
+    >
+      竞品 URL 反制
+    </Button>
+  );
+
+  const renderLeftPane = (inDrawer: boolean) => (
+    <StudioLeftPane
+      collapsed={inDrawer ? false : leftCollapsed}
+      hideCollapseToggle={inDrawer}
+      onToggleCollapse={() => {
+        leftCollapseManualRef.current = true;
+        setLeftCollapsed((v) => !v);
+      }}
+      briefs={briefs}
+      briefsLoading={briefsLoading}
+      activeBriefId={linkedBrief?.id ?? null}
+      selectedBriefIds={selectedBriefIds}
+      onSelectedBriefIdsChange={setSelectedBriefIds}
+      onSelectBrief={applyBriefToPrewrite}
+      onStartFreeTopic={handleStartFreeTopic}
+      onLaunchBatch={handleLaunchBatch}
+      batchSubmitting={batchSubmitting}
+      batchJobs={batchJobs}
+      highlightedBatchJobId={highlightedBatchJobId}
+      articles={articles}
+      articlesLoading={articlesLoading}
+      activeArticleId={activeArticle?.id ?? null}
+      articleStatusFilter={articleStatusFilter}
+      onArticleStatusFilterChange={setArticleStatusFilter}
+      articleTagFilter={articleTagFilter}
+      onArticleTagFilterChange={setArticleTagFilter}
+      onSelectArticle={applyArticleToCanvas}
+      onDeleteArticle={handleDeleteArticle}
+      readOnly={readOnly}
+      counterEntrySlot={counterEntryNode}
+    />
+  );
+
+  const renderRightPane = () => (
+    <StudioRightPane
+      activeMarket={activeMarket}
+      article={activeArticle}
+      streaming={streaming}
+      prewriteExpanded={!isPrewriteCollapsed}
+      brandFacts={brandFacts}
+      matchedFactIds={matchedFactIds}
+      missingSlotCount={missingSlotCount}
+      publishRecordCount={scopedPublishRecords.length}
+      hasCrawlAlert={hasCrawlAlert}
+      onChangeStatus={handleChangeStatus}
+      onChangeTags={handleChangeTags}
+      onFocusMissingFacts={() => {
+        setMobileRightDrawerOpen(false);
+        handleReturnToEditorForFix('MISSING_FACT_SLOTS');
+      }}
+      onOpenDistributionDrawer={() => {
+        setMobileRightDrawerOpen(false);
+        setDistributionDrawerOpen(true);
+      }}
+      readOnly={readOnly}
+      evaluatorSlot={
+        slots?.evaluatorSlot ?? (
+          <StudioGeoEvaluator
+            article={activeArticle}
+            evaluation={evaluation}
+            evaluating={evaluating}
+            supplementingTerm={supplementingTerm}
+            readOnly={readOnly}
+            streaming={streaming}
+            onRefreshEvaluate={handleRefreshEvaluate}
+            onSupplementFanOut={handleSupplementFanOut}
+          />
+        )
+      }
+      deliveryPackSlot={
+        slots?.deliveryPackSlot ?? (
+          <StudioDeliveryPack
+            activeMarket={activeMarket}
+            localBrandName={activeBrandMarket.localBrandName}
+            category={activeBrand.category}
+            localCategory={activeBrandMarket.localCategory}
+            ownedDomains={activeBrandMarket.ownedDomains}
+            brandNames={brandNames}
+            matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
+            readOnly={readOnly}
+            article={activeArticle}
+            evaluation={evaluation}
+            linkedBriefChannels={linkedBrief?.recommendedChannels}
+            streaming={streaming}
+            onOpenDistributionDrawer={() => {
+              setMobileRightDrawerOpen(false);
+              setDistributionDrawerOpen(true);
+            }}
+          />
+        )
+      }
+      publishRetestSlot={
+        slots?.publishRetestSlot ?? (
+          <StudioPublishRetest
+            activeMarket={activeMarket}
+            article={activeArticleMatchesContext ? activeArticle : null}
+            publishRecords={scopedPublishRecords}
+            recordsLoading={publishRecordsLoading}
+            retestingRecordId={retestingRecordId}
+            pollingRetestRecordId={pendingRetest?.recordId ?? null}
+            readOnly={readOnly}
+            onCreatePublishRecord={handleCreatePublishRecord}
+            onTriggerRetest={handleOpenRetestModal}
+            onPublishRecordUpdated={handlePublishRecordUpdated}
+          />
+        )
+      }
+    />
+  );
+
+  const gridClassName = [
+    'gm-studio-grid',
+    focusMode
+      ? 'gm-studio-grid-focus'
+      : isNarrowDrawerViewport
+        ? 'gm-studio-grid-narrow'
+        : leftCollapsed
+          ? 'gm-studio-grid-left-collapsed'
+          : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <section className="gm-studio-page" aria-label="GEO 写作台" data-testid="studio-workspace">
-      <div className={`gm-studio-grid${leftCollapsed ? ' gm-studio-grid-left-collapsed' : ''}`}>
+      <div className={gridClassName}>
         {/* Left Pane: Pending Briefs + Batch Queue + History Articles */}
-        <StudioLeftPane
-          collapsed={leftCollapsed}
-          onToggleCollapse={() => {
-            leftCollapseManualRef.current = true;
-            setLeftCollapsed((v) => !v);
-          }}
-          briefs={briefs}
-          briefsLoading={briefsLoading}
-          activeBriefId={linkedBrief?.id ?? null}
-          selectedBriefIds={selectedBriefIds}
-          onSelectedBriefIdsChange={setSelectedBriefIds}
-          onSelectBrief={applyBriefToPrewrite}
-          onStartFreeTopic={handleStartFreeTopic}
-          onLaunchBatch={handleLaunchBatch}
-          batchSubmitting={batchSubmitting}
-          batchJobs={batchJobs}
-          highlightedBatchJobId={highlightedBatchJobId}
-          articles={articles}
-          articlesLoading={articlesLoading}
-          activeArticleId={activeArticle?.id ?? null}
-          articleStatusFilter={articleStatusFilter}
-          onArticleStatusFilterChange={setArticleStatusFilter}
-          articleTagFilter={articleTagFilter}
-          onArticleTagFilterChange={setArticleTagFilter}
-          onSelectArticle={applyArticleToCanvas}
-          onDeleteArticle={handleDeleteArticle}
-          readOnly={readOnly}
-          counterEntrySlot={
-            slots?.counterEntrySlot ?? (
-              <Button
-                size="small"
-                data-testid="studio-counter-url-btn"
-                disabled={readOnly || streaming}
-                onClick={() => setCounterModalOpen(true)}
-              >
-                竞品 URL 反制
-              </Button>
-            )
-          }
-        />
+        {!focusMode && !isNarrowDrawerViewport ? renderLeftPane(false) : null}
 
-        {/* Center Pane: 3-Item Prewrite Bar + Live SSE Editor & Preview */}
+        {/* Center Pane: Collapsible Prewrite Bar + Live SSE Editor & Preview */}
         <main
           ref={centerPaneRef}
-          className="gm-studio-pane"
+          className="gm-studio-pane gm-studio-pane--center"
           aria-label="GEO 流式精写画布"
           data-testid="studio-center-pane"
         >
@@ -2170,6 +2323,19 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             availableLocales={availableLocales}
             targetLocale={targetLocale}
             onTargetLocaleChange={setTargetLocale}
+            collapsed={isPrewriteCollapsed}
+            canCollapse={Boolean(activeArticle)}
+            onToggleCollapsed={() => setPrewriteExpanded((prev) => !prev)}
+            articleSummary={
+              activeArticle
+                ? {
+                    targetPrompt: activeArticle.targetPrompt,
+                    recipe: activeArticle.recipe,
+                    targetFormat: activeArticle.targetFormat,
+                    targetLocale: activeArticle.targetLocale ?? targetLocale,
+                  }
+                : null
+            }
           />
 
           <StudioEditorCanvas
@@ -2192,6 +2358,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             onApplyRewrittenText={handleApplyRewrittenText}
             onCursorChange={handleEditorCursorChange}
             readOnly={readOnly}
+            focusMode={focusMode}
+            onToggleFocusMode={() => setFocusMode((v) => !v)}
+            isNarrowDrawerViewport={isNarrowDrawerViewport}
+            onOpenLeftDrawer={() => setMobileLeftDrawerOpen(true)}
+            onOpenRightDrawer={() => setMobileRightDrawerOpen(true)}
             mediaToolbarSlot={
               slots?.mediaToolbarSlot ?? (
                 <StudioMediaPopover
@@ -2214,68 +2385,39 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           />
         </main>
 
-        {/* Right Pane: GEO Score + Dual-Track Compliance + Status/Tags + M5 Slots */}
-        <StudioRightPane
-          activeMarket={activeMarket}
-          article={activeArticle}
-          brandFacts={brandFacts}
-          matchedFactIds={matchedFactIds}
-          onChangeStatus={handleChangeStatus}
-          onChangeTags={handleChangeTags}
-          readOnly={readOnly}
-          evaluatorSlot={
-            slots?.evaluatorSlot ?? (
-              <StudioGeoEvaluator
-                article={activeArticle}
-                evaluation={evaluation}
-                evaluating={evaluating}
-                supplementingTerm={supplementingTerm}
-                readOnly={readOnly}
-                streaming={streaming}
-                onRefreshEvaluate={handleRefreshEvaluate}
-                onSupplementFanOut={handleSupplementFanOut}
-              />
-            )
-          }
-          deliveryPackSlot={
-            slots?.deliveryPackSlot ?? (
-              <StudioDeliveryPack
-                activeMarket={activeMarket}
-                localBrandName={activeBrandMarket.localBrandName}
-                category={activeBrand.category}
-                localCategory={activeBrandMarket.localCategory}
-                ownedDomains={activeBrandMarket.ownedDomains}
-                brandNames={brandNames}
-                matchedFactCount={
-                  matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length
-                }
-                readOnly={readOnly}
-                article={activeArticle}
-                evaluation={evaluation}
-                linkedBriefChannels={linkedBrief?.recommendedChannels}
-                streaming={streaming}
-                onOpenDistributionDrawer={() => setDistributionDrawerOpen(true)}
-              />
-            )
-          }
-          publishRetestSlot={
-            slots?.publishRetestSlot ?? (
-              <StudioPublishRetest
-                activeMarket={activeMarket}
-                article={activeArticleMatchesContext ? activeArticle : null}
-                publishRecords={activeArticleMatchesContext ? publishRecords : []}
-                recordsLoading={publishRecordsLoading}
-                retestingRecordId={retestingRecordId}
-                pollingRetestRecordId={pendingRetest?.recordId ?? null}
-                readOnly={readOnly}
-                onCreatePublishRecord={handleCreatePublishRecord}
-                onTriggerRetest={handleOpenRetestModal}
-                onPublishRecordUpdated={handlePublishRecordUpdated}
-              />
-            )
-          }
-        />
+        {/* Right Pane: Dual-Tab (体检 | 交付) + Sticky Single-CTA Footer */}
+        {!focusMode && !isNarrowDrawerViewport ? renderRightPane() : null}
       </div>
+
+      {/* Narrow Viewport Drawers (<= 920px) */}
+      {isNarrowDrawerViewport ? (
+        <>
+          <Drawer
+            placement="left"
+            open={mobileLeftDrawerOpen}
+            onClose={() => setMobileLeftDrawerOpen(false)}
+            keyboard
+            destroyOnHidden
+            width={320}
+            title="选题与成稿队列"
+            classNames={{ body: 'gm-studio-drawer-body' }}
+          >
+            {renderLeftPane(true)}
+          </Drawer>
+          <Drawer
+            placement="right"
+            open={mobileRightDrawerOpen}
+            onClose={() => setMobileRightDrawerOpen(false)}
+            keyboard
+            destroyOnHidden
+            width={340}
+            title="体检与交付"
+            classNames={{ body: 'gm-studio-drawer-body' }}
+          >
+            {renderRightPane()}
+          </Drawer>
+        </>
+      ) : null}
 
       <StudioDistributionDrawer
         open={
@@ -2362,11 +2504,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           </Space>
         }
       >
-        <div
-          data-testid="publish-retest-modal"
-          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-        >
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+        <div data-testid="publish-retest-modal" className="gm-studio-stack gm-studio-stack--lg">
+          <div className="gm-studio-text-secondary">
             默认仅勾选当前市场已上线健康引擎，避免盲扣未上线引擎点数；异常项自动全额退还。
           </div>
 
@@ -2461,7 +2600,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             </div>
           )}
 
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
+          <div className="gm-studio-text-secondary">
             预计预冻 <strong className="gm-num">{retestEstimatedPoints}</strong> 点（
             <span className="gm-num">{validRetestCheckedEngines.length}</span> 引擎 ×{' '}
             <span className="gm-num">{VISIBILITY_DEFAULT_UNIT_POINTS}</span> 点/次）

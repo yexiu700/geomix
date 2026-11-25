@@ -8,6 +8,8 @@ import {
   L2_EXTENSION_PROVIDERS,
   PRICING_DEFAULTS,
   SUPPORTED_LOCALES,
+  UX_GLOSSARY_TOOLTIPS,
+  UX_TERMS,
   buildRecommendedChannelsForMarket,
   defaultTemplateKeyForProvider,
   evaluateDistributionPreflight,
@@ -39,9 +41,11 @@ import {
   Space,
   Tabs,
   Tag,
+  Tooltip,
 } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StatusBadge } from '../ui';
 import { authorizedRequest } from '../../lib/api';
 import { getBrief } from '../../lib/briefs';
 import {
@@ -1649,25 +1653,25 @@ export function StudioDistributionDrawer({
           }}
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            <Tag color="geekblue" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            <Tag className="gm-studio-tag-nowrap">
               {CHANNEL_PROVIDER_LABELS[task.provider] ?? task.provider}
             </Tag>
             <SignalPill tone={taskStatusTone(task.status)}>
               {DISTRIBUTION_TASK_STATUS_LABELS[task.status]}
             </SignalPill>
             {task.targetLocale && taskLocaleMeta ? (
-              <Tag
-                color="purple"
+              <StatusBadge
+                tone="active"
                 data-testid="distribution-task-locale-tag"
-                style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-studio-nowrap"
               >
                 {task.targetLocale} · {taskLocaleMeta.nativeLabel}
-              </Tag>
+              </StatusBadge>
             ) : null}
             {task.indexNowStatus ? (
-              <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              <StatusBadge tone="active" className="gm-studio-nowrap">
                 IndexNow: {task.indexNowStatus}
-              </Tag>
+              </StatusBadge>
             ) : null}
           </div>
           {task.publishedAt ? (
@@ -1811,7 +1815,7 @@ export function StudioDistributionDrawer({
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
                 <span style={{ color: 'var(--gm-fg-2)' }}>规范化标签：</span>
                 {extraTags.map((tag) => (
-                  <Tag key={tag} color="blue" style={{ margin: 0 }}>
+                  <Tag key={tag} className="gm-studio-tag-reset">
                     #{tag}
                   </Tag>
                 ))}
@@ -1914,7 +1918,7 @@ export function StudioDistributionDrawer({
                 }
               />
               {disabledBoundConn || missingBoundConn ? (
-                <div style={{ fontSize: 11, color: 'var(--gm-warning)', marginTop: 4 }}>
+                <div className="gm-studio-text-warning">
                   原绑定连接已停用或删除，请重新选择可用连接
                 </div>
               ) : null}
@@ -2434,17 +2438,7 @@ export function StudioDistributionDrawer({
                 {factSheet.keyAngles.length > 0 ? (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                     {factSheet.keyAngles.map((angle) => (
-                      <Tag
-                        key={angle}
-                        color="blue"
-                        style={{
-                          margin: 0,
-                          maxWidth: '100%',
-                          whiteSpace: 'normal',
-                          overflowWrap: 'anywhere',
-                          wordBreak: 'break-word',
-                        }}
-                      >
+                      <Tag key={angle} className="gm-studio-tag-wrap">
                         {angle}
                       </Tag>
                     ))}
@@ -2625,9 +2619,9 @@ export function StudioDistributionDrawer({
                 <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
                   多渠道分发与变体工作台
                 </span>
-                <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                <StatusBadge tone="active" className="gm-studio-nowrap">
                   {market === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[market]}
-                </Tag>
+                </StatusBadge>
               </div>
               {article ? (
                 <div
@@ -2766,18 +2760,13 @@ export function StudioDistributionDrawer({
                               }}
                             >
                               {blocker.details.map((detail) => (
-                                <Tag
+                                <StatusBadge
                                   key={detail}
-                                  color="red"
-                                  style={{
-                                    margin: 0,
-                                    maxWidth: '100%',
-                                    overflowWrap: 'anywhere',
-                                    whiteSpace: 'normal',
-                                  }}
+                                  tone="danger"
+                                  className="gm-studio-tag-wrap"
                                 >
                                   {detail}
-                                </Tag>
+                                </StatusBadge>
                               ))}
                             </div>
                           ) : null}
@@ -2883,18 +2872,13 @@ export function StudioDistributionDrawer({
                               }}
                             >
                               {w.details.map((detail) => (
-                                <Tag
+                                <StatusBadge
                                   key={detail}
-                                  color="gold"
-                                  style={{
-                                    margin: 0,
-                                    maxWidth: '100%',
-                                    overflowWrap: 'anywhere',
-                                    whiteSpace: 'normal',
-                                  }}
+                                  tone="warning"
+                                  className="gm-studio-tag-wrap"
                                 >
                                   {detail}
-                                </Tag>
+                                </StatusBadge>
                               ))}
                             </div>
                           ) : null}
@@ -3203,46 +3187,24 @@ export function StudioDistributionDrawer({
                                   {rec.channel}
                                 </span>
                                 {rec.priority ? (
-                                  <Tag
-                                    color={rec.priority === 'HIGH' ? 'gold' : 'blue'}
-                                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
+                                  <StatusBadge
+                                    tone={rec.priority === 'HIGH' ? 'warning' : 'active'}
+                                    className="gm-studio-nowrap"
                                   >
                                     {rec.priority === 'HIGH' ? '高优先被引' : '推荐阵地'}
-                                  </Tag>
+                                  </StatusBadge>
                                 ) : null}
                               </div>
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: 'var(--gm-fg-2)',
-                                  overflowWrap: 'anywhere',
-                                  wordBreak: 'break-word',
-                                }}
-                              >
-                                {rec.reason}
-                              </div>
+                              <div className="gm-studio-text-secondary">{rec.reason}</div>
                               {safeUrls.length > 0 ? (
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    flexWrap: 'wrap',
-                                    gap: 6,
-                                    marginTop: 4,
-                                  }}
-                                >
+                                <div className="gm-studio-row gm-studio-row--wrap">
                                   {safeUrls.map((url, idx) => (
                                     <a
                                       key={url}
                                       href={url}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="gm-mono"
-                                      style={{
-                                        fontSize: 11,
-                                        color: 'var(--gm-info)',
-                                        overflowWrap: 'anywhere',
-                                        wordBreak: 'break-word',
-                                      }}
+                                      className="gm-mono gm-studio-cited-link"
                                     >
                                       高频被引原帖 #{idx + 1} ↗
                                     </a>
@@ -3258,8 +3220,12 @@ export function StudioDistributionDrawer({
 
                   {/* Group 1: Connected L1 Official Sites */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-2)' }}>
-                      1. 已连接自有站点（L1 官方 API · 支持一键推草稿 / 上线）
+                    <div className="gm-studio-publish-subcard-title">
+                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
+                        <span className="gm-studio-glossary-trigger">
+                          1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
+                        </span>
+                      </Tooltip>
                     </div>
                     {l1Options.length === 0 ? (
                       <div
@@ -3361,33 +3327,18 @@ export function StudioDistributionDrawer({
                                     {opt.description}
                                   </Tag>
                                   {opt.targetLocale ? (
-                                    <Tag
-                                      color="purple"
-                                      style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                    >
+                                    <StatusBadge tone="active" className="gm-studio-nowrap">
                                       {opt.targetLocale}
-                                    </Tag>
+                                    </StatusBadge>
                                   ) : null}
                                   {opt.connectionStatus === 'INVALID' ? (
-                                    <Tag
-                                      color="red"
-                                      style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                    >
+                                    <StatusBadge tone="danger" className="gm-studio-nowrap">
                                       连接异常
-                                    </Tag>
+                                    </StatusBadge>
                                   ) : null}
                                 </div>
                                 {opt.siteBaseUrl ? (
-                                  <div
-                                    className="gm-mono"
-                                    style={{
-                                      fontSize: 11,
-                                      color: 'var(--gm-fg-3)',
-                                      marginTop: 4,
-                                      overflowWrap: 'anywhere',
-                                      wordBreak: 'break-word',
-                                    }}
-                                  >
+                                  <div className="gm-mono gm-studio-text-muted">
                                     {opt.siteBaseUrl}
                                   </div>
                                 ) : null}
@@ -3495,32 +3446,16 @@ export function StudioDistributionDrawer({
                                   >
                                     {opt.channelLabel}
                                   </span>
-                                  <Tag
-                                    color="cyan"
-                                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                  >
+                                  <StatusBadge tone="active" className="gm-studio-nowrap">
                                     Chrome 扩展
-                                  </Tag>
+                                  </StatusBadge>
                                   {opt.recommendedPriority === 'HIGH' ? (
-                                    <Tag
-                                      color="gold"
-                                      style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                    >
+                                    <StatusBadge tone="warning" className="gm-studio-nowrap">
                                       高频被引
-                                    </Tag>
+                                    </StatusBadge>
                                   ) : null}
                                 </div>
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    color: 'var(--gm-fg-3)',
-                                    marginTop: 4,
-                                    overflowWrap: 'anywhere',
-                                    wordBreak: 'break-word',
-                                  }}
-                                >
-                                  {opt.description}
-                                </div>
+                                <div className="gm-studio-text-muted">{opt.description}</div>
                               </div>
                             </div>
                           );
@@ -3531,8 +3466,12 @@ export function StudioDistributionDrawer({
 
                   {/* Group 2: L3 Community Assist */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-2)' }}>
-                      2. 社区合规辅发（L3 人工辅发 · 不自动发帖）
+                    <div className="gm-studio-publish-subcard-title">
+                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Community}>
+                        <span className="gm-studio-glossary-trigger">
+                          2. {UX_TERMS.channelModeL3Community}（人工辅发 · 不自动发帖）
+                        </span>
+                      </Tooltip>
                     </div>
                     <div
                       style={{
@@ -3597,25 +3536,12 @@ export function StudioDistributionDrawer({
                                   {opt.channelLabel}
                                 </span>
                                 {opt.recommendedPriority === 'HIGH' ? (
-                                  <Tag
-                                    color="gold"
-                                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                                  >
+                                  <StatusBadge tone="warning" className="gm-studio-nowrap">
                                     高频被引
-                                  </Tag>
+                                  </StatusBadge>
                                 ) : null}
                               </div>
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  color: 'var(--gm-fg-3)',
-                                  marginTop: 4,
-                                  overflowWrap: 'anywhere',
-                                  wordBreak: 'break-word',
-                                }}
-                              >
-                                {opt.description}
-                              </div>
+                              <div className="gm-studio-text-muted">{opt.description}</div>
                             </div>
                           </div>
                         );
@@ -3625,8 +3551,12 @@ export function StudioDistributionDrawer({
 
                   {/* Group 3: L3 PR Packet */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-2)' }}>
-                      3. 外部媒体 / KOL 协作包（L3 PR Packet）
+                    <div className="gm-studio-publish-subcard-title">
+                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Pr}>
+                        <span className="gm-studio-glossary-trigger">
+                          3. {UX_TERMS.channelModeL3Pr}（外部媒体协作包 · 免登录链接）
+                        </span>
+                      </Tooltip>
                     </div>
                     {prOptions.map((opt) => {
                       const selected = selectedTargetKeys.includes(opt.key);
@@ -3811,17 +3741,7 @@ export function StudioDistributionDrawer({
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
             {selectedTargets.map((opt) => (
-              <Tag
-                key={opt.key}
-                color="geekblue"
-                style={{
-                  margin: 0,
-                  maxWidth: '100%',
-                  whiteSpace: 'normal',
-                  overflowWrap: 'anywhere',
-                  wordBreak: 'break-word',
-                }}
-              >
+              <Tag key={opt.key} className="gm-studio-tag-wrap">
                 {opt.channelLabel}
               </Tag>
             ))}

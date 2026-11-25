@@ -23,6 +23,7 @@ import { GatewayApiError } from '../../lib/envelope';
 import { copyTextToClipboard, exportArticleFile } from '../../lib/studio';
 import { triggerBlobDownload } from '../../lib/ux-foundation';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { StatusBadge } from '../ui';
 
 export type StudioDeliveryPackProps = {
   activeMarket: GeoMarket;
@@ -88,7 +89,6 @@ export function StudioDeliveryPack({
   evaluation,
   linkedBriefChannels,
   streaming,
-  onOpenDistributionDrawer,
 }: StudioDeliveryPackProps): JSX.Element {
   const feedback = useUxFeedback();
   const [downloadingDocx, setDownloadingDocx] = useState(false);
@@ -323,50 +323,24 @@ export function StudioDeliveryPack({
             .slice(0, 3);
           return (
             <div key={item.channel} className="gm-studio-channel-item">
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 6,
-                  alignItems: 'center',
-                  minWidth: 0,
-                }}
-              >
-                <Tag
-                  color="geekblue"
-                  style={{
-                    margin: 0,
-                    alignSelf: 'flex-start',
-                    maxWidth: '100%',
-                    whiteSpace: 'normal',
-                    overflowWrap: 'anywhere',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {item.channel}
-                </Tag>
+              <div className="gm-studio-row gm-studio-row--wrap">
+                <Tag className="gm-studio-tag-wrap">{item.channel}</Tag>
                 {item.priority === 'HIGH' ? (
-                  <Tag color="gold" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  <StatusBadge tone="warning" className="gm-studio-nowrap">
                     高频被引
-                  </Tag>
+                  </StatusBadge>
                 ) : null}
               </div>
               <span className="gm-studio-channel-reason">{item.reason}</span>
               {safeCitedUrls.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                <div className="gm-studio-row gm-studio-row--wrap">
                   {safeCitedUrls.map((url, idx) => (
                     <a
                       key={url}
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="gm-mono"
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--gm-info)',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
+                      className="gm-mono gm-studio-cited-link"
                     >
                       被引原帖 #{idx + 1}
                     </a>
@@ -388,15 +362,13 @@ export function StudioDeliveryPack({
             ? 'JSON-LD Schema（Article / FAQPage / Product）'
             : '官网可选 JSON-LD Schema'}
         </span>
-        <Tag color="green" style={{ margin: 0 }}>
-          Schema 校验通过
-        </Tag>
+        <StatusBadge tone="success">Schema 校验通过</StatusBadge>
       </div>
 
       <div className="gm-studio-export-actions">
         <Button
           size="small"
-          type={activeMarket === 'GLOBAL' ? 'primary' : 'default'}
+          type="default"
           data-testid="delivery-copy-jsonld"
           disabled={!article || streaming || !safeJsonLdText}
           onClick={() => void handleCopyJsonLd()}
@@ -406,7 +378,7 @@ export function StudioDeliveryPack({
         <Button
           size="small"
           type="link"
-          style={{ padding: '0 4px', height: 'auto' }}
+          className="gm-studio-link-compact"
           data-testid="delivery-toggle-jsonld-preview"
           disabled={!article || !safeJsonLdText}
           onClick={() => setShowJsonLdPreview((prev) => !prev)}
@@ -448,9 +420,9 @@ export function StudioDeliveryPack({
               <div key={item.bot} className="gm-studio-crawler-row">
                 <div className="gm-studio-crawler-head">
                   <code className="gm-studio-crawler-bot">{item.bot}</code>
-                  <Tag color={item.recommended ? 'green' : 'default'} style={{ margin: 0 }}>
+                  <StatusBadge tone={item.recommended ? 'success' : 'neutral'}>
                     {item.recommended ? '建议放行' : '按需配置'}
-                  </Tag>
+                  </StatusBadge>
                 </div>
                 <span className="gm-studio-channel-reason">{item.purpose}</span>
               </div>
@@ -464,21 +436,10 @@ export function StudioDeliveryPack({
     <div className="gm-studio-delivery-pack" data-testid="studio-delivery-pack">
       <div className="gm-studio-delivery-subhead">
         <span className="gm-studio-section-label">双轨即发交付包</span>
-        <Tag color={activeMarket === 'GLOBAL' ? 'blue' : 'cyan'} style={{ margin: 0 }}>
+        <StatusBadge tone="active">
           {activeMarket === 'GLOBAL' ? '🌐 海外交付轨' : '🇨🇳 国内交付轨'}
-        </Tag>
+        </StatusBadge>
       </div>
-
-      <Button
-        block
-        type="primary"
-        data-testid="studio-open-distribution-btn"
-        disabled={!article || streaming}
-        style={{ whiteSpace: 'nowrap' }}
-        onClick={() => onOpenDistributionDrawer?.()}
-      >
-        进入分发工作台
-      </Button>
 
       {!article ? (
         <div className="gm-studio-item-meta">
