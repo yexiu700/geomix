@@ -23,6 +23,7 @@ import { WechatOfficialConnector } from './connectors/wechat-official.connector'
 import {
   VariantGeneratorService,
   presentDistributionTask,
+  readGeoVariantChannelTimeoutMs,
   readGeoVariantFreeRateLimit,
   type GeoDistributionTaskRow,
 } from './variant-generator.service';
@@ -2765,9 +2766,54 @@ describe('variant-templates & VariantGeneratorService (M3 / Issue #351)', () => 
       expect(finalJob.refundedCount).toBe(1);
       expect(finalJob.refundedPoints).toBe(3);
       expect(finalJob.failures).toHaveLength(1);
-      expect(finalJob.failures[0]?.error).toContain('超时');
+      expect(finalJob.failures[0]?.error).toContain('1 秒超时');
       expect(reservationState.settled).toBe(3);
       expect(reservationState.released).toBe(3);
+    });
+
+    it('defaults channel timeout to 120s (clamped to [1s, 300s]) and forwards timeoutMs to llm.complete (#399)', async () => {
+      expect(readGeoVariantChannelTimeoutMs({})).toBe(120_000);
+      expect(readGeoVariantChannelTimeoutMs({ GEO_VARIANT_CHANNEL_TIMEOUT_MS: '500' })).toBe(1_000);
+      expect(readGeoVariantChannelTimeoutMs({ GEO_VARIANT_CHANNEL_TIMEOUT_MS: '999999' })).toBe(
+        300_000,
+      );
+      expect(readGeoVariantChannelTimeoutMs({ GEO_VARIANT_CHANNEL_TIMEOUT_MS: '90000' })).toBe(
+        90_000,
+      );
+
+      process.env.GEO_VARIANT_CHANNEL_TIMEOUT_MS = '95000';
+      const completeSpy = vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          variantTitle: 'NebulaNAS N4 Acoustic Bench Notes',
+          variantMarkdown:
+            'NebulaNAS N4 measured 21 dB under load and 9W idle power with dual 2.5GbE.',
+        }),
+        provider: 'stub',
+        model: 'stub-1',
+        tokensIn: 100,
+        tokensOut: 80,
+      });
+      const spyLlm = {
+        isLive: () => true,
+        complete: completeSpy,
+      } as unknown as LlmService;
+
+      const { service } = makeHarness({ unitPrice: 2, llm: spyLlm });
+      const created = await service.createVariantJob(
+        'art_1',
+        {
+          targets: [{ provider: 'REDDIT_ASSIST', channelLabel: 'Reddit' }],
+        },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_forward_timeout' },
+      );
+
+      await service.processVariantJob('t_1', created.id);
+
+      expect(completeSpy).toHaveBeenCalledTimes(1);
+      const firstCallArg = completeSpy.mock.calls[0]?.[0] as { timeoutMs?: number } | undefined;
+      expect(firstCallArg?.timeoutMs).toBeGreaterThan(90_000);
+      expect(firstCallArg?.timeoutMs).toBeLessThanOrEqual(95_000);
     });
 
     it('closes reservation and marks job FAILED with 503 if BullMQ enqueue fails', async () => {
