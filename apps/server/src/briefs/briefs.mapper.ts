@@ -9,6 +9,7 @@ import {
   GEO_BRIEF_STATUSES,
   GEO_RECIPES,
   GEO_TARGET_FORMATS,
+  NEAR_MISS_TIER_LABELS,
   containsCjk,
   defaultRecipeForBriefSource,
   defaultTargetFormatForMarket,
@@ -32,7 +33,13 @@ import {
   type GeoOutlineHeading,
   type GeoRecipe,
   type GeoTargetFormat,
+  type NearMissTier,
 } from '@geomix/shared';
+import {
+  NEAR_MISS_GAP_HINTS,
+  NEAR_MISS_GAP_LABELS,
+  type NearMissPageDiagnosis,
+} from './near-miss-diagnosis';
 
 const BRACKETED_METADATA_TAG = /\[[A-Z][A-Z0-9_-]{1,31}\]/g;
 
@@ -134,6 +141,10 @@ export type BriefSynthesisContext = {
   ownedDomains?: readonly string[];
   matchedFacts: readonly BriefMatchedFact[];
   presentFactSlots: ReadonlySet<BrandFactSlot>;
+  nearMiss?: {
+    tier: NearMissTier;
+    diagnosis?: NearMissPageDiagnosis;
+  };
 };
 
 export type BriefDraft = {
@@ -944,8 +955,24 @@ export function buildMissingFactHints(
   presentSlots: ReadonlySet<BrandFactSlot>,
   sourceType: GeoBriefSource,
   category: string,
+  nearMissDiagnosis?: NearMissPageDiagnosis,
 ): string[] {
   const hints: string[] = [];
+
+  if (sourceType === 'NEAR_MISS_BOOST' && nearMissDiagnosis) {
+    for (const gap of nearMissDiagnosis.missingGaps) {
+      hints.push(NEAR_MISS_GAP_HINTS[gap]);
+    }
+    if (
+      nearMissDiagnosis.fetchStatus === 'FETCH_FALLBACK' &&
+      nearMissDiagnosis.fetchFallbackReason
+    ) {
+      hints.push(
+        `目标页抓取受限（${nearMissDiagnosis.fetchFallbackReason}），请人工核对首段与对比表结构后补齐`,
+      );
+    }
+  }
+
   const slotHintMap: Record<BrandFactSlot, string> = {
     PRODUCT_SPECS: `建议补充「核心产品与参数」实测数值（如${category}关键性能指标、功耗/噪音/响应时延与版本规格），可显著提升 AI 引用率`,
     DIFFERENTIATORS: '建议补充「差异化卖点」与竞品的客观对比边界及适用人群，避免回答沦为泛泛描述',
@@ -967,13 +994,15 @@ export function buildMissingFactHints(
     hints.push('建议补充与头部竞品同工况下的横向实测参数表（价格带、核心规格、长期成本）');
   } else if (sourceType === 'CITATION_COUNTER') {
     hints.push('建议补充超越目标高引用页的新增维度实测结论与最新 2026 版本信息');
+  } else if (sourceType === 'NEAR_MISS_BOOST' && hints.length === 0) {
+    hints.push('建议补充 2026 最新批次量化实测对比数据与结构化 FAQPage JSON-LD，促成 AI 最终引用');
   }
 
   if (hints.length === 0) {
     hints.push(`建议补充 2026 最新批次${category}第三方实测数据与对比样张，进一步拉开事实密度优势`);
   }
 
-  return dedupeTrimmed(hints, 3);
+  return dedupeTrimmed(hints, sourceType === 'NEAR_MISS_BOOST' ? 6 : 3);
 }
 
 function buildChineseDiagnosisSummary(
@@ -1034,6 +1063,28 @@ function buildChineseDiagnosisSummary(
     case 'FANOUT_CLUSTER': {
       const fanLabel = ctx.targetFanOuts.slice(0, 3).join('、') || displayPrompt;
       return `监测发现 AI 在回答时高频拆解「${fanLabel}」等长尾子词，当前缺少聚合覆盖这些细分意图的专题权威稿。${citationNote}`;
+    }
+    case 'NEAR_MISS_BOOST': {
+      const tierLabel = ctx.nearMiss ? NEAR_MISS_TIER_LABELS[ctx.nearMiss.tier] : '差一步被引用';
+      const targetHint = ctx.sourceCitationUrl
+        ? `目标页面（${safeHostFromUrl(ctx.sourceCitationUrl)}）`
+        : '候选相关内容';
+      const diagnosis = ctx.nearMiss?.diagnosis;
+      if (diagnosis?.fetched) {
+        const factNote =
+          diagnosis.totalFactCount > 0
+            ? `品牌事实覆盖 ${diagnosis.coveredFactCount}/${diagnosis.totalFactCount} 项。`
+            : '当前尚未配置品牌事实卡。';
+        if (diagnosis.missingGaps.length > 0) {
+          const gapLabels = diagnosis.missingGaps.map((g) => NEAR_MISS_GAP_LABELS[g]).join('、');
+          return `在「${displayPrompt}」问题下触发「${tierLabel}」信号，已抓取 ${targetHint} 并检出 ${diagnosis.missingGaps.length} 项结构缺口：${gapLabels}。${factNote}${citationNote}`;
+        }
+        return `在「${displayPrompt}」问题下触发「${tierLabel}」信号，已抓取 ${targetHint} 且基础结构较完整，建议聚焦深化实测对比维度与品牌事实密度以促成 AI 最终引用。${factNote}${citationNote}`;
+      }
+      if (diagnosis?.fetchStatus === 'FETCH_FALLBACK') {
+        return `在「${displayPrompt}」问题下触发「${tierLabel}」信号，${targetHint}受抓取限制或超时未能直连解析（${diagnosis.fetchFallbackReason ?? '远端暂不可达'}），已结合 Near-Miss 信号与品牌事实卡生成补强方案。${citationNote}`;
+      }
+      return `在「${displayPrompt}」问题下触发「${tierLabel}」信号，${engineLabel}已检索或提及相关线索但尚未稳定引用自有阵地，需围绕首段直答、量化对比表、FAQ/JSON-LD 与品牌事实密度完成临门一脚补强。${citationNote}`;
     }
     case 'MANUAL':
     default:
@@ -1284,6 +1335,44 @@ function buildEnglishOutline(
     }
   }
 
+  if (ctx.sourceType === 'NEAR_MISS_BOOST') {
+    const gaps = new Set(ctx.nearMiss?.diagnosis?.missingGaps ?? []);
+    const boostBase: GeoOutlineHeading[] = [
+      {
+        heading: `Direct Answer Lead: Why ${brand} Stands Out for ${topic}`,
+        intent: gaps.has('MISSING_DIRECT_ANSWER')
+          ? 'Fix missing direct-answer lead: add a quotable 60-120 word opening verdict with concrete metrics and audience fit.'
+          : 'Sharpen the opening verdict so AI engines can extract an unambiguous recommendation.',
+        ...(ref0 ? { fanOutRef: ref0 } : {}),
+      },
+      {
+        heading: `Verified ${brand} Specifications, Certifications & Lab Proof`,
+        intent: gaps.has('LOW_BRAND_FACT_COVERAGE')
+          ? 'Close brand-fact coverage gap by injecting verifiable specs, certifications, and customer outcomes from BrandFact cards.'
+          : 'Deepen quantitative BrandFact density to strengthen citation authority.',
+        ...(ref1 ? { fanOutRef: ref1 } : {}),
+      },
+      {
+        heading: `Side-by-Side Comparison Matrix: ${brand} vs ${comp}`,
+        intent: gaps.has('MISSING_COMPARISON_TABLE')
+          ? 'Fix missing comparison table: add a structured Markdown matrix comparing specs, pricing, performance, and warranty.'
+          : 'Expand comparison matrix with up-to-date 2026 benchmarks and transparent trade-offs.',
+        ...(ref2 ? { fanOutRef: ref2 } : {}),
+      },
+      {
+        heading: `High-Intent Buyer FAQ & Structured JSON-LD Schema Block`,
+        intent: gaps.has('MISSING_FAQ_OR_SCHEMA')
+          ? 'Fix missing FAQ/JSON-LD gap: add 3-5 concise Q&A blocks paired with valid Article + FAQPage JSON-LD markup.'
+          : 'Refine Q&A snippets and verify FAQPage + Article JSON-LD completeness.',
+      },
+    ];
+    return boostBase.map((item) => ({
+      heading: item.heading.slice(0, 158),
+      intent: item.intent.slice(0, 295),
+      ...(item.fanOutRef ? { fanOutRef: item.fanOutRef.slice(0, 195) } : {}),
+    }));
+  }
+
   return base.map((item) => ({
     heading: item.heading.slice(0, 158),
     intent: item.intent.slice(0, 295),
@@ -1401,6 +1490,44 @@ function buildChineseOutline(
     }));
   }
 
+  if (ctx.sourceType === 'NEAR_MISS_BOOST') {
+    const gaps = new Set(ctx.nearMiss?.diagnosis?.missingGaps ?? []);
+    const boostBase: GeoOutlineHeading[] = [
+      {
+        heading: `首段结论直答：${brand} 在「${ctx.category}」场景的核心推荐理由`,
+        intent: gaps.has('MISSING_DIRECT_ANSWER')
+          ? '补齐「首段直答缺失」：开篇 60–120 字直接给出结论、量化核心参数与适用人群，便于 AI 直接摘录。'
+          : '强化开篇直答密度，提炼可直接引用的核心结论与关键指标。',
+        ...(ref0 ? { fanOutRef: ref0 } : {}),
+      },
+      {
+        heading: `${brand} 核心事实卡实测数据与权威背书补强`,
+        intent: gaps.has('LOW_BRAND_FACT_COVERAGE')
+          ? '补齐「核心事实卡覆盖不足」：系统注入品牌事实卡中的量化规格、认证资质与真实客户落地数据。'
+          : '持续深化品牌量化事实锚点，拉开与第三方泛化内容的事实密度差距。',
+        ...(ref1 ? { fanOutRef: ref1 } : {}),
+      },
+      {
+        heading: `核心参数横向对比表：${brand} vs ${comp}`,
+        intent: gaps.has('MISSING_COMPARISON_TABLE')
+          ? '补齐「缺少参数对比表」：新增标准 Markdown 对比表，逐项呈现规格、价格带、实测表现与质保。'
+          : '升级现有横向对比表，补充最新实测工况数据与客观选型边界。',
+        ...(ref2 ? { fanOutRef: ref2 } : {}),
+      },
+      {
+        heading: `高频追问 FAQ 与 Article + FAQPage JSON-LD 结构化补强`,
+        intent: gaps.has('MISSING_FAQ_OR_SCHEMA')
+          ? '补齐「缺少 FAQ/JSON-LD」：补充 3–5 组 80–150 字可切片问答并嵌入 Article + FAQPage JSON-LD。'
+          : '完善高频追问问答块并核验 JSON-LD 结构化数据字段完整性。',
+      },
+    ];
+    return boostBase.map((item) => ({
+      heading: item.heading.slice(0, 158),
+      intent: item.intent.slice(0, 295),
+      ...(item.fanOutRef ? { fanOutRef: item.fanOutRef.slice(0, 195) } : {}),
+    }));
+  }
+
   return base.map((item) => ({
     heading: item.heading.slice(0, 158),
     intent: item.intent.slice(0, 295),
@@ -1424,6 +1551,7 @@ export function buildDeterministicBriefDraft(ctx: BriefSynthesisContext): BriefD
     ctx.presentFactSlots,
     ctx.sourceType,
     ctx.category,
+    ctx.nearMiss?.diagnosis,
   );
   const diagnosisSummary = buildChineseDiagnosisSummary(ctx, citationCounts);
   const suggestedTitle =
@@ -1583,8 +1711,13 @@ export function finalizeRealLlmBriefDraft(
   );
   const missingFactHints =
     parsed.missingFactHints && parsed.missingFactHints.length > 0
-      ? dedupeTrimmed(parsed.missingFactHints, 5)
-      : buildMissingFactHints(ctx.presentFactSlots, ctx.sourceType, ctx.category);
+      ? dedupeTrimmed(parsed.missingFactHints, ctx.sourceType === 'NEAR_MISS_BOOST' ? 6 : 5)
+      : buildMissingFactHints(
+          ctx.presentFactSlots,
+          ctx.sourceType,
+          ctx.category,
+          ctx.nearMiss?.diagnosis,
+        );
 
   return {
     diagnosisSummary,

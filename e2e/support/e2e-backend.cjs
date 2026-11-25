@@ -25,6 +25,12 @@ const { OutboundHttpClient } = require(path.join(serverDist, 'infra/outbound-htt
 const { ProviderError, PROVIDER_KIND } = require(path.join(serverDist, 'infra/provider-error.js'));
 const { StorageService } = require(path.join(serverDist, 'infra/storage.js'));
 const { MaintenanceRunner } = require(path.join(serverDist, 'queue/maintenance.runner.js'));
+const {
+  V2_2_VIRTUAL_HOSTS,
+  isV22VirtualHost,
+  handleV22FixtureRequest,
+  resetV22FixtureState,
+} = require('./v2-2-fixtures.cjs');
 
 function buildFixtureArticleHtml(title, topic) {
   return `<!doctype html>
@@ -162,7 +168,13 @@ function forwardToLocalFixture(localPort, req) {
       if (k.toLowerCase() === 'content-length') continue;
       filteredHeaders[k] = v;
     }
-    const bodyBuf = typeof req.body === 'string' ? Buffer.from(req.body, 'utf8') : undefined;
+    const bodyBuf = Buffer.isBuffer(req.body)
+      ? req.body
+      : req.body instanceof Uint8Array
+        ? Buffer.from(req.body)
+        : typeof req.body === 'string'
+          ? Buffer.from(req.body, 'utf8')
+          : undefined;
     const outgoing = http.request(
       {
         host: '127.0.0.1',
@@ -287,6 +299,7 @@ async function startFixtureServer(options = {}) {
         }
         if (pathname === '/__e2e/captures' && method === 'DELETE') {
           captures.length = 0;
+          resetV22FixtureState();
           sendJson(res, 200, { cleared: true });
           return;
         }
@@ -619,6 +632,28 @@ async function startFixtureServer(options = {}) {
         return;
       }
 
+      const handledV22 = handleV22FixtureRequest({
+        req,
+        res,
+        parsedUrl,
+        pathname,
+        method,
+        targetHost,
+        targetProto,
+        rawBody,
+        parsedBody,
+        nextSeq: () => {
+          seq += 1;
+          return seq;
+        },
+        recordCapture,
+        sendJson,
+        buildHealthyCrawlHtml,
+      });
+      if (handledV22) {
+        return;
+      }
+
       // ── Default Virtual Host (`public.e2e.example`): Existing v2.0 Fixtures ──
       if (pathname === '/robots.txt') {
         res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -809,6 +844,18 @@ async function bootstrap() {
     process.env.CREDENTIAL_ENCRYPTION_KEY =
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   }
+  if (!process.env.SHOPIFY_OAUTH_CLIENT_ID) {
+    process.env.SHOPIFY_OAUTH_CLIENT_ID = 'e2e_shopify_client_id';
+  }
+  if (!process.env.SHOPIFY_OAUTH_CLIENT_SECRET) {
+    process.env.SHOPIFY_OAUTH_CLIENT_SECRET = 'e2e_shopify_client_secret';
+  }
+  if (!process.env.SHOPIFY_OAUTH_SCOPES) {
+    process.env.SHOPIFY_OAUTH_SCOPES = 'read_content,write_content';
+  }
+  if (!process.env.WECHAT_API_BASE_URL) {
+    process.env.WECHAT_API_BASE_URL = 'https://wechat.e2e.example';
+  }
   if (
     (process.env.VISIBILITY_COLLECTOR || 'fake').trim().toLowerCase() === 'fake' &&
     process.env.VISIBILITY_DISABLED_ENGINES === undefined
@@ -826,12 +873,17 @@ async function bootstrap() {
     getMaintenanceRunner: () => maintenanceRunner,
   });
 
-  const VIRTUAL_HOSTS = new Set([fixtureHost, 'api.indexnow.org', 'api.webflow.com']);
+  const VIRTUAL_HOSTS = new Set([
+    fixtureHost,
+    'api.indexnow.org',
+    'api.webflow.com',
+    ...V2_2_VIRTUAL_HOSTS,
+  ]);
   const isVirtualFixtureHost = (hostname) => {
     const h = String(hostname || '')
       .trim()
       .toLowerCase();
-    return VIRTUAL_HOSTS.has(h) || h.endsWith('.e2e.example');
+    return VIRTUAL_HOSTS.has(h) || h.endsWith('.e2e.example') || isV22VirtualHost(h);
   };
 
   const realResolver = createDnsResolver();

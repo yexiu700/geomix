@@ -12,9 +12,14 @@ import { SecretBox } from '../common/secret-box';
 import { ConnectionsService } from '../distribution/connections.service';
 import {
   CmsConnectorRegistry,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
   ShopifyConnector,
   WebflowConnector,
   WebhookConnector,
+  WechatOfficialConnector,
   WordPressConnector,
 } from '../distribution/connectors';
 import { CrawlProbeService } from '../distribution/crawl-probe.service';
@@ -129,6 +134,11 @@ export class QueueModule {
         WordPressConnector,
         WebflowConnector,
         WebhookConnector,
+        GhostConnector,
+        DevtoConnector,
+        HashnodeConnector,
+        GithubMdxConnector,
+        WechatOfficialConnector,
         CmsConnectorRegistry,
         ConnectionsService,
         IndexNowService,

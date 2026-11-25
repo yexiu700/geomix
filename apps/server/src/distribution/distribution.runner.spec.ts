@@ -2,7 +2,12 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { GeoPublishRecordDto } from '@geomix/shared';
+import {
+  L1_CHANNEL_PROVIDERS,
+  type GeoPublishRecordDto,
+  type L1ChannelProvider,
+} from '@geomix/shared';
+import { ApiModule } from '../api.module';
 import type { QuotaService } from '../billing/quota.service';
 import { SecretBox } from '../common/secret-box';
 import type { OutboundHttpClient } from '../infra/outbound-http';
@@ -16,13 +21,25 @@ import { currentTenantId } from '../tenant/tenant-context';
 import { WorkerModule } from '../worker.module';
 import type { WorkerRuntimeService } from '../worker/worker-runtime.service';
 import { ConnectionsService } from './connections.service';
-import { CmsConnectorRegistry, WebhookConnector } from './connectors';
+import {
+  CmsConnectorRegistry,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
+  ShopifyConnector,
+  WebflowConnector,
+  WebhookConnector,
+  WechatOfficialConnector,
+  WordPressConnector,
+} from './connectors';
 import {
   ConnectorError,
   type CmsConnector,
   type ConnectorPublishPayload,
   type ConnectorPublishResult,
 } from './connectors/types';
+import { ShopifyOAuthService } from './shopify-oauth.service';
 import { CrawlProbeService } from './crawl-probe.service';
 import {
   DISTRIBUTION_ENQUEUER,
@@ -42,6 +59,7 @@ type TaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   variantTitle: string;
   variantSlug: string | null;
   variantMetaDesc: string | null;
@@ -73,6 +91,7 @@ type ConnectionRow = {
   configJson: Record<string, unknown>;
   status: string;
   authType: string;
+  targetLocale?: string | null;
 };
 
 type PublishRecordRow = {
@@ -780,25 +799,209 @@ describe('DistributionRunner, QueueProducer & WorkerModule wiring', () => {
     expect(opts).not.toHaveProperty('jobId');
   });
 
-  it('boots WorkerModule offline with full DistributionRunner DI chain wired', async () => {
+  it('boots both ApiModule (DistributionModule) and WorkerModule (QueueModule.forWorker) offline and resolves all 9 L1 connectors', async () => {
     const startSpy = vi.spyOn(QueueRuntime.prototype, 'start').mockResolvedValue(undefined);
     const stopSpy = vi.spyOn(QueueRuntime.prototype, 'stop').mockResolvedValue(undefined);
     const workerCtx = await NestFactory.createApplicationContext(WorkerModule, { logger: false });
+    const apiCtx = await NestFactory.createApplicationContext(ApiModule, { logger: false });
     try {
-      const runner = workerCtx.get(DistributionRunner);
-      expect(runner).toBeInstanceOf(DistributionRunner);
-      expect(workerCtx.get(DISTRIBUTION_HANDLER)).toBe(runner);
+      const expectedClasses: Record<L1ChannelProvider, new (...args: never[]) => CmsConnector> = {
+        SHOPIFY: ShopifyConnector,
+        WORDPRESS: WordPressConnector,
+        WEBFLOW: WebflowConnector,
+        WEBHOOK: WebhookConnector,
+        GHOST: GhostConnector,
+        DEVTO: DevtoConnector,
+        HASHNODE: HashnodeConnector,
+        GITHUB_MDX: GithubMdxConnector,
+        WECHAT_OFFICIAL: WechatOfficialConnector,
+      };
+
+      expect(L1_CHANNEL_PROVIDERS).toHaveLength(9);
+
+      for (const ctx of [apiCtx, workerCtx]) {
+        const registry = ctx.get(CmsConnectorRegistry);
+        expect(registry).toBeInstanceOf(CmsConnectorRegistry);
+        for (const provider of L1_CHANNEL_PROVIDERS) {
+          const connector = registry.get(provider);
+          expect(connector).toBeInstanceOf(expectedClasses[provider]);
+          expect(connector.provider).toBe(provider);
+        }
+        expect(ctx.get(DistributionRunner)).toBeInstanceOf(DistributionRunner);
+        expect(ctx.get(ConnectionsService)).toBeInstanceOf(ConnectionsService);
+        expect(ctx.get(IndexNowService)).toBeInstanceOf(IndexNowService);
+        expect(ctx.get(GeoDeliveryService)).toBeInstanceOf(GeoDeliveryService);
+        expect(ctx.get(CrawlProbeService)).toBeInstanceOf(CrawlProbeService);
+        expect(ctx.get(RetestSchedulerService)).toBeInstanceOf(RetestSchedulerService);
+      }
+
+      const workerRunner = workerCtx.get(DistributionRunner);
+      expect(workerCtx.get(DISTRIBUTION_HANDLER)).toBe(workerRunner);
       expect(workerCtx.get(DISTRIBUTION_ENQUEUER)).toBe(workerCtx.get(QueueProducer));
-      expect(workerCtx.get(ConnectionsService)).toBeInstanceOf(ConnectionsService);
-      expect(workerCtx.get(CmsConnectorRegistry)).toBeInstanceOf(CmsConnectorRegistry);
-      expect(workerCtx.get(IndexNowService)).toBeInstanceOf(IndexNowService);
-      expect(workerCtx.get(GeoDeliveryService)).toBeInstanceOf(GeoDeliveryService);
-      expect(workerCtx.get(CrawlProbeService)).toBeInstanceOf(CrawlProbeService);
-      expect(workerCtx.get(RetestSchedulerService)).toBeInstanceOf(RetestSchedulerService);
+      expect(apiCtx.get(ShopifyOAuthService)).toBeInstanceOf(ShopifyOAuthService);
     } finally {
+      await apiCtx.close();
       await workerCtx.close();
       startSpy.mockRestore();
       stopSpy.mockRestore();
     }
+  });
+
+  it('merges variantExtrasJson.tags ahead of article.tags (deduped) and forwards targetLocale in ConnectorPublishPayload (#370)', async () => {
+    const h = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        targetLocale: 'de-DE',
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          tags: ['architecture', 'benchmarks', 'battery'],
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+        targetLocale: 'de-DE',
+      },
+    });
+    h.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_123',
+      remoteAdminUrl: 'https://dev.to/dashboard/123',
+      publishedAsDraft: true,
+    });
+
+    await h.runner.process({ tenantId: h.tenantId, taskId: 'task_1' });
+
+    expect(h.task.status).toBe('DRAFT_PUSHED');
+    const payload = h.publishMock.mock.calls[0]?.[2] as {
+      tags?: string[];
+      targetLocale?: string | null;
+    };
+    expect(payload.targetLocale).toBe('de-DE');
+    expect(payload.tags).toEqual(['architecture', 'benchmarks', 'battery', 'review']);
+  });
+
+  it('Iter 2 Fix 3: strips private/loopback/metadata SSRF canonicalUrl candidates in DistributionRunner', async () => {
+    // All candidates unsafe -> canonicalUrl resolves to null
+    const hBlocked = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://127.0.0.1/admin',
+          canonicalGuideHint: 'http://[::1]/secret',
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    (hBlocked.task as { targetUrlHint?: string | null }).targetUrlHint =
+      'http://169.254.169.254/latest/meta-data/';
+    hBlocked.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_1',
+      publishedAsDraft: true,
+    });
+
+    await hBlocked.runner.process({ tenantId: hBlocked.tenantId, taskId: 'task_1' });
+    const blockedPayload = hBlocked.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(blockedPayload.canonicalUrl).toBeNull();
+
+    // Unsafe primary canonicalUrl falls back to safe public canonicalGuideHint
+    const hFallback = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://localhost:3000/internal',
+          canonicalGuideHint: 'https://blog.acme.example/guides/battery-benchmarks',
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    hFallback.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_2',
+      publishedAsDraft: true,
+    });
+
+    await hFallback.runner.process({ tenantId: hFallback.tenantId, taskId: 'task_1' });
+    const fallbackPayload = hFallback.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(fallbackPayload.canonicalUrl).toBe(
+      'https://blog.acme.example/guides/battery-benchmarks',
+    );
+    expect(fallbackPayload.extras).not.toHaveProperty('canonicalUrl');
+    expect(fallbackPayload.extras?.canonicalGuideHint).toBe(
+      'https://blog.acme.example/guides/battery-benchmarks',
+    );
+  });
+
+  it('Iter 3 Fix 2: scrubs unsafe SSRF URL fields from publishPayload.extras before connector.publish', async () => {
+    const hBlocked = makeRunnerHarness({
+      task: {
+        provider: 'DEVTO',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'DEVELOPER_TECH_POST',
+          canonicalUrl: 'http://127.0.0.1/admin',
+          contentSourceUrl: 'http://169.254.169.254/latest/meta-data/',
+          canonicalGuideHint: 'See http://10.0.0.1/internal',
+          coverImageUrl: 'http://127.0.0.1:8080/cover.png',
+          targetThreadUrls: ['http://[::1]/x', 'https://docs.example.com/thread'],
+        },
+      },
+      connection: {
+        provider: 'DEVTO',
+      },
+    });
+    hBlocked.publishMock.mockResolvedValueOnce({
+      remotePostId: 'devto_ssrf_extras_1',
+      publishedAsDraft: true,
+    });
+
+    await hBlocked.runner.process({ tenantId: hBlocked.tenantId, taskId: 'task_1' });
+
+    const blockedPayload = hBlocked.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(blockedPayload.canonicalUrl).toBeNull();
+    expect(blockedPayload.extras).not.toHaveProperty('canonicalUrl');
+    expect(blockedPayload.extras).not.toHaveProperty('contentSourceUrl');
+    expect(blockedPayload.extras).not.toHaveProperty('canonicalGuideHint');
+    expect(blockedPayload.extras).not.toHaveProperty('coverImageUrl');
+    expect(blockedPayload.extras?.targetThreadUrls).toEqual(['https://docs.example.com/thread']);
+
+    // Safe public URLs and safe prose hints pass through cleanly
+    const hSafe = makeRunnerHarness({
+      task: {
+        provider: 'WECHAT_OFFICIAL',
+        publishAsDraft: true,
+        variantExtrasJson: {
+          templateKey: 'WECHAT_OFFICIAL_ARTICLE',
+          contentSourceUrl: 'https://docs.example.com/original-guide',
+          canonicalGuideHint: 'Read full guide at https://docs.example.com/original-guide.',
+          coverImageUrl: 'https://cdn.example.com/cover.png',
+          targetThreadUrls: ['https://docs.example.com/thread-1'],
+        },
+      },
+      connection: {
+        provider: 'WECHAT_OFFICIAL',
+      },
+    });
+    hSafe.publishMock.mockResolvedValueOnce({
+      remotePostId: 'wx_safe_1',
+      publishedAsDraft: true,
+    });
+
+    await hSafe.runner.process({ tenantId: hSafe.tenantId, taskId: 'task_1' });
+
+    const safePayload = hSafe.publishMock.mock.calls[0]?.[2] as ConnectorPublishPayload;
+    expect(safePayload.canonicalUrl).toBe('https://docs.example.com/original-guide');
+    expect(safePayload.extras?.contentSourceUrl).toBe('https://docs.example.com/original-guide');
+    expect(safePayload.extras?.canonicalGuideHint).toBe(
+      'Read full guide at https://docs.example.com/original-guide.',
+    );
+    expect(safePayload.extras?.coverImageUrl).toBe('https://cdn.example.com/cover.png');
+    expect(safePayload.extras?.targetThreadUrls).toEqual(['https://docs.example.com/thread-1']);
   });
 });

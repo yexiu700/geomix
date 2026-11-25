@@ -18,9 +18,19 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+const listExtensionTokensMock = vi.fn();
+
+vi.mock('../../lib/extension', () => ({
+  listExtensionTokens: (...args: unknown[]) => listExtensionTokensMock(...args),
+  createExtensionToken: vi.fn(),
+  revokeExtensionToken: vi.fn(),
+}));
+
 beforeEach(() => {
   mockSearchParams = new URLSearchParams();
   replaceMock.mockReset();
+  listExtensionTokensMock.mockReset();
+  listExtensionTokensMock.mockResolvedValue({ items: [] });
 });
 
 afterEach(() => {
@@ -361,5 +371,32 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(await screen.findByText('请填写统一社会信用代码', {}, { timeout: 5000 })).toBeTruthy();
     expect(submit).not.toHaveBeenCalled();
     expect(document.querySelector('.ant-form-item-has-error')).not.toBeNull();
+  });
+
+  it('supports Chrome extension pairing tab via ?tab=extension preserving brandId/market and readOnly', async () => {
+    expect(resolveAccountTab('extension')).toBe('extension');
+    mockSearchParams = new URLSearchParams('brandId=b1&market=CN&tab=points');
+
+    render(
+      <AccountScreen
+        readOnly={true}
+        loadPoints={async () => pointPage([])}
+        loadSummary={async () => summaryStub()}
+        loadRights={async () => rightsViewStub()}
+        loadVerification={async () => null}
+      />,
+    );
+
+    const extTab = screen.getByRole('tab', { name: 'Chrome 扩展配对' });
+    expect(extTab).toBeTruthy();
+
+    fireEvent.click(extTab);
+    expect(replaceMock).toHaveBeenCalledWith('/account?brandId=b1&market=CN&tab=extension', {
+      scroll: false,
+    });
+    expect(await screen.findByTestId('extension-pairing-panel')).toBeTruthy();
+    expect((screen.getByTestId('extension-token-create-btn') as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 });

@@ -2,19 +2,26 @@
 
 import {
   BRAND_CATEGORY_MAX,
+  BRAND_DEFAULT_RETEST_CONTROL_PROMPTS,
   BRAND_MAX_COMPETITORS,
+  BRAND_MAX_CONTROL_PROMPTS,
   BRAND_NAME_MAX,
   GEO_MARKET_LABELS,
+  GLOBAL_SUPPORTED_LOCALES,
+  SUPPORTED_LOCALES,
   containsCjk,
   generateBrandSeedPrompts,
   normalizeBrandDomain,
+  validateControlPromptsAgainstSeeds,
   type BrandMarketRecord,
   type BrandRecord,
   type GeoMarket,
+  type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Input, Tag } from 'antd';
-import { useEffect, useState } from 'react';
+import { Alert, Button, Input, Select, Tag } from 'antd';
+import { useEffect, useRef, useState } from 'react';
 import { deleteBrand, updateBrand, updateBrandMarket } from '../../lib/brands';
+import { invalidateFreshness } from '../../lib/tab-freshness';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { useUxFeedback } from '../crud/ux-feedback';
 import {
@@ -70,16 +77,54 @@ export function BrandIdentitySection({
   const [competitorRows, setCompetitorRows] = useState<CompetitorDraftRow[]>(
     hydrateCompetitorRows(activeBrandMarket?.competitors ?? []),
   );
+  const resolveInitialLocales = (
+    market: GeoMarket,
+    bm: BrandMarketRecord | null,
+  ): SupportedLocale[] => {
+    if (market === 'CN') return ['zh-CN'];
+    const raw = bm?.supportedLocales ?? [];
+    const validGlobal = raw.filter((code) =>
+      (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(code),
+    );
+    if (validGlobal.length > 0) return [...new Set(validGlobal)];
+    if (bm?.locale && (GLOBAL_SUPPORTED_LOCALES as readonly string[]).includes(bm.locale)) {
+      return [bm.locale as SupportedLocale];
+    }
+    return ['en-US'];
+  };
+
   const [seedPrompts, setSeedPrompts] = useState<string[]>(activeBrandMarket?.seedPrompts ?? []);
   const [promptInput, setPromptInput] = useState('');
+  const [supportedLocales, setSupportedLocales] = useState<SupportedLocale[]>(() =>
+    resolveInitialLocales(activeMarket, activeBrandMarket),
+  );
+  const [controlPrompts, setControlPrompts] = useState<string[]>(
+    activeBrandMarket?.controlPrompts ?? [],
+  );
+  const [controlPromptInput, setControlPromptInput] = useState('');
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const marketSeqRef = useRef(0);
+  const marketSaveCtrlRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setBrandName(brand.name);
     setBrandCategory(brand.category);
     setBrandError(null);
   }, [brand.id, brand.name, brand.category]);
+
+  useEffect(() => {
+    marketSeqRef.current += 1;
+    marketSaveCtrlRef.current?.abort();
+    marketSaveCtrlRef.current = null;
+    setSavingMarket(false);
+    setMarketError(null);
+    return () => {
+      marketSeqRef.current += 1;
+      marketSaveCtrlRef.current?.abort();
+      marketSaveCtrlRef.current = null;
+    };
+  }, [brand.id, activeMarket]);
 
   useEffect(() => {
     setLocalBrandName(activeBrandMarket?.localBrandName ?? brand.name);
@@ -91,6 +136,9 @@ export function BrandIdentitySection({
     setCompetitorRows(hydrateCompetitorRows(activeBrandMarket?.competitors ?? []));
     setSeedPrompts(activeBrandMarket?.seedPrompts ?? []);
     setPromptInput('');
+    setSupportedLocales(resolveInitialLocales(activeMarket, activeBrandMarket));
+    setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
+    setControlPromptInput('');
     setMarketError(null);
   }, [brand.id, brand.name, activeMarket, activeBrandMarket]);
 
@@ -179,6 +227,36 @@ export function BrandIdentitySection({
     setPromptInput('');
   };
 
+  const handleAddControlPrompt = () => {
+    const trimmed = controlPromptInput.trim();
+    if (trimmed.length < 2) {
+      setMarketError('对照组问句至少 2 个字');
+      return;
+    }
+    if (controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS) {
+      setMarketError(`最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`);
+      return;
+    }
+    const normalizedNew = trimmed.replace(/\s+/g, ' ').toLowerCase();
+    if (
+      controlPrompts.some(
+        (item) => item.trim().replace(/\s+/g, ' ').toLowerCase() === normalizedNew,
+      )
+    ) {
+      setControlPromptInput('');
+      setMarketError(null);
+      return;
+    }
+    const overlapCheck = validateControlPromptsAgainstSeeds([trimmed], seedPrompts);
+    if (!overlapCheck.ok) {
+      setMarketError(`对照组问句不能与种子监控问句重复：${overlapCheck.duplicates[0]}`);
+      return;
+    }
+    setMarketError(null);
+    setControlPrompts((prev) => [...prev, trimmed.slice(0, 300)]);
+    setControlPromptInput('');
+  };
+
   const handleSaveMarket = async () => {
     if (!activeBrandMarket) return;
     setMarketError(null);
@@ -189,17 +267,40 @@ export function BrandIdentitySection({
       return;
     }
 
+    if (activeMarket === 'GLOBAL' && supportedLocales.length === 0) {
+      setMarketError('请至少保留 1 个支持语种');
+      return;
+    }
+
+    if (controlPrompts.length > BRAND_MAX_CONTROL_PROMPTS) {
+      setMarketError(`最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`);
+      return;
+    }
+
+    const overlapCheck = validateControlPromptsAgainstSeeds(controlPrompts, seedPrompts);
+    if (!overlapCheck.ok) {
+      setMarketError(`对照组问句不能与种子监控问句重复：${overlapCheck.duplicates[0]}`);
+      return;
+    }
+
     const { competitors, invalidDomainRows } = serializeCompetitorRows(competitorRows);
     if (invalidDomainRows.length > 0) {
       setMarketError(`请检查竞品域名格式：${invalidDomainRows.join('；')}`);
       return;
     }
 
+    marketSaveCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    marketSaveCtrlRef.current = ctrl;
+    const seq = ++marketSeqRef.current;
+    const saveBrandId = brand.id;
+    const saveMarket = activeMarket;
+
     setSavingMarket(true);
     try {
       const updated = await updateBrandMarket(
-        brand.id,
-        activeMarket,
+        saveBrandId,
+        saveMarket,
         {
           localBrandName: trimmedLocal,
           localCategory: localCategory.trim() || null,
@@ -207,17 +308,27 @@ export function BrandIdentitySection({
           ownedDomains,
           competitors,
           seedPrompts,
+          ...(saveMarket === 'GLOBAL' ? { supportedLocales } : {}),
+          controlPrompts,
         },
-        { storage: window.sessionStorage },
+        { storage: window.sessionStorage, signal: ctrl.signal },
       );
-      onBrandUpdated(updated, activeMarket);
-      feedback.notifySuccess(`已保存${GEO_MARKET_LABELS[activeMarket]}配置`);
+      if (ctrl.signal.aborted || seq !== marketSeqRef.current) return;
+      onBrandUpdated(updated, saveMarket);
+      invalidateFreshness('brands');
+      feedback.notifySuccess(`已保存${GEO_MARKET_LABELS[saveMarket]}配置`);
     } catch (reason: unknown) {
+      if (ctrl.signal.aborted || seq !== marketSeqRef.current) return;
       setMarketError(
         reason instanceof Error && reason.message ? reason.message : '保存市场配置失败',
       );
     } finally {
-      setSavingMarket(false);
+      if (marketSaveCtrlRef.current === ctrl) {
+        marketSaveCtrlRef.current = null;
+      }
+      if (!ctrl.signal.aborted && seq === marketSeqRef.current) {
+        setSavingMarket(false);
+      }
     }
   };
 
@@ -656,8 +767,126 @@ export function BrandIdentitySection({
                 ) : null}
               </div>
 
+              {activeMarket === 'GLOBAL' ? (
+                <div className="gm-brand-field" data-testid="brand-supported-locales-field">
+                  <span className="gm-brand-field-label">
+                    海外支持写作语种（至少 1 个；开启多语种后写作台自动出现语种切换）
+                  </span>
+                  <Select<SupportedLocale[]>
+                    mode="multiple"
+                    aria-label="海外支持写作语种"
+                    data-testid="brand-supported-locales-select"
+                    style={{ width: '100%' }}
+                    disabled={readOnly || savingMarket}
+                    placeholder="选择海外市场支持的写作与分发语种"
+                    value={supportedLocales}
+                    options={GLOBAL_SUPPORTED_LOCALES.map((code) => {
+                      const meta = SUPPORTED_LOCALES[code];
+                      return {
+                        value: code,
+                        label: `${meta.labelZh} (${meta.code}) · ${meta.nativeLabel}`,
+                      };
+                    })}
+                    onChange={(next) => {
+                      setSupportedLocales(next);
+                      if (next.length > 0 && marketError === '请至少保留 1 个支持语种') {
+                        setMarketError(null);
+                      }
+                    }}
+                  />
+                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
+                    支持英语（美/英）、德语、日语、西语、法语；日语内容自动采用防误判双信号校验。
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="gm-brand-field" data-testid="brand-control-prompts-field">
+                <span className="gm-brand-field-label">
+                  对照组问句（DiD 归因基线，{controlPrompts.length} / {BRAND_MAX_CONTROL_PROMPTS}）
+                </span>
+                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginBottom: 6 }}>
+                  开启对照组自动复测时默认取前 {BRAND_DEFAULT_RETEST_CONTROL_PROMPTS}{' '}
+                  条问句作为未发稿基线（最多 {BRAND_MAX_CONTROL_PROMPTS}{' '}
+                  条），且不可与上方种子监控问句重复。
+                </div>
+                <div className="gm-brand-chip-input-row">
+                  <Input
+                    aria-label="添加对照组问句"
+                    data-testid="control-prompt-input"
+                    value={controlPromptInput}
+                    maxLength={300}
+                    disabled={
+                      readOnly || savingMarket || controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
+                    }
+                    placeholder={
+                      activeMarket === 'CN'
+                        ? '输入未发稿对照组问句后回车（用于 DiD 净增益归因）'
+                        : 'Add a control prompt not targeted by published articles'
+                    }
+                    onChange={(event) => {
+                      setControlPromptInput(event.target.value);
+                      if (marketError) setMarketError(null);
+                    }}
+                    onPressEnter={(event) => {
+                      event.preventDefault();
+                      handleAddControlPrompt();
+                    }}
+                  />
+                  <Button
+                    data-testid="add-control-prompt-btn"
+                    disabled={
+                      readOnly ||
+                      savingMarket ||
+                      controlPromptInput.trim().length < 2 ||
+                      controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
+                    }
+                    onClick={handleAddControlPrompt}
+                  >
+                    + 添加
+                  </Button>
+                </div>
+                {controlPrompts.length > 0 ? (
+                  <div className="gm-brand-seed-list" data-testid="control-prompts-list">
+                    {controlPrompts.map((prompt, index) => (
+                      <div key={prompt} className="gm-brand-seed-item">
+                        <span style={{ overflowWrap: 'anywhere' }}>
+                          {prompt}
+                          {index < BRAND_DEFAULT_RETEST_CONTROL_PROMPTS ? (
+                            <Tag
+                              color="cyan"
+                              style={{ marginLeft: 8, marginRight: 0, fontSize: 11 }}
+                            >
+                              默认 DiD 对照
+                            </Tag>
+                          ) : null}
+                        </span>
+                        {!readOnly ? (
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            disabled={savingMarket}
+                            onClick={() =>
+                              setControlPrompts((prev) => prev.filter((item) => item !== prompt))
+                            }
+                          >
+                            移除
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
               {marketError ? (
-                <Alert type="error" showIcon message={marketError} style={{ marginBottom: 12 }} />
+                <Alert
+                  type="error"
+                  showIcon
+                  data-testid="brand-market-error"
+                  message={marketError}
+                  style={{ marginBottom: 12 }}
+                />
               ) : null}
 
               <div className="gm-brand-subcard-actions">

@@ -3,6 +3,8 @@ import {
   type CitationSourceKind,
   type CrudPageSize,
   type GeoMarket,
+  type NearMissListResponse,
+  type NearMissTier,
   type TaskStatusName,
   type VisibilityCitationListResponse,
   type VisibilityEngineAvailabilityItem,
@@ -47,6 +49,13 @@ export type FetchVisibilityCitationsParams = {
 export type FetchVisibilityOpportunitiesParams = {
   days?: number;
   engine?: VisibilityEngineKey;
+  limit?: number;
+};
+
+export type FetchVisibilityNearMissParams = {
+  days?: number;
+  tier?: NearMissTier;
+  sourceKind?: CitationSourceKind;
   limit?: number;
 };
 
@@ -254,6 +263,28 @@ export function fetchVisibilityOpportunities(
 
   return authorizedV2Request<VisibilityOpportunitiesResponse>(
     buildBrandVisPath(brandId, '/opportunities', query),
+    {
+      method: 'GET',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function fetchVisibilityNearMiss(
+  brandId: string,
+  market: GeoMarket,
+  params?: FetchVisibilityNearMissParams,
+  options?: VisibilityClientOptions,
+): Promise<NearMissListResponse> {
+  const query = new URLSearchParams({ market });
+  if (params?.days !== undefined) query.set('days', String(params.days));
+  if (params?.tier) query.set('tier', params.tier);
+  if (params?.sourceKind) query.set('sourceKind', params.sourceKind);
+  if (params?.limit !== undefined) query.set('limit', String(params.limit));
+
+  return authorizedV2Request<NearMissListResponse>(
+    buildBrandVisPath(brandId, '/near-miss', query),
     {
       method: 'GET',
       storage: options?.storage,

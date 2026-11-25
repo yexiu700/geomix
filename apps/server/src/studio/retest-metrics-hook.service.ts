@@ -1,8 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
+  computeDifferenceInDifferences,
+  computeWilsonInterval,
   normalizeVisibilityDomain,
   recomputeRunMetrics,
+  type GeoRetestControlMetricsSnapshot,
   type GeoRetestMetricsSnapshot,
   type ProfileForMetrics,
   type RetestMetricSnapshot,
@@ -14,9 +17,11 @@ import {
   type OnVisibilityRunCompleteHook,
   type VisibilityRunCompleteEvent,
 } from '../visibility/visibility-run.runner';
+import { normalizeRetestMetricSnapshot } from './studio.mapper';
 
 export type RetestObservationLike = {
   id: string;
+  runId?: string;
   status: string;
   promptText: string;
   answerText: string | null;
@@ -25,6 +30,7 @@ export type RetestObservationLike = {
   brandSentiment: string | null;
   competitorHits: unknown;
   citations: ReadonlyArray<{ url: string; domain: string; sourceKind: string }>;
+  createdAt?: Date;
 };
 
 export type RetestBrandMarketLike = {
@@ -32,7 +38,22 @@ export type RetestBrandMarketLike = {
   aliases: string[];
   ownedDomains: string[];
   competitors: unknown;
+  controlPrompts?: string[];
 };
+
+export type VisibilityObservationFinder = {
+  findMany?: (args: {
+    where: Record<string, unknown>;
+    include?: Record<string, unknown>;
+    orderBy?: Array<Record<string, 'asc' | 'desc'>>;
+    take?: number;
+  }) => Promise<RetestObservationLike[]>;
+};
+
+export function normalizeRetestPromptKey(raw: string | null | undefined): string {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().replace(/\s+/g, ' ').toLowerCase();
+}
 
 function canonicalizeUrlForMatch(raw: string): string | null {
   const trimmed = raw.trim();
@@ -136,6 +157,8 @@ function computeRetestSnapshotDetail(
     }
   }
 
+  const wilson = computeWilsonInterval(metrics.mentionedChecks, completed.length);
+
   return {
     mentionRate: Number.isFinite(metrics.visibilityPct) ? metrics.visibilityPct : 0,
     avgPosition:
@@ -146,6 +169,8 @@ function computeRetestSnapshotDetail(
     citationHit,
     sampleCount: completed.length,
     hitCount: metrics.mentionedChecks,
+    wilson,
+    confidenceLevel: wilson.confidenceLevel,
   };
 }
 
@@ -169,7 +194,7 @@ export function computeRetestMetricSnapshot(
 }
 
 /**
- * 计算定时复测节点（支持 sampleCount=1|3 多次采样聚合）的扩展指标快照。
+ * 计算定时复测节点（支持 sampleCount=1|3 多次采样聚合 + Wilson 95% 置信区间）的扩展指标快照。
  */
 export function computeScheduleMetricsSnapshot(
   observations: readonly RetestObservationLike[],
@@ -180,9 +205,219 @@ export function computeScheduleMetricsSnapshot(
 }
 
 /**
- * 复测完成回写钩子（Issue #333 / D10）：
+ * 将一次包含对照组问句的复测观测拆分为「目标问句观测」与「对照组问句观测」，
+ * 确保目标文章 afterMetrics 与 metricsSnapshotJson 不被对照组问句污染。
+ */
+export function partitionRetestObservations(params: {
+  observations: readonly RetestObservationLike[];
+  runPrompts?: readonly string[] | null;
+  includeControlPrompts?: boolean;
+  targetPrompt?: string | null;
+  brandMarketControlPrompts?: readonly string[] | null;
+}): {
+  targetObservations: RetestObservationLike[];
+  controlObservations: RetestObservationLike[];
+  controlPrompts: string[];
+} {
+  const completed = params.observations.filter((obs) => obs.status === 'SUCCESS');
+  if (!params.includeControlPrompts) {
+    return {
+      targetObservations: completed,
+      controlObservations: [],
+      controlPrompts: [],
+    };
+  }
+
+  const targetKey = normalizeRetestPromptKey(params.targetPrompt ?? params.runPrompts?.[0] ?? null);
+  const rawControlCandidates: readonly string[] =
+    Array.isArray(params.runPrompts) && params.runPrompts.length > 1
+      ? params.runPrompts.slice(1)
+      : (params.brandMarketControlPrompts ?? []);
+
+  const seen = new Set<string>(targetKey ? [targetKey] : []);
+  const controlPrompts: string[] = [];
+  for (const raw of rawControlCandidates) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const key = normalizeRetestPromptKey(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    controlPrompts.push(trimmed);
+  }
+
+  if (controlPrompts.length === 0) {
+    return {
+      targetObservations: completed,
+      controlObservations: [],
+      controlPrompts: [],
+    };
+  }
+
+  const controlKeySet = new Set(controlPrompts.map((p) => normalizeRetestPromptKey(p)));
+  const targetObservations: RetestObservationLike[] = [];
+  const controlObservations: RetestObservationLike[] = [];
+
+  for (const obs of completed) {
+    const key = normalizeRetestPromptKey(obs.promptText);
+    if (controlKeySet.has(key)) {
+      controlObservations.push(obs);
+    } else {
+      targetObservations.push(obs);
+    }
+  }
+
+  return {
+    targetObservations,
+    controlObservations,
+    controlPrompts,
+  };
+}
+
+/**
+ * 计算对照组指标快照及 Difference-in-Differences（DiD）净增益。
+ * 重要标度约定：mentionRate 均为 0..100 百分比，调用 computeDifferenceInDifferences 前
+ * 严格转换为 [0, 1] 比例（pct / 100），避免 clamp01 误截断。
+ */
+export function computeControlMetricsSnapshot(params: {
+  controlPrompts: readonly string[];
+  controlObservations: readonly RetestObservationLike[];
+  baselineControlObservations: readonly RetestObservationLike[];
+  brandMarket: RetestBrandMarketLike;
+  treatmentBaselineMentionRate: number | null;
+  treatmentCurrentMentionRate: number | null;
+}): GeoRetestControlMetricsSnapshot | null {
+  const controlObs = params.controlObservations.filter((obs) => obs.status === 'SUCCESS');
+  if (controlObs.length === 0) {
+    return null;
+  }
+
+  const currentDetail = computeRetestSnapshotDetail(controlObs, params.brandMarket, null);
+  if (!currentDetail) {
+    return null;
+  }
+
+  const baselineObs = params.baselineControlObservations.filter((obs) => obs.status === 'SUCCESS');
+  const baselineDetail =
+    baselineObs.length > 0
+      ? computeRetestSnapshotDetail(baselineObs, params.brandMarket, null)
+      : null;
+  const baselineMentionRate = baselineDetail ? baselineDetail.mentionRate : null;
+
+  const did =
+    params.treatmentBaselineMentionRate !== null &&
+    Number.isFinite(params.treatmentBaselineMentionRate) &&
+    params.treatmentCurrentMentionRate !== null &&
+    Number.isFinite(params.treatmentCurrentMentionRate) &&
+    baselineMentionRate !== null &&
+    Number.isFinite(baselineMentionRate)
+      ? computeDifferenceInDifferences({
+          treatmentBaseline: params.treatmentBaselineMentionRate / 100,
+          treatmentCurrent: params.treatmentCurrentMentionRate / 100,
+          controlBaseline: baselineMentionRate / 100,
+          controlCurrent: currentDetail.mentionRate / 100,
+        })
+      : null;
+
+  return {
+    controlPrompts: [...params.controlPrompts],
+    baselineMentionRate,
+    currentMentionRate: currentDetail.mentionRate,
+    sampleCount: currentDetail.sampleCount ?? controlObs.length,
+    hitCount: currentDetail.hitCount ?? 0,
+    ...(currentDetail.wilson ? { wilson: currentDetail.wilson } : {}),
+    did,
+  };
+}
+
+/**
+ * 查找对照组问句的基线观测：
+ * - 优先级 1：publishRecord.baselineRunId 内的对照组问句观测
+ * - 优先级 2：同 brandMarket 在 publishedAt 之前最近一次已完成的包含对应对照组问句的 VisibilityRun 观测
+ * - 优先级 3：无基线则返回空数组（baselineMentionRate = null, did = null）
+ */
+export async function findBaselineControlObservations(
+  obsDelegate: VisibilityObservationFinder | undefined,
+  params: {
+    tenantId?: string;
+    brandId: string;
+    brandMarketId: string;
+    currentRunId: string;
+    baselineRunId: string | null;
+    publishedAt: Date | null;
+    controlPrompts: readonly string[];
+  },
+): Promise<RetestObservationLike[]> {
+  if (typeof obsDelegate?.findMany !== 'function' || params.controlPrompts.length === 0) {
+    return [];
+  }
+
+  const controlKeySet = new Set(params.controlPrompts.map((p) => normalizeRetestPromptKey(p)));
+  const baseTenantFilter = params.tenantId ? { tenantId: params.tenantId } : {};
+
+  if (params.baselineRunId && params.baselineRunId !== params.currentRunId) {
+    const baselineRows = await obsDelegate.findMany({
+      where: {
+        ...baseTenantFilter,
+        brandId: params.brandId,
+        brandMarketId: params.brandMarketId,
+        runId: params.baselineRunId,
+        status: 'SUCCESS',
+      },
+      include: {
+        citations: {
+          orderBy: { position: 'asc' },
+        },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+
+    const matched = baselineRows.filter((row) =>
+      controlKeySet.has(normalizeRetestPromptKey(row.promptText)),
+    );
+    if (matched.length > 0) {
+      return matched;
+    }
+  }
+
+  const priorRows = await obsDelegate.findMany({
+    where: {
+      ...baseTenantFilter,
+      brandId: params.brandId,
+      brandMarketId: params.brandMarketId,
+      status: 'SUCCESS',
+      runId: { not: params.currentRunId },
+      ...(params.publishedAt ? { createdAt: { lte: params.publishedAt } } : {}),
+    },
+    include: {
+      citations: {
+        orderBy: { position: 'asc' },
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: 200,
+  });
+
+  const matchingPrior = priorRows.filter((row) =>
+    controlKeySet.has(normalizeRetestPromptKey(row.promptText)),
+  );
+  if (matchingPrior.length === 0) {
+    return [];
+  }
+
+  const latestRunId = matchingPrior[0]?.runId;
+  if (!latestRunId) {
+    return matchingPrior;
+  }
+
+  return matchingPrior.filter((row) => row.runId === latestRunId);
+}
+
+/**
+ * 复测完成回写钩子（Issue #333 / D10 / #369）：
  * 仅依赖 PrismaService，在 ApiModule 与 WorkerModule 中均安全注册，
- * 当 triggerType === 'RETEST' 且有有效 SUCCESS 观测时自动回写 GeoPublishRecord.afterMetrics。
+ * 当 triggerType === 'RETEST' 且有有效 SUCCESS 观测时自动回写 GeoPublishRecord.afterMetrics
+ * 以及 GeoRetestSchedule.metricsSnapshotJson（含 Wilson 95% CI）与 controlMetricsJson（含 DiD）。
  */
 @Injectable()
 export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
@@ -267,6 +502,14 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
               select: {
                 id: true,
                 publishedUrl: true,
+                baselineRunId: true,
+                beforeMetrics: true,
+                publishedAt: true,
+                article: {
+                  select: {
+                    targetPrompt: true,
+                  },
+                },
               },
             },
           },
@@ -302,15 +545,56 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           });
         }
 
-        const uniqueRecords = new Map<string, { id: string; publishedUrl: string }>();
+        type TargetRecordEntry = {
+          id: string;
+          publishedUrl: string;
+          includeControlPrompts: boolean;
+          targetPrompt: string | null;
+        };
+
+        const scheduleMetaByRecordId = new Map<
+          string,
+          { includeControlPrompts: boolean; targetPrompt: string | null }
+        >();
+        for (const schedule of allLinkedSchedules) {
+          const recId = schedule.publishRecord?.id ?? schedule.publishRecordId;
+          if (!recId) continue;
+          const prev = scheduleMetaByRecordId.get(recId);
+          scheduleMetaByRecordId.set(recId, {
+            includeControlPrompts:
+              Boolean(prev?.includeControlPrompts) ||
+              Boolean((schedule as { includeControlPrompts?: boolean }).includeControlPrompts),
+            targetPrompt:
+              schedule.publishRecord?.article?.targetPrompt ?? prev?.targetPrompt ?? null,
+          });
+        }
+
+        const uniqueRecords = new Map<string, TargetRecordEntry>();
         for (const record of records) {
-          uniqueRecords.set(record.id, { id: record.id, publishedUrl: record.publishedUrl });
+          const meta = scheduleMetaByRecordId.get(record.id);
+          uniqueRecords.set(record.id, {
+            id: record.id,
+            publishedUrl: record.publishedUrl,
+            includeControlPrompts: Boolean(meta?.includeControlPrompts),
+            targetPrompt: meta?.targetPrompt ?? null,
+          });
         }
         for (const schedule of schedules) {
           if (schedule.publishRecord) {
+            const existing = uniqueRecords.get(schedule.publishRecord.id);
+            const meta = scheduleMetaByRecordId.get(schedule.publishRecord.id);
             uniqueRecords.set(schedule.publishRecord.id, {
               id: schedule.publishRecord.id,
               publishedUrl: schedule.publishRecord.publishedUrl,
+              includeControlPrompts:
+                Boolean(existing?.includeControlPrompts) ||
+                Boolean(meta?.includeControlPrompts) ||
+                Boolean((schedule as { includeControlPrompts?: boolean }).includeControlPrompts),
+              targetPrompt:
+                schedule.publishRecord.article?.targetPrompt ??
+                meta?.targetPrompt ??
+                existing?.targetPrompt ??
+                null,
             });
           }
         }
@@ -319,10 +603,25 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
           return;
         }
 
+        const runPrompts = Array.isArray((run as { prompts?: unknown }).prompts)
+          ? ((run as { prompts?: string[] }).prompts ?? [])
+          : undefined;
+        const brandMarketLike = run.brandMarket as RetestBrandMarketLike;
+        const obsDelegate = (
+          tx as unknown as { visibilityObservation?: VisibilityObservationFinder }
+        ).visibilityObservation;
+
         for (const record of uniqueRecords.values()) {
+          const partitioned = partitionRetestObservations({
+            observations: run.observations,
+            runPrompts,
+            includeControlPrompts: record.includeControlPrompts,
+            targetPrompt: record.targetPrompt,
+            brandMarketControlPrompts: brandMarketLike.controlPrompts,
+          });
           const snapshot = computeRetestMetricSnapshot(
-            run.observations,
-            run.brandMarket,
+            partitioned.targetObservations,
+            brandMarketLike,
             record.publishedUrl,
           );
           if (!snapshot) continue;
@@ -338,12 +637,57 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
 
         const executedAt = new Date();
         for (const schedule of schedules) {
+          const includeControlPrompts = Boolean(
+            (schedule as { includeControlPrompts?: boolean }).includeControlPrompts,
+          );
+          const partitioned = partitionRetestObservations({
+            observations: run.observations,
+            runPrompts,
+            includeControlPrompts,
+            targetPrompt: schedule.publishRecord?.article?.targetPrompt ?? null,
+            brandMarketControlPrompts: brandMarketLike.controlPrompts,
+          });
+
           const scheduleSnapshot = computeScheduleMetricsSnapshot(
-            run.observations,
-            run.brandMarket,
+            partitioned.targetObservations,
+            brandMarketLike,
             schedule.publishRecord?.publishedUrl ?? null,
           );
-          if (!scheduleSnapshot) continue;
+          if (!scheduleSnapshot) {
+            await tx.geoRetestSchedule.update({
+              where: { id: schedule.id },
+              data: {
+                status: 'FAILED',
+                executedAt,
+                skipReason: '目标问句未产生有效观测结果',
+              },
+            });
+            continue;
+          }
+
+          let controlMetrics: GeoRetestControlMetricsSnapshot | null = null;
+          if (includeControlPrompts && partitioned.controlObservations.length > 0) {
+            const baselineControlObservations = await findBaselineControlObservations(obsDelegate, {
+              tenantId: event.tenantId,
+              brandId: run.brandId,
+              brandMarketId: run.brandMarketId,
+              currentRunId: run.id,
+              baselineRunId: schedule.publishRecord?.baselineRunId ?? null,
+              publishedAt: schedule.publishRecord?.publishedAt ?? null,
+              controlPrompts: partitioned.controlPrompts,
+            });
+            const beforeMetrics = normalizeRetestMetricSnapshot(
+              schedule.publishRecord?.beforeMetrics ?? null,
+            );
+            controlMetrics = computeControlMetricsSnapshot({
+              controlPrompts: partitioned.controlPrompts,
+              controlObservations: partitioned.controlObservations,
+              baselineControlObservations,
+              brandMarket: brandMarketLike,
+              treatmentBaselineMentionRate: beforeMetrics?.mentionRate ?? null,
+              treatmentCurrentMentionRate: scheduleSnapshot.mentionRate,
+            });
+          }
 
           await tx.geoRetestSchedule.update({
             where: { id: schedule.id },
@@ -352,6 +696,11 @@ export class RetestMetricsHookService implements OnVisibilityRunCompleteHook {
               executedAt,
               skipReason: null,
               metricsSnapshotJson: scheduleSnapshot as unknown as Prisma.InputJsonValue,
+              ...(controlMetrics
+                ? {
+                    controlMetricsJson: controlMetrics as unknown as Prisma.InputJsonValue,
+                  }
+                : {}),
             },
           });
         }

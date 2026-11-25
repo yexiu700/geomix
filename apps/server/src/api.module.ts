@@ -8,6 +8,7 @@ import { BrandsModule } from './brands/brands.module';
 import { BriefsModule } from './briefs/briefs.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DistributionModule } from './distribution/distribution.module';
+import { ExtensionModule } from './extension/extension.module';
 import { HealthController } from './health/health.controller';
 import { HealthService } from './health/health.service';
 import { AdaptersModule } from './infra/adapters.module';
@@ -15,6 +16,7 @@ import { MarketingModule } from './marketing/marketing.module';
 import { MeModule } from './me/me.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
+import { ReportsModule } from './reports/reports.module';
 import { StudioModule } from './studio/studio.module';
 import { VisibilityModule } from './visibility/visibility.module';
 
@@ -34,7 +36,9 @@ import { VisibilityModule } from './visibility/visibility.module';
     BriefsModule,
     StudioModule,
     DistributionModule,
+    ExtensionModule,
     MarketingModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [HealthService],

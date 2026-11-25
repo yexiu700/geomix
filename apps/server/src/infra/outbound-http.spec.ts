@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   DnsResolver,
@@ -336,5 +338,215 @@ describe('OutboundHttpClient', () => {
     });
     expect(allowedRes.status).toBe(200);
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports PUT with SSRF guard, cross-origin api-key stripping, 302/303 downgrade, and blocks cross-origin 307/308 PUT', async () => {
+    const calls: TransportRequest[] = [];
+    const transport = vi.fn<HttpTransport>(async (req) => {
+      calls.push(req);
+      const makeRes = (status: number, headers: Record<string, string>, body: string) => ({
+        status,
+        headers,
+        body: Buffer.from(body),
+      });
+      if (req.url.pathname === '/contents/post.mdx') {
+        return makeRes(201, { 'content-type': 'application/json' }, '{"content":{"sha":"abc123"}}');
+      }
+      if (req.url.pathname === '/put-redirect-meta') {
+        return makeRes(302, { location: 'http://169.254.169.254/latest/meta-data/' }, '');
+      }
+      if (req.url.pathname === '/put-303-cross') {
+        return makeRes(303, { location: 'https://cdn.other.example/final' }, '');
+      }
+      if (req.url.pathname === '/put-307-same') {
+        return makeRes(307, { location: 'https://api.github.example/put-307-target' }, '');
+      }
+      if (req.url.pathname === '/put-307-cross') {
+        return makeRes(307, { location: 'https://cdn.other.example/evil' }, '');
+      }
+      return makeRes(200, { 'content-type': 'application/json' }, '{"ok":true}');
+    });
+
+    const resolver = makeResolver({
+      'api.github.example': [{ address: '93.184.216.34', family: 4 }],
+      'cdn.other.example': [{ address: '93.184.216.35', family: 4 }],
+      'rebind.example': [{ address: '10.0.0.5', family: 4 }],
+    });
+
+    const client = new OutboundHttpClient({ resolver, transport });
+
+    // 1. Public PUT forwards method, JSON body, and Authorization header
+    const putRes = await client.request({
+      url: 'https://api.github.example/contents/post.mdx',
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer ghp_test_token',
+        'Content-Type': 'application/json',
+      },
+      body: '{"message":"add post","content":"ZGF0YQ=="}',
+    });
+    expect(putRes.status).toBe(201);
+    expect(calls[0]?.method).toBe('PUT');
+    expect(calls[0]?.body).toBe('{"message":"add post","content":"ZGF0YQ=="}');
+    expect(calls[0]?.headers.Authorization).toBe('Bearer ghp_test_token');
+
+    // 2. Private IP / loopback / metadata / DNS-rebind PUT fails SSRF without touching transport
+    const countBeforeSsrf = calls.length;
+    for (const blockedUrl of [
+      'http://127.0.0.1/contents/a.mdx',
+      'http://169.254.169.254/latest/meta-data',
+      'http://sonargate/contents/a.mdx',
+      'https://rebind.example/contents/a.mdx',
+    ]) {
+      await expect(
+        client.request({ url: blockedUrl, method: 'PUT', body: '{}' }),
+      ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+    }
+    expect(calls.length).toBe(countBeforeSsrf);
+
+    // 3. PUT 302 redirect to metadata fails SSRF even when maxRedirects = 0
+    await expect(
+      client.request({
+        url: 'https://api.github.example/put-redirect-meta',
+        method: 'PUT',
+        body: '{}',
+        maxRedirects: 0,
+      }),
+    ).rejects.toMatchObject({ kind: PROVIDER_KIND.SSRF });
+
+    // 4. PUT cross-origin 303 downgrades to GET, clears body/content-type, strips api-key & authorization
+    const cross303 = await client.request({
+      url: 'https://api.github.example/put-303-cross',
+      method: 'PUT',
+      headers: {
+        Authorization: 'Bearer secret',
+        'api-key': 'devto_secret',
+        'X-Api-Key': 'x_secret',
+        'Content-Type': 'application/json',
+        'Content-Length': '12',
+      },
+      body: '{"a":"test"}',
+    });
+    expect(cross303.status).toBe(200);
+    const redirected = calls[calls.length - 1]!;
+    expect(redirected.method).toBe('GET');
+    expect(redirected.body).toBeUndefined();
+    expect(redirected.headers.Authorization).toBeUndefined();
+    expect(redirected.headers['api-key']).toBeUndefined();
+    expect(redirected.headers['X-Api-Key']).toBeUndefined();
+    expect(redirected.headers['Content-Type']).toBeUndefined();
+    expect(redirected.headers['Content-Length']).toBeUndefined();
+
+    // 5. Same-origin 307 preserves PUT and body; cross-origin 307 throws SSRF cross_origin_put_redirect
+    const same307 = await client.request({
+      url: 'https://api.github.example/put-307-same',
+      method: 'PUT',
+      headers: { Authorization: 'Bearer same_origin_ok' },
+      body: '{"keep":true}',
+    });
+    expect(same307.status).toBe(200);
+    const sameTarget = calls[calls.length - 1]!;
+    expect(sameTarget.method).toBe('PUT');
+    expect(sameTarget.body).toBe('{"keep":true}');
+    expect(sameTarget.headers.Authorization).toBe('Bearer same_origin_ok');
+
+    await expect(
+      client.request({
+        url: 'https://api.github.example/put-307-cross',
+        method: 'PUT',
+        body: '{"sensitive":true}',
+      }),
+    ).rejects.toMatchObject({
+      kind: PROVIDER_KIND.SSRF,
+      reason: 'cross_origin_put_redirect',
+    });
+  });
+
+  it('forwards binary rawBody Buffer intact (including non-UTF-8 bytes) and clears it on 302 downgrade', async () => {
+    const binaryPayload = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x80,
+    ]);
+
+    // 1. Mock transport + 302 downgrade clears both rawBody and body
+    const seen: TransportRequest[] = [];
+    const transport: HttpTransport = async (req): Promise<TransportResponse> => {
+      seen.push(req);
+      if (req.url.pathname === '/upload-redirect') {
+        return {
+          status: 302,
+          headers: { location: 'https://cdn.example.com/done' },
+          body: Buffer.alloc(0),
+        };
+      }
+      return {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+        body: req.rawBody ? Buffer.from(req.rawBody) : Buffer.from('done'),
+      };
+    };
+
+    const mockClient = new OutboundHttpClient({
+      resolver: makeResolver({
+        'upload.example.com': [PUBLIC_IP],
+        'cdn.example.com': [PUBLIC_IP],
+      }),
+      transport,
+    });
+
+    const direct = await mockClient.request({
+      url: 'https://upload.example.com/media',
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      rawBody: binaryPayload,
+    });
+    expect(direct.status).toBe(200);
+    expect(direct.rawBody.equals(binaryPayload)).toBe(true);
+    expect(Buffer.isBuffer(seen[0]?.rawBody)).toBe(true);
+    expect((seen[0]?.rawBody as Buffer).equals(binaryPayload)).toBe(true);
+
+    seen.length = 0;
+    const redirected = await mockClient.request({
+      url: 'https://upload.example.com/upload-redirect',
+      method: 'POST',
+      headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+      rawBody: binaryPayload,
+    });
+    expect(redirected.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]?.method).toBe('GET');
+    expect(seen[1]?.rawBody).toBeUndefined();
+    expect(seen[1]?.body).toBeUndefined();
+    expect(seen[1]?.headers['Content-Type']).toBeUndefined();
+
+    // 2. Real undici transport against local HTTP server preserves exact non-UTF-8 bytes
+    let receivedRaw = Buffer.alloc(0);
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        receivedRaw = Buffer.concat(chunks);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ bytes: receivedRaw.length }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const realClient = new OutboundHttpClient({
+        defaultAllowlist: parseSsrfAllowlist(`127.0.0.1:${port}`, { includeDefaults: false }),
+      });
+      const res = await realClient.request({
+        url: `http://127.0.0.1:${port}/binary`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        rawBody: binaryPayload,
+      });
+      expect(res.status).toBe(200);
+      expect(receivedRaw.equals(binaryPayload)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
   });
 });

@@ -129,6 +129,7 @@ export class QueueProducer
         jobId: data.jobId,
         ...(data.recipe ? { recipe: data.recipe } : {}),
         ...(data.targetFormat ? { targetFormat: data.targetFormat } : {}),
+        ...(data.targetLocale ? { targetLocale: data.targetLocale } : {}),
       },
       {
         jobId: `geo-batch-${data.jobId}`,

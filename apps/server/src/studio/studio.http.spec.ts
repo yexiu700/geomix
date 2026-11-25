@@ -38,6 +38,7 @@ type BrandMarketRow = {
   brandId: string;
   market: 'CN' | 'GLOBAL';
   locale: string;
+  supportedLocales?: string[];
   region: string;
   localBrandName: string;
   aliases: string[];
@@ -84,6 +85,7 @@ type ArticleRow = {
   batchJobId: string | null;
   recipe: string;
   targetFormat: string;
+  targetLocale?: string | null;
   title: string;
   targetPrompt: string;
   outlineJson: unknown;
@@ -313,6 +315,7 @@ describe('Studio HTTP v2 endpoints, SSE streaming, billing refund & WorkerModule
           batchJobId: (args.data.batchJobId as string | null) ?? null,
           recipe: String(args.data.recipe),
           targetFormat: String(args.data.targetFormat),
+          targetLocale: (args.data.targetLocale as string | null) ?? null,
           title: String(args.data.title),
           targetPrompt: String(args.data.targetPrompt),
           outlineJson: args.data.outlineJson ?? [],
@@ -1413,5 +1416,171 @@ describe('Studio HTTP v2 endpoints, SSE streaming, billing refund & WorkerModule
     expect(patch2.status).toBe(200);
     expect(mediaUsedCounts.get('media_1')).toBe(1);
     expect(mediaUsedCounts.get('media_2')).toBe(1);
+  });
+
+  it('M3B (#370): validates targetLocale against CN/GLOBAL & supportedLocales, persists targetLocale, enforces 409 idempotency on locale change, and propagates batch targetLocale', async () => {
+    const globalMarket = markets.get('mkt_a_global')!;
+    globalMarket.supportedLocales = ['en-US', 'de-DE', 'ja-JP'];
+    const cnMarket = markets.get('mkt_a_cn')!;
+    cnMarket.supportedLocales = ['zh-CN'];
+
+    // Seed two GLOBAL briefs for batch test
+    briefs.set('brief_g1', {
+      id: 'brief_g1',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'mkt_a_global',
+      status: 'OPEN',
+      targetPrompt: 'Best quiet NAS 2026',
+      suggestedTitle: 'AstraVault Quiet NAS Guide',
+      recommendedRecipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+      outlineH2: [],
+      targetFanOuts: [],
+      matchedFactIds: ['fact_1'],
+      sourceCitationUrl: null,
+    });
+    briefs.set('brief_g2', {
+      id: 'brief_g2',
+      tenantId: 'tenant_a',
+      brandId: 'brand_a',
+      brandMarketId: 'mkt_a_global',
+      status: 'OPEN',
+      targetPrompt: 'NAS power draw comparison',
+      suggestedTitle: 'AstraVault Power Draw Comparison',
+      recommendedRecipe: 'COMPARISON_MATRIX',
+      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+      outlineH2: [],
+      targetFanOuts: [],
+      matchedFactIds: ['fact_1'],
+      sourceCitationUrl: null,
+    });
+
+    const pointsStart = wallets.get('tenant_a')!.points;
+
+    // 1. Cross-market & unenabled locale rejections return 400 BEFORE billing reserve (0 pts charged)
+    for (const badPayload of [
+      { market: 'GLOBAL', targetFormat: 'GLOBAL_AUTHORITY_GUIDE', targetLocale: 'zh-CN' },
+      { market: 'CN', targetFormat: 'CN_DEEP_REVIEW', targetLocale: 'de-DE' },
+      { market: 'GLOBAL', targetFormat: 'GLOBAL_AUTHORITY_GUIDE', targetLocale: 'fr-FR' },
+    ]) {
+      const badRes = await fetch(`${baseUrl}/brands/brand_a/articles/stream`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenTenantA}`,
+          'content-type': 'application/json',
+          'idempotency-key': `idem-bad-locale-${badPayload.targetLocale}`,
+        },
+        body: JSON.stringify({
+          ...badPayload,
+          recipe: 'AUTHORITY_GUIDE',
+          targetPrompt: 'Quiet NAS comparison',
+        }),
+      });
+      expect(badRes.status).toBe(400);
+    }
+    expect(wallets.get('tenant_a')!.points).toBe(pointsStart);
+    expect(wallets.get('tenant_a')!.reserved).toBe(0);
+
+    // 2. Valid ja-JP stream on GLOBAL market -> persists targetLocale='ja-JP', inLanguage='ja-JP', settles exactly 10 pts
+    const jaRes = await fetch(`${baseUrl}/brands/brand_a/articles/stream`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${tokenTenantA}`,
+        'content-type': 'application/json',
+        'idempotency-key': 'idem-m3b-ja-stream-01',
+      },
+      body: JSON.stringify({
+        market: 'GLOBAL',
+        recipe: 'AUTHORITY_GUIDE',
+        targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+        targetLocale: 'ja-JP',
+        targetPrompt: 'Quiet 4-bay NAS 2026',
+      }),
+    });
+    expect(jaRes.status).toBe(200);
+    const jaFrames = parseSseFrames(await jaRes.text());
+    const jaComplete = jaFrames.find((f) => f.event === 'complete')?.data as {
+      article: GeoArticleRecord;
+    };
+    expect(jaComplete.article.targetLocale).toBe('ja-JP');
+    const graph = (
+      jaComplete.article.schemaJsonLd as { '@graph'?: Array<{ inLanguage?: string }> }
+    )['@graph'];
+    expect(graph?.[0]?.inLanguage).toBe('ja-JP');
+    expect(wallets.get('tenant_a')!.points).toBe(pointsStart - 10);
+
+    // GET /articles/:id returns persisted targetLocale
+    const getRes = (await (
+      await fetch(`${baseUrl}/articles/${jaComplete.article.id}`, {
+        headers: { authorization: `Bearer ${tokenTenantA}` },
+      })
+    ).json()) as Envelope<GeoArticleRecord>;
+    expect(getRes.data.targetLocale).toBe('ja-JP');
+
+    // 3. Reusing same Idempotency-Key with different targetLocale ('de-DE' vs 'ja-JP') -> 409 CONFLICT
+    const conflictRes = await fetch(`${baseUrl}/brands/brand_a/articles/stream`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${tokenTenantA}`,
+        'content-type': 'application/json',
+        'idempotency-key': 'idem-m3b-ja-stream-01',
+      },
+      body: JSON.stringify({
+        market: 'GLOBAL',
+        recipe: 'AUTHORITY_GUIDE',
+        targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+        targetLocale: 'de-DE',
+        targetPrompt: 'Quiet 4-bay NAS 2026',
+      }),
+    });
+    expect(conflictRes.status).toBe(409);
+
+    // 4. Batch job with disallowed locale -> 400 pre-reserve; valid de-DE -> enqueues targetLocale='de-DE'
+    const batchEnqueuer = app.get<{ enqueueGeoBatch(job: GeoBatchJobData): Promise<void> }>(
+      GEO_BATCH_ENQUEUER,
+    );
+    const localEnqueued: GeoBatchJobData[] = [];
+    const enqueueSpy = vi
+      .spyOn(batchEnqueuer, 'enqueueGeoBatch')
+      .mockImplementation(async (job) => {
+        localEnqueued.push(job);
+      });
+    try {
+      const badBatch = await fetch(`${baseUrl}/brands/brand_a/articles/batch`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenTenantA}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'idem-m3b-batch-bad',
+        },
+        body: JSON.stringify({
+          market: 'GLOBAL',
+          briefIds: ['brief_g1', 'brief_g2'],
+          targetLocale: 'es-ES',
+        }),
+      });
+      expect(badBatch.status).toBe(400);
+      expect(localEnqueued).toHaveLength(0);
+
+      const okBatch = await fetch(`${baseUrl}/brands/brand_a/articles/batch`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${tokenTenantA}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'idem-m3b-batch-de',
+        },
+        body: JSON.stringify({
+          market: 'GLOBAL',
+          briefIds: ['brief_g1', 'brief_g2'],
+          targetLocale: 'de-DE',
+        }),
+      });
+      expect(okBatch.status).toBe(200);
+      expect(localEnqueued).toHaveLength(1);
+      expect(localEnqueued[0]?.targetLocale).toBe('de-DE');
+    } finally {
+      enqueueSpy.mockRestore();
+    }
   });
 });

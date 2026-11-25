@@ -232,6 +232,11 @@ export const EXPECTED_FREE_ACTION_KEYS = [
   'distribution_preflight',
   'crawl_probe',
   'pr_packet_share',
+  'near_miss_boost',
+  'roi_report_export',
+  'roi_report_share',
+  'extension_token_issue',
+  'extension_sync',
 ] as const;
 
 export const LEAD_STATUS_LABELS: Readonly<Record<MarketingLeadStatus, string>> = {

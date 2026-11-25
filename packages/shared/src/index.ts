@@ -222,3 +222,7 @@ export * from './account-costs-ux';
 export * from './shanghai-time';
 export * from './distribution';
 export * from './marketing';
+export * from './stats';
+export * from './locales';
+export * from './roi-report';
+export * from './extension-bridge';

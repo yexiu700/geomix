@@ -21,6 +21,7 @@ export const GEO_BRIEF_SOURCES = [
   'SENTIMENT_RISK',
   'FANOUT_CLUSTER',
   'CITATION_COUNTER',
+  'NEAR_MISS_BOOST',
   'MANUAL',
 ] as const;
 export type GeoBriefSource = (typeof GEO_BRIEF_SOURCES)[number];
@@ -31,6 +32,7 @@ export const GEO_BRIEF_SOURCE_LABELS: Record<GeoBriefSource, string> = {
   SENTIMENT_RISK: '负面/褒贬风险',
   FANOUT_CLUSTER: '拆解词专题缺口',
   CITATION_COUNTER: '高引用信源反制',
+  NEAR_MISS_BOOST: '差一步被引用补强',
   MANUAL: '自由选题',
 };
 
@@ -1464,8 +1466,9 @@ export function computeChar5GramJaccard(sourceText: string, candidateText: strin
 export const GEO_BRIEF_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export const GEO_BRIEF_SOURCE_PRIORITY_RANK: Record<GeoBriefSource, number> = {
-  AUTO_GAP: 6,
-  SENTIMENT_RISK: 5,
+  AUTO_GAP: 7,
+  SENTIMENT_RISK: 6,
+  NEAR_MISS_BOOST: 5,
   LOW_RANK: 4,
   CITATION_COUNTER: 3,
   FANOUT_CLUSTER: 2,
@@ -1483,6 +1486,8 @@ export type GeoBriefPriorityInput = {
   ownedCitationCount?: number;
   isCompetitorSource?: boolean;
   fanOutCount?: number;
+  wasOpened?: boolean;
+  isOwnedNearMiss?: boolean;
 };
 
 function clampInt(min: number, max: number, value: number): number {
@@ -1541,6 +1546,12 @@ export function computeGeoBriefPriorityScore(input: GeoBriefPriorityInput): numb
       const fanOutCount = Math.max(1, Math.floor(input.fanOutCount ?? 3));
       return clampInt(60, 69, 60 + Math.min(9, fanOutCount));
     }
+    case 'NEAR_MISS_BOOST': {
+      const openedBonus = input.wasOpened ? 6 : 0;
+      const ownedBonus = input.isOwnedNearMiss ? 4 : 0;
+      const hitBonus = Math.min(2, Math.max(0, Math.floor(input.citationCount ?? 0)));
+      return clampInt(72, 88, 76 + openedBonus + ownedBonus + hitBonus);
+    }
     case 'MANUAL':
     default:
       return 55;
@@ -1572,6 +1583,7 @@ export function defaultRecipeForBriefSource(sourceType: GeoBriefSource): GeoReci
       return 'COMPARISON_MATRIX';
     case 'CITATION_COUNTER':
       return 'CITATION_COUNTER';
+    case 'NEAR_MISS_BOOST':
     case 'AUTO_GAP':
     case 'FANOUT_CLUSTER':
     case 'MANUAL':

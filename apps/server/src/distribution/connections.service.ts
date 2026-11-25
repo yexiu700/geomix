@@ -5,6 +5,8 @@ import {
   AUTH_ERROR,
   isL1ChannelProvider,
   isSafeDistributionHttpUrl,
+  isSupportedLocale,
+  supportedLocalesForMarket,
   type ChannelConnectionConfig,
   type ChannelConnectionDto,
   type ChannelConnectionStatus,
@@ -13,6 +15,7 @@ import {
   type CreateChannelConnectionInput,
   type GeoMarket,
   type L1ChannelProvider,
+  type SupportedLocale,
   type TestChannelConnectionInput,
   type UpdateChannelConnectionInput,
 } from '@geomix/shared';
@@ -33,7 +36,7 @@ import {
   type ConnectorSecrets,
 } from './connectors';
 
-type ChannelConnectionRow = {
+export type ChannelConnectionRow = {
   id: string;
   brandId: string;
   brandMarketId: string;
@@ -48,6 +51,8 @@ type ChannelConnectionRow = {
   configJson: Prisma.JsonValue;
   status: string;
   authType: string;
+  targetLocale?: string | null;
+  externalShopDomain?: string | null;
   lastTestedAt: Date | null;
   lastError: string | null;
   createdAt: Date;
@@ -82,7 +87,7 @@ function mergeDefinedConfig(
   return next;
 }
 
-function presentConnection(
+export function presentConnection(
   row: ChannelConnectionRow,
   fallbackMarket?: GeoMarket,
 ): ChannelConnectionDto {
@@ -99,6 +104,8 @@ function presentConnection(
     configJson: normalizeConfigRecord(row.configJson),
     status: row.status as ChannelConnectionStatus,
     authType: row.authType,
+    targetLocale: isSupportedLocale(row.targetLocale) ? row.targetLocale : null,
+    externalShopDomain: row.externalShopDomain ?? null,
     lastTestedAt: row.lastTestedAt ? row.lastTestedAt.toISOString() : null,
     lastError: row.lastError ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -169,6 +176,7 @@ export class ConnectionsService {
     const siteBaseUrl = input.siteBaseUrl.trim();
     await this.assertSafeSiteUrl(siteBaseUrl);
     await this.assertSafeOptionalApiBaseUrl(input.configJson);
+    const targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, input.market);
 
     const trimmedCredentials = this.trimCredentials(input.credentials);
     this.validateProviderCredentials(input.provider, trimmedCredentials);
@@ -195,6 +203,8 @@ export class ConnectionsService {
           configJson: configJson as Prisma.InputJsonValue,
           status: 'ACTIVE',
           authType: input.authType ?? 'API_KEY',
+          targetLocale,
+          externalShopDomain: null,
         },
         include: { brandMarket: { select: { market: true } } },
       });
@@ -245,6 +255,11 @@ export class ConnectionsService {
       updateData.status = input.status;
     }
 
+    if (input.targetLocale !== undefined) {
+      const market = (existing.brandMarket?.market === 'CN' ? 'CN' : 'GLOBAL') as GeoMarket;
+      updateData.targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, market);
+    }
+
     if (input.credentials !== undefined) {
       const nonBlankPatch = this.extractNonBlankCredentials(input.credentials);
       if (Object.keys(nonBlankPatch).length > 0) {
@@ -267,6 +282,13 @@ export class ConnectionsService {
           ...baseCredentials,
           ...nonBlankPatch,
         };
+        if (existing.provider === 'SHOPIFY' && nonBlankPatch.accessToken) {
+          delete mergedCredentials.oauthAccessToken;
+          updateData.authType = 'API_KEY';
+          updateData.oauthAccessTokenCiphertext = null;
+          updateData.oauthExpiresAt = null;
+          updateData.externalShopDomain = null;
+        }
         this.validateProviderCredentials(existing.provider, mergedCredentials);
         const envelope = this.encryptCredentials(mergedCredentials);
         updateData.credentialsCiphertext = envelope.ciphertext;
@@ -322,6 +344,15 @@ export class ConnectionsService {
     }
 
     const now = new Date();
+    if (existing.status === 'DISABLED' && !existing.credentialsCiphertext) {
+      return {
+        ok: false,
+        status: 'DISABLED',
+        message: '该连接已停用或已卸载，请重新授权或更新凭据',
+        testedAt: now.toISOString(),
+      };
+    }
+
     let credentials: ConnectorSecrets;
     try {
       credentials = this.decryptCredentials(existing);
@@ -389,17 +420,31 @@ export class ConnectionsService {
       siteBaseUrl: existing.siteBaseUrl,
       configJson: configRecord as ChannelConnectionConfig,
       authType: existing.authType,
+      targetLocale: existing.targetLocale ?? null,
+      externalShopDomain: existing.externalShopDomain ?? null,
     };
 
     try {
       const result = await connector.testConnection(context, credentials, input);
-      const nextConfig =
-        result.discoveredConfig?.primaryDomain && !configRecord.primaryDomain
-          ? ({
-              ...configRecord,
-              primaryDomain: result.discoveredConfig.primaryDomain,
-            } as Prisma.InputJsonValue)
-          : undefined;
+      const backfilledConfig = { ...configRecord };
+      let configChanged = false;
+      const discovered = result.discoveredConfig;
+      if (discovered) {
+        for (const key of [
+          'primaryDomain',
+          'publicationId',
+          'branch',
+          'repoOwner',
+          'repoName',
+        ] as const) {
+          const val = discovered[key];
+          if (typeof val === 'string' && val.trim() && !backfilledConfig[key]) {
+            backfilledConfig[key] = val.trim();
+            configChanged = true;
+          }
+        }
+      }
+      const nextConfig = configChanged ? (backfilledConfig as Prisma.InputJsonValue) : undefined;
 
       await this.prisma.scoped.channelConnection.update({
         where: { id: existing.id },
@@ -551,13 +596,31 @@ export class ConnectionsService {
     return out;
   }
 
+  private validateTargetLocaleForMarket(
+    rawLocale: SupportedLocale | null | undefined,
+    market: GeoMarket,
+  ): SupportedLocale | null {
+    if (rawLocale === undefined || rawLocale === null) {
+      return null;
+    }
+    const allowed = supportedLocalesForMarket(market);
+    if (!allowed.includes(rawLocale)) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `目标语种 ${rawLocale} 与当前市场（${market}）不匹配`,
+      );
+    }
+    return rawLocale;
+  }
+
   private validateProviderCredentials(
     provider: L1ChannelProvider,
     credentials: ConnectorSecrets,
   ): void {
     switch (provider) {
       case 'SHOPIFY': {
-        if (!credentials.accessToken?.trim()) {
+        if (!credentials.accessToken?.trim() && !credentials.oauthAccessToken?.trim()) {
           throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 Shopify Admin API Access Token');
         }
         break;
@@ -584,6 +647,44 @@ export class ConnectionsService {
         }
         break;
       }
+      case 'GHOST': {
+        const key = credentials.adminApiKey?.trim() ?? '';
+        if (!/^[^:\s]+:(?:[0-9a-fA-F]{2}){8,}$/.test(key)) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            '请填写有效的 Ghost Admin API Key（格式为 id:hex_secret）',
+          );
+        }
+        break;
+      }
+      case 'DEVTO': {
+        if (!credentials.apiKey?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 Dev.to API Key');
+        }
+        break;
+      }
+      case 'HASHNODE': {
+        if (!credentials.apiToken?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 Hashnode Personal Access Token');
+        }
+        break;
+      }
+      case 'GITHUB_MDX': {
+        if (!credentials.token?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写 GitHub Personal Access Token');
+        }
+        break;
+      }
+      case 'WECHAT_OFFICIAL': {
+        if (!credentials.appId?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写微信公众号 AppID');
+        }
+        if (!credentials.appSecret?.trim()) {
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, '请填写微信公众号 AppSecret');
+        }
+        break;
+      }
     }
   }
 
@@ -601,6 +702,21 @@ export class ConnectionsService {
         break;
       case 'WEBHOOK':
         primarySecret = credentials.signingSecret ?? '';
+        break;
+      case 'GHOST':
+        primarySecret = credentials.adminApiKey ?? '';
+        break;
+      case 'DEVTO':
+        primarySecret = credentials.apiKey ?? '';
+        break;
+      case 'HASHNODE':
+        primarySecret = credentials.apiToken ?? '';
+        break;
+      case 'GITHUB_MDX':
+        primarySecret = credentials.token ?? '';
+        break;
+      case 'WECHAT_OFFICIAL':
+        primarySecret = credentials.appSecret ?? credentials.appId ?? '';
         break;
     }
     return this.secretBox.maskSecret(primarySecret) || '****';

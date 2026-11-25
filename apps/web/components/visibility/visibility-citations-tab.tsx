@@ -60,6 +60,8 @@ export type VisibilityCitationsTabProps = {
   renderCitationAction?: (row: RankedCitationRow) => ReactNode;
   /** Optional M3 slot for multi-selected Fan-Out cluster button (data-testid="fanout-cluster-btn"). */
   renderFanOutBatchAction?: (selectedQueries: readonly string[]) => ReactNode;
+  /** Optional v2.2 slot for 4-tier Near-Miss panel rendered inside Tab 3. */
+  nearMissSlot?: ReactNode;
 };
 
 export function VisibilityCitationsTab({
@@ -83,6 +85,7 @@ export function VisibilityCitationsTab({
   onSelectedFanOutsChange,
   renderCitationAction,
   renderFanOutBatchAction,
+  nearMissSlot,
 }: VisibilityCitationsTabProps): JSX.Element {
   const breakdown = citations?.sourceBreakdown;
   const totalAllSources = useMemo(() => {
@@ -358,6 +361,9 @@ export function VisibilityCitationsTab({
           />
         </div>
       </div>
+
+      {/* 1.5. v2.2 Near-Miss 4-Tier Opportunities Panel */}
+      {nearMissSlot ?? null}
 
       {/* 2. Ranked High-Citation URLs Table */}
       <div className="gm-panel">

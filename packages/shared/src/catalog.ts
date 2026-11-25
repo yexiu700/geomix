@@ -31,6 +31,11 @@ export const FREE_RATE_LIMITED_ACTIONS = [
   'distribution_preflight',
   'crawl_probe',
   'pr_packet_share',
+  'near_miss_boost',
+  'roi_report_export',
+  'roi_report_share',
+  'extension_token_issue',
+  'extension_sync',
 ] as const;
 
 export type FreeRateLimitedAction = (typeof FREE_RATE_LIMITED_ACTIONS)[number];

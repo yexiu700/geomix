@@ -10,9 +10,14 @@ import { ConnectionsController } from './connections.controller';
 import { ConnectionsService } from './connections.service';
 import {
   CmsConnectorRegistry,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
   ShopifyConnector,
   WebflowConnector,
   WebhookConnector,
+  WechatOfficialConnector,
   WordPressConnector,
 } from './connectors';
 import { CrawlProbeService } from './crawl-probe.service';
@@ -23,21 +28,34 @@ import { IndexNowService } from './indexnow.service';
 import { PublicPrPacketController } from './public-pr-packet.controller';
 import { PublicPrPacketService } from './public-pr-packet.service';
 import { RetestSchedulerService } from './retest-scheduler.service';
+import { ShopifyOAuthController } from './shopify-oauth.controller';
+import { ShopifyOAuthService } from './shopify-oauth.service';
 import { VariantGeneratorService } from './variant-generator.service';
 import { VariantJobRunner } from './variant-job.runner';
 
 @Module({
   imports: [PrismaModule, AuthModule, BillingModule, AdaptersModule, BrandsModule, StudioModule],
-  controllers: [ConnectionsController, DistributionController, PublicPrPacketController],
+  controllers: [
+    ConnectionsController,
+    DistributionController,
+    PublicPrPacketController,
+    ShopifyOAuthController,
+  ],
   providers: [
     SecretBox,
     ShopifyConnector,
     WordPressConnector,
     WebflowConnector,
     WebhookConnector,
+    GhostConnector,
+    DevtoConnector,
+    HashnodeConnector,
+    GithubMdxConnector,
+    WechatOfficialConnector,
     CmsConnectorRegistry,
     IndexNowService,
     ConnectionsService,
+    ShopifyOAuthService,
     VariantGeneratorService,
     VariantJobRunner,
     CrawlProbeService,
@@ -51,6 +69,7 @@ import { VariantJobRunner } from './variant-job.runner';
     CmsConnectorRegistry,
     IndexNowService,
     ConnectionsService,
+    ShopifyOAuthService,
     VariantGeneratorService,
     VariantJobRunner,
     CrawlProbeService,

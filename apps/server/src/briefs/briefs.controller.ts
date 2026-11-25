@@ -14,6 +14,7 @@ import {
 import {
   API_ERROR,
   GEO_BRIEF_ID_PATTERN,
+  createNearMissBoostBriefSchema,
   geoBriefFromCitationUrlSchema,
   geoBriefGenerateSchema,
   geoBriefListQuerySchema,
@@ -106,6 +107,25 @@ export class BrandBriefsController {
     const input = parseBody(geoBriefFromCitationUrlSchema, body);
     return ok(
       await this.briefs.fromCitationUrl(auth.tenantId, auth.userId, brandId, input, queryMarket),
+    );
+  }
+
+  @Post('from-near-miss')
+  @HttpCode(200)
+  @UseGuards(TenantActiveGuard)
+  async fromNearMiss(
+    @Req() req: unknown,
+    @Param('brandId') brandIdRaw: string,
+    @Query() query: Record<string, unknown>,
+    @Body() body: unknown,
+  ) {
+    const auth = requireAuth(req);
+    const brandId = parseBrandId(brandIdRaw);
+    const flat = flattenQuery(query);
+    const queryMarket = parseOptionalMarket(flat.market);
+    const input = parseBody(createNearMissBoostBriefSchema, body);
+    return ok(
+      await this.briefs.fromNearMiss(auth.tenantId, auth.userId, brandId, input, queryMarket),
     );
   }
 }

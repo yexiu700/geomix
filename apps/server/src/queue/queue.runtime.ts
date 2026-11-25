@@ -6,7 +6,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { readReconcileConfig } from '@geomix/shared';
+import { isSupportedLocale, readReconcileConfig, type SupportedLocale } from '@geomix/shared';
 import { Worker } from 'bullmq';
 import {
   FACT_INDEX_ENQUEUER,
@@ -287,6 +287,7 @@ function readGeoBatchPayload(data: unknown): GeoBatchJobData | null {
     jobId?: unknown;
     recipe?: unknown;
     targetFormat?: unknown;
+    targetLocale?: unknown;
   };
   if (typeof raw.tenantId !== 'string' || typeof raw.jobId !== 'string') return null;
   if (!ID.test(raw.tenantId) || !ID.test(raw.jobId)) return null;
@@ -297,6 +298,9 @@ function readGeoBatchPayload(data: unknown): GeoBatchJobData | null {
     ...(typeof raw.recipe === 'string' ? { recipe: raw.recipe as GeoBatchJobData['recipe'] } : {}),
     ...(typeof raw.targetFormat === 'string'
       ? { targetFormat: raw.targetFormat as GeoBatchJobData['targetFormat'] }
+      : {}),
+    ...(typeof raw.targetLocale === 'string' && isSupportedLocale(raw.targetLocale)
+      ? { targetLocale: raw.targetLocale.trim() as SupportedLocale }
       : {}),
   };
 }

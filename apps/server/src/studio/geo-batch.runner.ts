@@ -7,6 +7,7 @@ import {
   type GeoMarket,
   type GeoRecipe,
   type GeoTargetFormat,
+  type SupportedLocale,
 } from '@geomix/shared';
 import { BillingService } from '../billing/billing.service';
 import { QuotaService } from '../billing/quota.service';
@@ -14,7 +15,12 @@ import { ComplianceService } from '../infra/compliance';
 import { ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { StudioGenerationService } from './studio-generation.service';
-import { deriveGeoArticleId, extractCompetitorNames, normalizeOutlineJson } from './studio.mapper';
+import {
+  deriveGeoArticleId,
+  extractCompetitorNames,
+  normalizeOutlineJson,
+  resolveStudioTargetLocale,
+} from './studio.mapper';
 
 export const GEO_BATCH_HANDLER = Symbol('GEO_BATCH_HANDLER');
 export const GEO_BATCH_ENQUEUER = Symbol('GEO_BATCH_ENQUEUER');
@@ -24,6 +30,7 @@ export type GeoBatchJobData = {
   jobId: string;
   recipe?: GeoRecipe;
   targetFormat?: GeoTargetFormat;
+  targetLocale?: SupportedLocale;
 };
 
 export interface GeoBatchHandler {
@@ -181,6 +188,12 @@ export class GeoBatchRunner implements GeoBatchHandler {
         const targetFormat = targetFormatsForMarket(market).includes(rawTargetFormat)
           ? rawTargetFormat
           : defaultTargetFormatForMarket(market);
+        const targetLocale = resolveStudioTargetLocale({
+          market,
+          requestedLocale: payload.targetLocale,
+          brandMarketLocale: job.brandMarket.locale,
+          supportedLocales: job.brandMarket.supportedLocales,
+        });
         const outlineH2 = normalizeOutlineJson(brief.outlineH2);
         const queryText = [brief.targetPrompt, ...brief.targetFanOuts].join(' ');
         const factSnippets = await this.generation.retrieveFacts(tenantId, job.brandId, queryText);
@@ -208,6 +221,7 @@ export class GeoBatchRunner implements GeoBatchHandler {
           },
           recipe,
           targetFormat,
+          targetLocale,
           targetPrompt: brief.targetPrompt,
           title: brief.suggestedTitle,
           outlineH2,
@@ -232,6 +246,7 @@ export class GeoBatchRunner implements GeoBatchHandler {
               batchJobId: job.id,
               recipe,
               targetFormat,
+              targetLocale,
               title: generated.title,
               targetPrompt: brief.targetPrompt,
               outlineJson: outlineH2 as unknown as Prisma.InputJsonValue,

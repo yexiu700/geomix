@@ -35,9 +35,14 @@ import { ConnectionsController } from './connections.controller';
 import { ConnectionsService } from './connections.service';
 import {
   CmsConnectorRegistry,
+  DevtoConnector,
+  GhostConnector,
+  GithubMdxConnector,
+  HashnodeConnector,
   ShopifyConnector,
   WebflowConnector,
   WebhookConnector,
+  WechatOfficialConnector,
   WordPressConnector,
 } from './connectors';
 
@@ -79,6 +84,8 @@ type ConnectionRow = {
   configJson: Record<string, unknown>;
   status: string;
   authType: string;
+  targetLocale?: string | null;
+  externalShopDomain?: string | null;
   lastTestedAt: Date | null;
   lastError: string | null;
   createdAt: Date;
@@ -451,6 +458,11 @@ async function createTestNestApp(
       WordPressConnector,
       WebflowConnector,
       WebhookConnector,
+      GhostConnector,
+      DevtoConnector,
+      HashnodeConnector,
+      GithubMdxConnector,
+      WechatOfficialConnector,
       CmsConnectorRegistry,
       ConnectionsService,
     ],
@@ -1111,5 +1123,72 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
       expect(out).not.toContain('wh_live_secr');
       expect(out).toContain('[REDACTED]');
     }
+  });
+
+  it('rejects odd-length hex Ghost adminApiKey on PATCH and persists/validates targetLocale per market', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+
+    // 1. Valid Ghost connection with targetLocale de-DE on GLOBAL market
+    const createRes = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        displayName: 'Ghost DE Blog',
+        siteBaseUrl: `${mockCmsBaseUrl}/ghost`,
+        targetLocale: 'de-DE',
+        credentials: { adminApiKey: 'ghost_id_1:0123456789abcdef0123456789abcdef' },
+      },
+    });
+    expect(createRes.status).toBe(200);
+    expect(createRes.json.data.targetLocale).toBe('de-DE');
+    expect(createRes.json.data.externalShopDomain).toBeNull();
+    const ghostId = createRes.json.data.id;
+
+    // 2. PATCH with odd-length 17-char hex secret MUST be rejected with 400
+    const badPatchRes = await apiFetch(`/api/v2/brands/brand_a/connections/${ghostId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: {
+        credentials: { adminApiKey: 'ghost_id_1:0123456789abcdef1' },
+      },
+    });
+    expect(badPatchRes.status).toBe(400);
+
+    // 3. PATCH with valid even-length hex secret + targetLocale ja-JP succeeds
+    const goodPatchRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${ghostId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: {
+          targetLocale: 'ja-JP',
+          credentials: { adminApiKey: 'ghost_id_1:abcdef0123456789abcdef0123456789' },
+        },
+      },
+    );
+    expect(goodPatchRes.status).toBe(200);
+    expect(goodPatchRes.json.data.targetLocale).toBe('ja-JP');
+
+    // 4. Market/locale mismatch (zh-CN on GLOBAL market) is rejected with 400
+    const badLocaleRes = await apiFetch(`/api/v2/brands/brand_a/connections/${ghostId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { targetLocale: 'zh-CN' },
+    });
+    expect(badLocaleRes.status).toBe(400);
+
+    // 5. Clearing targetLocale to null succeeds
+    const clearLocaleRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${ghostId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: { targetLocale: null },
+      },
+    );
+    expect(clearLocaleRes.status).toBe(200);
+    expect(clearLocaleRes.json.data.targetLocale).toBeNull();
   });
 });

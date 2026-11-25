@@ -15,6 +15,7 @@ import { VisibilityController } from './visibility.controller';
 import { VisibilityEngineHealthService } from './visibility-engine-health.service';
 import { VisibilityJudgeService } from './visibility-judge.service';
 import { VISIBILITY_RUN_HANDLER, VisibilityRunRunner } from './visibility-run.runner';
+import { VisibilityNearMissService } from './visibility-near-miss.service';
 import { VisibilityRunLifecycleService } from './visibility-run-lifecycle.service';
 import { VisibilityService } from './visibility.service';
 
@@ -31,6 +32,7 @@ import { VisibilityService } from './visibility.service';
     VisibilityJudgeService,
     VisibilityRunLifecycleService,
     VisibilityAnalyticsService,
+    VisibilityNearMissService,
     VisibilityService,
     VisibilityRunRunner,
     {
@@ -43,6 +45,7 @@ import { VisibilityService } from './visibility.service';
     VisibilityCollectorService,
     VisibilityEngineHealthService,
     VisibilityJudgeService,
+    VisibilityNearMissService,
     VisibilityService,
     VisibilityRunRunner,
     VISIBILITY_RUN_HANDLER,

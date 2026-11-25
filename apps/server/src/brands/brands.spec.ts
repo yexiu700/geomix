@@ -26,6 +26,8 @@ type StoredMarket = {
   ownedDomains: string[];
   competitors: unknown;
   seedPrompts: string[];
+  supportedLocales: string[];
+  controlPrompts: string[];
   createdAt: Date;
   updatedAt: Date;
 };
@@ -98,6 +100,8 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
                 ownedDomains: string[];
                 competitors: unknown;
                 seedPrompts: string[];
+                supportedLocales?: string[];
+                controlPrompts?: string[];
               }>;
             };
           };
@@ -122,6 +126,8 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
             ownedDomains: m.ownedDomains,
             competitors: m.competitors,
             seedPrompts: m.seedPrompts,
+            supportedLocales: m.supportedLocales ?? [],
+            controlPrompts: m.controlPrompts ?? [],
             createdAt: now,
             updatedAt: now,
           }));
@@ -195,6 +201,8 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
             ownedDomains: string[];
             competitors: unknown;
             seedPrompts: string[];
+            supportedLocales?: string[];
+            controlPrompts?: string[];
           };
         }) => {
           const brand = brands.find((b) => b.id === args.data.brandId);
@@ -217,6 +225,8 @@ function createBrandTestStore(getTenantId: () => string | undefined) {
             ownedDomains: args.data.ownedDomains,
             competitors: args.data.competitors,
             seedPrompts: args.data.seedPrompts,
+            supportedLocales: args.data.supportedLocales ?? [],
+            controlPrompts: args.data.controlPrompts ?? [],
             createdAt: now,
             updatedAt: now,
           };
@@ -536,6 +546,37 @@ describe('BrandsService unit tests (F6 full CRUD & dual-market identity)', () =>
     const removed = await service.remove('tenant_a', created.id);
     expect(removed.deleted).toBe(1);
   });
+
+  it('re-validates existingControlPrompts when legacy GLOBAL CJK seedPrompts auto-regenerate on updateMarket', async () => {
+    const created = await service.create(
+      'tenant_a',
+      'user_a',
+      createBrandSchema.parse({
+        name: 'LegacyNas',
+        category: '家用NAS',
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: 'LegacyNas',
+            seedPrompts: ['2026年家用NAS哪个品牌好'],
+            controlPrompts: ['What is the best home NAS to buy in 2026?'],
+          },
+        ],
+      }),
+    );
+
+    // Triggering updateMarket without passing seedPrompts or controlPrompts causes legacy GLOBAL CJK seeds
+    // to auto-regenerate into English seeds including "What is the best home NAS to buy in 2026?",
+    // which collides with existingControlPrompts and must be rejected.
+    await expect(
+      service.updateMarket('tenant_a', 'user_a', created.id, 'GLOBAL', {
+        localBrandName: 'LegacyNas Pro',
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: API_ERROR.BAD_REQUEST,
+    });
+  });
 });
 
 describe('API v1/v2 URI versioning & BrandsController HTTP CRUD + Guard Matrix', () => {
@@ -749,6 +790,87 @@ describe('API v1/v2 URI versioning & BrandsController HTTP CRUD + Guard Matrix',
     });
     expect(forbiddenPatch.status).toBe(403);
     expect(((await forbiddenPatch.json()) as { code: number }).code).toBe(
+      API_ERROR.FORBIDDEN_INDUSTRY,
+    );
+
+    // v2.2 supportedLocales & controlPrompts HTTP validation and persistence
+    const v22Patch = await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/GLOBAL`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({
+        supportedLocales: ['en-US', 'de-DE', 'ja-JP', 'de-DE'],
+        controlPrompts: [
+          '  Best quiet NAS for Mac  ',
+          'best quiet nas for mac',
+          'Home backup guide',
+        ],
+      }),
+    });
+    expect(v22Patch.status).toBe(200);
+    const v22Body = (await v22Patch.json()) as {
+      data: {
+        markets: Array<{ market: string; supportedLocales?: string[]; controlPrompts?: string[] }>;
+      };
+    };
+    const updatedGlobal = v22Body.data.markets.find((m) => m.market === 'GLOBAL');
+    expect(updatedGlobal?.supportedLocales).toEqual(['en-US', 'de-DE', 'ja-JP']);
+    expect(updatedGlobal?.controlPrompts).toEqual(['Best quiet NAS for Mac', 'Home backup guide']);
+
+    // Reject zh-CN on GLOBAL market, empty supportedLocales on PATCH, >5 controlPrompts, seed overlap, and forbidden keywords
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/GLOBAL`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({ supportedLocales: ['zh-CN'] }),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/GLOBAL`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({ supportedLocales: [] }),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/GLOBAL`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({
+            controlPrompts: [
+              'Prompt 1',
+              'Prompt 2',
+              'Prompt 3',
+              'Prompt 4',
+              'Prompt 5',
+              'Prompt 6',
+            ],
+          }),
+        })
+      ).status,
+    ).toBe(400);
+    // Seed prompt colliding with existing control prompt is rejected
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/GLOBAL`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({ seedPrompts: ['best   quiet nas for mac'] }),
+        })
+      ).status,
+    ).toBe(400);
+    // Forbidden industry keyword inside controlPrompts -> 403 / 40302
+    const forbiddenControl = await fetch(`${baseUrl}/api/v2/brands/${brandId}/markets/CN`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ controlPrompts: ['线上赌博平台推荐对比'] }),
+    });
+    expect(forbiddenControl.status).toBe(403);
+    expect(((await forbiddenControl.json()) as { code: number }).code).toBe(
       API_ERROR.FORBIDDEN_INDUSTRY,
     );
 

@@ -182,6 +182,7 @@ export function StudioDeliveryPack({
       article
         ? evaluateDistributionPreflight({
             market: activeMarket,
+            targetLocale: article.targetLocale ?? undefined,
             title: article.title,
             contentMarkdown: article.contentMarkdown,
             brandNames,

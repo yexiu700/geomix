@@ -69,9 +69,13 @@ describe('parseEnv', () => {
     expect(env.ARTICLE_RETENTION_DAYS).toBe(30);
     expect(env.CREDENTIAL_ENCRYPTION_KEY).toBeUndefined();
     expect(env.PUBLIC_APP_URL).toBeUndefined();
+    expect(env.SHOPIFY_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(env.SHOPIFY_OAUTH_CLIENT_SECRET).toBeUndefined();
+    expect(env.SHOPIFY_OAUTH_SCOPES).toBeUndefined();
+    expect(env.WECHAT_API_BASE_URL).toBeUndefined();
   });
 
-  it('accepts explicit overrides including optional v2.1 distribution env vars', () => {
+  it('accepts explicit overrides including optional v2.1/v2.2 distribution env vars', () => {
     const env = parseEnv({
       BILLING_MODE: 'STRICT',
       FEATURE_AI_IMAGE: 'false',
@@ -79,6 +83,10 @@ describe('parseEnv', () => {
       LLM_PROVIDERS: '{"fake":{"kind":"offline"}}',
       CREDENTIAL_ENCRYPTION_KEY: '  any-placeholder-validated-lazily-by-secretbox  ',
       PUBLIC_APP_URL: 'https://app.geomix.example///',
+      SHOPIFY_OAUTH_CLIENT_ID: '  shopify-client-id  ',
+      SHOPIFY_OAUTH_CLIENT_SECRET: '  shopify-client-secret  ',
+      SHOPIFY_OAUTH_SCOPES: 'read_content,write_content',
+      WECHAT_API_BASE_URL: 'https://wechat-mock.example.com///',
     });
     expect(env.BILLING_MODE).toBe('STRICT');
     expect(env.FEATURE_AI_IMAGE).toBe(false);
@@ -86,21 +94,37 @@ describe('parseEnv', () => {
     expect(env.LLM_PROVIDERS).toEqual({ fake: { kind: 'offline' } });
     expect(env.CREDENTIAL_ENCRYPTION_KEY).toBe('any-placeholder-validated-lazily-by-secretbox');
     expect(env.PUBLIC_APP_URL).toBe('https://app.geomix.example');
+    expect(env.SHOPIFY_OAUTH_CLIENT_ID).toBe('shopify-client-id');
+    expect(env.SHOPIFY_OAUTH_CLIENT_SECRET).toBe('shopify-client-secret');
+    expect(env.SHOPIFY_OAUTH_SCOPES).toBe('read_content,write_content');
+    expect(env.WECHAT_API_BASE_URL).toBe('https://wechat-mock.example.com');
 
     const blankEnv = parseEnv({
       CREDENTIAL_ENCRYPTION_KEY: '   ',
       PUBLIC_APP_URL: '   ',
+      SHOPIFY_OAUTH_CLIENT_ID: '   ',
+      SHOPIFY_OAUTH_CLIENT_SECRET: '   ',
+      SHOPIFY_OAUTH_SCOPES: '   ',
+      WECHAT_API_BASE_URL: '   ',
     });
     expect(blankEnv.CREDENTIAL_ENCRYPTION_KEY).toBeUndefined();
     expect(blankEnv.PUBLIC_APP_URL).toBeUndefined();
+    expect(blankEnv.SHOPIFY_OAUTH_CLIENT_ID).toBeUndefined();
+    expect(blankEnv.SHOPIFY_OAUTH_CLIENT_SECRET).toBeUndefined();
+    expect(blankEnv.SHOPIFY_OAUTH_SCOPES).toBeUndefined();
+    expect(blankEnv.WECHAT_API_BASE_URL).toBeUndefined();
   });
 
-  it('rejects a bad provider document, billing mode, or PUBLIC_APP_URL', () => {
+  it('rejects a bad provider document, billing mode, PUBLIC_APP_URL, or WECHAT_API_BASE_URL', () => {
     expect(() => parseLlmProviders('[]')).toThrow(/JSON object/);
     expect(() => parseEnv({ BILLING_MODE: 'LIVE' })).toThrow(/SHADOW or STRICT/);
     expect(() => parseEnv({ WEB_PORT: '0' })).toThrow();
     expect(() => parseEnv({ PUBLIC_APP_URL: 'not-a-url' })).toThrow(/PUBLIC_APP_URL/);
     expect(() => parseEnv({ PUBLIC_APP_URL: 'ftp://app.geomix.example' })).toThrow(
+      /http:\/\/ or https:\/\//,
+    );
+    expect(() => parseEnv({ WECHAT_API_BASE_URL: 'not-a-url' })).toThrow(/WECHAT_API_BASE_URL/);
+    expect(() => parseEnv({ WECHAT_API_BASE_URL: 'ftp://api.weixin.qq.com' })).toThrow(
       /http:\/\/ or https:\/\//,
     );
   });
@@ -116,6 +140,8 @@ describe('.env.example', () => {
     expect(example.BILLING_MODE).toBe('SHADOW');
     expect(env.BILLING_MODE).toBe('SHADOW');
     expect(env.DATABASE_URL.startsWith('postgresql://')).toBe(true);
+    expect(env.SHOPIFY_OAUTH_SCOPES).toBe('read_content,write_content');
+    expect(env.WECHAT_API_BASE_URL).toBeUndefined();
     expect(text).not.toMatch(/sk-[A-Za-z0-9]{20,}/);
     expect(text).not.toMatch(/AKIA[0-9A-Z]{16}/);
     expect(text).not.toMatch(/BEGIN (RSA |OPENSSH )?PRIVATE KEY/);

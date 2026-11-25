@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { DistributionSummaryDto } from '@geomix/shared';
+import type { ActionHomeResponse, DistributionSummaryDto } from '@geomix/shared';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HomeDistributionSummary } from './home-distribution-summary';
@@ -202,5 +202,147 @@ describe('HomeDistributionSummary (M6B #355)', () => {
     expect(text).not.toContain('NaN');
     expect(text).not.toContain('Infinity');
     expect(text).toContain('待引文就绪');
+  });
+
+  it('renders Wilson 95% CI badge, low-sample n<5 3x hint, DiD net lift strip, keeps 50.0%(2/4) contiguous, and opens ROI modal (#372)', () => {
+    const onOpenRoiReportModal = vi.fn();
+    const recentArticles: ActionHomeResponse['recentArticles'] = [
+      {
+        id: 'art_did_1',
+        title: 'Quiet NAS Comparison',
+        recipe: 'AUTHORITY_GUIDE',
+        geoScore: 86,
+        status: 'PUBLISHED',
+        updatedAt: '2026-11-18T00:00:00.000Z',
+        publishRecord: {
+          id: 'pub_did_1',
+          articleId: 'art_did_1',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_1',
+          channel: 'Official Blog / Docs',
+          publishedUrl: 'https://astravault.example.com/guide',
+          publishedAt: '2026-11-10T00:00:00.000Z',
+          baselineRunId: 'vrun_base_1',
+          latestRetestRunId: 'vrun_1',
+          beforeMetrics: {
+            mentionRate: 40,
+            avgPosition: 3.0,
+            sentiment: 'neutral',
+            citationHit: false,
+          },
+          afterMetrics: {
+            mentionRate: 70,
+            avgPosition: 1.8,
+            sentiment: 'positive',
+            citationHit: true,
+          },
+          crawlStatus: 'OK',
+          crawlCheckedAt: '2026-11-11T00:00:00.000Z',
+          crawlReportJson: null,
+          retestSchedules: [
+            {
+              id: 'sched_did_1',
+              publishRecordId: 'pub_did_1',
+              milestoneDay: 7,
+              sampleCount: 1,
+              includeControlPrompts: true,
+              dueAt: '2026-11-17T00:00:00.000Z',
+              status: 'COMPLETED',
+              visibilityRunId: 'vrun_1',
+              metricsSnapshot: {
+                mentionRate: 70,
+                avgPosition: 1.8,
+                sentiment: 'positive',
+                citationHit: true,
+                sampleCount: 4,
+                hitCount: 3,
+                wilson: {
+                  hits: 3,
+                  trials: 4,
+                  rate: 0.75,
+                  lower: 0.3006,
+                  upper: 0.9544,
+                  halfWidth: 0.3269,
+                  z: 1.96,
+                  confidenceLevel: 'LOW',
+                },
+                confidenceLevel: 'LOW',
+              },
+              controlMetricsJson: {
+                controlPrompts: ['backup nas'],
+                baselineMentionRate: 40,
+                currentMentionRate: 45,
+                sampleCount: 4,
+                hitCount: 2,
+                did: {
+                  treatmentDelta: 0.3,
+                  controlDelta: 0.05,
+                  netLift: 0.25,
+                  direction: 'POSITIVE',
+                },
+              },
+              skipReason: null,
+              executedAt: '2026-11-17T01:00:00.000Z',
+              createdAt: '2026-11-10T00:00:00.000Z',
+              updatedAt: '2026-11-17T01:00:00.000Z',
+            },
+          ],
+        },
+      },
+    ];
+
+    const summaryWithWilson = makeSummary({
+      channelAttribution: [
+        {
+          ...makeSummary().channelAttribution[0]!,
+          citationHitWilson: {
+            hits: 2,
+            trials: 4,
+            rate: 0.5,
+            lower: 0.15,
+            upper: 0.85,
+            halfWidth: 0.35,
+            z: 1.96,
+            confidenceLevel: 'LOW',
+          },
+        },
+      ],
+    });
+
+    render(
+      <HomeDistributionSummary
+        summary={summaryWithWilson}
+        recentArticles={recentArticles}
+        onOpenArticle={vi.fn()}
+        onOpenRoiReportModal={onOpenRoiReportModal}
+      />,
+    );
+
+    const box = screen.getByTestId('home-distribution-summary');
+    expect(box.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
+    expect(box.textContent).toContain('50.0%(2/4)');
+
+    // Channel-level Wilson 95% CI & low-sample hint
+    const channelCi = screen.getByTestId('channel-wilson-ci-Official Blog / Docs');
+    expect(channelCi.textContent).toContain('95% CI [15.0%, 85.0%]');
+    expect(channelCi.textContent).toContain('低置信');
+    expect(
+      screen.getByTestId('channel-low-sample-hint-Official Blog / Docs').textContent,
+    ).toContain('3× 采样');
+
+    // DiD net lift indicator strip
+    const strip = screen.getByTestId('home-did-confidence-strip');
+    expect(screen.getByTestId('home-did-net-lift').textContent).toContain('+25.0pp');
+    expect(strip.textContent).toContain('正向净增益');
+    expect(strip.textContent).toContain('处理组 Δ +30.0pp');
+    expect(strip.textContent).toContain('对照组 Δ +5.0pp');
+    expect(screen.getByTestId('home-wilson-summary').textContent).toContain(
+      'Wilson 95% CI [30.1%, 95.4%]',
+    );
+    expect(screen.getByTestId('home-low-sample-hint').textContent).toContain('3× 采样');
+
+    // Trigger ROI report modal button
+    fireEvent.click(screen.getByTestId('home-summary-roi-report-btn'));
+    expect(onOpenRoiReportModal).toHaveBeenCalledTimes(1);
   });
 });

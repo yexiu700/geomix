@@ -5,6 +5,7 @@ import {
   AUTH_ERROR,
   VISIBILITY_ENGINE_LABELS,
   buildSingleDocxBytes,
+  computeWilsonInterval,
   evaluateGeoArticle,
   htmlToExportDocument,
   htmlToExportMarkdown,
@@ -216,7 +217,7 @@ export class GeoDeliveryService {
 
     const evaluation = evaluateGeoArticle({
       market,
-      locale: article.brandMarket.locale,
+      locale: article.targetLocale || article.brandMarket.locale,
       localBrandName: article.brandMarket.localBrandName,
       category: article.brand.category,
       localCategory: article.brandMarket.localCategory,
@@ -276,6 +277,7 @@ export class GeoDeliveryService {
       contentText: stripHtmlToText(article.contentHtml || article.contentMarkdown),
       contentMarkdown: article.contentMarkdown,
       locale:
+        article.targetLocale ||
         article.brandMarket?.locale ||
         (article.brandMarket?.market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
       createdAt: article.createdAt.toISOString(),
@@ -891,6 +893,11 @@ export class GeoDeliveryService {
           }
         }
 
+        const citationHitWilson =
+          citationHitRate !== null && bucket.completedRetestCount > 0
+            ? computeWilsonInterval(bucket.citationHitCount, bucket.completedRetestCount)
+            : null;
+
         const positiveSentimentRate =
           sentimentTotal > 0
             ? roundDecimals(bucket.sentimentCounts.positive / sentimentTotal, 3)
@@ -903,6 +910,7 @@ export class GeoDeliveryService {
           completedRetestCount: bucket.completedRetestCount,
           citationHitCount: bucket.citationHitCount,
           citationHitRate,
+          citationHitWilson,
           avgMentionRateDelta: meanOrNull(bucket.mentionDeltas, 1),
           avgPosition: meanOrNull(bucket.positions, 1),
           avgPositionDelta: meanOrNull(bucket.positionDeltas, 1),

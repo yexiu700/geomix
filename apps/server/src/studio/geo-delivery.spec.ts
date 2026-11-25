@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { computeWilsonInterval } from '@geomix/shared';
 import type { BrandsService } from '../brands/brands.service';
 import { readGeoEvaluateRateLimit } from '../common/free-action-rate-limiter';
 import type { RetestSchedulerService } from '../distribution/retest-scheduler.service';
@@ -683,6 +684,7 @@ describe('GeoDeliveryService v2.1 auto-retest & ActionHome distributionSummary',
       completedRetestCount: 2,
       citationHitCount: 1,
       citationHitRate: 0.5,
+      citationHitWilson: computeWilsonInterval(1, 2),
       avgMentionRateDelta: 25,
       avgPosition: 2,
       avgPositionDelta: -1.5,
@@ -696,6 +698,7 @@ describe('GeoDeliveryService v2.1 auto-retest & ActionHome distributionSummary',
       completedRetestCount: 1,
       citationHitCount: 0,
       citationHitRate: null, // PRD D5: upstream returned 0 citations -> null!
+      citationHitWilson: null,
       avgMentionRateDelta: 25,
       avgPosition: 3,
       avgPositionDelta: -2,
@@ -709,6 +712,7 @@ describe('GeoDeliveryService v2.1 auto-retest & ActionHome distributionSummary',
       completedRetestCount: 1,
       citationHitCount: 0,
       citationHitRate: 0, // upstream returned non-matching citations -> 0!
+      citationHitWilson: computeWilsonInterval(0, 1),
       avgMentionRateDelta: null,
       avgPosition: null,
       avgPositionDelta: null,

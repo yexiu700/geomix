@@ -1,9 +1,20 @@
+import 'reflect-metadata';
+import type { AddressInfo } from 'node:net';
 import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import { API_ERROR, AUTH_ERROR } from '@geomix/shared';
+import {
+  API_ERROR,
+  AUTH_ERROR,
+  computeDifferenceInDifferences,
+  computeWilsonInterval,
+  parseEnv,
+} from '@geomix/shared';
+import { passwordFingerprint } from '../auth/auth.service';
+import { signToken } from '../auth/token';
 import type { BillingService } from '../billing/billing.service';
 import { ApiError } from '../common/api-error';
-import type { PrismaService } from '../prisma/prisma.service';
+import { createApiApp } from '../common/create-api-app';
+import { PrismaService } from '../prisma/prisma.service';
 import type {
   RetestBrandMarketLike,
   RetestMetricsHookService,
@@ -13,9 +24,13 @@ import { currentTenantId, runInTenant } from '../tenant/tenant-context';
 import { readVisibilityConfig } from '../visibility/visibility.config';
 import { deriveVisibilityRunId } from '../visibility/visibility.mapper';
 import type { VisibilityEngineHealthService } from '../visibility/visibility-engine-health.service';
+import { DistributionService } from './distribution.service';
 import {
   RetestSchedulerService,
+  computeRetestEstimatedPoints,
   ensureRetestSchedulesForPublishRecord,
+  retestBudgetEstimateQuerySchema,
+  selectRetestControlPrompts,
   type RetestRunCreator,
 } from './retest-scheduler.service';
 
@@ -29,10 +44,12 @@ type ScheduleRow = {
   publishRecordId: string;
   milestoneDay: number;
   sampleCount: number;
+  includeControlPrompts?: boolean;
   dueAt: Date;
   status: string;
   visibilityRunId: string | null;
   metricsSnapshotJson: unknown;
+  controlMetricsJson?: unknown;
   skipReason: string | null;
   executedAt: Date | null;
   createdAt: Date;
@@ -66,10 +83,17 @@ function createHarness(opts?: {
       articleId: string;
       publishedUrl: string;
       publishedAt: Date;
+      baselineRunId?: string | null;
+      beforeMetrics?: unknown;
       latestRetestRunId: string | null;
       afterMetrics: unknown;
       article: { id: string; title: string; targetPrompt: string };
-      brandMarket: { id: string; market: 'CN' | 'GLOBAL'; localBrandName: string };
+      brandMarket: {
+        id: string;
+        market: 'CN' | 'GLOBAL';
+        localBrandName: string;
+        controlPrompts?: string[];
+      };
     }
   >();
   const tenants = new Map<string, TenantState>();
@@ -95,12 +119,23 @@ function createHarness(opts?: {
       status: string;
       triggerType?: string;
       retestArticleId?: string | null;
+      prompts?: string[];
       lastError: string | null;
       finishedAt: Date | null;
       brandMarket?: RetestBrandMarketLike | null;
       observations?: RetestObservationLike[];
     }
   >();
+
+  const visibilityObservations: Array<
+    RetestObservationLike & {
+      tenantId: string;
+      brandId: string;
+      brandMarketId: string;
+      runId: string;
+      createdAt: Date;
+    }
+  > = [];
 
   let seq = 1;
 
@@ -143,15 +178,74 @@ function createHarness(opts?: {
           },
         ),
       },
+      visibilityObservation: {
+        findMany: vi.fn(
+          async (args: {
+            where: {
+              brandId?: string;
+              brandMarketId?: string;
+              runId?: string | { not?: string };
+              status?: string;
+              createdAt?: { lte?: Date };
+            };
+          }) => {
+            const tid = currentTenantId();
+            return visibilityObservations.filter((obs) => {
+              if (obs.tenantId !== tid) return false;
+              if (args.where.brandId && obs.brandId !== args.where.brandId) return false;
+              if (args.where.brandMarketId && obs.brandMarketId !== args.where.brandMarketId) {
+                return false;
+              }
+              if (args.where.status && obs.status !== args.where.status) return false;
+              if (typeof args.where.runId === 'string' && obs.runId !== args.where.runId) {
+                return false;
+              }
+              if (
+                args.where.runId &&
+                typeof args.where.runId === 'object' &&
+                args.where.runId.not &&
+                obs.runId === args.where.runId.not
+              ) {
+                return false;
+              }
+              if (
+                args.where.createdAt?.lte &&
+                obs.createdAt.getTime() > args.where.createdAt.lte.getTime()
+              ) {
+                return false;
+              }
+              return true;
+            });
+          },
+        ),
+      },
       geoPublishRecord: {
         findFirst: vi.fn(
-          async (args: { where: { id?: string; brandId?: string; brandMarketId?: string } }) => {
+          async (args: {
+            where: { id?: string; brandId?: string; brandMarketId?: string };
+            include?: { retestSchedules?: { where?: { status?: string } } | boolean };
+          }) => {
             const tid = currentTenantId();
             const rec = args.where.id ? publishRecords.get(args.where.id) : undefined;
             if (!rec || rec.tenantId !== tid) return null;
             if (args.where.brandId && rec.brandId !== args.where.brandId) return null;
             if (args.where.brandMarketId && rec.brandMarketId !== args.where.brandMarketId) {
               return null;
+            }
+            if (args.include?.retestSchedules) {
+              const statusFilter =
+                typeof args.include.retestSchedules === 'object'
+                  ? args.include.retestSchedules.where?.status
+                  : undefined;
+              const retestSchedules = [...schedules.values()]
+                .filter(
+                  (s) =>
+                    s.tenantId === tid &&
+                    s.publishRecordId === rec.id &&
+                    (!statusFilter || s.status === statusFilter),
+                )
+                .sort((a, b) => a.milestoneDay - b.milestoneDay || a.id.localeCompare(b.id));
+              return { ...rec, retestSchedules };
             }
             return rec;
           },
@@ -197,6 +291,7 @@ function createHarness(opts?: {
               publishRecordId: string;
               milestoneDay: number;
               sampleCount: number;
+              includeControlPrompts?: boolean;
               dueAt: Date;
               status: string;
             }>;
@@ -223,10 +318,12 @@ function createHarness(opts?: {
                 publishRecordId: item.publishRecordId,
                 milestoneDay: item.milestoneDay,
                 sampleCount: item.sampleCount,
+                includeControlPrompts: Boolean(item.includeControlPrompts),
                 dueAt: item.dueAt,
                 status: item.status,
                 visibilityRunId: null,
                 metricsSnapshotJson: null,
+                controlMetricsJson: null,
                 skipReason: null,
                 executedAt: null,
                 createdAt: now,
@@ -326,7 +423,8 @@ function createHarness(opts?: {
       (async (brandId, input, idempotencyKey) => {
         const tid = currentTenantId()!;
         const t = tenants.get(tid)!;
-        const cost = input.engines.length * (input.sampleCount ?? 1) * unitPrice;
+        const promptCount = Math.max(1, input.prompts.length);
+        const cost = promptCount * input.engines.length * (input.sampleCount ?? 1) * unitPrice;
         if (t.billingMode === 'STRICT') {
           if (t.available < cost) {
             throw new ApiError(402, API_ERROR.INSUFFICIENT_POINTS, '可用点数不足');
@@ -396,6 +494,7 @@ function createHarness(opts?: {
     service,
     prisma,
     visibilityRuns,
+    visibilityObservations,
     billing,
     engineHealth,
     createRunMock,
@@ -1067,5 +1166,754 @@ describe('RetestSchedulerService.runDueSweep', () => {
 
     // (c) Within 2-minute grace window -> untouched (stays RUNNING)
     expect(h.schedules.get('sched_in_grace')?.status).toBe('RUNNING');
+  });
+
+  it('defaults includeControlPrompts=false, toggles PENDING-only schedules, selects first 2 control prompts, and enforces (target+control)*engines*sampleCount*2 budget in STRICT & SHADOW (#369)', async () => {
+    expect(
+      selectRetestControlPrompts(
+        'Target NAS prompt',
+        ['Target NAS prompt', 'Ctrl 1', 'Ctrl 2', 'Ctrl 3'],
+        true,
+      ),
+    ).toEqual(['Ctrl 1', 'Ctrl 2']);
+    expect(
+      computeRetestEstimatedPoints({
+        targetPromptCount: 1,
+        controlPromptCount: 2,
+        activeEngineCount: 2,
+        sampleCount: 3,
+        unitPrice: 2,
+      }),
+    ).toBe(36);
+
+    const h = createHarness({
+      tenants: [
+        {
+          id: 'tenant_strict_low',
+          isActive: true,
+          expiresAt: new Date('2027-01-01T00:00:00Z'),
+          billingMode: 'STRICT',
+          available: 35, // 1 point short of 36!
+        },
+        {
+          id: 'tenant_strict_ok',
+          isActive: true,
+          expiresAt: new Date('2027-01-01T00:00:00Z'),
+          billingMode: 'STRICT',
+          available: 36,
+        },
+        {
+          id: 'tenant_shadow',
+          isActive: true,
+          expiresAt: new Date('2027-01-01T00:00:00Z'),
+          billingMode: 'SHADOW',
+          available: 0,
+        },
+      ],
+    });
+
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const dueNow = new Date(publishedAt.getTime() + 8 * DAY_MS);
+
+    for (const [pubId, tid, controlPrompts] of [
+      ['pub_low', 'tenant_strict_low', ['Control A', 'Control B', 'Control C']],
+      ['pub_ok', 'tenant_strict_ok', ['Control A', 'Control B', 'Control C']],
+      ['pub_shadow', 'tenant_shadow', ['Control A', 'Control B', 'Control C']],
+      ['pub_no_ctrl', 'tenant_strict_low', []],
+    ] as const) {
+      h.publishRecords.set(pubId, {
+        id: pubId,
+        tenantId: tid,
+        brandId: 'brand_1',
+        brandMarketId: 'bm_cn',
+        articleId: `art_${pubId}`,
+        publishedUrl: `https://example.com/${pubId}`,
+        publishedAt,
+        latestRetestRunId: null,
+        afterMetrics: null,
+        article: { id: `art_${pubId}`, title: '静音 NAS 对比', targetPrompt: 'Target NAS prompt' },
+        brandMarket: {
+          id: 'bm_cn',
+          market: 'CN',
+          localBrandName: '星辰存储',
+          controlPrompts: [...controlPrompts],
+        },
+      });
+    }
+
+    // Default includeControlPrompts is false
+    const defaultCreated = await runInTenant('tenant_strict_low', () =>
+      h.service.ensureSchedulesForPublishRecord({
+        id: 'pub_low',
+        tenantId: 'tenant_strict_low',
+        brandId: 'brand_1',
+        brandMarketId: 'bm_cn',
+        publishedAt,
+      }),
+    );
+    expect(defaultCreated.every((s) => s.includeControlPrompts === false)).toBe(true);
+
+    // Mark T+14 COMPLETED so we verify toggle only mutates PENDING rows
+    const sched14 = [...h.schedules.values()].find(
+      (s) => s.publishRecordId === 'pub_low' && s.milestoneDay === 14,
+    )!;
+    sched14.status = 'COMPLETED';
+
+    const toggled = await runInTenant('tenant_strict_low', () =>
+      h.service.updateSchedulesForPublishRecord('pub_low', {
+        sampleCount: 3,
+        includeControlPrompts: true,
+      }),
+    );
+    expect(toggled.find((s) => s.milestoneDay === 7)?.includeControlPrompts).toBe(true);
+    expect(toggled.find((s) => s.milestoneDay === 14)?.includeControlPrompts).toBe(false);
+
+    // Create due schedules for pub_ok (STRICT 36pts), pub_shadow (SHADOW 0pts), and pub_no_ctrl (graceful 0-control degradation -> 12pts)
+    await runInTenant('tenant_strict_ok', () =>
+      h.service.ensureSchedulesForPublishRecord(
+        {
+          id: 'pub_ok',
+          tenantId: 'tenant_strict_ok',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_cn',
+          publishedAt,
+        },
+        { milestones: [7], sampleCount: 3, includeControlPrompts: true },
+      ),
+    );
+    await runInTenant('tenant_shadow', () =>
+      h.service.ensureSchedulesForPublishRecord(
+        {
+          id: 'pub_shadow',
+          tenantId: 'tenant_shadow',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_cn',
+          publishedAt,
+        },
+        { milestones: [7], sampleCount: 3, includeControlPrompts: true },
+      ),
+    );
+    await runInTenant('tenant_strict_low', () =>
+      h.service.ensureSchedulesForPublishRecord(
+        {
+          id: 'pub_no_ctrl',
+          tenantId: 'tenant_strict_low',
+          brandId: 'brand_1',
+          brandMarketId: 'bm_cn',
+          publishedAt,
+        },
+        { milestones: [7], sampleCount: 3, includeControlPrompts: true },
+      ),
+    );
+
+    const report = await h.service.runDueSweep({ now: dueNow });
+    expect(report.skippedInsufficientPoints).toBe(1);
+    expect(report.triggered).toBe(3);
+
+    // STRICT low (35 < 36) -> SKIPPED_INSUFFICIENT_POINTS, zero deduction on pub_low,
+    // while pub_no_ctrl gracefully degraded to 1 prompt * 2 engines * 3 samples * 2 = 12 pts -> wallet 35 - 12 = 23 (never negative!)
+    const lowSched = [...h.schedules.values()].find(
+      (s) => s.publishRecordId === 'pub_low' && s.milestoneDay === 7,
+    )!;
+    expect(lowSched.status).toBe('SKIPPED_INSUFFICIENT_POINTS');
+    expect(lowSched.skipReason).toContain('36 点');
+    expect(lowSched.skipReason).toContain('含 2 条对照');
+    expect(h.tenants.get('tenant_strict_low')!.available).toBe(23);
+
+    // STRICT exact 36 pts -> triggered with 3 prompts (target + first 2 controlPrompts), wallet becomes 0
+    expect(h.tenants.get('tenant_strict_ok')!.available).toBe(0);
+    // SHADOW 0 pts -> triggered with 3 prompts, wallet stays 0
+    expect(h.tenants.get('tenant_shadow')!.available).toBe(0);
+
+    const createCalls = h.createRunMock.mock.calls;
+    const promptsPassed = createCalls.map((call) => call[1].prompts);
+    expect(promptsPassed).toContainEqual(['Target NAS prompt', 'Control A', 'Control B']);
+    expect(promptsPassed).toContainEqual(['Target NAS prompt']); // pub_no_ctrl graceful 0-control degradation
+  });
+
+  it('exposes live budget estimate via estimateBudgetForPublishRecord and GET /api/v2/publish-records/:id/retest-budget (#369)', async () => {
+    const h = createHarness({
+      tenants: [
+        {
+          id: 'tenant_a',
+          isActive: true,
+          expiresAt: new Date('2027-01-01T00:00:00Z'),
+          billingMode: 'STRICT',
+          available: 30,
+        },
+        {
+          id: 'tenant_b',
+          isActive: true,
+          expiresAt: new Date('2027-01-01T00:00:00Z'),
+          billingMode: 'SHADOW',
+          available: 0,
+        },
+      ],
+    });
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    h.publishRecords.set('pub_budget_1', {
+      id: 'pub_budget_1',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      articleId: 'art_budget_1',
+      publishedUrl: 'https://example.com/budget',
+      publishedAt,
+      latestRetestRunId: null,
+      afterMetrics: null,
+      article: { id: 'art_budget_1', title: '静音 NAS', targetPrompt: 'Target NAS prompt' },
+      brandMarket: {
+        id: 'bm_cn',
+        market: 'CN',
+        localBrandName: '星辰存储',
+        controlPrompts: ['Ctrl 1', 'Ctrl 2', 'Ctrl 3'],
+      },
+    });
+    await runInTenant('tenant_a', () =>
+      h.service.ensureSchedulesForPublishRecord({
+        id: 'pub_budget_1',
+        tenantId: 'tenant_a',
+        brandId: 'brand_1',
+        brandMarketId: 'bm_cn',
+        publishedAt,
+      }),
+    );
+
+    const withoutCtrl = await runInTenant('tenant_a', () =>
+      h.service.estimateBudgetForPublishRecord('pub_budget_1', 'tenant_a', {
+        includeControlPrompts: false,
+        sampleCount: 1,
+      }),
+    );
+    expect(withoutCtrl).toMatchObject({
+      publishRecordId: 'pub_budget_1',
+      targetPromptCount: 1,
+      configuredControlPromptCount: 3,
+      effectiveControlPromptCount: 0,
+      totalPromptCount: 1,
+      activeEngineCount: 2,
+      sampleCount: 1,
+      unitPrice: 2,
+      perRunPoints: 4,
+      pendingMilestoneCount: 3,
+      totalEstimatedPoints: 12,
+      billingMode: 'STRICT',
+      walletAvailable: 30,
+      sufficientForNextRun: true,
+      sufficientForAllPending: true,
+    });
+
+    const withCtrl = await runInTenant('tenant_a', () =>
+      h.service.estimateBudgetForPublishRecord('pub_budget_1', 'tenant_a', {
+        includeControlPrompts: true,
+        sampleCount: 3,
+      }),
+    );
+    expect(withCtrl).toMatchObject({
+      effectiveControlPromptCount: 2,
+      selectedControlPrompts: ['Ctrl 1', 'Ctrl 2'],
+      totalPromptCount: 3,
+      perRunPoints: 36,
+      totalEstimatedPoints: 108,
+      sufficientForNextRun: false,
+      sufficientForAllPending: false,
+    });
+
+    // Cross-tenant 404
+    await expect(
+      runInTenant('tenant_b', () =>
+        h.service.estimateBudgetForPublishRecord('pub_budget_1', 'tenant_b'),
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+
+    // HTTP endpoint test via real ApiModule / DistributionController
+    const env = parseEnv(process.env);
+    const app = await createApiApp();
+    const future = new Date(Date.now() + 30 * 86_400_000);
+    const prismaSvc = app.get(PrismaService) as unknown as { base: unknown; scoped: unknown };
+    const authUsers: Record<string, unknown> = {
+      u_a: {
+        id: 'u_a',
+        tenantId: 'tenant_a',
+        username: 'u_a',
+        nickname: 'User A',
+        role: 'MERCHANT',
+        status: 'ACTIVE',
+        passwordHash: 'pw_a',
+        lastLoginAt: null,
+        tenant: { id: 'tenant_a', name: 'Tenant A', isActive: true, expiresAt: future },
+      },
+      u_b: {
+        id: 'u_b',
+        tenantId: 'tenant_b',
+        username: 'u_b',
+        nickname: 'User B',
+        role: 'MERCHANT',
+        status: 'ACTIVE',
+        passwordHash: 'pw_b',
+        lastLoginAt: null,
+        tenant: { id: 'tenant_b', name: 'Tenant B', isActive: true, expiresAt: future },
+      },
+    };
+    const mockAuthPrisma = {
+      $disconnect: async () => undefined,
+      auditLog: {
+        findMany: async () => [],
+        create: async () => ({ id: 'audit_1' }),
+      },
+      user: {
+        findUnique: async (args: { where: { id?: string } }) =>
+          (args.where.id ? authUsers[args.where.id] : null) ?? null,
+      },
+    };
+    prismaSvc.base = mockAuthPrisma;
+    prismaSvc.scoped = mockAuthPrisma;
+
+    const distService = app.get(DistributionService);
+    vi.spyOn(distService, 'estimateRetestBudget').mockImplementation((pubId, auth, query) =>
+      h.service.estimateBudgetForPublishRecord(pubId, auth.tenantId, query),
+    );
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const tokenA = signToken(
+      {
+        sub: 'u_a',
+        tid: 'tenant_a',
+        role: 'MERCHANT',
+        typ: 'access',
+        fp: passwordFingerprint('pw_a'),
+        lms: Date.now(),
+        iat: nowSec,
+        exp: nowSec + 3600,
+      },
+      env.JWT_ACCESS_SECRET,
+    );
+    const tokenB = signToken(
+      {
+        sub: 'u_b',
+        tid: 'tenant_b',
+        role: 'MERCHANT',
+        typ: 'access',
+        fp: passwordFingerprint('pw_b'),
+        lms: Date.now(),
+        iat: nowSec,
+        exp: nowSec + 3600,
+      },
+      env.JWT_ACCESS_SECRET,
+    );
+
+    await app.listen(0, '127.0.0.1');
+    const addr = app.getHttpServer().address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+    try {
+      const okRes = await fetch(
+        `${baseUrl}/api/v2/publish-records/pub_budget_1/retest-budget?includeControlPrompts=true&sampleCount=3`,
+        { headers: { Authorization: `Bearer ${tokenA}` } },
+      );
+      expect(okRes.status).toBe(200);
+      const okBody = (await okRes.json()) as {
+        data: { perRunPoints: number; selectedControlPrompts: string[] };
+      };
+      expect(okBody.data.perRunPoints).toBe(36);
+      expect(okBody.data.selectedControlPrompts).toEqual(['Ctrl 1', 'Ctrl 2']);
+
+      // Invalid sampleCount -> 400
+      const badRes = await fetch(
+        `${baseUrl}/api/v2/publish-records/pub_budget_1/retest-budget?sampleCount=2`,
+        { headers: { Authorization: `Bearer ${tokenA}` } },
+      );
+      expect(badRes.status).toBe(400);
+
+      // Defect 4: partially invalid milestones query tokens MUST return 400 (never silently stripped)
+      expect(retestBudgetEstimateQuerySchema.safeParse({ milestones: '7,abc' }).success).toBe(
+        false,
+      );
+      expect(
+        retestBudgetEstimateQuerySchema.safeParse({ milestones: '7,Infinity,NaN' }).success,
+      ).toBe(false);
+      expect(retestBudgetEstimateQuerySchema.safeParse({ milestones: '7,' }).success).toBe(false);
+      expect(retestBudgetEstimateQuerySchema.safeParse({ milestones: '7,14,30' }).success).toBe(
+        true,
+      );
+
+      const badMilestones1 = await fetch(
+        `${baseUrl}/api/v2/publish-records/pub_budget_1/retest-budget?milestones=7,abc`,
+        { headers: { Authorization: `Bearer ${tokenA}` } },
+      );
+      expect(badMilestones1.status).toBe(400);
+
+      const badMilestones2 = await fetch(
+        `${baseUrl}/api/v2/publish-records/pub_budget_1/retest-budget?milestones=7,Infinity,NaN`,
+        { headers: { Authorization: `Bearer ${tokenA}` } },
+      );
+      expect(badMilestones2.status).toBe(400);
+
+      // Defect 5: selectRetestControlPrompts with maxCount <= 0 returns []
+      expect(
+        selectRetestControlPrompts('Target', ['Control Alpha', 'Control Beta'], true, 0),
+      ).toEqual([]);
+      expect(
+        selectRetestControlPrompts('Target', ['Control Alpha', 'Control Beta'], true, -2),
+      ).toEqual([]);
+
+      // Cross-tenant -> 404
+      const crossRes = await fetch(`${baseUrl}/api/v2/publish-records/pub_budget_1/retest-budget`, {
+        headers: { Authorization: `Bearer ${tokenB}` },
+      });
+      expect(crossRes.status).toBe(404);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('reconcileStaleRunningSchedules partitions control observations and persists Wilson CI + DiD in controlMetricsJson (#369)', async () => {
+    const h = createHarness();
+    const now = new Date('2026-10-15T12:00:00Z');
+    const oldFinishedAt = new Date(now.getTime() - 10 * 60 * 1000);
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const targetPrompt = 'Target quiet NAS';
+    const ctrlPrompt = 'Control router query';
+
+    h.publishRecords.set('pub_rec_did', {
+      id: 'pub_rec_did',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      articleId: 'art_did',
+      publishedUrl: 'https://xingchen.example/nas',
+      publishedAt,
+      baselineRunId: 'run_base_1',
+      beforeMetrics: { mentionRate: 25, avgPosition: 3, sentiment: 'neutral', citationHit: false },
+      latestRetestRunId: 'run_reconcile_did',
+      afterMetrics: null,
+      article: { id: 'art_did', title: '静音 NAS', targetPrompt },
+      brandMarket: {
+        id: 'bm_cn',
+        market: 'CN',
+        localBrandName: '星辰存储',
+        controlPrompts: [ctrlPrompt],
+      },
+    });
+
+    h.visibilityObservations.push(
+      {
+        id: 'base_c1',
+        tenantId: 'tenant_a',
+        brandId: 'brand_1',
+        brandMarketId: 'bm_cn',
+        runId: 'run_base_1',
+        status: 'SUCCESS',
+        promptText: ctrlPrompt,
+        answerText: '星辰存储',
+        brandMentioned: true,
+        brandPosition: 2,
+        brandSentiment: 'neutral',
+        competitorHits: [],
+        citations: [],
+        createdAt: new Date('2026-09-28T00:00:00Z'),
+      },
+      {
+        id: 'base_c2',
+        tenantId: 'tenant_a',
+        brandId: 'brand_1',
+        brandMarketId: 'bm_cn',
+        runId: 'run_base_1',
+        status: 'SUCCESS',
+        promptText: ctrlPrompt,
+        answerText: '竞品',
+        brandMentioned: false,
+        brandPosition: null,
+        brandSentiment: 'neutral',
+        competitorHits: [],
+        citations: [],
+        createdAt: new Date('2026-09-28T00:00:01Z'),
+      },
+    );
+
+    h.schedules.set('sched_rec_did', {
+      id: 'sched_rec_did',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      publishRecordId: 'pub_rec_did',
+      milestoneDay: 7,
+      sampleCount: 1,
+      includeControlPrompts: true,
+      dueAt: new Date('2026-10-08T00:00:00Z'),
+      status: 'RUNNING',
+      visibilityRunId: 'run_reconcile_did',
+      metricsSnapshotJson: null,
+      controlMetricsJson: null,
+      skipReason: null,
+      executedAt: null,
+      createdAt: publishedAt,
+      updatedAt: oldFinishedAt,
+    });
+
+    h.visibilityRuns.set('run_reconcile_did', {
+      id: 'run_reconcile_did',
+      tenantId: 'tenant_a',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_cn',
+      status: 'COMPLETED',
+      triggerType: 'RETEST',
+      retestArticleId: 'art_did',
+      prompts: [targetPrompt, ctrlPrompt],
+      lastError: null,
+      finishedAt: oldFinishedAt,
+      brandMarket: {
+        localBrandName: '星辰存储',
+        aliases: [],
+        ownedDomains: ['xingchen.example'],
+        competitors: [],
+        controlPrompts: [ctrlPrompt],
+      },
+      observations: [
+        {
+          id: 'o_t1',
+          status: 'SUCCESS',
+          promptText: targetPrompt,
+          answerText: '星辰存储推荐',
+          brandMentioned: true,
+          brandPosition: 1,
+          brandSentiment: 'positive',
+          competitorHits: [],
+          citations: [
+            {
+              url: 'https://xingchen.example/nas',
+              domain: 'xingchen.example',
+              sourceKind: 'OWNED',
+            },
+          ],
+        },
+        {
+          id: 'o_c1',
+          status: 'SUCCESS',
+          promptText: ctrlPrompt,
+          answerText: '星辰存储',
+          brandMentioned: true,
+          brandPosition: 2,
+          brandSentiment: 'neutral',
+          competitorHits: [],
+          citations: [],
+        },
+        {
+          id: 'o_c2',
+          status: 'SUCCESS',
+          promptText: ctrlPrompt,
+          answerText: '其他品牌',
+          brandMentioned: false,
+          brandPosition: null,
+          brandSentiment: 'neutral',
+          competitorHits: [],
+          citations: [],
+        },
+      ],
+    });
+
+    await h.service.runDueSweep({ now });
+
+    const updated = h.schedules.get('sched_rec_did')!;
+    expect(updated.status).toBe('COMPLETED');
+    expect(updated.metricsSnapshotJson).toEqual({
+      mentionRate: 100,
+      avgPosition: 1,
+      sentiment: 'positive',
+      citationHit: true,
+      sampleCount: 1,
+      hitCount: 1,
+      wilson: computeWilsonInterval(1, 1),
+      confidenceLevel: 'LOW',
+    });
+    expect(updated.controlMetricsJson).toEqual({
+      controlPrompts: [ctrlPrompt],
+      baselineMentionRate: 50,
+      currentMentionRate: 50,
+      sampleCount: 2,
+      hitCount: 1,
+      wilson: computeWilsonInterval(1, 2),
+      did: computeDifferenceInDifferences({
+        treatmentBaseline: 0.25,
+        treatmentCurrent: 1,
+        controlBaseline: 0.5,
+        controlCurrent: 0.5,
+      }),
+    });
+  });
+
+  it('Tier 5 regression: preserves includeControlPrompts and sampleCount when reopening a CANCELLED milestone with zero PENDING schedules remaining', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_reopen_did',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14],
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+
+      // Mark T+7 COMPLETED and T+14 CANCELLED so ZERO PENDING schedules remain
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+        } else if (sched.milestoneDay === 14) {
+          sched.status = 'CANCELLED';
+        }
+      }
+
+      // Reopen T+14 without explicitly passing includeControlPrompts or sampleCount
+      const updated = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [14],
+      });
+
+      const t14 = updated.find((s) => s.milestoneDay === 14)!;
+      expect(t14.status).toBe('PENDING');
+      expect(t14.includeControlPrompts).toBe(true);
+      expect(t14.sampleCount).toBe(3);
+    });
+  });
+
+  it('Tier 5 iter2 regression: reopening CANCELLED milestones with stale COMPLETED T+7 preserves CANCELLED sampleCount & includeControlPrompts across full resume, single milestone reopen, and distinct per-milestone settings', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_mixed_reopen',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      // Seed T+7, T+14, T+30 at (1, false)
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14, 30],
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      // T+7 completes at (1, false); user upgrades remaining PENDING rows to (3, true), then pauses all
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+        }
+      }
+      await h.service.updateSchedulesForPublishRecord(rec.id, {
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+
+      // Resume all via { enabled: true }: must preserve (3, true) on T+14 & T+30 (not clobber with T+7's 1/false)
+      const resumedAll = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 7)).toMatchObject({
+        status: 'COMPLETED',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(resumedAll.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+
+      // Pause again and give T+30 distinct persisted settings (1, false) while T+14 remains (3, true)
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 30) {
+          sched.sampleCount = 1;
+          sched.includeControlPrompts = false;
+        }
+      }
+
+      // Reopen T+14 only via { enabled: true, milestones: [14] }
+      const reopenedT14 = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [14],
+      });
+      expect(reopenedT14.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(reopenedT14.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'CANCELLED',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      // Pause T+14 again so zero PENDING rows exist, then resume all: each CANCELLED row keeps its own settings
+      await h.service.updateSchedulesForPublishRecord(rec.id, { enabled: false });
+      const resumedDistinct = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+      });
+      expect(resumedDistinct.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      expect(resumedDistinct.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+    });
+  });
+
+  it('Tier 5 iter2 regression: creating a brand-new missing milestone inherits from CANCELLED (3, true) rather than stale COMPLETED T+7 (1, false)', async () => {
+    const h = createHarness();
+    const publishedAt = new Date('2026-10-01T00:00:00Z');
+    const rec = h.seedPublishRecord({
+      id: 'pub_mixed_create_missing',
+      publishedAt,
+    });
+
+    await runInTenant('tenant_a', async () => {
+      await h.service.ensureSchedulesForPublishRecord(rec, {
+        milestones: [7, 14],
+        sampleCount: 1,
+        includeControlPrompts: false,
+      });
+
+      for (const sched of h.schedules.values()) {
+        if (sched.milestoneDay === 7) {
+          sched.status = 'COMPLETED';
+          sched.sampleCount = 1;
+          sched.includeControlPrompts = false;
+        } else if (sched.milestoneDay === 14) {
+          sched.status = 'CANCELLED';
+          sched.sampleCount = 3;
+          sched.includeControlPrompts = true;
+        }
+      }
+
+      // Create brand-new T+30 when T+7 is COMPLETED (1, false) and T+14 is CANCELLED (3, true)
+      const updated = await h.service.updateSchedulesForPublishRecord(rec.id, {
+        enabled: true,
+        milestones: [30],
+      });
+
+      expect(updated.find((s) => s.milestoneDay === 30)).toMatchObject({
+        status: 'PENDING',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+      // T+14 was not requested, remains CANCELLED (3, true)
+      expect(updated.find((s) => s.milestoneDay === 14)).toMatchObject({
+        status: 'CANCELLED',
+        sampleCount: 3,
+        includeControlPrompts: true,
+      });
+    });
   });
 });

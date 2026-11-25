@@ -8,11 +8,15 @@ import {
   LLM_STREAM_IDLE_TIMEOUT_MS,
   LLM_STREAM_TIMEOUT_MS,
   cleanTitleText,
+  detectLocaleLeakage,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
   normalizeMissingFactPlaceholdersForMarket,
   postProcessArticleMarkdown,
+  resolveEffectiveLocale,
   resolveGlobalCategoryLabel,
+  resolveLocaleWritingDirective,
+  stripInlineJsonLdBlocks,
   type GeoComplianceFlag,
   type GeoEvaluationResult,
   type GeoMarket,
@@ -20,6 +24,7 @@ import {
   type GeoRecipe,
   type GeoRewriteAction,
   type GeoTargetFormat,
+  type SupportedLocale,
 } from '@geomix/shared';
 import {
   BrandFactIndexRunner,
@@ -66,6 +71,7 @@ export type StudioGenerateArticleParams = {
   market: StudioMarketContext;
   recipe: GeoRecipe;
   targetFormat: GeoTargetFormat;
+  targetLocale?: SupportedLocale;
   targetPrompt: string;
   title?: string;
   outlineH2: readonly GeoOutlineHeading[];
@@ -85,6 +91,7 @@ export type StudioGenerateArticleParams = {
 
 export type StudioGeneratedArticleResult = {
   title: string;
+  targetLocale: SupportedLocale;
   contentMarkdown: string;
   contentHtml: string;
   complianceFlags: GeoComplianceFlag[];
@@ -99,6 +106,7 @@ export type StudioRewriteSectionParams = {
   articleId: string;
   market: StudioMarketContext;
   brand: StudioBrandContext;
+  targetLocale?: SupportedLocale;
   action: GeoRewriteAction;
   selectedText: string;
   instruction?: string;
@@ -142,6 +150,11 @@ export class StudioGenerationService {
 
   async streamArticle(params: StudioGenerateArticleParams): Promise<StudioGeneratedArticleResult> {
     const started = Date.now();
+    const effectiveLocale = resolveEffectiveLocale(
+      params.targetLocale ?? params.market.locale,
+      params.market.market,
+    );
+    const allowedTerms = collectAllowedTerms(params.brand, params.market);
     const usesFakePrimary = this.llm.usesFakePrimary('geo_write');
     let rawText = '';
     let suggestedTitle = params.title ?? '';
@@ -166,6 +179,8 @@ export class StudioGenerationService {
 
       const fakeResult = await streamFakeGeoArticle({
         market: params.market.market,
+        targetLocale: effectiveLocale,
+        allowedTerms,
         recipe: params.recipe,
         targetFormat: params.targetFormat,
         localBrandName: params.market.localBrandName,
@@ -186,7 +201,7 @@ export class StudioGenerationService {
       });
 
       rawText = fakeResult.text;
-      suggestedTitle = suggestedTitle || fakeResult.title;
+      suggestedTitle = fakeResult.title || suggestedTitle;
       model = fakeResult.model;
       tokensIn = fakeResult.tokensIn;
       tokensOut = fakeResult.tokensOut;
@@ -242,7 +257,12 @@ export class StudioGenerationService {
       tokensOut = result.tokensOut;
     }
 
-    const processed = postProcessArticleMarkdown(rawText, {
+    const preparedRaw = ensureLocalizedStructuralMarkers(
+      rawText,
+      effectiveLocale,
+      params.market.localBrandName,
+    );
+    const processed = postProcessArticleMarkdown(preparedRaw, {
       question: params.targetPrompt,
       brand: params.market.localBrandName,
       market: params.market.market,
@@ -279,12 +299,26 @@ export class StudioGenerationService {
       bodyScan.text,
       params.market.market,
     );
+
+    const leakage = detectLocaleLeakage(
+      `${finalTitle}\n${finalMarkdown}`,
+      effectiveLocale,
+      allowedTerms,
+    );
+    if (leakage.leaked) {
+      throw new ProviderError(
+        PROVIDER_KIND.CONTRACT,
+        formatLocaleLeakageError(effectiveLocale),
+        'locale_leakage_blocked',
+      );
+    }
+
     const finalHtml = markdownToSanitizedHtml(finalMarkdown);
     const mergedFlags = mergeComplianceFlags(titleScan.geoFlags, bodyScan.geoFlags);
 
     const evaluation = evaluateGeoArticle({
       market: params.market.market,
-      locale: params.market.locale,
+      locale: effectiveLocale,
       localBrandName: params.market.localBrandName,
       category: params.brand.category,
       localCategory: params.market.localCategory,
@@ -300,6 +334,7 @@ export class StudioGenerationService {
 
     return {
       title: finalTitle,
+      targetLocale: effectiveLocale,
       contentMarkdown: finalMarkdown,
       contentHtml: finalHtml,
       complianceFlags: mergedFlags,
@@ -320,6 +355,11 @@ export class StudioGenerationService {
   }
 
   async rewriteSection(params: StudioRewriteSectionParams): Promise<StudioRewriteSectionResult> {
+    const effectiveLocale = resolveEffectiveLocale(
+      params.targetLocale ?? params.market.locale,
+      params.market.market,
+    );
+    const allowedTerms = collectAllowedTerms(params.brand, params.market);
     const factSnippets = await this.retrieveFacts(
       params.tenantId,
       params.brand.id,
@@ -347,6 +387,8 @@ export class StudioGenerationService {
       }
       const fake = buildFakeRewriteSection({
         market: params.market.market,
+        targetLocale: effectiveLocale,
+        allowedTerms,
         action: params.action,
         selectedText: params.selectedText,
         localBrandName: params.market.localBrandName,
@@ -358,7 +400,7 @@ export class StudioGenerationService {
       tokensIn = fake.tokensIn;
       tokensOut = fake.tokensOut;
     } else {
-      const messages = buildRewriteMessages(params, factSnippets);
+      const messages = buildRewriteMessages(params, factSnippets, effectiveLocale);
       const idempotencyKey = `geo_rw_${params.articleId.slice(0, 20)}_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
       const result = await this.llm.complete({
         tenantId: params.tenantId,
@@ -386,14 +428,80 @@ export class StudioGenerationService {
       throw new ProviderError(PROVIDER_KIND.CONTRACT, '改写结果触发合规拦截', 'compliance_blocked');
     }
 
+    const finalRewritten = scanned.text.trim();
+    const leakage = detectLocaleLeakage(finalRewritten, effectiveLocale, allowedTerms);
+    if (leakage.leaked) {
+      throw new ProviderError(
+        PROVIDER_KIND.CONTRACT,
+        formatLocaleLeakageError(effectiveLocale),
+        'locale_leakage_blocked',
+      );
+    }
+
     return {
-      rewrittenText: scanned.text.trim(),
+      rewrittenText: finalRewritten,
       complianceFlags: scanned.geoFlags,
       model,
       tokensIn,
       tokensOut,
     };
   }
+}
+
+function collectAllowedTerms(brand: StudioBrandContext, market: StudioMarketContext): string[] {
+  return [brand.name, market.localBrandName, ...market.aliases, ...market.competitors].filter(
+    (term) => term.trim().length > 0,
+  );
+}
+
+function formatLocaleLeakageError(locale: SupportedLocale): string {
+  return locale === 'ja-JP'
+    ? '日语（ja-JP）生成结果检测到疑似简体中文字符或缺失假名特征，已拦截并退还本次点数'
+    : `目标语种（${locale}）生成结果检测到未翻译的非品牌中文/CJK 字符，已拦截并退还本次点数`;
+}
+
+const STUDIO_PLEASANTRY_LINE =
+  /^(好的|当然|没问题|收到|以下为您|以下是|下面为您|为您整理|这是一篇|根据您的要求)[^\n]*\n+/u;
+const STUDIO_LEADING_H1 = /^#\s+[^\n]+\n+/u;
+const STUDIO_RAW_URL_PATTERN = /https?:\/\/[^\s)>"'】）]+/gi;
+
+function ensureLocalizedStructuralMarkers(
+  rawMarkdown: string,
+  locale: SupportedLocale,
+  brandName: string,
+): string {
+  if (locale === 'zh-CN' || locale === 'en-US') {
+    return rawMarkdown;
+  }
+  const directive = resolveLocaleWritingDirective(locale);
+  let out = rawMarkdown.replace(/\r\n?/g, '\n').trim();
+  const fenced = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i.exec(out);
+  if (fenced) {
+    out = fenced[1]!.trim();
+  }
+  out = stripInlineJsonLdBlocks(out).trim();
+  for (let i = 0; i < 3; i += 1) {
+    const next = out.replace(STUDIO_PLEASANTRY_LINE, '').replace(STUDIO_LEADING_H1, '').trim();
+    if (next === out) break;
+    out = next;
+  }
+
+  if (!/^##\s+/m.test(out)) {
+    out = `## ${directive.keyTakeawaysHeading}\n\n${out}`;
+  }
+  const faqProbeText = out.replace(STUDIO_RAW_URL_PATTERN, '');
+  if (!/FAQ|常见问题|Frequently Asked Questions/i.test(faqProbeText)) {
+    const safeBrand = brandName.trim() || 'Solution';
+    const fallbackFaqByLocale: Record<Exclude<SupportedLocale, 'zh-CN' | 'en-US'>, string> = {
+      'en-GB': `**Q: What verified metrics should buyers review for ${safeBrand}?**\nA: Compare documented specifications, acoustic and power measurements, and warranty coverage against your workload.`,
+      'de-DE': `**F: Welche geprüften Kennzahlen sind bei ${safeBrand} entscheidend?**\nA: Vergleichen Sie dokumentierte Messwerte, Leistungsaufnahme und Garantiebedingungen sachlich mit Ihrem Einsatzprofil.`,
+      'ja-JP': `**Q: ${safeBrand} を選定する際に確認すべき主な指標は何ですか？**\nA: 公開されている検証済みスペック、実測データ、長期運用時の保守条件を用途と照らし合わせて比較してください。`,
+      'es-ES': `**P: ¿Qué métricas verificadas conviene revisar para ${safeBrand}?**\nA: Compare las especificaciones documentadas, las mediciones reales y la garantía frente a sus necesidades operativas.`,
+      'fr-FR': `**Q : Quels indicateurs vérifiés examiner pour ${safeBrand} ?**\nR : Comparez les spécifications documentées, les mesures réelles et les conditions de garantie selon votre usage.`,
+    };
+    out = `${out.trimEnd()}\n\n## ${directive.faqHeading}\n${fallbackFaqByLocale[locale]}`;
+  }
+  return out;
 }
 
 function extractFirstH1(raw: string): string {
@@ -418,9 +526,15 @@ function mergeComplianceFlags(
 
 function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[] {
   const isGlobal = params.market.market === 'GLOBAL';
-  const languageRule = isGlobal
-    ? `Write in fluent native English (${params.market.locale}). Even when Brand Facts below are written in Chinese, cross-lingually translate and integrate all verified numbers, models, certifications, and advantages into natural English prose. Follow FTC objectivity standards and naturally retain high-intent buyer phrasing (such as "Best", "Top", or factual "100%" specifications) where appropriate.`
-    : `使用地道简体中文（${params.market.locale}）撰写。严格遵守中国广告法，禁止使用“全网第一/国家级/顶级/100%/最好”等极限绝对化用语。`;
+  const effectiveLocale = resolveEffectiveLocale(
+    params.targetLocale ?? params.market.locale,
+    params.market.market,
+  );
+  const directive = resolveLocaleWritingDirective(effectiveLocale);
+  const crossLingualRule =
+    effectiveLocale !== 'zh-CN'
+      ? `Even when Brand Facts below are written in Chinese or another language, cross-lingually translate and integrate all verified numbers, models, certifications, and advantages into natural ${directive.nativeLabel} (${directive.locale}) prose.`
+      : '';
 
   const formatDesc = GEO_TARGET_FORMAT_LABELS[params.targetFormat];
   const recipeDesc = GEO_RECIPE_LABELS[params.recipe];
@@ -429,18 +543,19 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
     : params.market.localCategory?.trim() || params.brand.category;
 
   const placeholderExample =
-    params.market.market === 'GLOBAL'
-      ? '[TBD: e.g., Standby Power Draw W]'
-      : '[待补充：如待机功耗 W]';
-  const placeholderShort = params.market.market === 'GLOBAL' ? '[TBD: ...]' : '[待补充：...]';
+    effectiveLocale !== 'zh-CN' ? '[TBD: e.g., Standby Power Draw W]' : '[待补充：如待机功耗 W]';
+  const placeholderShort = effectiveLocale !== 'zh-CN' ? '[TBD: ...]' : '[待补充：...]';
 
   const systemParts = [
     'You are an expert GEO (Generative Engine Optimization) technical editor.',
-    languageRule,
+    `Target Locale: ${directive.locale} (${directive.nativeLabel}, html lang="${directive.htmlLang}").`,
+    `Language Directive: ${directive.writingLanguageInstruction}`,
+    ...(crossLingualRule ? [crossLingualRule] : []),
+    `Compliance Standard (${directive.complianceNoticeKey}): ${directive.complianceInstruction}`,
     `Recipe: ${params.recipe} (${recipeDesc}). Target channel format: ${params.targetFormat} (${formatDesc}).`,
     'Structure requirements:',
     '1. Start with a concise direct-answer opening paragraph (60-120 chars/words) before the first H2.',
-    '2. Include at least 3 clear Markdown H2 (##) sections, a GFM comparison table (| col | ... |), bullet lists, and a closing FAQ section.',
+    `2. Include at least 3 clear Markdown H2 (##) sections, a GFM comparison table (| col | ... |), bullet lists, and a closing FAQ section titled "## ${directive.faqHeading}".`,
     `3. Ground all specifications in the provided Brand Facts. Never fabricate numbers; if a critical spec is absent from Brand Facts, insert a plain placeholder like ${placeholderExample} — NEVER wrap it in a Markdown link such as ${placeholderShort}(#faq).`,
     '4. Never output legacy template variables such as {训练词占位符} or 【品牌1】.',
     '5. Do NOT output <script type="application/ld+json">, raw JSON-LD blocks, or HTML <script> tags inside the Markdown article body; structured JSON-LD Schema is generated separately by the delivery panel.',
@@ -468,6 +583,7 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
   const userParts = [
     `Brand: ${params.market.localBrandName} (Category: ${effectiveCategory})`,
     `Competitors: ${params.market.competitors.join(', ') || 'Mainstream competitors'}`,
+    `Target Locale: ${directive.locale} (${directive.nativeLabel})`,
     `Target Prompt: ${params.targetPrompt}`,
   ];
   if (params.title) userParts.push(`Preferred Title: ${params.title}`);
@@ -498,22 +614,24 @@ function buildGeoWriteMessages(params: StudioGenerateArticleParams): LlmMessage[
 function buildRewriteMessages(
   params: StudioRewriteSectionParams,
   factSnippets: readonly RetrievedBrandFactSnippet[],
+  effectiveLocale: SupportedLocale,
 ): LlmMessage[] {
-  const isGlobal = params.market.market === 'GLOBAL';
+  const isZh = effectiveLocale === 'zh-CN';
+  const directive = resolveLocaleWritingDirective(effectiveLocale);
   const actionLabel = GEO_REWRITE_ACTION_LABELS[params.action];
   const actionRule: Record<GeoRewriteAction, string> = {
-    DE_AD: isGlobal
-      ? 'Make the passage more objective, evidence-driven, and remove promotional fluff while keeping FTC-compliant buyer terms.'
-      : '去除硬广与夸张营销口吻，改写为客观、理性、可验证的评测表述，严禁广告法极限词。',
-    TO_TABLE: isGlobal
-      ? 'Convert the passage into a clean GFM Markdown comparison table (| Metric | Value | Notes |).'
-      : '将选中内容提炼为结构清晰的 GFM Markdown 对比表格（含表头与 | --- | 分隔行）。',
-    ADD_EVIDENCE: isGlobal
-      ? 'Enrich the passage with concrete specifications and verifiable facts from the Brand Facts below.'
-      : '结合下方品牌事实卡补充可核验的数据论据与规格锚点，禁止编造未提供的参数。',
-    CONCISE_ANSWER: isGlobal
-      ? 'Condense the passage into a crisp 2-3 sentence direct answer ideal for AI answer extraction.'
-      : '精简为 60-120 字直答结论，开门见山便于 AI 直接引用。',
+    DE_AD: isZh
+      ? '去除硬广与夸张营销口吻，改写为客观、理性、可验证的评测表述，严禁广告法极限词。'
+      : `Make the passage more objective, evidence-driven, and remove promotional fluff in natural ${directive.nativeLabel} (${directive.locale}).`,
+    TO_TABLE: isZh
+      ? '将选中内容提炼为结构清晰的 GFM Markdown 对比表格（含表头与 | --- | 分隔行）。'
+      : `Convert the passage into a clean GFM Markdown comparison table in ${directive.nativeLabel} (${directive.locale}) (| Metric | Value | Notes |).`,
+    ADD_EVIDENCE: isZh
+      ? '结合下方品牌事实卡补充可核验的数据论据与规格锚点，禁止编造未提供的参数。'
+      : `Enrich the passage in ${directive.nativeLabel} (${directive.locale}) with concrete specifications and verifiable facts from the Brand Facts below.`,
+    CONCISE_ANSWER: isZh
+      ? '精简为 60-120 字直答结论，开门见山便于 AI 直接引用。'
+      : `Condense the passage into a crisp 2-3 sentence direct answer in ${directive.nativeLabel} (${directive.locale}) ideal for AI answer extraction.`,
   };
 
   const factsText = factSnippets
@@ -526,6 +644,9 @@ function buildRewriteMessages(
       role: 'system',
       content: [
         `You are a GEO section editor performing action ${params.action} (${actionLabel}).`,
+        `Target Locale: ${directive.locale} (${directive.nativeLabel}, html lang="${directive.htmlLang}").`,
+        `Language Directive: ${directive.writingLanguageInstruction}`,
+        `Compliance Standard (${directive.complianceNoticeKey}): ${directive.complianceInstruction}`,
         actionRule[params.action],
         'Return ONLY the rewritten Markdown passage without preamble or wrapper fences.',
         params.customToneNote?.trim() ? `Tone note: ${params.customToneNote.trim()}` : '',
@@ -540,6 +661,7 @@ function buildRewriteMessages(
       role: 'user',
       content: [
         `Brand: ${params.market.localBrandName}`,
+        `Target Locale: ${directive.locale} (${directive.nativeLabel})`,
         params.instruction ? `Extra instruction: ${params.instruction}` : '',
         params.surroundingContext ? `Surrounding context:\n${params.surroundingContext}` : '',
         factsText ? `Brand Facts:\n${factsText}` : '',

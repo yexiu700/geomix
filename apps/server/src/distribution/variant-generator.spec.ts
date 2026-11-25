@@ -4,10 +4,13 @@ import {
   AUTH_ERROR,
   BILLING_ERROR,
   containsCjk,
+  detectLocaleLeakage,
   evaluateDistributionPreflight,
+  resolveLocaleWritingDirective,
   type ChannelProvider,
   type DistributionTemplateKey,
   type GeoMarket,
+  type SupportedLocale,
 } from '@geomix/shared';
 import type { BillingService, ReservationView } from '../billing/billing.service';
 import { ApiError } from '../common/api-error';
@@ -16,20 +19,30 @@ import { ComplianceService } from '../infra/compliance';
 import { LlmService } from '../infra/llm';
 import { ProviderError, PROVIDER_KIND } from '../infra/provider-error';
 import type { PrismaService } from '../prisma/prisma.service';
+import { WechatOfficialConnector } from './connectors/wechat-official.connector';
 import {
   VariantGeneratorService,
   presentDistributionTask,
   readGeoVariantFreeRateLimit,
   type GeoDistributionTaskRow,
 } from './variant-generator.service';
+import { VariantJobRunner } from './variant-job.runner';
 import {
+  WECHAT_DIGEST_MAX_LEN,
+  WECHAT_TITLE_MAX_LEN,
   VariantGlobalCjkLeakError,
   buildDeterministicFakeVariantDraft,
   buildVariantPromptMessages,
+  extractJsonObject,
   finalizeRealLlmVariantDraft,
+  normalizeDeveloperTechTags,
   normalizeVariantMetaDesc,
   normalizeVariantSlug,
+  renderVariantHtml,
+  resolveDeveloperCanonicalUrl,
   resolveVariantTemplateKey,
+  resolveWechatContentSourceUrl,
+  sanitizeCanonicalGuideHint,
   sliceUtf16Safe,
   stripRedditPromotionalCtas,
   type DistributionVariantExtras,
@@ -45,6 +58,8 @@ function makePromptCtx(overrides: Partial<VariantPromptContext> = {}): VariantPr
   return {
     market,
     locale: overrides.locale ?? (market === 'GLOBAL' ? 'en-US' : 'zh-CN'),
+    targetLocale: overrides.targetLocale,
+    articleTargetLocale: overrides.articleTargetLocale,
     brandName: overrides.brandName ?? (market === 'GLOBAL' ? '星云存储' : '星云存储'),
     localBrandName: overrides.localBrandName ?? (market === 'GLOBAL' ? 'NebulaNAS' : '星云存储'),
     brandAliases: overrides.brandAliases ?? (market === 'GLOBAL' ? ['Nebula'] : ['星云']),
@@ -143,6 +158,7 @@ function makeHarness(options?: {
     tenantId: 't_1',
     brandId: 'b_1',
     brandMarketId: 'bm_1',
+    targetLocale: null as string | null,
     title:
       market === 'GLOBAL'
         ? '2026 Best Quiet 4-Bay Home NAS Guide: NebulaNAS vs Synology'
@@ -165,6 +181,7 @@ function makeHarness(options?: {
       id: 'bm_1',
       market,
       locale: market === 'GLOBAL' ? 'en-US' : 'zh-CN',
+      supportedLocales: [] as string[],
       localBrandName: market === 'GLOBAL' ? 'NebulaNAS' : '星云存储',
       localCategory: market === 'GLOBAL' ? 'Home NAS' : '家用 NAS',
       aliases: market === 'GLOBAL' ? ['Nebula'] : ['星云'],
@@ -207,6 +224,7 @@ function makeHarness(options?: {
       provider: 'SHOPIFY',
       displayName: 'Nebula Shopify Blog',
       status: 'ACTIVE',
+      targetLocale: null,
       configJson: { defaultPublishAsDraft: true },
     },
   };
@@ -220,6 +238,36 @@ function makeHarness(options?: {
         findFirst: vi.fn().mockImplementation(async ({ where }: { where: { id: string } }) => {
           return connectionsMap[where.id] ?? null;
         }),
+        findMany: vi.fn().mockImplementation(
+          async ({
+            where,
+          }: {
+            where?: {
+              brandId?: string;
+              brandMarketId?: string;
+              provider?: { in?: string[] } | string;
+              status?: string;
+            };
+          }) => {
+            return Object.values(connectionsMap).filter((conn) => {
+              if (where?.brandId && conn.brandId !== where.brandId) return false;
+              if (where?.brandMarketId && conn.brandMarketId !== where.brandMarketId) return false;
+              if (where?.status && conn.status !== where.status) return false;
+              if (typeof where?.provider === 'string' && conn.provider !== where.provider) {
+                return false;
+              }
+              if (
+                where?.provider &&
+                typeof where.provider === 'object' &&
+                Array.isArray(where.provider.in) &&
+                !where.provider.in.includes(String(conn.provider))
+              ) {
+                return false;
+              }
+              return true;
+            });
+          },
+        ),
       },
       brandFact: {
         findMany: vi.fn().mockResolvedValue([
@@ -265,6 +313,7 @@ function makeHarness(options?: {
             provider: String(data.provider),
             mode: String(data.mode),
             channelLabel: String(data.channelLabel),
+            targetLocale: (data.targetLocale as string | null) ?? null,
             targetUrlHint: (data.targetUrlHint as string | null) ?? null,
             variantTitle: String(data.variantTitle),
             variantSlug: (data.variantSlug as string | null) ?? null,
@@ -2741,6 +2790,1076 @@ describe('variant-templates & VariantGeneratorService (M3 / Issue #351)', () => 
       const listed = await service.listVariantJobs('art_1');
       expect(listed.items[0]?.status).toBe('FAILED');
       expect(listed.items[0]?.refundedPoints).toBe(2);
+    });
+  });
+
+  describe('M3B (#370): DEVELOPER_TECH_POST, WECHAT_OFFICIAL_ARTICLE, L2 extensions, 7-locale prompts & Sync/Async GeoVariantJob threading', () => {
+    it('generates complete DEVELOPER_TECH_POST drafts for DEVTO, HASHNODE & GITHUB_MDX (fake + real LLM)', () => {
+      for (const provider of ['DEVTO', 'HASHNODE', 'GITHUB_MDX'] as const) {
+        const ctx = makePromptCtx({
+          market: 'GLOBAL',
+          provider,
+          targetLocale: 'de-DE',
+          locale: 'de-DE',
+          channelLabel: provider,
+        });
+        expect(ctx.templateKey).toBe('DEVELOPER_TECH_POST');
+
+        const fake = buildDeterministicFakeVariantDraft(ctx);
+        expect(fake.variantMarkdown).toContain('```yaml');
+        expect(fake.variantMarkdown).toContain('|');
+        expect(fake.variantMarkdown).toContain('Häufig gestellte Fragen (FAQ)');
+        expect(fake.variantSlug).toMatch(/^[a-z0-9-]+$/);
+        expect(fake.variantMetaDesc?.length).toBeGreaterThanOrEqual(140);
+        expect(fake.variantMetaDesc?.length).toBeLessThanOrEqual(160);
+        expect(fake.variantExtrasJson.canonicalUrl).toMatch(/^https:\/\/nebulanas\.example\.com\//);
+        expect(fake.variantExtrasJson.schemaJsonLd).toBeTruthy();
+        expect(fake.variantExtrasJson.jsonLdSnippet).toContain('https://schema.org');
+        expect(fake.variantExtrasJson.jsonLdSnippet).toContain('"inLanguage": "de-DE"');
+        expect(fake.variantExtrasJson.llmsTxtSnippet).toBeTruthy();
+        const tags = fake.variantExtrasJson.tags ?? [];
+        if (provider === 'DEVTO') {
+          expect(tags.length).toBeGreaterThan(0);
+          expect(tags.length).toBeLessThanOrEqual(4);
+          for (const tag of tags) {
+            expect(tag).toMatch(/^[a-z0-9]{2,30}$/);
+          }
+        } else {
+          expect(tags.length).toBeGreaterThan(0);
+          expect(tags.length).toBeLessThanOrEqual(5);
+        }
+
+        const preflight = evaluateDistributionPreflight({
+          market: 'GLOBAL',
+          targetLocale: 'de-DE',
+          title: fake.variantTitle,
+          contentMarkdown: fake.variantMarkdown,
+          variantHtml: fake.variantHtml,
+          brandNames: ['星云存储', 'NebulaNAS', 'Nebula'],
+          geoScore: 86,
+          matchedFactCount: 2,
+          provider,
+          variantSlug: fake.variantSlug,
+          variantMetaDesc: fake.variantMetaDesc,
+        });
+        expect(preflight.ok).toBe(true);
+        expect(preflight.blockers).toEqual([]);
+        expect(preflight.warnings).toEqual([]);
+      }
+
+      // Real LLM finalization for DEVELOPER_TECH_POST on DEVTO
+      const devtoCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        targetLocale: 'en-GB',
+        locale: 'en-GB',
+        channelLabel: 'Dev.to UK',
+      });
+      const realRaw = JSON.stringify({
+        variantTitle: 'NebulaNAS N4 Architecture & Optimised Benchmarks',
+        variantSlug: 'nebulanas-n4-architecture-benchmarks',
+        variantMetaDesc:
+          'Optimised architecture and verified acoustic benchmarks for NebulaNAS N4 with reproducible YAML checks and transparent comparison against Synology.',
+        tags: ['Home-NAS!', 'BenchMarks', 'DevOps', 'Storage-Tech', 'Extra-Dropped'],
+        canonicalUrl: 'https://nebulanas.example.com/guides/n4-benchmarks',
+        variantMarkdown:
+          '## Technical Summary\n\nNebulaNAS N4 runs at 21 dB.\n\n```yaml\nnoise_db: 21\nidle_w: 9\n```\n\n## Frequently Asked Questions (FAQ)\n\n**Q: Quiet?**\nA: Yes, 21 dB.',
+      });
+      const finalized = finalizeRealLlmVariantDraft(realRaw, devtoCtx);
+      expect(finalized.variantSlug).toBe('nebulanas-n4-architecture-benchmarks');
+      expect(finalized.variantMetaDesc?.length).toBeGreaterThanOrEqual(140);
+      expect(finalized.variantMetaDesc?.length).toBeLessThanOrEqual(160);
+      expect(finalized.variantExtrasJson.tags).toEqual([
+        'homenas',
+        'benchmarks',
+        'devops',
+        'storagetech',
+      ]);
+      expect(finalized.variantExtrasJson.canonicalUrl).toBe(
+        'https://nebulanas.example.com/guides/n4-benchmarks',
+      );
+      expect(finalized.variantExtrasJson.schemaJsonLd).toBeTruthy();
+    });
+
+    it('generates WECHAT_OFFICIAL_ARTICLE with <=64 title, <=120 digest, mobile inline HTML (zero script/CDN), draft-only & 0 preflight warnings', async () => {
+      const longTitle = '超长标题测试'.repeat(20);
+      const wechatCtx = makePromptCtx({
+        market: 'CN',
+        provider: 'WECHAT_OFFICIAL',
+        articleTitle: longTitle,
+        channelLabel: '品牌公众号',
+      });
+      expect(wechatCtx.templateKey).toBe('WECHAT_OFFICIAL_ARTICLE');
+
+      const fake = buildDeterministicFakeVariantDraft(wechatCtx);
+      expect(fake.variantTitle.length).toBeLessThanOrEqual(WECHAT_TITLE_MAX_LEN);
+      expect(fake.variantSlug).toBeNull();
+      expect(fake.variantMetaDesc).toBeTruthy();
+      expect(fake.variantMetaDesc!.length).toBeLessThanOrEqual(WECHAT_DIGEST_MAX_LEN);
+      expect(fake.variantExtrasJson.digest).toBe(fake.variantMetaDesc);
+      expect(fake.variantHtml).toContain('<section style=');
+      expect(fake.variantHtml).toContain('<h2 style=');
+      expect(fake.variantHtml).toContain('<blockquote style=');
+      expect(fake.variantHtml).toContain('<table style=');
+      expect(fake.variantHtml).not.toMatch(/<script|<style|onerror|onclick|https?:\/\/cdn/i);
+
+      const preflight = evaluateDistributionPreflight({
+        market: 'CN',
+        targetLocale: 'zh-CN',
+        title: fake.variantTitle,
+        contentMarkdown: fake.variantMarkdown,
+        variantHtml: fake.variantHtml,
+        brandNames: ['星云存储'],
+        geoScore: 86,
+        matchedFactCount: 2,
+        provider: 'WECHAT_OFFICIAL',
+        variantSlug: fake.variantSlug,
+        variantMetaDesc: fake.variantMetaDesc,
+      });
+      expect(preflight.ok).toBe(true);
+      expect(preflight.blockers).toEqual([]);
+      expect(preflight.warnings).toEqual([]);
+
+      // Real LLM WECHAT_OFFICIAL_ARTICLE with Ad Law superlatives & >64 title -> clamped & inline HTML preserved after compliance!
+      const realWechatLlm = {
+        usesFakePrimary: vi.fn(() => false),
+        isFakeAllowed: vi.fn(() => false),
+        complete: vi.fn(async () => ({
+          provider: 'stub-real',
+          model: 'stub-1',
+          fake: false,
+          text: JSON.stringify({
+            variantTitle: `全网第一${'家用四盘位静音存储实测指南'.repeat(6)}`,
+            digest:
+              '全网第一静音四盘位家用NAS深度实测，汇总满载21dB噪音与9W待机功耗数据，帮助家庭用户客观选型对比。'.repeat(
+                3,
+              ),
+            variantMarkdown:
+              '> **核心结论**：星云存储 N4 在实测中表现稳定。\n\n## 实测对比\n\n| 指标 | 数值 |\n| --- | --- |\n| 噪音 | 21dB |\n\n<script>alert(1)</script>本款采用全网第一静音风道设计。',
+          }),
+          tokensIn: 120,
+          tokensOut: 220,
+        })),
+      } as unknown as LlmService;
+
+      const { service } = makeHarness({ market: 'CN', unitPrice: 2, llm: realWechatLlm });
+      const res = await service.generateVariants(
+        'art_1',
+        {
+          targets: [
+            {
+              provider: 'WECHAT_OFFICIAL',
+              channelLabel: '微信公众号',
+              publishAsDraft: false,
+            },
+          ],
+        },
+        { tenantId: 't_1' },
+      );
+
+      expect(res.tasks).toHaveLength(1);
+      const task = res.tasks[0]!;
+      expect(task.publishAsDraft).toBe(true);
+      expect(task.targetLocale).toBe('zh-CN');
+      expect(task.variantSlug).toBeNull();
+      expect(task.variantTitle.length).toBeLessThanOrEqual(WECHAT_TITLE_MAX_LEN);
+      expect(task.variantMetaDesc!.length).toBeLessThanOrEqual(WECHAT_DIGEST_MAX_LEN);
+      expect(task.variantHtml).toContain('<section style=');
+      expect(task.variantHtml).not.toMatch(/<script/i);
+      expect(task.preflightJson?.ok).toBe(true);
+      expect(task.preflightJson?.warnings).toEqual([]);
+    });
+
+    it('maps L2 extension providers (ZHIHU_EXT, TOUTIAO_EXT, SMZDM_EXT) to L2_EXTENSION + CN_COMMUNITY_QA with draft-box checklists', async () => {
+      const { service } = makeHarness({ market: 'CN', unitPrice: 2 });
+      const res = await service.generateVariants(
+        'art_1',
+        {
+          targets: [
+            { provider: 'ZHIHU_EXT', channelLabel: '知乎草稿箱' },
+            { provider: 'TOUTIAO_EXT', channelLabel: '头条草稿箱' },
+            { provider: 'SMZDM_EXT', channelLabel: '值得买草稿箱' },
+          ],
+        },
+        { tenantId: 't_1' },
+      );
+
+      expect(res.totalChargedPoints).toBe(6);
+      expect(res.tasks).toHaveLength(3);
+      for (const task of res.tasks) {
+        expect(task.mode).toBe('L2_EXTENSION');
+        expect(task.connectionId).toBeNull();
+        expect(task.publishAsDraft).toBe(true);
+        expect(task.targetLocale).toBe('zh-CN');
+        expect(task.variantExtrasJson.templateKey).toBe('CN_COMMUNITY_QA');
+        const checklist = task.variantExtrasJson.antiBanChecklist as string[];
+        expect(checklist.length).toBeGreaterThanOrEqual(4);
+        expect(checklist.some((item) => item.includes('草稿箱'))).toBe(true);
+      }
+    });
+
+    it('builds locale-aware prompts and offline fake drafts passing detectLocaleLeakage & preflight across all 7 locales (ja-JP 0 false positives)', () => {
+      const allLocales: SupportedLocale[] = [
+        'zh-CN',
+        'en-US',
+        'en-GB',
+        'de-DE',
+        'ja-JP',
+        'es-ES',
+        'fr-FR',
+      ];
+      for (const locale of allLocales) {
+        const market: GeoMarket = locale === 'zh-CN' ? 'CN' : 'GLOBAL';
+        const ctx = makePromptCtx({
+          market,
+          locale: market === 'CN' ? 'zh-CN' : 'en-US',
+          targetLocale: locale,
+          articleTargetLocale: market === 'CN' ? 'zh-CN' : 'en-US',
+          provider: 'GHOST',
+          channelLabel: `Ghost ${locale}`,
+        });
+
+        const msgs = buildVariantPromptMessages(ctx, false);
+        const directive = resolveLocaleWritingDirective(locale);
+        expect(msgs[0]?.content).toContain(directive.writingLanguageInstruction);
+        expect(msgs[0]?.content).toContain(directive.complianceInstruction);
+        expect(msgs[0]?.content).toContain(directive.faqHeading);
+
+        const fake = buildDeterministicFakeVariantDraft(ctx);
+        expect(fake.variantExtrasJson.targetLocale).toBe(locale);
+        const leakage = detectLocaleLeakage(
+          `${fake.variantTitle}\n${fake.variantMetaDesc ?? ''}\n${fake.variantMarkdown}`,
+          locale,
+          ['星云存储', 'NebulaNAS', 'Nebula'],
+        );
+        expect(leakage.leaked).toBe(false);
+
+        const graph = (
+          fake.variantExtrasJson.schemaJsonLd as { '@graph'?: Array<{ inLanguage?: string }> }
+        )['@graph'];
+        expect(graph?.[0]?.inLanguage).toBe(locale);
+
+        const preflight = evaluateDistributionPreflight({
+          market,
+          targetLocale: locale,
+          title: fake.variantTitle,
+          contentMarkdown: fake.variantMarkdown,
+          variantHtml: fake.variantHtml,
+          brandNames: ['星云存储', 'NebulaNAS', 'Nebula'],
+          geoScore: 86,
+          matchedFactCount: 2,
+          provider: 'GHOST',
+          variantSlug: fake.variantSlug,
+          variantMetaDesc: fake.variantMetaDesc,
+        });
+        expect(preflight.ok).toBe(true);
+        expect(preflight.blockers).toEqual([]);
+        expect(preflight.warnings).toEqual([]);
+      }
+
+      // Real LLM ja-JP with Joyo Kanji + Kana passes without VariantGlobalCjkLeakError!
+      const jaCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        targetLocale: 'ja-JP',
+        locale: 'ja-JP',
+      });
+      const jaRealJson = JSON.stringify({
+        variantTitle: 'NebulaNAS N4 静音ストレージの実測ベンチマーク比較',
+        variantSlug: 'nebulanas-n4-benchmark-jp',
+        variantMetaDesc:
+          'NebulaNAS N4 の検証済みスペックと動作音21dB・待機電力9Wの実測結果を、主要モデルと比較しながら分かりやすく解説します。導入前の注意点とFAQも収録しています。',
+        variantMarkdown:
+          '## 結論まとめ\n\nNebulaNAS N4 は高負荷時でも 21 dB の静音動作と 9W の省電力を実現します。\n\n## よくある質問（FAQ）\n\n**Q: リビングに設置できますか？**\nA: はい、静音設計のため快適に使えます。',
+      });
+      const jaFinal = finalizeRealLlmVariantDraft(jaRealJson, jaCtx);
+      expect(jaFinal.variantExtrasJson.targetLocale).toBe('ja-JP');
+
+      // Real LLM ja-JP with Simplified Chinese exclusive chars -> throws VariantGlobalCjkLeakError
+      const jaScLeakJson = JSON.stringify({
+        variantTitle: 'NebulaNAS 评测结果非常优秀',
+        variantSlug: 'nebulanas-sc-leak',
+        variantMetaDesc: '这里混入了简体中文评测结论，请尽快修改后重新生成。',
+        variantMarkdown: '## 评测结论\n\n这里混入了简体中文评测结论，不适合日语读者直接阅读。',
+      });
+      expect(() => finalizeRealLlmVariantDraft(jaScLeakJson, jaCtx)).toThrow(
+        VariantGlobalCjkLeakError,
+      );
+
+      // Real LLM de-DE with Chinese leakage -> throws VariantGlobalCjkLeakError
+      const deCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        targetLocale: 'de-DE',
+        locale: 'de-DE',
+      });
+      const deLeakJson = JSON.stringify({
+        variantTitle: 'NebulaNAS Testbericht 2026',
+        variantSlug: 'nebulanas-de-test',
+        variantMetaDesc: 'Geprüfte Messwerte mit 21 dB und 9W.',
+        variantMarkdown: '## Direkte Antwort\n\nNebulaNAS bietet 21 dB. 这里混入了中文字符。',
+      });
+      expect(() => finalizeRealLlmVariantDraft(deLeakJson, deCtx)).toThrow(
+        VariantGlobalCjkLeakError,
+      );
+    });
+
+    it('threads targetLocale end-to-end across Sync AND Async GeoVariantJob (via VariantJobRunner), with bidirectional ChannelConnection.targetLocale auto-matching and 2pt geo_variant billing', async () => {
+      const { service, prismaStub, storedTasks } = makeHarness({
+        market: 'GLOBAL',
+        unitPrice: 2,
+        article: {
+          id: 'art_1',
+          tenantId: 't_1',
+          brandId: 'b_1',
+          brandMarketId: 'bm_1',
+          targetLocale: 'en-US',
+          title: '2026 Best Quiet 4-Bay Home NAS Guide: NebulaNAS vs Synology',
+          targetPrompt: 'Best quiet 4-bay home NAS 2026',
+          contentMarkdown: 'NebulaNAS N4 runs at 21 dB under load and draws 9W at idle.',
+          schemaJsonLd: {},
+          llmsTxtSnippet: null,
+          geoScore: 88,
+          brand: { id: 'b_1', name: '星云存储', category: 'Home NAS' },
+          brandMarket: {
+            id: 'bm_1',
+            market: 'GLOBAL',
+            locale: 'en-US',
+            supportedLocales: ['en-US', 'en-GB', 'de-DE', 'ja-JP', 'es-ES', 'fr-FR'],
+            localBrandName: 'NebulaNAS',
+            localCategory: 'Home NAS',
+            aliases: ['Nebula'],
+            ownedDomains: ['nebulanas.example.com'],
+            competitors: [{ name: 'Synology' }],
+          },
+          brief: {
+            id: 'br_1',
+            targetFanOuts: ['quiet 4-bay NAS'],
+            competitorFocus: ['Synology'],
+            matchedFactIds: ['fact_1'],
+            recommendedChannels: [],
+          },
+        },
+        connections: {
+          conn_shopify_de: {
+            id: 'conn_shopify_de',
+            brandId: 'b_1',
+            brandMarketId: 'bm_1',
+            provider: 'SHOPIFY',
+            displayName: 'Shopify DE',
+            status: 'ACTIVE',
+            targetLocale: 'de-DE',
+            configJson: { defaultPublishAsDraft: true },
+          },
+          conn_ghost_ja: {
+            id: 'conn_ghost_ja',
+            brandId: 'b_1',
+            brandMarketId: 'bm_1',
+            provider: 'GHOST',
+            displayName: 'Ghost JP',
+            status: 'ACTIVE',
+            targetLocale: 'ja-JP',
+            configJson: { defaultPublishAsDraft: true },
+          },
+          conn_ghost_null: {
+            id: 'conn_ghost_null',
+            brandId: 'b_1',
+            brandMarketId: 'bm_1',
+            provider: 'GHOST',
+            displayName: 'Ghost Unscoped',
+            status: 'ACTIVE',
+            targetLocale: null,
+            configJson: { defaultPublishAsDraft: true },
+          },
+        },
+      });
+
+      // 1. Sync multi-locale cross-derivation (5 locales from en-US master)
+      const syncRes = await service.generateVariants(
+        'art_1',
+        {
+          targets: [
+            { provider: 'SHOPIFY', connectionId: 'conn_shopify_de', channelLabel: 'Shopify DE' }, // inherits de-DE from conn
+            { provider: 'GHOST', channelLabel: 'Ghost JP', targetLocale: 'ja-JP' }, // auto-matches conn_ghost_ja
+            { provider: 'GHOST', channelLabel: 'Ghost FR', targetLocale: 'fr-FR' }, // NO match -> stays null (must NOT bind conn_ghost_ja or conn_ghost_null!)
+            { provider: 'DEVTO', channelLabel: 'Dev.to ES', targetLocale: 'es-ES' },
+            { provider: 'HASHNODE', channelLabel: 'Hashnode UK', targetLocale: 'en-GB' },
+          ],
+        },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_sync_multilocale_1' },
+      );
+
+      expect(syncRes.totalChargedPoints).toBe(10); // 5 * 2 pts unchanged!
+      expect(syncRes.tasks.map((t) => t.targetLocale)).toEqual([
+        'de-DE',
+        'ja-JP',
+        'fr-FR',
+        'es-ES',
+        'en-GB',
+      ]);
+      expect(syncRes.tasks[0]?.connectionId).toBe('conn_shopify_de');
+      expect(syncRes.tasks[1]?.connectionId).toBe('conn_ghost_ja');
+      expect(syncRes.tasks[2]?.connectionId).toBeNull();
+      for (const task of syncRes.tasks) {
+        expect(task.preflightJson?.ok).toBe(true);
+      }
+
+      // Sync idempotency conflict (409) when mutating targetLocale with same Idempotency-Key
+      await expect(
+        service.generateVariants(
+          'art_1',
+          {
+            targets: [
+              { provider: 'SHOPIFY', connectionId: 'conn_shopify_de', channelLabel: 'Shopify DE' },
+              { provider: 'GHOST', channelLabel: 'Ghost JP', targetLocale: 'es-ES' },
+              { provider: 'GHOST', channelLabel: 'Ghost FR', targetLocale: 'fr-FR' },
+              { provider: 'DEVTO', channelLabel: 'Dev.to ES', targetLocale: 'es-ES' },
+              { provider: 'HASHNODE', channelLabel: 'Hashnode UK', targetLocale: 'en-GB' },
+            ],
+          },
+          { tenantId: 't_1' },
+          { idempotencyKey: 'idem_sync_multilocale_1' },
+        ),
+      ).rejects.toMatchObject({ status: 409, code: BILLING_ERROR.CONFLICT });
+
+      // 2. Async GeoVariantJob via VariantJobRunner.process()
+      storedTasks.clear();
+      const job = await service.createVariantJob(
+        'art_1',
+        {
+          targets: [
+            { provider: 'SHOPIFY', connectionId: 'conn_shopify_de', channelLabel: 'Shopify DE' },
+            { provider: 'GHOST', channelLabel: 'Ghost JP', targetLocale: 'ja-JP' },
+            { provider: 'GHOST', channelLabel: 'Ghost FR', targetLocale: 'fr-FR' },
+          ],
+        },
+        { tenantId: 't_1' },
+        { idempotencyKey: 'idem_async_multilocale_1' },
+      );
+      expect(job.status).toBe('QUEUED');
+
+      // Verify normalized targetsJson persisted with resolved targetLocale & auto-matched connectionId
+      const storedJobRow = await prismaStub.scoped.geoVariantJob.findFirst({
+        where: { id: job.id },
+      });
+      const storedTargets = storedJobRow?.targetsJson as Array<{
+        provider: string;
+        connectionId?: string;
+        targetLocale?: string;
+      }>;
+      expect(storedTargets).toEqual([
+        expect.objectContaining({
+          provider: 'SHOPIFY',
+          connectionId: 'conn_shopify_de',
+          targetLocale: 'de-DE',
+        }),
+        expect.objectContaining({
+          provider: 'GHOST',
+          connectionId: 'conn_ghost_ja',
+          targetLocale: 'ja-JP',
+        }),
+        expect.objectContaining({
+          provider: 'GHOST',
+          targetLocale: 'fr-FR',
+        }),
+      ]);
+      expect(storedTargets[2]?.connectionId).toBeUndefined();
+
+      // Async idempotency conflict (409) when mutating targetLocale with same Idempotency-Key
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          {
+            targets: [
+              { provider: 'SHOPIFY', connectionId: 'conn_shopify_de', channelLabel: 'Shopify DE' },
+              { provider: 'GHOST', channelLabel: 'Ghost JP', targetLocale: 'de-DE' },
+              { provider: 'GHOST', channelLabel: 'Ghost FR', targetLocale: 'fr-FR' },
+            ],
+          },
+          { tenantId: 't_1' },
+          { idempotencyKey: 'idem_async_multilocale_1' },
+        ),
+      ).rejects.toMatchObject({ status: 409, code: BILLING_ERROR.CONFLICT });
+
+      // Execute async job through actual VariantJobRunner
+      const runner = new VariantJobRunner(service);
+      await runner.process({ tenantId: 't_1', jobId: job.id });
+
+      const finalJob = await service.getVariantJob('art_1', job.id);
+      expect(finalJob.status).toBe('COMPLETED');
+      expect(finalJob.doneCount).toBe(3);
+      expect(finalJob.totalChargedPoints).toBe(6);
+
+      const createdAsyncTasks = finalJob.taskIds.map((id) => storedTasks.get(id)!);
+      expect(createdAsyncTasks.map((t) => t.targetLocale)).toEqual(['de-DE', 'ja-JP', 'fr-FR']);
+      expect(createdAsyncTasks.map((t) => t.connectionId)).toEqual([
+        'conn_shopify_de',
+        'conn_ghost_ja',
+        null,
+      ]);
+      for (const t of createdAsyncTasks) {
+        const dto = presentDistributionTask(t);
+        expect(dto.targetLocale).toBe(t.targetLocale);
+        expect(dto.preflightJson?.ok).toBe(true);
+      }
+    });
+
+    it('rejects cross-market & unenabled supportedLocales with 400 BEFORE billing.reserve in both sync and async paths', async () => {
+      const { service, billingStub } = makeHarness({
+        market: 'GLOBAL',
+        unitPrice: 2,
+        article: {
+          id: 'art_1',
+          tenantId: 't_1',
+          brandId: 'b_1',
+          brandMarketId: 'bm_1',
+          targetLocale: 'en-US',
+          title: 'NebulaNAS Guide',
+          targetPrompt: 'Best NAS',
+          contentMarkdown: 'NebulaNAS 21 dB.',
+          schemaJsonLd: {},
+          llmsTxtSnippet: null,
+          geoScore: 86,
+          brand: { id: 'b_1', name: 'NebulaNAS', category: 'NAS' },
+          brandMarket: {
+            id: 'bm_1',
+            market: 'GLOBAL',
+            locale: 'en-US',
+            supportedLocales: ['en-US', 'de-DE'],
+            localBrandName: 'NebulaNAS',
+            localCategory: 'NAS',
+            aliases: [],
+            ownedDomains: [],
+            competitors: [],
+          },
+          brief: null,
+        },
+      });
+
+      // Cross-market zh-CN on GLOBAL -> 400
+      await expect(
+        service.generateVariants(
+          'art_1',
+          { targets: [{ provider: 'GHOST', channelLabel: 'Ghost CN', targetLocale: 'zh-CN' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      // Locale not in supportedLocales (fr-FR not in ['en-US', 'de-DE']) -> 400
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'GHOST', channelLabel: 'Ghost FR', targetLocale: 'fr-FR' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      // CN-only provider WECHAT_OFFICIAL on GLOBAL market -> 400
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'WECHAT_OFFICIAL', channelLabel: 'WeChat' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      expect(billingStub.reserve).not.toHaveBeenCalled();
+
+      // CN market rejecting de-DE -> 400 with 0 reserve
+      const cnHarness = makeHarness({ market: 'CN', unitPrice: 2 });
+      await expect(
+        cnHarness.service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'GHOST', channelLabel: 'Ghost DE', targetLocale: 'de-DE' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+      expect(cnHarness.billingStub.reserve).not.toHaveBeenCalled();
+    });
+
+    it('renders safe WeChat inline HTML via renderVariantHtml and normalizes German umlauts & Japanese fallback slugs', () => {
+      const html = renderVariantHtml(
+        '> 核心结论：测试\n\n## 对比\n\n<script>alert(1)</script>正文内容',
+        'WECHAT_OFFICIAL_ARTICLE',
+      );
+      expect(html).toContain('<section style=');
+      expect(html).toContain('<h2 style=');
+      expect(html).not.toContain('<script');
+      expect(normalizeVariantSlug(null, 'Größere Übersicht für NAS', 'AstraVault')).toBe(
+        'groessere-uebersicht-fuer-nas',
+      );
+      expect(normalizeVariantSlug(null, '静音ストレージ比較ガイド', 'AstraVault')).toBe(
+        'astravault-geo-guide',
+      );
+    });
+
+    it('Iter 2 Fix 1: blocks CN-only templates (WECHAT_OFFICIAL_ARTICLE / CN_COMMUNITY_QA) on GLOBAL market regardless of provider with 400 and 0 pts reserved', async () => {
+      const { service, billingStub } = makeHarness({
+        market: 'GLOBAL',
+        unitPrice: 2,
+      });
+
+      await expect(
+        service.generateVariants(
+          'art_1',
+          {
+            targets: [
+              {
+                provider: 'WORDPRESS',
+                templateKey: 'WECHAT_OFFICIAL_ARTICLE',
+                channelLabel: 'Sneaky WeChat',
+                targetLocale: 'en-US',
+              },
+            ],
+          },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          {
+            targets: [
+              {
+                provider: 'SHOPIFY',
+                templateKey: 'CN_COMMUNITY_QA',
+                channelLabel: 'Sneaky CN QA',
+              },
+            ],
+          },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      expect(billingStub.reserve).not.toHaveBeenCalled();
+    });
+
+    it('Iter 2 Fix 3: rejects private/loopback/SSRF URLs in resolveDeveloperCanonicalUrl, resolveWechatContentSourceUrl & finalizeRealLlmVariantDraft', () => {
+      const ssrfUrls = [
+        'http://127.0.0.1/admin',
+        'http://localhost:3000/internal',
+        'http://169.254.169.254/latest/meta-data/',
+        'http://[::1]/secret',
+        'http://10.0.0.1/panel',
+        'http://192.168.1.10/status',
+        'javascript:alert(1)',
+      ];
+      const noOwnedCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        ownedDomains: [],
+        targetUrlHint: null,
+      });
+      const safeOwnedCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        ownedDomains: ['nebulanas.example.com'],
+        targetUrlHint: null,
+      });
+
+      for (const badUrl of ssrfUrls) {
+        expect(resolveDeveloperCanonicalUrl(badUrl, noOwnedCtx, 'test-slug')).toBeNull();
+        expect(resolveDeveloperCanonicalUrl(badUrl, safeOwnedCtx, 'test-slug')).toBe(
+          'https://nebulanas.example.com/guides/test-slug',
+        );
+        expect(
+          resolveWechatContentSourceUrl(
+            makePromptCtx({
+              market: 'CN',
+              provider: 'WECHAT_OFFICIAL',
+              targetUrlHint: badUrl,
+              ownedDomains: [],
+            }),
+          ),
+        ).toBeNull();
+        expect(
+          resolveWechatContentSourceUrl(
+            makePromptCtx({
+              market: 'CN',
+              provider: 'WECHAT_OFFICIAL',
+              targetUrlHint: badUrl,
+              ownedDomains: ['aurora.example.cn'],
+            }),
+          ),
+        ).toBe('https://aurora.example.cn');
+      }
+
+      // Unsafe ownedDomain itself (e.g. '127.0.0.1') must also be rejected
+      const badOwnedCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        ownedDomains: ['127.0.0.1'],
+        targetUrlHint: 'http://127.0.0.1:8080/internal',
+      });
+      expect(resolveDeveloperCanonicalUrl(null, badOwnedCtx, 'test-slug')).toBeNull();
+
+      // Real LLM canonicalUrl + canonicalGuideHint pointing to loopback are stripped
+      const finalized = finalizeRealLlmVariantDraft(
+        JSON.stringify({
+          variantTitle: 'NebulaNAS N4 Architecture Benchmarks',
+          variantSlug: 'nebulanas-n4-arch',
+          variantMetaDesc:
+            'Independent architecture review and verified acoustic benchmarks for NebulaNAS N4 across four bays with reproducible YAML checks and transparent trade-offs.',
+          canonicalUrl: 'http://127.0.0.1/admin/secret',
+          canonicalGuideHint: 'http://169.254.169.254/latest/meta-data/',
+          variantMarkdown:
+            '## Summary\n\nNebulaNAS N4 operates at 21 dB.\n\n```yaml\nnoise_db: 21\n```\n\n## Frequently Asked Questions (FAQ)\n\n**Q: Quiet?**\nA: Yes.',
+        }),
+        noOwnedCtx,
+      );
+      expect(finalized.variantExtrasJson.canonicalUrl).toBeNull();
+      expect(finalized.variantExtrasJson.canonicalGuideHint).not.toContain('127.0.0.1');
+      expect(finalized.variantExtrasJson.canonicalGuideHint).not.toContain('169.254.169.254');
+    });
+
+    it('Iter 2 Fix 4: enforces UTF-16 surrogate-safe length <= 64 on WECHAT_OFFICIAL_ARTICLE titles (emoji boundaries + WechatOfficialConnector compatibility)', async () => {
+      const hasUnpairedSurrogate = (str: string) =>
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(str) ||
+        /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(str);
+
+      const trickyTitles = ['测'.repeat(63) + '🔥', '🔥'.repeat(33), '测'.repeat(60) + '🔥🔥🔥'];
+      const wechatHttpStub = {
+        assertAllowedUrl: vi.fn(async (u: string) => new URL(u)),
+        request: vi.fn(async (req: { url: string }) => {
+          if (req.url.includes('stable_token')) {
+            return {
+              status: 200,
+              headers: {},
+              body: JSON.stringify({ access_token: 'tok_test_1', expires_in: 7200 }),
+              rawBody: Buffer.from('{}'),
+              finalUrl: req.url,
+            };
+          }
+          return {
+            status: 200,
+            headers: {},
+            body: JSON.stringify({ media_id: 'draft_media_1' }),
+            rawBody: Buffer.from('{}'),
+            finalUrl: req.url,
+          };
+        }),
+      };
+      const connector = new WechatOfficialConnector(wechatHttpStub as never);
+
+      for (const trickyTitle of trickyTitles) {
+        const wechatCtx = makePromptCtx({
+          market: 'CN',
+          provider: 'WECHAT_OFFICIAL',
+          articleTitle: trickyTitle,
+          channelLabel: '公众号',
+        });
+
+        const fake = buildDeterministicFakeVariantDraft(wechatCtx);
+        expect(fake.variantTitle.length).toBeLessThanOrEqual(WECHAT_TITLE_MAX_LEN);
+        expect(fake.variantTitle.length).toBeGreaterThan(0);
+        expect(hasUnpairedSurrogate(fake.variantTitle)).toBe(false);
+
+        const real = finalizeRealLlmVariantDraft(
+          JSON.stringify({
+            variantTitle: trickyTitle,
+            digest: '星云存储 N4 四盘位家用静音 NAS 实测噪音 21dB，待机功耗 9W。',
+            variantMarkdown:
+              '> 核心结论：实测噪音 21dB。\n\n## 参数对照\n\n星云存储 N4 支持四盘位静音运行。',
+          }),
+          wechatCtx,
+        );
+        expect(real.variantTitle.length).toBeLessThanOrEqual(WECHAT_TITLE_MAX_LEN);
+        expect(real.variantTitle.length).toBeGreaterThan(0);
+        expect(hasUnpairedSurrogate(real.variantTitle)).toBe(false);
+
+        // Verify downstream WechatOfficialConnector accepts the generated title without HTTP 422
+        const pubRes = await connector.publish(
+          {
+            id: 'conn_wx_1',
+            provider: 'WECHAT_OFFICIAL',
+            displayName: '公众号',
+            siteBaseUrl: 'https://api.weixin.qq.com',
+            configJson: { defaultThumbMediaId: 'thumb_123', defaultPublishAsDraft: true },
+            authType: 'API_KEY',
+          },
+          { appId: 'wx_app_1', appSecret: 'wx_sec_1' },
+          {
+            taskId: 'task_wx_1',
+            articleId: 'art_1',
+            market: 'CN',
+            channelLabel: '公众号',
+            title: real.variantTitle,
+            slug: null,
+            metaDesc: real.variantMetaDesc,
+            markdown: real.variantMarkdown,
+            html: real.variantHtml,
+            publishAsDraft: true,
+            tags: [],
+            extras: real.variantExtrasJson as unknown as Record<string, unknown>,
+            deliveryId: 'dist_wx_1',
+          },
+        );
+        expect(pubRes.publishedAsDraft).toBe(true);
+        expect(pubRes.remotePostId).toBe('draft_media_1');
+      }
+
+      // Full generateVariants post-compliance path with surrogate-boundary title
+      const realLlm = {
+        usesFakePrimary: () => false,
+        hasFakeFallback: () => false,
+        complete: vi.fn().mockResolvedValueOnce({
+          provider: 'deepseek',
+          model: 'deepseek-chat',
+          fake: false,
+          text: JSON.stringify({
+            variantTitle: '测'.repeat(63) + '🔥',
+            digest: '星云存储 N4 实测噪音 21dB，待机功耗 9W，适合家庭客厅稳定运行。',
+            variantMarkdown:
+              '> 核心结论：星云存储 N4 满载噪音 21dB。\n\n## 实测明细\n\n待机功耗 9W。',
+          }),
+          tokensIn: 50,
+          tokensOut: 80,
+          cost: 0,
+        }),
+      } as unknown as LlmService;
+      const { service } = makeHarness({ market: 'CN', unitPrice: 2, llm: realLlm });
+      const res = await service.generateVariants(
+        'art_1',
+        { targets: [{ provider: 'WECHAT_OFFICIAL', channelLabel: '公众号' }] },
+        { tenantId: 't_1' },
+      );
+      expect(res.tasks[0]!.variantTitle.length).toBeLessThanOrEqual(WECHAT_TITLE_MAX_LEN);
+      expect(hasUnpairedSurrogate(res.tasks[0]!.variantTitle)).toBe(false);
+    });
+
+    it('Iter 2 Fix 7: enforces empty supportedLocales as [brandMarketDefaultLocale] and validates linkedConnLocale pre-reserve', async () => {
+      const { service, billingStub } = makeHarness({
+        market: 'GLOBAL',
+        unitPrice: 2,
+        article: {
+          id: 'art_1',
+          tenantId: 't_1',
+          brandId: 'b_1',
+          brandMarketId: 'bm_1',
+          targetLocale: 'en-US',
+          title: 'NebulaNAS Guide',
+          targetPrompt: 'Best quiet NAS',
+          contentMarkdown: 'NebulaNAS runs at 21 dB.',
+          schemaJsonLd: {},
+          llmsTxtSnippet: null,
+          geoScore: 86,
+          brand: { id: 'b_1', name: 'NebulaNAS', category: 'NAS' },
+          brandMarket: {
+            id: 'bm_1',
+            market: 'GLOBAL',
+            locale: 'en-US',
+            supportedLocales: [],
+            localBrandName: 'NebulaNAS',
+            localCategory: 'NAS',
+            aliases: [],
+            ownedDomains: [],
+            competitors: [],
+          },
+          brief: null,
+        },
+        connections: {
+          conn_fr_disabled_locale: {
+            id: 'conn_fr_disabled_locale',
+            brandId: 'b_1',
+            brandMarketId: 'bm_1',
+            provider: 'GHOST',
+            displayName: 'Ghost FR',
+            status: 'ACTIVE',
+            targetLocale: 'fr-FR',
+            configJson: { defaultPublishAsDraft: true },
+          },
+        },
+      });
+
+      // supportedLocales: [] on GLOBAL (locale: 'en-US') -> rejects explicit de-DE pre-reserve
+      await expect(
+        service.generateVariants(
+          'art_1',
+          { targets: [{ provider: 'GHOST', channelLabel: 'Ghost DE', targetLocale: 'de-DE' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      await expect(
+        service.createVariantJob(
+          'art_1',
+          { targets: [{ provider: 'GHOST', channelLabel: 'Ghost DE', targetLocale: 'de-DE' }] },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      // Omitting targetLocale with a connection whose targetLocale ('fr-FR') is not enabled -> rejects 400 pre-reserve
+      await expect(
+        service.generateVariants(
+          'art_1',
+          {
+            targets: [
+              {
+                provider: 'GHOST',
+                connectionId: 'conn_fr_disabled_locale',
+                channelLabel: 'Ghost FR',
+              },
+            ],
+          },
+          { tenantId: 't_1' },
+        ),
+      ).rejects.toMatchObject({ status: 400, code: API_ERROR.BAD_REQUEST });
+
+      expect(billingStub.reserve).not.toHaveBeenCalled();
+
+      // Default locale 'en-US' and omitted targetLocale succeed cleanly
+      const okRes = await service.generateVariants(
+        'art_1',
+        {
+          targets: [
+            { provider: 'GHOST', channelLabel: 'Ghost US', targetLocale: 'en-US' },
+            { provider: 'PR_PACKET', channelLabel: 'PR Default' },
+          ],
+        },
+        { tenantId: 't_1' },
+      );
+      expect(okRes.tasks).toHaveLength(2);
+      expect(okRes.tasks.map((t) => t.targetLocale)).toEqual(['en-US', 'en-US']);
+    });
+
+    it('Iter 2 Fix 8: parses LLM JSON with prose braces, nested code fences & trailing curl snippets via balanced-brace scanner', () => {
+      const prosePreambleWithFence =
+        'Output matching {variantTitle}:\n```json\n{"variantTitle":"NebulaNAS Guide","variantMarkdown":"```yaml\\na: {b}\\n```"}\n```';
+      expect(extractJsonObject(prosePreambleWithFence)).toEqual({
+        variantTitle: 'NebulaNAS Guide',
+        variantMarkdown: '```yaml\na: {b}\n```',
+      });
+
+      const trailingProseBraces =
+        '```json\n{"variantTitle":"NebulaNAS Guide","variantMarkdown":"## Overview\\n\\nMeasured 21 dB noise floor with {nested} literal."}\n```\nNote: update {domain} before publishing.';
+      expect(extractJsonObject(trailingProseBraces)).toEqual({
+        variantTitle: 'NebulaNAS Guide',
+        variantMarkdown: '## Overview\n\nMeasured 21 dB noise floor with {nested} literal.',
+      });
+
+      const trailingBashCurl =
+        '```json\n{"variantTitle":"NebulaNAS Guide","variantMarkdown":"## Overview\\n\\nVerified 21 dB acoustics and 9W idle."}\n```\nExample curl:\n```bash\ncurl -d \'{"test":1}\'\n```';
+      expect(extractJsonObject(trailingBashCurl)).toEqual({
+        variantTitle: 'NebulaNAS Guide',
+        variantMarkdown: '## Overview\n\nVerified 21 dB acoustics and 9W idle.',
+      });
+
+      const rawJsonAfterProseBrace =
+        'Schema {a}:\n{"variantTitle":"NebulaNAS Raw","variantMarkdown":"## Overview\\n\\nVerified 21 dB acoustics across four drives."}\nTail {b}.';
+      expect(extractJsonObject(rawJsonAfterProseBrace)).toEqual({
+        variantTitle: 'NebulaNAS Raw',
+        variantMarkdown: '## Overview\n\nVerified 21 dB acoustics across four drives.',
+      });
+    });
+
+    it('Iter 2 Fix 9: strips trailing hyphen in normalizeDeveloperTechTags and trims targetLocale in presentDistributionTask', () => {
+      const hashnodeCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'HASHNODE',
+      });
+      const tags = normalizeDeveloperTechTags(['a'.repeat(29) + '-bbbb'], hashnodeCtx);
+      expect(tags[0]).toBe('a'.repeat(29));
+      expect(tags[0]?.endsWith('-')).toBe(false);
+
+      const now = new Date();
+      const dto = presentDistributionTask({
+        id: 'task_trim_1',
+        brandId: 'b_1',
+        brandMarketId: 'bm_1',
+        articleId: 'art_1',
+        connectionId: null,
+        provider: 'GHOST',
+        mode: 'L1_API',
+        channelLabel: 'Ghost DE',
+        targetLocale: '  de-DE  ',
+        targetUrlHint: null,
+        variantTitle: 'NebulaNAS Test',
+        variantSlug: 'nebulanas-test',
+        variantMetaDesc: 'Test',
+        variantMarkdown: 'Test',
+        variantHtml: '<p>Test</p>',
+        variantExtrasJson: {},
+        preflightJson: null,
+        status: 'DRAFT_VARIANT',
+        publishAsDraft: true,
+        remotePostId: null,
+        remoteAdminUrl: null,
+        remotePublishedUrl: null,
+        indexNowStatus: null,
+        lastError: null,
+        shareExpiresAt: null,
+        publishedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      expect(dto.targetLocale).toBe('de-DE');
+    });
+
+    it('Iter 3 Fix 1: sanitizeCanonicalGuideHint blocks protocol-relative, dangerous-scheme, and prose-embedded SSRF URLs while preserving safe hints', () => {
+      const blockedHints: unknown[] = [
+        null,
+        undefined,
+        '',
+        '   ',
+        123,
+        '//127.0.0.1/admin',
+        '//169.254.169.254/latest',
+        '//evil.com/path',
+        'http://127.0.0.1/admin',
+        'http://[::1]/secret',
+        'Read full benchmark at http://169.254.169.254/latest/meta-data/',
+        'See http://127.0.0.1/secret',
+        'See //127.0.0.1/admin',
+        'See //evil.com/path',
+        'Click javascript:alert(1)',
+        'Click javascript: alert(1)',
+        'See data:text/html,<script>alert(1)</script>',
+        'See file:///etc/passwd',
+        'See ftp://127.0.0.1/archive.zip',
+        'Note: check http://10.0.0.1/internal',
+      ];
+      for (const badHint of blockedHints) {
+        expect(sanitizeCanonicalGuideHint(badHint)).toBeNull();
+      }
+
+      const allowedHints = [
+        'https://docs.example.com/guide',
+        'Read full guide at https://docs.example.com/guide.',
+        'Original guide on docs.example.com',
+        'Note: full benchmark available at https://docs.example.com/guide.',
+      ];
+      for (const goodHint of allowedHints) {
+        expect(sanitizeCanonicalGuideHint(goodHint)).toBe(goodHint);
+      }
+
+      // End-to-end via finalizeRealLlmVariantDraft: protocol-relative & prose-embedded SSRF hints are stripped
+      const noOwnedCtx = makePromptCtx({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        ownedDomains: [],
+        targetUrlHint: null,
+      });
+      for (const badHint of [
+        '//127.0.0.1/admin',
+        'Read full benchmark at http://169.254.169.254/latest/meta-data/',
+      ]) {
+        const finalized = finalizeRealLlmVariantDraft(
+          JSON.stringify({
+            variantTitle: 'NebulaNAS N4 Architecture Benchmarks',
+            variantSlug: 'nebulanas-n4-arch',
+            variantMetaDesc:
+              'Independent architecture review and verified acoustic benchmarks for NebulaNAS N4 across four bays with reproducible YAML checks and transparent trade-offs.',
+            canonicalGuideHint: badHint,
+            variantMarkdown:
+              '## Summary\n\nNebulaNAS N4 operates at 21 dB.\n\n```yaml\nnoise_db: 21\n```\n\n## Frequently Asked Questions (FAQ)\n\n**Q: Quiet?**\nA: Yes.',
+          }),
+          noOwnedCtx,
+        );
+        expect(finalized.variantExtrasJson.canonicalGuideHint).not.toContain('127.0.0.1');
+        expect(finalized.variantExtrasJson.canonicalGuideHint).not.toContain('169.254.169.254');
+      }
     });
   });
 });

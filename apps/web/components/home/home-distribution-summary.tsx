@@ -5,23 +5,70 @@ import {
   RETEST_SCHEDULE_STATUS_LABELS,
   formatShanghaiDate,
   formatShanghaiDateTime,
+  type ActionHomeResponse,
+  type ConfidenceLevel,
   type CrawlProbeStatus,
+  type DidDirection,
   type DistributionChannelAttributionItem,
   type DistributionSummaryDto,
   type RetestScheduleStatus,
   type VisibilitySentiment,
+  type WilsonInterval,
 } from '@geomix/shared';
 import { Button, Tag } from 'antd';
 import type { JSX } from 'react';
 import { GM } from '../../lib/design-tokens';
-import { SentimentDot, SignalEmpty, SignalPill } from '../geo/primitives';
+import { SentimentDot, SignalEmpty, SignalPill, type SignalTone } from '../geo/primitives';
 
 export type HomeDistributionSummaryProps = {
   summary?: DistributionSummaryDto | null;
+  recentArticles?: readonly ActionHomeResponse['recentArticles'][number][];
   onOpenArticle: (articleId: string) => void;
   onOpenPoints?: () => void;
   onOpenStudio?: () => void;
+  onOpenRoiReportModal?: () => void;
 };
+
+const CONFIDENCE_LABELS: Record<ConfidenceLevel, string> = {
+  HIGH: '高置信',
+  MEDIUM: '中置信',
+  LOW: '低置信',
+  INSUFFICIENT: '样本不足',
+};
+
+const CONFIDENCE_TONE: Record<ConfidenceLevel, SignalTone> = {
+  HIGH: 'cited',
+  MEDIUM: 'info',
+  LOW: 'warning',
+  INSUFFICIENT: 'neutral',
+};
+
+const DID_DIRECTION_LABELS: Record<DidDirection, string> = {
+  POSITIVE: '正向净增益',
+  NEGATIVE: '负向变化',
+  NEUTRAL: '无显著净差',
+};
+
+const DID_DIRECTION_TONE: Record<DidDirection, SignalTone> = {
+  POSITIVE: 'cited',
+  NEGATIVE: 'danger',
+  NEUTRAL: 'neutral',
+};
+
+function isValidWilson(wilson: WilsonInterval | null | undefined): wilson is WilsonInterval {
+  return Boolean(
+    wilson &&
+    isFiniteNumber(wilson.lower) &&
+    isFiniteNumber(wilson.upper) &&
+    isFiniteNumber(wilson.trials) &&
+    wilson.trials > 0,
+  );
+}
+
+function formatDidPp(fraction: number): string {
+  const pp = fraction * 100;
+  return `${pp > 0 ? '+' : ''}${pp.toFixed(1)}pp`;
+}
 
 const KNOWN_SENTIMENTS = new Set<string>(['positive', 'neutral', 'mixed', 'negative']);
 
@@ -60,22 +107,54 @@ function renderCitationCell(row: DistributionChannelAttributionItem): JSX.Elemen
       isFiniteNumber(row.citationHitCount) &&
       isFiniteNumber(row.completedRetestCount) &&
       row.completedRetestCount > 0;
+    const wilson = isValidWilson(row.citationHitWilson) ? row.citationHitWilson : null;
+    const isLowSample = wilson ? wilson.confidenceLevel === 'LOW' || wilson.trials < 5 : false;
     return (
-      <span
-        className="gm-num"
-        style={{
-          color: row.citationHitRate > 0 ? GM.sig.cited : GM.fg.f2,
-          fontWeight: row.citationHitRate > 0 ? 600 : 400,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {pct}%
-        {hasCount ? (
-          <span style={{ color: GM.fg.f3, marginLeft: 4 }}>
-            ({row.citationHitCount}/{row.completedRetestCount})
-          </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        <span
+          className="gm-num"
+          style={{
+            color: row.citationHitRate > 0 ? GM.sig.cited : GM.fg.f2,
+            fontWeight: row.citationHitRate > 0 ? 600 : 400,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {pct}%
+          {hasCount ? (
+            <span style={{ color: GM.fg.f3, marginLeft: 4 }}>
+              ({row.citationHitCount}/{row.completedRetestCount})
+            </span>
+          ) : null}
+        </span>
+        {wilson ? (
+          <div
+            data-testid={`channel-wilson-ci-${row.channel}`}
+            style={{
+              display: 'inline-flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 11,
+              color: GM.fg.f3,
+            }}
+          >
+            <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
+              95% CI [{(wilson.lower * 100).toFixed(1)}%, {(wilson.upper * 100).toFixed(1)}%]
+            </span>
+            <SignalPill tone={CONFIDENCE_TONE[wilson.confidenceLevel]}>
+              {CONFIDENCE_LABELS[wilson.confidenceLevel]}
+            </SignalPill>
+            {isLowSample ? (
+              <span
+                data-testid={`channel-low-sample-hint-${row.channel}`}
+                style={{ color: GM.status.warning, whiteSpace: 'nowrap' }}
+              >
+                样本较少，建议开启 3× 采样
+              </span>
+            ) : null}
+          </div>
         ) : null}
-      </span>
+      </div>
     );
   }
 
@@ -177,16 +256,89 @@ function renderSentimentCell(
 
 export function HomeDistributionSummary({
   summary,
+  recentArticles,
   onOpenArticle,
   onOpenPoints,
   onOpenStudio,
+  onOpenRoiReportModal,
 }: HomeDistributionSummaryProps): JSX.Element {
   const crawlAlerts = summary?.crawlAlerts ?? [];
   const upcomingRetests = summary?.upcomingRetests ?? [];
   const channelAttribution = summary?.channelAttribution ?? [];
 
+  // Derive Statistical Confidence & DiD Net Lift summary from completed retestSchedules
+  const completedRetests = (recentArticles ?? []).flatMap((article) =>
+    (article.publishRecord?.retestSchedules ?? [])
+      .filter((sched) => sched.status === 'COMPLETED')
+      .map((sched) => ({ articleTitle: article.title, sched })),
+  );
+
+  const didSamples = completedRetests.filter((entry) => {
+    const did = entry.sched.controlMetricsJson?.did;
+    return (
+      did &&
+      isFiniteNumber(did.netLift) &&
+      isFiniteNumber(did.treatmentDelta) &&
+      isFiniteNumber(did.controlDelta)
+    );
+  });
+
+  const didSummary =
+    didSamples.length > 0
+      ? (() => {
+          const avgTreatment =
+            didSamples.reduce(
+              (sum, e) => sum + (e.sched.controlMetricsJson?.did?.treatmentDelta ?? 0),
+              0,
+            ) / didSamples.length;
+          const avgControl =
+            didSamples.reduce(
+              (sum, e) => sum + (e.sched.controlMetricsJson?.did?.controlDelta ?? 0),
+              0,
+            ) / didSamples.length;
+          const avgNetLift =
+            didSamples.reduce(
+              (sum, e) => sum + (e.sched.controlMetricsJson?.did?.netLift ?? 0),
+              0,
+            ) / didSamples.length;
+          const direction: DidDirection =
+            avgNetLift > 1e-6 ? 'POSITIVE' : avgNetLift < -1e-6 ? 'NEGATIVE' : 'NEUTRAL';
+          const latestWilson =
+            didSamples.find((e) => isValidWilson(e.sched.metricsSnapshot?.wilson))?.sched
+              .metricsSnapshot?.wilson ?? null;
+          return {
+            count: didSamples.length,
+            treatmentDelta: avgTreatment,
+            controlDelta: avgControl,
+            netLift: avgNetLift,
+            direction,
+            wilson: latestWilson,
+          };
+        })()
+      : null;
+
+  const latestCompletedWilson =
+    didSummary?.wilson ??
+    completedRetests.find((e) => isValidWilson(e.sched.metricsSnapshot?.wilson))?.sched
+      .metricsSnapshot?.wilson ??
+    channelAttribution.find((row) => isValidWilson(row.citationHitWilson))?.citationHitWilson ??
+    null;
+
+  const hasLowSampleWarning =
+    (latestCompletedWilson !== null &&
+      (latestCompletedWilson.confidenceLevel === 'LOW' || latestCompletedWilson.trials < 5)) ||
+    channelAttribution.some(
+      (row) =>
+        isValidWilson(row.citationHitWilson) &&
+        (row.citationHitWilson.confidenceLevel === 'LOW' || row.citationHitWilson.trials < 5),
+    );
+
   const isEmpty =
-    crawlAlerts.length === 0 && upcomingRetests.length === 0 && channelAttribution.length === 0;
+    crawlAlerts.length === 0 &&
+    upcomingRetests.length === 0 &&
+    channelAttribution.length === 0 &&
+    !didSummary &&
+    !latestCompletedWilson;
 
   const hasDegradedCitation = channelAttribution.some(
     (item) =>
@@ -210,11 +362,30 @@ export function HomeDistributionSummary({
           </p>
         </div>
 
-        {onOpenStudio ? (
-          <Button size="small" type="link" onClick={onOpenStudio} style={{ whiteSpace: 'nowrap' }}>
-            进入写作与分发台
-          </Button>
-        ) : null}
+        <div style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          {onOpenRoiReportModal ? (
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              data-testid="home-summary-roi-report-btn"
+              onClick={onOpenRoiReportModal}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              生成月度 GEO ROI 报告
+            </Button>
+          ) : null}
+          {onOpenStudio ? (
+            <Button
+              size="small"
+              type="link"
+              onClick={onOpenStudio}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              进入写作与分发台
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {isEmpty ? (
@@ -224,6 +395,94 @@ export function HomeDistributionSummary({
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+          {/* 0. Statistical Confidence (Wilson 95% CI) & DiD Net Lift Indicator Strip */}
+          {didSummary || latestCompletedWilson ? (
+            <div
+              data-testid="home-did-confidence-strip"
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'var(--gm-bg-elevated, #171B1A)',
+                border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                minWidth: 0,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 10,
+                  minWidth: 0,
+                }}
+              >
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: GM.fg.f1 }}>
+                  统计置信与对照组 DiD 归因
+                </span>
+                {didSummary ? (
+                  <>
+                    <SignalPill tone={DID_DIRECTION_TONE[didSummary.direction]}>
+                      {DID_DIRECTION_LABELS[didSummary.direction]}
+                    </SignalPill>
+                    <span
+                      data-testid="home-did-net-lift"
+                      className="gm-num"
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color:
+                          didSummary.direction === 'POSITIVE'
+                            ? GM.sig.cited
+                            : didSummary.direction === 'NEGATIVE'
+                              ? GM.status.danger
+                              : GM.fg.f2,
+                      }}
+                    >
+                      DiD 净增益 {formatDidPp(didSummary.netLift)}
+                    </span>
+                    <span className="gm-num" style={{ fontSize: 12, color: GM.fg.f2 }}>
+                      处理组 Δ {formatDidPp(didSummary.treatmentDelta)} · 对照组 Δ{' '}
+                      {formatDidPp(didSummary.controlDelta)}（{didSummary.count} 次对照复测）
+                    </span>
+                  </>
+                ) : null}
+                {latestCompletedWilson ? (
+                  <span
+                    data-testid="home-wilson-summary"
+                    style={{
+                      display: 'inline-flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span className="gm-num" style={{ fontSize: 12, color: GM.fg.f2 }}>
+                      Wilson 95% CI [{(latestCompletedWilson.lower * 100).toFixed(1)}%,{' '}
+                      {(latestCompletedWilson.upper * 100).toFixed(1)}%]（n=
+                      {latestCompletedWilson.trials}）
+                    </span>
+                    <SignalPill tone={CONFIDENCE_TONE[latestCompletedWilson.confidenceLevel]}>
+                      {CONFIDENCE_LABELS[latestCompletedWilson.confidenceLevel]}
+                    </SignalPill>
+                  </span>
+                ) : null}
+              </div>
+
+              {hasLowSampleWarning ? (
+                <span
+                  data-testid="home-low-sample-hint"
+                  style={{ fontSize: 12, color: GM.status.warning }}
+                >
+                  当前样本量较少（n&lt;5），建议在复测中开启 3× 采样以收窄置信区间
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {/* 1. Crawl Alert Banner */}
           {crawlAlerts.length > 0 ? (
             <div

@@ -5,6 +5,7 @@ import {
   GEO_RECIPE_LABELS,
   GEO_TARGET_FORMAT_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
+  SUPPORTED_LOCALES,
   targetFormatsForMarket,
   type GeoBriefRecord,
   type GeoMarket,
@@ -12,6 +13,7 @@ import {
   type GeoRecipe,
   type GeoTargetFormat,
   type PromptPreferenceRecord,
+  type SupportedLocale,
 } from '@geomix/shared';
 import { Alert, Button, Input, InputNumber, Tag } from 'antd';
 import type { JSX } from 'react';
@@ -42,6 +44,9 @@ export type StudioPrewriteBarProps = {
   onStartStream: () => void;
   onAbortStream: () => void;
   readOnly: boolean;
+  availableLocales?: readonly SupportedLocale[];
+  targetLocale?: SupportedLocale;
+  onTargetLocaleChange?: (next: SupportedLocale) => void;
 };
 
 export function StudioPrewriteBar({
@@ -66,6 +71,9 @@ export function StudioPrewriteBar({
   onStartStream,
   onAbortStream,
   readOnly,
+  availableLocales,
+  targetLocale,
+  onTargetLocaleChange,
 }: StudioPrewriteBarProps): JSX.Element {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [draftToneNote, setDraftToneNote] = useState<string | null>(null);
@@ -139,7 +147,7 @@ export function StudioPrewriteBar({
               {linkedBrief.sourceCitationUrl &&
               /^https?:\/\//i.test(linkedBrief.sourceCitationUrl) ? (
                 <Tag color="gold" style={{ margin: 0 }} title={linkedBrief.sourceCitationUrl}>
-                  反制信源 ·{' '}
+                  {linkedBrief.sourceType === 'NEAR_MISS_BOOST' ? '补强页面 · ' : '反制信源 · '}
                   {linkedBrief.sourceCitationUrl.length > 36
                     ? `${linkedBrief.sourceCitationUrl.slice(0, 36)}…`
                     : linkedBrief.sourceCitationUrl}
@@ -207,6 +215,35 @@ export function StudioPrewriteBar({
             </button>
           ))}
         </div>
+        {activeMarket === 'GLOBAL' &&
+        availableLocales &&
+        availableLocales.length > 1 &&
+        onTargetLocaleChange ? (
+          <div
+            data-testid="studio-target-locale-selector"
+            style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+          >
+            <span className="gm-studio-section-label">目标写作语种</span>
+            <div className="gm-studio-chip-group" role="group" aria-label="目标写作语种">
+              {availableLocales.map((code) => {
+                const meta = SUPPORTED_LOCALES[code];
+                return (
+                  <button
+                    key={code}
+                    type="button"
+                    className="gm-studio-chip"
+                    data-testid={`studio-locale-${code}`}
+                    aria-pressed={targetLocale === code}
+                    disabled={streaming}
+                    onClick={() => onTargetLocaleChange(code)}
+                  >
+                    {meta ? `${meta.nativeLabel} (${code})` : code}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Item 3: Collapsed Advanced Preferences (PromptPreference) */}

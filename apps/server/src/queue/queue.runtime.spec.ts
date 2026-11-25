@@ -177,4 +177,55 @@ describe('QueueRuntime distribution queue isolation', () => {
 
     expect(driver.handle).not.toHaveBeenCalled();
   });
+
+  it('forwards validated targetLocale on geo-batch payloads and ignores unsupported values (#370)', async () => {
+    const { runtime, geoBatchRunner } = makeRuntime();
+
+    await runtime.dispatchJob('geo-batch', {
+      name: 'geo-batch',
+      data: {
+        tenantId: 'tenant_a',
+        jobId: 'gb_locale_1',
+        recipe: 'AUTHORITY_GUIDE',
+        targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+        targetLocale: 'de-DE',
+      },
+    });
+
+    await runtime.dispatchJob('geo-batch', {
+      name: 'geo-batch',
+      data: {
+        tenantId: 'tenant_a',
+        jobId: 'gb_locale_2',
+        targetLocale: 'xx-INVALID',
+      },
+    });
+
+    await runtime.dispatchJob('geo-batch', {
+      name: 'geo-batch',
+      data: {
+        tenantId: 'tenant_a',
+        jobId: 'gb_locale_3',
+        targetLocale: '  de-DE  ',
+      },
+    });
+
+    expect(geoBatchRunner.process).toHaveBeenCalledTimes(3);
+    expect(geoBatchRunner.process).toHaveBeenNthCalledWith(1, {
+      tenantId: 'tenant_a',
+      jobId: 'gb_locale_1',
+      recipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+      targetLocale: 'de-DE',
+    });
+    expect(geoBatchRunner.process).toHaveBeenNthCalledWith(2, {
+      tenantId: 'tenant_a',
+      jobId: 'gb_locale_2',
+    });
+    expect(geoBatchRunner.process).toHaveBeenNthCalledWith(3, {
+      tenantId: 'tenant_a',
+      jobId: 'gb_locale_3',
+      targetLocale: 'de-DE',
+    });
+  });
 });

@@ -20,9 +20,10 @@ export type DnsResolver = {
 
 export type TransportRequest = {
   url: URL;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT';
   headers: Record<string, string>;
   body?: string;
+  rawBody?: Buffer | Uint8Array;
   pinned: ResolvedAddress[];
   signal: AbortSignal;
   maxBytes: number;
@@ -95,9 +96,10 @@ export function createDnsResolver(): DnsResolver {
 
 export async function requestOnce(input: {
   url: string | URL;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT';
   headers?: Record<string, string>;
   body?: string;
+  rawBody?: Buffer | Uint8Array;
   timeoutMs: number;
   maxBytes: number;
   signal?: AbortSignal;
@@ -128,7 +130,8 @@ export async function requestOnce(input: {
       url,
       method: input.method,
       headers,
-      body: input.body,
+      body: input.body ?? (input.rawBody as unknown as string | undefined),
+      rawBody: input.rawBody,
       pinned,
       signal,
       maxBytes: input.maxBytes,

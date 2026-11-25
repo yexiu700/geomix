@@ -835,6 +835,91 @@ export class VisibilityCollectorService {
     const fanOutQueries = normalizeFanOutQueries(rawFanOuts, input.promptText);
     const citations = normalizeCollectedCitations(rawCitations);
 
+    const latencyMs = 180 + (digestBuf[1] ?? 0) * 3;
+    const isFallbackEngine =
+      input.engine === 'perplexity' || input.engine === 'gemini' || input.engine === 'google_aio';
+    const shouldEmitRetrievalSignals = !hasNoCitations && !isFallbackEngine;
+
+    let retrievalMeta: Record<string, unknown> = {};
+    if (shouldEmitRetrievalSignals) {
+      const isGapLike =
+        hasGap ||
+        hasEchoOnly ||
+        (!isRetest && !hasNegative && !hasLowRank && !hasEchoTrap && bucket === 3);
+      const signalTopic = isGapLike ? gapTopicCore : topicCore;
+
+      const citedRetrieved = citations.slice(0, 2).map((cite, idx) => ({
+        url: cite.url,
+        title: cite.title ?? undefined,
+        snippet: cite.snippet ?? undefined,
+        rank: idx + 1,
+        opened: idx === 0,
+      }));
+      const baseRank = citedRetrieved.length;
+
+      const ownedOpenedUrl = `https://${ownedDomain}/near-miss/opened-${slugB}`;
+      const thirdPartyOpenedUrl = isGlobal
+        ? `https://www.techradar.com/guides/nm-${slugB}`
+        : `https://zhuanlan.zhihu.com/p/nm-${slugB}`;
+      const ownedRetrievedUrl = `https://${ownedDomain}/near-miss/retrieved-${slugA}`;
+      const thirdPartyRetrievedUrl = isGlobal
+        ? `https://www.reddit.com/r/technology/comments/nm-${slugA}`
+        : `https://36kr.com/p/nm-${slugA}`;
+
+      retrievalMeta = {
+        serverToolSearchCount: 2,
+        serverToolFetchCount: 2,
+        retrievedSources: [
+          ...citedRetrieved,
+          {
+            url: ownedOpenedUrl,
+            title: isGlobal
+              ? `${input.brandName} ${signalTopic} Engineering Deep Dive`
+              : `${input.brandName}「${signalTopic}」深度参数与场景解析`,
+            snippet: isGlobal
+              ? `Opened official overview covering ${signalTopic} architecture and setup notes.`
+              : `官网深度解析页，涵盖「${signalTopic}」核心场景说明，可补充首段直答与对比表。`,
+            rank: baseRank + 1,
+            opened: true,
+          },
+          {
+            url: thirdPartyOpenedUrl,
+            title: isGlobal
+              ? `${signalTopic} Practical Buying Checklist`
+              : `${signalTopic} 深度选购避坑与实测参考`,
+            snippet: isGlobal
+              ? `Independent editorial guide opened during search synthesis for ${signalTopic}.`
+              : `第三方测评专栏文章，已被模型检索并读取正文。`,
+            rank: baseRank + 2,
+            opened: false,
+          },
+          {
+            url: ownedRetrievedUrl,
+            title: isGlobal
+              ? `${input.brandName} ${signalTopic} Spec Sheet`
+              : `${input.brandName}「${signalTopic}」产品规格手册`,
+            snippet: isGlobal
+              ? `Official specification page retrieved in search candidates for ${signalTopic}.`
+              : `官网产品规格页，已进入候选召回列表但尚未被点开或引用。`,
+            rank: baseRank + 3,
+            opened: false,
+          },
+          {
+            url: thirdPartyRetrievedUrl,
+            title: isGlobal
+              ? `${signalTopic} Community Benchmarks Thread`
+              : `2026「${signalTopic}」行业实测与口碑观察`,
+            snippet: isGlobal
+              ? `Community benchmark thread retrieved as candidate source for ${signalTopic}.`
+              : `行业媒体候选评测页，进入召回阶段但未入选最终引文。`,
+            rank: baseRank + 4,
+            opened: false,
+          },
+        ],
+        openedPages: [ownedOpenedUrl, thirdPartyOpenedUrl],
+      };
+    }
+
     return {
       collectorKind: 'fake',
       answerText,
@@ -843,6 +928,9 @@ export class VisibilityCollectorService {
       rawMeta: {
         fake: true,
         simulated: true,
+        provider: 'fake',
+        latencyMs,
+        ...(input.engine === 'google_aio' ? { aiOverviewTriggered: true } : {}),
         market,
         locale,
         region,
@@ -850,6 +938,7 @@ export class VisibilityCollectorService {
         scenarioBucket: bucket,
         scenario: scenarioTag,
         fingerprint: digestHex.slice(0, 16),
+        ...retrievalMeta,
         ...(citations.length === 0 ? { noCitations: true } : {}),
       },
     };

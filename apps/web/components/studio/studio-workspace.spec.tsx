@@ -2889,4 +2889,195 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(new URLSearchParams(window.location.search).get('articleId')).toBe(globalArticle.id);
     res4.unmount();
   });
+
+  it('shows conditional targetLocale selector only for multi-locale GLOBAL brands, wires it into streamGenerateArticle, and prevents ja-JP preflight false positives', async () => {
+    const multiLocaleBrand: BrandRecord = {
+      ...DUAL_BRAND,
+      markets: [
+        DUAL_BRAND.markets[0]!,
+        {
+          ...DUAL_BRAND.markets[1]!,
+          supportedLocales: ['en-US', 'ja-JP', 'de-DE'],
+        },
+      ],
+    };
+
+    // 1. CN market: targetLocale selector MUST be hidden
+    useWorkspaceStore.setState({
+      brands: [multiLocaleBrand],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: multiLocaleBrand.id,
+      activeMarket: 'CN',
+      hydrated: true,
+      contextEpoch: 10,
+    });
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockResolvedValue({ aborted: false, receivedEvents: 0 });
+
+    const { unmount } = render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId('studio-prewrite-bar')).toBeTruthy());
+    expect(screen.queryByTestId('studio-target-locale-selector')).toBeNull();
+
+    // 2. Switch to GLOBAL multi-locale brand: selector appears and wires selected ja-JP to streamGenerateArticle
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    const selector = await screen.findByTestId('studio-target-locale-selector');
+    expect(within(selector).getByTestId('studio-locale-en-US')).toBeTruthy();
+    expect(within(selector).getByTestId('studio-locale-ja-JP')).toBeTruthy();
+    expect(within(selector).getByTestId('studio-locale-de-DE')).toBeTruthy();
+
+    fireEvent.click(within(selector).getByTestId('studio-locale-ja-JP'));
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: '静音ホームNASおすすめ2026' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledWith(
+        multiLocaleBrand.id,
+        expect.objectContaining({
+          market: 'GLOBAL',
+          targetLocale: 'ja-JP',
+          targetPrompt: '静音ホームNASおすすめ2026',
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+    unmount();
+
+    // 3. StudioDeliveryPack ja-JP article copy triggers ZERO false-positive GLOBAL_CJK_LEAK confirm dialogs
+    mockConfirm.mockClear();
+    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
+    const jaArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_ja_delivery',
+      brandId: multiLocaleBrand.id,
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      targetLocale: 'ja-JP',
+      briefId: null,
+      recipe: 'AUTHORITY_GUIDE',
+      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
+      targetPrompt: '静音ホームNASおすすめ2026',
+      title: '2026年 静音ホームNASの選び方と実測データ',
+      contentMarkdown:
+        '# 静音ホームNASの選び方\n\nAstraVaultは18.5dBの静音設計で、家庭用サーバーとして高い信頼性を提供します。',
+      contentHtml:
+        '<h1>静音ホームNASの選び方</h1><p>AstraVaultは18.5dBの静音設計で、家庭用サーバーとして高い信頼性を提供します。</p>',
+      geoScore: 86,
+      complianceFlags: [],
+      status: 'DRAFT',
+      tags: [],
+    };
+
+    render(
+      <StudioDeliveryPack
+        activeMarket="GLOBAL"
+        localBrandName="AstraVault"
+        category="Home NAS"
+        ownedDomains={['astravault.example.com']}
+        brandNames={['AstraVault']}
+        matchedFactCount={3}
+        readOnly={false}
+        article={jaArticle}
+        evaluation={null}
+        streaming={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /复制.*Markdown/ }));
+    await waitFor(() => {
+      expect(copySpy).toHaveBeenCalledTimes(1);
+    });
+    expect(mockConfirm).not.toHaveBeenCalled();
+  });
+
+  it('Defect 2 regression: background brands refresh with cloned supportedLocales array preserves unsaved editor draft without resetting workspace', async () => {
+    const multiLocaleBrand: BrandRecord = {
+      ...DUAL_BRAND,
+      markets: [
+        DUAL_BRAND.markets[0]!,
+        {
+          ...DUAL_BRAND.markets[1]!,
+          supportedLocales: ['en-US', 'de-DE', 'ja-JP'],
+        },
+      ],
+    };
+    const globalArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_gl_draft_preserve',
+      brandId: multiLocaleBrand.id,
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      targetLocale: 'en-US',
+      title: 'Original Title',
+      contentMarkdown: '# Original Title\n\nInitial content.',
+    };
+
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${multiLocaleBrand.id}&market=GLOBAL&articleId=${globalArticle.id}`,
+    );
+    useWorkspaceStore.setState({
+      brands: [multiLocaleBrand],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: multiLocaleBrand.id,
+      activeMarket: 'GLOBAL',
+      hydrated: true,
+      contextEpoch: 20,
+    });
+    const fetchArticlesSpy = vi
+      .spyOn(studioApi, 'fetchArticles')
+      .mockResolvedValue({ items: [globalArticle], total: 1 });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const titleInput = (await screen.findByLabelText('文章标题')) as HTMLInputElement;
+    await waitFor(() => {
+      expect(titleInput.value).toBe('Original Title');
+    });
+    const fetchCountBeforeRefresh = fetchArticlesSpy.mock.calls.length;
+
+    // User makes unsaved edit in editor
+    fireEvent.change(titleInput, { target: { value: 'Unsaved Important User Edit' } });
+    expect(titleInput.value).toBe('Unsaved Important User Edit');
+
+    // Simulate background brands refresh returning cloned brand + cloned supportedLocales array
+    act(() => {
+      useWorkspaceStore.setState({
+        brands: [
+          {
+            ...multiLocaleBrand,
+            markets: multiLocaleBrand.markets.map((m) => ({
+              ...m,
+              supportedLocales: [...(m.supportedLocales ?? [])],
+            })),
+          },
+        ],
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe(
+      'Unsaved Important User Edit',
+    );
+    expect(fetchArticlesSpy).toHaveBeenCalledTimes(fetchCountBeforeRefresh);
+  });
 });

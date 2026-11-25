@@ -25,6 +25,16 @@ const DEFAULT_REWRITE_SECTION_MAX = 20;
 const DEFAULT_REWRITE_SECTION_WINDOW_SECONDS = 60;
 const DEFAULT_GEO_EVALUATE_MAX = 60;
 const DEFAULT_GEO_EVALUATE_WINDOW_SECONDS = 60;
+const DEFAULT_NEAR_MISS_BOOST_MAX = 20;
+const DEFAULT_NEAR_MISS_BOOST_WINDOW_SECONDS = 60;
+const DEFAULT_ROI_REPORT_EXPORT_MAX = 20;
+const DEFAULT_ROI_REPORT_EXPORT_WINDOW_SECONDS = 60;
+const DEFAULT_ROI_REPORT_SHARE_MAX = 30;
+const DEFAULT_ROI_REPORT_SHARE_WINDOW_SECONDS = 60;
+const DEFAULT_EXTENSION_TOKEN_ISSUE_MAX = 10;
+const DEFAULT_EXTENSION_TOKEN_ISSUE_WINDOW_SECONDS = 60;
+const DEFAULT_EXTENSION_SYNC_MAX = 60;
+const DEFAULT_EXTENSION_SYNC_WINDOW_SECONDS = 60;
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
@@ -72,6 +82,64 @@ export function readGeoEvaluateRateLimit(
   const windowSeconds = readPositiveInt(
     env.GEO_EVALUATE_RATE_LIMIT_WINDOW_SECONDS,
     DEFAULT_GEO_EVALUATE_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readNearMissBoostRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.NEAR_MISS_BOOST_RATE_LIMIT_MAX, DEFAULT_NEAR_MISS_BOOST_MAX);
+  const windowSeconds = readPositiveInt(
+    env.NEAR_MISS_BOOST_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_NEAR_MISS_BOOST_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readRoiReportExportRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.ROI_REPORT_EXPORT_RATE_LIMIT_MAX, DEFAULT_ROI_REPORT_EXPORT_MAX);
+  const windowSeconds = readPositiveInt(
+    env.ROI_REPORT_EXPORT_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_ROI_REPORT_EXPORT_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readRoiReportShareRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.ROI_REPORT_SHARE_RATE_LIMIT_MAX, DEFAULT_ROI_REPORT_SHARE_MAX);
+  const windowSeconds = readPositiveInt(
+    env.ROI_REPORT_SHARE_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_ROI_REPORT_SHARE_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readExtensionTokenIssueRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(
+    env.EXTENSION_TOKEN_ISSUE_RATE_LIMIT_MAX,
+    DEFAULT_EXTENSION_TOKEN_ISSUE_MAX,
+  );
+  const windowSeconds = readPositiveInt(
+    env.EXTENSION_TOKEN_ISSUE_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_EXTENSION_TOKEN_ISSUE_WINDOW_SECONDS,
+  );
+  return { max, windowMs: windowSeconds * 1000 };
+}
+
+export function readExtensionSyncRateLimit(
+  env: Record<string, string | undefined> = process.env,
+): FreeActionRateLimit {
+  const max = readPositiveInt(env.EXTENSION_SYNC_RATE_LIMIT_MAX, DEFAULT_EXTENSION_SYNC_MAX);
+  const windowSeconds = readPositiveInt(
+    env.EXTENSION_SYNC_RATE_LIMIT_WINDOW_SECONDS,
+    DEFAULT_EXTENSION_SYNC_WINDOW_SECONDS,
   );
   return { max, windowMs: windowSeconds * 1000 };
 }

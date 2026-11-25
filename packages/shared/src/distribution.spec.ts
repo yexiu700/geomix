@@ -10,6 +10,7 @@ import {
   DISTRIBUTION_TEMPLATE_KEYS,
   GLOBAL_PREFLIGHT_CLAIM_RULES,
   L1_CHANNEL_PROVIDERS,
+  L2_EXTENSION_PROVIDERS,
   RETEST_SAMPLE_COUNTS,
   RETEST_SCHEDULE_STATUSES,
   createChannelConnectionSchema,
@@ -22,6 +23,7 @@ import {
   evaluateDistributionPreflight,
   extractPlainTextFromHtml,
   isL1ChannelProvider,
+  isL2ExtensionProvider,
   isSafeDistributionHttpUrl,
   localizePublicChannelLabel,
   publicPrPacketSubmitSchema,
@@ -35,28 +37,54 @@ import {
 } from './distribution';
 
 describe('distribution constants & mapping helpers', () => {
-  it('registers all 9 channel providers, 4 L1 providers, and 6 template keys', () => {
+  it('registers all 17 channel providers, 9 L1 providers, 3 L2 extension providers, and 8 template keys', () => {
     expect(CHANNEL_PROVIDERS).toEqual([
       'SHOPIFY',
       'WORDPRESS',
       'WEBFLOW',
       'WEBHOOK',
+      'GHOST',
+      'DEVTO',
+      'HASHNODE',
+      'GITHUB_MDX',
+      'WECHAT_OFFICIAL',
+      'ZHIHU_EXT',
+      'TOUTIAO_EXT',
+      'SMZDM_EXT',
       'REDDIT_ASSIST',
       'QUORA_ASSIST',
       'SOCIAL_THREAD_ASSIST',
       'PR_PACKET',
       'CN_COMMUNITY_ASSIST',
     ]);
-    expect(L1_CHANNEL_PROVIDERS).toEqual(['SHOPIFY', 'WORDPRESS', 'WEBFLOW', 'WEBHOOK']);
+    expect(L1_CHANNEL_PROVIDERS).toEqual([
+      'SHOPIFY',
+      'WORDPRESS',
+      'WEBFLOW',
+      'WEBHOOK',
+      'GHOST',
+      'DEVTO',
+      'HASHNODE',
+      'GITHUB_MDX',
+      'WECHAT_OFFICIAL',
+    ]);
+    expect(L2_EXTENSION_PROVIDERS).toEqual(['ZHIHU_EXT', 'TOUTIAO_EXT', 'SMZDM_EXT']);
     expect(DISTRIBUTION_TEMPLATE_KEYS).toEqual([
       'OWNED_BLOG_SEO_GEO',
+      'DEVELOPER_TECH_POST',
+      'WECHAT_OFFICIAL_ARTICLE',
       'REDDIT_DISCUSSION',
       'QUORA_ANSWER',
       'SOCIAL_THREAD',
       'PR_MEDIA_PACKET',
       'CN_COMMUNITY_QA',
     ]);
-    expect(DISTRIBUTION_MODES).toEqual(['L1_API', 'L3_COMMUNITY_ASSIST', 'L3_PR_PACKET']);
+    expect(DISTRIBUTION_MODES).toEqual([
+      'L1_API',
+      'L2_EXTENSION',
+      'L3_COMMUNITY_ASSIST',
+      'L3_PR_PACKET',
+    ]);
     expect(DISTRIBUTION_TASK_STATUSES).toHaveLength(7);
     expect(CRAWL_PROBE_STATUSES).toEqual(['PENDING', 'OK', 'WARNING', 'BLOCKED', 'FAILED']);
     expect(RETEST_SCHEDULE_STATUSES).toHaveLength(7);
@@ -72,22 +100,176 @@ describe('distribution constants & mapping helpers', () => {
     expect(DEFAULT_PR_SHARE_TTL_DAYS).toBe(30);
   });
 
-  it('maps providers to L1 checks, distribution modes, and template keys', () => {
+  it('maps providers to L1/L2 checks, distribution modes, and template keys', () => {
     expect(isL1ChannelProvider('SHOPIFY')).toBe(true);
     expect(isL1ChannelProvider('WEBHOOK')).toBe(true);
+    expect(isL1ChannelProvider('GHOST')).toBe(true);
+    expect(isL1ChannelProvider('DEVTO')).toBe(true);
+    expect(isL1ChannelProvider('HASHNODE')).toBe(true);
+    expect(isL1ChannelProvider('GITHUB_MDX')).toBe(true);
+    expect(isL1ChannelProvider('WECHAT_OFFICIAL')).toBe(true);
+    expect(isL1ChannelProvider('ZHIHU_EXT')).toBe(false);
     expect(isL1ChannelProvider('REDDIT_ASSIST')).toBe(false);
     expect(isL1ChannelProvider('PR_PACKET')).toBe(false);
 
+    expect(isL2ExtensionProvider('ZHIHU_EXT')).toBe(true);
+    expect(isL2ExtensionProvider('TOUTIAO_EXT')).toBe(true);
+    expect(isL2ExtensionProvider('SMZDM_EXT')).toBe(true);
+    expect(isL2ExtensionProvider('SHOPIFY')).toBe(false);
+
     expect(defaultDistributionModeForProvider('WORDPRESS')).toBe('L1_API');
+    expect(defaultDistributionModeForProvider('GHOST')).toBe('L1_API');
+    expect(defaultDistributionModeForProvider('WECHAT_OFFICIAL')).toBe('L1_API');
+    expect(defaultDistributionModeForProvider('ZHIHU_EXT')).toBe('L2_EXTENSION');
+    expect(defaultDistributionModeForProvider('TOUTIAO_EXT')).toBe('L2_EXTENSION');
+    expect(defaultDistributionModeForProvider('SMZDM_EXT')).toBe('L2_EXTENSION');
     expect(defaultDistributionModeForProvider('PR_PACKET')).toBe('L3_PR_PACKET');
     expect(defaultDistributionModeForProvider('SOCIAL_THREAD_ASSIST')).toBe('L3_COMMUNITY_ASSIST');
 
     expect(defaultTemplateKeyForProvider('SHOPIFY')).toBe('OWNED_BLOG_SEO_GEO');
+    expect(defaultTemplateKeyForProvider('GHOST')).toBe('OWNED_BLOG_SEO_GEO');
+    expect(defaultTemplateKeyForProvider('DEVTO')).toBe('DEVELOPER_TECH_POST');
+    expect(defaultTemplateKeyForProvider('HASHNODE')).toBe('DEVELOPER_TECH_POST');
+    expect(defaultTemplateKeyForProvider('GITHUB_MDX')).toBe('DEVELOPER_TECH_POST');
+    expect(defaultTemplateKeyForProvider('WECHAT_OFFICIAL')).toBe('WECHAT_OFFICIAL_ARTICLE');
+    expect(defaultTemplateKeyForProvider('ZHIHU_EXT')).toBe('CN_COMMUNITY_QA');
+    expect(defaultTemplateKeyForProvider('TOUTIAO_EXT')).toBe('CN_COMMUNITY_QA');
+    expect(defaultTemplateKeyForProvider('SMZDM_EXT')).toBe('CN_COMMUNITY_QA');
     expect(defaultTemplateKeyForProvider('REDDIT_ASSIST')).toBe('REDDIT_DISCUSSION');
     expect(defaultTemplateKeyForProvider('QUORA_ASSIST')).toBe('QUORA_ANSWER');
     expect(defaultTemplateKeyForProvider('SOCIAL_THREAD_ASSIST')).toBe('SOCIAL_THREAD');
     expect(defaultTemplateKeyForProvider('PR_PACKET')).toBe('PR_MEDIA_PACKET');
     expect(defaultTemplateKeyForProvider('CN_COMMUNITY_ASSIST')).toBe('CN_COMMUNITY_QA');
+  });
+
+  it('validates v2.2 L1 credentials, targetLocale, and ja-JP locale-aware preflight', () => {
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        displayName: 'Ghost Blog',
+        siteBaseUrl: 'https://blog.example.com',
+        credentials: { adminApiKey: '65f1a2b3c4d5e6f7:0123456789abcdef0123456789abcdef' },
+        targetLocale: 'de-DE',
+      }).success,
+    ).toBe(true);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        displayName: 'Bad Ghost Key',
+        siteBaseUrl: 'https://blog.example.com',
+        credentials: { adminApiKey: 'invalid-no-colon' },
+      }).success,
+    ).toBe(false);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        displayName: 'Odd Hex Ghost Key',
+        siteBaseUrl: 'https://blog.example.com',
+        credentials: { adminApiKey: '65f1a2b3c4d5e6f7:0123456789abcdef0' },
+      }).success,
+    ).toBe(false);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'GHOST',
+        displayName: 'Short Hex Ghost Key',
+        siteBaseUrl: 'https://blog.example.com',
+        credentials: { adminApiKey: '65f1a2b3c4d5e6f7:0123456789abcd' },
+      }).success,
+    ).toBe(false);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'DEVTO',
+        displayName: 'Dev.to',
+        siteBaseUrl: 'https://dev.to',
+        credentials: { apiKey: 'devto_key_123' },
+      }).success,
+    ).toBe(true);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'HASHNODE',
+        displayName: 'Hashnode',
+        siteBaseUrl: 'https://hashnode.com',
+        credentials: { apiToken: 'hn_pat_123' },
+      }).success,
+    ).toBe(true);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'GLOBAL',
+        provider: 'GITHUB_MDX',
+        displayName: 'Docs Repo',
+        siteBaseUrl: 'https://github.com/org/docs',
+        credentials: { token: 'ghp_exampletoken' },
+      }).success,
+    ).toBe(true);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'CN',
+        provider: 'WECHAT_OFFICIAL',
+        displayName: 'Official Account',
+        siteBaseUrl: 'https://mp.weixin.qq.com',
+        credentials: { appId: 'wx123456', appSecret: 'sec_123456' },
+      }).success,
+    ).toBe(true);
+    expect(
+      createChannelConnectionSchema.safeParse({
+        market: 'CN',
+        provider: 'WECHAT_OFFICIAL',
+        displayName: 'Missing Secret',
+        siteBaseUrl: 'https://mp.weixin.qq.com',
+        credentials: { appId: 'wx123456' },
+      }).success,
+    ).toBe(false);
+
+    // ja-JP natural Japanese passes preflight with 0 false positives
+    const jaClean = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      targetLocale: 'ja-JP',
+      title: '2026年 家庭用プロジェクター比較ガイド',
+      contentMarkdown:
+        '本ガイドでは静音性と輝度の実測データに基づき、国内ユーザーの選び方を客観的にまとめました。',
+      provider: 'GHOST',
+      variantSlug: 'home-projector-guide-jp',
+      variantMetaDesc:
+        '2026年家庭用プロジェクターの静音性・輝度・消費電力を比較した検証ガイドです。',
+      geoScore: 86,
+      matchedFactCount: 3,
+    });
+    expect(jaClean.ok).toBe(true);
+    expect(jaClean.blockers).toEqual([]);
+
+    // ja-JP with Simplified Chinese leakage is blocked
+    const jaLeak = evaluateDistributionPreflight({
+      market: 'GLOBAL',
+      targetLocale: 'ja-JP',
+      title: 'プロジェクター比較',
+      contentMarkdown: '製品特徴：这里混入了简体中文说明，请及时修改。',
+    });
+    expect(jaLeak.ok).toBe(false);
+    expect(jaLeak.blockers.some((item) => item.code === 'GLOBAL_CJK_LEAK')).toBe(true);
+
+    // WECHAT_OFFICIAL does not require URL slug
+    const wechatPreflight = evaluateDistributionPreflight({
+      market: 'CN',
+      title: '2026 家用 NAS 实测选型指南',
+      contentMarkdown: '本文汇总四盘位 NAS 实测功耗与噪声数据。',
+      provider: 'WECHAT_OFFICIAL',
+      variantMetaDesc: '四盘位 NAS 实测功耗与噪声对比摘要。',
+      geoScore: 85,
+      matchedFactCount: 2,
+    });
+    expect(wechatPreflight.ok).toBe(true);
+    expect(wechatPreflight.warnings.some((item) => item.code === 'MISSING_SLUG')).toBe(false);
+
+    // Retest config supports includeControlPrompts alone
+    expect(retestScheduleConfigSchema.safeParse({ includeControlPrompts: true }).success).toBe(
+      true,
+    );
   });
 
   it('validates safe HTTP(S) URLs strictly', () => {

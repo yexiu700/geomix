@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import {
   API_ERROR,
   AccountQueryError,
   CHANNEL_PROVIDERS,
+  SUPPORTED_LOCALE_CODES,
   createDistributionVariantsSchema,
   createPrShareLinkSchema,
   ok,
@@ -29,14 +31,16 @@ import { TenantActiveGuard } from '../auth/tenant-active.guard';
 import { requireAuth } from '../brands/brands.http-utils';
 import { ApiError } from '../common/api-error';
 import { parseBody } from '../common/parse-body';
-import { parseEntityId } from '../studio/studio.controller';
+import { flattenQuery, parseEntityId } from '../studio/studio.controller';
 import { DistributionService } from './distribution.service';
+import { retestBudgetEstimateQuerySchema } from './retest-scheduler.service';
 
 const articlePreflightBodySchema = z
   .object({
     title: z.string().trim().max(300).optional(),
     contentMarkdown: z.string().max(150_000).optional(),
     provider: z.enum(CHANNEL_PROVIDERS).nullable().optional(),
+    targetLocale: z.enum(SUPPORTED_LOCALE_CODES).nullable().optional(),
     variantSlug: z.string().trim().max(160).nullable().optional(),
     variantMetaDesc: z.string().trim().max(320).nullable().optional(),
   })
@@ -188,6 +192,18 @@ export class DistributionController {
     const auth = requireAuth(request);
     const publishRecordId = parseEntityId(idRaw, '发布记录编号');
     return ok(await this.distribution.triggerCrawlProbe(publishRecordId, auth));
+  }
+
+  @Get('publish-records/:id/retest-budget')
+  async getRetestBudget(
+    @Req() request: unknown,
+    @Param('id') idRaw: string,
+    @Query() query: Record<string, unknown>,
+  ) {
+    const auth = requireAuth(request);
+    const publishRecordId = parseEntityId(idRaw, '发布记录编号');
+    const parsed = parseBody(retestBudgetEstimateQuerySchema, flattenQuery(query));
+    return ok(await this.distribution.estimateRetestBudget(publishRecordId, auth, parsed));
   }
 
   @Patch('publish-records/:id/retest-schedules')

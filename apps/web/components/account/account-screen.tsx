@@ -6,17 +6,19 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { readCachedAccount } from '../../lib/account-cache';
 import type { LedgerPage, PointItem, RightsView, VerificationView } from '../../lib/account-client';
+import { ExtensionPairingPanel } from '../brands/extension-pairing-panel';
 import { useConsoleContext } from '../shell/console-context';
 import { PointsScreen } from './points-screen';
 import { RightsScreen } from './rights-screen';
 import { VerifyScreen } from './verify-screen';
 
-export const ACCOUNT_TABS = ['points', 'rights', 'verify'] as const;
+export const ACCOUNT_TABS = ['points', 'rights', 'verify', 'extension'] as const;
 export type AccountTabKey = (typeof ACCOUNT_TABS)[number];
 
 export function resolveAccountTab(raw: string | null | undefined): AccountTabKey {
   if (raw === 'rights') return 'rights';
   if (raw === 'verify') return 'verify';
+  if (raw === 'extension') return 'extension';
   return 'points';
 }
 
@@ -110,6 +112,17 @@ export function AccountScreen({
                 readOnly={effectiveReadOnly}
                 load={loadVerification}
                 submit={submitVerification}
+              />
+            ),
+          },
+          {
+            key: 'extension',
+            label: 'Chrome 扩展配对',
+            children: (
+              <ExtensionPairingPanel
+                variant="account"
+                readOnly={effectiveReadOnly}
+                active={activeTab === 'extension'}
               />
             ),
           },

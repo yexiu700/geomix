@@ -12,7 +12,9 @@ export type FreshnessDomain =
   | 'articles'
   | 'distributions'
   | 'publish-records'
-  | 'points';
+  | 'points'
+  | 'roi-reports'
+  | 'extension-tokens';
 
 export type FreshnessRefreshReason = 'activated' | 'invalidated';
 

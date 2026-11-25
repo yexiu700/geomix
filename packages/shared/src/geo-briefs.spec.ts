@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CN_RECOMMENDED_CHANNELS,
   GEO_BRIEF_SOURCES,
+  GEO_BRIEF_SOURCE_LABELS,
   GEO_BRIEF_STATUSES,
   GLOBAL_RECOMMENDED_CHANNELS,
   canonicalizeRewriteUrl,
@@ -26,6 +27,8 @@ import {
 describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
   it('validates brief generation, citation counter, list query, and update schemas', () => {
     expect(GEO_BRIEF_SOURCES).toContain('AUTO_GAP');
+    expect(GEO_BRIEF_SOURCES).toContain('NEAR_MISS_BOOST');
+    expect(GEO_BRIEF_SOURCE_LABELS.NEAR_MISS_BOOST).toBe('差一步被引用补强');
     expect(GEO_BRIEF_STATUSES).toEqual(['OPEN', 'WRITING', 'DONE', 'DISMISSED']);
 
     expect(
@@ -168,6 +171,19 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
     expect(p4FanOut).toBeGreaterThanOrEqual(60);
     expect(p4FanOut).toBeLessThanOrEqual(69);
 
+    const nearMissOpened = computeGeoBriefPriorityScore({
+      sourceType: 'NEAR_MISS_BOOST',
+      wasOpened: true,
+      isOwnedNearMiss: true,
+      citationCount: 2,
+    });
+    const nearMissBase = computeGeoBriefPriorityScore({
+      sourceType: 'NEAR_MISS_BOOST',
+    });
+    expect(nearMissBase).toBeGreaterThanOrEqual(72);
+    expect(nearMissOpened).toBeGreaterThan(nearMissBase);
+    expect(nearMissOpened).toBeLessThanOrEqual(88);
+
     expect(manual).toBe(55);
     expect(p1Multi).toBeGreaterThan(p1Single);
     expect(p1Single).toBeGreaterThan(p2Neg);
@@ -203,6 +219,7 @@ describe('geo-briefs v2 contracts and extracted HTML/SSRF utilities', () => {
     expect(defaultRecipeForBriefSource('SENTIMENT_RISK')).toBe('OBJECTION_FAQ');
     expect(defaultRecipeForBriefSource('LOW_RANK')).toBe('COMPARISON_MATRIX');
     expect(defaultRecipeForBriefSource('CITATION_COUNTER')).toBe('CITATION_COUNTER');
+    expect(defaultRecipeForBriefSource('NEAR_MISS_BOOST')).toBe('AUTHORITY_GUIDE');
     expect(defaultRecipeForBriefSource('FANOUT_CLUSTER')).toBe('AUTHORITY_GUIDE');
     expect(defaultRecipeForBriefSource('MANUAL')).toBe('AUTHORITY_GUIDE');
 

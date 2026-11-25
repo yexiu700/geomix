@@ -177,6 +177,7 @@ type BrandMarketRow = {
   brandId: string;
   market: 'CN' | 'GLOBAL';
   locale: string;
+  supportedLocales?: string[];
   region: string;
   localBrandName: string;
   aliases: string[];
@@ -235,6 +236,7 @@ type GeoArticleRow = {
   targetPrompt: string;
   recipe: string;
   targetFormat: string;
+  targetLocale?: string | null;
   contentMarkdown: string;
   contentHtml: string;
   schemaJsonLd: Prisma.JsonValue;
@@ -267,6 +269,8 @@ type ConnectionRow = {
   authType: string;
   oauthAccessTokenCiphertext: string | null;
   oauthExpiresAt: Date | null;
+  targetLocale?: string | null;
+  externalShopDomain?: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -281,6 +285,7 @@ type TaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   targetUrlHint: string | null;
   variantTitle: string;
   variantSlug: string | null;
@@ -1538,6 +1543,8 @@ class InMemoryDistributionStore {
             authType: String(args.data.authType ?? 'API_KEY'),
             oauthAccessTokenCiphertext: args.data.oauthAccessTokenCiphertext ?? null,
             oauthExpiresAt: args.data.oauthExpiresAt ?? null,
+            targetLocale: args.data.targetLocale ?? null,
+            externalShopDomain: args.data.externalShopDomain ?? null,
             createdAt: now,
             updatedAt: now,
           };
@@ -1639,6 +1646,7 @@ class InMemoryDistributionStore {
             provider: String(args.data.provider),
             mode: String(args.data.mode),
             channelLabel: String(args.data.channelLabel ?? ''),
+            targetLocale: args.data.targetLocale ?? null,
             targetUrlHint: args.data.targetUrlHint ?? null,
             variantTitle: String(args.data.variantTitle ?? ''),
             variantSlug: args.data.variantSlug ?? null,
@@ -2703,9 +2711,17 @@ describe('GeoMix v2.1 Distribution E2E Suite (Offline Real NestJS + Mock HTTP Se
   // ── T1-01, T1-02, T2-01 & WorkerModule DI Wiring ──────────────────────────
   describe('Foundation Contracts, SecretBox Boundaries & WorkerModule DI (T1-01, T1-02, T2-01)', () => {
     it('T1-01 & T1-02: enums, queue names, pricing defaults, free actions, quotas & WorkerModule DI wiring', async () => {
-      expect(CHANNEL_PROVIDERS).toHaveLength(9);
+      expect(CHANNEL_PROVIDERS).toHaveLength(17);
       expect(CHANNEL_PROVIDERS).toContain('SOCIAL_THREAD_ASSIST');
-      expect(DISTRIBUTION_MODES).toEqual(['L1_API', 'L3_COMMUNITY_ASSIST', 'L3_PR_PACKET']);
+      expect(CHANNEL_PROVIDERS).toContain('GHOST');
+      expect(CHANNEL_PROVIDERS).toContain('WECHAT_OFFICIAL');
+      expect(CHANNEL_PROVIDERS).toContain('ZHIHU_EXT');
+      expect(DISTRIBUTION_MODES).toEqual([
+        'L1_API',
+        'L2_EXTENSION',
+        'L3_COMMUNITY_ASSIST',
+        'L3_PR_PACKET',
+      ]);
       expect(DISTRIBUTION_TASK_STATUSES).toContain('DRAFT_PUSHED');
       expect(CRAWL_PROBE_STATUSES).toContain('BLOCKED');
       expect(RETEST_SCHEDULE_STATUSES).toContain('SKIPPED_INSUFFICIENT_POINTS');
@@ -2713,7 +2729,16 @@ describe('GeoMix v2.1 Distribution E2E Suite (Offline Real NestJS + Mock HTTP Se
       expect(PRICING_DEFAULTS.find((p) => p.action === 'geo_variant')?.unitPoints).toBe(2);
       expect(ZERO_ALLOWED_PRICING_ACTIONS).toContain('geo_variant');
       expect(FREE_RATE_LIMITED_ACTIONS).toEqual(
-        expect.arrayContaining(['distribution_preflight', 'crawl_probe', 'pr_packet_share']),
+        expect.arrayContaining([
+          'distribution_preflight',
+          'crawl_probe',
+          'pr_packet_share',
+          'near_miss_boost',
+          'roi_report_export',
+          'roi_report_share',
+          'extension_token_issue',
+          'extension_sync',
+        ]),
       );
       expect(QUOTA_MEASURE.SOCIAL_AUTH).toBe('stock');
       expect(QUOTA_MEASURE.PUBLISH).toBe('cumulative');

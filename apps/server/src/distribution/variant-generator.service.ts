@@ -8,6 +8,7 @@ import {
   CHANNEL_PROVIDERS,
   DISTRIBUTION_MODES,
   DISTRIBUTION_TASK_STATUSES,
+  DISTRIBUTION_TEMPLATE_KEYS,
   GEO_VARIANT_JOB_STATUSES,
   createDistributionVariantsSchema,
   defaultDistributionModeForProvider,
@@ -16,8 +17,11 @@ import {
   distributionVariantTargetSchema,
   evaluateDistributionPreflight,
   finishStatus,
+  isL1ChannelProvider,
   isSafeDistributionHttpUrl,
-  markdownToSanitizedHtml,
+  isSupportedLocale,
+  resolveEffectiveLocale,
+  supportedLocalesForMarket,
   type BrandFactSlot,
   type ChannelProvider,
   type CreateDistributionVariantsInput,
@@ -32,6 +36,7 @@ import {
   type GeoVariantJobDto,
   type GeoVariantJobFailureItem,
   type GeoVariantJobStatus,
+  type SupportedLocale,
 } from '@geomix/shared';
 import { BillingService, type ReservationView } from '../billing/billing.service';
 import { parseStoredChannels } from '../briefs/briefs.mapper';
@@ -50,8 +55,12 @@ import {
   buildDeterministicFakeVariantDraft,
   buildOwnedBlogExtras,
   buildVariantPromptMessages,
+  clampWechatTitle,
   finalizeRealLlmVariantDraft,
+  getLocaleNeutralMetaPad,
   normalizeVariantMetaDesc,
+  normalizeWechatDigest,
+  renderVariantHtml,
   resolveVariantTemplateKey,
   sliceUtf16Safe,
   type DistributionVariantExtras,
@@ -87,6 +96,26 @@ const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
 const DISTRIBUTION_MODE_SET = new Set<string>(DISTRIBUTION_MODES);
 const DISTRIBUTION_TASK_STATUS_SET = new Set<string>(DISTRIBUTION_TASK_STATUSES);
 const VARIANT_JOB_STATUS_SET = new Set<string>(GEO_VARIANT_JOB_STATUSES);
+const CN_ONLY_PROVIDERS = new Set<ChannelProvider>([
+  'WECHAT_OFFICIAL',
+  'ZHIHU_EXT',
+  'TOUTIAO_EXT',
+  'SMZDM_EXT',
+  'CN_COMMUNITY_ASSIST',
+]);
+const CN_ONLY_TEMPLATES = new Set<DistributionTemplateKey>([
+  'WECHAT_OFFICIAL_ARTICLE',
+  'CN_COMMUNITY_QA',
+]);
+
+type ValidatedConnectionRow = {
+  id: string;
+  provider: string;
+  displayName: string;
+  status: string;
+  configJson: Prisma.JsonValue;
+  targetLocale?: string | null;
+};
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw || !/^[1-9]\d*$/.test(raw.trim())) return fallback;
@@ -320,6 +349,7 @@ export type GeoDistributionTaskRow = {
   provider: string;
   mode: string;
   channelLabel: string;
+  targetLocale?: string | null;
   targetUrlHint: string | null;
   variantTitle: string;
   variantSlug: string | null;
@@ -452,6 +482,9 @@ export function presentDistributionTask(
     provider,
     mode: toDistributionMode(row.mode, provider),
     channelLabel: row.channelLabel,
+    targetLocale: isSupportedLocale(row.targetLocale)
+      ? (row.targetLocale.trim() as SupportedLocale)
+      : null,
     targetUrlHint: row.targetUrlHint ?? null,
     variantTitle: row.variantTitle,
     variantSlug: row.variantSlug ?? null,
@@ -486,6 +519,7 @@ function computeVariantBatchFingerprint(
     provider: t.provider,
     connectionId: t.connectionId ?? null,
     channelLabel: t.channelLabel,
+    targetLocale: t.targetLocale ?? null,
     targetUrlHint: t.targetUrlHint ?? null,
     templateKey: resolveVariantTemplateKey(t),
     publishAsDraft: t.publishAsDraft ?? null,
@@ -607,18 +641,13 @@ function readConnectionDefaultDraft(
     : undefined;
 }
 
+const DISTRIBUTION_TEMPLATE_KEY_SET = new Set<string>(DISTRIBUTION_TEMPLATE_KEYS);
+
 function readStoredTemplateKey(row: GeoDistributionTaskRow): DistributionTemplateKey {
   const extras = asJsonRecord(row.variantExtrasJson);
   const raw = extras.templateKey;
-  if (
-    raw === 'OWNED_BLOG_SEO_GEO' ||
-    raw === 'REDDIT_DISCUSSION' ||
-    raw === 'QUORA_ANSWER' ||
-    raw === 'SOCIAL_THREAD' ||
-    raw === 'PR_MEDIA_PACKET' ||
-    raw === 'CN_COMMUNITY_QA'
-  ) {
-    return raw;
+  if (typeof raw === 'string' && DISTRIBUTION_TEMPLATE_KEY_SET.has(raw)) {
+    return raw as DistributionTemplateKey;
   }
   return defaultTemplateKeyForProvider(toChannelProvider(row.provider));
 }
@@ -707,6 +736,7 @@ export class VariantGeneratorService {
             id: true,
             market: true,
             locale: true,
+            supportedLocales: true,
             localBrandName: true,
             localCategory: true,
             aliases: true,
@@ -730,60 +760,19 @@ export class VariantGeneratorService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或无权访问');
     }
 
-    // 2. 校验所有指定 connectionId 的存在性、品牌市场归属、provider 一致性与启用状态
-    const validatedConnections = new Map<
-      string,
-      {
-        id: string;
-        provider: string;
-        displayName: string;
-        status: string;
-        configJson: Prisma.JsonValue;
-      }
-    >();
-    for (const target of targets) {
-      if (!target.connectionId) continue;
-      if (validatedConnections.has(target.connectionId)) {
-        const cached = validatedConnections.get(target.connectionId)!;
-        if (cached.provider !== target.provider) {
-          throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与目标分发渠道不匹配');
-        }
-        continue;
-      }
-      const conn = await this.prisma.scoped.channelConnection.findFirst({
-        where: { id: target.connectionId },
-        select: {
-          id: true,
-          brandId: true,
-          brandMarketId: true,
-          provider: true,
-          displayName: true,
-          status: true,
-          configJson: true,
-        },
-      });
-      if (!conn) {
-        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '目标渠道连接不存在');
-      }
-      if (conn.brandId !== article.brandId || conn.brandMarketId !== article.brandMarketId) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接与当前文章所属品牌市场不匹配');
-      }
-      if (conn.provider !== target.provider) {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与目标分发渠道不匹配');
-      }
-      if (conn.status === 'DISABLED') {
-        throw new ApiError(400, API_ERROR.BAD_REQUEST, '该渠道连接已停用，请先启用或更换连接');
-      }
-      validatedConnections.set(conn.id, conn);
-    }
+    // 2. 校验连接、语种市场隔离与品牌市场 supportedLocales，并自动匹配 ChannelConnection.targetLocale
+    const { normalizedTargets, validatedConnections } = await this.validateAndNormalizeTargets(
+      article,
+      targets,
+    );
 
     const requestFingerprint = normalizedIdempotencyKey
-      ? computeVariantBatchFingerprint(targets)
+      ? computeVariantBatchFingerprint(normalizedTargets)
       : undefined;
 
     // 3. 幂等重放检测（必须在计费预扣与 LLM 调用之前执行！）
     if (normalizedIdempotencyKey) {
-      const slotCount = Math.max(targets.length, MAX_TARGETS_PER_BATCH);
+      const slotCount = Math.max(normalizedTargets.length, MAX_TARGETS_PER_BATCH);
       const candidateIds = Array.from({ length: slotCount }, (_, index) =>
         deriveDeterministicTaskId(auth.tenantId, article.id, normalizedIdempotencyKey, index),
       );
@@ -821,22 +810,23 @@ export class VariantGeneratorService {
               return false;
             }
             const slotIdx = slotIndexById.get(row.id) ?? -1;
-            if (slotIdx < 0 || slotIdx >= targets.length) {
+            if (slotIdx < 0 || slotIdx >= normalizedTargets.length) {
               return false;
             }
-            const target = targets[slotIdx]!;
+            const target = normalizedTargets[slotIdx]!;
             return (
               row.provider === target.provider &&
               row.channelLabel === target.channelLabel &&
               readStoredTemplateKey(row) === resolveVariantTemplateKey(target) &&
               (row.connectionId ?? null) === (target.connectionId ?? null) &&
-              (row.targetUrlHint ?? null) === (target.targetUrlHint ?? null)
+              (row.targetUrlHint ?? null) === (target.targetUrlHint ?? null) &&
+              (!row.targetLocale || row.targetLocale === (target.targetLocale ?? null))
             );
           });
         } else {
           isExactMatch =
-            orderedExisting.length === targets.length &&
-            targets.every((target, index) => {
+            orderedExisting.length === normalizedTargets.length &&
+            normalizedTargets.every((target, index) => {
               const existing = orderedExisting[index];
               if (!existing) return false;
               const expectedId = candidateIds[index];
@@ -846,7 +836,8 @@ export class VariantGeneratorService {
                 existing.channelLabel === target.channelLabel &&
                 readStoredTemplateKey(existing) === resolveVariantTemplateKey(target) &&
                 (existing.connectionId ?? null) === (target.connectionId ?? null) &&
-                (existing.targetUrlHint ?? null) === (target.targetUrlHint ?? null)
+                (existing.targetUrlHint ?? null) === (target.targetUrlHint ?? null) &&
+                (!existing.targetLocale || existing.targetLocale === (target.targetLocale ?? null))
               );
             });
         }
@@ -946,7 +937,7 @@ export class VariantGeneratorService {
     const batchOutcome = await this.executeTargetsBatch({
       tenantId: auth.tenantId,
       article,
-      targets,
+      targets: normalizedTargets,
       validatedConnections,
       facts,
       customForbiddenWords,
@@ -1012,7 +1003,6 @@ export class VariantGeneratorService {
 
     const targets = parsedInput.data.targets;
     const normalizedIdempotencyKey = options?.idempotencyKey?.trim() || undefined;
-    const requestFingerprint = computeVariantBatchFingerprint(targets);
 
     const article = await this.prisma.scoped.geoArticle.findFirst({
       where: { id: articleId },
@@ -1020,13 +1010,22 @@ export class VariantGeneratorService {
         id: true,
         brandId: true,
         brandMarketId: true,
+        targetLocale: true,
+        brandMarket: {
+          select: {
+            market: true,
+            locale: true,
+            supportedLocales: true,
+          },
+        },
       },
     });
     if (!article) {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '文章不存在或无权访问');
     }
 
-    await this.validateTargetConnections(article, targets);
+    const { normalizedTargets } = await this.validateAndNormalizeTargets(article, targets);
+    const requestFingerprint = computeVariantBatchFingerprint(normalizedTargets);
 
     // 1. 幂等重放检测：同幂等键 + 同参数直接返回现有任务（含进行中 QUEUED/RUNNING），绝不报 409
     if (normalizedIdempotencyKey) {
@@ -1059,7 +1058,7 @@ export class VariantGeneratorService {
         tenantId: auth.tenantId,
         refType: 'geo_variant',
         refId: batchRefId,
-        amount: targets.length * unitPrice,
+        amount: normalizedTargets.length * unitPrice,
       });
       if (reservation.status === 'CLOSED') {
         if (normalizedIdempotencyKey) {
@@ -1100,8 +1099,8 @@ export class VariantGeneratorService {
           articleId: article.id,
           idempotencyKey: normalizedIdempotencyKey ?? null,
           requestFingerprint,
-          targetsJson: targets as unknown as Prisma.InputJsonValue,
-          total: targets.length,
+          targetsJson: normalizedTargets as unknown as Prisma.InputJsonValue,
+          total: normalizedTargets.length,
           doneCount: 0,
           failCount: 0,
           unitPrice,
@@ -1284,6 +1283,7 @@ export class VariantGeneratorService {
               id: true,
               market: true,
               locale: true,
+              supportedLocales: true,
               localBrandName: true,
               localCategory: true,
               aliases: true,
@@ -1308,16 +1308,7 @@ export class VariantGeneratorService {
         return;
       }
 
-      let validatedConnections: Map<
-        string,
-        {
-          id: string;
-          provider: string;
-          displayName: string;
-          status: string;
-          configJson: Prisma.JsonValue;
-        }
-      >;
+      let validatedConnections: Map<string, ValidatedConnectionRow>;
       try {
         validatedConnections = await this.validateTargetConnections(article, targets, {
           allowMissing: true,
@@ -1451,32 +1442,189 @@ export class VariantGeneratorService {
     });
   }
 
+  private async validateAndNormalizeTargets(
+    article: {
+      brandId: string;
+      brandMarketId: string;
+      targetLocale?: string | null;
+      brandMarket?: {
+        market?: string;
+        locale?: string;
+        supportedLocales?: string[] | null;
+      } | null;
+    },
+    targets: readonly DistributionVariantTargetInput[],
+  ): Promise<{
+    normalizedTargets: DistributionVariantTargetInput[];
+    validatedConnections: Map<string, ValidatedConnectionRow>;
+  }> {
+    const validatedConnections = await this.validateTargetConnections(article, targets);
+    const market: GeoMarket = article.brandMarket?.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
+    const marketAllowed = supportedLocalesForMarket(market);
+    const marketAllowedSet = new Set<string>(marketAllowed);
+    const brandMarketDefaultLocale = resolveEffectiveLocale(article.brandMarket?.locale, market);
+    const configuredLocales: SupportedLocale[] = [];
+    for (const loc of article.brandMarket?.supportedLocales ?? []) {
+      if (isSupportedLocale(loc)) {
+        const trimmed = loc.trim() as SupportedLocale;
+        if (marketAllowedSet.has(trimmed) && !configuredLocales.includes(trimmed)) {
+          configuredLocales.push(trimmed);
+        }
+      }
+    }
+    const effectiveSupportedLocales: SupportedLocale[] =
+      configuredLocales.length > 0 ? configuredLocales : [brandMarketDefaultLocale];
+    const effectiveSupportedSet = new Set<SupportedLocale>(effectiveSupportedLocales);
+    const defaultFallbackLocale: SupportedLocale = effectiveSupportedSet.has(
+      brandMarketDefaultLocale,
+    )
+      ? brandMarketDefaultLocale
+      : (effectiveSupportedLocales[0] ?? brandMarketDefaultLocale);
+
+    const articleLocale =
+      isSupportedLocale(article.targetLocale) && marketAllowedSet.has(article.targetLocale.trim())
+        ? (article.targetLocale.trim() as SupportedLocale)
+        : null;
+
+    const resolvedLocales: SupportedLocale[] = [];
+    const providersNeedingAutoMatch = new Set<ChannelProvider>();
+
+    for (const target of targets) {
+      if (market === 'GLOBAL' && CN_ONLY_PROVIDERS.has(target.provider)) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          `渠道 ${target.provider} 仅支持中国大陆（CN）市场`,
+        );
+      }
+
+      const templateKey = resolveVariantTemplateKey(target);
+      if (market === 'GLOBAL' && CN_ONLY_TEMPLATES.has(templateKey)) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          `模板 ${templateKey} 仅支持中国大陆（CN）市场`,
+        );
+      }
+
+      let explicitLocale: SupportedLocale | null = null;
+      if (target.targetLocale !== undefined) {
+        const trimmedRequested = target.targetLocale.trim();
+        if (!isSupportedLocale(trimmedRequested)) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            `不支持的目标语种：${String(target.targetLocale)}`,
+          );
+        }
+        const normalizedRequested = trimmedRequested as SupportedLocale;
+        if (!marketAllowedSet.has(normalizedRequested)) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            `目标语种 ${normalizedRequested} 与当前市场（${market}）不匹配`,
+          );
+        }
+        if (!effectiveSupportedSet.has(normalizedRequested)) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            `目标语种 ${normalizedRequested} 未在当前品牌市场支持的语种范围内`,
+          );
+        }
+        explicitLocale = normalizedRequested;
+      }
+
+      const linkedConn = target.connectionId
+        ? validatedConnections.get(target.connectionId)
+        : undefined;
+      const linkedConnLocale =
+        isSupportedLocale(linkedConn?.targetLocale) &&
+        marketAllowedSet.has(linkedConn.targetLocale.trim())
+          ? (linkedConn.targetLocale.trim() as SupportedLocale)
+          : null;
+
+      if (
+        explicitLocale === null &&
+        linkedConnLocale &&
+        !effectiveSupportedSet.has(linkedConnLocale)
+      ) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          `所选渠道连接的目标语种 ${linkedConnLocale} 未在当前品牌市场支持的语种范围内`,
+        );
+      }
+
+      const fallbackArticleLocale =
+        articleLocale && effectiveSupportedSet.has(articleLocale) ? articleLocale : null;
+      const effectiveLocale: SupportedLocale =
+        explicitLocale ?? linkedConnLocale ?? fallbackArticleLocale ?? defaultFallbackLocale;
+
+      resolvedLocales.push(effectiveLocale);
+      if (!target.connectionId && isL1ChannelProvider(target.provider)) {
+        providersNeedingAutoMatch.add(target.provider);
+      }
+    }
+
+    const activeConnectionsByProvider = new Map<string, ValidatedConnectionRow[]>();
+    if (
+      providersNeedingAutoMatch.size > 0 &&
+      typeof this.prisma.scoped.channelConnection?.findMany === 'function'
+    ) {
+      const candidates = await this.prisma.scoped.channelConnection.findMany({
+        where: {
+          brandId: article.brandId,
+          brandMarketId: article.brandMarketId,
+          provider: { in: [...providersNeedingAutoMatch] },
+          status: 'ACTIVE',
+        },
+        select: {
+          id: true,
+          provider: true,
+          displayName: true,
+          status: true,
+          configJson: true,
+          targetLocale: true,
+        },
+        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+      });
+      for (const conn of candidates) {
+        const list = activeConnectionsByProvider.get(conn.provider) ?? [];
+        list.push(conn);
+        activeConnectionsByProvider.set(conn.provider, list);
+      }
+    }
+
+    const normalizedTargets: DistributionVariantTargetInput[] = targets.map((target, index) => {
+      const effectiveLocale = resolvedLocales[index]!;
+      let resolvedConnectionId = target.connectionId;
+      if (!resolvedConnectionId && isL1ChannelProvider(target.provider)) {
+        const providerConns = activeConnectionsByProvider.get(target.provider) ?? [];
+        const matchedConn = providerConns.find(
+          (conn) => isSupportedLocale(conn.targetLocale) && conn.targetLocale === effectiveLocale,
+        );
+        if (matchedConn) {
+          resolvedConnectionId = matchedConn.id;
+          validatedConnections.set(matchedConn.id, matchedConn);
+        }
+      }
+      return {
+        ...target,
+        ...(resolvedConnectionId ? { connectionId: resolvedConnectionId } : {}),
+        targetLocale: effectiveLocale,
+      };
+    });
+
+    return { normalizedTargets, validatedConnections };
+  }
+
   private async validateTargetConnections(
     article: { brandId: string; brandMarketId: string },
     targets: readonly DistributionVariantTargetInput[],
     options?: { allowMissing?: boolean },
-  ): Promise<
-    Map<
-      string,
-      {
-        id: string;
-        provider: string;
-        displayName: string;
-        status: string;
-        configJson: Prisma.JsonValue;
-      }
-    >
-  > {
-    const validatedConnections = new Map<
-      string,
-      {
-        id: string;
-        provider: string;
-        displayName: string;
-        status: string;
-        configJson: Prisma.JsonValue;
-      }
-    >();
+  ): Promise<Map<string, ValidatedConnectionRow>> {
+    const validatedConnections = new Map<string, ValidatedConnectionRow>();
     for (const target of targets) {
       if (!target.connectionId) continue;
       if (validatedConnections.has(target.connectionId)) {
@@ -1496,6 +1644,7 @@ export class VariantGeneratorService {
           displayName: true,
           status: true,
           configJson: true,
+          targetLocale: true,
         },
       });
       if (!conn) {
@@ -1522,6 +1671,7 @@ export class VariantGeneratorService {
       id: string;
       brandId: string;
       brandMarketId: string;
+      targetLocale?: string | null;
       title: string;
       targetPrompt: string;
       contentMarkdown: string;
@@ -1533,6 +1683,7 @@ export class VariantGeneratorService {
         id: string;
         market: string;
         locale: string;
+        supportedLocales?: string[];
         localBrandName: string | null;
         localCategory: string | null;
         aliases: string[];
@@ -1548,16 +1699,7 @@ export class VariantGeneratorService {
       } | null;
     };
     targets: readonly DistributionVariantTargetInput[];
-    validatedConnections: Map<
-      string,
-      {
-        id: string;
-        provider: string;
-        displayName: string;
-        status: string;
-        configJson: Prisma.JsonValue;
-      }
-    >;
+    validatedConnections: Map<string, ValidatedConnectionRow>;
     facts: VariantBrandFactInput[];
     customForbiddenWords: string[];
     customToneNote: string | null;
@@ -1658,6 +1800,7 @@ export class VariantGeneratorService {
     };
 
     try {
+      const marketAllowedSet = new Set<string>(supportedLocalesForMarket(market));
       await runWithConcurrency(targets, concurrency, async (target, i) => {
         const templateKey = resolveVariantTemplateKey(target);
         const unitKey = `geo_var:${batchRefId}:${i}`;
@@ -1665,10 +1808,35 @@ export class VariantGeneratorService {
           article.brief?.recommendedChannels,
           target,
         );
+        const linkedConn = target.connectionId
+          ? validatedConnections.get(target.connectionId)
+          : undefined;
+        const explicitLocale =
+          isSupportedLocale(target.targetLocale) && marketAllowedSet.has(target.targetLocale)
+            ? target.targetLocale
+            : null;
+        const linkedConnLocale =
+          isSupportedLocale(linkedConn?.targetLocale) &&
+          marketAllowedSet.has(linkedConn.targetLocale)
+            ? linkedConn.targetLocale
+            : null;
+        const articleLocale =
+          isSupportedLocale(article.targetLocale) && marketAllowedSet.has(article.targetLocale)
+            ? article.targetLocale
+            : null;
+        const effectiveTargetLocale: SupportedLocale =
+          templateKey === 'WECHAT_OFFICIAL_ARTICLE' || templateKey === 'CN_COMMUNITY_QA'
+            ? 'zh-CN'
+            : (explicitLocale ??
+              linkedConnLocale ??
+              articleLocale ??
+              resolveEffectiveLocale(locale, market));
 
         const promptCtx: VariantPromptContext = {
           market,
-          locale,
+          locale: effectiveTargetLocale,
+          targetLocale: effectiveTargetLocale,
+          articleTargetLocale: article.targetLocale ?? article.brandMarket.locale,
           brandName: article.brand.name,
           localBrandName: article.brandMarket.localBrandName || article.brand.name,
           brandAliases: article.brandMarket.aliases ?? [],
@@ -1732,7 +1900,10 @@ export class VariantGeneratorService {
             );
           }
 
-          const sanitizedTitle = titleScan.text.trim() || draft.variantTitle;
+          let sanitizedTitle = titleScan.text.trim() || draft.variantTitle;
+          if (templateKey === 'WECHAT_OFFICIAL_ARTICLE') {
+            sanitizedTitle = clampWechatTitle(sanitizedTitle, draft.variantTitle);
+          }
           const sanitizedMarkdown = bodyScan.text.trim() || draft.variantMarkdown;
           let sanitizedMetaDesc = metaScan
             ? metaScan.text.trim() || draft.variantMetaDesc
@@ -1769,8 +1940,8 @@ export class VariantGeneratorService {
             sanitizedThreadPosts = nextPosts;
           }
 
-          // OWNED_BLOG_SEO_GEO: 合规替换可能导致摘要长度漂移出 140..160 区间，需重新规整并二次扫描
-          if (templateKey === 'OWNED_BLOG_SEO_GEO') {
+          // OWNED_BLOG_SEO_GEO & DEVELOPER_TECH_POST: 合规替换可能导致摘要长度漂移出 140..160 区间，需重新规整并二次扫描
+          if (templateKey === 'OWNED_BLOG_SEO_GEO' || templateKey === 'DEVELOPER_TECH_POST') {
             const metaChanged = sanitizedMetaDesc !== draft.variantMetaDesc;
             const metaOutOfRange =
               !sanitizedMetaDesc ||
@@ -1795,10 +1966,7 @@ export class VariantGeneratorService {
               }
               reNormalized = reScan.text.trim() || reNormalized;
               if (reNormalized.length < 140) {
-                const neutralPad =
-                  market === 'GLOBAL'
-                    ? ' Objective reference metrics and spec summary.'
-                    : ' 客观参考数据与规格对照说明。';
+                const neutralPad = getLocaleNeutralMetaPad(effectiveTargetLocale);
                 while (reNormalized.length < 140) {
                   reNormalized = `${reNormalized}${neutralPad}`;
                 }
@@ -1808,15 +1976,21 @@ export class VariantGeneratorService {
               }
               sanitizedMetaDesc = reNormalized;
             }
+          } else if (templateKey === 'WECHAT_OFFICIAL_ARTICLE') {
+            sanitizedMetaDesc = normalizeWechatDigest(
+              sanitizedMetaDesc,
+              promptCtx,
+              sanitizedMarkdown,
+            );
           }
 
-          const sanitizedHtml = markdownToSanitizedHtml(sanitizedMarkdown);
+          const sanitizedHtml = renderVariantHtml(sanitizedMarkdown, templateKey);
 
-          // OWNED_BLOG_SEO_GEO: 若标题或正文经合规清洗，按需重建未复用母稿的 JSON-LD / llmsTxtSnippet，并对最终 llmsTxtSnippet（含母稿复用）无条件做合规扫描
+          // OWNED_BLOG_SEO_GEO & DEVELOPER_TECH_POST: 若标题或正文经合规清洗，按需重建未复用母稿的 JSON-LD / llmsTxtSnippet
           let finalSchemaJsonLd = draft.variantExtrasJson.schemaJsonLd;
           let finalJsonLdSnippet = draft.variantExtrasJson.jsonLdSnippet;
           let finalLlmsTxtSnippet = draft.variantExtrasJson.llmsTxtSnippet;
-          if (templateKey === 'OWNED_BLOG_SEO_GEO') {
+          if (templateKey === 'OWNED_BLOG_SEO_GEO' || templateKey === 'DEVELOPER_TECH_POST') {
             const titleOrBodyChanged =
               sanitizedTitle !== draft.variantTitle || sanitizedMarkdown !== draft.variantMarkdown;
             const needsSchemaRebuild = !draft.schemaReusedFromArticle;
@@ -1885,7 +2059,11 @@ export class VariantGeneratorService {
             ...(finalJsonLdSnippet !== undefined ? { jsonLdSnippet: finalJsonLdSnippet } : {}),
             ...(finalLlmsTxtSnippet !== undefined ? { llmsTxtSnippet: finalLlmsTxtSnippet } : {}),
             ...(sanitizedThreadPosts !== undefined ? { threadPosts: sanitizedThreadPosts } : {}),
+            ...(templateKey === 'WECHAT_OFFICIAL_ARTICLE' && sanitizedMetaDesc
+              ? { digest: sanitizedMetaDesc }
+              : {}),
             templateKey,
+            targetLocale: effectiveTargetLocale,
             model,
             tokensIn,
             tokensOut,
@@ -1899,8 +2077,10 @@ export class VariantGeneratorService {
 
           const preflight = evaluateDistributionPreflight({
             market,
+            targetLocale: effectiveTargetLocale,
             title: sanitizedTitle,
             contentMarkdown: sanitizedMarkdown,
+            variantHtml: sanitizedHtml,
             brandNames,
             complianceFlags: dedupedComplianceFlags,
             geoScore: article.geoScore,
@@ -1910,11 +2090,12 @@ export class VariantGeneratorService {
             variantMetaDesc: sanitizedMetaDesc,
           });
 
-          const linkedConn = target.connectionId
-            ? validatedConnections.get(target.connectionId)
-            : undefined;
           const publishAsDraft =
-            target.publishAsDraft ?? readConnectionDefaultDraft(linkedConn?.configJson) ?? true;
+            target.provider === 'WECHAT_OFFICIAL'
+              ? true
+              : (target.publishAsDraft ??
+                readConnectionDefaultDraft(linkedConn?.configJson) ??
+                true);
           const deterministicId = normalizedIdempotencyKey
             ? deriveDeterministicTaskId(tenantId, article.id, normalizedIdempotencyKey, i)
             : undefined;
@@ -1930,6 +2111,7 @@ export class VariantGeneratorService {
               provider: target.provider,
               mode: defaultDistributionModeForProvider(target.provider),
               channelLabel: target.channelLabel,
+              targetLocale: effectiveTargetLocale,
               targetUrlHint: target.targetUrlHint ?? null,
               variantTitle: sanitizedTitle,
               variantSlug: draft.variantSlug,
@@ -1957,6 +2139,7 @@ export class VariantGeneratorService {
                   taskId: createdRow.id,
                   provider: target.provider,
                   templateKey,
+                  targetLocale: effectiveTargetLocale,
                 },
               });
               totalChargedPoints += unitPrice;

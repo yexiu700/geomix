@@ -7,6 +7,7 @@ import {
   deleteVisibilityRun,
   fetchVisibilityCitations,
   fetchVisibilityEngines,
+  fetchVisibilityNearMiss,
   fetchVisibilityOpportunities,
   fetchVisibilityOverview,
   fetchVisibilityRunDetail,
@@ -91,6 +92,17 @@ describe('lib/visibility v2 API client and helpers', () => {
     expect(spy).toHaveBeenLastCalledWith(
       '/brands/brand_1/visibility/opportunities?market=GLOBAL&days=14&limit=20',
       { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchVisibilityNearMiss(
+      'brand/1',
+      'CN',
+      { days: 30, tier: 'OPENED_NOT_CITED', sourceKind: 'OWNED', limit: 50 },
+      { signal: ctrl.signal },
+    );
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/brand%2F1/visibility/near-miss?market=CN&days=30&tier=OPENED_NOT_CITED&sourceKind=OWNED&limit=50',
+      { method: 'GET', storage: undefined, signal: ctrl.signal },
     );
 
     await pauseVisibilityRun('brand_1', 'run_1', 'CN');
