@@ -187,4 +187,38 @@ describe('lib/visibility v2 API client and helpers', () => {
     expect(isSafeHttpUrl('data:text/html,<script>alert(1)</script>')).toBe(false);
     expect(isSafeHttpUrl('not-a-url')).toBe(false);
   });
+
+  it('forwards optional productLineId query parameter across all visibility read endpoints', async () => {
+    const spy = vi.spyOn(api, 'authorizedV2Request').mockResolvedValue({} as never);
+
+    await fetchVisibilityOverview('b1', 'GLOBAL', { days: 14, productLineId: ' pl_1 ' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/visibility/overview?market=GLOBAL&days=14&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchVisibilityRuns('b1', 'GLOBAL', { page: 1, productLineId: 'pl_1' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/visibility/runs?market=GLOBAL&page=1&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchVisibilityCitations('b1', 'GLOBAL', { days: 14, productLineId: 'pl_1' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/visibility/citations?market=GLOBAL&days=14&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchVisibilityOpportunities('b1', 'GLOBAL', { days: 14, productLineId: 'pl_1' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/visibility/opportunities?market=GLOBAL&days=14&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchVisibilityNearMiss('b1', 'GLOBAL', { days: 14, productLineId: 'pl_1' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/visibility/near-miss?market=GLOBAL&days=14&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+  });
 });

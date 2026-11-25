@@ -29,6 +29,7 @@ export type FetchVisibilityOverviewParams = {
   engine?: VisibilityEngineKey;
   from?: string;
   to?: string;
+  productLineId?: string | null;
 };
 
 export type FetchVisibilityRunsParams = {
@@ -36,6 +37,7 @@ export type FetchVisibilityRunsParams = {
   pageSize?: CrudPageSize;
   status?: TaskStatusName;
   keyword?: string;
+  productLineId?: string | null;
 };
 
 export type FetchVisibilityCitationsParams = {
@@ -44,12 +46,14 @@ export type FetchVisibilityCitationsParams = {
   engine?: VisibilityEngineKey;
   page?: number;
   pageSize?: CrudPageSize;
+  productLineId?: string | null;
 };
 
 export type FetchVisibilityOpportunitiesParams = {
   days?: number;
   engine?: VisibilityEngineKey;
   limit?: number;
+  productLineId?: string | null;
 };
 
 export type FetchVisibilityNearMissParams = {
@@ -57,6 +61,7 @@ export type FetchVisibilityNearMissParams = {
   tier?: NearMissTier;
   sourceKind?: CitationSourceKind;
   limit?: number;
+  productLineId?: string | null;
 };
 
 function buildBrandVisPath(brandId: string, suffix: string, query?: URLSearchParams): string {
@@ -78,6 +83,7 @@ export function fetchVisibilityOverview(
   if (params.engine) query.set('engine', params.engine);
   if (params.from) query.set('from', params.from);
   if (params.to) query.set('to', params.to);
+  if (params.productLineId?.trim()) query.set('productLineId', params.productLineId.trim());
 
   return authorizedV2Request<VisibilityOverviewResponse>(
     buildBrandVisPath(brandId, '/overview', query),
@@ -116,6 +122,7 @@ export function fetchVisibilityRuns(
   if (params?.pageSize !== undefined) query.set('pageSize', String(params.pageSize));
   if (params?.status) query.set('status', params.status);
   if (params?.keyword?.trim()) query.set('keyword', params.keyword.trim());
+  if (params?.productLineId?.trim()) query.set('productLineId', params.productLineId.trim());
 
   return authorizedV2Request<VisibilityRunListResponse>(
     buildBrandVisPath(brandId, '/runs', query),
@@ -239,6 +246,7 @@ export function fetchVisibilityCitations(
   if (params?.engine) query.set('engine', params.engine);
   if (params?.page !== undefined) query.set('page', String(params.page));
   if (params?.pageSize !== undefined) query.set('pageSize', String(params.pageSize));
+  if (params?.productLineId?.trim()) query.set('productLineId', params.productLineId.trim());
 
   return authorizedV2Request<VisibilityCitationListResponse>(
     buildBrandVisPath(brandId, '/citations', query),
@@ -260,6 +268,7 @@ export function fetchVisibilityOpportunities(
   if (params?.days !== undefined) query.set('days', String(params.days));
   if (params?.engine) query.set('engine', params.engine);
   if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.productLineId?.trim()) query.set('productLineId', params.productLineId.trim());
 
   return authorizedV2Request<VisibilityOpportunitiesResponse>(
     buildBrandVisPath(brandId, '/opportunities', query),
@@ -282,6 +291,7 @@ export function fetchVisibilityNearMiss(
   if (params?.tier) query.set('tier', params.tier);
   if (params?.sourceKind) query.set('sourceKind', params.sourceKind);
   if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.productLineId?.trim()) query.set('productLineId', params.productLineId.trim());
 
   return authorizedV2Request<NearMissListResponse>(
     buildBrandVisPath(brandId, '/near-miss', query),

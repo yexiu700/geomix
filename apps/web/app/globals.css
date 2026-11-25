@@ -12152,3 +12152,330 @@ input:not([class*='ant-']):hover {
   line-height: var(--gm-lh-xs);
   color: var(--gm-fg-3);
 }
+
+/* === Multi-Product-Line Progressive UI & Monthly Retest Budget Board (#387) === */
+
+.gm-product-line-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gm-sp-2);
+  padding: var(--gm-sp-1) 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gm-product-line-switcher--compact {
+  gap: 6px;
+  padding: 0;
+}
+
+.gm-studio-pl-bar {
+  margin-bottom: var(--gm-sp-2);
+}
+
+.gm-product-line-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--gm-border-inner);
+  background: var(--gm-surface-1);
+  color: var(--gm-fg-2);
+  font-size: var(--gm-fs-sm);
+  line-height: var(--gm-lh-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background-color var(--gm-dur-fast) var(--gm-ease-out),
+    border-color var(--gm-dur-fast) var(--gm-ease-out),
+    color var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-product-line-switcher--compact .gm-product-line-pill {
+  padding: 3px 10px;
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+}
+
+.gm-product-line-pill:hover:not(:disabled) {
+  border-color: var(--gm-border-outer);
+  background: var(--gm-surface-2);
+  color: var(--gm-fg-1);
+}
+
+.gm-product-line-pill.is-active {
+  background: var(--gm-selected-bg);
+  border-color: var(--gm-phosphor);
+  color: var(--gm-selected-fg);
+  font-weight: 500;
+}
+
+.gm-product-line-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* /brands — Product Lines Section */
+.gm-brand-pl-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-sp-2);
+}
+
+.gm-brand-pl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gm-sp-3);
+  padding: var(--gm-sp-3) var(--gm-sp-4);
+  border-radius: var(--gm-radius-sm);
+  background: var(--gm-surface-1);
+  box-shadow: inset 0 0 0 1px var(--gm-border-inner);
+}
+
+.gm-brand-pl-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.gm-brand-pl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gm-sp-2);
+}
+
+.gm-brand-pl-name {
+  font-size: var(--gm-fs-md);
+  line-height: var(--gm-lh-md);
+  color: var(--gm-fg-1);
+}
+
+.gm-brand-pl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gm-sp-3);
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  color: var(--gm-fg-3);
+}
+
+.gm-brand-pl-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-sp-3);
+}
+
+.gm-brand-pl-sort-field {
+  max-width: 240px;
+}
+
+.gm-brand-pl-market-overrides {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-sp-3);
+  padding: var(--gm-sp-3);
+  border-radius: var(--gm-radius-sm);
+  background: var(--gm-surface-1);
+  box-shadow: inset 0 0 0 1px var(--gm-border-inner);
+}
+
+.gm-brand-pl-overrides-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gm-sp-2);
+}
+
+.gm-brand-pl-overrides-head .gm-brand-mode-tabs {
+  margin-bottom: 0;
+}
+
+.gm-brand-pl-overrides-title {
+  font-size: var(--gm-fs-sm);
+  line-height: var(--gm-lh-sm);
+  font-weight: 500;
+  color: var(--gm-fg-1);
+}
+
+.gm-brand-pl-comp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: var(--gm-sp-2);
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .gm-brand-pl-comp-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* /brands — Fact Card Scope Selector */
+.gm-brand-fact-scope-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-sp-2);
+  margin-bottom: var(--gm-sp-3);
+}
+
+.gm-brand-fact-scope-tabs {
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.gm-brand-fact-scope-count {
+  margin-left: 4px;
+  color: var(--gm-fg-3);
+}
+
+.gm-brand-fact-other-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gm-sp-2);
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  color: var(--gm-fg-3);
+}
+
+.gm-brand-fact-other-label {
+  flex: none;
+}
+
+.gm-brand-fact-other-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--gm-radius-sm);
+  border: 1px solid var(--gm-border-inner);
+  background: var(--gm-surface-1);
+  color: var(--gm-fg-2);
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  cursor: pointer;
+}
+
+.gm-brand-fact-other-chip:hover {
+  border-color: var(--gm-border-outer);
+  color: var(--gm-fg-1);
+}
+
+.gm-brand-fact-card-scope-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gm-sp-2);
+  margin-bottom: var(--gm-sp-2);
+}
+
+.gm-brand-fact-card-scope-label {
+  flex: none;
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  color: var(--gm-fg-3);
+}
+
+.gm-brand-fact-scope-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* /home — Monthly Auto-Retest Budget Progress Board */
+.gm-home-budget-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gm-sp-2);
+  padding: var(--gm-sp-3) var(--gm-sp-4);
+  border-radius: var(--gm-radius-sm);
+  background: var(--gm-surface-1);
+  box-shadow: inset 0 0 0 1px var(--gm-border-inner);
+}
+
+.gm-home-budget-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gm-sp-2);
+}
+
+.gm-home-budget-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-sp-2);
+}
+
+.gm-home-budget-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gm-sp-2);
+}
+
+.gm-home-budget-stat-primary {
+  font-size: var(--gm-fs-sm);
+  line-height: var(--gm-lh-sm);
+  font-weight: 500;
+  color: var(--gm-fg-1);
+}
+
+.gm-home-budget-stat-meta {
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  color: var(--gm-fg-3);
+}
+
+.gm-home-budget-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--gm-surface-2);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.gm-home-budget-track-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gm-home-budget-fill {
+  fill: var(--gm-phosphor);
+}
+
+.gm-home-budget-fill--caution {
+  fill: var(--gm-sig-warning);
+}
+
+.gm-home-budget-fill--warning {
+  fill: var(--gm-sig-warning);
+}
+
+.gm-home-budget-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gm-sp-2);
+  margin-top: 2px;
+}
+
+.gm-home-budget-hint {
+  font-size: var(--gm-fs-xs);
+  line-height: var(--gm-lh-xs);
+  color: var(--gm-fg-3);
+}

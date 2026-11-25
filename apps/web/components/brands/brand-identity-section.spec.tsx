@@ -509,4 +509,58 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
       );
     });
   });
+
+  it('tracks monthlyRetestPointCap input, previews current month consumption, and saves via updateBrandMarket (#387)', async () => {
+    const brand = makeDualMarketBrand();
+    const globalMarket = brand.markets[1]!;
+    const updatedBrand: BrandRecord = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, monthlyRetestPointCap: 120 } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 200,
+          usedPoints: 40,
+          remainingPoints: 160,
+          skippedCount: 0,
+        }}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('2026-11');
+    expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('已消耗 40 点');
+
+    const capInput = screen.getByLabelText('本月自动复测点数上限') as HTMLInputElement;
+    expect(capInput.value).toBe('');
+
+    fireEvent.change(capInput, { target: { value: '120' } });
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledWith(
+        brand.id,
+        'GLOBAL',
+        expect.objectContaining({
+          monthlyRetestPointCap: 120,
+        }),
+        expect.anything(),
+      );
+    });
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'GLOBAL');
+  });
 });

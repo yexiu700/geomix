@@ -49,9 +49,9 @@ describe('Studio v2 client (studio.ts)', () => {
 
   it('calls exact /api/v2 studio REST routes with encoded params and headers', async () => {
     mockReq.mockResolvedValue({ items: [], total: 0 });
-    await fetchArticles('b/1', 'CN', { status: 'DRAFT', tag: 'NAS' });
+    await fetchArticles('b/1', 'CN', { status: 'DRAFT', tag: 'NAS', productLineId: ' pl_1 ' });
     expect(mockReq).toHaveBeenLastCalledWith(
-      '/brands/b%2F1/articles?market=CN&status=DRAFT&tag=NAS',
+      '/brands/b%2F1/articles?market=CN&status=DRAFT&tag=NAS&productLineId=pl_1',
       expect.objectContaining({ method: 'GET' }),
     );
 

@@ -18,9 +18,10 @@ import {
   type BrandMarketRecord,
   type BrandRecord,
   type GeoMarket,
+  type RetestBudgetSummaryDto,
   type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Input, Select, Tag } from 'antd';
+import { Alert, Button, Checkbox, Input, InputNumber, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { updateBrand, updateBrandMarket } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
@@ -39,6 +40,7 @@ export type BrandIdentitySectionProps = {
   brand: BrandRecord;
   activeMarket: GeoMarket;
   activeBrandMarket: BrandMarketRecord | null;
+  retestBudget?: RetestBudgetSummaryDto | null;
   readOnly: boolean;
   onBrandUpdated: (brand: BrandRecord, market?: GeoMarket) => void;
   onOpenEnableMarket: (market: GeoMarket) => void;
@@ -105,6 +107,7 @@ type MarketDirtyInput = {
   seedPrompts: readonly string[];
   supportedLocales: readonly SupportedLocale[];
   controlPrompts: readonly string[];
+  monthlyRetestPointCap: number | null;
 };
 
 function computeMarketDirty(input: MarketDirtyInput): boolean {
@@ -123,6 +126,9 @@ function computeMarketDirty(input: MarketDirtyInput): boolean {
     return true;
   }
   if (!stringArraysEqual(input.controlPrompts, activeBrandMarket.controlPrompts ?? [])) return true;
+  if ((input.monthlyRetestPointCap ?? null) !== (activeBrandMarket.monthlyRetestPointCap ?? null)) {
+    return true;
+  }
   return false;
 }
 
@@ -152,6 +158,7 @@ export function BrandIdentitySection({
   brand,
   activeMarket,
   activeBrandMarket,
+  retestBudget = null,
   readOnly,
   onBrandUpdated,
   onOpenEnableMarket,
@@ -193,6 +200,9 @@ export function BrandIdentitySection({
     activeBrandMarket?.controlPrompts ?? [],
   );
   const [controlPromptInput, setControlPromptInput] = useState('');
+  const [monthlyRetestPointCap, setMonthlyRetestPointCap] = useState<number | null>(
+    activeBrandMarket?.monthlyRetestPointCap ?? null,
+  );
   const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -240,6 +250,7 @@ export function BrandIdentitySection({
       activeBrandMarket.seedPrompts ?? [],
       activeBrandMarket.supportedLocales ?? [],
       activeBrandMarket.controlPrompts ?? [],
+      activeBrandMarket.monthlyRetestPointCap ?? null,
     ]);
   }, [activeBrandMarket]);
 
@@ -256,6 +267,7 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setMonthlyRetestPointCap(activeBrandMarket?.monthlyRetestPointCap ?? null);
     setAllowCjkGlobalIdentity(false);
     setMarketError(null);
     // Intentionally keyed on value-based activeBrandMarketSignature so base-only updates
@@ -280,6 +292,7 @@ export function BrandIdentitySection({
         seedPrompts,
         supportedLocales,
         controlPrompts,
+        monthlyRetestPointCap,
       }),
     [
       activeMarket,
@@ -295,6 +308,7 @@ export function BrandIdentitySection({
       seedPrompts,
       supportedLocales,
       controlPrompts,
+      monthlyRetestPointCap,
     ],
   );
   const isDirty = isBaseDirty || isMarketDirty;
@@ -394,6 +408,7 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setMonthlyRetestPointCap(activeBrandMarket?.monthlyRetestPointCap ?? null);
     setAllowCjkGlobalIdentity(false);
     setMarketError(null);
   };
@@ -440,6 +455,14 @@ export function BrandIdentitySection({
         hasValidationError = true;
       } else if (controlPrompts.length > BRAND_MAX_CONTROL_PROMPTS) {
         setMarketError(`最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`);
+        hasValidationError = true;
+      } else if (
+        monthlyRetestPointCap !== null &&
+        (!Number.isInteger(monthlyRetestPointCap) ||
+          monthlyRetestPointCap < 1 ||
+          monthlyRetestPointCap > 1_000_000)
+      ) {
+        setMarketError('本月自动复测点数上限需为 1–1,000,000 的整数，或留空表示不限');
         hasValidationError = true;
       } else {
         const overlapCheck = validateControlPromptsAgainstSeeds(controlPrompts, seedPrompts);
@@ -520,6 +543,7 @@ export function BrandIdentitySection({
               ? { allowCjkGlobalIdentity: true }
               : {}),
             controlPrompts,
+            monthlyRetestPointCap,
           },
           { storage: window.sessionStorage, signal: ctrl.signal },
         );
@@ -535,6 +559,7 @@ export function BrandIdentitySection({
           setSeedPrompts(savedBm.seedPrompts ?? []);
           setSupportedLocales(resolveInitialLocales(targetMarket, savedBm));
           setControlPrompts(savedBm.controlPrompts ?? []);
+          setMonthlyRetestPointCap(savedBm.monthlyRetestPointCap ?? null);
         }
         setAllowCjkGlobalIdentity(false);
         marketSaved = true;
@@ -1150,6 +1175,36 @@ export function BrandIdentitySection({
                     </div>
                   ) : null}
                 </div>
+              </FormField>
+
+              <FormField
+                data-testid="brand-retest-cap-field"
+                label="本月自动复测点数上限（选填，留空不限）"
+                htmlFor="market-retest-cap-input"
+                help={
+                  retestBudget
+                    ? `仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。本月（${retestBudget.monthKey}）已消耗 ${retestBudget.usedPoints} 点${retestBudget.capPoints !== null ? ` / 上限 ${retestBudget.capPoints} 点` : ''}。`
+                    : '仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。'
+                }
+              >
+                <InputNumber
+                  id="market-retest-cap-input"
+                  data-testid="market-retest-cap-input"
+                  aria-label="本月自动复测点数上限"
+                  min={1}
+                  max={1_000_000}
+                  precision={0}
+                  placeholder="留空不限"
+                  value={monthlyRetestPointCap}
+                  disabled={readOnly || saving}
+                  className="gm-brand-w-full"
+                  onChange={(val) => {
+                    setMonthlyRetestPointCap(
+                      typeof val === 'number' && Number.isFinite(val) ? Math.trunc(val) : null,
+                    );
+                    if (marketError) setMarketError(null);
+                  }}
+                />
               </FormField>
 
               {marketError ? (

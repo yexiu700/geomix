@@ -4052,4 +4052,248 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       await Promise.resolve();
     });
   });
+
+  it('#387 R2-01 regression: switching activeProductLineId clears ?articleId= and never fetches or injects Line A article into Line B', async () => {
+    const lineA = {
+      id: 'pl_power',
+      brandId: DUAL_BRAND.id,
+      name: 'Portable Power',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const lineB = {
+      ...lineA,
+      id: 'pl_nas',
+      name: 'Home NAS',
+      category: 'NAS',
+      sortOrder: 1,
+    };
+    const artLineA: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      title: 'Line A Portable Power Guide',
+    };
+    const artLineB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_line_b',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_nas',
+      title: 'Line B Home NAS Guide',
+    };
+
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&productLineId=pl_power&articleId=art_line_a`,
+    );
+
+    vi.spyOn(studioApi, 'fetchArticles').mockImplementation(async (_brandId, _market, query) => {
+      if (query?.productLineId === 'pl_power') return { items: [artLineA], total: 1 };
+      if (query?.productLineId === 'pl_nas') return { items: [artLineB], total: 1 };
+      return { items: [artLineA, artLineB], total: 2 };
+    });
+    const getArticleSpy = vi.spyOn(studioApi, 'getArticle').mockResolvedValue(artLineA);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineA, lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_power',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Line A Portable Power Guide')).toBeTruthy();
+    });
+    expect(new URLSearchParams(window.location.search).get('articleId')).toBe('art_line_a');
+
+    // Switch product line from pl_power -> pl_nas via store action
+    act(() => {
+      useWorkspaceStore.getState().setActiveProductLine('pl_nas');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Line B Home NAS Guide')).toBeTruthy();
+    });
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBe('pl_nas');
+    expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+    expect(getArticleSpy).not.toHaveBeenCalled();
+    expect(screen.queryByText('Line A Portable Power Guide')).toBeNull();
+    expect(screen.queryByDisplayValue('Line A Portable Power Guide')).toBeNull();
+  });
+
+  it('#387 R2-01 regression: deep-linking conflicting ?articleId= and ?briefId= for Line A while on Line B rejects and strips them instead of bleeding into Line B', async () => {
+    const lineA = {
+      id: 'pl_power',
+      brandId: DUAL_BRAND.id,
+      name: 'Portable Power',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const lineB = {
+      ...lineA,
+      id: 'pl_nas',
+      name: 'Home NAS',
+      category: 'NAS',
+      sortOrder: 1,
+    };
+    const artLineA: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_foreign_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      title: 'Foreign Line A Article',
+    };
+    const briefLineA: GeoBriefRecord = {
+      ...BRIEF_1,
+      id: 'brief_foreign_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      targetPrompt: 'Foreign Line A Brief Prompt',
+    };
+    const artLineB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_only_line_b',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_nas',
+      title: 'Line B Only Article',
+    };
+
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&productLineId=pl_nas&articleId=art_foreign_line_a&briefId=brief_foreign_line_a`,
+    );
+
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(briefLineA);
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({ items: [artLineB], total: 1 });
+    const getArticleSpy = vi.spyOn(studioApi, 'getArticle').mockResolvedValue(artLineA);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineA, lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_nas',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(getArticleSpy).toHaveBeenCalledWith('art_foreign_line_a', expect.anything());
+      expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+      expect(new URLSearchParams(window.location.search).get('briefId')).toBeNull();
+    });
+
+    expect(screen.getByText('Line B Only Article')).toBeTruthy();
+    expect(screen.queryByText('Foreign Line A Article')).toBeNull();
+    expect(screen.queryByDisplayValue('Foreign Line A Article')).toBeNull();
+    expect(screen.queryByDisplayValue('Foreign Line A Brief Prompt')).toBeNull();
+    expect(mockNotifyWarning).toHaveBeenCalledWith(
+      '该文章不属于当前产品线，已清除链接中的文章参数',
+    );
+  });
+
+  it('#387 R2-02 regression: fallback getBrandFacts pre-generation check forwards activeProductLineId', async () => {
+    const lineB = {
+      id: 'pl_nas',
+      brandId: DUAL_BRAND.id,
+      name: 'Home NAS',
+      localNamesJson: {},
+      category: 'NAS',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+
+    const getFactsSpy = vi
+      .spyOn(brandsApi, 'getBrandFacts')
+      // Initial workspace load fails transiently -> brandFactsLoadedRef stays false and pending ref clears
+      .mockRejectedValueOnce(new Error('transient facts timeout'))
+      // Fallback check on clicking Generate succeeds with empty facts for pl_nas
+      .mockResolvedValueOnce({
+        brandId: DUAL_BRAND.id,
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockResolvedValue({ aborted: false, receivedEvents: 0 });
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_nas',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(getFactsSpy).toHaveBeenNthCalledWith(
+      1,
+      DUAL_BRAND.id,
+      expect.objectContaining({ productLineId: 'pl_nas' }),
+    );
+
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: 'Best quiet 4-bay Home NAS' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(getFactsSpy).toHaveBeenNthCalledWith(2, DUAL_BRAND.id, {
+      productLineId: 'pl_nas',
+    });
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
 });

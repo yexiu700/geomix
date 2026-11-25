@@ -59,6 +59,7 @@ export function fetchArticles(
     briefId?: string;
     batchJobId?: string;
     keyword?: string;
+    productLineId?: string | null;
     page?: number;
     pageSize?: number;
   },
@@ -71,6 +72,7 @@ export function fetchArticles(
   if (params?.briefId) qs.set('briefId', params.briefId);
   if (params?.batchJobId) qs.set('batchJobId', params.batchJobId);
   if (params?.keyword?.trim()) qs.set('keyword', params.keyword.trim());
+  if (params?.productLineId?.trim()) qs.set('productLineId', params.productLineId.trim());
   if (params?.page) qs.set('page', String(params.page));
   if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
   return authorizedV2Request<GeoArticleListResponse>(

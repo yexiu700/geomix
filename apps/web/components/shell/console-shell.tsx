@@ -204,6 +204,33 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
     },
   });
 
+  const activeBrandId = workspace.activeBrandId;
+
+  useEffect(() => {
+    if (!accountId || !activeBrandId) return undefined;
+    const ctrl = new AbortController();
+    void useWorkspaceStore.getState().loadProductLines(activeBrandId, {
+      storage: window.sessionStorage,
+      signal: ctrl.signal,
+    });
+    return () => {
+      ctrl.abort();
+    };
+  }, [accountId, activeBrandId]);
+
+  useTabFreshness({
+    active: Boolean(accountId && activeBrandId),
+    domains: ['product-lines'],
+    refreshOnActivate: false,
+    onRefresh: () => {
+      const currentBrandId = useWorkspaceStore.getState().activeBrandId;
+      if (!currentBrandId) return;
+      void useWorkspaceStore.getState().loadProductLines(currentBrandId, {
+        storage: window.sessionStorage,
+      });
+    },
+  });
+
   useEffect(() => {
     if (!workspace.hydrated) return;
     useWorkspaceStore.getState().syncFromUrl(search, window.localStorage);

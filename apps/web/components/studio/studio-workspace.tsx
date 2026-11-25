@@ -75,8 +75,10 @@ import {
 import {
   selectActiveBrand,
   selectActiveBrandMarket,
+  selectActiveProductLine,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { ProductLineSelectorPill } from '../brands/product-line-selector-pill';
 import { QuickFactExtractModal } from '../brands/quick-fact-extract-modal';
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
@@ -112,18 +114,27 @@ const EMPTY_PREF: PromptPreferenceRecord = {
 function readStudioUrlParams(): {
   brandId: string | null;
   market: string | null;
+  productLineId: string | null;
   briefId: string | null;
   articleId: string | null;
   batchJobId: string | null;
 } {
   if (typeof window === 'undefined') {
-    return { brandId: null, market: null, briefId: null, articleId: null, batchJobId: null };
+    return {
+      brandId: null,
+      market: null,
+      productLineId: null,
+      briefId: null,
+      articleId: null,
+      batchJobId: null,
+    };
   }
   const sp = new URLSearchParams(window.location.search);
   const rawMarket = sp.get('market')?.trim().toUpperCase() || null;
   return {
     brandId: sp.get('brandId')?.trim() || null,
     market: rawMarket === 'CN' || rawMarket === 'GLOBAL' ? rawMarket : null,
+    productLineId: sp.get('productLineId')?.trim() || null,
     briefId: sp.get('briefId')?.trim() || null,
     articleId: sp.get('articleId')?.trim() || null,
     batchJobId: sp.get('batchJobId')?.trim() || null,
@@ -167,9 +178,11 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const state = useWorkspaceStore();
   const activeBrand = selectActiveBrand(state);
   const activeBrandMarket = selectActiveBrandMarket(state);
+  const activeProductLine = selectActiveProductLine(state);
   const activeBrandId = activeBrand?.id ?? null;
   const activeBrandMarketId = activeBrandMarket?.id ?? null;
   const activeMarket = state.activeMarket;
+  const activeProductLineId = state.activeProductLineId;
   const consoleCtx = useConsoleContext();
   const readOnly = consoleCtx?.readOnly ?? false;
   const feedback = useUxFeedback();
@@ -452,7 +465,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       brandId: string,
       market: typeof activeMarket,
       seq: number,
-      options?: { preserveSelection?: boolean },
+      options?: { preserveSelection?: boolean; productLineId?: string | null },
     ) => {
       loadCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -464,8 +477,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
       const urlParams = readStudioUrlParams();
       const { status: currentStatus, tag: currentTag } = articleFiltersRef.current;
+      const productLineId = options?.productLineId ?? null;
 
-      const factsReq = getBrandFacts(brandId, { signal: ctrl.signal });
+      const factsReq = getBrandFacts(brandId, {
+        signal: ctrl.signal,
+        ...(productLineId ? { productLineId } : {}),
+      });
       brandFactsPromiseRef.current = {
         seq,
         promise: factsReq.then((res) => res.items).catch(() => null),
@@ -473,13 +490,19 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
       const [briefsRes, articlesRes, batchRes, factsRes, prefRes, mediaRes] =
         await Promise.allSettled([
-          fetchBriefs(brandId, market, { status: 'OPEN', pageSize: 50 }, { signal: ctrl.signal }),
+          fetchBriefs(
+            brandId,
+            market,
+            { status: 'OPEN', pageSize: 50, ...(productLineId ? { productLineId } : {}) },
+            { signal: ctrl.signal },
+          ),
           fetchArticles(
             brandId,
             market,
             {
               status: currentStatus || undefined,
               tag: currentTag.trim() || undefined,
+              ...(productLineId ? { productLineId } : {}),
               pageSize: 50,
             },
             { signal: ctrl.signal },
@@ -505,6 +528,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         brandFactsLoadedRef.current = true;
       } else {
         brandFactsLoadedRef.current = false;
+        if (brandFactsPromiseRef.current?.seq === seq) {
+          brandFactsPromiseRef.current = null;
+        }
       }
       if (prefRes.status === 'fulfilled') {
         setPromptPreference(prefRes.value);
@@ -550,8 +576,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             getBrief(urlParams.briefId, { signal: ctrl.signal })
               .then((fetched) => {
                 if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-                if (fetched.brandId === brandId && fetched.market === market) {
+                if (
+                  fetched.brandId === brandId &&
+                  fetched.market === market &&
+                  (!productLineId || (fetched.productLineId ?? null) === productLineId)
+                ) {
                   applyBriefToPrewrite(fetched);
+                } else {
+                  replaceStudioUrlParam('briefId', null);
                 }
               })
               .catch(() => undefined),
@@ -570,7 +602,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             getArticle(urlParams.articleId, { signal: ctrl.signal })
               .then((fetched) => {
                 if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-                if (fetched.brandId === brandId && fetched.market === market) {
+                const productLineMatches =
+                  !productLineId || (fetched.productLineId ?? null) === productLineId;
+                if (
+                  fetched.brandId === brandId &&
+                  fetched.market === market &&
+                  productLineMatches
+                ) {
                   lastNotifiedInvalidArticleIdRef.current = null;
                   setArticles((prev) =>
                     prev.some((a) => a.id === fetched.id) ? prev : [fetched, ...prev],
@@ -587,6 +625,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 const hasConflictingMarket = Boolean(
                   curParams.market && curParams.market !== fetched.market,
                 );
+                const hasConflictingProductLine = Boolean(
+                  curParams.productLineId &&
+                  (fetched.productLineId ?? null) !== curParams.productLineId,
+                );
+                const needsBrandOrMarketSwitch =
+                  fetched.brandId !== brandId || fetched.market !== market;
                 const targetBrand = useWorkspaceStore
                   .getState()
                   .brands.find(
@@ -594,7 +638,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                       b.id === fetched.brandId &&
                       b.markets.some((m) => m.market === fetched.market),
                   );
-                if (!hasConflictingBrand && !hasConflictingMarket && targetBrand) {
+                if (
+                  needsBrandOrMarketSwitch &&
+                  !hasConflictingBrand &&
+                  !hasConflictingMarket &&
+                  !hasConflictingProductLine &&
+                  targetBrand
+                ) {
                   pendingAutoSwitchArticleIdRef.current = fetched.id;
                   useWorkspaceStore
                     .getState()
@@ -608,7 +658,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
                 if (lastNotifiedInvalidArticleIdRef.current !== urlParams.articleId) {
                   lastNotifiedInvalidArticleIdRef.current = urlParams.articleId;
                   feedbackRef.current.notifyWarning(
-                    '该文章不属于当前品牌或市场，已清除链接中的文章参数',
+                    !productLineMatches && fetched.brandId === brandId && fetched.market === market
+                      ? '该文章不属于当前产品线，已清除链接中的文章参数'
+                      : '该文章不属于当前品牌或市场，已清除链接中的文章参数',
                   );
                 }
               })
@@ -660,10 +712,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setSavingArticle(false);
     setBatchSubmitting(false);
     const seq = ++contextSeqRef.current;
-    const contextKey = `${activeBrandId ?? ''}::${activeBrandMarketId ?? ''}::${activeMarket}::${state.contextEpoch}`;
+    const contextKey = `${activeBrandId ?? ''}::${activeBrandMarketId ?? ''}::${activeMarket}::${activeProductLineId ?? ''}::${state.contextEpoch}`;
     const brandMarketKey =
       activeBrandId && activeBrandMarketId
-        ? `${activeBrandId}::${activeBrandMarketId}::${activeMarket}`
+        ? `${activeBrandId}::${activeBrandMarketId}::${activeMarket}::${activeProductLineId ?? ''}`
         : null;
     const contextChanged =
       prevContextKeyRef.current !== null &&
@@ -682,10 +734,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (isPreservedAutoSwitch) {
         pendingAutoSwitchArticleIdRef.current = null;
       }
+      const curProductLineId = curParams.productLineId ?? null;
       const urlTargetsNewContext = Boolean(
         curParams.articleId &&
         (!curParams.brandId || curParams.brandId === activeBrandId) &&
-        (!curParams.market || curParams.market === activeMarket),
+        (!curParams.market || curParams.market === activeMarket) &&
+        curProductLineId === (activeProductLineId ?? null),
       );
       if (!isPreservedAutoSwitch && !urlTargetsNewContext) {
         replaceStudioUrlParam('briefId', null);
@@ -758,12 +812,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     hadActiveBatchRef.current = false;
     editorCursorRef.current = null;
     pendingUsedMediaIdsRef.current = [];
-    if (lastLoadedBrandIdRef.current !== activeBrandId) {
-      setBrandMedia([]);
+    const brandLineKey = activeBrandId ? `${activeBrandId}::${activeProductLineId ?? ''}` : null;
+    if (lastLoadedBrandIdRef.current !== brandLineKey) {
+      if (!lastLoadedBrandIdRef.current?.startsWith(`${activeBrandId ?? ''}::`)) {
+        setBrandMedia([]);
+      }
       setBrandFacts([]);
       brandFactsRef.current = [];
       brandFactsLoadedRef.current = false;
-      lastLoadedBrandIdRef.current = activeBrandId;
+      lastLoadedBrandIdRef.current = brandLineKey;
     }
 
     if (!activeBrandId || !activeBrandMarketId) {
@@ -773,7 +830,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       return;
     }
 
-    void loadWorkspaceData(activeBrandId, activeMarket, seq);
+    void loadWorkspaceData(activeBrandId, activeMarket, seq, {
+      productLineId: activeProductLineId,
+    });
 
     return () => {
       loadCtrlRef.current?.abort();
@@ -803,6 +862,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     activeBrandId,
     activeBrandMarketId,
     activeMarket,
+    activeProductLineId,
     state.contextEpoch,
     loadWorkspaceData,
     clearArticleActionControllers,
@@ -844,7 +904,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     void getArticle(targetArticleId, { signal: ctrl.signal })
       .then((fetched) => {
         if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
-        if (fetched.brandId === activeBrandId && fetched.market === activeMarket) {
+        const productLineMatches =
+          !activeProductLineId || (fetched.productLineId ?? null) === activeProductLineId;
+        if (
+          fetched.brandId === activeBrandId &&
+          fetched.market === activeMarket &&
+          productLineMatches
+        ) {
           lastNotifiedInvalidArticleIdRef.current = null;
           setArticles((prev) =>
             prev.some((a) => a.id === fetched.id) ? prev : [fetched, ...prev],
@@ -859,12 +925,23 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         const hasConflictingMarket = Boolean(
           curParams.market && curParams.market !== fetched.market,
         );
+        const hasConflictingProductLine = Boolean(
+          curParams.productLineId && (fetched.productLineId ?? null) !== curParams.productLineId,
+        );
+        const needsBrandOrMarketSwitch =
+          fetched.brandId !== activeBrandId || fetched.market !== activeMarket;
         const targetBrand = useWorkspaceStore
           .getState()
           .brands.find(
             (b) => b.id === fetched.brandId && b.markets.some((m) => m.market === fetched.market),
           );
-        if (!hasConflictingBrand && !hasConflictingMarket && targetBrand) {
+        if (
+          needsBrandOrMarketSwitch &&
+          !hasConflictingBrand &&
+          !hasConflictingMarket &&
+          !hasConflictingProductLine &&
+          targetBrand
+        ) {
           pendingAutoSwitchArticleIdRef.current = fetched.id;
           useWorkspaceStore
             .getState()
@@ -876,7 +953,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         replaceStudioUrlParam('articleId', null);
         if (lastNotifiedInvalidArticleIdRef.current !== targetArticleId) {
           lastNotifiedInvalidArticleIdRef.current = targetArticleId;
-          feedbackRef.current.notifyWarning('该文章不属于当前品牌或市场，已清除链接中的文章参数');
+          feedbackRef.current.notifyWarning(
+            !productLineMatches &&
+              fetched.brandId === activeBrandId &&
+              fetched.market === activeMarket
+              ? '该文章不属于当前产品线，已清除链接中的文章参数'
+              : '该文章不属于当前品牌或市场，已清除链接中的文章参数',
+          );
         }
       })
       .catch(() => {
@@ -893,6 +976,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     activeBrandId,
     activeBrandMarketId,
     activeMarket,
+    activeProductLineId,
     applyArticleToCanvas,
     resetActiveArticleContext,
   ]);
@@ -914,7 +998,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   // Refetch articles ONLY when status/tag filters actually change (never wipes editor or aborts stream)
   useEffect(() => {
     if (!activeBrandId || !activeBrandMarketId) return;
-    const contextKey = `${activeBrandId}::${activeBrandMarketId}::${activeMarket}::${state.contextEpoch}`;
+    const contextKey = `${activeBrandId}::${activeBrandMarketId}::${activeMarket}::${activeProductLineId ?? ''}::${state.contextEpoch}`;
     if (pendingFilterResetRef.current) {
       if (articleStatusFilter === '' && articleTagFilter === '') {
         pendingFilterResetRef.current = false;
@@ -945,6 +1029,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       {
         status: articleStatusFilter || undefined,
         tag: articleTagFilter.trim() || undefined,
+        ...(activeProductLineId ? { productLineId: activeProductLineId } : {}),
         pageSize: 50,
       },
       { signal: ctrl.signal },
@@ -964,6 +1049,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     activeBrandId,
     activeBrandMarketId,
     activeMarket,
+    activeProductLineId,
     state.contextEpoch,
     articleStatusFilter,
     articleTagFilter,
@@ -989,7 +1075,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         const stillActive = res.items.some((j) => j.status === 'QUEUED' || j.status === 'RUNNING');
         if (hadActiveBatchRef.current && !stillActive) {
           hadActiveBatchRef.current = false;
-          void loadWorkspaceData(activeBrandId, activeMarket, seq, { preserveSelection: true });
+          void loadWorkspaceData(activeBrandId, activeMarket, seq, {
+            preserveSelection: true,
+            productLineId: activeProductLineId,
+          });
           void consoleCtx?.refreshWallet();
           invalidateFreshness('articles', 'briefs', 'points');
         } else if (stillActive) {
@@ -1157,9 +1246,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     },
   });
 
-  // Cross-tab freshness sync (briefs/articles/brand-facts/brand-media)
+  // Cross-tab freshness sync (briefs/articles/brand-facts/brand-media/product-lines)
   useTabFreshness({
-    domains: ['briefs', 'articles', 'brand-facts', 'brand-media'],
+    domains: ['briefs', 'articles', 'brand-facts', 'brand-media', 'product-lines'],
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     refreshOnActivate: false,
     onRefresh: () => {
@@ -1170,6 +1259,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (!activeBrandId || !activeBrandMarket || streaming) return;
       void loadWorkspaceData(activeBrandId, activeMarket, contextSeqRef.current, {
         preserveSelection: true,
+        productLineId: activeProductLineId,
       });
     },
   });
@@ -1262,11 +1352,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       const safeTargetFormat = targetFormatsForMarket(activeMarket).includes(targetFormat)
         ? targetFormat
         : defaultTargetFormatForMarket(activeMarket);
+      const effectiveProductLineId = linkedBrief?.productLineId ?? activeProductLineId ?? undefined;
       const result = await streamGenerateArticle(
         activeBrandId,
         {
           market: activeMarket,
           ...(linkedBrief ? { briefId: linkedBrief.id } : {}),
+          ...(effectiveProductLineId ? { productLineId: effectiveProductLineId } : {}),
           ...(linkedBrief?.sourceCitationUrl
             ? { sourceCitationUrl: linkedBrief.sourceCitationUrl }
             : {}),
@@ -1395,7 +1487,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (pending && pending.seq === seq) {
         resolvedFacts = await pending.promise;
       } else {
-        resolvedFacts = await getBrandFacts(activeBrandId)
+        resolvedFacts = await getBrandFacts(activeBrandId, {
+          ...(activeProductLineId ? { productLineId: activeProductLineId } : {}),
+        })
           .then((res) => res.items)
           .catch(() => null);
       }
@@ -1629,6 +1723,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     if (!activeArticle || !activeBrandId || readOnly) return;
     const targetArticle = activeArticle;
     const targetBrandId = activeBrandId;
+    const targetProductLineId = targetArticle.productLineId ?? activeProductLineId ?? null;
     const targetTitle = draftTitle.trim() || targetArticle.title;
     const seq = contextSeqRef.current;
     const artSeq = articleSeqRef.current;
@@ -1638,10 +1733,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       if (options.syncToFact) {
         let currentFacts = brandFacts;
         if (currentFacts.length === 0) {
-          const loaded = await getBrandFacts(targetBrandId);
+          const loaded = await getBrandFacts(targetBrandId, {
+            ...(targetProductLineId ? { productLineId: targetProductLineId } : {}),
+          });
           currentFacts = loaded.items;
         }
-        const existingFact = currentFacts.find((f) => f.slot === options.factSlot);
+        const existingFact = currentFacts.find(
+          (f) => f.slot === options.factSlot && (f.productLineId ?? null) === targetProductLineId,
+        );
         const mergedContent = mergeFactFeedbackContent(existingFact?.content, slot.hint, value);
         const factRes = await saveBrandFacts(targetBrandId, {
           facts: [
@@ -1651,6 +1750,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
               title: existingFact?.title || BRAND_FACT_SLOT_LABELS[options.factSlot],
               content: mergedContent,
               sourceType: 'STUDIO_FEEDBACK',
+              ...(targetProductLineId !== null ? { productLineId: targetProductLineId } : {}),
             },
           ],
           ...(!activeBrand?.truthAgreementSignedAt ? { truthAgreed: true } : {}),
@@ -1699,6 +1799,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     if (!activeArticle || !activeBrandId || readOnly || entries.length === 0) return;
     const targetArticle = activeArticle;
     const targetBrandId = activeBrandId;
+    const targetProductLineId = targetArticle.productLineId ?? activeProductLineId ?? null;
     const targetTitle = draftTitle.trim() || targetArticle.title;
     const seq = contextSeqRef.current;
     const artSeq = articleSeqRef.current;
@@ -1712,7 +1813,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     try {
       if (options.syncToFact) {
         // Must fetch latest server facts before merging so existing slot facts are never overwritten with stale/empty local cache
-        const latest = await getBrandFacts(targetBrandId);
+        const latest = await getBrandFacts(targetBrandId, {
+          ...(targetProductLineId ? { productLineId: targetProductLineId } : {}),
+        });
         const currentFacts = latest.items;
 
         const bySlot = new Map<BrandFactSlot, { existing?: BrandFactRecord; content: string }>();
@@ -1720,7 +1823,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           let bucket = bySlot.get(options.factSlot);
           if (!bucket) {
             const existing = currentFacts.find(
-              (f) => f.slot === options.factSlot && !f.productLineId,
+              (f) =>
+                f.slot === options.factSlot && (f.productLineId ?? null) === targetProductLineId,
             );
             bucket = { existing, content: existing?.content ?? '' };
             bySlot.set(options.factSlot, bucket);
@@ -1735,6 +1839,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           content: bucket.content.slice(0, BRAND_FACT_CARD_MAX),
           sourceType: 'STUDIO_FEEDBACK' as const,
           ...(bucket.existing?.sourceUrl ? { sourceUrl: bucket.existing.sourceUrl } : {}),
+          ...(targetProductLineId !== null ? { productLineId: targetProductLineId } : {}),
         }));
 
         const factRes = await saveBrandFacts(targetBrandId, {
@@ -2501,6 +2606,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   return (
     <section className="gm-studio-page" aria-label="GEO 写作台" data-testid="studio-workspace">
+      <ProductLineSelectorPill compact className="gm-studio-pl-bar" disabled={streaming} />
       <div className={gridClassName}>
         {/* Left Pane: Pending Briefs + Batch Queue + History Articles */}
         {!focusMode && !isNarrowDrawerViewport ? renderLeftPane(false) : null}
@@ -2543,6 +2649,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             collapsed={isPrewriteCollapsed}
             canCollapse={Boolean(activeArticle)}
             onToggleCollapsed={() => setPrewriteExpanded((prev) => !prev)}
+            activeProductLineName={activeProductLine?.name ?? null}
             articleSummary={
               activeArticle
                 ? {
@@ -2675,6 +2782,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         open={counterModalOpen}
         brandId={activeBrand.id}
         market={activeMarket}
+        productLineId={activeProductLineId}
         readOnly={readOnly}
         mode="url"
         onClose={() => setCounterModalOpen(false)}

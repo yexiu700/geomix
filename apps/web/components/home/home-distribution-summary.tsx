@@ -8,6 +8,7 @@ import {
   type DidDirection,
   type DistributionChannelAttributionItem,
   type DistributionSummaryDto,
+  type RetestBudgetSummaryDto,
   type VisibilitySentiment,
   type WilsonInterval,
 } from '@geomix/shared';
@@ -19,10 +20,12 @@ import { HomeCrawlAlertBanner } from './home-crawl-alert-banner';
 
 export type HomeDistributionSummaryProps = {
   summary?: DistributionSummaryDto | null;
+  retestBudget?: RetestBudgetSummaryDto | null;
   recentArticles?: readonly ActionHomeResponse['recentArticles'][number][];
   hideCrawlAlerts?: boolean;
   onOpenArticle: (articleId: string) => void;
   onOpenPoints?: () => void;
+  onOpenBudgetSettings?: () => void;
   onOpenStudio?: () => void;
   onOpenRoiReportModal?: () => void;
 };
@@ -203,10 +206,12 @@ function renderSentimentCell(
 
 export function HomeDistributionSummary({
   summary,
+  retestBudget,
   recentArticles,
   hideCrawlAlerts = false,
   onOpenArticle,
   onOpenPoints,
+  onOpenBudgetSettings,
   onOpenStudio,
   onOpenRoiReportModal,
 }: HomeDistributionSummaryProps): JSX.Element {
@@ -282,12 +287,38 @@ export function HomeDistributionSummary({
         (row.citationHitWilson.confidenceLevel === 'LOW' || row.citationHitWilson.trials < 5),
     );
 
+  const showBudgetBoard = Boolean(
+    retestBudget &&
+    (retestBudget.capPoints !== null ||
+      retestBudget.usedPoints > 0 ||
+      retestBudget.skippedCount > 0),
+  );
+
+  const budgetUsedPoints = Math.max(0, retestBudget?.usedPoints ?? 0);
+  const budgetCapPoints = retestBudget?.capPoints ?? null;
+  const budgetRemainingPoints =
+    budgetCapPoints !== null
+      ? retestBudget?.remainingPoints !== null && retestBudget?.remainingPoints !== undefined
+        ? Math.max(0, retestBudget.remainingPoints)
+        : Math.max(0, budgetCapPoints - budgetUsedPoints)
+      : null;
+  const budgetRawPct =
+    budgetCapPoints !== null && budgetCapPoints > 0
+      ? Math.round((budgetUsedPoints / budgetCapPoints) * 100)
+      : 0;
+  const budgetClampedPct = Math.max(0, Math.min(100, budgetRawPct));
+  const budgetAtOrOverCap =
+    budgetCapPoints !== null && budgetCapPoints > 0 && budgetUsedPoints >= budgetCapPoints;
+  const budgetNearCap =
+    budgetCapPoints !== null && budgetCapPoints > 0 && !budgetAtOrOverCap && budgetClampedPct >= 80;
+
   const isEmpty =
     visibleCrawlAlerts.length === 0 &&
     upcomingRetests.length === 0 &&
     channelAttribution.length === 0 &&
     !didSummary &&
-    !latestCompletedWilson;
+    !latestCompletedWilson &&
+    !showBudgetBoard;
 
   const hasDegradedCitation = channelAttribution.some(
     (item) =>
@@ -385,6 +416,99 @@ export function HomeDistributionSummary({
             <HomeCrawlAlertBanner alerts={visibleCrawlAlerts} onOpenArticle={onOpenArticle} />
           ) : null}
 
+          {/* 1.5 Monthly Auto-Retest Budget Progress Board (#387) */}
+          {showBudgetBoard && retestBudget ? (
+            <div className="gm-home-budget-box" data-testid="home-retest-budget-board">
+              <div className="gm-home-budget-head">
+                <div className="gm-home-budget-title-wrap">
+                  <span className="gm-home-retest-title">月度自动复测预算</span>
+                  <span className="gm-home-chip gm-num">{retestBudget.monthKey}</span>
+                </div>
+                {onOpenBudgetSettings ? (
+                  <Button
+                    size="small"
+                    type="link"
+                    className="gm-home-nowrap-btn"
+                    data-testid="home-retest-budget-settings-btn"
+                    onClick={onOpenBudgetSettings}
+                  >
+                    调整上限
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="gm-home-budget-stats">
+                {budgetCapPoints !== null ? (
+                  <>
+                    <span className="gm-num gm-home-budget-stat-primary">
+                      已消耗 {budgetUsedPoints} 点 / 上限 {budgetCapPoints} 点
+                    </span>
+                    <span className="gm-num gm-home-budget-stat-meta">
+                      剩余 {budgetRemainingPoints ?? 0} 点（{budgetRawPct}%）
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="gm-num gm-home-budget-stat-primary">
+                      本月已消耗 {budgetUsedPoints} 点
+                    </span>
+                    <span className="gm-home-budget-stat-meta">未设上限</span>
+                  </>
+                )}
+              </div>
+
+              <div
+                className="gm-home-budget-track"
+                role="progressbar"
+                data-testid="home-retest-budget-bar"
+                aria-label="月度自动复测预算使用进度"
+                aria-valuenow={budgetCapPoints !== null ? budgetClampedPct : 0}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                data-empty={budgetUsedPoints === 0 || budgetCapPoints === null ? 'true' : 'false'}
+              >
+                <svg
+                  className="gm-home-budget-track-svg"
+                  viewBox="0 0 100 4"
+                  preserveAspectRatio="none"
+                  aria-hidden="true"
+                >
+                  {budgetCapPoints !== null && budgetUsedPoints > 0 && budgetClampedPct > 0 ? (
+                    <rect
+                      className={
+                        budgetAtOrOverCap
+                          ? 'gm-home-budget-fill gm-home-budget-fill--warning'
+                          : budgetNearCap
+                            ? 'gm-home-budget-fill gm-home-budget-fill--caution'
+                            : 'gm-home-budget-fill'
+                      }
+                      x="0"
+                      y="0"
+                      width={budgetClampedPct}
+                      height="4"
+                      rx="2"
+                    />
+                  ) : null}
+                </svg>
+              </div>
+
+              {retestBudget.skippedCount > 0 ? (
+                <div
+                  className="gm-home-budget-alert"
+                  data-testid="home-retest-budget-skipped-alert"
+                >
+                  <StatusBadge
+                    tone="warning"
+                    label={`已达月度预算上限，已跳过 ${retestBudget.skippedCount} 次自动复测`}
+                  />
+                  <span className="gm-home-budget-hint">
+                    手动写作、可见度监测与手动复测不受此上限影响。
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {/* 2. Upcoming / Skipped Auto-Retest Reminders */}
           {upcomingRetests.length > 0 ? (
             <div className="gm-home-retest-box" data-testid="home-upcoming-retests">
@@ -392,12 +516,15 @@ export function HomeDistributionSummary({
                 <span className="gm-home-retest-title">
                   自动复测提醒（{upcomingRetests.length} 项）
                 </span>
-                <span className="gm-home-retest-sub">近 7 天到期复测节点与余额不足跳过提醒</span>
+                <span className="gm-home-retest-sub">
+                  近 7 天到期复测节点、预算上限与余额不足跳过提醒
+                </span>
               </div>
 
               <div className="gm-home-retest-list">
                 {upcomingRetests.map((item) => {
                   const isSkippedPoints = item.status === 'SKIPPED_INSUFFICIENT_POINTS';
+                  const isSkippedBudgetCap = item.status === 'SKIPPED_BUDGET_CAP';
                   return (
                     <div
                       key={item.scheduleId}
@@ -436,6 +563,15 @@ export function HomeDistributionSummary({
                             onClick={onOpenPoints}
                           >
                             查看点数
+                          </Button>
+                        ) : null}
+                        {isSkippedBudgetCap && onOpenBudgetSettings ? (
+                          <Button
+                            size="small"
+                            className="gm-home-nowrap-btn"
+                            onClick={onOpenBudgetSettings}
+                          >
+                            调整上限
                           </Button>
                         ) : null}
                         {item.articleId ? (

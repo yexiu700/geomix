@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import type { BrandRecord } from '@geomix/shared';
+import type { BrandProductLineDto, BrandRecord } from '@geomix/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   WORKSPACE_STORAGE_KEY,
@@ -9,6 +9,7 @@ import {
   resolveActiveWorkspace,
   selectActiveBrand,
   selectActiveBrandMarket,
+  selectActiveProductLine,
   useWorkspaceStore,
 } from './workspace-store';
 
@@ -320,6 +321,347 @@ describe('useWorkspaceStore', () => {
       .upsertBrand(b1, { activate: true, market: 'CN', persistStorage: window.localStorage });
 
     expect(window.location.search).toBe('?brandId=b-state-1&market=CN');
+    expect(window.history.state).toEqual(customState);
+  });
+
+  it('loads, sorts, selects, upserts, and removes product lines while syncing ?productLineId= without touching localStorage', async () => {
+    const makeLine = (
+      id: string,
+      brandId: string,
+      name: string,
+      sortOrder: number,
+      createdAt = '2026-11-20T00:00:00.000Z',
+    ): BrandProductLineDto => ({
+      id,
+      brandId,
+      name,
+      localNamesJson: {},
+      category: 'Hardware',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const b1 = makeBrand('b-1', '品牌甲', ['CN', 'GLOBAL']);
+    const customState = { __NA: true, key: 'pl-state' };
+    window.history.replaceState(customState, '', '/home?brandId=b-1&market=GLOBAL');
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, market: 'GLOBAL', persistStorage: window.localStorage });
+
+    const lineB = makeLine('pl-b', 'b-1', 'Home NAS', 2);
+    const lineA = makeLine('pl-a', 'b-1', 'Power Station', 1);
+
+    // Out-of-order response guard
+    let resolveOld!: (value: { items: BrandProductLineDto[] }) => void;
+    const oldLoad = useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+    });
+    const newLoad = useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: async () => ({ items: [lineB, lineA] }),
+    });
+    await newLoad;
+    resolveOld({ items: [makeLine('pl-stale', 'b-1', 'Stale', 0)] });
+    await oldLoad;
+
+    const afterLoad = useWorkspaceStore.getState();
+    expect(afterLoad.productLines.map((l) => l.id)).toEqual(['pl-a', 'pl-b']);
+    expect(afterLoad.productLinesBrandId).toBe('b-1');
+    expect(afterLoad.productLinesLoaded).toBe(true);
+    expect(selectActiveProductLine(afterLoad)).toBeNull();
+
+    // Selecting valid line updates state & URL (preserving history.state), never localStorage
+    useWorkspaceStore.getState().setActiveProductLine(' pl-a ');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-a');
+    expect(selectActiveProductLine(useWorkspaceStore.getState())?.name).toBe('Power Station');
+    expect(window.location.search).toContain('productLineId=pl-a');
+    expect(window.history.state).toEqual(customState);
+    expect(window.localStorage.getItem(WORKSPACE_STORAGE_KEY)).not.toContain('pl-a');
+
+    // Selecting unknown line when loaded coerces to null and strips URL param
+    useWorkspaceStore.getState().setActiveProductLine('pl-unknown');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+
+    // Upsert preserves canonical order & ignores foreign brand
+    useWorkspaceStore.getState().upsertProductLine(makeLine('pl-c', 'b-1', 'Audio', 0));
+    useWorkspaceStore.getState().upsertProductLine(makeLine('pl-foreign', 'b-other', 'Other', 0));
+    expect(useWorkspaceStore.getState().productLines.map((l) => l.id)).toEqual([
+      'pl-c',
+      'pl-a',
+      'pl-b',
+    ]);
+
+    // Deleting active line resets activeProductLineId synchronously and strips URL
+    useWorkspaceStore.getState().setActiveProductLine('pl-c');
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBe('pl-c');
+    useWorkspaceStore.getState().removeProductLine('pl-c');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+  });
+
+  it('synchronously resets activeProductLineId and strips ?productLineId= on brand switches, removal, loadBrands, syncFromUrl, and reset', async () => {
+    const line1: BrandProductLineDto = {
+      id: 'pl-1',
+      brandId: 'b-1',
+      name: 'Power Station',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const b1 = makeBrand('b-1', '品牌甲', ['CN', 'GLOBAL']);
+    const b2 = makeBrand('b-2', '品牌乙', ['CN', 'GLOBAL']);
+    const b3 = makeBrand('b-3', '品牌丙', ['CN']);
+
+    window.history.replaceState(null, '', '/home?brandId=b-1&market=GLOBAL');
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      preferredBrandId: 'b-1',
+      preferredMarket: 'GLOBAL',
+      fetcher: async () => ({ items: [b1, b2] }),
+    });
+    await useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: async () => ({ items: [line1] }),
+    });
+    useWorkspaceStore.getState().setActiveProductLine('pl-1');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-1');
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBe('pl-1');
+
+    // 1. setActiveBrand to different brand synchronously clears line & strips URL
+    useWorkspaceStore.getState().setActiveBrand('b-2', 'GLOBAL', window.localStorage);
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-2');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(useWorkspaceStore.getState().productLines).toEqual([]);
+    expect(useWorkspaceStore.getState().productLinesLoaded).toBe(false);
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+
+    // 2. syncFromUrl to different brand clears stale line unless explicitly passed
+    useWorkspaceStore.getState().setActiveBrand('b-1', 'GLOBAL', window.localStorage);
+    await useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: async () => ({ items: [line1] }),
+    });
+    useWorkspaceStore.getState().setActiveProductLine('pl-1');
+    useWorkspaceStore.getState().syncFromUrl('?brandId=b-2&market=GLOBAL', window.localStorage);
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-2');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+
+    // 3. upsertBrand activating a new brand clears activeProductLineId
+    useWorkspaceStore.getState().setActiveBrand('b-1', 'GLOBAL', window.localStorage);
+    await useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: async () => ({ items: [line1] }),
+    });
+    useWorkspaceStore.getState().setActiveProductLine('pl-1');
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b3, { activate: true, persistStorage: window.localStorage });
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-3');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+
+    // 4. removeBrand of active brand clears activeProductLineId
+    useWorkspaceStore.getState().setActiveBrand('b-1', 'GLOBAL', window.localStorage);
+    await useWorkspaceStore.getState().loadProductLines('b-1', {
+      fetcher: async () => ({ items: [line1] }),
+    });
+    useWorkspaceStore.getState().setActiveProductLine('pl-1');
+    useWorkspaceStore.getState().removeBrand('b-1', window.localStorage);
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+
+    // 5. loadProductLines resets stale URL ?productLineId= that doesn't exist in loaded brand
+    window.history.replaceState(null, '', '/home?brandId=b-2&market=GLOBAL&productLineId=stale-id');
+    useWorkspaceStore.getState().hydrate(window.location.search, window.localStorage);
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('stale-id');
+    await useWorkspaceStore.getState().loadProductLines('b-2', {
+      fetcher: async () => ({ items: [] }),
+    });
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+  });
+
+  it('ignores stale cross-brand loadProductLines calls without aborting active brand load or wedging productLinesLoading (C1-01)', async () => {
+    const b1 = makeBrand('brand-1', '品牌甲', ['CN', 'GLOBAL']);
+    const b2 = makeBrand('brand-2', '品牌乙', ['CN', 'GLOBAL']);
+    const lineB2: BrandProductLineDto = {
+      id: 'pl-b2',
+      brandId: 'brand-2',
+      name: 'Home NAS',
+      localNamesJson: {},
+      category: 'NAS',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      preferredBrandId: 'brand-2',
+      preferredMarket: 'GLOBAL',
+      fetcher: async () => ({ items: [b1, b2] }),
+    });
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('brand-2');
+
+    let resolveB2!: (value: { items: BrandProductLineDto[] }) => void;
+    const b2Load = useWorkspaceStore.getState().loadProductLines('brand-2', {
+      fetcher: () =>
+        new Promise((resolve) => {
+          resolveB2 = resolve;
+        }),
+    });
+    expect(useWorkspaceStore.getState().productLinesLoading).toBe(true);
+    const seqAfterB2Start = useWorkspaceStore.getState().productLinesLoadSeq;
+
+    // Stale caller invokes loadProductLines('brand-1') while activeBrandId === 'brand-2'
+    const staleFetcher = vi.fn(async () => ({ items: [] }));
+    await useWorkspaceStore.getState().loadProductLines('brand-1', {
+      fetcher: staleFetcher,
+    });
+    expect(staleFetcher).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().productLinesLoadSeq).toBe(seqAfterB2Start);
+
+    // Active brand-2 load still commits cleanly and resets loading to false
+    resolveB2({ items: [lineB2] });
+    await b2Load;
+    const state = useWorkspaceStore.getState();
+    expect(state.productLinesLoading).toBe(false);
+    expect(state.productLinesLoaded).toBe(true);
+    expect(state.productLinesBrandId).toBe('brand-2');
+    expect(state.productLines.map((item) => item.id)).toEqual(['pl-b2']);
+  });
+
+  it('resets productLinesLoading to false when loadProductLines is aborted via AbortController without switching brands (C1-02)', async () => {
+    const b1 = makeBrand('brand-1', '品牌甲', ['CN', 'GLOBAL']);
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      preferredBrandId: 'brand-1',
+      preferredMarket: 'GLOBAL',
+      fetcher: async () => ({ items: [b1] }),
+    });
+
+    // Case A: fetcher rejects after signal abort
+    const ctrlReject = new AbortController();
+    const loadReject = useWorkspaceStore.getState().loadProductLines('brand-1', {
+      signal: ctrlReject.signal,
+      fetcher: () =>
+        new Promise((_, reject) => {
+          ctrlReject.signal.addEventListener('abort', () => reject(new Error('Aborted')));
+        }),
+    });
+    expect(useWorkspaceStore.getState().productLinesLoading).toBe(true);
+    ctrlReject.abort();
+    await loadReject;
+    expect(useWorkspaceStore.getState().productLinesLoading).toBe(false);
+
+    // Case B: fetcher resolves after signal abort
+    const ctrlResolve = new AbortController();
+    let resolveAborted!: (value: { items: BrandProductLineDto[] }) => void;
+    const loadResolve = useWorkspaceStore.getState().loadProductLines('brand-1', {
+      signal: ctrlResolve.signal,
+      fetcher: () =>
+        new Promise((resolve) => {
+          resolveAborted = resolve;
+        }),
+    });
+    expect(useWorkspaceStore.getState().productLinesLoading).toBe(true);
+    ctrlResolve.abort();
+    resolveAborted({ items: [] });
+    await loadResolve;
+    expect(useWorkspaceStore.getState().productLinesLoading).toBe(false);
+  });
+
+  it('coerces setActiveProductLine to null and leaves URL clean when activeBrandId is null (C1-03)', () => {
+    window.history.replaceState(null, '', '/home');
+    expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
+
+    useWorkspaceStore.getState().setActiveProductLine('poison-line');
+
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(window.location.search).toBe('');
+  });
+
+  it('clears /studio item query params on setActiveProductLine switch while preserving brandId, market, productLineId, and history.state (R2-01)', async () => {
+    const b1 = makeBrand('b1', '品牌甲', ['CN', 'GLOBAL']);
+    const lineA: BrandProductLineDto = {
+      id: 'pl-a',
+      brandId: 'b1',
+      name: 'Power Station',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const lineB: BrandProductLineDto = {
+      ...lineA,
+      id: 'pl-b',
+      name: 'Home NAS',
+      sortOrder: 1,
+    };
+
+    const customState = { __NA: true, studioKey: 'keep-me' };
+    window.history.replaceState(
+      customState,
+      '',
+      '/studio?brandId=b1&market=GLOBAL&articleId=artA&briefId=brA&batchJobId=bjA',
+    );
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      preferredBrandId: 'b1',
+      preferredMarket: 'GLOBAL',
+      fetcher: async () => ({ items: [b1] }),
+    });
+    await useWorkspaceStore.getState().loadProductLines('b1', {
+      fetcher: async () => ({ items: [lineA, lineB] }),
+    });
+
+    // Switch from All -> pl-a clears studio item params and preserves history.state
+    useWorkspaceStore.getState().setActiveProductLine('pl-a');
+    let params = new URLSearchParams(window.location.search);
+    expect(params.get('brandId')).toBe('b1');
+    expect(params.get('market')).toBe('GLOBAL');
+    expect(params.get('productLineId')).toBe('pl-a');
+    expect(params.get('articleId')).toBeNull();
+    expect(params.get('briefId')).toBeNull();
+    expect(params.get('batchJobId')).toBeNull();
+    expect(window.history.state).toEqual(customState);
+
+    // Same-line re-selection does NOT wipe current articleId
+    window.history.replaceState(
+      customState,
+      '',
+      '/studio?brandId=b1&market=GLOBAL&productLineId=pl-a&articleId=artA&briefId=brA&batchJobId=bjA',
+    );
+    useWorkspaceStore.getState().setActiveProductLine('pl-a');
+    params = new URLSearchParams(window.location.search);
+    expect(params.get('articleId')).toBe('artA');
+
+    // Switch pl-a -> pl-b clears studio item params and preserves brandId, market, productLineId, history.state
+    useWorkspaceStore.getState().setActiveProductLine('pl-b');
+    params = new URLSearchParams(window.location.search);
+    expect(params.get('brandId')).toBe('b1');
+    expect(params.get('market')).toBe('GLOBAL');
+    expect(params.get('productLineId')).toBe('pl-b');
+    expect(params.get('articleId')).toBeNull();
+    expect(params.get('briefId')).toBeNull();
+    expect(params.get('batchJobId')).toBeNull();
     expect(window.history.state).toEqual(customState);
   });
 });

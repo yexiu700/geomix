@@ -2,6 +2,7 @@
 
 import type {
   BrandMarketRecord,
+  BrandProductLineDto,
   GeoMarket,
   TaskStatusName,
   VisibilityEngineAvailabilityItem,
@@ -15,6 +16,7 @@ import {
   VISIBILITY_DEFAULT_UNIT_POINTS,
   VISIBILITY_TASK_STATUS_LABELS,
   formatShanghaiDateTime,
+  readProductLineMarketSeedPrompts,
   sanitizeEntityTitleSegment,
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Space, Table, Tooltip } from 'antd';
@@ -30,6 +32,7 @@ import { EmptyState, RowActions, Section, StatusBadge, type RowActionItem } from
 export type VisibilityRunsTabProps = {
   activeMarket: GeoMarket;
   activeBrandMarket: BrandMarketRecord | null;
+  activeProductLine?: BrandProductLineDto | null;
   readOnly: boolean;
   // Create run form
   runName: string;
@@ -85,6 +88,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
   const {
     activeMarket,
     activeBrandMarket,
+    activeProductLine = null,
     readOnly,
     runName,
     onRunNameChange,
@@ -150,7 +154,15 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
   const unitPrice = VISIBILITY_DEFAULT_UNIT_POINTS;
   const estimatedPoints = promptCount * checkedCount * unitPrice;
 
-  const seedPrompts = activeBrandMarket?.seedPrompts ?? [];
+  const lineSeedPrompts = useMemo(
+    () =>
+      activeProductLine
+        ? readProductLineMarketSeedPrompts(activeProductLine.seedPromptsJson, activeMarket)
+        : [],
+    [activeProductLine, activeMarket],
+  );
+  const seedPrompts =
+    lineSeedPrompts.length > 0 ? lineSeedPrompts : (activeBrandMarket?.seedPrompts ?? []);
 
   const handleToggleSeedPrompt = (seed: string) => {
     const existing = parsePromptLines(promptsText);

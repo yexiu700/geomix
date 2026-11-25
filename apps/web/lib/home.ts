@@ -5,6 +5,8 @@ import type { SessionStorageLike } from './session';
 export type HomeClientOptions = {
   storage?: SessionStorageLike;
   signal?: AbortSignal;
+  productLineId?: string | null;
+  days?: number;
 };
 
 export function fetchActionHome(
@@ -13,6 +15,13 @@ export function fetchActionHome(
   options?: HomeClientOptions,
 ): Promise<ActionHomeResponse> {
   const qs = new URLSearchParams({ market });
+  if (options?.days !== undefined) {
+    qs.set('days', String(options.days));
+  }
+  const trimmedLineId = options?.productLineId?.trim();
+  if (trimmedLineId) {
+    qs.set('productLineId', trimmedLineId);
+  }
   return authorizedV2Request<ActionHomeResponse>(
     `/brands/${encodeURIComponent(brandId)}/home?${qs.toString()}`,
     {

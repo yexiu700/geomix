@@ -59,6 +59,7 @@ export type StudioPrewriteBarProps = {
   canCollapse?: boolean;
   onToggleCollapsed?: () => void;
   articleSummary?: StudioPrewriteArticleSummary | null;
+  activeProductLineName?: string | null;
 };
 
 export function StudioPrewriteBar({
@@ -90,6 +91,7 @@ export function StudioPrewriteBar({
   canCollapse = false,
   onToggleCollapsed,
   articleSummary = null,
+  activeProductLineName = null,
 }: StudioPrewriteBarProps): JSX.Element {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [draftToneNote, setDraftToneNote] = useState<string | null>(null);
@@ -151,6 +153,14 @@ export function StudioPrewriteBar({
             {summaryPrompt}
           </span>
           <span className="gm-studio-prewrite-collapsed-meta">
+            {activeProductLineName ? (
+              <span
+                className="gm-studio-meta-pill"
+                data-testid="studio-collapsed-product-line-pill"
+              >
+                {activeProductLineName}
+              </span>
+            ) : null}
             <span className="gm-studio-meta-pill">{GEO_RECIPE_LABELS[summaryRecipe]}</span>
             <span className="gm-studio-meta-pill">{GEO_TARGET_FORMAT_LABELS[summaryFormat]}</span>
             {showCollapsedLocale && summaryLocale ? (
@@ -184,6 +194,14 @@ export function StudioPrewriteBar({
         <div className="gm-studio-section-label gm-studio-section-label--wrap">
           <span className="gm-studio-nowrap">1. 目标问题与大纲上下文</span>
           <span className="gm-studio-row gm-studio-row--wrap">
+            {activeProductLineName ? (
+              <StatusBadge
+                tone="active"
+                className="gm-studio-tag-wrap"
+                data-testid="studio-prewrite-product-line-badge"
+                label={`产品线 · ${activeProductLineName}`}
+              />
+            ) : null}
             {linkedBrief ? (
               <>
                 <StatusBadge tone="active" className="gm-studio-tag-wrap">

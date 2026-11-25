@@ -24,6 +24,7 @@ import {
   selectActiveBrandMarket,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { ProductLineSelectorPill } from '../brands/product-line-selector-pill';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
@@ -49,6 +50,7 @@ export function HomeWorkspace(): JSX.Element {
   const activeBrandId = activeBrand?.id ?? null;
   const activeBrandMarketId = activeBrandMarket?.id ?? null;
   const activeMarket = state.activeMarket;
+  const activeProductLineId = state.activeProductLineId;
   const consoleCtx = useConsoleContext();
   const readOnly = consoleCtx?.readOnly ?? false;
   const feedback = useUxFeedback();
@@ -81,7 +83,12 @@ export function HomeWorkspace(): JSX.Element {
   const factsBrandRef = useRef<string | null>(null);
 
   const loadHome = useCallback(
-    async (brandId: string, market: GeoMarket, seq: number, opts?: { silent?: boolean }) => {
+    async (
+      brandId: string,
+      market: GeoMarket,
+      seq: number,
+      opts?: { silent?: boolean; productLineId?: string | null },
+    ) => {
       loadCtrlRef.current?.abort();
       const ctrl = new AbortController();
       loadCtrlRef.current = ctrl;
@@ -92,7 +99,10 @@ export function HomeWorkspace(): JSX.Element {
       setHomeError(null);
 
       try {
-        const res = await fetchActionHome(brandId, market, { signal: ctrl.signal });
+        const res = await fetchActionHome(brandId, market, {
+          signal: ctrl.signal,
+          productLineId: opts?.productLineId,
+        });
         if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
         setHomeData(res);
       } catch (err) {
@@ -107,7 +117,7 @@ export function HomeWorkspace(): JSX.Element {
     [],
   );
 
-  // Brand / Market / ContextEpoch switch anti-race reset & reload
+  // Brand / Market / ProductLine / ContextEpoch switch anti-race reset & reload
   useEffect(() => {
     loadCtrlRef.current?.abort();
     drawerCtrlRef.current?.abort();
@@ -127,7 +137,8 @@ export function HomeWorkspace(): JSX.Element {
     setPendingRetestRuns([]);
     setRoiModalOpen(false);
 
-    if (factsBrandRef.current !== activeBrandId) {
+    const nextFactsKey = activeBrandId ? `${activeBrandId}::${activeProductLineId ?? ''}` : null;
+    if (factsBrandRef.current !== nextFactsKey) {
       setBrandFacts([]);
       factsBrandRef.current = null;
     }
@@ -137,7 +148,7 @@ export function HomeWorkspace(): JSX.Element {
       return;
     }
 
-    void loadHome(activeBrandId, activeMarket, seq);
+    void loadHome(activeBrandId, activeMarket, seq, { productLineId: activeProductLineId });
 
     return () => {
       loadCtrlRef.current?.abort();
@@ -146,7 +157,14 @@ export function HomeWorkspace(): JSX.Element {
       retestCtrlRef.current = null;
       retestingRecords.clear();
     };
-  }, [activeBrandId, activeBrandMarketId, activeMarket, state.contextEpoch, loadHome]);
+  }, [
+    activeBrandId,
+    activeBrandMarketId,
+    activeMarket,
+    activeProductLineId,
+    state.contextEpoch,
+    loadHome,
+  ]);
 
   // Poll pending retest runs triggered from /home recent articles
   const pollingRecordIds = useMemo(
@@ -162,7 +180,9 @@ export function HomeWorkspace(): JSX.Element {
       if (!activeBrandId || !activeBrandMarket || pendingRetestRuns.length === 0) return;
       const seq = contextSeqRef.current;
       try {
-        const refreshed = await fetchActionHome(activeBrandId, activeMarket);
+        const refreshed = await fetchActionHome(activeBrandId, activeMarket, {
+          productLineId: activeProductLineId,
+        });
         if (seq !== contextSeqRef.current) return;
         setHomeData(refreshed);
 
@@ -209,7 +229,9 @@ export function HomeWorkspace(): JSX.Element {
 
         let hadZeroSuccess = false;
         if (terminalCandidates.length > 0 && seq === contextSeqRef.current) {
-          const recheck = await fetchActionHome(activeBrandId, activeMarket);
+          const recheck = await fetchActionHome(activeBrandId, activeMarket, {
+            productLineId: activeProductLineId,
+          });
           if (seq !== contextSeqRef.current) return;
           setHomeData(recheck);
           for (const candidate of terminalCandidates) {
@@ -256,6 +278,7 @@ export function HomeWorkspace(): JSX.Element {
   useTabFreshness({
     domains: [
       'brands',
+      'product-lines',
       'visibility-runs',
       'briefs',
       'articles',
@@ -266,7 +289,10 @@ export function HomeWorkspace(): JSX.Element {
     refreshOnActivate: false,
     onRefresh: () => {
       if (!activeBrandId || !activeBrandMarket) return;
-      void loadHome(activeBrandId, activeMarket, contextSeqRef.current, { silent: true });
+      void loadHome(activeBrandId, activeMarket, contextSeqRef.current, {
+        silent: true,
+        productLineId: activeProductLineId,
+      });
     },
   });
 
@@ -278,20 +304,24 @@ export function HomeWorkspace(): JSX.Element {
     const seq = contextSeqRef.current;
 
     setLoadingBriefId(briefId);
-    const shouldFetchFacts = factsBrandRef.current !== activeBrandId;
+    const factsKey = `${activeBrandId}::${activeProductLineId ?? ''}`;
+    const shouldFetchFacts = factsBrandRef.current !== factsKey;
     if (shouldFetchFacts) setBrandFactsLoading(true);
 
     try {
       const [brief, factsRes] = await Promise.all([
         getBrief(briefId, { signal: ctrl.signal }),
         shouldFetchFacts
-          ? getBrandFacts(activeBrandId, { signal: ctrl.signal })
+          ? getBrandFacts(activeBrandId, {
+              signal: ctrl.signal,
+              productLineId: activeProductLineId,
+            })
           : Promise.resolve(null),
       ]);
       if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
       if (factsRes) {
         setBrandFacts(factsRes.items);
-        factsBrandRef.current = activeBrandId;
+        factsBrandRef.current = factsKey;
       }
       setDrawerBrief(brief);
       setDrawerOpen(true);
@@ -313,13 +343,17 @@ export function HomeWorkspace(): JSX.Element {
     const seq = contextSeqRef.current;
     const targetBrandId = activeBrandId;
     const targetMarket = activeMarket;
+    const targetProductLineId = activeProductLineId;
     const hasMarket = Boolean(activeBrandMarket);
     const saved = await updateBrief(briefId, patch);
     invalidateFreshness('briefs');
     if (seq !== contextSeqRef.current) return saved;
     setDrawerBrief(saved);
     if (targetBrandId && hasMarket) {
-      void loadHome(targetBrandId, targetMarket, seq, { silent: true });
+      void loadHome(targetBrandId, targetMarket, seq, {
+        silent: true,
+        productLineId: targetProductLineId,
+      });
     }
     return saved;
   };
@@ -328,6 +362,7 @@ export function HomeWorkspace(): JSX.Element {
     const seq = contextSeqRef.current;
     const targetBrandId = activeBrandId;
     const targetMarket = activeMarket;
+    const targetProductLineId = activeProductLineId;
     const hasMarket = Boolean(activeBrandMarket);
     await dismissBrief(brief.id);
     invalidateFreshness('briefs');
@@ -336,7 +371,10 @@ export function HomeWorkspace(): JSX.Element {
     setDrawerBrief(null);
     feedback.notifySuccess('已忽略该写作建议');
     if (targetBrandId && hasMarket) {
-      void loadHome(targetBrandId, targetMarket, seq, { silent: true });
+      void loadHome(targetBrandId, targetMarket, seq, {
+        silent: true,
+        productLineId: targetProductLineId,
+      });
     }
   };
 
@@ -391,7 +429,8 @@ export function HomeWorkspace(): JSX.Element {
     activeBrand &&
     activeBrandMarket &&
     homeData.brandId === activeBrand.id &&
-    homeData.brandMarketId === activeBrandMarket.id,
+    homeData.brandMarketId === activeBrandMarket.id &&
+    (homeData.productLineId ?? null) === (activeProductLineId ?? null),
   );
 
   // 1. Cold-load & brand/market-switch Skeleton (ZERO 0% / 0 点 / 免费体验期 / ¥0.00 / stale-brand flash!)
@@ -474,7 +513,11 @@ export function HomeWorkspace(): JSX.Element {
         <div className="gm-panel">
           <SignalError
             message={homeError}
-            onRetry={() => void loadHome(activeBrand.id, activeMarket, contextSeqRef.current)}
+            onRetry={() =>
+              void loadHome(activeBrand.id, activeMarket, contextSeqRef.current, {
+                productLineId: activeProductLineId,
+              })
+            }
           />
         </div>
       </section>
@@ -550,6 +593,9 @@ export function HomeWorkspace(): JSX.Element {
         }
       />
 
+      {/* Progressive Multi-Product-Line Switcher (renders null for single-category brands) */}
+      <ProductLineSelectorPill />
+
       {/* Block 1: Honest Brand Health Signal Strip */}
       <HomeHealthStrip activeMarket={activeMarket} health={resolvedData.health} />
 
@@ -586,15 +632,17 @@ export function HomeWorkspace(): JSX.Element {
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
       />
 
-      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355 + v2.2 #372 CI/DiD) */}
+      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355 + v2.2 #372 CI/DiD + #387 Budget Board) */}
       <HomeDistributionSummary
         summary={resolvedData.distributionSummary}
+        retestBudget={resolvedData.retestBudget}
         recentArticles={resolvedData.recentArticles}
         hideCrawlAlerts
         onOpenArticle={(articleId) =>
           consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
         }
         onOpenPoints={() => consoleCtx?.navigateWorkspace('/account?tab=points')}
+        onOpenBudgetSettings={() => consoleCtx?.navigateWorkspace('/brands?section=identity')}
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
         onOpenRoiReportModal={() => setRoiModalOpen(true)}
       />

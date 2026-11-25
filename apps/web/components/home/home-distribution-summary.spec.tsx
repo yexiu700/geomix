@@ -363,4 +363,119 @@ describe('HomeDistributionSummary (M6B #355)', () => {
       '暂无分发追踪与渠道归因数据',
     );
   });
+
+  it('renders Monthly Retest Budget Progress Board honoring 0% empty track rule, >100% clamp, null cap, and SKIPPED_BUDGET_CAP (#387)', () => {
+    const onOpenBudgetSettings = vi.fn();
+
+    // 1. 0% used with cap=100 -> empty track (NO <rect> fill) AND prevents EmptyState
+    const { rerender } = render(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 100,
+          usedPoints: 0,
+          remainingPoints: 100,
+          skippedCount: 0,
+        }}
+        onOpenArticle={vi.fn()}
+        onOpenBudgetSettings={onOpenBudgetSettings}
+      />,
+    );
+
+    const board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).toContain('月度自动复测预算');
+    expect(board.textContent).toContain('2026-11');
+    expect(board.textContent).toContain('已消耗 0 点 / 上限 100 点');
+    const barZero = screen.getByTestId('home-retest-budget-bar');
+    expect(barZero.getAttribute('aria-valuenow')).toBe('0');
+    expect(barZero.getAttribute('data-empty')).toBe('true');
+    expect(barZero.querySelector('rect')).toBeNull();
+
+    // 2. Over-cap usage (150/100) + skippedCount=2 + SKIPPED_BUDGET_CAP row -> clamped to 100 & warning badge
+    rerender(
+      <HomeDistributionSummary
+        summary={{
+          crawlAlerts: [],
+          channelAttribution: [],
+          upcomingRetests: [
+            {
+              scheduleId: 'sched_cap_1',
+              publishRecordId: 'pub_cap_1',
+              articleId: 'art_cap_1',
+              articleTitle: 'Portable Power Station Benchmark',
+              channel: 'Official Blog',
+              milestoneDay: 7,
+              sampleCount: 1,
+              dueAt: '2026-11-25T08:00:00.000Z',
+              status: 'SKIPPED_BUDGET_CAP',
+              skipReason: '本月自动复测预算已达上限，已温和跳过',
+            },
+          ],
+        }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 100,
+          usedPoints: 150,
+          remainingPoints: 0,
+          skippedCount: 2,
+        }}
+        onOpenArticle={vi.fn()}
+        onOpenBudgetSettings={onOpenBudgetSettings}
+      />,
+    );
+
+    const barOver = screen.getByTestId('home-retest-budget-bar');
+    expect(barOver.getAttribute('aria-valuenow')).toBe('100');
+    expect(barOver.getAttribute('data-empty')).toBe('false');
+    const fillRect = barOver.querySelector('rect');
+    expect(fillRect).not.toBeNull();
+    expect(fillRect?.getAttribute('width')).toBe('100');
+
+    expect(screen.getByTestId('home-retest-budget-skipped-alert').textContent).toContain(
+      '已达月度预算上限，已跳过 2 次自动复测',
+    );
+    const retestRow = screen.getByTestId('home-upcoming-retest-sched_cap_1');
+    expect(retestRow.textContent).toContain('超出月度预算上限已跳过');
+
+    fireEvent.click(within(retestRow).getByRole('button', { name: '调整上限' }));
+    expect(onOpenBudgetSettings).toHaveBeenCalledTimes(1);
+
+    // 3. null cap with usedPoints > 0 -> shows 未设上限 and no filled rect
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: null,
+          usedPoints: 30,
+          remainingPoints: null,
+          skippedCount: 0,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('home-retest-budget-board').textContent).toContain('未设上限');
+    expect(screen.getByTestId('home-retest-budget-bar').querySelector('rect')).toBeNull();
+  });
+
+  it('clamps malformed negative remainingPoints to 0 so negative remaining points never render (#387)', () => {
+    render(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 100,
+          usedPoints: 250,
+          remainingPoints: -150,
+          skippedCount: 1,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    const board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).toContain('剩余 0 点');
+    expect(board.textContent).not.toContain('-150');
+  });
 });

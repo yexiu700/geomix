@@ -181,4 +181,20 @@ describe('apps/web/lib/briefs v2 client', () => {
       signal: controller.signal,
     });
   });
+
+  it('forwards trimmed productLineId in fetchBriefs and omits empty/null values', async () => {
+    spy.mockResolvedValue({ items: [], total: 0 });
+    await fetchBriefs('b1', 'GLOBAL', { status: 'OPEN', productLineId: ' pl_1 ' });
+    expect(spy).toHaveBeenLastCalledWith(
+      '/brands/b1/briefs?market=GLOBAL&status=OPEN&productLineId=pl_1',
+      { method: 'GET', storage: undefined, signal: undefined },
+    );
+
+    await fetchBriefs('b1', 'GLOBAL', { status: 'OPEN', productLineId: '   ' });
+    expect(spy).toHaveBeenLastCalledWith('/brands/b1/briefs?market=GLOBAL&status=OPEN', {
+      method: 'GET',
+      storage: undefined,
+      signal: undefined,
+    });
+  });
 });
