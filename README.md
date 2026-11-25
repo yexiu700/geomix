@@ -1,15 +1,15 @@
 <div align="center">
 
-```text
-    ╭─────╮      ██████╗ ███████╗ ██████╗ ███╗   ███╗██╗██╗  ██╗
-   ╱ ╭───╮ ╲    ██╔════╝ ██╔════╝██╔═══██╗████╗ ████║██║╚██╗██╔╝
-  │  │  ╱│  │   ██║  ███╗█████╗  ██║   ██║██╔████╔██║██║ ╚███╔╝
-  │ ─┼─*─┼─ │   ██║   ██║██╔══╝  ██║   ██║██║╚██╔╝██║██║ ██╔██╗
-   ╲ ╰───╯ ╱    ╚██████╔╝███████╗╚██████╔╝██║ ╚═╝ ██║██║██╔╝ ██╗
-    ╰─────╯      ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝
+<br />
 
-  GEO CONTENT CREATION   /   AI VISIBILITY RADAR   /   SONAR INK
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./apps/web/public/brand/formal_logo.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="./apps/web/public/brand/formal_logo_light.svg" />
+  <img alt="GeoMix" src="./apps/web/public/brand/formal_logo.svg" width="280" />
+</picture>
+
+<br />
+<br />
 
 **Multi-Tenant Generative Engine Optimization (GEO) Growth & AI Visibility Platform**
 
@@ -20,7 +20,7 @@
 ![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)
 ![NestJS 10](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs&logoColor=white)
 
-**English** · [简体中文](./README.zh-CN.md)
+**English** · [简体中文](./README.zh-CN.md) · [Chrome Extension (`geomix-extension`)](https://github.com/yexiu700/geomix-extension)
 
 </div>
 
@@ -28,7 +28,7 @@
 
 ## Overview
 
-**GeoMix** (GeoMix 2.0 / v2.1) is a full-stack TypeScript monorepo platform built for dual-market (**CN / GLOBAL**) **Generative Engine Optimization (GEO)** content workflows, multi-channel distribution, and **AI Visibility Diagnostics**. All branding, UI copy, design tokens (**Sonar Ink** dark theme), and compliance agreements are original and self-authored.
+**GeoMix** (v2.2) is a full-stack TypeScript monorepo platform built for dual-market (**CN / GLOBAL**) **Generative Engine Optimization (GEO)** content workflows, multi-channel L1/L2/L3 distribution, **Near-Miss citation mining**, and **provable AI Visibility ROI**. All branding, v2.2 brand kit assets, UI copy, design tokens (**Sonar Ink** dark theme), and compliance agreements are original and self-authored.
 
 Development and CI default to deterministic fake model/storage adapters and `BILLING_MODE=SHADOW` (full ledger accounting with zero point deduction), enabling local startup and full-stack end-to-end testing without external API keys.
 
@@ -42,12 +42,12 @@ Development and CI default to deterministic fake model/storage adapters and `BIL
   - Structured Brand Fact Cards (4 core slots + extra long documents) with 0-point AI extraction from URLs, pasted text, or `.txt`/`.md`/`.pdf` uploads, automatic 1024-dim `pgvector` HNSW chunk indexing (`fact-index` queue) for long facts, and a brand media gallery (auto-compression, EXIF stripping, thumbnails, S3/MinIO storage, and `FEATURE_AI_IMAGE`-gated inline AI image generation).
 - **AI Visibility Radar & Diagnosis-to-Brief Engine**
   - Feature-flagged AI Visibility Diagnostics (`FEATURE_VISIBILITY`) supporting 8 domestic CN engines (`deepseek`, `doubao`, `yuanbao`, `tongyi`, `wenxin`, `nami`, `kimi`, `zhipu`) and 5 global engines (`chatgpt`, `perplexity`, `claude`, `gemini`, `google_aio`), engine health probes, LLM judge scoring, trend charts, citation trace graphs, and opportunity gaps.
-  - Automated & manual GEO Brief generation (`briefs`) triggered after visibility runs or via competitor high-citation URL counter-play (`from-citation-url`) with SSRF-guarded fetching and `robots.txt` validation.
-- **GEO Content Studio, Global-First Distribution & Attribution Loop**
-  - SSE streaming targeted writer (`POST /api/v2/brands/:brandId/articles/stream`) with 4 GEO recipes × market-specific target formats, plus BullMQ-backed 2–20 article batch generation (`geo-batch` queue).
-  - Markdown/preview editor with inline media insertion, selection-level section rewriting (`rewrite-section`), dual-track compliance & preflight gate (CN Advertising Law + GLOBAL FTC/claims), 5-dimension GEO evaluator, Schema JSON-LD / `llms.txt` generation, multi-format delivery export (`Markdown` / `HTML` / `Docx` / ZIP), async 1→N multi-channel variant generation (`distribution` queue), L1 official CMS push (Shopify / WordPress / Webflow / signed Webhook + IndexNow), login-free external PR/KOL Media Kits (`/share/pr/[token]`), and T+1 Crawl/Schema Probe + T+7/14/30 automated retest attribution on Action Home (`/home`).
-- **Minimalist 5-Workspace Shell & Engineering Delivery**
-  - Brand & dual-market scoped 5-workspace console (`/home`, `/brands`, `/visibility`, `/studio`, `/account`), persisted sidebar collapse (`User.uiPrefs`), `⌘K` command palette, and 23 legacy route redirects (`/dashboard`, `/me/*`, `/visibility/*`, `/user/*`).
+  - Automated & manual GEO Brief generation (`briefs`) triggered after visibility runs, competitor high-citation URL counter-play (`from-citation-url`), or **4-tier Near-Miss citation mining** (`NEAR_MISS_BOOST`) with SSRF-guarded fetching and `robots.txt` validation.
+- **GEO Content Studio, Global-First Distribution & Provable ROI Loop**
+  - SSE streaming targeted writer (`POST /api/v2/brands/:brandId/articles/stream`) with 4 GEO recipes × market-specific target formats, lightweight **multi-locale output** (`en-US`, `en-GB`, `de-DE`, `ja-JP`, `es-ES`, `fr-FR`, `zh-CN`), plus BullMQ-backed 2–20 article batch generation (`geo-batch` queue).
+  - Markdown/preview editor with inline media insertion, selection-level section rewriting (`rewrite-section`), dual-track & multi-locale compliance gate, 5-dimension GEO evaluator, Schema JSON-LD / `llms.txt` generation, multi-format delivery export (`Markdown` / `HTML` / `Docx` / ZIP), async 1→N multi-channel variant generation (`distribution` queue), L1 official connectors (**Shopify OAuth 2.0**, WordPress, Webflow, **Ghost**, **Dev.to**, **Hashnode**, **GitHub MDX**, **WeChat Official Account Drafts**, signed Webhook + IndexNow), **L2 Chrome Extension Bridge** ([`yexiu700/geomix-extension`](https://github.com/yexiu700/geomix-extension) for Zhihu / Toutiao / SMZDM draft boxes), login-free external PR/KOL Media Kits (`/share/pr/[token]`), T+1 Crawl/Schema Probe + T+7/14/30 **Control-Group DiD** automated retest, and **Monthly GEO ROI Reports** (Wilson 95% CI, inline SVG HTML/PDF, white-label `/share/report/[token]`).
+- **Minimalist 5-Workspace Shell, Bilingual Brand Website & Engineering Delivery**
+  - Brand & dual-market scoped 5-workspace console (`/home`, `/brands`, `/visibility`, `/studio`, `/account`), bilingual EN/ZH marketing site (`(marketing)` with interactive sandbox, points calculator, and `/admin/leads`), persisted sidebar collapse (`User.uiPrefs`), `⌘K` command palette, and 23 legacy route redirects.
   - Full Vitest unit/contract test suite, Playwright full-stack E2E suite (including `e2e/v2/` 4-tier + Tier 5 adversarial tests), and GHCR + Self-Hosted Runner CD pipeline.
 
 ## Architecture
