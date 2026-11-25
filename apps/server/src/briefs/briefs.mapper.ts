@@ -62,6 +62,7 @@ export type GeoBriefRow = {
   id: string;
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
   sourceType: string;
   sourceRunId: string | null;
   sourceObservationIds: string[];
@@ -913,6 +914,7 @@ export function presentBrief(row: GeoBriefRow, fallbackMarket?: GeoMarket): GeoB
     id: row.id,
     brandId: row.brandId,
     brandMarketId: row.brandMarketId,
+    productLineId: row.productLineId ?? null,
     market,
     sourceType: toBriefSource(row.sourceType),
     sourceRunId: row.sourceRunId ?? null,

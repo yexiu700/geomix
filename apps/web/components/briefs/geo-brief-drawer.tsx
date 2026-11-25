@@ -25,7 +25,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { truncateMiddle } from '../../lib/design-tokens';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalPill } from '../geo/primitives';
+import { StatusBadge, type StatusTone } from '../ui';
 
 export type GeoBriefDrawerProps = {
   open: boolean;
@@ -88,10 +88,10 @@ function outlineSignature(outline: readonly GeoOutlineHeading[]): string {
   );
 }
 
-function priorityTone(score: number): 'danger' | 'warning' | 'info' | 'neutral' {
+function priorityTone(score: number): StatusTone {
   if (score >= 90) return 'danger';
   if (score >= 80) return 'warning';
-  if (score >= 70) return 'info';
+  if (score >= 70) return 'active';
   return 'neutral';
 }
 
@@ -278,11 +278,7 @@ export function GeoBriefDrawer({
           <div className="gm-brief-drawer-header">
             <div className="gm-brief-drawer-header-main">
               <div className="gm-brief-drawer-kicker">GEO 写作诊断意见</div>
-              <Typography.Title
-                level={5}
-                className="gm-brief-drawer-headline"
-                style={{ margin: 0 }}
-              >
+              <Typography.Title level={5} className="gm-brief-drawer-headline">
                 {draftTitle.trim() || brief.suggestedTitle}
               </Typography.Title>
             </div>
@@ -308,12 +304,13 @@ export function GeoBriefDrawer({
               </div>
 
               <div className="gm-brief-badge-row">
-                <SignalPill tone={priorityTone(brief.priorityScore)}>
-                  优先级 {brief.priorityScore}
-                </SignalPill>
-                <Tag color="blue">{GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}</Tag>
-                <Tag>{GEO_BRIEF_STATUS_LABELS[brief.status]}</Tag>
-                <Tag color="geekblue">{GEO_MARKET_LABELS[brief.market]}</Tag>
+                <StatusBadge
+                  tone={priorityTone(brief.priorityScore)}
+                  label={`优先级 ${brief.priorityScore}`}
+                />
+                <StatusBadge status={brief.status} label={GEO_BRIEF_STATUS_LABELS[brief.status]} />
+                <Tag>{GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}</Tag>
+                <Tag>{GEO_MARKET_LABELS[brief.market]}</Tag>
               </div>
 
               <div className="gm-brief-prompt-box">
@@ -327,9 +324,7 @@ export function GeoBriefDrawer({
                 <div className="gm-brief-chip-group">
                   <span className="gm-brief-meta-label">重点对照竞品：</span>
                   {brief.competitorFocus.map((comp) => (
-                    <SignalPill key={comp} tone="competitor">
-                      {comp}
-                    </SignalPill>
+                    <StatusBadge key={comp} tone="neutral" label={comp} />
                   ))}
                 </div>
               ) : null}
@@ -527,7 +522,7 @@ export function GeoBriefDrawer({
                   {matchedFacts.map((fact) => (
                     <div key={fact.id} className="gm-brief-fact-card">
                       <div className="gm-brief-fact-card-head">
-                        <Tag color="cyan">{BRAND_FACT_SLOT_LABELS[fact.slot]}</Tag>
+                        <Tag>{BRAND_FACT_SLOT_LABELS[fact.slot]}</Tag>
                         <span className="gm-brief-fact-title">{fact.title}</span>
                       </div>
                       <div className="gm-brief-fact-excerpt">
@@ -567,7 +562,7 @@ export function GeoBriefDrawer({
               <div className="gm-brief-channel-list">
                 {brief.recommendedChannels.map((item, idx) => (
                   <div key={`${item.channel}-${idx}`} className="gm-brief-channel-item">
-                    <Tag color="geekblue">{item.channel}</Tag>
+                    <Tag>{item.channel}</Tag>
                     <span className="gm-brief-channel-reason">{item.reason}</span>
                   </div>
                 ))}

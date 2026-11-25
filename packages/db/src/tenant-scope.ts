@@ -24,6 +24,7 @@ export const REQUIRED_TENANT_MODELS = [
   'ActiveWork',
   'Brand',
   'BrandMarket',
+  'BrandProductLine',
   'BrandFact',
   'BrandFactChunk',
   'BrandMediaAsset',

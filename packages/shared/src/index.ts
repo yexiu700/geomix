@@ -226,3 +226,4 @@ export * from './stats';
 export * from './locales';
 export * from './roi-report';
 export * from './extension-bridge';
+export * from './product-lines';

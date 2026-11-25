@@ -5,7 +5,8 @@ import { VISIBILITY_ENGINE_LABELS } from '@geomix/shared';
 import type { JSX } from 'react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
-import { SignalEmpty, SignalSkeleton } from '../geo/primitives';
+import { SignalSkeleton } from '../geo/primitives';
+import { EmptyState } from '../ui';
 
 export type VisibilityTrendChartProps = {
   points: readonly VisibilityTrendPoint[];
@@ -15,7 +16,7 @@ export type VisibilityTrendChartProps = {
 
 const W = 640;
 const H = 200;
-const PAD_L = 42;
+const PAD_L = 46;
 const PAD_R = 16;
 const PAD_T = 18;
 const PAD_B = 30;
@@ -99,7 +100,8 @@ export function VisibilityTrendChart({
   if (!hasData || geometry.coords.length === 0) {
     return (
       <div className="gm-vis-trend-empty">
-        <SignalEmpty
+        <EmptyState
+          size="compact"
           title="所选时间窗口暂无趋势数据"
           description="发起并完成监测任务后，这里会按天展示品牌 AI 提及率变化曲线"
         />
@@ -144,7 +146,7 @@ export function VisibilityTrendChart({
                 x={PAD_L - 8}
                 y={y + 4}
                 textAnchor="end"
-                fontSize={10}
+                fontSize={12}
                 fill={GM.chart.axis}
                 className="gm-num"
               >
@@ -175,7 +177,7 @@ export function VisibilityTrendChart({
                   x={x}
                   y={H - 8}
                   textAnchor="middle"
-                  fontSize={10}
+                  fontSize={12}
                   fill={GM.chart.axis}
                   className="gm-num"
                 >

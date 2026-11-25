@@ -631,6 +631,7 @@ describe('RetestSchedulerService.runDueSweep', () => {
       claimed: 2,
       triggered: 2,
       skippedInsufficientPoints: 0,
+      skippedBudgetCap: 0,
       skippedNoEngine: 0,
       skippedInactiveTenant: 0,
       failed: 0,

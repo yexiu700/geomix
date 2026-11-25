@@ -23,6 +23,7 @@ const SCHEMA_MODELS = [
   'ActiveWork',
   'Brand',
   'BrandMarket',
+  'BrandProductLine',
   'BrandFact',
   'BrandFactChunk',
   'BrandMediaAsset',
@@ -67,6 +68,7 @@ describe('schema migrations contract', () => {
       '20261124090000_geomix_v2_1_variant_jobs',
       '20261124120000_marketing_lead',
       '20261125090000_geomix_v2_2_roi_connectors',
+      '20261126090000_geomix_product_lines_budget_cap',
     ]);
     const sql = readFileSync(
       resolve(migrationsDir, '20261116120000_init', 'migration.sql'),
@@ -219,6 +221,25 @@ describe('schema migrations contract', () => {
     expect(v22Sql).toContain('ExtensionAccessToken_tokenHash_key');
     expect(v22Sql.toLowerCase()).not.toContain('drop table');
     expect(v22Sql.toLowerCase()).not.toContain('create extension');
+    const productLinesSql = readFileSync(
+      resolve(migrationsDir, '20261126090000_geomix_product_lines_budget_cap', 'migration.sql'),
+      'utf8',
+    );
+    expect(productLinesSql).toContain('CREATE TABLE IF NOT EXISTS "BrandProductLine"');
+    expect(productLinesSql).toContain("ADD VALUE IF NOT EXISTS 'SKIPPED_BUDGET_CAP'");
+    expect(productLinesSql).toContain('ALTER TABLE "BrandMarket"');
+    expect(productLinesSql).toContain('ADD COLUMN IF NOT EXISTS "monthlyRetestPointCap"');
+    expect(productLinesSql).toContain('BrandProductLine_brandId_name_key');
+    expect(productLinesSql).toContain('BrandProductLine_tenantId_brandId_sortOrder_idx');
+    expect(productLinesSql).toContain('BrandFact_tenantId_brandId_productLineId_idx');
+    expect(productLinesSql).toContain(
+      'VisibilityRun_tenantId_brandMarketId_productLineId_createdAt_idx',
+    );
+    expect(productLinesSql).toContain('GeoBrief_tenantId_brandMarketId_productLineId_status_idx');
+    expect(productLinesSql).toContain('GeoArticle_tenantId_brandMarketId_productLineId_status_idx');
+    expect(productLinesSql).toContain('ON DELETE SET NULL');
+    expect(productLinesSql.toLowerCase()).not.toContain('drop table');
+    expect(productLinesSql.toLowerCase()).not.toContain('create extension');
     const schema = readFileSync(resolve(packageRoot, 'prisma/schema.prisma'), 'utf8');
     const models = [...schema.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
     expect(models).toEqual(SCHEMA_MODELS);

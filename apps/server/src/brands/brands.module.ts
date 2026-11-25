@@ -9,6 +9,8 @@ import { BrandFactsController } from './brand-facts.controller';
 import { BrandFactsService } from './brand-facts.service';
 import { BrandMediaController, BrandMediaPublicController } from './brand-media.controller';
 import { BrandMediaService } from './brand-media.service';
+import { BrandProductLinesController } from './brand-product-lines.controller';
+import { BrandProductLinesService } from './brand-product-lines.service';
 import { BrandsController } from './brands.controller';
 import { GALLERY_MAX_INPUT_BYTES_TOKEN, readGalleryMaxInputBytes } from './brands.http-utils';
 import { BrandsService } from './brands.service';
@@ -17,12 +19,14 @@ import { BrandsService } from './brands.service';
   imports: [PrismaModule, AuthModule, AdaptersModule, BillingModule],
   controllers: [
     BrandsController,
+    BrandProductLinesController,
     BrandFactsController,
     BrandMediaController,
     BrandMediaPublicController,
   ],
   providers: [
     BrandsService,
+    BrandProductLinesService,
     FreeActionRateLimiter,
     BrandFactIndexRunner,
     BrandFactsService,
@@ -34,6 +38,7 @@ import { BrandsService } from './brands.service';
   ],
   exports: [
     BrandsService,
+    BrandProductLinesService,
     BrandFactsService,
     BrandFactIndexRunner,
     BrandMediaService,

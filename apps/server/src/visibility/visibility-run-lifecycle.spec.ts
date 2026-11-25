@@ -197,7 +197,7 @@ describe('VisibilityRunLifecycleService adversarial guards (B-01, B-03, B-04)', 
 
     expect(geoArticleFindFirst).toHaveBeenCalledWith({
       where: { id: 'art_brand_b', brandId: 'brand_a', brandMarketId: 'bm_cn' },
-      select: { id: true },
+      select: { id: true, productLineId: true },
     });
     expect(billing.reserve).not.toHaveBeenCalled();
   });

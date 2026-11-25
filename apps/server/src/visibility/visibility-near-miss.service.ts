@@ -23,7 +23,8 @@ import {
 import {
   higherPrioritySourceKind,
   isEffectiveBrandMention,
-  parseProfileCompetitors,
+  mergeProductLineBrandAliases,
+  resolveEffectiveVisibilityCompetitors,
   shanghaiWindowFromQuery,
 } from './visibility.mapper';
 
@@ -281,8 +282,24 @@ export class VisibilityNearMissService {
     requireTenant();
 
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
+    const productLine =
+      query.productLineId && typeof this.prisma.scoped.brandProductLine?.findFirst === 'function'
+        ? await this.prisma.scoped.brandProductLine.findFirst({
+            where: { id: query.productLineId, brandId: brand.id },
+            select: { id: true, name: true, localNamesJson: true, competitorsJson: true },
+          })
+        : null;
     const ownedDomains = await this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []);
-    const competitors = parseProfileCompetitors(market.competitors);
+    const competitors = resolveEffectiveVisibilityCompetitors(
+      market.competitors,
+      productLine,
+      market.market,
+    );
+    const brandAliases = mergeProductLineBrandAliases(
+      market.aliases ?? [],
+      productLine,
+      market.market,
+    );
     const competitorDomains = competitors.flatMap((c) => c.domains ?? []);
     const competitorNames = competitors.map((c) => c.name);
     const window = shanghaiWindowFromQuery({ days: query.days });
@@ -298,6 +315,9 @@ export class VisibilityNearMissService {
               where: {
                 brandId: brand.id,
                 brandMarketId: market.id,
+                ...(query.productLineId
+                  ? { observation: { run: { productLineId: query.productLineId } } }
+                  : {}),
                 createdAt: { gte: window.startUtc, lte: window.endUtc },
               },
             })
@@ -308,6 +328,9 @@ export class VisibilityNearMissService {
                 brandId: brand.id,
                 brandMarketId: market.id,
                 wasCited: false,
+                ...(query.productLineId
+                  ? { observation: { run: { productLineId: query.productLineId } } }
+                  : {}),
                 createdAt: { gte: window.startUtc, lte: window.endUtc },
               },
               orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -344,6 +367,7 @@ export class VisibilityNearMissService {
                 brandId: brand.id,
                 brandMarketId: market.id,
                 crawlStatus: 'OK',
+                ...(query.productLineId ? { article: { productLineId: query.productLineId } } : {}),
               },
               include: {
                 article: {
@@ -373,6 +397,7 @@ export class VisibilityNearMissService {
             brandMarketId: market.id,
             status: 'SUCCESS',
             brandMentioned: true,
+            ...(query.productLineId ? { run: { productLineId: query.productLineId } } : {}),
             OR: [
               { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
               { checkedAt: null, createdAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -757,7 +782,7 @@ export class VisibilityNearMissService {
       if (
         !isEffectiveBrandMention(obs, {
           brandName: market.localBrandName,
-          brandAliases: market.aliases,
+          brandAliases,
           competitorNames,
         })
       ) {

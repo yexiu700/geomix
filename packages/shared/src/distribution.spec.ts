@@ -13,6 +13,7 @@ import {
   L2_EXTENSION_PROVIDERS,
   RETEST_SAMPLE_COUNTS,
   RETEST_SCHEDULE_STATUSES,
+  RETEST_SCHEDULE_STATUS_LABELS,
   createChannelConnectionSchema,
   createDistributionVariantsSchema,
   createPrShareLinkSchema,
@@ -87,7 +88,9 @@ describe('distribution constants & mapping helpers', () => {
     ]);
     expect(DISTRIBUTION_TASK_STATUSES).toHaveLength(7);
     expect(CRAWL_PROBE_STATUSES).toEqual(['PENDING', 'OK', 'WARNING', 'BLOCKED', 'FAILED']);
-    expect(RETEST_SCHEDULE_STATUSES).toHaveLength(7);
+    expect(RETEST_SCHEDULE_STATUSES).toHaveLength(8);
+    expect(RETEST_SCHEDULE_STATUSES).toContain('SKIPPED_BUDGET_CAP');
+    expect(RETEST_SCHEDULE_STATUS_LABELS.SKIPPED_BUDGET_CAP).toContain('预算上限');
     expect(DEFAULT_RETEST_MILESTONE_DAYS).toEqual([7, 14, 30]);
     expect(RETEST_SAMPLE_COUNTS).toEqual([1, 3]);
     expect(CRAWL_PROBE_BOTS).toEqual([

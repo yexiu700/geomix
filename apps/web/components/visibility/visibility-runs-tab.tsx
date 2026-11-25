@@ -17,21 +17,15 @@ import {
   formatShanghaiDateTime,
   sanitizeEntityTitleSegment,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Input, Space, Table, Tag, Tooltip } from 'antd';
+import { Alert, Button, Checkbox, Input, Space, Table, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { JSX, ReactNode } from 'react';
 import { useMemo } from 'react';
 import { formatPct } from '../../lib/design-tokens';
 import { filterEnginesForMarket, parsePromptLines } from '../../lib/visibility';
-import {
-  EngineChipList,
-  SignalEmpty,
-  SignalError,
-  SignalSkeleton,
-  StatusPill,
-  TruncText,
-} from '../geo/primitives';
+import { EngineChipList, SignalError, SignalSkeleton, TruncText } from '../geo/primitives';
 import { RunWorkspace } from '../geo/run-workspace';
+import { EmptyState, RowActions, Section, StatusBadge, type RowActionItem } from '../ui';
 
 export type VisibilityRunsTabProps = {
   activeMarket: GeoMarket;
@@ -215,7 +209,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
               >
                 <TruncText text={safeTitle} lines={1} />
               </button>
-              {row.triggerType === 'RETEST' ? <Tag color="cyan">复测</Tag> : null}
+              {row.triggerType === 'RETEST' ? <StatusBadge tone="active" label="复测" /> : null}
             </div>
           );
         },
@@ -224,8 +218,10 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 76,
-        render: (status: TaskStatusName) => <StatusPill kind="task" status={status} />,
+        width: 82,
+        render: (status: TaskStatusName) => (
+          <StatusBadge status={status} label={VISIBILITY_TASK_STATUS_LABELS[status] ?? status} />
+        ),
       },
       {
         title: '引擎',
@@ -267,76 +263,62 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         key: 'createdAt',
         width: 96,
         render: (iso: string) => (
-          <span className="gm-num" style={{ whiteSpace: 'normal', lineHeight: 1.3 }}>
-            {formatShanghaiDateTime(iso)}
-          </span>
+          <span className="gm-num gm-vis-cell-time">{formatShanghaiDateTime(iso)}</span>
         ),
       },
       {
         title: '操作',
         key: 'actions',
-        width: 118,
+        width: 144,
         render: (_v, row) => {
           const busy = actionLoadingRunId === row.id;
           const isActive =
             row.status === 'QUEUED' || row.status === 'RUNNING' || row.status === 'PAUSED';
+          const secondary: RowActionItem[] = [];
+          if (!readOnly && (row.status === 'QUEUED' || row.status === 'RUNNING')) {
+            secondary.push({
+              key: 'pause',
+              label: '暂停',
+              loading: busy,
+              onClick: () => onPauseRun(row),
+            });
+          }
+          if (!readOnly && row.status === 'PAUSED') {
+            secondary.push({
+              key: 'resume',
+              label: '继续',
+              loading: busy,
+              onClick: () => onResumeRun(row),
+            });
+          }
+          if (!readOnly && isActive) {
+            secondary.push({
+              key: 'cancel',
+              label: '终止',
+              danger: true,
+              loading: busy,
+              onClick: () => onCancelRun(row),
+            });
+          }
+          if (!readOnly && !isActive) {
+            secondary.push({
+              key: 'delete',
+              label: '删除',
+              danger: true,
+              loading: busy,
+              onClick: () => onDeleteRun(row),
+            });
+          }
+
           return (
-            <Space size={2} wrap>
-              <Button
-                type="link"
-                size="small"
-                style={{ paddingInline: 4 }}
-                onClick={() => onSelectRun(row.id)}
-              >
-                查看
-              </Button>
-              {!readOnly && (row.status === 'QUEUED' || row.status === 'RUNNING') ? (
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ paddingInline: 4 }}
-                  loading={busy}
-                  onClick={() => onPauseRun(row)}
-                >
-                  暂停
-                </Button>
-              ) : null}
-              {!readOnly && row.status === 'PAUSED' ? (
-                <Button
-                  type="link"
-                  size="small"
-                  style={{ paddingInline: 4 }}
-                  loading={busy}
-                  onClick={() => onResumeRun(row)}
-                >
-                  继续
-                </Button>
-              ) : null}
-              {!readOnly && isActive ? (
-                <Button
-                  type="link"
-                  size="small"
-                  danger
-                  style={{ paddingInline: 4 }}
-                  loading={busy}
-                  onClick={() => onCancelRun(row)}
-                >
-                  终止
-                </Button>
-              ) : null}
-              {!readOnly && !isActive ? (
-                <Button
-                  type="link"
-                  size="small"
-                  danger
-                  style={{ paddingInline: 4 }}
-                  loading={busy}
-                  onClick={() => onDeleteRun(row)}
-                >
-                  删除
-                </Button>
-              ) : null}
-            </Space>
+            <RowActions
+              primary={{
+                key: 'view',
+                label: '查看',
+                onClick: () => onSelectRun(row.id),
+              }}
+              secondary={secondary}
+            />
           );
         },
       },
@@ -356,22 +338,19 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
   return (
     <div className="gm-vis-tab-stack">
       {/* 1. Create Monitor Run Panel */}
-      <div className="gm-panel gm-vis-create-panel">
-        <div className="gm-vis-panel-head">
-          <div>
-            <div className="gm-vis-panel-title">发起新一轮 AI 可见度监测</div>
-            <div className="gm-vis-panel-sub">
-              当前市场：{activeMarket === 'CN' ? '中国国内（8 引擎）' : '海外市场（5 引擎）'} ·
-              默认仅勾选已上线健康引擎
-            </div>
-          </div>
-          {seedPrompts.length > 0 ? (
+      <Section
+        variant="card"
+        className="gm-vis-create-panel"
+        title="发起新一轮 AI 可见度监测"
+        description={`当前市场：${activeMarket === 'CN' ? '中国国内（8 引擎）' : '海外市场（5 引擎）'} · 默认仅勾选已上线健康引擎`}
+        actions={
+          seedPrompts.length > 0 ? (
             <Button size="small" disabled={readOnly || submitting} onClick={handleFillAllSeeds}>
               一键填入全部种子问题（{seedPrompts.length}）
             </Button>
-          ) : null}
-        </div>
-
+          ) : undefined
+        }
+      >
         <div className="gm-vis-form-row">
           <label className="gm-vis-field-label" htmlFor="vis-run-name-input">
             任务名称（选填）
@@ -525,12 +504,13 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
             发起监测（{estimatedPoints} 点）
           </Button>
         </div>
-      </div>
+      </Section>
 
       {/* 2. Runs List Table (Zero Overflow at 1440x900 & 1280x800) */}
-      <div className="gm-panel">
-        <div className="gm-vis-panel-head gm-vis-runs-head">
-          <div className="gm-vis-panel-title">监测任务记录</div>
+      <Section
+        variant="card"
+        title="监测任务记录"
+        actions={
           <div className="gm-vis-runs-filters">
             <select
               aria-label="按状态筛选监测任务"
@@ -558,14 +538,15 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
               刷新
             </Button>
           </div>
-        </div>
-
+        }
+      >
         {runsError ? (
           <SignalError message={runsError} onRetry={onRefreshRuns} />
         ) : runsLoading && runs.length === 0 ? (
           <SignalSkeleton variant="row" rows={5} />
         ) : runs.length === 0 ? (
-          <SignalEmpty
+          <EmptyState
+            size="compact"
             title="当前市场暂无监测任务"
             description="在上方输入监测问题并勾选已上线引擎，即可发起首次 AI 可见度监测"
           />
@@ -589,13 +570,13 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
             />
           </div>
         )}
-      </div>
+      </Section>
 
       {/* 3. Selected Run Workspace & Answer Lens */}
       {activeRunId ? (
-        <div className="gm-panel gm-vis-detail-panel">
+        <Section variant="card" className="gm-vis-detail-panel">
           {runDetailError && !activeRunDetail ? (
-            <div style={{ padding: 16 }}>
+            <div className="gm-vis-detail-error">
               <SignalError message={runDetailError} onRetry={() => onSelectRun(activeRunId)} />
             </div>
           ) : (
@@ -614,7 +595,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
               onResetFilters={onResetObsFilters}
             />
           )}
-        </div>
+        </Section>
       ) : null}
     </div>
   );

@@ -10,10 +10,9 @@ import {
   type GeoRoiReportRecordDto,
   type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Tag } from 'antd';
+import { Alert, Button, Input, Modal } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GM } from '../../lib/design-tokens';
 import { GatewayApiError } from '../../lib/envelope';
 import {
   buildDefaultRoiPeriod,
@@ -27,19 +26,13 @@ import {
   revokeGeoRoiReportShare,
   type GeoRoiReportShareCreatedDto,
 } from '../../lib/reports';
-import { NATIVE_SELECT_STYLE } from '../../lib/select-styles';
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness } from '../../lib/tab-freshness';
 import { triggerBlobDownload } from '../../lib/ux-foundation';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
-import {
-  SignalEmpty,
-  SignalError,
-  SignalPill,
-  SignalSkeleton,
-  type SignalTone,
-} from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { EmptyState, StatusBadge, type StatusTone } from '../ui';
 
 export type HomeRoiReportModalProps = {
   open: boolean;
@@ -71,9 +64,9 @@ const CONFIDENCE_LABELS_ZH: Record<ConfidenceLevel, string> = {
   INSUFFICIENT: '样本不足',
 };
 
-const CONFIDENCE_TONE: Record<ConfidenceLevel, SignalTone> = {
-  HIGH: 'cited',
-  MEDIUM: 'info',
+const CONFIDENCE_TONE: Record<ConfidenceLevel, StatusTone> = {
+  HIGH: 'success',
+  MEDIUM: 'active',
   LOW: 'warning',
   INSUFFICIENT: 'neutral',
 };
@@ -84,8 +77,8 @@ const DID_DIRECTION_LABELS_ZH: Record<DidDirection, string> = {
   NEUTRAL: '无显著净差',
 };
 
-const DID_DIRECTION_TONE: Record<DidDirection, SignalTone> = {
-  POSITIVE: 'cited',
+const DID_DIRECTION_TONE: Record<DidDirection, StatusTone> = {
+  POSITIVE: 'success',
   NEGATIVE: 'danger',
   NEUTRAL: 'neutral',
 };
@@ -421,90 +414,60 @@ export function HomeRoiReportModal({
       width="min(860px, calc(100vw - 32px))"
       styles={{ body: { overflowX: 'hidden', maxHeight: '72vh', overflowY: 'auto' } }}
       title={
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <div className="gm-roi-modal-title">
           <span>月度 GEO ROI 报告中心</span>
-          <Tag color={market === 'GLOBAL' ? 'blue' : 'cyan'} style={{ margin: 0 }}>
+          <span className="gm-home-chip">
             {brandName} · {market === 'GLOBAL' ? '海外市场（GLOBAL）' : '国内市场（CN）'}
-          </Tag>
+          </span>
         </div>
       }
     >
-      <div
-        data-testid="home-roi-report-modal"
-        style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}
-      >
+      <div className="gm-roi-modal-body" data-testid="home-roi-report-modal">
         {/* 1. Create New Report Form */}
-        <section
-          data-testid="roi-report-create-form"
-          style={{
-            padding: 14,
-            borderRadius: 8,
-            background: 'var(--gm-bg-elevated, #171B1A)',
-            border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-            }}
-          >
-            <strong style={{ fontSize: 13.5, color: GM.fg.f1 }}>新建月度 GEO ROI 快照报告</strong>
-            <span style={{ fontSize: 12, color: GM.fg.f3 }}>
+        <section className="gm-roi-card" data-testid="roi-report-create-form">
+          <div className="gm-roi-card-head">
+            <strong className="gm-roi-section-title">新建月度 GEO ROI 快照报告</strong>
+            <span className="gm-roi-muted">
               包含 Wilson 95% 置信区间、对照组 DiD 净增益、Near-Miss 转化与渠道归因（免费导出）
             </span>
           </div>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-              gap: 10,
-              minWidth: 0,
-            }}
-          >
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: GM.fg.f2 }}>统计开始日期</span>
+          <div className="gm-roi-grid-3">
+            <label className="gm-roi-field">
+              <span className="gm-roi-field-label">统计开始日期</span>
               <input
                 type="date"
                 aria-label="统计开始日期"
                 data-testid="roi-report-period-start"
+                className="gm-roi-date-input"
                 value={periodStart}
                 onChange={(e) => setPeriodStart(e.target.value)}
                 disabled={readOnly || generating}
-                style={{ width: '100%', boxSizing: 'border-box' }}
               />
             </label>
 
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: GM.fg.f2 }}>统计结束日期</span>
+            <label className="gm-roi-field">
+              <span className="gm-roi-field-label">统计结束日期</span>
               <input
                 type="date"
                 aria-label="统计结束日期"
                 data-testid="roi-report-period-end"
+                className="gm-roi-date-input"
                 value={periodEnd}
                 onChange={(e) => setPeriodEnd(e.target.value)}
                 disabled={readOnly || generating}
-                style={{ width: '100%', boxSizing: 'border-box' }}
               />
             </label>
 
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: GM.fg.f2 }}>报告语言</span>
+            <label className="gm-roi-field">
+              <span className="gm-roi-field-label">报告语言</span>
               <select
                 aria-label="报告语言"
                 data-testid="roi-report-locale"
+                className="gm-select gm-roi-select"
                 value={locale}
                 onChange={(e) => setLocale(e.target.value as SupportedLocale)}
                 disabled={readOnly || generating}
-                style={{ ...NATIVE_SELECT_STYLE, width: '100%', boxSizing: 'border-box' }}
               >
                 {REPORT_LOCALE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -515,16 +478,9 @@ export function HomeRoiReportModal({
             </label>
           </div>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: 10,
-              minWidth: 0,
-            }}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: GM.fg.f2 }}>白标机构名称（选填）</span>
+          <div className="gm-roi-grid-2">
+            <div className="gm-roi-field">
+              <span className="gm-roi-field-label">白标机构名称（选填）</span>
               <Input
                 aria-label="白标机构名称"
                 data-testid="roi-report-whitelabel"
@@ -536,8 +492,8 @@ export function HomeRoiReportModal({
               />
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-              <span style={{ fontSize: 12, color: GM.fg.f2 }}>自定义报告标题（选填）</span>
+            <div className="gm-roi-field">
+              <span className="gm-roi-field-label">自定义报告标题（选填）</span>
               <Input
                 aria-label="自定义报告标题"
                 data-testid="roi-report-title"
@@ -554,16 +510,8 @@ export function HomeRoiReportModal({
             <Alert type="error" showIcon message={formError} data-testid="roi-report-form-error" />
           ) : null}
 
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 12, color: GM.fg.f3 }}>
+          <div className="gm-roi-card-foot">
+            <span className="gm-roi-muted">
               {readOnly
                 ? '当前为只读状态，仅可浏览或下载已有报告。'
                 : '生成后将冻结当前周期汇总快照，支持随时导出与白标分享。'}
@@ -581,22 +529,9 @@ export function HomeRoiReportModal({
         </section>
 
         {/* 2. Saved Reports History & Selected Preview */}
-        <section
-          aria-label="历史 ROI 报告列表"
-          style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-            }}
-          >
-            <strong style={{ fontSize: 13.5, color: GM.fg.f1 }}>
-              已保存的 ROI 报告（{reports.length}）
-            </strong>
+        <section className="gm-roi-section" aria-label="历史 ROI 报告列表">
+          <div className="gm-roi-card-head">
+            <strong className="gm-roi-section-title">已保存的 ROI 报告（{reports.length}）</strong>
             <Button size="small" onClick={() => void loadReports()} loading={loading}>
               刷新列表
             </Button>
@@ -607,17 +542,15 @@ export function HomeRoiReportModal({
           ) : loading && reports.length === 0 ? (
             <SignalSkeleton variant="row" rows={3} />
           ) : reports.length === 0 ? (
-            <SignalEmpty
+            <EmptyState
+              size="compact"
               title="暂无已生成的月度 GEO ROI 报告"
               description="选择统计时间窗口与报告语言，点击上方「生成月度 GEO ROI 报告」即可创建首份可验证复盘报告。"
             />
           ) : (
             <>
               {/* Report selector list */}
-              <div
-                data-testid="roi-report-list"
-                style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}
-              >
+              <div className="gm-roi-list" data-testid="roi-report-list">
                 {reports.map((report) => {
                   const isSelected = selectedReport?.id === report.id;
                   return (
@@ -633,72 +566,20 @@ export function HomeRoiReportModal({
                           setSelectedReportId(report.id);
                         }
                       }}
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: 8,
-                        cursor: 'pointer',
-                        background: isSelected
-                          ? 'var(--gm-bg-selected, rgba(197, 240, 74, 0.07))'
-                          : 'var(--gm-bg-surface, #111413)',
-                        border: isSelected
-                          ? '1px solid var(--gm-phosphor-a40, rgba(197, 240, 74, 0.4))'
-                          : '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
+                      className={`gm-roi-item${isSelected ? ' gm-roi-item--selected' : ''}`}
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 4,
-                          minWidth: 0,
-                          flex: '1 1 280px',
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            alignItems: 'center',
-                            gap: 6,
-                          }}
-                        >
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: GM.fg.f1,
-                              overflowWrap: 'anywhere',
-                            }}
-                          >
-                            {report.title}
-                          </span>
-                          <Tag style={{ margin: 0 }}>{report.locale}</Tag>
+                      <div className="gm-roi-item-main">
+                        <div className="gm-roi-item-top">
+                          <span className="gm-roi-item-title">{report.title}</span>
+                          <span className="gm-home-chip">{report.locale}</span>
                           {report.whiteLabelOrg ? (
-                            <Tag color="purple" style={{ margin: 0 }}>
-                              白标：{report.whiteLabelOrg}
-                            </Tag>
+                            <span className="gm-home-chip">白标：{report.whiteLabelOrg}</span>
                           ) : null}
                           {report.shareActive ? (
-                            <Tag color="green" style={{ margin: 0 }}>
-                              已开启分享
-                            </Tag>
+                            <StatusBadge tone="success" label="已开启分享" />
                           ) : null}
                         </div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexWrap: 'wrap',
-                            gap: '2px 12px',
-                            fontSize: 12,
-                            color: GM.fg.f3,
-                          }}
-                        >
+                        <div className="gm-roi-item-meta">
                           <span className="gm-num">
                             周期：{formatUtcCalendarDate(report.periodStart)} ~{' '}
                             {formatUtcCalendarDate(report.periodEnd)}
@@ -709,15 +590,14 @@ export function HomeRoiReportModal({
                         </div>
                       </div>
 
-                      <div
-                        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}
-                      >
-                        <span className="gm-num" style={{ fontSize: 12, color: GM.sig.cited }}>
+                      <div className="gm-roi-item-right">
+                        <span className="gm-num gm-roi-item-rate">
                           提及率 {formatRatioPct(report.summary.overview.mentionRate)}
                         </span>
-                        <SignalPill tone={CONFIDENCE_TONE[report.summary.overview.confidenceLevel]}>
-                          {CONFIDENCE_LABELS_ZH[report.summary.overview.confidenceLevel]}
-                        </SignalPill>
+                        <StatusBadge
+                          tone={CONFIDENCE_TONE[report.summary.overview.confidenceLevel]}
+                          label={CONFIDENCE_LABELS_ZH[report.summary.overview.confidenceLevel]}
+                        />
                       </div>
                     </div>
                   );
@@ -726,50 +606,18 @@ export function HomeRoiReportModal({
 
               {/* Selected report KPI preview & actions */}
               {selectedReport ? (
-                <div
-                  data-testid="roi-report-detail-card"
-                  style={{
-                    padding: 14,
-                    borderRadius: 8,
-                    background: 'var(--gm-bg-elevated, #171B1A)',
-                    border: '1px solid var(--gm-line-2, rgba(255,255,255,0.1))',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 600,
-                          color: GM.fg.f1,
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {selectedReport.title}
-                      </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 12, color: GM.fg.f3, marginTop: 2 }}
-                      >
+                <div className="gm-roi-detail-card" data-testid="roi-report-detail-card">
+                  <div className="gm-roi-card-head">
+                    <div className="gm-roi-detail-heading">
+                      <div className="gm-roi-detail-title">{selectedReport.title}</div>
+                      <div className="gm-num gm-roi-detail-sub">
                         统计周期：{formatUtcCalendarDate(selectedReport.periodStart)} 至{' '}
                         {formatUtcCalendarDate(selectedReport.periodEnd)} · 语言：
                         {selectedReport.locale}
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <div className="gm-roi-detail-actions">
                       <Button
                         size="small"
                         data-testid="roi-report-download-html-btn"
@@ -790,7 +638,6 @@ export function HomeRoiReportModal({
                       </Button>
                       <Button
                         size="small"
-                        type="primary"
                         data-testid="roi-report-share-btn"
                         loading={sharingReportId === selectedReport.id}
                         disabled={readOnly || Boolean(sharingReportId) || Boolean(revokingReportId)}
@@ -816,132 +663,64 @@ export function HomeRoiReportModal({
                   </div>
 
                   {/* Summary 4 KPI tiles */}
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
-                      gap: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-surface, #111413)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                      }}
-                    >
-                      <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>
-                        品牌提及率（Wilson 95% CI）
-                      </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                      >
+                  <div className="gm-roi-kpi-grid">
+                    <div className="gm-roi-kpi-tile">
+                      <div className="gm-roi-kpi-label">品牌提及率（Wilson 95% CI）</div>
+                      <div className="gm-num gm-roi-kpi-value">
                         {formatRatioPct(selectedReport.summary.overview.mentionRate)}
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 2 }}
-                      >
+                      <div className="gm-num gm-roi-kpi-sub">
                         [{formatRatioPct(selectedReport.summary.overview.mentionWilson.lower)},{' '}
                         {formatRatioPct(selectedReport.summary.overview.mentionWilson.upper)}] · n=
                         {formatSafeCount(selectedReport.summary.overview.mentionWilson.trials)}
                       </div>
                     </div>
 
-                    <div
-                      style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-surface, #111413)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                      }}
-                    >
-                      <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>对照组 DiD 净增益</div>
+                    <div className="gm-roi-kpi-tile">
+                      <div className="gm-roi-kpi-label">对照组 DiD 净增益</div>
                       {selectedReport.summary.overview.did ? (
                         <>
                           <div
-                            className="gm-num"
-                            style={{
-                              fontSize: 18,
-                              fontWeight: 700,
-                              color:
-                                selectedReport.summary.overview.did.direction === 'POSITIVE'
-                                  ? GM.sig.cited
-                                  : selectedReport.summary.overview.did.direction === 'NEGATIVE'
-                                    ? GM.status.danger
-                                    : GM.fg.f2,
-                              marginTop: 2,
-                            }}
+                            className={`gm-num gm-roi-kpi-value gm-roi-kpi-value--${selectedReport.summary.overview.did.direction.toLowerCase()}`}
                           >
                             {formatRatioPp(selectedReport.summary.overview.did.netLift)}
                           </div>
-                          <div style={{ marginTop: 2 }}>
-                            <SignalPill
+                          <div className="gm-roi-kpi-badge">
+                            <StatusBadge
                               tone={
                                 DID_DIRECTION_TONE[selectedReport.summary.overview.did.direction]
                               }
-                            >
-                              {
+                              label={
                                 DID_DIRECTION_LABELS_ZH[
                                   selectedReport.summary.overview.did.direction
                                 ]
                               }
-                            </SignalPill>
+                            />
                           </div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 12, color: GM.fg.f3, marginTop: 6 }}>
-                          暂未启用对照组复测
-                        </div>
+                        <div className="gm-roi-kpi-empty">暂未启用对照组复测</div>
                       )}
                     </div>
 
-                    <div
-                      style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-surface, #111413)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                      }}
-                    >
-                      <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>Near-Miss 补强转化</div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                      >
+                    <div className="gm-roi-kpi-tile">
+                      <div className="gm-roi-kpi-label">Near-Miss 补强转化</div>
+                      <div className="gm-num gm-roi-kpi-value">
                         {formatSafeCount(selectedReport.summary.nearMiss.convertedToCited)} /{' '}
                         {formatSafeCount(selectedReport.summary.nearMiss.totalOpportunities)}
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 2 }}
-                      >
+                      <div className="gm-num gm-roi-kpi-sub">
                         已建补强卡{' '}
                         {formatSafeCount(selectedReport.summary.nearMiss.boostBriefsCreated)} 张
                       </div>
                     </div>
 
-                    <div
-                      style={{
-                        padding: 10,
-                        borderRadius: 6,
-                        background: 'var(--gm-bg-surface, #111413)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                      }}
-                    >
-                      <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>分发与可抓取漏斗</div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                      >
+                    <div className="gm-roi-kpi-tile">
+                      <div className="gm-roi-kpi-label">分发与可抓取漏斗</div>
+                      <div className="gm-num gm-roi-kpi-value">
                         {formatSafeCount(selectedReport.summary.funnel.publishedTotal)} 篇
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 2 }}
-                      >
+                      <div className="gm-num gm-roi-kpi-sub">
                         可抓取率 {formatRatioPct(selectedReport.summary.funnel.crawlOkRate)}
                       </div>
                     </div>
@@ -949,44 +728,15 @@ export function HomeRoiReportModal({
 
                   {/* Share URL banner */}
                   {selectedShare && selectedShareUrl ? (
-                    <div
-                      data-testid="roi-report-share-box"
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: 6,
-                        background: 'rgba(61, 224, 200, 0.08)',
-                        border: '1px solid rgba(61, 224, 200, 0.28)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.sig.cited, fontWeight: 600 }}>
+                    <div className="gm-roi-share-box" data-testid="roi-report-share-box">
+                      <div className="gm-roi-share-title">
                         公开免登录分享链接（仅本次展示明文，有效期至{' '}
                         {formatShanghaiDateTime(selectedShare.expiresAt)}）
                       </div>
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          gap: 8,
-                          minWidth: 0,
-                        }}
-                      >
+                      <div className="gm-roi-share-row">
                         <code
                           data-testid="roi-report-share-url"
-                          className="gm-mono"
-                          style={{
-                            flex: '1 1 280px',
-                            minWidth: 0,
-                            overflowWrap: 'anywhere',
-                            padding: '4px 8px',
-                            borderRadius: 4,
-                            background: 'var(--gm-bg-base, #0A0C0B)',
-                            color: GM.fg.f1,
-                          }}
+                          className="gm-mono gm-roi-share-code"
                         >
                           {selectedShareUrl}
                         </code>
@@ -1003,7 +753,7 @@ export function HomeRoiReportModal({
                             target="_blank"
                             rel="noopener noreferrer"
                             data-testid="roi-report-open-share-link"
-                            style={{ fontSize: 12, color: GM.phosphor, whiteSpace: 'nowrap' }}
+                            className="gm-roi-share-link"
                           >
                             打开分享页 ↗
                           </a>

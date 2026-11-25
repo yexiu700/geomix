@@ -39,6 +39,7 @@ import {
   type FactIndexEnqueuer,
   type RetrievedBrandFactSnippet,
 } from './brand-fact-index.runner';
+import { BrandProductLinesService } from './brand-product-lines.service';
 import { normalizeClientIp } from './brands.http-utils';
 
 const MAX_EXTRACT_SOURCE_CHARS = 50_000;
@@ -80,6 +81,7 @@ export type FactExtractInput = {
 type BrandFactRow = {
   id: string;
   brandId: string;
+  productLineId?: string | null;
   slot: string;
   title: string;
   content: string;
@@ -92,7 +94,7 @@ type BrandFactRow = {
 
 /**
  * 品牌事实卡服务（100% 走 prisma.scoped）：
- * - 维护 4 块核心事实卡 + 可选 EXTRA_DOC 补充长文档
+ * - 维护 4 块核心事实卡 + 可选 EXTRA_DOC 补充长文档（支持可选多产品线归属隔离）
  * - 轻量单选合规承诺留痕（truthAgreementSignedAt + truthAgreementIp）
  * - 0 点防刷限流 AI 提炼（URL / 粘贴文本 / .txt / .md / .pdf）
  * - >6,000 字自动异步触发 fact-index 队列向量化；≤6,000 字零延迟直注并清理旧切片
@@ -111,9 +113,12 @@ export class BrandFactsService {
     @Optional()
     @Inject(FACT_INDEX_ENQUEUER)
     private readonly factIndexEnqueuer?: FactIndexEnqueuer,
+    @Optional()
+    @Inject(BrandProductLinesService)
+    private readonly productLines?: BrandProductLinesService,
   ) {}
 
-  async getFacts(brandId: string): Promise<BrandFactsResponse> {
+  async getFacts(brandId: string, productLineId?: string): Promise<BrandFactsResponse> {
     const brand = await this.prisma.scoped.brand.findFirst({
       where: { id: brandId },
       select: { id: true, truthAgreementSignedAt: true },
@@ -122,12 +127,28 @@ export class BrandFactsService {
       throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '品牌不存在');
     }
 
+    const normalizedProductLineId = productLineId?.trim() || undefined;
+    if (normalizedProductLineId) {
+      await this.assertProductLineBelongsToBrand(brandId, normalizedProductLineId);
+    }
+
     const rows = await this.prisma.scoped.brandFact.findMany({
-      where: { brandId },
+      where: normalizedProductLineId
+        ? {
+            brandId,
+            OR: [{ productLineId: null }, { productLineId: normalizedProductLineId }],
+          }
+        : { brandId },
       orderBy: [{ slot: 'asc' }, { updatedAt: 'desc' }],
     });
 
-    return buildFactsResponse(brand.id, brand.truthAgreementSignedAt, rows);
+    const filteredRows = normalizedProductLineId
+      ? rows.filter(
+          (row) => row.productLineId == null || row.productLineId === normalizedProductLineId,
+        )
+      : rows;
+
+    return buildFactsResponse(brand.id, brand.truthAgreementSignedAt, filteredRows);
   }
 
   async upsertFacts(
@@ -148,6 +169,17 @@ export class BrandFactsService {
     const agreed = Boolean(input.truthAgreed || input.agreeTruthTerms);
     if (!brand.truthAgreementSignedAt && !agreed) {
       throw new ApiError(400, API_ERROR.BAD_REQUEST, '请先勾选品牌事实真实性与合规承诺');
+    }
+
+    const requestedLineIds = [
+      ...new Set(
+        input.facts
+          .map((item) => item.productLineId)
+          .filter((id): id is string => typeof id === 'string' && id.trim().length > 0),
+      ),
+    ];
+    if (requestedLineIds.length > 0) {
+      await this.assertAllProductLinesBelongToBrand(brandId, requestedLineIds);
     }
 
     const complianceText = input.facts
@@ -185,13 +217,23 @@ export class BrandFactsService {
       for (const item of input.facts) {
         const title = item.title?.trim() || BRAND_FACT_SLOT_LABELS[item.slot];
         const sourceUrl = item.sourceUrl ?? null;
+        const hasProductLineField = item.productLineId !== undefined;
+        const normalizedProductLineId = item.productLineId ?? null;
 
         let target = item.id
           ? existing.find((row) => row.id === item.id)
-          : existing.find((row) => row.slot === item.slot && !matchedIds.has(row.id));
+          : existing.find(
+              (row) =>
+                row.slot === item.slot &&
+                (row.productLineId ?? null) === normalizedProductLineId &&
+                !matchedIds.has(row.id),
+            );
 
         if (!target && !item.id) {
-          target = existing.find((row) => row.slot === item.slot);
+          target = existing.find(
+            (row) =>
+              row.slot === item.slot && (row.productLineId ?? null) === normalizedProductLineId,
+          );
         }
 
         if (target) {
@@ -204,13 +246,23 @@ export class BrandFactsService {
               content: item.content,
               sourceType: item.sourceType,
               sourceUrl,
+              ...(hasProductLineField ? { productLineId: normalizedProductLineId } : {}),
             },
           });
+          target.slot = item.slot;
+          target.title = title;
+          target.content = item.content;
+          target.sourceType = item.sourceType;
+          target.sourceUrl = sourceUrl;
+          if (hasProductLineField) {
+            target.productLineId = normalizedProductLineId;
+          }
         } else {
-          await tx.brandFact.create({
+          const created = await tx.brandFact.create({
             data: {
               tenantId,
               brandId,
+              productLineId: normalizedProductLineId,
               slot: item.slot,
               title,
               content: item.content,
@@ -219,6 +271,8 @@ export class BrandFactsService {
               indexStatus: 'NONE',
             },
           });
+          matchedIds.add(created.id);
+          existing.push(created);
         }
       }
 
@@ -387,8 +441,49 @@ export class BrandFactsService {
     brandId: string,
     query: string,
     topK: number = BRAND_FACT_TOP_K_CHUNKS,
+    productLineId?: string | null,
   ): Promise<RetrievedBrandFactSnippet[]> {
-    return this.factIndexRunner.retrieveRelevantBrandFacts(tenantId, brandId, query, topK);
+    return this.factIndexRunner.retrieveRelevantBrandFacts(
+      tenantId,
+      brandId,
+      query,
+      topK,
+      productLineId,
+    );
+  }
+
+  private async assertProductLineBelongsToBrand(
+    brandId: string,
+    productLineId: string,
+  ): Promise<void> {
+    if (this.productLines) {
+      await this.productLines.assertBelongsToBrand(brandId, productLineId);
+      return;
+    }
+    const row = await this.prisma.scoped.brandProductLine.findFirst({
+      where: { id: productLineId, brandId },
+      select: { id: true },
+    });
+    if (!row) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所属产品线不存在或不属于当前品牌');
+    }
+  }
+
+  private async assertAllProductLinesBelongToBrand(
+    brandId: string,
+    productLineIds: readonly string[],
+  ): Promise<void> {
+    if (this.productLines) {
+      await this.productLines.assertAllBelongToBrand(brandId, productLineIds);
+      return;
+    }
+    const rows = await this.prisma.scoped.brandProductLine.findMany({
+      where: { brandId, id: { in: [...productLineIds] } },
+      select: { id: true },
+    });
+    if (rows.length !== productLineIds.length) {
+      throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '所属产品线不存在或不属于当前品牌');
+    }
   }
 
   private async resolveExtractSource(input: FactExtractInput): Promise<{
@@ -808,6 +903,7 @@ function presentFact(row: BrandFactRow): BrandFactRecord {
   return {
     id: row.id,
     brandId: row.brandId,
+    productLineId: row.productLineId ?? null,
     slot,
     title: row.title,
     content: row.content,

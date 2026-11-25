@@ -8,7 +8,9 @@ import {
   defaultTargetFormatForMarket,
   evaluateGeoArticle,
   markdownToSanitizedHtml,
+  readProductLineMarketCompetitors,
   replaceComplianceInTextSegments,
+  resolveEffectiveCategory,
   resolveEffectiveLocale,
   sanitizeRichArticleHtml,
   stripHtmlToText,
@@ -51,6 +53,7 @@ import {
   StudioGenerationService,
   type StudioBrandContext,
   type StudioMarketContext,
+  type StudioProductLineContext,
 } from './studio-generation.service';
 import {
   deriveGeoArticleId,
@@ -97,6 +100,7 @@ export type PreparedStudioStream =
       market: GeoMarket;
       recipe: GeoRecipe;
       targetFormat: GeoTargetFormat;
+      productLineId: string | null;
       matchedFactIds: string[];
     }
   | {
@@ -105,6 +109,8 @@ export type PreparedStudioStream =
       articleId: string;
       brand: StudioBrandContext;
       market: StudioMarketContext;
+      productLineId: string | null;
+      productLine: StudioProductLineContext | null;
       briefId: string | null;
       markedBriefWriting: boolean;
       recipe: GeoRecipe;
@@ -149,6 +155,7 @@ export class StudioService {
     const where: Prisma.GeoArticleWhereInput = {
       brandId: resolved.brand.id,
       brandMarketId: resolved.market.id,
+      ...(query.productLineId ? { productLineId: query.productLineId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.tag ? { tags: { has: query.tag } } : {}),
       ...(query.briefId ? { briefId: query.briefId } : {}),
@@ -199,6 +206,7 @@ export class StudioService {
     const existing = await this.prisma.scoped.geoArticle.findFirst({
       where: { id: articleId },
       include: {
+        productLine: true,
         brand: { select: { id: true, name: true, category: true } },
         brandMarket: {
           select: {
@@ -295,16 +303,32 @@ export class StudioService {
     }
 
     if (shouldRecomputeEval) {
-      const brandFacts = await this.prisma.scoped.brandFact.findMany({
-        where: { brandId: existing.brandId },
-        select: { id: true, content: true },
+      const existingProductLineId = existing.productLineId ?? null;
+      const rawBrandFacts = await this.prisma.scoped.brandFact.findMany({
+        where: existingProductLineId
+          ? {
+              brandId: existing.brandId,
+              OR: [{ productLineId: null }, { productLineId: existingProductLineId }],
+            }
+          : { brandId: existing.brandId },
+        select: { id: true, content: true, productLineId: true },
       });
+      const brandFacts = existingProductLineId
+        ? rawBrandFacts.filter(
+            (f) => f.productLineId == null || f.productLineId === existingProductLineId,
+          )
+        : rawBrandFacts;
+      const effectiveCategory = resolveEffectiveCategory(
+        existing.brand,
+        { market, localCategory: existing.brandMarket.localCategory },
+        (existing as { productLine?: StudioProductLineContext | null }).productLine ?? null,
+      );
       const evaluation = evaluateGeoArticle({
         market,
         locale: existing.targetLocale ?? existing.brandMarket.locale,
         localBrandName: existing.brandMarket.localBrandName,
-        category: existing.brand.category,
-        localCategory: existing.brandMarket.localCategory,
+        category: effectiveCategory,
+        localCategory: effectiveCategory,
         ownedDomains: existing.brandMarket.ownedDomains,
         title: nextTitle,
         targetPrompt: existing.targetPrompt,
@@ -388,6 +412,7 @@ export class StudioService {
     let brief: {
       id: string;
       status: string;
+      productLineId?: string | null;
       suggestedTitle: string;
       outlineH2: Prisma.JsonValue;
       targetFanOuts: string[];
@@ -403,6 +428,7 @@ export class StudioService {
         select: {
           id: true,
           status: true,
+          productLineId: true,
           suggestedTitle: true,
           outlineH2: true,
           targetFanOuts: true,
@@ -413,6 +439,45 @@ export class StudioService {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '写作意见不存在或不属于当前品牌市场');
       }
     }
+
+    let resolvedProductLine: (StudioProductLineContext & { id: string }) | null = null;
+    if (typeof input.productLineId === 'string' && input.productLineId.trim().length > 0) {
+      const foundLine = await this.prisma.scoped.brandProductLine.findFirst({
+        where: { id: input.productLineId.trim(), brandId: resolved.brand.id },
+        select: {
+          id: true,
+          name: true,
+          localNamesJson: true,
+          category: true,
+          localCategoriesJson: true,
+          competitorsJson: true,
+        },
+      });
+      if (!foundLine) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '产品线不存在或不属于当前品牌');
+      }
+      resolvedProductLine = foundLine;
+    } else if (
+      input.productLineId === undefined &&
+      brief?.productLineId &&
+      typeof this.prisma.scoped.brandProductLine?.findFirst === 'function'
+    ) {
+      const inheritedLine = await this.prisma.scoped.brandProductLine.findFirst({
+        where: { id: brief.productLineId, brandId: resolved.brand.id },
+        select: {
+          id: true,
+          name: true,
+          localNamesJson: true,
+          category: true,
+          localCategoriesJson: true,
+          competitorsJson: true,
+        },
+      });
+      if (inheritedLine) {
+        resolvedProductLine = inheritedLine;
+      }
+    }
+    const effectiveProductLineId = resolvedProductLine?.id ?? null;
 
     const pref = await this.prisma.scoped.promptPreference.findFirst({
       where: { tenantId: auth.tenantId },
@@ -470,6 +535,7 @@ export class StudioService {
       if (
         existing.brandId !== resolved.brand.id ||
         existing.brandMarketId !== resolved.market.id ||
+        (existing.productLineId ?? null) !== effectiveProductLineId ||
         existing.recipe !== input.recipe ||
         existing.targetFormat !== targetFormat ||
         existing.targetPrompt !== input.targetPrompt ||
@@ -491,6 +557,7 @@ export class StudioService {
         market,
         recipe: presented.recipe,
         targetFormat: presented.targetFormat,
+        productLineId: presented.productLineId ?? null,
         matchedFactIds: [],
       };
     }
@@ -507,6 +574,7 @@ export class StudioService {
         auth.tenantId,
         resolved.brand.id,
         queryText,
+        effectiveProductLineId,
       );
       const matchedFactIds = [...new Set(factSnippets.map((f) => f.factId))];
 
@@ -541,6 +609,14 @@ export class StudioService {
           : null;
       const overrideRaw = recipeOverrides?.[input.recipe];
 
+      const lineCompetitors = resolvedProductLine
+        ? readProductLineMarketCompetitors(resolvedProductLine.competitorsJson, market)
+        : [];
+      const effectiveCompetitorNames =
+        lineCompetitors.length > 0
+          ? lineCompetitors.map((c) => c.name)
+          : resolved.market.competitors.map((c) => c.name);
+
       return {
         kind: 'generate',
         tenantId: auth.tenantId,
@@ -559,8 +635,10 @@ export class StudioService {
           localCategory: resolved.market.localCategory ?? null,
           aliases: resolved.market.aliases,
           ownedDomains: resolved.market.ownedDomains,
-          competitors: resolved.market.competitors.map((c) => c.name),
+          competitors: effectiveCompetitorNames,
         },
+        productLineId: effectiveProductLineId,
+        productLine: resolvedProductLine,
         briefId: brief?.id ?? null,
         markedBriefWriting,
         recipe: input.recipe,
@@ -626,6 +704,7 @@ export class StudioService {
         market: prepared.market,
         recipe: prepared.recipe,
         targetFormat: prepared.targetFormat,
+        productLineId: prepared.productLineId,
         matchedFactIds: prepared.matchedFactIds,
       });
       writeSseEvent(res, 'delta', { text: prepared.article.contentMarkdown });
@@ -692,6 +771,7 @@ export class StudioService {
         market: prepared.market.market,
         recipe: prepared.recipe,
         targetFormat: prepared.targetFormat,
+        productLineId: prepared.productLineId,
         matchedFactIds: prepared.matchedFactIds,
       });
 
@@ -700,6 +780,7 @@ export class StudioService {
         articleId: prepared.articleId,
         brand: prepared.brand,
         market: prepared.market,
+        productLine: prepared.productLine,
         recipe: prepared.recipe,
         targetFormat: prepared.targetFormat,
         targetLocale: prepared.targetLocale,
@@ -733,6 +814,7 @@ export class StudioService {
           tenantId: prepared.tenantId,
           brandId: prepared.brand.id,
           brandMarketId: prepared.market.id,
+          productLineId: prepared.productLineId,
           briefId: prepared.briefId,
           recipe: prepared.recipe,
           targetFormat: prepared.targetFormat,
@@ -836,6 +918,7 @@ export class StudioService {
     const article = await this.prisma.scoped.geoArticle.findFirst({
       where: { id: articleId },
       include: {
+        productLine: true,
         brand: { select: { id: true, name: true, category: true } },
         brandMarket: {
           select: {
@@ -873,10 +956,21 @@ export class StudioService {
     this.rateLimiter.assertAllowed('rewrite_section', auth.tenantId, readRewriteSectionRateLimit());
 
     try {
+      const articleProductLine =
+        (article as { productLine?: StudioProductLineContext | null }).productLine ?? null;
+      const lineCompetitors = articleProductLine
+        ? readProductLineMarketCompetitors(articleProductLine.competitorsJson, market)
+        : [];
+      const effectiveCompetitors =
+        lineCompetitors.length > 0
+          ? lineCompetitors.map((c) => c.name)
+          : extractCompetitorNames(article.brandMarket.competitors);
       const result = await this.generation.rewriteSection({
         tenantId: auth.tenantId,
         articleId: article.id,
         brand: article.brand,
+        productLineId: article.productLineId ?? null,
+        productLine: articleProductLine,
         market: {
           id: article.brandMarket.id,
           market,
@@ -885,7 +979,7 @@ export class StudioService {
           localBrandName: article.brandMarket.localBrandName,
           aliases: article.brandMarket.aliases,
           ownedDomains: article.brandMarket.ownedDomains,
-          competitors: extractCompetitorNames(article.brandMarket.competitors),
+          competitors: effectiveCompetitors,
         },
         targetLocale: resolveEffectiveLocale(
           article.targetLocale ?? article.brandMarket.locale,

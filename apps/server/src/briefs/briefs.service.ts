@@ -8,6 +8,7 @@ import {
   canonicalizeRewriteUrl,
   classifyCitationSource,
   computeGeoBriefPriorityScore,
+  containsCjk,
   extractArticleFromHtml,
   extractSourceHeadingsFromHtml,
   extractSourceHeadingsFromText,
@@ -15,6 +16,9 @@ import {
   normalizeFanOutQueries,
   normalizePastedSource,
   normalizeVisibilityDomain,
+  readProductLineMarketCompetitors,
+  resolveEffectiveCategory,
+  resolveProductLineLocalName,
   stripHtmlToText,
   targetFormatsForMarket,
   type BrandFactSlot,
@@ -168,6 +172,7 @@ export class BriefsService {
     const where: Prisma.GeoBriefWhereInput = {
       brandId: brand.id,
       brandMarketId: market.id,
+      ...(query.productLineId ? { productLineId: query.productLineId } : {}),
       ...(query.status
         ? { status: query.status }
         : query.includeDismissed === true
@@ -225,6 +230,10 @@ export class BriefsService {
       brandId,
       input.market ?? queryMarket,
     );
+    const explicitProductLine =
+      input.productLineId !== undefined
+        ? await this.resolveProductLine(brand.id, input.productLineId)
+        : undefined;
 
     const obsIds = Array.from(
       new Set((input.observationIds ?? []).map((id) => id.trim()).filter(Boolean)),
@@ -259,6 +268,7 @@ export class BriefsService {
     let observations: BriefSignalObservation[] = [];
     let matchedCitationTitle: string | null = null;
     let extraCitations: BriefSignalCitation[] = [];
+    let inheritedRunProductLineId: string | null = null;
 
     if (obsIds.length > 0) {
       const loadedObs = await this.prisma.scoped.visibilityObservation.findMany({
@@ -268,6 +278,7 @@ export class BriefsService {
           brandMarketId: market.id,
         },
         include: {
+          run: { select: { productLineId: true } },
           citations: {
             orderBy: { position: 'asc' },
           },
@@ -278,6 +289,10 @@ export class BriefsService {
       if (loadedObs.length !== obsIds.length) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分观测记录不存在或不属于当前品牌市场');
       }
+
+      inheritedRunProductLineId =
+        loadedObs.find((o) => (o as { run?: { productLineId?: string | null } }).run?.productLineId)
+          ?.run?.productLineId ?? null;
 
       observations = loadedObs.map((obs) => ({
         id: obs.id,
@@ -308,10 +323,21 @@ export class BriefsService {
           },
         },
         include: {
-          observation: true,
+          observation: {
+            include: {
+              run: { select: { productLineId: true } },
+            },
+          },
         },
         take: 10,
       });
+
+      inheritedRunProductLineId =
+        storedCitations.find(
+          (c) =>
+            (c.observation as { run?: { productLineId?: string | null } } | null)?.run
+              ?.productLineId,
+        )?.observation?.run?.productLineId ?? null;
 
       if (storedCitations.length > 0) {
         matchedCitationTitle =
@@ -402,7 +428,19 @@ export class BriefsService {
     const observedCompetitors = [...competitorCounts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name]) => name);
-    const marketCompetitors = market.competitors.map((c) => c.name);
+    const productLine =
+      explicitProductLine !== undefined
+        ? explicitProductLine
+        : await this.resolveProductLine(brand.id, undefined, inheritedRunProductLineId);
+    const effectiveProductLineId = productLine?.id ?? null;
+    const effectiveCategory = resolveEffectiveCategory(brand, market, productLine);
+    const lineCompetitors = productLine
+      ? readProductLineMarketCompetitors(productLine.competitorsJson, market.market)
+      : [];
+    const marketCompetitors =
+      lineCompetitors.length > 0
+        ? lineCompetitors.map((c) => c.name)
+        : market.competitors.map((c) => c.name);
     const competitorFocus = dedupeTrimmed(
       observedCompetitors.length > 0 ? observedCompetitors : marketCompetitors,
       10,
@@ -415,7 +453,7 @@ export class BriefsService {
       citationUrl,
       citationTitle: matchedCitationTitle,
       localBrandName: market.localBrandName || brand.name,
-      category: brand.category,
+      category: effectiveCategory,
       market: market.market,
     });
 
@@ -462,8 +500,13 @@ export class BriefsService {
 
     const [factSlotRows, retrievedFacts] = await Promise.all([
       this.prisma.scoped.brandFact.findMany({
-        where: { brandId: brand.id },
-        select: { slot: true, content: true },
+        where: effectiveProductLineId
+          ? {
+              brandId: brand.id,
+              OR: [{ productLineId: null }, { productLineId: effectiveProductLineId }],
+            }
+          : { brandId: brand.id },
+        select: { slot: true, content: true, productLineId: true },
       }),
       this.factIndexRunner.retrieveRelevantBrandFacts(
         tenantId,
@@ -476,11 +519,17 @@ export class BriefsService {
           .filter(Boolean)
           .join(' '),
         BRAND_FACT_TOP_K_CHUNKS,
+        effectiveProductLineId,
       ),
     ]);
 
+    const scopedFactSlotRows = effectiveProductLineId
+      ? factSlotRows.filter(
+          (row) => row.productLineId == null || row.productLineId === effectiveProductLineId,
+        )
+      : factSlotRows;
     const presentFactSlots = new Set<BrandFactSlot>(
-      factSlotRows
+      scopedFactSlotRows
         .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
         .map((row) => toBrandFactSlot(row.slot)),
     );
@@ -495,7 +544,7 @@ export class BriefsService {
       market: market.market,
       brandName: brand.name,
       localBrandName: market.localBrandName || brand.name,
-      category: brand.category,
+      category: effectiveCategory,
       sourceType: input.sourceType,
       priorityScore,
       targetPrompt,
@@ -519,6 +568,7 @@ export class BriefsService {
         tenantId,
         brandId: brand.id,
         brandMarketId: market.id,
+        productLineId: effectiveProductLineId,
         sourceType: input.sourceType,
         sourceRunId,
         sourceObservationIds,
@@ -560,6 +610,10 @@ export class BriefsService {
       brandId,
       input.market ?? queryMarket,
     );
+    const explicitProductLine =
+      input.productLineId !== undefined
+        ? await this.resolveProductLine(brand.id, input.productLineId)
+        : undefined;
 
     const validatedUrl = input.citationUrl ? assertSafePublicBriefUrl(input.citationUrl) : null;
     const rawCitationUrl = validatedUrl?.rawUrl ?? null;
@@ -676,6 +730,7 @@ export class BriefsService {
 
     let observations: BriefSignalObservation[] = [];
     let extraCitations: BriefSignalCitation[] = [];
+    let inheritedRunProductLineId: string | null = null;
 
     if (citationUrl) {
       const candidateUrls = Array.from(
@@ -690,10 +745,21 @@ export class BriefsService {
           },
         },
         include: {
-          observation: true,
+          observation: {
+            include: {
+              run: { select: { productLineId: true } },
+            },
+          },
         },
         take: 10,
       });
+
+      inheritedRunProductLineId =
+        storedCitations.find(
+          (c) =>
+            (c.observation as { run?: { productLineId?: string | null } } | null)?.run
+              ?.productLineId,
+        )?.observation?.run?.productLineId ?? null;
 
       if (storedCitations.length > 0) {
         extraCitations = storedCitations.map((c) => ({
@@ -773,7 +839,19 @@ export class BriefsService {
     const observedCompetitors = [...competitorCounts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name]) => name);
-    const marketCompetitors = market.competitors.map((c) => c.name);
+    const productLine =
+      explicitProductLine !== undefined
+        ? explicitProductLine
+        : await this.resolveProductLine(brand.id, undefined, inheritedRunProductLineId);
+    const effectiveProductLineId = productLine?.id ?? null;
+    const effectiveCategory = resolveEffectiveCategory(brand, market, productLine);
+    const lineCompetitors = productLine
+      ? readProductLineMarketCompetitors(productLine.competitorsJson, market.market)
+      : [];
+    const marketCompetitors =
+      lineCompetitors.length > 0
+        ? lineCompetitors.map((c) => c.name)
+        : market.competitors.map((c) => c.name);
     const competitorFocus = dedupeTrimmed(
       observedCompetitors.length > 0 ? observedCompetitors : marketCompetitors,
       10,
@@ -786,7 +864,7 @@ export class BriefsService {
       citationUrl,
       citationTitle: sourceTitle && sourceTitle !== '未命名源文章' ? sourceTitle : null,
       localBrandName: market.localBrandName || brand.name,
-      category: brand.category,
+      category: effectiveCategory,
       market: market.market,
     });
 
@@ -811,8 +889,13 @@ export class BriefsService {
 
     const [factSlotRows, retrievedFacts] = await Promise.all([
       this.prisma.scoped.brandFact.findMany({
-        where: { brandId: brand.id },
-        select: { slot: true, content: true },
+        where: effectiveProductLineId
+          ? {
+              brandId: brand.id,
+              OR: [{ productLineId: null }, { productLineId: effectiveProductLineId }],
+            }
+          : { brandId: brand.id },
+        select: { slot: true, content: true, productLineId: true },
       }),
       this.factIndexRunner.retrieveRelevantBrandFacts(
         tenantId,
@@ -826,11 +909,17 @@ export class BriefsService {
           .filter(Boolean)
           .join(' '),
         BRAND_FACT_TOP_K_CHUNKS,
+        effectiveProductLineId,
       ),
     ]);
 
+    const scopedFactSlotRows = effectiveProductLineId
+      ? factSlotRows.filter(
+          (row) => row.productLineId == null || row.productLineId === effectiveProductLineId,
+        )
+      : factSlotRows;
     const presentFactSlots = new Set<BrandFactSlot>(
-      factSlotRows
+      scopedFactSlotRows
         .filter((row) => typeof row.content === 'string' && row.content.trim().length > 0)
         .map((row) => toBrandFactSlot(row.slot)),
     );
@@ -845,7 +934,7 @@ export class BriefsService {
       market: market.market,
       brandName: brand.name,
       localBrandName: market.localBrandName || brand.name,
-      category: brand.category,
+      category: effectiveCategory,
       sourceType: 'CITATION_COUNTER',
       priorityScore,
       targetPrompt,
@@ -872,6 +961,7 @@ export class BriefsService {
         tenantId,
         brandId: brand.id,
         brandMarketId: market.id,
+        productLineId: effectiveProductLineId,
         sourceType: 'CITATION_COUNTER',
         sourceRunId,
         sourceObservationIds,
@@ -913,6 +1003,10 @@ export class BriefsService {
       brandId,
       input.market ?? queryMarket,
     );
+    const explicitProductLine =
+      input.productLineId !== undefined
+        ? await this.resolveProductLine(brand.id, input.productLineId)
+        : undefined;
 
     const obsIds = Array.from(
       new Set((input.observationIds ?? []).map((id) => id.trim()).filter(Boolean)),
@@ -928,6 +1022,7 @@ export class BriefsService {
     const canonicalSourceUrl = validatedUrl?.canonicalUrl ?? null;
 
     let observations: BriefSignalObservation[] = [];
+    let inheritedRunProductLineId: string | null = null;
     if (obsIds.length > 0) {
       const loadedObs = await this.prisma.scoped.visibilityObservation.findMany({
         where: {
@@ -936,6 +1031,7 @@ export class BriefsService {
           brandMarketId: market.id,
         },
         include: {
+          run: { select: { productLineId: true } },
           citations: { orderBy: { position: 'asc' } },
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -943,6 +1039,9 @@ export class BriefsService {
       if (loadedObs.length !== obsIds.length) {
         throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '部分观测记录不存在或不属于当前品牌市场');
       }
+      inheritedRunProductLineId =
+        loadedObs.find((o) => (o as { run?: { productLineId?: string | null } }).run?.productLineId)
+          ?.run?.productLineId ?? null;
       observations = loadedObs.map((obs) => ({
         id: obs.id,
         runId: obs.runId,
@@ -964,6 +1063,13 @@ export class BriefsService {
       }));
     }
 
+    const productLine =
+      explicitProductLine !== undefined
+        ? explicitProductLine
+        : await this.resolveProductLine(brand.id, undefined, inheritedRunProductLineId);
+    const effectiveProductLineId = productLine?.id ?? null;
+    const effectiveCategory = resolveEffectiveCategory(brand, market, productLine);
+
     const targetPrompt = input.targetPrompt.trim().slice(0, 300);
     const inputSourceTitle = input.sourceTitle?.trim() || null;
 
@@ -978,10 +1084,20 @@ export class BriefsService {
     // 免费防刷限流（0 点扣费；放在归属校验、SSRF 语法校验与合规校验之后、远程抓取/LLM 之前）
     this.rateLimiter.assertAllowed('near_miss_boost', tenantId, readNearMissBoostRateLimit());
 
-    const factRows = await this.prisma.scoped.brandFact.findMany({
-      where: { brandId: brand.id },
-      select: { id: true, slot: true, title: true, content: true },
+    const rawFactRows = await this.prisma.scoped.brandFact.findMany({
+      where: effectiveProductLineId
+        ? {
+            brandId: brand.id,
+            OR: [{ productLineId: null }, { productLineId: effectiveProductLineId }],
+          }
+        : { brandId: brand.id },
+      select: { id: true, slot: true, title: true, content: true, productLineId: true },
     });
+    const factRows = effectiveProductLineId
+      ? rawFactRows.filter(
+          (row) => row.productLineId == null || row.productLineId === effectiveProductLineId,
+        )
+      : rawFactRows;
 
     const nonEmptyFactRows = factRows.filter(
       (row) => typeof row.content === 'string' && row.content.trim().length > 0,
@@ -990,6 +1106,18 @@ export class BriefsService {
       nonEmptyFactRows.map((row) => toBrandFactSlot(row.slot)),
     );
 
+    const lineLocalName = resolveProductLineLocalName(productLine, market.market);
+    const rawLineName = typeof productLine?.name === 'string' ? productLine.name.trim() : '';
+    const safeLineName =
+      rawLineName && (market.market === 'CN' || !containsCjk(rawLineName)) ? rawLineName : null;
+    const nearMissBrandNames = [
+      brand.name,
+      market.localBrandName,
+      ...(market.aliases ?? []),
+      ...(safeLineName ? [safeLineName] : []),
+      ...(lineLocalName ? [lineLocalName] : []),
+    ];
+
     let diagnosis: NearMissPageDiagnosis;
     if (canonicalSourceUrl) {
       try {
@@ -997,7 +1125,7 @@ export class BriefsService {
         diagnosis = diagnoseNearMissPageHtml({
           rawHtml: page.body,
           pageUrl: page.url,
-          brandNames: [brand.name, market.localBrandName, ...(market.aliases ?? [])],
+          brandNames: nearMissBrandNames,
           brandFacts: nonEmptyFactRows.map((row) => ({
             id: row.id ?? '',
             slot: row.slot,
@@ -1086,7 +1214,13 @@ export class BriefsService {
     const observedCompetitors = [...competitorCounts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name]) => name);
-    const marketCompetitors = market.competitors.map((c) => c.name);
+    const lineCompetitors = productLine
+      ? readProductLineMarketCompetitors(productLine.competitorsJson, market.market)
+      : [];
+    const marketCompetitors =
+      lineCompetitors.length > 0
+        ? lineCompetitors.map((c) => c.name)
+        : market.competitors.map((c) => c.name);
     const competitorFocus = dedupeTrimmed(
       observedCompetitors.length > 0 ? observedCompetitors : marketCompetitors,
       10,
@@ -1104,6 +1238,7 @@ export class BriefsService {
         .filter(Boolean)
         .join(' '),
       BRAND_FACT_TOP_K_CHUNKS,
+      effectiveProductLineId,
     );
     const matchedFacts: BriefMatchedFact[] = retrievedFacts.map((item) => ({
       factId: item.factId,
@@ -1135,7 +1270,10 @@ export class BriefsService {
       const host = sourceHost || canonicalSourceUrl;
       const sourceKind = classifyCitationSource(canonicalSourceUrl, {
         ownedDomains,
-        competitorDomains: market.competitors.flatMap((c) => c.domains),
+        competitorDomains:
+          lineCompetitors.length > 0
+            ? lineCompetitors.flatMap((c) => c.domains)
+            : market.competitors.flatMap((c) => c.domains),
       });
       allCitations = [
         {
@@ -1159,7 +1297,7 @@ export class BriefsService {
       market: market.market,
       brandName: brand.name,
       localBrandName: market.localBrandName || brand.name,
-      category: brand.category,
+      category: effectiveCategory,
       sourceType: 'NEAR_MISS_BOOST',
       priorityScore,
       targetPrompt,
@@ -1189,6 +1327,7 @@ export class BriefsService {
         tenantId,
         brandId: brand.id,
         brandMarketId: market.id,
+        productLineId: effectiveProductLineId,
         sourceType: 'NEAR_MISS_BOOST',
         sourceRunId,
         sourceObservationIds,
@@ -1213,6 +1352,58 @@ export class BriefsService {
     });
 
     return presentBrief(created, market.market);
+  }
+
+  private async resolveProductLine(
+    brandId: string,
+    explicitProductLineId: string | null | undefined,
+    inheritedProductLineId?: string | null,
+  ): Promise<{
+    id: string;
+    name: string;
+    localNamesJson: unknown;
+    category: string;
+    localCategoriesJson: unknown;
+    competitorsJson: unknown;
+  } | null> {
+    if (typeof explicitProductLineId === 'string' && explicitProductLineId.trim().length > 0) {
+      const row = await this.prisma.scoped.brandProductLine.findFirst({
+        where: { id: explicitProductLineId.trim(), brandId },
+        select: {
+          id: true,
+          name: true,
+          localNamesJson: true,
+          category: true,
+          localCategoriesJson: true,
+          competitorsJson: true,
+        },
+      });
+      if (!row) {
+        throw new ApiError(404, AUTH_ERROR.NOT_FOUND, '产品线不存在或不属于当前品牌');
+      }
+      return row;
+    }
+    if (explicitProductLineId === null) {
+      return null;
+    }
+    if (
+      inheritedProductLineId &&
+      typeof this.prisma.scoped.brandProductLine?.findFirst === 'function'
+    ) {
+      const row = await this.prisma.scoped.brandProductLine.findFirst({
+        where: { id: inheritedProductLineId, brandId },
+        select: {
+          id: true,
+          name: true,
+          localNamesJson: true,
+          category: true,
+          localCategoriesJson: true,
+          competitorsJson: true,
+        },
+      });
+      return row ?? null;
+    }
+    return null;
   }
 
   async update(

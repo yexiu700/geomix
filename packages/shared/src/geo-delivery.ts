@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { GEO_MARKETS, containsCjk, resolveGlobalCategoryLabel, type GeoMarket } from './brands';
+import {
+  BRAND_ID_PATTERN,
+  GEO_MARKETS,
+  containsCjk,
+  resolveGlobalCategoryLabel,
+  type GeoMarket,
+} from './brands';
 import type { GeoComplianceFlag } from './compliance';
 import {
   extractMissingFactSlots,
@@ -17,6 +23,7 @@ import type {
   CrawlProbeStatus,
   DistributionSummaryDto,
   GeoRetestScheduleDto,
+  RetestBudgetSummaryDto,
 } from './distribution';
 
 /**
@@ -3150,6 +3157,11 @@ export type ArticleExportQueryInput = z.infer<typeof articleExportQuerySchema>;
 
 export const actionHomeQuerySchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: z.preprocess(
+    (value) =>
+      value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+    z.string().trim().regex(BRAND_ID_PATTERN, '产品线编号不合法').optional(),
+  ),
   days: z.coerce.number().int().min(1).max(90).optional().default(14),
 });
 
@@ -3185,6 +3197,7 @@ export type GeoPublishRecordDto = {
 export type ActionHomeResponse = {
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
   market: GeoMarket;
   health: {
     days: number;
@@ -3196,6 +3209,7 @@ export type ActionHomeResponse = {
   };
   topBriefs: Array<{
     id: string;
+    productLineId?: string | null;
     sourceType: string;
     priorityScore: number;
     diagnosisSummary: string;
@@ -3213,6 +3227,7 @@ export type ActionHomeResponse = {
   }>;
   recentArticles: Array<{
     id: string;
+    productLineId?: string | null;
     title: string;
     recipe: GeoRecipe;
     geoScore: number;
@@ -3221,6 +3236,7 @@ export type ActionHomeResponse = {
     publishRecord?: GeoPublishRecordDto | null;
   }>;
   distributionSummary?: DistributionSummaryDto;
+  retestBudget?: RetestBudgetSummaryDto;
 };
 
 // ==================== GEO 0–100 实时体检、JSON-LD 与 llms.txt 纯函数 ====================

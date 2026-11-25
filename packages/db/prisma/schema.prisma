@@ -203,6 +203,7 @@ enum RetestScheduleStatus {
   COMPLETED
   SKIPPED_INSUFFICIENT_POINTS
   SKIPPED_NO_ENGINE
+  SKIPPED_BUDGET_CAP
   FAILED
   CANCELLED
 }
@@ -242,6 +243,7 @@ model Tenant {
   activeWorks            ActiveWork[]
   brands                 Brand[]
   brandMarkets           BrandMarket[]
+  brandProductLines      BrandProductLine[]
   brandFacts             BrandFact[]
   brandFactChunks        BrandFactChunk[]
   brandMediaAssets       BrandMediaAsset[]
@@ -478,6 +480,7 @@ model Brand {
   updatedAt              DateTime                @updatedAt
 
   markets                BrandMarket[]
+  productLines           BrandProductLine[]
   facts                  BrandFact[]
   factChunks             BrandFactChunk[]
   mediaAssets            BrandMediaAsset[]
@@ -513,10 +516,11 @@ model BrandMarket {
   ownedDomains   String[]  @default([])
   competitors    Json      @default("[]")
   seedPrompts      String[]  @default([])
-  supportedLocales String[]  @default([])
-  controlPrompts   String[]  @default([])
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  supportedLocales      String[]  @default([])
+  controlPrompts        String[]  @default([])
+  monthlyRetestPointCap Int?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   visibilityRuns             VisibilityRun[]
   visibilityObservations     VisibilityObservation[]
@@ -536,24 +540,52 @@ model BrandMarket {
   @@index([tenantId, market])
 }
 
+model BrandProductLine {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId             String
+  brand               Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name                String
+  localNamesJson      Json     @default("{}")
+  category            String
+  localCategoriesJson Json     @default("{}")
+  seedPromptsJson     Json     @default("{}")
+  competitorsJson     Json     @default("{}")
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  facts          BrandFact[]
+  visibilityRuns VisibilityRun[]
+  geoBriefs      GeoBrief[]
+  geoArticles    GeoArticle[]
+
+  @@unique([brandId, name])
+  @@index([tenantId, brandId, sortOrder])
+}
+
 model BrandFact {
-  id          String          @id @default(cuid())
-  tenantId    String
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  brandId     String
-  brand       Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
-  slot        BrandFactSlot
-  title       String
-  content     String
-  sourceType  FactSourceType  @default(MANUAL)
-  sourceUrl   String?
-  indexStatus FactIndexStatus @default(NONE)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  id            String            @id @default(cuid())
+  tenantId      String
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  brandId       String
+  brand         Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  productLineId String?
+  productLine   BrandProductLine? @relation(fields: [productLineId], references: [id], onDelete: SetNull)
+  slot          BrandFactSlot
+  title         String
+  content       String
+  sourceType    FactSourceType    @default(MANUAL)
+  sourceUrl     String?
+  indexStatus   FactIndexStatus   @default(NONE)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   chunks BrandFactChunk[]
 
   @@index([tenantId, brandId, slot])
+  @@index([tenantId, brandId, productLineId])
   @@index([brandId, indexStatus])
 }
 
@@ -609,6 +641,8 @@ model VisibilityRun {
   brand             Brand                 @relation(fields: [brandId], references: [id], onDelete: Cascade)
   brandMarketId     String
   brandMarket       BrandMarket           @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  productLineId     String?
+  productLine       BrandProductLine?     @relation(fields: [productLineId], references: [id], onDelete: SetNull)
   name              String
   engines           String[]              @default([])
   prompts           String[]              @default([])
@@ -631,6 +665,7 @@ model VisibilityRun {
 
   @@index([tenantId, status, createdAt])
   @@index([tenantId, brandMarketId, createdAt])
+  @@index([tenantId, brandMarketId, productLineId, createdAt])
   @@index([tenantId, brandId, createdAt])
   @@index([retestArticleId])
 }
@@ -700,73 +735,79 @@ model GeoBrief {
   brandId              String
   brand                Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
   brandMarketId        String
-  brandMarket          BrandMarket     @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  brandMarket          BrandMarket       @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  productLineId        String?
+  productLine          BrandProductLine? @relation(fields: [productLineId], references: [id], onDelete: SetNull)
   sourceType           GeoBriefSource
   sourceRunId          String?
-  sourceRun            VisibilityRun?  @relation(fields: [sourceRunId], references: [id], onDelete: SetNull)
-  sourceObservationIds String[]        @default([])
+  sourceRun            VisibilityRun?    @relation(fields: [sourceRunId], references: [id], onDelete: SetNull)
+  sourceObservationIds String[]          @default([])
   sourceCitationUrl    String?
   targetPrompt         String
-  priorityScore        Int             @default(50)
+  priorityScore        Int               @default(50)
   diagnosisSummary     String
   recommendedRecipe    GeoRecipe
   targetFormat         GeoTargetFormat
   suggestedTitle       String
-  outlineH2            Json            @default("[]")
-  targetFanOuts        String[]        @default([])
-  competitorFocus      String[]        @default([])
-  matchedFactIds       String[]        @default([])
-  missingFactHints     String[]        @default([])
-  recommendedChannels  Json            @default("[]")
-  status               GeoBriefStatus  @default(OPEN)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  outlineH2            Json              @default("[]")
+  targetFanOuts        String[]          @default([])
+  competitorFocus      String[]          @default([])
+  matchedFactIds       String[]          @default([])
+  missingFactHints     String[]          @default([])
+  recommendedChannels  Json              @default("[]")
+  status               GeoBriefStatus    @default(OPEN)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
 
   articles GeoArticle[]
 
   @@index([tenantId, brandMarketId, status, priorityScore])
+  @@index([tenantId, brandMarketId, productLineId, status])
   @@index([tenantId, brandId, createdAt])
   @@index([sourceRunId])
 }
 
 model GeoArticle {
-  id              String           @id @default(cuid())
+  id              String            @id @default(cuid())
   tenantId        String
-  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   brandId         String
-  brand           Brand            @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brand           Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
   brandMarketId   String
-  brandMarket     BrandMarket      @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  brandMarket     BrandMarket       @relation(fields: [brandMarketId], references: [id], onDelete: Cascade)
+  productLineId   String?
+  productLine     BrandProductLine? @relation(fields: [productLineId], references: [id], onDelete: SetNull)
   briefId         String?
-  brief           GeoBrief?        @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  brief           GeoBrief?         @relation(fields: [briefId], references: [id], onDelete: SetNull)
   batchJobId      String?
-  batchJob        GeoBatchJob?     @relation(fields: [batchJobId], references: [id], onDelete: SetNull)
+  batchJob        GeoBatchJob?      @relation(fields: [batchJobId], references: [id], onDelete: SetNull)
   recipe          GeoRecipe
   targetFormat    GeoTargetFormat
   targetLocale    String?
   title           String
   targetPrompt    String
-  outlineJson     Json             @default("[]")
+  outlineJson     Json              @default("[]")
   contentMarkdown String
   contentHtml     String
-  schemaJsonLd    Json             @default("{}")
+  schemaJsonLd    Json              @default("{}")
   llmsTxtSnippet  String?
-  geoScore        Int              @default(0)
-  geoScoreDetail  Json             @default("{}")
-  tags            String[]         @default([])
-  status          GeoArticleStatus @default(DRAFT)
+  geoScore        Int               @default(0)
+  geoScoreDetail  Json              @default("{}")
+  tags            String[]          @default([])
+  status          GeoArticleStatus  @default(DRAFT)
   model           String?
   tokensIn        Int?
   tokensOut       Int?
   complianceFlags Json?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   publishRecords    GeoPublishRecord[]
   distributionTasks GeoDistributionTask[]
   variantJobs       GeoVariantJob[]
 
   @@index([tenantId, brandMarketId, status, createdAt])
+  @@index([tenantId, brandMarketId, productLineId, status])
   @@index([tenantId, brandId, createdAt])
   @@index([tenantId, createdAt])
   @@index([briefId])

@@ -1755,8 +1755,20 @@ const optionalBoundedInt = (min: number, max: number, fallback: number) =>
     return val;
   }, z.number().int().min(min).max(max));
 
+const optionalBriefProductLineQuerySchema = z.preprocess(
+  (value) =>
+    value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+  z.string().trim().regex(GEO_BRIEF_ID_PATTERN, '产品线编号格式不正确').optional(),
+);
+
+const optionalBriefProductLineBodySchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().regex(GEO_BRIEF_ID_PATTERN, '产品线编号格式不正确').nullable().optional(),
+);
+
 export const geoBriefListQuerySchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: optionalBriefProductLineQuerySchema,
   status: z.enum(GEO_BRIEF_STATUSES).optional(),
   sourceType: z.enum(GEO_BRIEF_SOURCES).optional(),
   sourceRunId: z.string().trim().regex(GEO_BRIEF_ID_PATTERN, '监测任务编号格式不正确').optional(),
@@ -1770,6 +1782,7 @@ export type GeoBriefListQuery = z.infer<typeof geoBriefListQuerySchema>;
 
 export const geoBriefGenerateSchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
+  productLineId: optionalBriefProductLineBodySchema,
   sourceType: z.enum(GEO_BRIEF_SOURCES),
   observationIds: z.array(z.string().trim().min(1).max(64)).max(50).optional(),
   citationUrl: z.string().trim().url('参考引用链接格式不正确').max(2048).optional(),
@@ -1791,6 +1804,7 @@ function isHttpOrHttpsUrl(value: string): boolean {
 export const geoBriefFromCitationUrlSchema = z
   .object({
     market: z.enum(GEO_MARKETS).optional(),
+    productLineId: optionalBriefProductLineBodySchema,
     citationUrl: z
       .string()
       .trim()
@@ -1837,6 +1851,7 @@ export type GeoBriefRecord = {
   id: string;
   brandId: string;
   brandMarketId: string;
+  productLineId?: string | null;
   market: GeoMarket;
   sourceType: GeoBriefSource;
   sourceRunId: string | null;

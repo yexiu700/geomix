@@ -7,6 +7,7 @@ import {
   isSafeHttpPublishedUrl,
   localizePublicChannelLabel,
   publicPrPacketSubmitSchema,
+  resolveEffectiveCategory,
   type ChannelProvider,
   type DistributionTaskStatus,
   type GeoMarket,
@@ -202,9 +203,8 @@ export class PublicPrPacketService {
               name: true,
               category: true,
               facts: {
-                select: { title: true, content: true },
+                select: { title: true, content: true, productLineId: true },
                 orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
-                take: 12,
               },
             },
           },
@@ -219,6 +219,13 @@ export class PublicPrPacketService {
           article: {
             select: {
               targetPrompt: true,
+              productLineId: true,
+              productLine: {
+                select: {
+                  category: true,
+                  localCategoriesJson: true,
+                },
+              },
               brief: {
                 select: {
                   targetFanOuts: true,
@@ -242,7 +249,22 @@ export class PublicPrPacketService {
       const factSheet = extractFactSheet(task.variantExtrasJson);
       const market: GeoMarket = task.brandMarket.market === 'GLOBAL' ? 'GLOBAL' : 'CN';
       const brandName = factSheet?.brandName || task.brandMarket.localBrandName || task.brand.name;
-      const category = factSheet?.category || task.brandMarket.localCategory || task.brand.category;
+      const articleProductLine =
+        (
+          task.article as {
+            productLine?: { category?: string | null; localCategoriesJson?: unknown } | null;
+          }
+        ).productLine ?? null;
+      const articleProductLineId =
+        (task.article as { productLineId?: string | null }).productLineId ?? null;
+      const effectiveCategory = resolveEffectiveCategory(
+        task.brand,
+        { market, localCategory: task.brandMarket.localCategory },
+        articleProductLine,
+      );
+      const category = articleProductLine
+        ? effectiveCategory
+        : factSheet?.category || effectiveCategory;
       const targetPrompt = factSheet?.targetPrompt || task.article.targetPrompt;
       const targetFanOuts =
         factSheet && factSheet.targetFanOuts.length > 0
@@ -252,10 +274,29 @@ export class PublicPrPacketService {
         factSheet && factSheet.keyAngles.length > 0
           ? factSheet.keyAngles
           : extractFallbackAngles(task.article.brief?.outlineH2, task.variantMarkdown);
+      const scopedBrandFacts = articleProductLineId
+        ? task.brand.facts
+            .filter(
+              (fact) =>
+                (fact as { productLineId?: string | null }).productLineId == null ||
+                (fact as { productLineId?: string | null }).productLineId === articleProductLineId,
+            )
+            .sort((a, b) => {
+              const aScope =
+                (a as { productLineId?: string | null }).productLineId === articleProductLineId
+                  ? 0
+                  : 1;
+              const bScope =
+                (b as { productLineId?: string | null }).productLineId === articleProductLineId
+                  ? 0
+                  : 1;
+              return aScope - bScope;
+            })
+        : task.brand.facts;
       const verifiedFacts =
         factSheet && factSheet.verifiedFacts.length > 0
           ? factSheet.verifiedFacts
-          : task.brand.facts.map((fact) => ({
+          : scopedBrandFacts.slice(0, 12).map((fact) => ({
               title: fact.title,
               summary: fact.content.trim().slice(0, 300),
             }));

@@ -18,12 +18,12 @@ import { isSafeHttpUrl } from '../../lib/visibility';
 import { CitationTrace } from '../geo/citation-trace';
 import {
   EngineChipList,
-  SignalEmpty,
   SignalError,
   SignalSkeleton,
   SourceKindChip,
   TruncText,
 } from '../geo/primitives';
+import { EmptyState, Section } from '../ui';
 
 export type RankedCitationRow = {
   key: string;
@@ -304,15 +304,12 @@ export function VisibilityCitationsTab({
   return (
     <div className="gm-vis-tab-stack">
       {/* 1. Citation Source Kind Filter Pills + CitationTrace Topology */}
-      <div className="gm-panel">
-        <div className="gm-vis-panel-head">
-          <div>
-            <div className="gm-vis-panel-title">引用信源阵地拓扑</div>
-            <div className="gm-vis-panel-sub">
-              识别自有官网、竞品官网、电商平台、社媒社区与权威评测媒体分布
-            </div>
-          </div>
-          {runs.length > 1 ? (
+      <Section
+        variant="card"
+        title="引用信源阵地拓扑"
+        description="识别自有官网、竞品官网、电商平台、社媒社区与权威评测媒体分布"
+        actions={
+          runs.length > 1 ? (
             <select
               aria-label="选择用于拓扑展示的监测任务"
               className="gm-vis-native-select"
@@ -325,9 +322,9 @@ export function VisibilityCitationsTab({
                 </option>
               ))}
             </select>
-          ) : null}
-        </div>
-
+          ) : undefined
+        }
+      >
         <div className="gm-vis-source-pills" role="group" aria-label="按信源类型筛选">
           <button
             type="button"
@@ -360,33 +357,31 @@ export function VisibilityCitationsTab({
             onSelectObservation={onInspectObservationInRunsTab}
           />
         </div>
-      </div>
+      </Section>
 
       {/* 1.5. v2.2 Near-Miss 4-Tier Opportunities Panel */}
       {nearMissSlot ?? null}
 
       {/* 2. Ranked High-Citation URLs Table */}
-      <div className="gm-panel">
-        <div className="gm-vis-panel-head">
-          <div>
-            <div className="gm-vis-panel-title">高频被引用页面排行</div>
-            <div className="gm-vis-panel-sub">
-              按被引用频次排序；修改品牌竞品域名后即时生效重分类
-            </div>
-          </div>
-          {sourceFilter ? (
+      <Section
+        variant="card"
+        title="高频被引用页面排行"
+        description="按被引用频次排序；修改品牌竞品域名后即时生效重分类"
+        actions={
+          sourceFilter ? (
             <Button size="small" onClick={() => onSourceFilterChange(undefined)}>
               清除类型筛选
             </Button>
-          ) : null}
-        </div>
-
+          ) : undefined
+        }
+      >
         {citationsError ? (
           <SignalError message={citationsError} onRetry={onRetryCitations} />
         ) : citationsLoading && !citations ? (
           <SignalSkeleton variant="row" rows={5} />
         ) : rankedUrlRows.length === 0 ? (
-          <SignalEmpty
+          <EmptyState
+            size="compact"
             title="暂无引用信源页面"
             description="当 AI 引擎返回可核验的参考链接时，将在此展示高频引用页面与阵地归类"
           />
@@ -403,17 +398,14 @@ export function VisibilityCitationsTab({
             />
           </div>
         )}
-      </div>
+      </Section>
 
       {/* 3. Deduplicated Query Fan-Out Leaderboard */}
-      <div className="gm-panel">
-        <div className="gm-vis-panel-head">
-          <div>
-            <div className="gm-vis-panel-title">Query Fan-Out 高频拆解词榜</div>
-            <div className="gm-vis-panel-sub">
-              已按分号/换行自动拆行去重，可多选拆解词用于后续专题内容规划
-            </div>
-          </div>
+      <Section
+        variant="card"
+        title="Query Fan-Out 高频拆解词榜"
+        description="已按分号/换行自动拆行去重，可多选拆解词用于后续专题内容规划"
+        actions={
           <div className="gm-vis-fanout-bar">
             {selectedFanOuts.length > 0 ? (
               <>
@@ -427,14 +419,15 @@ export function VisibilityCitationsTab({
               </>
             ) : null}
           </div>
-        </div>
-
+        }
+      >
         {opportunitiesError ? (
           <SignalError message={opportunitiesError} onRetry={onRetryOpportunities} />
         ) : opportunitiesLoading && !opportunities ? (
           <SignalSkeleton variant="row" rows={5} />
         ) : fanOutItems.length === 0 ? (
-          <SignalEmpty
+          <EmptyState
+            size="compact"
             title="暂无搜索拆解词数据"
             description="完成支持联网搜索的监测任务后，这里将聚合展示 AI 搜索引擎拆解出的高频子词"
           />
@@ -451,7 +444,7 @@ export function VisibilityCitationsTab({
             />
           </div>
         )}
-      </div>
+      </Section>
     </div>
   );
 }

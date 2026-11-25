@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import {
   defaultTargetFormatForMarket,
   finishStatus,
+  readProductLineMarketCompetitors,
   targetFormatsForMarket,
   type GeoMarket,
   type GeoRecipe,
@@ -147,6 +148,9 @@ export class GeoBatchRunner implements GeoBatchHandler {
             brandId: job.brandId,
             brandMarketId: job.brandMarketId,
           },
+          include: {
+            productLine: true,
+          },
         });
         if (row && row.status === 'OPEN') {
           await tx.geoBrief.updateMany({
@@ -196,8 +200,20 @@ export class GeoBatchRunner implements GeoBatchHandler {
         });
         const outlineH2 = normalizeOutlineJson(brief.outlineH2);
         const queryText = [brief.targetPrompt, ...brief.targetFanOuts].join(' ');
-        const factSnippets = await this.generation.retrieveFacts(tenantId, job.brandId, queryText);
+        const briefProductLineId = brief.productLineId ?? null;
+        const factSnippets = await this.generation.retrieveFacts(
+          tenantId,
+          job.brandId,
+          queryText,
+          briefProductLineId,
+        );
         const matchedFactIds = [...new Set(factSnippets.map((f) => f.factId))];
+
+        const lineCompetitors = brief.productLine
+          ? readProductLineMarketCompetitors(brief.productLine.competitorsJson, market)
+          : [];
+        const effectiveCompetitors =
+          lineCompetitors.length > 0 ? lineCompetitors.map((c) => c.name) : competitors;
 
         const overrideRaw = recipeOverrides?.[recipe];
         const generated = await this.generation.generateArticle({
@@ -217,8 +233,9 @@ export class GeoBatchRunner implements GeoBatchHandler {
             localCategory: job.brandMarket.localCategory,
             aliases: job.brandMarket.aliases,
             ownedDomains: job.brandMarket.ownedDomains,
-            competitors,
+            competitors: effectiveCompetitors,
           },
+          productLine: brief.productLine ?? null,
           recipe,
           targetFormat,
           targetLocale,
@@ -242,6 +259,7 @@ export class GeoBatchRunner implements GeoBatchHandler {
               tenantId,
               brandId: job.brandId,
               brandMarketId: job.brandMarketId,
+              productLineId: briefProductLineId,
               briefId: brief.id,
               batchJobId: job.id,
               recipe,

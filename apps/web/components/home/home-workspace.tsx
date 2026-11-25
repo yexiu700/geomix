@@ -8,7 +8,7 @@ import type {
   GeoMarket,
   GeoPublishRecordDto,
 } from '@geomix/shared';
-import { Button, Skeleton, Tag } from 'antd';
+import { Button, Skeleton } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
@@ -26,8 +26,10 @@ import {
 } from '../../lib/workspace-store';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { EmptyState, KpiStrip, PageHeader } from '../ui';
+import { HomeCrawlAlertBanner } from './home-crawl-alert-banner';
 import { HomeDistributionSummary } from './home-distribution-summary';
 import { HomeHealthStrip } from './home-health-strip';
 import { HomeRecentArticles } from './home-recent-articles';
@@ -404,28 +406,19 @@ export function HomeWorkspace(): JSX.Element {
         aria-busy="true"
         data-testid="home-loading"
       >
-        <div className="gm-panel gm-home-block">
-          <div className="gm-home-kpi-grid">
-            <SignalSkeleton variant="kpi" />
-            <SignalSkeleton variant="kpi" />
-            <SignalSkeleton variant="kpi" />
-            <SignalSkeleton variant="kpi" />
+        <KpiStrip items={[]} loading skeletonCount={4} aria-label="品牌健康信号条加载中" />
+        <div className="gm-home-brief-grid">
+          <div className="gm-home-brief-card">
+            <Skeleton active paragraph={{ rows: 3 }} />
+          </div>
+          <div className="gm-home-brief-card">
+            <Skeleton active paragraph={{ rows: 3 }} />
+          </div>
+          <div className="gm-home-brief-card">
+            <Skeleton active paragraph={{ rows: 3 }} />
           </div>
         </div>
-        <div className="gm-panel gm-home-block">
-          <div className="gm-home-brief-grid">
-            <div className="gm-home-brief-card">
-              <Skeleton active paragraph={{ rows: 3 }} />
-            </div>
-            <div className="gm-home-brief-card">
-              <Skeleton active paragraph={{ rows: 3 }} />
-            </div>
-            <div className="gm-home-brief-card">
-              <Skeleton active paragraph={{ rows: 3 }} />
-            </div>
-          </div>
-        </div>
-        <div className="gm-panel gm-home-block">
+        <div className="gm-home-loading-rows">
           <SignalSkeleton variant="row" rows={5} />
         </div>
       </section>
@@ -436,12 +429,10 @@ export function HomeWorkspace(): JSX.Element {
   if (state.brandsError) {
     return (
       <section className="gm-home-page" aria-label="行动首页">
-        <div className="gm-panel">
-          <SignalError
-            message={state.brandsError}
-            onRetry={() => void useWorkspaceStore.getState().loadBrands()}
-          />
-        </div>
+        <SignalError
+          message={state.brandsError}
+          onRetry={() => void useWorkspaceStore.getState().loadBrands()}
+        />
       </section>
     );
   }
@@ -450,14 +441,18 @@ export function HomeWorkspace(): JSX.Element {
   if (state.brandsLoaded && state.brands.length === 0) {
     return (
       <section className="gm-home-page" aria-label="行动首页" data-testid="home-onboarding">
-        <div className="gm-panel">
-          <SignalEmpty
-            title="欢迎使用 GeoMix 行动首页"
-            description="先用 60 秒创建首个品牌并提炼 4 块真实产品事实卡，即可开启国内 / 海外隔离的 AI 可见度监测、优先写作建议与发布复测闭环。"
-            actionText={readOnly ? undefined : '60 秒创建首个品牌'}
-            onAction={readOnly ? undefined : () => consoleCtx?.openCreateBrandModal()}
-          />
-        </div>
+        <EmptyState
+          size="full"
+          title="欢迎使用 GeoMix 行动首页"
+          description="先用 60 秒创建首个品牌并提炼 4 块真实产品事实卡，即可开启国内 / 海外隔离的 AI 可见度监测、优先写作建议与发布复测闭环。"
+          action={
+            readOnly ? undefined : (
+              <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
+                60 秒创建首个品牌
+              </Button>
+            )
+          }
+        />
       </section>
     );
   }
@@ -507,43 +502,63 @@ export function HomeWorkspace(): JSX.Element {
 
   return (
     <section className="gm-home-page" aria-label="行动首页" data-testid="home-workspace">
-      <header className="gm-home-context-bar">
-        <div className="gm-home-context-info">
-          <h1 className="gm-home-page-title">{activeBrandMarket.localBrandName}</h1>
-          <Tag color={activeMarket === 'GLOBAL' ? 'blue' : 'cyan'} style={{ margin: 0 }}>
-            {activeMarket === 'GLOBAL' ? '🌐 海外市场（Global）' : '🇨🇳 国内市场（CN）'}
-          </Tag>
-          <span className="gm-home-context-category">{activeBrand.category}</span>
-        </div>
-
-        <div style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-          <Button
-            size="small"
-            type="primary"
-            data-testid="home-open-roi-report-btn"
-            onClick={() => setRoiModalOpen(true)}
-          >
-            生成月度 GEO ROI 报告
-          </Button>
-          {missingMarket ? (
+      <PageHeader
+        title="行动首页"
+        description={`${activeBrandMarket.localBrandName} · ${activeBrand.category} · 近 ${resolvedData.health.days} 天（已完成 ${resolvedData.health.completedChecks} 次有效检测）`}
+        tags={
+          <span className="gm-home-chip">
+            {activeMarket === 'GLOBAL' ? '海外市场（GLOBAL）' : '国内市场（CN）'}
+          </span>
+        }
+        extra={
+          <>
             <Button
               size="small"
+              data-testid="home-cta-write"
               disabled={readOnly}
-              onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
+              onClick={() => consoleCtx?.navigateWorkspace('/studio')}
             >
-              + 开启{missingMarket === 'GLOBAL' ? '海外' : '国内'}市场
+              直接写 GEO 文章
             </Button>
-          ) : null}
-        </div>
-      </header>
+            <Button
+              size="small"
+              data-testid="home-open-roi-report-btn"
+              onClick={() => setRoiModalOpen(true)}
+            >
+              生成月度 GEO ROI 报告
+            </Button>
+            {missingMarket ? (
+              <Button
+                size="small"
+                disabled={readOnly}
+                onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
+              >
+                + 开启{missingMarket === 'GLOBAL' ? '海外' : '国内'}市场
+              </Button>
+            ) : null}
+          </>
+        }
+        action={
+          <Button
+            type="primary"
+            data-testid="home-cta-monitor"
+            disabled={readOnly}
+            onClick={() => consoleCtx?.navigateWorkspace('/visibility?tab=runs')}
+          >
+            发起新一轮监测
+          </Button>
+        }
+      />
 
-      {/* Block 1: Brand Health Signal Strip */}
-      <HomeHealthStrip
-        activeMarket={activeMarket}
-        health={resolvedData.health}
-        readOnly={readOnly}
-        onStartMonitor={() => consoleCtx?.navigateWorkspace('/visibility?tab=runs')}
-        onWriteArticle={() => consoleCtx?.navigateWorkspace('/studio')}
+      {/* Block 1: Honest Brand Health Signal Strip */}
+      <HomeHealthStrip activeMarket={activeMarket} health={resolvedData.health} />
+
+      {/* Hoisted P0 Crawl Alert Banner (directly below KpiStrip, above Top 3 Briefs, zero duplicate) */}
+      <HomeCrawlAlertBanner
+        alerts={resolvedData.distributionSummary?.crawlAlerts ?? []}
+        onOpenArticle={(articleId) =>
+          consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
+        }
       />
 
       {/* Block 2: Today's Top 3 Priority Briefs */}
@@ -554,6 +569,7 @@ export function HomeWorkspace(): JSX.Element {
         onOpenBriefDrawer={(briefId) => void handleOpenBriefDrawer(briefId)}
         onWriteBrief={handleWriteBrief}
         onViewAllBriefs={() => consoleCtx?.navigateWorkspace('/visibility?tab=overview')}
+        onWriteArticle={() => consoleCtx?.navigateWorkspace('/studio')}
         onStartMonitor={() => consoleCtx?.navigateWorkspace('/visibility?tab=runs')}
       />
 
@@ -574,6 +590,7 @@ export function HomeWorkspace(): JSX.Element {
       <HomeDistributionSummary
         summary={resolvedData.distributionSummary}
         recentArticles={resolvedData.recentArticles}
+        hideCrawlAlerts
         onOpenArticle={(articleId) =>
           consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
         }

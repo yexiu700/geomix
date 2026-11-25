@@ -6,9 +6,11 @@ import {
   AUTH_ERROR,
   BRAND_DEFAULT_RETEST_CONTROL_PROMPTS,
   DEFAULT_RETEST_MILESTONE_DAYS,
+  shanghaiCurrentMonthWindowUtc,
   type GeoMarket,
   type GeoRetestControlMetricsSnapshot,
   type GeoRetestScheduleDto,
+  type RetestBudgetSummaryDto,
   type RetestSampleCount,
   type RetestScheduleConfigInput,
   type VisibilityRunDetailRecord,
@@ -130,10 +132,232 @@ export type RetestSweepReport = {
   claimed: number;
   triggered: number;
   skippedInsufficientPoints: number;
+  skippedBudgetCap: number;
   skippedNoEngine: number;
   skippedInactiveTenant: number;
   failed: number;
 };
+
+/**
+ * 统计指定品牌市场在当前 Asia/Shanghai 自然月内的自动复测预算消耗与超限跳过次数（100% 走 prisma.scoped）：
+ * - 已完成（COMPLETED/PARTIAL）定时复测：优先累加 PointLog(status='SETTLED').listPrice（兼容 SHADOW 模式，与计费模式解耦），
+ *   缺失日志时退回按 (doneCount || totalChecks) * unitPrice 估算；
+ * - 执行中/排队中（RUNNING/QUEUED）定时复测：按 totalChecks * unitPrice 计入在途预算，避免同批次并发击穿上限；
+ * - 失败/取消（FAILED/CANCELLED）计 0 点。
+ */
+export async function computeMonthlyRetestBudgetUsage(
+  scopedPrisma: PrismaService['scoped'],
+  params: {
+    brandId: string;
+    brandMarketId: string;
+    capPoints: number | null;
+    now?: Date;
+    excludeScheduleId?: string;
+    inSweepRuns?: ReadonlyArray<{
+      scheduleId: string;
+      runId: string;
+      estimatedPoints: number;
+    }>;
+  },
+): Promise<RetestBudgetSummaryDto> {
+  const { monthKey, startUtc, endUtc } = shanghaiCurrentMonthWindowUtc(params.now ?? new Date());
+  const capPoints =
+    typeof params.capPoints === 'number' &&
+    Number.isInteger(params.capPoints) &&
+    params.capPoints > 0
+      ? params.capPoints
+      : null;
+
+  const scheduleDelegate = (
+    scopedPrisma as unknown as {
+      geoRetestSchedule?: {
+        findMany?: (args: unknown) => Promise<
+          Array<{
+            id: string;
+            status: string;
+            visibilityRunId: string | null;
+            executedAt: Date | null;
+            updatedAt: Date;
+          }>
+        >;
+      };
+    }
+  ).geoRetestSchedule;
+
+  if (typeof scheduleDelegate?.findMany !== 'function') {
+    return {
+      monthKey,
+      capPoints,
+      usedPoints: 0,
+      remainingPoints: capPoints,
+      skippedCount: 0,
+    };
+  }
+
+  const rows = await scheduleDelegate.findMany({
+    where: {
+      brandId: params.brandId,
+      brandMarketId: params.brandMarketId,
+      ...(params.excludeScheduleId ? { id: { not: params.excludeScheduleId } } : {}),
+      status: { in: ['RUNNING', 'COMPLETED', 'SKIPPED_BUDGET_CAP'] },
+      OR: [
+        { executedAt: { gte: startUtc, lt: endUtc } },
+        { executedAt: null, updatedAt: { gte: startUtc, lt: endUtc } },
+      ],
+    },
+    select: {
+      id: true,
+      status: true,
+      visibilityRunId: true,
+      executedAt: true,
+      updatedAt: true,
+    },
+  });
+
+  const startMs = startUtc.getTime();
+  const endMs = endUtc.getTime();
+  let skippedCount = 0;
+  const runIdSet = new Set<string>();
+
+  for (const row of rows) {
+    if (params.excludeScheduleId && row.id === params.excludeScheduleId) {
+      continue;
+    }
+    const ts = row.executedAt ?? row.updatedAt;
+    if (!(ts instanceof Date) || ts.getTime() < startMs || ts.getTime() >= endMs) {
+      continue;
+    }
+    if (row.status === 'SKIPPED_BUDGET_CAP') {
+      skippedCount += 1;
+      continue;
+    }
+    if (
+      (row.status === 'COMPLETED' || row.status === 'RUNNING') &&
+      typeof row.visibilityRunId === 'string' &&
+      row.visibilityRunId.length > 0
+    ) {
+      runIdSet.add(row.visibilityRunId);
+    }
+  }
+
+  let usedPoints = 0;
+  const runIds = [...runIdSet];
+  const runDelegate = (
+    scopedPrisma as unknown as {
+      visibilityRun?: {
+        findMany?: (args: unknown) => Promise<
+          Array<{
+            id: string;
+            status: string;
+            reservationId: string | null;
+            totalChecks: number;
+            doneCount: number;
+            unitPrice: number;
+          }>
+        >;
+      };
+    }
+  ).visibilityRun;
+
+  const seenDbRunIds = new Set<string>();
+  if (runIds.length > 0 && typeof runDelegate?.findMany === 'function') {
+    const runs = await runDelegate.findMany({
+      where: {
+        id: { in: runIds },
+        brandId: params.brandId,
+        brandMarketId: params.brandMarketId,
+      },
+      select: {
+        id: true,
+        status: true,
+        reservationId: true,
+        totalChecks: true,
+        doneCount: true,
+        unitPrice: true,
+      },
+    });
+
+    const finishedReservationIds = [
+      ...new Set(
+        runs
+          .filter(
+            (r) =>
+              (r.status === 'COMPLETED' || r.status === 'PARTIAL') &&
+              typeof r.reservationId === 'string' &&
+              r.reservationId.length > 0,
+          )
+          .map((r) => r.reservationId as string),
+      ),
+    ];
+
+    const settledListPriceByResId = new Map<string, number>();
+    const pointLogDelegate = (
+      scopedPrisma as unknown as {
+        pointLog?: {
+          findMany?: (args: unknown) => Promise<
+            Array<{
+              reservationId: string | null;
+              listPrice: number;
+            }>
+          >;
+        };
+      }
+    ).pointLog;
+
+    if (finishedReservationIds.length > 0 && typeof pointLogDelegate?.findMany === 'function') {
+      const logs = await pointLogDelegate.findMany({
+        where: {
+          reservationId: { in: finishedReservationIds },
+          status: 'SETTLED',
+        },
+        select: {
+          reservationId: true,
+          listPrice: true,
+        },
+      });
+      for (const log of logs) {
+        if (!log.reservationId) continue;
+        settledListPriceByResId.set(
+          log.reservationId,
+          (settledListPriceByResId.get(log.reservationId) ?? 0) + Math.max(0, log.listPrice),
+        );
+      }
+    }
+
+    for (const run of runs) {
+      seenDbRunIds.add(run.id);
+      if (run.status === 'COMPLETED' || run.status === 'PARTIAL') {
+        if (run.reservationId && settledListPriceByResId.has(run.reservationId)) {
+          usedPoints += settledListPriceByResId.get(run.reservationId)!;
+        } else {
+          const checks = run.doneCount > 0 ? run.doneCount : run.totalChecks;
+          usedPoints += Math.max(0, checks * run.unitPrice);
+        }
+      } else if (run.status === 'QUEUED' || run.status === 'RUNNING') {
+        usedPoints += Math.max(0, run.totalChecks * run.unitPrice);
+      }
+    }
+  }
+
+  for (const entry of params.inSweepRuns ?? []) {
+    if (params.excludeScheduleId && entry.scheduleId === params.excludeScheduleId) {
+      continue;
+    }
+    if (seenDbRunIds.has(entry.runId)) {
+      continue;
+    }
+    seenDbRunIds.add(entry.runId);
+    usedPoints += Math.max(0, entry.estimatedPoints);
+  }
+
+  return {
+    monthKey,
+    capPoints,
+    usedPoints,
+    remainingPoints: capPoints !== null ? Math.max(0, capPoints - usedPoints) : null,
+    skippedCount,
+  };
+}
 
 export interface RetestRunCreator {
   createRun(
@@ -614,10 +838,16 @@ export class RetestSchedulerService {
       claimed: 0,
       triggered: 0,
       skippedInsufficientPoints: 0,
+      skippedBudgetCap: 0,
       skippedNoEngine: 0,
       skippedInactiveTenant: 0,
       failed: 0,
     };
+
+    const inSweepRunsByMarket = new Map<
+      string,
+      Array<{ scheduleId: string; runId: string; estimatedPoints: number }>
+    >();
 
     for (const schedule of due) {
       await runInTenant(schedule.tenantId, async () => {
@@ -625,7 +855,7 @@ export class RetestSchedulerService {
 
         const claimed = await this.prisma.scoped.geoRetestSchedule.updateMany({
           where: { id: schedule.id, status: 'PENDING' },
-          data: { status: 'RUNNING', visibilityRunId: expectedRunId },
+          data: { status: 'RUNNING', visibilityRunId: expectedRunId, updatedAt: now },
         });
         if (claimed.count !== 1) {
           return;
@@ -661,6 +891,7 @@ export class RetestSchedulerService {
                   id: true,
                   title: true,
                   targetPrompt: true,
+                  productLineId: true,
                 },
               },
               brandMarket: {
@@ -669,6 +900,7 @@ export class RetestSchedulerService {
                   market: true,
                   localBrandName: true,
                   controlPrompts: true,
+                  monthlyRetestPointCap: true,
                 },
               },
             },
@@ -748,6 +980,42 @@ export class RetestSchedulerService {
             sampleCount,
             unitPrice,
           });
+
+          const rawMonthlyCap = (record.brandMarket as { monthlyRetestPointCap?: number | null })
+            .monthlyRetestPointCap;
+          const monthlyCap =
+            typeof rawMonthlyCap === 'number' &&
+            Number.isInteger(rawMonthlyCap) &&
+            rawMonthlyCap > 0
+              ? rawMonthlyCap
+              : null;
+
+          const marketSweepKey = `${schedule.tenantId}:${record.brandMarketId}`;
+          if (monthlyCap !== null) {
+            const monthlyUsage = await computeMonthlyRetestBudgetUsage(this.prisma.scoped, {
+              brandId: record.brandId,
+              brandMarketId: record.brandMarketId,
+              capPoints: monthlyCap,
+              now,
+              excludeScheduleId: schedule.id,
+              inSweepRuns: inSweepRunsByMarket.get(marketSweepKey),
+            });
+            if (monthlyUsage.usedPoints + estimatedPoints > monthlyCap) {
+              await this.prisma.scoped.geoRetestSchedule.updateMany({
+                where: { id: schedule.id, status: 'RUNNING' },
+                data: {
+                  status: 'SKIPPED_BUDGET_CAP',
+                  visibilityRunId: null,
+                  skipReason: `本月（${monthlyUsage.monthKey}）自动复测预算已用 ${monthlyUsage.usedPoints}/${monthlyCap} 点，本次预计需 ${estimatedPoints} 点，已温和跳过（不影响手动复测与写作）`,
+                  executedAt: now,
+                  updatedAt: now,
+                },
+              });
+              report.skippedBudgetCap += 1;
+              return;
+            }
+          }
+
           const wallet = await this.billing.wallet(schedule.tenantId);
 
           if (wallet.billingMode === 'STRICT' && wallet.available < estimatedPoints) {
@@ -772,10 +1040,14 @@ export class RetestSchedulerService {
             throw new Error('VisibilityRunLifecycleService unavailable');
           }
 
+          const articleProductLineId =
+            (record.article as { productLineId?: string | null }).productLineId ?? undefined;
+
           const run = await this.runLifecycle.createRun(
             record.brandId,
             {
               market,
+              ...(articleProductLineId ? { productLineId: articleProductLineId } : {}),
               name: `定时复测 T+${schedule.milestoneDay}：${record.article.title.slice(0, 36)}`.slice(
                 0,
                 80,
@@ -794,9 +1066,17 @@ export class RetestSchedulerService {
           if (run.id !== expectedRunId) {
             await this.prisma.scoped.geoRetestSchedule.updateMany({
               where: { id: schedule.id },
-              data: { visibilityRunId: run.id },
+              data: { visibilityRunId: run.id, updatedAt: now },
             });
           }
+
+          const committedRuns = inSweepRunsByMarket.get(marketSweepKey) ?? [];
+          committedRuns.push({
+            scheduleId: schedule.id,
+            runId: run.id,
+            estimatedPoints,
+          });
+          inSweepRunsByMarket.set(marketSweepKey, committedRuns);
 
           try {
             await this.prisma.scoped.geoPublishRecord.updateMany({

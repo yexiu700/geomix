@@ -10,7 +10,7 @@ import {
   type BrandRecord,
   type MediaStorageSummary,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Tag } from 'antd';
+import { Alert, Button, Input, Modal } from 'antd';
 import { useRef, useState, type DragEvent } from 'react';
 import {
   deleteBrandMedia,
@@ -19,7 +19,8 @@ import {
   uploadBrandMedia,
 } from '../../lib/brands';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { EmptyState, Section, StatusBadge } from '../ui';
 import { defaultAltFromFilename } from './brand-form-helpers';
 
 export type BrandMediaSectionProps = {
@@ -192,25 +193,24 @@ export function BrandMediaSection({
   };
 
   return (
-    <section id="brand-section-media" className="gm-brand-section" aria-label="真实产品实拍图库">
-      <div className="gm-brand-section-head">
-        <div>
-          <div className="gm-brand-section-title-row">
-            <h2 className="gm-brand-section-title">3. 真实产品实拍图库</h2>
-            <Tag>双市场共享（CN / GLOBAL）</Tag>
-            {storage ? (
-              <SignalPill tone="neutral">
-                租户共享存储配额：已用 {storage.usedText} / {storage.limitText}
-              </SignalPill>
-            ) : null}
-          </div>
-          <p className="gm-brand-section-desc">
-            单层平铺管理真实产品实拍图与图片说明（Alt 文本），在 GEO
-            写作台编辑器内可随时免费按需插入。
-          </p>
-        </div>
-      </div>
-
+    <Section
+      id="brand-section-media"
+      variant="plain"
+      aria-label="真实产品实拍图库"
+      title={
+        <span className="gm-brand-section-title-row">
+          <span>真实产品实拍图库</span>
+          <StatusBadge tone="neutral" label="双市场共享（CN / GLOBAL）" />
+          {storage ? (
+            <StatusBadge
+              tone="neutral"
+              label={`租户共享存储配额：已用 ${storage.usedText} / ${storage.limitText}`}
+            />
+          ) : null}
+        </span>
+      }
+      description="单层平铺管理真实产品实拍图与图片说明（Alt 文本），在 GEO 写作台编辑器内可随时免费按需插入。"
+    >
       {/* Flat Drag-and-Drop Upload Zone */}
       <div
         data-testid="brand-media-dropzone"
@@ -235,7 +235,7 @@ export function BrandMediaSection({
           accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
           aria-label="上传产品实拍图"
           disabled={readOnly || uploading}
-          style={{ display: 'none' }}
+          className="gm-brand-hidden-file-input"
           onChange={(event) => void handleFilesSelected(event.target.files)}
         />
         <div className="gm-brand-dropzone-copy">
@@ -246,10 +246,10 @@ export function BrandMediaSection({
           </span>
         </div>
         <Button
-          type="primary"
-          ghost
+          type="default"
           disabled={readOnly}
           loading={uploading}
+          className="gm-brand-btn-nowrap"
           onClick={() => fileInputRef.current?.click()}
         >
           选择图片上传
@@ -257,11 +257,11 @@ export function BrandMediaSection({
       </div>
 
       {uploadNotice ? (
-        <Alert type="warning" showIcon message={uploadNotice} style={{ marginTop: 10 }} />
+        <Alert type="warning" showIcon message={uploadNotice} className="gm-brand-mt-sm" />
       ) : null}
 
       {/* Photo Grid */}
-      <div style={{ marginTop: 14 }}>
+      <div className="gm-brand-media-wrap">
         {loading ? (
           <div className="gm-brand-media-grid" aria-busy="true">
             <SignalSkeleton variant="block" height={200} />
@@ -271,7 +271,8 @@ export function BrandMediaSection({
         ) : error ? (
           <SignalError message={error} onRetry={onRetry} />
         ) : items.length === 0 ? (
-          <SignalEmpty
+          <EmptyState
+            size="compact"
             title="还没有产品实拍图"
             description="拖入真实产品实拍图并维护图片说明，在 GEO 写作台编辑器内按需免费插入。"
           />
@@ -309,7 +310,7 @@ export function BrandMediaSection({
                         />
                         <div className="gm-brand-media-alt-actions">
                           <Button
-                            type="primary"
+                            type="default"
                             size="small"
                             autoInsertSpace={false}
                             loading={savingAlt}
@@ -336,6 +337,7 @@ export function BrandMediaSection({
                           type="link"
                           size="small"
                           disabled={readOnly}
+                          className="gm-brand-btn-nowrap"
                           onClick={() => {
                             setEditingId(asset.id);
                             setEditingTitle(asset.title);
@@ -356,6 +358,7 @@ export function BrandMediaSection({
                         danger
                         autoInsertSpace={false}
                         disabled={readOnly}
+                        className="gm-brand-btn-nowrap"
                         onClick={() => handleDeleteAsset(asset)}
                       >
                         删除
@@ -389,7 +392,10 @@ export function BrandMediaSection({
               className="gm-brand-media-preview-img"
             />
             <div className="gm-brand-media-preview-meta">
-              <Tag>{previewAsset.origin === 'AI_INLINE_GEN' ? 'AI 配图' : '实拍上传'}</Tag>
+              <StatusBadge
+                tone="neutral"
+                label={previewAsset.origin === 'AI_INLINE_GEN' ? 'AI 配图' : '实拍上传'}
+              />
               <span>
                 尺寸：{previewAsset.width} × {previewAsset.height}
               </span>
@@ -400,6 +406,6 @@ export function BrandMediaSection({
           </div>
         ) : null}
       </Modal>
-    </section>
+    </Section>
   );
 }

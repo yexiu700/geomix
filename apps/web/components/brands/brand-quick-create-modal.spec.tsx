@@ -93,6 +93,10 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     fireEvent.change(within(dialog).getByLabelText('竞品官网域名 1'), {
       target: { value: 'https://www.synology.com' },
     });
+    expect(
+      within(dialog).getByRole('button', { name: '移除竞品 群晖' }).querySelector('svg'),
+    ).toBeTruthy();
+    expect(dialog.querySelectorAll('button.ant-btn-dangerous')).toHaveLength(0);
 
     fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
 

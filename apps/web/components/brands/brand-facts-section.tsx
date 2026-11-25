@@ -19,11 +19,12 @@ import {
   type FactIndexStatus,
   type FactSourceType,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Input, Modal, Radio, Space, Tag } from 'antd';
+import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from 'antd';
 import { useEffect, useState } from 'react';
 import { extractBrandFacts, saveBrandFacts, type ExtractBrandFactsRequest } from '../../lib/brands';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalError, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { Section, StatusBadge } from '../ui';
 import {
   CORE_FACT_SLOTS,
   FACT_EXTRACT_ACCEPT,
@@ -305,40 +306,42 @@ export function BrandFactsSection({
   };
 
   return (
-    <section id="brand-section-facts" className="gm-brand-section" aria-label="品牌事实卡">
-      <div className="gm-brand-section-head">
-        <div>
-          <div className="gm-brand-section-title-row">
-            <h2 className="gm-brand-section-title">2. 4 块结构化品牌事实卡</h2>
-            <Tag color="green">免费标配 · 双市场共享</Tag>
-            <SignalPill tone={needsVectorIndex ? 'info' : 'neutral'}>
-              总计 {totalChars} 字
-            </SignalPill>
-            {anyIndexing ? (
-              <SignalPill tone="info">{FACT_INDEX_STATUS_LABELS.INDEXING}</SignalPill>
-            ) : anyFailed ? (
-              <SignalPill tone="danger">{FACT_INDEX_STATUS_LABELS.FAILED}</SignalPill>
-            ) : needsVectorIndex && anyReady ? (
-              <SignalPill tone="cited">{FACT_INDEX_STATUS_LABELS.READY}</SignalPill>
-            ) : (
-              <SignalPill tone="cited">{FACT_INDEX_STATUS_LABELS.NONE}</SignalPill>
-            )}
-          </div>
-          <p className="gm-brand-section-desc">
-            维护一份中文核心事实，切至海外市场写作时自动跨语种注入，无需手动翻译；总字数超过{' '}
-            {BRAND_FACT_FULL_INJECT_MAX.toLocaleString()} 字时系统自动后台建立检索索引。
-          </p>
-        </div>
+    <Section
+      id="brand-section-facts"
+      variant="plain"
+      aria-label="品牌事实卡"
+      title={
+        <span className="gm-brand-section-title-row">
+          <span>品牌事实卡</span>
+          <StatusBadge tone="neutral" label="免费标配 · 双市场共享" />
+          <StatusBadge
+            tone={needsVectorIndex ? 'active' : 'neutral'}
+            label={`总计 ${totalChars} 字`}
+          />
+          {anyIndexing ? (
+            <StatusBadge status="INDEXING" label={FACT_INDEX_STATUS_LABELS.INDEXING} />
+          ) : anyFailed ? (
+            <StatusBadge status="FAILED" label={FACT_INDEX_STATUS_LABELS.FAILED} />
+          ) : needsVectorIndex && anyReady ? (
+            <StatusBadge tone="success" label={FACT_INDEX_STATUS_LABELS.READY} />
+          ) : (
+            <StatusBadge tone="success" label={FACT_INDEX_STATUS_LABELS.NONE} />
+          )}
+        </span>
+      }
+      description={`维护一份中文核心事实，切至海外市场写作时自动跨语种注入，无需手动翻译；总字数超过 ${BRAND_FACT_FULL_INJECT_MAX.toLocaleString()} 字时系统自动后台建立检索索引。`}
+      actions={
         <Button
           type="default"
           data-testid="fact-ai-extract-btn"
           disabled={readOnly || loading}
+          className="gm-brand-btn-nowrap"
           onClick={openExtractModal}
         >
           AI 自动提炼 4 块事实卡（免费）
         </Button>
-      </div>
-
+      }
+    >
       {loading ? (
         <div className="gm-brand-facts-grid" aria-busy="true">
           {CORE_FACT_SLOTS.map((slot) => (
@@ -358,7 +361,7 @@ export function BrandFactsSection({
                   <div className="gm-brand-fact-card-head">
                     <div className="gm-brand-fact-title-wrap">
                       <strong>{BRAND_FACT_SLOT_LABELS[slot]}</strong>
-                      <Tag>{FACT_SOURCE_LABELS[card.sourceType]}</Tag>
+                      <StatusBadge tone="neutral" label={FACT_SOURCE_LABELS[card.sourceType]} />
                     </div>
                     <div className="gm-brand-fact-meta">
                       <span className={charLen > 2000 ? 'gm-brand-char-warn' : undefined}>
@@ -376,7 +379,7 @@ export function BrandFactsSection({
                     value={card.title}
                     maxLength={120}
                     disabled={readOnly || saving}
-                    style={{ marginBottom: 8 }}
+                    className="gm-brand-fact-title-input"
                     onChange={(event) => updateSlotField(slot, { title: event.target.value })}
                   />
 
@@ -408,13 +411,16 @@ export function BrandFactsSection({
               </span>
               <span className="gm-brand-extra-doc-meta">
                 <span>{drafts.EXTRA_DOC.content.length} 字</span>
-                <Tag>{FACT_INDEX_STATUS_LABELS[drafts.EXTRA_DOC.indexStatus]}</Tag>
+                <StatusBadge
+                  status={drafts.EXTRA_DOC.indexStatus}
+                  label={FACT_INDEX_STATUS_LABELS[drafts.EXTRA_DOC.indexStatus]}
+                />
               </span>
             </button>
 
             {extraDocOpen ? (
               <div className="gm-brand-extra-doc-body" data-testid="fact-slot-EXTRA_DOC">
-                <p className="gm-brand-section-desc" style={{ marginBottom: 8 }}>
+                <p className="gm-brand-section-desc gm-brand-mb-sm">
                   适合粘贴完整产品规格书、白皮书或长篇 FAQ；总字数超过 6,000
                   字时系统将在后台自动建立检索索引，无需手动配置。
                 </p>
@@ -457,9 +463,10 @@ export function BrandFactsSection({
             </div>
 
             <Button
-              type="primary"
+              type="default"
               loading={saving}
               disabled={readOnly}
+              className="gm-brand-btn-nowrap"
               onClick={() => void handleSaveFacts()}
             >
               保存品牌事实卡
@@ -467,7 +474,7 @@ export function BrandFactsSection({
           </div>
 
           {saveError ? (
-            <Alert type="warning" showIcon message={saveError} style={{ marginTop: 10 }} />
+            <Alert type="warning" showIcon message={saveError} className="gm-brand-mt-sm" />
           ) : null}
         </>
       )}
@@ -483,9 +490,9 @@ export function BrandFactsSection({
           </Button>,
         ]}
       >
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space direction="vertical" size={10} className="gm-brand-terms-list">
           {BRAND_TRUTH_AGREEMENT_PARAGRAPHS.map((para, idx) => (
-            <p key={idx} style={{ margin: 0, color: 'var(--gm-fg-2)', lineHeight: 1.7 }}>
+            <p key={idx} className="gm-brand-terms-para">
               {para}
             </p>
           ))}
@@ -569,7 +576,7 @@ export function BrandFactsSection({
           )}
 
           {extractError ? (
-            <Alert type="error" showIcon message={extractError} style={{ marginTop: 10 }} />
+            <Alert type="error" showIcon message={extractError} className="gm-brand-mt-sm" />
           ) : null}
 
           {extractResult ? (
@@ -579,7 +586,7 @@ export function BrandFactsSection({
                   type="info"
                   showIcon
                   message={extractResult.warnings.join(' ')}
-                  style={{ marginBottom: 8 }}
+                  className="gm-brand-mb-sm"
                 />
               ) : null}
               <div className="gm-brand-apply-mode">
@@ -608,8 +615,7 @@ export function BrandFactsSection({
               关闭
             </Button>
             <Button
-              type="primary"
-              ghost
+              type={extractResult ? 'default' : 'primary'}
               loading={extracting}
               onClick={() => void handleRunExtract()}
             >
@@ -623,6 +629,6 @@ export function BrandFactsSection({
           </div>
         </div>
       </Modal>
-    </section>
+    </Section>
   );
 }

@@ -265,16 +265,7 @@ export function CommandPalette({
       footer={null}
       closable={false}
       width={640}
-      style={{ top: '15vh' }}
-      styles={{
-        body: { padding: 0 },
-        content: {
-          padding: 0,
-          borderRadius: 12,
-          background: 'var(--gm-bg-overlay)',
-          boxShadow: 'var(--gm-shadow-pop)',
-        },
-      }}
+      className="gm-cmd-modal"
     >
       <div onKeyDown={handleKeyDown}>
         <input
@@ -284,50 +275,15 @@ export function CommandPalette({
           aria-label="搜索页面或操作"
           placeholder="搜索工作区、品牌或操作…"
           onChange={(event) => setQuery(event.target.value)}
-          style={{
-            width: '100%',
-            height: 48,
-            padding: '0 16px',
-            fontSize: 15,
-            color: 'var(--gm-fg-1)',
-            background: 'transparent',
-            border: 0,
-            borderBottom: '1px solid var(--gm-line-1)',
-            borderRadius: 0,
-            outline: 'none',
-            boxShadow: 'none',
-            boxSizing: 'border-box',
-          }}
+          className="gm-cmd-input"
         />
-        <div
-          role="listbox"
-          aria-label="指令列表"
-          style={{ maxHeight: 360, overflowY: 'auto', padding: 6 }}
-        >
+        <div role="listbox" aria-label="指令列表" className="gm-cmd-list">
           {filtered.length === 0 ? (
-            <div
-              style={{
-                fontSize: 13,
-                color: 'var(--gm-fg-3)',
-                padding: '32px 0',
-                textAlign: 'center',
-              }}
-            >
-              {`没有匹配「${query}」的页面或操作`}
-            </div>
+            <div className="gm-cmd-empty">{`没有匹配「${query}」的页面或操作`}</div>
           ) : (
             grouped.map((section) => (
               <div key={section.group}>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--gm-fg-3)',
-                    padding: '8px 10px 4px',
-                    fontWeight: 500,
-                  }}
-                >
-                  {section.group}
-                </div>
+                <div className="gm-cmd-group">{section.group}</div>
                 {section.entries.map(({ item, flatIndex }) => {
                   const isActive = flatIndex === activeIndex;
                   return (
@@ -339,6 +295,7 @@ export function CommandPalette({
                       type="button"
                       role="option"
                       aria-selected={isActive}
+                      className={isActive ? 'gm-cmd-option is-active' : 'gm-cmd-option'}
                       onMouseMove={() => {
                         if (activeIndex !== flatIndex) setActiveIndex(flatIndex);
                       }}
@@ -346,33 +303,9 @@ export function CommandPalette({
                         item.execute();
                         onClose();
                       }}
-                      style={{
-                        width: '100%',
-                        height: 36,
-                        padding: '0 10px',
-                        border: 0,
-                        borderRadius: 6,
-                        fontSize: 13,
-                        color: isActive ? 'var(--gm-fg-1)' : 'var(--gm-fg-2)',
-                        background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
-                        boxShadow: isActive ? 'inset 2px 0 0 var(--gm-phosphor)' : 'none',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                      }}
                     >
                       <span className="gm-clamp-1">{item.title}</span>
-                      {item.href ? (
-                        <span
-                          className="gm-mono"
-                          style={{ fontSize: 11, color: 'var(--gm-fg-4)', flexShrink: 0 }}
-                        >
-                          {item.href}
-                        </span>
-                      ) : null}
+                      {item.href ? <span className="gm-mono gm-cmd-href">{item.href}</span> : null}
                     </button>
                   );
                 })}
@@ -380,19 +313,7 @@ export function CommandPalette({
             ))
           )}
         </div>
-        <div
-          style={{
-            height: 32,
-            borderTop: '1px solid var(--gm-line-1)',
-            padding: '0 12px',
-            display: 'flex',
-            alignItems: 'center',
-            fontSize: 11,
-            color: 'var(--gm-fg-3)',
-          }}
-        >
-          ↑↓ 选择 · Enter 打开 · Esc 关闭
-        </div>
+        <div className="gm-cmd-footer">↑↓ 选择 · Enter 打开 · Esc 关闭</div>
       </div>
     </Modal>
   );

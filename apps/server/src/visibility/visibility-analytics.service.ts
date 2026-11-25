@@ -39,10 +39,13 @@ import {
   computeOverviewMetricsAndGroups,
   higherPrioritySourceKind,
   isEffectiveBrandMention,
+  mergeProductLineBrandAliases,
   parseProfileCompetitors,
   parseStoredCompetitorHits,
+  resolveEffectiveVisibilityCompetitors,
   shanghaiWindowFromQuery,
   type OverviewProfileContext,
+  type ProductLineVisibilityContext,
 } from './visibility.mapper';
 
 function requireTenant(): string {
@@ -132,6 +135,21 @@ export class VisibilityAnalyticsService {
     );
   }
 
+  private async loadOptionalProductLine(
+    brandId: string,
+    productLineId?: string,
+  ): Promise<ProductLineVisibilityContext | null> {
+    if (!productLineId) return null;
+    const delegate = this.prisma.scoped.brandProductLine;
+    if (typeof delegate?.findFirst !== 'function') return null;
+    return (
+      (await delegate.findFirst({
+        where: { id: productLineId, brandId },
+        select: { id: true, name: true, localNamesJson: true, competitorsJson: true },
+      })) ?? null
+    );
+  }
+
   async overview(
     brandId: string,
     query: VisibilityV2OverviewQuery,
@@ -142,9 +160,24 @@ export class VisibilityAnalyticsService {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
     assertMarketEngine(query.engine, market.market);
 
-    const ownedDomains = await this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []);
+    const [ownedDomains, productLine] = await Promise.all([
+      this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []),
+      this.loadOptionalProductLine(brand.id, query.productLineId),
+    ]);
+    const effectiveCompetitors = resolveEffectiveVisibilityCompetitors(
+      market.competitors,
+      productLine,
+      market.market,
+    );
+    const effectiveAliases = mergeProductLineBrandAliases(
+      market.aliases ?? [],
+      productLine,
+      market.market,
+    );
     const overviewCtx = buildSingleMarketOverviewContext({
       ...market,
+      aliases: effectiveAliases,
+      competitors: effectiveCompetitors,
       ownedDomains,
     });
     const window = shanghaiWindowFromQuery({
@@ -158,6 +191,7 @@ export class VisibilityAnalyticsService {
         brandId: brand.id,
         brandMarketId: market.id,
         status: 'SUCCESS',
+        ...(query.productLineId ? { run: { productLineId: query.productLineId } } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -180,6 +214,7 @@ export class VisibilityAnalyticsService {
       profileId: market.id,
       brandId: brand.id,
       brandMarketId: market.id,
+      productLineId: query.productLineId ?? null,
       market: market.market,
       metrics,
       trend,
@@ -198,8 +233,15 @@ export class VisibilityAnalyticsService {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
     assertMarketEngine(query.engine, market.market);
 
-    const competitors = parseProfileCompetitors(market.competitors);
-    const ownedDomains = await this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []);
+    const [ownedDomains, productLine] = await Promise.all([
+      this.resolveBrandOwnedDomains(brand.id, market.ownedDomains ?? []),
+      this.loadOptionalProductLine(brand.id, query.productLineId),
+    ]);
+    const competitors = resolveEffectiveVisibilityCompetitors(
+      market.competitors,
+      productLine,
+      market.market,
+    );
     const competitorDomains = competitors.flatMap((comp) => comp.domains ?? []);
 
     const window = shanghaiWindowFromQuery({
@@ -214,6 +256,7 @@ export class VisibilityAnalyticsService {
           brandId: brand.id,
           brandMarketId: market.id,
           status: 'SUCCESS',
+          ...(query.productLineId ? { run: { productLineId: query.productLineId } } : {}),
           ...(query.engine ? { engine: query.engine } : {}),
           OR: [
             { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
@@ -352,7 +395,16 @@ export class VisibilityAnalyticsService {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, query.market);
     assertMarketEngine(query.engine, market.market);
 
-    const overviewCtx = buildSingleMarketOverviewContext(market);
+    const productLine = await this.loadOptionalProductLine(brand.id, query.productLineId);
+    const overviewCtx = buildSingleMarketOverviewContext({
+      ...market,
+      aliases: mergeProductLineBrandAliases(market.aliases ?? [], productLine, market.market),
+      competitors: resolveEffectiveVisibilityCompetitors(
+        market.competitors,
+        productLine,
+        market.market,
+      ),
+    });
     const window = shanghaiWindowFromQuery({
       days: query.days,
       from: query.from,
@@ -364,6 +416,7 @@ export class VisibilityAnalyticsService {
         brandId: brand.id,
         brandMarketId: market.id,
         status: 'SUCCESS',
+        ...(query.productLineId ? { run: { productLineId: query.productLineId } } : {}),
         ...(query.engine ? { engine: query.engine } : {}),
         OR: [
           { checkedAt: { gte: window.startUtc, lte: window.endUtc } },
