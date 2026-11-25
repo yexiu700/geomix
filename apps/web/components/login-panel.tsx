@@ -7,6 +7,7 @@ import { writeCachedAccount } from '../lib/account-cache';
 import { loadAccount, postJson, type AccountProfile } from '../lib/api';
 import { safePostLoginHref } from '../lib/route-map';
 import { clearSession, readAccessToken, saveSession } from '../lib/session';
+import { GeoMixIcon } from './brand/geomix-logo';
 
 export const CAPTCHA_LOAD_TIMEOUT_MS = 10_000;
 
@@ -360,7 +361,15 @@ export function LoginPanel() {
 
   return (
     <main className="gm-boot">
-      <Card className="gm-login-card" title="GeoMix 登录">
+      <Card
+        className="gm-login-card"
+        title={
+          <span className="gm-login-title">
+            <GeoMixIcon size={20} className="gm-brand-mark" />
+            <span>GeoMix 登录</span>
+          </span>
+        }
+      >
         <Typography.Paragraph className="gm-login-helper">账号由管理员开通。</Typography.Paragraph>
         {checking ? <Typography.Paragraph>正在确认登录</Typography.Paragraph> : null}
         {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}

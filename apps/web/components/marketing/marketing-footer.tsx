@@ -8,7 +8,7 @@ import {
   switchMarketingPathLocale,
   type MarketingLocale,
 } from '../../lib/marketing-i18n';
-import { MarketingBrandMark } from './marketing-brand-mark';
+import { GeoMixLockup } from '../brand/geomix-logo';
 
 function getFooterCopy(locale: MarketingLocale) {
   const isZh = locale === 'zh-CN';
@@ -65,8 +65,8 @@ export function MarketingFooter() {
         <div className="gm-mkt-footer-grid">
           <div className="gm-mkt-footer-brand-col">
             <Link href={copy.homeHref} className="gm-mkt-brand">
-              <MarketingBrandMark size={20} />
-              <span>{SITE_NAME}</span>
+              <GeoMixLockup height={22} className="gm-mkt-brand-lockup" />
+              <span className="gm-sr-only">{SITE_NAME}</span>
             </Link>
             <p className="gm-mkt-footer-tagline">{copy.tagline}</p>
           </div>
