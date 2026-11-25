@@ -244,7 +244,11 @@ export class ExtensionBridgeService {
           mode: 'L2_EXTENSION',
           provider: query.provider ? query.provider : { in: [...L2_EXTENSION_PROVIDERS] },
           ...(validatedBrandId ? { brandId: validatedBrandId } : {}),
-          status: query.status ? query.status : { in: DEFAULT_PENDING_STATUSES },
+          status: Array.isArray(query.status)
+            ? { in: query.status }
+            : query.status
+              ? query.status
+              : { in: DEFAULT_PENDING_STATUSES },
         },
         include: {
           brand: {

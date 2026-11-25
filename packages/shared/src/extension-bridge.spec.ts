@@ -48,8 +48,27 @@ describe('extension-bridge.ts — Chrome Extension L2 Bridge v1 contracts', () =
       status: 'READY_TO_PUBLISH',
       limit: 15,
     });
-    // Non-L2 providers must be rejected
+    expect(
+      extensionTasksQuerySchema.parse({
+        status: 'DRAFT_VARIANT,READY_TO_PUBLISH',
+      }),
+    ).toEqual({
+      status: ['DRAFT_VARIANT', 'READY_TO_PUBLISH'],
+      limit: 20,
+    });
+    expect(
+      extensionTasksQuerySchema.parse({
+        status: 'READY_TO_PUBLISH,READY_TO_PUBLISH',
+      }),
+    ).toEqual({
+      status: 'READY_TO_PUBLISH',
+      limit: 20,
+    });
+    // Non-L2 providers and invalid statuses must be rejected
     expect(extensionTasksQuerySchema.safeParse({ provider: 'SHOPIFY' }).success).toBe(false);
+    expect(extensionTasksQuerySchema.safeParse({ status: 'DRAFT_VARIANT,ARCHIVED' }).success).toBe(
+      false,
+    );
     expect(extensionTasksQuerySchema.safeParse({ limit: '100' }).success).toBe(false);
   });
 
