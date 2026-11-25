@@ -6,6 +6,7 @@ import type { JSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createBriefFromCitationUrl, isCitationCounterFallbackError } from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
+import { FormField } from '../ui';
 
 export type CitationCounterModalProps = {
   open: boolean;
@@ -212,7 +213,7 @@ export function CitationCounterModal({
       ]}
     >
       <div className="gm-counter-modal-body" data-testid="citation-counter-modal">
-        <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+        <div className="gm-counter-desc">
           输入被 AI
           高频引用的竞品或第三方评测链接，系统自动解析议题骨架并强制注入当前品牌事实卡，生成「高引用信源超越稿」意见卡（0
           点免费）。
@@ -222,13 +223,7 @@ export function CitationCounterModal({
           <Alert type="warning" showIcon message={errorMsg} data-testid="counter-error-alert" />
         ) : null}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label
-            htmlFor="gm-counter-url-input"
-            style={{ fontSize: 12, fontWeight: 500, color: 'var(--gm-fg-2)' }}
-          >
-            竞品高引用链接
-          </label>
+        <FormField label="竞品高引用链接" htmlFor="gm-counter-url-input">
           <Input
             id="gm-counter-url-input"
             aria-label="竞品高引用链接"
@@ -238,15 +233,9 @@ export function CitationCounterModal({
             onChange={(e) => setUrlInput(e.target.value)}
             disabled={readOnly || submitting}
           />
-        </div>
+        </FormField>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label
-            htmlFor="gm-counter-prompt-input"
-            style={{ fontSize: 12, fontWeight: 500, color: 'var(--gm-fg-2)' }}
-          >
-            目标攻克问题（选填）
-          </label>
+        <FormField label="目标攻克问题（选填）" htmlFor="gm-counter-prompt-input">
           <Input
             id="gm-counter-prompt-input"
             aria-label="目标攻克问题"
@@ -260,14 +249,14 @@ export function CitationCounterModal({
             onChange={(e) => setTargetPromptInput(e.target.value)}
             disabled={readOnly || submitting}
           />
-        </div>
+        </FormField>
 
         {!showFallback ? (
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div className="gm-counter-toggle-row">
             <Button
               size="small"
               type="link"
-              style={{ padding: 0 }}
+              className="gm-counter-link-btn"
               data-testid="counter-toggle-fallback-btn"
               onClick={() => setShowFallback(true)}
             >
@@ -276,20 +265,13 @@ export function CitationCounterModal({
           </div>
         ) : (
           <div className="gm-counter-fallback-box" data-testid="counter-pasted-fallback">
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 8,
-              }}
-            >
-              <strong style={{ fontSize: 13, color: 'var(--gm-warning)' }}>粘贴参考正文</strong>
+            <div className="gm-counter-fallback-head">
+              <strong className="gm-counter-fallback-title">粘贴参考正文</strong>
               {mode === 'url' ? (
                 <Button
                   size="small"
                   type="link"
-                  style={{ padding: 0 }}
+                  className="gm-counter-link-btn"
                   onClick={() => {
                     setShowFallback(false);
                     setErrorMsg(null);

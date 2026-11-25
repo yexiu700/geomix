@@ -1,16 +1,15 @@
 'use client';
 
 import type { ActionHomeResponse, GeoMarket } from '@geomix/shared';
-import { Button } from 'antd';
 import type { JSX } from 'react';
-import { SignalKpiCard } from '../geo/primitives';
+import { KpiStrip, type KpiStripItem } from '../ui';
 
 export type HomeHealthStripProps = {
   activeMarket: GeoMarket;
   health: ActionHomeResponse['health'];
-  readOnly: boolean;
-  onStartMonitor: () => void;
-  onWriteArticle: () => void;
+  readOnly?: boolean;
+  onStartMonitor?: () => void;
+  onWriteArticle?: () => void;
 };
 
 function formatPct(value: number): string {
@@ -19,80 +18,66 @@ function formatPct(value: number): string {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`;
 }
 
-export function HomeHealthStrip({
-  activeMarket,
-  health,
-  readOnly,
-  onStartMonitor,
-  onWriteArticle,
-}: HomeHealthStripProps): JSX.Element {
+function formatAvgPositionCaption(avgPosition: number | null): string {
+  if (avgPosition === null || !Number.isFinite(avgPosition)) {
+    return '暂无排名观测，完成监测后显示';
+  }
+  if (avgPosition <= 1.5) {
+    return '多数回答将品牌排在第 1 位';
+  }
+  const roundedRank = Math.max(1, Math.round(avgPosition));
+  if (avgPosition <= 3.0) {
+    return `多数回答将品牌排在第 ${roundedRank} 位（前 3 位）`;
+  }
+  return `多数回答将品牌排在第 ${roundedRank} 位`;
+}
+
+export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps): JSX.Element {
   const engineScopeLabel =
     activeMarket === 'GLOBAL' ? '海外 5 引擎隔离统计' : '国内 8 引擎隔离统计';
 
-  return (
-    <section
-      className="gm-panel gm-home-block"
-      aria-label="品牌健康信号条"
-      data-testid="home-health-strip"
-    >
-      <div className="gm-home-block-head">
-        <div className="gm-home-block-heading">
-          <h2 className="gm-home-block-title">品牌健康信号条</h2>
-          <p className="gm-home-block-desc">
-            近 {health.days} 天 · {engineScopeLabel}（已完成{' '}
-            <span className="gm-num">{health.completedChecks}</span> 次有效检测）
-          </p>
-        </div>
+  const mentionPct = Number.isFinite(health.mentionRatePct) ? health.mentionRatePct : 0;
+  const sovPct = Number.isFinite(health.shareOfVoicePct) ? health.shareOfVoicePct : 0;
+  const ownedPct = Number.isFinite(health.ownedCitationRatePct) ? health.ownedCitationRatePct : 0;
+  const hasAvgPosition = health.avgPosition !== null && Number.isFinite(health.avgPosition);
 
-        <div className="gm-home-cta-group">
-          <Button
-            type="primary"
-            data-testid="home-cta-monitor"
-            disabled={readOnly}
-            onClick={onStartMonitor}
-          >
-            发起新一轮监测
-          </Button>
-          <Button data-testid="home-cta-write" disabled={readOnly} onClick={onWriteArticle}>
-            直接写 GEO 文章
-          </Button>
-        </div>
-      </div>
+  const items: KpiStripItem[] = [
+    {
+      key: 'mention',
+      testId: 'home-kpi-mention',
+      label: 'AI 提及率',
+      value: formatPct(mentionPct),
+      progressPct: mentionPct,
+      tone: 'accent',
+      caption: `近 ${health.days} 天 · ${engineScopeLabel}`,
+    },
+    {
+      key: 'sov',
+      testId: 'home-kpi-sov',
+      label: '声量占比 SoV',
+      value: formatPct(sovPct),
+      progressPct: sovPct,
+      tone: 'active',
+      caption: '本品牌 vs 竞品总声量',
+    },
+    {
+      key: 'position',
+      testId: 'home-kpi-position',
+      label: '平均顺位',
+      value: hasAvgPosition ? `#${health.avgPosition!.toFixed(1)}` : '—',
+      tone: hasAvgPosition ? 'warning' : 'neutral',
+      caption: formatAvgPositionCaption(health.avgPosition),
+    },
+    {
+      key: 'owned',
+      testId: 'home-kpi-owned',
+      label: '自有阵地引用率',
+      value: formatPct(ownedPct),
+      progressPct: ownedPct,
+      tone: 'success',
+      caption: '官网与自有域名被引用占比',
+    },
+  ];
 
-      <div className="gm-home-kpi-grid">
-        <SignalKpiCard
-          label="AI 提及率"
-          value={formatPct(health.mentionRatePct)}
-          tone="cited"
-          caption={`近 ${health.days} 天监测提及占比`}
-          testId="home-kpi-mention"
-        />
-        <SignalKpiCard
-          label="声量占比 SoV"
-          value={formatPct(health.shareOfVoicePct)}
-          tone="info"
-          caption="本品牌 vs 竞品总声量"
-          testId="home-kpi-sov"
-        />
-        <SignalKpiCard
-          label="平均顺位"
-          value={
-            health.avgPosition !== null && Number.isFinite(health.avgPosition)
-              ? `#${health.avgPosition.toFixed(1)}`
-              : '—'
-          }
-          tone="warning"
-          caption="AI 推荐清单平均排名"
-          testId="home-kpi-position"
-        />
-        <SignalKpiCard
-          label="自有阵地引用率"
-          value={formatPct(health.ownedCitationRatePct)}
-          tone="cited"
-          caption="官网与自有域名被引用占比"
-          testId="home-kpi-owned"
-        />
-      </div>
-    </section>
-  );
+  return <KpiStrip items={items} aria-label="品牌健康信号条" data-testid="home-health-strip" />;
 }

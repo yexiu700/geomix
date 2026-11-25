@@ -13,11 +13,11 @@ import {
   GEO_RECIPE_LABELS,
   formatShanghaiDateTime,
 } from '@geomix/shared';
-import { Button, Checkbox, Tag } from 'antd';
+import { Button, Checkbox } from 'antd';
 import type { JSX } from 'react';
 import { useMemo } from 'react';
-import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { EmptyState, RowActions, StatusBadge, type StatusTone } from '../ui';
 
 type VisibilityGapRow = VisibilityOpportunitiesResponse['gaps'][number];
 
@@ -52,10 +52,10 @@ export type BriefListPanelProps = {
 const MAX_BATCH_SELECT = 20;
 const MIN_BATCH_SELECT = 2;
 
-function priorityTone(score: number): 'danger' | 'warning' | 'info' | 'neutral' {
+function priorityTone(score: number): StatusTone {
   if (score >= 90) return 'danger';
   if (score >= 80) return 'warning';
-  if (score >= 70) return 'info';
+  if (score >= 70) return 'active';
   return 'neutral';
 }
 
@@ -84,8 +84,6 @@ export function BriefListPanel({
   onSwitchToRuns,
   onRefresh,
 }: BriefListPanelProps): JSX.Element {
-  const feedback = useUxFeedback();
-
   const selectableBriefs = useMemo(() => briefs.filter((item) => item.status === 'OPEN'), [briefs]);
 
   const selectedSet = useMemo(() => new Set(selectedBriefIds), [selectedBriefIds]);
@@ -102,17 +100,6 @@ export function BriefListPanel({
   const handleSelectAllVisible = () => {
     const ids = selectableBriefs.slice(0, MAX_BATCH_SELECT).map((b) => b.id);
     onSelectedBriefIdsChange(ids);
-  };
-
-  const handleDismissClick = (brief: GeoBriefRecord) => {
-    if (readOnly || brief.status === 'DISMISSED') return;
-    feedback.confirm({
-      title: '确认忽略这条写作建议？',
-      content: '忽略后该意见将移出默认待处理列表，可随时切换状态筛选找回。',
-      okText: '确认忽略',
-      okButtonProps: { danger: true },
-      onOk: () => onDismissBrief(brief),
-    });
   };
 
   const canBatchWrite =
@@ -174,7 +161,6 @@ export function BriefListPanel({
 
           <Button
             size="small"
-            type="primary"
             data-testid="briefs-batch-btn"
             loading={batchSubmitting}
             disabled={!canBatchWrite || batchSubmitting}
@@ -199,11 +185,19 @@ export function BriefListPanel({
           {briefs.map((brief) => {
             const checked = selectedSet.has(brief.id);
             const selectable = brief.status === 'OPEN' && !readOnly;
+            const priorityRank =
+              brief.priorityScore >= 90
+                ? '1'
+                : brief.priorityScore >= 80
+                  ? '2'
+                  : brief.priorityScore >= 70
+                    ? '3'
+                    : '4';
             return (
               <div
                 key={brief.id}
                 data-testid={`brief-card-${brief.id}`}
-                className={`gm-vis-brief-card${checked ? ' gm-vis-brief-card-selected' : ''}`}
+                className={`gm-ui-row gm-vis-brief-card${checked ? ' gm-vis-brief-card-selected' : ''}`}
               >
                 <div className="gm-vis-brief-check">
                   <Checkbox
@@ -218,20 +212,20 @@ export function BriefListPanel({
 
                 <div className="gm-vis-brief-main">
                   <div className="gm-vis-brief-head">
-                    <SignalPill tone={priorityTone(brief.priorityScore)}>
-                      P
-                      {brief.priorityScore >= 90
-                        ? '1'
-                        : brief.priorityScore >= 80
-                          ? '2'
-                          : brief.priorityScore >= 70
-                            ? '3'
-                            : '4'}{' '}
-                      · {brief.priorityScore}
-                    </SignalPill>
-                    <Tag color="blue">{GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}</Tag>
-                    <Tag>{GEO_RECIPE_LABELS[brief.recommendedRecipe]}</Tag>
-                    <Tag>{GEO_BRIEF_STATUS_LABELS[brief.status]}</Tag>
+                    <StatusBadge
+                      tone={priorityTone(brief.priorityScore)}
+                      label={`P${priorityRank} · ${brief.priorityScore}`}
+                    />
+                    <StatusBadge
+                      status={brief.status}
+                      label={GEO_BRIEF_STATUS_LABELS[brief.status]}
+                    />
+                    <span className="gm-vis-context-chip">
+                      {GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}
+                    </span>
+                    <span className="gm-vis-context-chip gm-vis-context-chip--muted">
+                      {GEO_RECIPE_LABELS[brief.recommendedRecipe]}
+                    </span>
                     <span className="gm-vis-brief-time">
                       {formatShanghaiDateTime(brief.createdAt)}
                     </span>
@@ -244,9 +238,12 @@ export function BriefListPanel({
                     <div className="gm-vis-brief-meta">
                       <span className="gm-vis-brief-meta-label">建议投放：</span>
                       {brief.recommendedChannels.slice(0, 3).map((ch, idx) => (
-                        <Tag key={`${ch.channel}-${idx}`} color="geekblue">
+                        <span
+                          key={`${ch.channel}-${idx}`}
+                          className="gm-vis-context-chip gm-vis-context-chip--muted"
+                        >
                           {ch.channel}
-                        </Tag>
+                        </span>
                       ))}
                     </div>
                   ) : null}
@@ -256,24 +253,33 @@ export function BriefListPanel({
                   <Button size="small" onClick={() => onOpenBrief(brief)}>
                     查看详细意见
                   </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    disabled={readOnly}
-                    onClick={() => onWriteBrief(brief)}
-                  >
-                    一键去写（10 点）
-                  </Button>
-                  {!readOnly && brief.status !== 'DISMISSED' ? (
-                    <Button
-                      size="small"
-                      danger
-                      autoInsertSpace={false}
-                      onClick={() => handleDismissClick(brief)}
-                    >
-                      忽略
-                    </Button>
-                  ) : null}
+                  <RowActions
+                    primary={{
+                      key: 'write',
+                      label: '一键去写（10 点）',
+                      disabled: readOnly,
+                      onClick: () => onWriteBrief(brief),
+                    }}
+                    secondary={
+                      !readOnly && brief.status !== 'DISMISSED'
+                        ? [
+                            {
+                              key: 'dismiss',
+                              label: '忽略',
+                              danger: true,
+                              confirm: {
+                                title: '确认忽略这条写作建议？',
+                                content:
+                                  '忽略后该意见将移出默认待处理列表，可随时切换状态筛选找回。',
+                                okText: '确认忽略',
+                                danger: true,
+                              },
+                              onClick: () => onDismissBrief(brief),
+                            },
+                          ]
+                        : undefined
+                    }
+                  />
                 </div>
               </div>
             );
@@ -286,7 +292,7 @@ export function BriefListPanel({
               <div className="gm-vis-gap-main">
                 <div className="gm-vis-gap-prompt">{gap.promptText}</div>
                 <div className="gm-vis-gap-meta">
-                  <SignalPill tone="danger">待生成意见</SignalPill>
+                  <StatusBadge tone="danger" label="待生成意见" />
                   <span className="gm-vis-gap-sub">
                     未提及 {gap.observationCount} 次 · 竞品：
                     {gap.competitors.slice(0, 3).join(' / ') || '无'}
@@ -295,7 +301,6 @@ export function BriefListPanel({
               </div>
               <Button
                 size="small"
-                type="primary"
                 disabled={readOnly || generatingGapPrompt !== null}
                 loading={generatingGapPrompt === gap.promptText}
                 onClick={() => onGenerateFromGap(gap)}
@@ -306,7 +311,8 @@ export function BriefListPanel({
           ))}
         </div>
       ) : (
-        <SignalEmpty
+        <EmptyState
+          size="compact"
           title={
             completedChecks === 0 ? '完成首次监测后自动生成优先写作建议' : '当前筛选下暂无写作建议'
           }
@@ -315,8 +321,13 @@ export function BriefListPanel({
               ? '发起新一轮监测后，系统会自动识别竞品霸榜缺口、负面风险与低顺位问题，免费输出 Top 优先写作意见。'
               : '可切换筛选条件，或在「监测任务与问答透视」「信源阵地与竞品洞察」中对任意观测点免费提取写作意见。'
           }
-          actionText={completedChecks === 0 && !readOnly ? '立即发起监测' : undefined}
-          onAction={completedChecks === 0 && !readOnly ? onSwitchToRuns : undefined}
+          action={
+            completedChecks === 0 && !readOnly ? (
+              <Button size="small" onClick={onSwitchToRuns}>
+                立即发起监测
+              </Button>
+            ) : undefined
+          }
         />
       )}
     </div>

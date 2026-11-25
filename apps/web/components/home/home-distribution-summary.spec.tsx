@@ -130,7 +130,7 @@ describe('HomeDistributionSummary (M6B #355)', () => {
     expect(crawlBox.textContent).toContain('抓取受阻');
     expect(crawlBox.textContent).toContain('AstraVault X4 Quiet NAS Review');
     expect(crawlBox.textContent).toContain('robots.txt 拦截了 GPTBot');
-    fireEvent.click(within(crawlBox).getByRole('button', { name: '前往排查' }));
+    fireEvent.click(within(crawlBox).getByRole('button', { name: '立即排查' }));
     expect(onOpenArticle).toHaveBeenCalledWith('art_blocked_1');
 
     const retestBox = screen.getByTestId('home-upcoming-retests');
@@ -344,5 +344,23 @@ describe('HomeDistributionSummary (M6B #355)', () => {
     // Trigger ROI report modal button
     fireEvent.click(screen.getByTestId('home-summary-roi-report-btn'));
     expect(onOpenRoiReportModal).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses duplicate home-crawl-alerts and respects isEmpty when hideCrawlAlerts is true (#392)', () => {
+    render(
+      <HomeDistributionSummary
+        summary={makeSummary({
+          upcomingRetests: [],
+          channelAttribution: [],
+        })}
+        hideCrawlAlerts
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('home-crawl-alerts')).toBeNull();
+    expect(screen.getByTestId('home-distribution-summary').textContent).toContain(
+      '暂无分发追踪与渠道归因数据',
+    );
   });
 });

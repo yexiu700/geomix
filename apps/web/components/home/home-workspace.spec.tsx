@@ -758,9 +758,26 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     );
 
     const summary = await screen.findByTestId('home-distribution-summary');
-    expect(within(summary).getByTestId('home-crawl-alerts').textContent).toContain(
-      'robots.txt 拦截了 GPTBot',
-    );
+    const allCrawlAlertBanners = screen.getAllByTestId('home-crawl-alerts');
+    expect(allCrawlAlertBanners).toHaveLength(1);
+    const crawlAlerts = allCrawlAlertBanners[0]!;
+    expect(within(summary).queryByTestId('home-crawl-alerts')).toBeNull();
+    expect(crawlAlerts.textContent).toContain('robots.txt 拦截了 GPTBot');
+
+    // Hoisted directly after KpiStrip and before Top 3 Briefs
+    const kpiStrip = screen.getByTestId('home-health-strip');
+    const topBriefs = screen.getByTestId('home-top-briefs');
+    expect(
+      Boolean(kpiStrip.compareDocumentPosition(crawlAlerts) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+    expect(
+      Boolean(crawlAlerts.compareDocumentPosition(topBriefs) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+
+    // Strictly 1 Phosphor primary CTA inside home-workspace
+    const workspace = screen.getByTestId('home-workspace');
+    expect(workspace.querySelectorAll('.ant-btn-primary')).toHaveLength(1);
+
     expect(within(summary).getByTestId('home-upcoming-retests').textContent).toContain('T+7');
     const attrText = within(summary).getByTestId('home-channel-attribution').textContent ?? '';
     expect(attrText).toContain('待引文就绪');
@@ -768,7 +785,7 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     expect(attrText).not.toContain('NaN');
     expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
 
-    fireEvent.click(within(summary).getByRole('button', { name: '前往排查' }));
+    fireEvent.click(within(crawlAlerts).getByRole('button', { name: '立即排查' }));
     expect(navigateWorkspace).toHaveBeenCalledWith('/studio?articleId=art_brand_home_a_1');
 
     fireEvent.click(within(summary).getByRole('button', { name: '查看点数' }));

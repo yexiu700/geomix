@@ -152,8 +152,8 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 1202,
-  inlineFontSize: 348,
+  inlineStyleBlocks: 1006,
+  inlineFontSize: 290,
 } as const;
 
 const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
@@ -162,15 +162,12 @@ const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/crud/export-action.tsx': 2,
   'components/geo/citation-trace.tsx': 1,
   'components/geo/geo-signal-strip.tsx': 1,
-  'components/home/home-distribution-summary.tsx': 1,
-  'components/home/home-roi-report-modal.tsx': 7,
   'components/reports/public-roi-report-view.tsx': 13,
   'components/studio/studio-delivery-pack.tsx': 1,
   'components/studio/studio-distribution-drawer.tsx': 3,
   'components/studio/studio-editor-canvas.tsx': 2,
   'components/studio/studio-media-popover.tsx': 3,
   'components/studio/studio-publish-retest.tsx': 38,
-  'components/visibility/visibility-near-miss-panel.tsx': 3,
 };
 
 const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
@@ -181,14 +178,7 @@ const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/brands/brand-identity-section.tsx': 4,
   'components/brands/brands-workspace.tsx': 2,
   'components/brands/extension-pairing-panel.tsx': 2,
-  'components/briefs/brief-list-panel.tsx': 2,
-  'components/briefs/geo-brief-drawer.tsx': 4,
   'components/distribution/pr-share-packet-view.tsx': 3,
-  'components/home/home-distribution-summary.tsx': 1,
-  'components/home/home-recent-articles.tsx': 3,
-  'components/home/home-roi-report-modal.tsx': 3,
-  'components/home/home-top-briefs.tsx': 2,
-  'components/home/home-workspace.tsx': 1,
   'components/reports/public-roi-report-view.tsx': 3,
   'components/studio/studio-delivery-pack.tsx': 5,
   'components/studio/studio-distribution-drawer.tsx': 15,
@@ -196,9 +186,6 @@ const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/studio/studio-prewrite-bar.tsx': 2,
   'components/studio/studio-publish-retest.tsx': 11,
   'components/studio/studio-right-pane.tsx': 3,
-  'components/visibility/visibility-near-miss-panel.tsx': 1,
-  'components/visibility/visibility-runs-tab.tsx': 1,
-  'components/visibility/visibility-workspace.tsx': 1,
 };
 
 const ANTD_PRESET_TAG_COLORS = [

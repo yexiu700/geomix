@@ -22,7 +22,7 @@ import type {
   VisibilityRunRecord,
 } from '@geomix/shared';
 import { GEO_MARKET_LABELS, sanitizeEntityTitleSegment } from '@geomix/shared';
-import { Button, Skeleton, Tabs, Tag, Typography } from 'antd';
+import { Button, Skeleton, Tabs } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
@@ -67,8 +67,9 @@ import { BriefListPanel, type BriefStatusFilterValue } from '../briefs/brief-lis
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { EmptyState, KpiStrip, PageHeader } from '../ui';
 import { VisibilityCitationsTab, type RankedCitationRow } from './visibility-citations-tab';
 import {
   VisibilityNearMissPanel,
@@ -1404,12 +1405,7 @@ export function VisibilityWorkspace(): JSX.Element {
         <div className="gm-panel">
           <Skeleton active title={{ width: '28%' }} paragraph={{ rows: 1 }} />
         </div>
-        <div className="gm-overview-kpi-grid">
-          <SignalSkeleton variant="kpi" />
-          <SignalSkeleton variant="kpi" />
-          <SignalSkeleton variant="kpi" />
-          <SignalSkeleton variant="kpi" />
-        </div>
+        <KpiStrip items={[]} loading skeletonCount={4} aria-label="可见度核心指标加载中" />
         <div className="gm-panel">
           <SignalSkeleton variant="block" height={300} />
         </div>
@@ -1437,20 +1433,53 @@ export function VisibilityWorkspace(): JSX.Element {
   if (!activeBrand || !activeBrandMarket) {
     return (
       <section className="gm-vis-page" aria-label="可见度诊断">
-        <div className="gm-panel">
-          <SignalEmpty
-            title="尚未创建品牌资产"
-            description="先用 60 秒完成品牌与竞品配置，即可开启国内 8 引擎与海外 5 引擎 AI 可见度诊断。"
-            actionText={readOnly ? undefined : '立即创建首个品牌'}
-            onAction={readOnly ? undefined : () => consoleCtx?.openCreateBrandModal()}
-          />
-        </div>
+        <EmptyState
+          size="full"
+          title="尚未创建品牌资产"
+          description="先用 60 秒完成品牌与竞品配置，即可开启国内 8 引擎与海外 5 引擎 AI 可见度诊断。"
+          action={
+            readOnly ? undefined : (
+              <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
+                立即创建首个品牌
+              </Button>
+            )
+          }
+        />
       </section>
     );
   }
 
   const missingMarket: GeoMarket | null =
     activeBrand.markets.length < 2 ? (activeMarket === 'CN' ? 'GLOBAL' : 'CN') : null;
+
+  const nearMissPanelNode = (
+    <VisibilityNearMissPanel
+      data={nearMiss}
+      loading={nearMissLoading}
+      error={nearMissError}
+      tierFilter={nearMissTierFilter}
+      onTierFilterChange={handleNearMissTierChange}
+      ownershipFilter={nearMissOwnershipFilter}
+      onOwnershipFilterChange={handleNearMissOwnershipChange}
+      onResetFilters={handleResetNearMissFilters}
+      onRetry={() => {
+        if (!activeBrandId) return;
+        void loadNearMiss(
+          activeBrandId,
+          activeMarket,
+          contextSeqRef.current,
+          days,
+          nearMissFilterRef.current.tier,
+          nearMissFilterRef.current.ownership,
+        );
+      }}
+      readOnly={readOnly}
+      boostingItemId={
+        generatingBriefKey?.startsWith('near-miss:') ? generatingBriefKey.slice(10) : null
+      }
+      onBoostItem={(item) => void handleBoostFromNearMiss(item)}
+    />
+  );
 
   const tabItems = [
     {
@@ -1459,6 +1488,7 @@ export function VisibilityWorkspace(): JSX.Element {
       children: (
         <VisibilityOverviewTab
           activeMarket={activeMarket}
+          days={days}
           overview={overview}
           opportunities={opportunities}
           loading={overviewLoading}
@@ -1526,6 +1556,7 @@ export function VisibilityWorkspace(): JSX.Element {
               }}
             />
           }
+          nearMissSlot={activeTab === 'overview' ? nearMissPanelNode : null}
         />
       ),
     },
@@ -1598,8 +1629,6 @@ export function VisibilityWorkspace(): JSX.Element {
           renderObservationAction={(obs) => (
             <Button
               size="small"
-              type="primary"
-              ghost
               data-testid="answer-brief-btn"
               disabled={readOnly || generatingBriefKey !== null}
               loading={generatingBriefKey === `obs:${obs.id}`}
@@ -1665,7 +1694,6 @@ export function VisibilityWorkspace(): JSX.Element {
           renderFanOutBatchAction={(selectedQueries) => (
             <Button
               size="small"
-              type="primary"
               data-testid="fanout-cluster-btn"
               disabled={readOnly || selectedQueries.length === 0 || generatingBriefKey !== null}
               loading={generatingBriefKey === 'fanout:cluster'}
@@ -1674,34 +1702,7 @@ export function VisibilityWorkspace(): JSX.Element {
               合并生成专题意见（{selectedQueries.length}）
             </Button>
           )}
-          nearMissSlot={
-            <VisibilityNearMissPanel
-              data={nearMiss}
-              loading={nearMissLoading}
-              error={nearMissError}
-              tierFilter={nearMissTierFilter}
-              onTierFilterChange={handleNearMissTierChange}
-              ownershipFilter={nearMissOwnershipFilter}
-              onOwnershipFilterChange={handleNearMissOwnershipChange}
-              onResetFilters={handleResetNearMissFilters}
-              onRetry={() => {
-                if (!activeBrandId) return;
-                void loadNearMiss(
-                  activeBrandId,
-                  activeMarket,
-                  contextSeqRef.current,
-                  days,
-                  nearMissFilterRef.current.tier,
-                  nearMissFilterRef.current.ownership,
-                );
-              }}
-              readOnly={readOnly}
-              boostingItemId={
-                generatingBriefKey?.startsWith('near-miss:') ? generatingBriefKey.slice(10) : null
-              }
-              onBoostItem={(item) => void handleBoostFromNearMiss(item)}
-            />
-          }
+          nearMissSlot={activeTab === 'citations' ? nearMissPanelNode : null}
         />
       ),
     },
@@ -1711,46 +1712,54 @@ export function VisibilityWorkspace(): JSX.Element {
     <section
       className="gm-vis-page"
       aria-label="可见度诊断"
+      data-testid="visibility-workspace"
       data-brand-id={activeBrand.id}
       data-market={activeMarket}
     >
-      {/* Top Context Header Bar */}
-      <div className="gm-panel gm-vis-header">
-        <div className="gm-vis-header-left">
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            可见度诊断
-          </Typography.Title>
-          <Tag color="geekblue">{activeBrandMarket.localBrandName || activeBrand.name}</Tag>
-          <Tag>
-            {GEO_MARKET_LABELS[activeMarket]} · {activeBrandMarket.locale}
-          </Tag>
-        </div>
-
-        <div className="gm-vis-header-right">
-          <div className="gm-vis-day-group" role="group" aria-label="统计时间窗口">
-            {DAY_WINDOWS.map((d) => (
-              <button
-                key={d}
-                type="button"
-                className={`gm-day-pill${days === d ? ' gm-day-pill-active' : ''}`}
-                onClick={() => handleDaysChange(d)}
-              >
-                {d} 天
-              </button>
-            ))}
-          </div>
-
-          {missingMarket && !readOnly ? (
-            <Button size="small" onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}>
-              {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
-            </Button>
-          ) : null}
-
-          <Button type="primary" disabled={readOnly} onClick={handleJumpToRunsCreate}>
+      <PageHeader
+        title="可见度诊断"
+        description="监测品牌在各 AI 引擎中的提及率、推荐顺位、引用阵地与竞品声量对比"
+        tags={
+          <>
+            <span className="gm-vis-context-chip">
+              {activeBrandMarket.localBrandName || activeBrand.name}
+            </span>
+            <span className="gm-vis-context-chip gm-vis-context-chip--muted">
+              {GEO_MARKET_LABELS[activeMarket]} · {activeBrandMarket.locale}
+            </span>
+          </>
+        }
+        extra={
+          <>
+            <div className="gm-vis-day-group" role="group" aria-label="统计时间窗口">
+              {DAY_WINDOWS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`gm-day-pill${days === d ? ' gm-day-pill-active' : ''}`}
+                  onClick={() => handleDaysChange(d)}
+                >
+                  {d} 天
+                </button>
+              ))}
+            </div>
+            {missingMarket && !readOnly ? (
+              <Button size="small" onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}>
+                {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
+              </Button>
+            ) : null}
+          </>
+        }
+        action={
+          <Button
+            type={activeTab === 'runs' ? 'default' : 'primary'}
+            disabled={readOnly}
+            onClick={handleJumpToRunsCreate}
+          >
             发起新监测
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* 3-Tab Workspace */}
       <Tabs
