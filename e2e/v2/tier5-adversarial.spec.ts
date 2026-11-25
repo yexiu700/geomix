@@ -705,7 +705,8 @@ v2Describe(
           await expect(page.getByTestId('global-brand-switcher')).toContainText(brand1.name, {
             timeout: 15_000,
           });
-          await page.getByRole('button', { name: '删除品牌' }).click();
+          await page.getByTestId('brand-actions-trigger').click();
+          await page.getByRole('menuitem', { name: '删除品牌' }).click();
           const modal1 = page.locator('.ant-modal-confirm:visible, .ant-modal:visible').last();
           await expect(modal1).toBeVisible();
           await modal1.getByRole('button', { name: '确认删除' }).click();
@@ -719,7 +720,8 @@ v2Describe(
             .toBe(brand2.id);
 
           // Delete remaining brand2 -> clean 0-brand onboarding & URL strips brandId/market
-          await page.getByRole('button', { name: '删除品牌' }).click();
+          await page.getByTestId('brand-actions-trigger').click();
+          await page.getByRole('menuitem', { name: '删除品牌' }).click();
           const modal2 = page.locator('.ant-modal-confirm:visible, .ant-modal:visible').last();
           await expect(modal2).toBeVisible();
           await modal2.getByRole('button', { name: '确认删除' }).click();
