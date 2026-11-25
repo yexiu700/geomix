@@ -62,6 +62,28 @@ function makeEmptyCompetitorRow(): CompetitorDraftRow {
   return { key: `qc-comp-${rowSeq}`, name: '', domainsText: '' };
 }
 
+function RemoveRowIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2.5 4.25h11" />
+      <path d="M6 2.5h4" />
+      <path d="M4.25 4.25l.6 8.5a1 1 0 0 0 1 .93h4.3a1 1 0 0 0 1-.93l.6-8.5" />
+      <path d="M6.75 7v4" />
+      <path d="M9.25 7v4" />
+    </svg>
+  );
+}
+
 export function BrandQuickCreateModal({
   open,
   readOnly = false,
@@ -499,22 +521,9 @@ export function BrandQuickCreateModal({
               {hasGlobalSelected ? (
                 <div
                   data-testid="brand-quick-create-global-fields"
-                  style={{
-                    padding: 12,
-                    marginBottom: 16,
-                    borderRadius: 'var(--gm-radius-sm)',
-                    border: '1px solid var(--gm-line-2)',
-                    background: 'var(--gm-bg-elevated)',
-                  }}
+                  className="gm-brand-qc-global-box"
                 >
-                  <div
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 600,
-                      color: 'var(--gm-fg-1)',
-                      marginBottom: 8,
-                    }}
-                  >
+                  <div className="gm-brand-qc-global-title">
                     🌐 海外市场本地化身份（选填 · 建议填写纯英文避免英文种子问句与 Schema 混入中文）
                   </div>
                   <Form.Item
@@ -523,7 +532,7 @@ export function BrandQuickCreateModal({
                     rules={[
                       { max: BRAND_NAME_MAX, message: `品牌名称不超过 ${BRAND_NAME_MAX} 字` },
                     ]}
-                    style={{ marginBottom: 10 }}
+                    className="gm-brand-qc-item-sm"
                   >
                     <Input
                       aria-label="海外英文品牌名"
@@ -541,7 +550,7 @@ export function BrandQuickCreateModal({
                         message: `所属品类不超过 ${BRAND_CATEGORY_MAX} 字`,
                       },
                     ]}
-                    style={{ marginBottom: 10 }}
+                    className="gm-brand-qc-item-sm"
                   >
                     <Input
                       aria-label="海外英文品类"
@@ -553,7 +562,7 @@ export function BrandQuickCreateModal({
                   <Form.Item
                     label="海外官网域名（选填）"
                     name="globalOwnedDomainsText"
-                    style={{ marginBottom: 0 }}
+                    className="gm-brand-qc-item-none"
                   >
                     <Input
                       aria-label="海外官网域名"
@@ -599,17 +608,18 @@ export function BrandQuickCreateModal({
                           )
                         }
                       />
-                      <Button
-                        size="small"
-                        danger
-                        autoInsertSpace={false}
+                      <button
+                        type="button"
+                        className="gm-brand-row-remove-btn"
+                        aria-label={`移除竞品 ${row.name.trim() || idx + 1}`}
+                        title="移除竞品"
                         disabled={readOnly || submitting}
                         onClick={() =>
                           setCompetitorRows((prev) => prev.filter((item) => item.key !== row.key))
                         }
                       >
-                        移除
-                      </Button>
+                        <RemoveRowIcon />
+                      </button>
                     </div>
                   ))}
                   <Button
@@ -632,7 +642,7 @@ export function BrandQuickCreateModal({
               </Form.Item>
 
               {error ? (
-                <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />
+                <Alert type="error" showIcon message={error} className="gm-brand-inline-alert" />
               ) : null}
 
               <div className="gm-brand-modal-footer">
@@ -651,7 +661,7 @@ export function BrandQuickCreateModal({
                 showIcon
                 message={`品牌「${createdBrand?.name ?? ''}」已创建！`}
                 description="贴入官网链接或上传产品资料（TXT / MD / PDF），AI 自动帮您提炼 4 块结构化品牌事实卡（免费，0 点）。"
-                style={{ marginBottom: 12 }}
+                className="gm-brand-inline-alert"
               />
 
               <div className="gm-brand-mode-tabs" role="tablist" aria-label="资料来源方式">
@@ -717,10 +727,9 @@ export function BrandQuickCreateModal({
                 </div>
               )}
 
-              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+              <div className="gm-brand-qc-extract-action">
                 <Button
-                  type="primary"
-                  ghost
+                  type={drafts ? 'default' : 'primary'}
                   loading={extracting}
                   disabled={savingFacts}
                   onClick={() => void handleRunExtract()}
@@ -776,7 +785,7 @@ export function BrandQuickCreateModal({
                   type="error"
                   showIcon
                   message={extractError}
-                  style={{ marginTop: 10, marginBottom: 4 }}
+                  className="gm-brand-mt-sm gm-brand-mb-xs"
                 />
               ) : null}
 
@@ -810,9 +819,9 @@ export function BrandQuickCreateModal({
           </Button>,
         ]}
       >
-        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        <Space direction="vertical" size={10} className="gm-brand-terms-list">
           {BRAND_TRUTH_AGREEMENT_PARAGRAPHS.map((para, idx) => (
-            <p key={idx} style={{ margin: 0, color: 'var(--gm-fg-2)', lineHeight: 1.7 }}>
+            <p key={idx} className="gm-brand-terms-para">
               {para}
             </p>
           ))}

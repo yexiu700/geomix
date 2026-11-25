@@ -17,7 +17,7 @@ import {
   type SupportedLocale,
   type UpdateChannelConnectionInput,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Select, Space, Switch, Tabs, Tag } from 'antd';
+import { Alert, Button, Input, Modal, Select, Space, Switch, Tabs } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -32,7 +32,8 @@ import { GatewayApiError } from '../../lib/envelope';
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { EmptyState, FormField, Section, StatusBadge, type StatusTone } from '../ui';
 
 export type BrandChannelConnectionsProps = {
   brandId: string;
@@ -244,12 +245,12 @@ function parseWebflowFieldsFromTargets(
 }
 
 function connectionStatusMeta(status: ChannelConnectionDto['status']): {
-  tone: 'cited' | 'danger' | 'neutral';
+  tone: StatusTone;
   label: string;
 } {
   switch (status) {
     case 'ACTIVE':
-      return { tone: 'cited', label: '已连接' };
+      return { tone: 'success', label: '已连接' };
     case 'INVALID':
       return { tone: 'danger', label: '连接异常' };
     case 'DISABLED':
@@ -1186,12 +1187,11 @@ export function BrandChannelConnections({
         options.unshift({ value, label: `${value}（当前配置）` });
       }
       return (
-        <div key={fieldKey} style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>{label}</div>
+        <FormField key={fieldKey} label={label}>
           <Select
             allowClear
             showSearch
-            style={{ width: '100%' }}
+            className="gm-brand-w-full"
             aria-label={label}
             placeholder={`默认：${defaultHint}`}
             value={value || undefined}
@@ -1200,19 +1200,18 @@ export function BrandChannelConnections({
               setFieldMap((prev) => ({ ...prev, [fieldKey]: typeof next === 'string' ? next : '' }))
             }
           />
-        </div>
+        </FormField>
       );
     }
     return (
-      <div key={fieldKey} style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>{label}</div>
+      <FormField key={fieldKey} label={label}>
         <Input
           aria-label={label}
           placeholder={`默认：${defaultHint}`}
           value={value}
           onChange={(e) => setFieldMap((prev) => ({ ...prev, [fieldKey]: e.target.value }))}
         />
-      </div>
+      </FormField>
     );
   };
 
@@ -1247,49 +1246,39 @@ export function BrandChannelConnections({
     provider === 'SHOPIFY' && !editingConn && shopifyAuthMode === 'oauth';
 
   return (
-    <section
+    <Section
       id="brand-section-connections"
-      className="gm-brand-section"
+      variant="plain"
       aria-label="发布渠道连接"
       data-testid="brand-channel-connections"
-    >
-      <div
-        className="gm-brand-section-head"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 12,
-        }}
-      >
-        <div style={{ minWidth: 0, flex: '1 1 320px' }}>
-          <div className="gm-brand-section-title-row">
-            <h4 className="gm-brand-section-title">4. 自有站点与发布渠道连接</h4>
-            <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {activeMarket === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[activeMarket]}
-            </Tag>
-          </div>
-          <p className="gm-brand-section-desc">
-            {activeMarket === 'CN'
-              ? '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持微信公众号草稿箱（不自动群发）、WordPress、Webhook 等官方 L1 渠道连接。'
-              : '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持 Shopify（OAuth / Custom Token）、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 与通用签名 Webhook。'}
-          </p>
-        </div>
-
-        {marketEnabled ? (
+      title={
+        <span className="gm-brand-section-title-row">
+          <span>自有站点与发布渠道连接</span>
+          <StatusBadge
+            tone="neutral"
+            label={`${activeMarket === 'CN' ? '🇨🇳' : '🌐'} ${GEO_MARKET_LABELS[activeMarket]}`}
+          />
+        </span>
+      }
+      description={
+        activeMarket === 'CN'
+          ? '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持微信公众号草稿箱（不自动群发）、WordPress、Webhook 等官方 L1 渠道连接。'
+          : '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持 Shopify（OAuth / Custom Token）、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 与通用签名 Webhook。'
+      }
+      actions={
+        marketEnabled ? (
           <Button
-            type="primary"
+            type="default"
             data-testid="add-channel-connection-btn"
             disabled={readOnly}
-            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            className="gm-brand-btn-nowrap"
             onClick={openCreateModal}
           >
             + 添加渠道连接
           </Button>
-        ) : null}
-      </div>
-
+        ) : undefined
+      }
+    >
       {!marketEnabled ? (
         <Alert
           type="info"
@@ -1299,9 +1288,9 @@ export function BrandChannelConnections({
           action={
             <Button
               size="small"
-              type="primary"
+              type="default"
               disabled={readOnly}
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-brand-btn-nowrap"
               onClick={onEnableMarket}
             >
               立即开启
@@ -1313,24 +1302,24 @@ export function BrandChannelConnections({
       ) : error ? (
         <SignalError message={error} onRetry={() => void loadConnections()} />
       ) : connections.length === 0 ? (
-        <SignalEmpty
+        <EmptyState
+          size="compact"
           title="当前市场尚未配置自有站点连接"
           description={
             activeMarket === 'CN'
               ? '绑定微信公众号草稿箱、WordPress 或自定义 Webhook 后，可在写作台一键推送草稿并跟踪 AI 收录效果。'
               : '绑定 Shopify、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 或自定义 Webhook 后，可在写作台一键推送草稿、注入 JSON-LD 并触发 IndexNow 收录通知。'
           }
-          actionText={readOnly ? undefined : '添加渠道连接'}
-          onAction={readOnly ? undefined : openCreateModal}
+          action={
+            readOnly ? undefined : (
+              <Button size="small" onClick={openCreateModal}>
+                添加渠道连接
+              </Button>
+            )
+          }
         />
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(360px, 100%), 1fr))',
-            gap: 12,
-          }}
-        >
+        <div className="gm-brand-conn-grid">
           {connections.map((conn) => {
             const statusMeta = connectionStatusMeta(conn.status);
             const cfg = conn.configJson ?? {};
@@ -1371,114 +1360,58 @@ export function BrandChannelConnections({
             return (
               <div
                 key={conn.id}
-                className="gm-brand-subcard"
+                className="gm-brand-conn-card"
                 data-testid={`channel-connection-card-${conn.id}`}
-                style={{
-                  minWidth: 0,
-                  maxWidth: '100%',
-                  boxSizing: 'border-box',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ minWidth: 0, flex: '1 1 180px' }}>
-                    <div
-                      style={{
-                        fontSize: 15,
-                        fontWeight: 600,
-                        color: 'var(--gm-fg-1)',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
-                      {conn.displayName}
-                    </div>
-                    <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      <Tag
-                        color="geekblue"
-                        style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                      >
+                <div className="gm-brand-conn-card-head">
+                  <div className="gm-brand-conn-card-identity">
+                    <div className="gm-brand-conn-title">{conn.displayName}</div>
+                    <div className="gm-brand-conn-chips">
+                      <span className="gm-brand-meta-chip">
                         {CHANNEL_PROVIDER_LABELS[conn.provider] ?? conn.provider}
-                      </Tag>
+                      </span>
                       {conn.provider === 'SHOPIFY' ? (
-                        <Tag
-                          color={conn.authType === 'OAUTH' ? 'green' : 'default'}
-                          style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                        >
+                        <span className="gm-brand-meta-chip">
                           {conn.authType === 'OAUTH' ? 'Shopify OAuth' : 'Custom App Token'}
-                        </Tag>
+                        </span>
                       ) : null}
                       {conn.targetLocale && localeMeta ? (
-                        <Tag
-                          color="purple"
+                        <span
+                          className="gm-brand-meta-chip"
                           data-testid={`channel-connection-locale-${conn.id}`}
-                          style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
                         >
                           {conn.targetLocale} · {localeMeta.nativeLabel}
-                        </Tag>
+                        </span>
                       ) : null}
                     </div>
                   </div>
-                  <SignalPill tone={statusMeta.tone}>{statusMeta.label}</SignalPill>
+                  <StatusBadge
+                    status={conn.status}
+                    tone={statusMeta.tone}
+                    label={statusMeta.label}
+                  />
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
-                    fontSize: 12,
-                    color: 'var(--gm-fg-2)',
-                    minWidth: 0,
-                  }}
-                >
-                  <div
-                    className="gm-mono"
-                    style={{
-                      color: 'var(--gm-fg-1)',
-                      overflowWrap: 'anywhere',
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    {conn.siteBaseUrl}
-                  </div>
+                <div className="gm-brand-conn-details">
+                  <div className="gm-mono gm-brand-conn-url">{conn.siteBaseUrl}</div>
                   {conn.externalShopDomain ? (
-                    <div style={{ color: 'var(--gm-fg-3)', overflowWrap: 'anywhere' }}>
+                    <div className="gm-brand-conn-subline">
                       绑定店铺：<span className="gm-mono">{conn.externalShopDomain}</span>
                     </div>
                   ) : null}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                    <span style={{ color: 'var(--gm-fg-3)' }}>凭据指纹：</span>
-                    <span
-                      className="gm-mono"
-                      style={{
-                        color: 'var(--gm-fg-2)',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
-                    >
+                  <div className="gm-brand-conn-cred-row">
+                    <span className="gm-brand-conn-label">凭据指纹：</span>
+                    <span className="gm-mono gm-brand-conn-cred-val">
                       {conn.credentialHint || '已加密存储'}
                     </span>
                   </div>
-                  <div style={{ color: 'var(--gm-fg-3)' }}>
+                  <div className="gm-brand-conn-label">
                     最近测试：{formatShanghaiDateTime(conn.lastTestedAt, { fallback: '尚未测试' })}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  <Tag
-                    color={isWechatConn ? 'gold' : undefined}
-                    style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}
-                  >
+                <div className="gm-brand-conn-chips">
+                  <span className="gm-brand-meta-chip">
                     {isWechatConn
                       ? '仅推草稿箱（不自动群发）'
                       : isDraftDefault
@@ -1488,76 +1421,38 @@ export function BrandChannelConnections({
                         : conn.provider === 'GITHUB_MDX'
                           ? '直接提交分支'
                           : '直接上线'}
-                  </Tag>
+                  </span>
                   {!isWechatConn ? (
-                    <Tag style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    <span className="gm-brand-meta-chip">
                       {hasInlineJsonLd ? '内联 JSON-LD' : '关闭内联 JSON-LD'}
-                    </Tag>
+                    </span>
                   ) : null}
                   {hasIndexNow && !isWechatConn ? (
-                    <Tag color="green" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                      IndexNow 已启用
-                    </Tag>
+                    <span className="gm-brand-meta-chip">IndexNow 已启用</span>
                   ) : null}
                   {conn.provider === 'SHOPIFY' && shopifyTarget ? (
-                    <Tag
-                      color="blue"
-                      style={{
-                        margin: 0,
-                        maxWidth: '100%',
-                        whiteSpace: 'normal',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
-                    >
+                    <span className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
                       Blog: {shopifyTarget}
-                    </Tag>
+                    </span>
                   ) : null}
                   {conn.provider === 'WORDPRESS' && wpCatCount > 0 ? (
-                    <Tag color="blue" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                      已选 {wpCatCount} 个分类
-                    </Tag>
+                    <span className="gm-brand-meta-chip">已选 {wpCatCount} 个分类</span>
                   ) : null}
                   {conn.provider === 'WEBFLOW' && webflowTarget ? (
-                    <Tag
-                      color="blue"
-                      style={{
-                        margin: 0,
-                        maxWidth: '100%',
-                        whiteSpace: 'normal',
-                        overflowWrap: 'anywhere',
-                        wordBreak: 'break-word',
-                      }}
-                    >
+                    <span className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
                       集合: {webflowTarget}
-                    </Tag>
+                    </span>
                   ) : null}
                   {conn.provider === 'HASHNODE' && hashnodePubId ? (
-                    <Tag
-                      color="blue"
-                      style={{
-                        margin: 0,
-                        maxWidth: '100%',
-                        whiteSpace: 'normal',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
+                    <span className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
                       Publication: {hashnodePubId}
-                    </Tag>
+                    </span>
                   ) : null}
                   {conn.provider === 'GITHUB_MDX' && githubRepoSlug ? (
-                    <Tag
-                      color="blue"
-                      style={{
-                        margin: 0,
-                        maxWidth: '100%',
-                        whiteSpace: 'normal',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
+                    <span className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
                       Repo: {githubRepoSlug}
                       {githubBranch ? `@${githubBranch}` : ''}
-                    </Tag>
+                    </span>
                   ) : null}
                 </div>
 
@@ -1568,7 +1463,7 @@ export function BrandChannelConnections({
                     data-testid={`wechat-card-draft-notice-${conn.id}`}
                     message="仅推送至公众号草稿箱，绝不自动群发"
                     description={WECHAT_IP_WHITELIST_NOTICE}
-                    style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                    className="gm-brand-alert-wrap"
                   />
                 ) : null}
 
@@ -1581,9 +1476,9 @@ export function BrandChannelConnections({
                     action={
                       <Button
                         size="small"
-                        type="primary"
+                        type="default"
                         disabled={readOnly}
-                        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                        className="gm-brand-btn-nowrap"
                         onClick={() => openEditModal(conn, 'oauth')}
                       >
                         重新授权
@@ -1602,25 +1497,17 @@ export function BrandChannelConnections({
                         ? '处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」，添加 GeoMix 服务器出口 IP 后重新测试连接。'
                         : undefined
                     }
-                    style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+                    className="gm-brand-alert-wrap"
                   />
                 ) : null}
 
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: 8,
-                    marginTop: 'auto',
-                    paddingTop: 4,
-                  }}
-                >
+                <div className="gm-brand-conn-actions">
                   <Button
                     size="small"
                     data-testid={`channel-connection-test-btn-${conn.id}`}
                     loading={testingCardId === conn.id}
                     disabled={readOnly}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-brand-btn-nowrap"
                     onClick={() => void handleTestCard(conn)}
                   >
                     测试连接
@@ -1630,18 +1517,19 @@ export function BrandChannelConnections({
                     autoInsertSpace={false}
                     data-testid={`channel-connection-edit-btn-${conn.id}`}
                     disabled={readOnly}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-brand-btn-nowrap"
                     onClick={() => openEditModal(conn)}
                   >
                     编辑
                   </Button>
                   <Button
                     size="small"
+                    type="text"
                     danger
                     autoInsertSpace={false}
                     data-testid={`channel-connection-delete-btn-${conn.id}`}
                     disabled={readOnly}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-brand-btn-nowrap"
                     onClick={() => handleDeleteCard(conn)}
                   >
                     删除
@@ -1662,17 +1550,10 @@ export function BrandChannelConnections({
         maskClosable={!submitting && !modalTesting && !shopifyOAuthStarting}
         onCancel={resetModalState}
         footer={
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              justifyContent: 'flex-end',
-              gap: 8,
-            }}
-          >
+          <div className="gm-brand-modal-footer-wrap">
             <Button
               disabled={submitting || modalTesting || shopifyOAuthStarting}
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-brand-btn-nowrap"
               onClick={resetModalState}
             >
               取消
@@ -1682,7 +1563,7 @@ export function BrandChannelConnections({
                 data-testid="channel-connection-modal-test-btn"
                 loading={modalTesting}
                 disabled={readOnly || submitting}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-brand-btn-nowrap"
                 onClick={() => void runModalTest(editingConn.id, provider)}
               >
                 测试连接并拉取目标
@@ -1692,7 +1573,7 @@ export function BrandChannelConnections({
                 data-testid="channel-connection-save-and-test-btn"
                 loading={submitting || modalTesting}
                 disabled={readOnly}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-brand-btn-nowrap"
                 onClick={() => void handleModalSubmit({ testAfterCreate: true })}
               >
                 保存并测试连接
@@ -1704,7 +1585,7 @@ export function BrandChannelConnections({
                 data-testid="channel-connection-submit-btn"
                 loading={submitting}
                 disabled={readOnly || modalTesting}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                className="gm-brand-btn-nowrap"
                 onClick={() => void handleModalSubmit()}
               >
                 保存连接
@@ -1713,24 +1594,9 @@ export function BrandChannelConnections({
           </div>
         }
       >
-        <div
-          data-testid="channel-connection-modal"
-          style={{
-            minWidth: 0,
-            maxWidth: '100%',
-            boxSizing: 'border-box',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-          }}
-        >
+        <div data-testid="channel-connection-modal" className="gm-brand-conn-modal-body">
           {modalError ? (
-            <Alert
-              type="error"
-              showIcon
-              message={modalError}
-              style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
-            />
+            <Alert type="error" showIcon message={modalError} className="gm-brand-alert-wrap" />
           ) : null}
 
           {modalTestResult ? (
@@ -1745,18 +1611,15 @@ export function BrandChannelConnections({
                   ? '处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」添加出口 IP 后再试。'
                   : undefined
               }
-              style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
+              className="gm-brand-alert-wrap"
             />
           ) : null}
 
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-              渠道类型（所属市场：{GEO_MARKET_LABELS[activeMarket]}）
-            </div>
+          <FormField label={`渠道类型（所属市场：${GEO_MARKET_LABELS[activeMarket]}）`}>
             <Select<L1ChannelProvider>
               data-testid="channel-provider-select"
               aria-label="渠道类型"
-              style={{ width: '100%' }}
+              className="gm-brand-w-full"
               listHeight={360}
               disabled={Boolean(editingConn)}
               value={provider}
@@ -1803,7 +1666,7 @@ export function BrandChannelConnections({
                 setRemoteTargets([]);
               }}
             />
-          </div>
+          </FormField>
 
           {provider === 'SHOPIFY' ? (
             <Tabs
@@ -1824,7 +1687,7 @@ export function BrandChannelConnections({
                   children: (
                     <div
                       data-testid="shopify-oauth-tab-panel"
-                      style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}
+                      className="gm-brand-conn-oauth-panel"
                     >
                       <Alert
                         type="info"
@@ -1843,9 +1706,9 @@ export function BrandChannelConnections({
                           action={
                             <Button
                               size="small"
-                              type="primary"
+                              type="default"
                               data-testid="shopify-switch-to-custom-btn"
-                              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                              className="gm-brand-btn-nowrap"
                               onClick={() => {
                                 setShopifyAuthMode('custom');
                                 setShopifyOAuthUnconfiguredMsg(null);
@@ -1858,10 +1721,7 @@ export function BrandChannelConnections({
                         />
                       ) : null}
 
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                          Shopify 店铺域名（*.myshopify.com）
-                        </div>
+                      <FormField label="Shopify 店铺域名（*.myshopify.com）">
                         <Input
                           aria-label="Shopify 店铺域名"
                           data-testid="shopify-oauth-shop-input"
@@ -1870,14 +1730,11 @@ export function BrandChannelConnections({
                           disabled={readOnly || shopifyOAuthStarting}
                           onChange={(e) => setShopifyOAuthShop(e.target.value)}
                         />
-                      </div>
+                      </FormField>
 
                       {!editingConn ? (
                         <>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                              连接名称（可选，默认使用店铺域名）
-                            </div>
+                          <FormField label="连接名称（可选，默认使用店铺域名）">
                             <Input
                               aria-label="OAuth 连接名称"
                               maxLength={80}
@@ -1886,33 +1743,30 @@ export function BrandChannelConnections({
                               disabled={readOnly || shopifyOAuthStarting}
                               onChange={(e) => setDisplayName(e.target.value)}
                             />
-                          </div>
+                          </FormField>
 
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                              目标语种（可选）
-                            </div>
+                          <FormField label="目标语种（可选）">
                             <Select<SupportedLocale>
                               allowClear
                               aria-label="OAuth 目标语种"
-                              style={{ width: '100%' }}
+                              className="gm-brand-w-full"
                               placeholder="不限定语种（通用）"
                               disabled={readOnly || shopifyOAuthStarting}
                               value={targetLocale ?? undefined}
                               options={marketLocaleOptions}
                               onChange={(next) => setTargetLocale(next ?? null)}
                             />
-                          </div>
+                          </FormField>
                         </>
                       ) : null}
 
                       <div>
                         <Button
-                          type="primary"
+                          type={editingConn ? 'default' : 'primary'}
                           data-testid="shopify-oauth-start-btn"
                           loading={shopifyOAuthStarting}
                           disabled={readOnly}
-                          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                          className="gm-brand-btn-nowrap"
                           onClick={() => void handleStartShopifyOAuth()}
                         >
                           {editingConn ? '重新发起 Shopify OAuth 授权' : '前往 Shopify 一键授权'}
@@ -1927,7 +1781,7 @@ export function BrandChannelConnections({
                   children: (
                     <div
                       data-testid="shopify-custom-tab-panel"
-                      style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginBottom: 4 }}
+                      className="gm-brand-conn-custom-note"
                     >
                       使用 Shopify Admin Custom App 手动填入 Access Token 接入；适合自托管或尚未配置
                       OAuth Client 的环境。
@@ -1940,10 +1794,7 @@ export function BrandChannelConnections({
 
           {!isShopifyCreateOAuthTab ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  连接名称
-                </div>
+              <FormField label="连接名称">
                 <Input
                   aria-label="连接名称"
                   maxLength={80}
@@ -1955,38 +1806,29 @@ export function BrandChannelConnections({
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
-              </div>
+              </FormField>
 
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  站点地址
-                </div>
+              <FormField label="站点地址" help={providerSiteHint(provider)}>
                 <Input
                   aria-label="站点地址"
                   placeholder={providerSitePlaceholder(provider)}
                   value={siteBaseUrl}
                   onChange={(e) => setSiteBaseUrl(e.target.value)}
                 />
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-3)', marginTop: 4 }}>
-                  {providerSiteHint(provider)}
-                </div>
-              </div>
+              </FormField>
 
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  目标语种（可选，留空表示通用连接）
-                </div>
+              <FormField label="目标语种（可选，留空表示通用连接）">
                 <Select<SupportedLocale>
                   allowClear
                   aria-label="目标语种"
                   data-testid="channel-connection-locale-select"
-                  style={{ width: '100%' }}
+                  className="gm-brand-w-full"
                   placeholder="不限定语种（通用）"
                   value={targetLocale ?? undefined}
                   options={marketLocaleOptions}
                   onChange={(next) => setTargetLocale(next ?? null)}
                 />
-              </div>
+              </FormField>
             </>
           ) : null}
 
@@ -1994,10 +1836,7 @@ export function BrandChannelConnections({
           {provider === 'SHOPIFY' && !isShopifyCreateOAuthTab ? (
             <>
               {shopifyAuthMode === 'custom' ? (
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    Shopify Admin API Access Token
-                  </div>
+                <FormField label="Shopify Admin API Access Token">
                   <Input.Password
                     aria-label="Shopify Access Token"
                     autoComplete="off"
@@ -2007,60 +1846,50 @@ export function BrandChannelConnections({
                     value={shopifyAccessToken}
                     onChange={(e) => setShopifyAccessToken(e.target.value)}
                   />
-                </div>
+                </FormField>
               ) : null}
 
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  目标 Blog（测试连接后自动拉取列表，也可手动填写 Blog ID）
-                </div>
-                {remoteTargets.length > 0 ? (
-                  <Select
-                    allowClear
-                    aria-label="Shopify 目标 Blog 选择"
-                    style={{ width: '100%', marginBottom: 8 }}
-                    placeholder="选择要推送的 Shopify Blog"
-                    value={blogId || undefined}
-                    options={remoteTargets.map((t) => ({
-                      value: t.id,
-                      label: t.handle ? `${t.name} (${t.handle})` : t.name,
-                    }))}
-                    onChange={(next) => {
-                      const nextId = typeof next === 'string' ? next : '';
+              <FormField label="目标 Blog（测试连接后自动拉取列表，也可手动填写 Blog ID）">
+                <div className="gm-brand-field-stack">
+                  {remoteTargets.length > 0 ? (
+                    <Select
+                      allowClear
+                      aria-label="Shopify 目标 Blog 选择"
+                      className="gm-brand-w-full"
+                      placeholder="选择要推送的 Shopify Blog"
+                      value={blogId || undefined}
+                      options={remoteTargets.map((t) => ({
+                        value: t.id,
+                        label: t.handle ? `${t.name} (${t.handle})` : t.name,
+                      }))}
+                      onChange={(next) => {
+                        const nextId = typeof next === 'string' ? next : '';
+                        setBlogId(nextId);
+                        const matched = remoteTargets.find((t) => t.id === nextId);
+                        setBlogHandle(matched?.handle ?? '');
+                      }}
+                    />
+                  ) : null}
+                  <Input
+                    aria-label="Shopify Blog ID"
+                    placeholder="可选，例如 gid://shopify/Blog/123456"
+                    value={blogId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
                       setBlogId(nextId);
-                      const matched = remoteTargets.find((t) => t.id === nextId);
+                      const matched = remoteTargets.find((t) => t.id === nextId.trim());
                       setBlogHandle(matched?.handle ?? '');
                     }}
                   />
-                ) : null}
-                <Input
-                  aria-label="Shopify Blog ID"
-                  placeholder="可选，例如 gid://shopify/Blog/123456"
-                  value={blogId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setBlogId(nextId);
-                    const matched = remoteTargets.find((t) => t.id === nextId.trim());
-                    setBlogHandle(matched?.handle ?? '');
-                  }}
-                />
-              </div>
+                </div>
+              </FormField>
             </>
           ) : null}
 
           {provider === 'WORDPRESS' ? (
             <>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    WordPress 用户名
-                  </div>
+              <div className="gm-brand-form-grid-2">
+                <FormField label="WordPress 用户名">
                   <Input
                     aria-label="WordPress 用户名"
                     autoComplete="off"
@@ -2068,11 +1897,8 @@ export function BrandChannelConnections({
                     value={wpUsername}
                     onChange={(e) => setWpUsername(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    Application Password
-                  </div>
+                </FormField>
+                <FormField label="Application Password">
                   <Input.Password
                     aria-label="WordPress Application Password"
                     autoComplete="off"
@@ -2080,18 +1906,15 @@ export function BrandChannelConnections({
                     value={wpAppPassword}
                     onChange={(e) => setWpAppPassword(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
 
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  默认文章分类（测试连接后自动拉取 WordPress 分类）
-                </div>
+              <FormField label="默认文章分类（测试连接后自动拉取 WordPress 分类）">
                 <Select
                   mode="multiple"
                   allowClear
                   aria-label="WordPress 默认分类"
-                  style={{ width: '100%' }}
+                  className="gm-brand-w-full"
                   placeholder="测试连接后选择分类"
                   value={categoryIds.map(String)}
                   options={[
@@ -2110,16 +1933,13 @@ export function BrandChannelConnections({
                     setCategoryIds([...new Set(numeric)]);
                   }}
                 />
-              </div>
+              </FormField>
             </>
           ) : null}
 
           {provider === 'WEBFLOW' ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Webflow Data API v2 Token
-                </div>
+              <FormField label="Webflow Data API v2 Token">
                 <Input.Password
                   aria-label="Webflow API Token"
                   autoComplete="off"
@@ -2127,115 +1947,89 @@ export function BrandChannelConnections({
                   value={webflowApiToken}
                   onChange={(e) => setWebflowApiToken(e.target.value)}
                 />
+              </FormField>
+
+              <div className="gm-brand-form-grid-2">
+                <FormField label="Webflow Site ID">
+                  <div className="gm-brand-field-stack">
+                    {webflowSiteTargets.length > 0 ? (
+                      <Select
+                        allowClear
+                        aria-label="Webflow Site 选择"
+                        className="gm-brand-w-full"
+                        placeholder="选择 Webflow 站点"
+                        value={siteId || undefined}
+                        options={webflowSiteTargets.map((s) => ({
+                          value: s.id,
+                          label: s.handle ? `${s.name} (${s.handle})` : s.name,
+                        }))}
+                        onChange={(next) => {
+                          const nextSiteId = typeof next === 'string' ? next : '';
+                          setSiteId(nextSiteId);
+                          setCollectionId('');
+                          setCollectionSlug('');
+                          if (editingConn && nextSiteId) {
+                            void runModalTest(editingConn.id, 'WEBFLOW', {
+                              siteId: nextSiteId,
+                              collectionId: '',
+                            });
+                          }
+                        }}
+                      />
+                    ) : null}
+                    <Input
+                      aria-label="Webflow Site ID"
+                      placeholder="测试连接后自动获取，或手动填写"
+                      value={siteId}
+                      onChange={(e) => setSiteId(e.target.value)}
+                    />
+                  </div>
+                </FormField>
+
+                <FormField label="Webflow Collection ID">
+                  <div className="gm-brand-field-stack">
+                    {webflowCollectionTargets.length > 0 ? (
+                      <Select
+                        allowClear
+                        aria-label="Webflow Collection 选择"
+                        className="gm-brand-w-full"
+                        placeholder="选择目标 CMS Collection"
+                        value={collectionId || undefined}
+                        options={webflowCollectionTargets.map((c) => ({
+                          value: c.id,
+                          label: c.handle ? `${c.name} (${c.handle})` : c.name,
+                        }))}
+                        onChange={(next) => {
+                          const nextColId = typeof next === 'string' ? next : '';
+                          setCollectionId(nextColId);
+                          const matched = webflowCollectionTargets.find((c) => c.id === nextColId);
+                          setCollectionSlug(
+                            typeof matched?.meta?.collectionSlug === 'string'
+                              ? matched.meta.collectionSlug
+                              : (matched?.handle ?? ''),
+                          );
+                          if (editingConn && nextColId) {
+                            void runModalTest(editingConn.id, 'WEBFLOW', {
+                              siteId: siteId || undefined,
+                              collectionId: nextColId,
+                            });
+                          }
+                        }}
+                      />
+                    ) : null}
+                    <Input
+                      aria-label="Webflow Collection ID"
+                      placeholder="发布时必填，测试连接后可下拉选择"
+                      value={collectionId}
+                      onChange={(e) => setCollectionId(e.target.value)}
+                    />
+                  </div>
+                </FormField>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    Webflow Site ID
-                  </div>
-                  {webflowSiteTargets.length > 0 ? (
-                    <Select
-                      allowClear
-                      aria-label="Webflow Site 选择"
-                      style={{ width: '100%', marginBottom: 6 }}
-                      placeholder="选择 Webflow 站点"
-                      value={siteId || undefined}
-                      options={webflowSiteTargets.map((s) => ({
-                        value: s.id,
-                        label: s.handle ? `${s.name} (${s.handle})` : s.name,
-                      }))}
-                      onChange={(next) => {
-                        const nextSiteId = typeof next === 'string' ? next : '';
-                        setSiteId(nextSiteId);
-                        setCollectionId('');
-                        setCollectionSlug('');
-                        if (editingConn && nextSiteId) {
-                          void runModalTest(editingConn.id, 'WEBFLOW', {
-                            siteId: nextSiteId,
-                            collectionId: '',
-                          });
-                        }
-                      }}
-                    />
-                  ) : null}
-                  <Input
-                    aria-label="Webflow Site ID"
-                    placeholder="测试连接后自动获取，或手动填写"
-                    value={siteId}
-                    onChange={(e) => setSiteId(e.target.value)}
-                  />
-                </div>
-
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    Webflow Collection ID
-                  </div>
-                  {webflowCollectionTargets.length > 0 ? (
-                    <Select
-                      allowClear
-                      aria-label="Webflow Collection 选择"
-                      style={{ width: '100%', marginBottom: 6 }}
-                      placeholder="选择目标 CMS Collection"
-                      value={collectionId || undefined}
-                      options={webflowCollectionTargets.map((c) => ({
-                        value: c.id,
-                        label: c.handle ? `${c.name} (${c.handle})` : c.name,
-                      }))}
-                      onChange={(next) => {
-                        const nextColId = typeof next === 'string' ? next : '';
-                        setCollectionId(nextColId);
-                        const matched = webflowCollectionTargets.find((c) => c.id === nextColId);
-                        setCollectionSlug(
-                          typeof matched?.meta?.collectionSlug === 'string'
-                            ? matched.meta.collectionSlug
-                            : (matched?.handle ?? ''),
-                        );
-                        if (editingConn && nextColId) {
-                          void runModalTest(editingConn.id, 'WEBFLOW', {
-                            siteId: siteId || undefined,
-                            collectionId: nextColId,
-                          });
-                        }
-                      }}
-                    />
-                  ) : null}
-                  <Input
-                    aria-label="Webflow Collection ID"
-                    placeholder="发布时必填，测试连接后可下拉选择"
-                    value={collectionId}
-                    onChange={(e) => setCollectionId(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div
-                style={{
-                  padding: 10,
-                  borderRadius: 'var(--gm-radius-md)',
-                  border: '1px solid var(--gm-line-1)',
-                  background: 'var(--gm-bg-base)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-                  CMS 字段映射（fieldMap）
-                </div>
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))',
-                    gap: 8,
-                  }}
-                >
+              <div className="gm-brand-conn-group-box">
+                <div className="gm-brand-conn-group-title">CMS 字段映射（fieldMap）</div>
+                <div className="gm-brand-form-grid-compact">
                   {renderWebflowFieldControl('title', '标题字段（title）', 'name')}
                   {renderWebflowFieldControl('slug', '短链字段（slug）', 'slug')}
                   {renderWebflowFieldControl('bodyHtml', '正文字段（bodyHtml）', 'post-body')}
@@ -2251,54 +2045,52 @@ export function BrandChannelConnections({
           ) : null}
 
           {provider === 'WEBHOOK' ? (
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                Webhook 签名密钥（HMAC-SHA256，至少 8 位）
+            <FormField label="Webhook 签名密钥（HMAC-SHA256，至少 8 位）">
+              <div className="gm-brand-field-stack">
+                <Input.Password
+                  aria-label="Webhook 签名密钥"
+                  autoComplete="off"
+                  placeholder={
+                    editingConn ? '留空则保留现有加密凭据' : '点击下方随机生成或手动输入'
+                  }
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                />
+                <Space wrap size={8}>
+                  <Button
+                    size="small"
+                    data-testid="webhook-generate-secret-btn"
+                    className="gm-brand-btn-nowrap"
+                    onClick={() => {
+                      const nextSecret = generateSecureWebhookSecret();
+                      setWebhookSecret(nextSecret);
+                      feedback.notifySuccess('已生成 32 位随机签名密钥，请在保存前复制妥善保管');
+                    }}
+                  >
+                    随机生成密钥
+                  </Button>
+                  <Button
+                    size="small"
+                    data-testid="webhook-copy-secret-btn"
+                    disabled={!webhookSecret.trim()}
+                    className="gm-brand-btn-nowrap"
+                    onClick={() => {
+                      void copyTextToClipboard(webhookSecret.trim()).then((ok) => {
+                        if (ok) feedback.notifySuccess('已复制签名密钥到剪贴板');
+                        else feedback.notifyError('复制失败，请手动复制');
+                      });
+                    }}
+                  >
+                    复制密钥
+                  </Button>
+                </Space>
               </div>
-              <Input.Password
-                aria-label="Webhook 签名密钥"
-                autoComplete="off"
-                placeholder={editingConn ? '留空则保留现有加密凭据' : '点击下方随机生成或手动输入'}
-                value={webhookSecret}
-                onChange={(e) => setWebhookSecret(e.target.value)}
-              />
-              <Space wrap size={8} style={{ marginTop: 8 }}>
-                <Button
-                  size="small"
-                  data-testid="webhook-generate-secret-btn"
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                  onClick={() => {
-                    const nextSecret = generateSecureWebhookSecret();
-                    setWebhookSecret(nextSecret);
-                    feedback.notifySuccess('已生成 32 位随机签名密钥，请在保存前复制妥善保管');
-                  }}
-                >
-                  随机生成密钥
-                </Button>
-                <Button
-                  size="small"
-                  data-testid="webhook-copy-secret-btn"
-                  disabled={!webhookSecret.trim()}
-                  style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
-                  onClick={() => {
-                    void copyTextToClipboard(webhookSecret.trim()).then((ok) => {
-                      if (ok) feedback.notifySuccess('已复制签名密钥到剪贴板');
-                      else feedback.notifyError('复制失败，请手动复制');
-                    });
-                  }}
-                >
-                  复制密钥
-                </Button>
-              </Space>
-            </div>
+            </FormField>
           ) : null}
 
           {provider === 'GHOST' ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Ghost Admin API Key（格式 id:hex_secret，偶数长度十六进制）
-                </div>
+              <FormField label="Ghost Admin API Key（格式 id:hex_secret，偶数长度十六进制）">
                 <Input.Password
                   aria-label="Ghost Admin API Key"
                   autoComplete="off"
@@ -2308,27 +2100,21 @@ export function BrandChannelConnections({
                   value={ghostAdminApiKey}
                   onChange={(e) => setGhostAdminApiKey(e.target.value)}
                 />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  默认标签（逗号分隔，可选）
-                </div>
+              </FormField>
+              <FormField label="默认标签（逗号分隔，可选）">
                 <Input
                   aria-label="Ghost 默认标签"
                   placeholder="例如：geo, product-guide"
                   value={tagsInput}
                   onChange={(e) => setTagsInput(e.target.value)}
                 />
-              </div>
+              </FormField>
             </>
           ) : null}
 
           {provider === 'DEVTO' ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Dev.to API Key
-                </div>
+              <FormField label="Dev.to API Key">
                 <Input.Password
                   aria-label="Dev.to API Key"
                   autoComplete="off"
@@ -2336,27 +2122,21 @@ export function BrandChannelConnections({
                   value={devtoApiKey}
                   onChange={(e) => setDevtoApiKey(e.target.value)}
                 />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  默认标签（最多 4 个小写英文标签，逗号分隔，可选）
-                </div>
+              </FormField>
+              <FormField label="默认标签（最多 4 个小写英文标签，逗号分隔，可选）">
                 <Input
                   aria-label="Dev.to 默认标签"
                   placeholder="例如：devops, selfhosted, homelab"
                   value={tagsInput}
                   onChange={(e) => setTagsInput(e.target.value)}
                 />
-              </div>
+              </FormField>
             </>
           ) : null}
 
           {provider === 'HASHNODE' ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Hashnode Personal Access Token
-                </div>
+              <FormField label="Hashnode Personal Access Token">
                 <Input.Password
                   aria-label="Hashnode Personal Access Token"
                   autoComplete="off"
@@ -2366,41 +2146,37 @@ export function BrandChannelConnections({
                   value={hashnodeApiToken}
                   onChange={(e) => setHashnodeApiToken(e.target.value)}
                 />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  Hashnode Publication ID（可选，测试连接时自动发现并回填）
-                </div>
-                {remoteTargets.length > 0 ? (
-                  <Select
-                    allowClear
-                    aria-label="Hashnode Publication 选择"
-                    style={{ width: '100%', marginBottom: 6 }}
-                    placeholder="选择发现的 Hashnode Publication"
-                    value={publicationId || undefined}
-                    options={remoteTargets.map((t) => ({
-                      value: t.id,
-                      label: t.handle ? `${t.name} (${t.handle})` : t.name,
-                    }))}
-                    onChange={(next) => setPublicationId(typeof next === 'string' ? next : '')}
+              </FormField>
+              <FormField label="Hashnode Publication ID（可选，测试连接时自动发现并回填）">
+                <div className="gm-brand-field-stack">
+                  {remoteTargets.length > 0 ? (
+                    <Select
+                      allowClear
+                      aria-label="Hashnode Publication 选择"
+                      className="gm-brand-w-full"
+                      placeholder="选择发现的 Hashnode Publication"
+                      value={publicationId || undefined}
+                      options={remoteTargets.map((t) => ({
+                        value: t.id,
+                        label: t.handle ? `${t.name} (${t.handle})` : t.name,
+                      }))}
+                      onChange={(next) => setPublicationId(typeof next === 'string' ? next : '')}
+                    />
+                  ) : null}
+                  <Input
+                    aria-label="Hashnode Publication ID"
+                    placeholder="留空可在测试连接时自动发现"
+                    value={publicationId}
+                    onChange={(e) => setPublicationId(e.target.value)}
                   />
-                ) : null}
-                <Input
-                  aria-label="Hashnode Publication ID"
-                  placeholder="留空可在测试连接时自动发现"
-                  value={publicationId}
-                  onChange={(e) => setPublicationId(e.target.value)}
-                />
-              </div>
+                </div>
+              </FormField>
             </>
           ) : null}
 
           {provider === 'GITHUB_MDX' ? (
             <>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  GitHub Personal Access Token（需具备 repo contents & pull requests 权限）
-                </div>
+              <FormField label="GitHub Personal Access Token（需具备 repo contents & pull requests 权限）">
                 <Input.Password
                   aria-label="GitHub Personal Access Token"
                   autoComplete="off"
@@ -2408,17 +2184,14 @@ export function BrandChannelConnections({
                   value={githubToken}
                   onChange={(e) => setGithubToken(e.target.value)}
                 />
-              </div>
+              </FormField>
 
               {remoteTargets.length > 0 ? (
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    已发现仓库（点击自动填充 Owner / Repo / Branch）
-                  </div>
+                <FormField label="已发现仓库（点击自动填充 Owner / Repo / Branch）">
                   <Select
                     allowClear
                     aria-label="GitHub 仓库选择"
-                    style={{ width: '100%' }}
+                    className="gm-brand-w-full"
                     placeholder="选择仓库"
                     value={repoOwner && repoName ? `${repoOwner}/${repoName}` : undefined}
                     options={remoteTargets.map((t) => ({
@@ -2436,76 +2209,49 @@ export function BrandChannelConnections({
                       if (matched?.handle) setRepoBranch(matched.handle);
                     }}
                   />
-                </div>
+                </FormField>
               ) : null}
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    仓库所有者（repoOwner）
-                  </div>
+              <div className="gm-brand-form-grid-2">
+                <FormField label="仓库所有者（repoOwner）">
                   <Input
                     aria-label="GitHub 仓库所有者"
                     placeholder="例如：acme-org"
                     value={repoOwner}
                     onChange={(e) => setRepoOwner(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    仓库名称（repoName）
-                  </div>
+                </FormField>
+                <FormField label="仓库名称（repoName）">
                   <Input
                     aria-label="GitHub 仓库名称"
                     placeholder="例如：docs-site"
                     value={repoName}
                     onChange={(e) => setRepoName(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    目标分支（branch）
-                  </div>
+              <div className="gm-brand-form-grid-3">
+                <FormField label="目标分支（branch）">
                   <Input
                     aria-label="GitHub 目标分支"
                     placeholder="默认 main"
                     value={repoBranch}
                     onChange={(e) => setRepoBranch(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    内容目录（contentDir）
-                  </div>
+                </FormField>
+                <FormField label="内容目录（contentDir）">
                   <Input
                     aria-label="GitHub 内容目录"
                     placeholder="默认 content/blog"
                     value={contentDir}
                     onChange={(e) => setContentDir(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    文件后缀（fileExtension）
-                  </div>
+                </FormField>
+                <FormField label="文件后缀（fileExtension）">
                   <Select<'mdx' | 'md'>
                     aria-label="GitHub 文件后缀"
-                    style={{ width: '100%' }}
+                    className="gm-brand-w-full"
                     value={fileExtension}
                     options={[
                       { value: 'mdx', label: '.mdx' },
@@ -2513,38 +2259,26 @@ export function BrandChannelConnections({
                     ]}
                     onChange={setFileExtension}
                   />
-                </div>
+                </FormField>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    公网链接模板（publicUrlTemplate，可选）
-                  </div>
+              <div className="gm-brand-form-grid-2">
+                <FormField label="公网链接模板（publicUrlTemplate，可选）">
                   <Input
                     aria-label="公网链接模板"
                     placeholder="例如：https://docs.example.com/blog/{{slug}}"
                     value={publicUrlTemplate}
                     onChange={(e) => setPublicUrlTemplate(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    主站域名（primaryDomain，可选）
-                  </div>
+                </FormField>
+                <FormField label="主站域名（primaryDomain，可选）">
                   <Input
                     aria-label="主站域名"
                     placeholder="例如：docs.example.com"
                     value={primaryDomain}
                     onChange={(e) => setPrimaryDomain(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
             </>
           ) : null}
@@ -2558,17 +2292,8 @@ export function BrandChannelConnections({
                 message={WECHAT_DRAFT_ONLY_NOTICE}
                 description={WECHAT_IP_WHITELIST_NOTICE}
               />
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    微信公众号 AppID
-                  </div>
+              <div className="gm-brand-form-grid-2">
+                <FormField label="微信公众号 AppID">
                   <Input
                     aria-label="微信公众号 AppID"
                     autoComplete="off"
@@ -2578,11 +2303,8 @@ export function BrandChannelConnections({
                     value={wechatAppId}
                     onChange={(e) => setWechatAppId(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    微信公众号 AppSecret
-                  </div>
+                </FormField>
+                <FormField label="微信公众号 AppSecret">
                   <Input.Password
                     aria-label="微信公众号 AppSecret"
                     autoComplete="off"
@@ -2592,19 +2314,10 @@ export function BrandChannelConnections({
                     value={wechatAppSecret}
                     onChange={(e) => setWechatAppSecret(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
-                  gap: 10,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    默认作者名（可选，最多 16 字符）
-                  </div>
+              <div className="gm-brand-form-grid-2">
+                <FormField label="默认作者名（可选，最多 16 字符）">
                   <Input
                     aria-label="公众号默认作者名"
                     maxLength={16}
@@ -2612,76 +2325,45 @@ export function BrandChannelConnections({
                     value={wechatAuthor}
                     onChange={(e) => setWechatAuthor(e.target.value)}
                   />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                    默认封面素材 media_id（可选）
-                  </div>
+                </FormField>
+                <FormField label="默认封面素材 media_id（可选）">
                   <Input
                     aria-label="公众号默认封面 media_id"
                     placeholder="留空则使用正文首图或默认封面"
                     value={wechatCoverMediaId}
                     onChange={(e) => setWechatCoverMediaId(e.target.value)}
                   />
-                </div>
+                </FormField>
               </div>
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '8px 10px',
-                  borderRadius: 'var(--gm-radius-md)',
-                  border: '1px solid var(--gm-line-1)',
-                  background: 'var(--gm-bg-base)',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>草稿默认开启留言</div>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
-                    对应微信公众号草稿接口 need_open_comment 字段。
+              <div className="gm-brand-conn-group-box">
+                <div className="gm-brand-switch-row">
+                  <div>
+                    <div className="gm-brand-switch-title">草稿默认开启留言</div>
+                    <div className="gm-brand-switch-desc">
+                      对应微信公众号草稿接口 need_open_comment 字段。
+                    </div>
                   </div>
+                  <Switch
+                    aria-label="公众号草稿开启留言"
+                    checked={wechatNeedOpenComment}
+                    onChange={setWechatNeedOpenComment}
+                  />
                 </div>
-                <Switch
-                  aria-label="公众号草稿开启留言"
-                  checked={wechatNeedOpenComment}
-                  onChange={setWechatNeedOpenComment}
-                />
               </div>
             </>
           ) : null}
 
           {/* Common Delivery Toggles & Optional IndexNow */}
           {!isShopifyCreateOAuthTab && provider !== 'WECHAT_OFFICIAL' ? (
-            <div
-              style={{
-                padding: 10,
-                borderRadius: 'var(--gm-radius-md)',
-                border: '1px solid var(--gm-line-1)',
-                background: 'var(--gm-bg-base)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
+            <div className="gm-brand-conn-group-box">
+              <div className="gm-brand-switch-row">
                 <div>
-                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+                  <div className="gm-brand-switch-title">
                     {provider === 'GITHUB_MDX'
                       ? '默认创建 Draft PR（推荐）'
                       : '默认推送为草稿（推荐）'}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                  <div className="gm-brand-switch-desc">
                     {provider === 'GITHUB_MDX'
                       ? '开启后新建分支提交 MDX 并生成 Draft PR 审阅；关闭则直接提交至目标分支。'
                       : '开启后在写作台默认以草稿态推送至后台，审核无误后再正式上线。'}
@@ -2694,22 +2376,14 @@ export function BrandChannelConnections({
                 />
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
+              <div className="gm-brand-switch-row">
                 <div>
-                  <div style={{ fontSize: 13, color: 'var(--gm-fg-1)' }}>
+                  <div className="gm-brand-switch-title">
                     {provider === 'WORDPRESS'
                       ? '内联注入 Gutenberg JSON-LD 区块'
                       : '内联注入 JSON-LD 结构化数据'}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                  <div className="gm-brand-switch-desc">
                     自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。
                   </div>
                 </div>
@@ -2720,10 +2394,7 @@ export function BrandChannelConnections({
                 />
               </div>
 
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-                  IndexNow Key（可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录）
-                </div>
+              <FormField label="IndexNow Key（可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录）">
                 <Input
                   aria-label="IndexNow Key"
                   maxLength={128}
@@ -2731,11 +2402,11 @@ export function BrandChannelConnections({
                   value={indexNowKey}
                   onChange={(e) => setIndexNowKey(e.target.value)}
                 />
-              </div>
+              </FormField>
             </div>
           ) : null}
         </div>
       </Modal>
-    </section>
+    </Section>
   );
 }

@@ -152,13 +152,12 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 1006,
-  inlineFontSize: 290,
+  inlineStyleBlocks: 776,
+  inlineFontSize: 227,
 } as const;
 
 const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/admin/leads-admin.tsx': 1,
-  'components/brands/brand-identity-section.tsx': 1,
   'components/crud/export-action.tsx': 2,
   'components/geo/citation-trace.tsx': 1,
   'components/geo/geo-signal-strip.tsx': 1,
@@ -173,11 +172,6 @@ const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
 const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
   'components/account/points-screen.tsx': 1,
   'components/admin/llm-cost-admin.tsx': 1,
-  'components/brands/brand-channel-connections.tsx': 11,
-  'components/brands/brand-facts-section.tsx': 1,
-  'components/brands/brand-identity-section.tsx': 4,
-  'components/brands/brands-workspace.tsx': 2,
-  'components/brands/extension-pairing-panel.tsx': 2,
   'components/distribution/pr-share-packet-view.tsx': 3,
   'components/reports/public-roi-report-view.tsx': 3,
   'components/studio/studio-delivery-pack.tsx': 5,
@@ -435,17 +429,21 @@ describe('Sonar Ink 2.0 visual-debt ratchet (#390)', () => {
     expect(violations).toEqual([]);
   });
 
-  it('enforces zero visual debt inside apps/web/components/ui/** and components/shell/**', () => {
+  it('enforces zero visual debt inside apps/web/components/ui/**, components/shell/**, and components/brands/**', () => {
     expect(existsSync(uiDir)).toBe(true);
     const shellDir = join(COMPONENTS_DIR, 'shell');
+    const brandsDir = join(COMPONENTS_DIR, 'brands');
     expect(existsSync(shellDir)).toBe(true);
+    expect(existsSync(brandsDir)).toBe(true);
     const uiFiles = collectProductionSourceFiles(uiDir);
     const shellFiles = collectProductionSourceFiles(shellDir);
+    const brandsFiles = collectProductionSourceFiles(brandsDir);
     expect(uiFiles.length).toBeGreaterThanOrEqual(8);
     expect(shellFiles.length).toBeGreaterThanOrEqual(7);
+    expect(brandsFiles.length).toBeGreaterThanOrEqual(8);
 
     const violations: string[] = [];
-    for (const file of [...uiFiles, ...shellFiles]) {
+    for (const file of [...uiFiles, ...shellFiles, ...brandsFiles]) {
       const rel = toPosixRel(file);
       const content = readFileSync(file, 'utf8');
       const styleBlocks = countInlineStyleBlocks(content);

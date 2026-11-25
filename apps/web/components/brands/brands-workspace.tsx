@@ -9,9 +9,9 @@ import {
   type GeoMarket,
   type MediaStorageSummary,
 } from '@geomix/shared';
-import { Alert, Button, Skeleton, Tag, Typography } from 'antd';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getBrandFacts, listBrandMedia } from '../../lib/brands';
+import { Alert, Button, Skeleton, Tag } from 'antd';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { deleteBrand, getBrandFacts, listBrandMedia } from '../../lib/brands';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
@@ -19,8 +19,10 @@ import {
   selectActiveBrandMarket,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
-import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
+import { useUxFeedback } from '../crud/ux-feedback';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { EmptyState, PageHeader, RowActions, StatusBadge, type RowActionItem } from '../ui';
 import { BrandChannelConnections } from './brand-channel-connections';
 import { BrandFactsSection } from './brand-facts-section';
 import { BrandIdentitySection } from './brand-identity-section';
@@ -32,6 +34,20 @@ type ShopifyOAuthBannerState = {
   connectionId?: string;
   reason?: string;
 };
+
+type BrandSectionAnchor = {
+  id: string;
+  label: string;
+  cnOnly?: boolean;
+};
+
+const BRAND_SECTION_ANCHORS: readonly BrandSectionAnchor[] = [
+  { id: 'brand-section-identity', label: '基础身份' },
+  { id: 'brand-section-facts', label: '事实卡' },
+  { id: 'brand-section-media', label: '实拍图库' },
+  { id: 'brand-section-connections', label: '发布渠道' },
+  { id: 'brand-section-extension', label: '扩展配对', cnOnly: true },
+];
 
 const KNOWN_OAUTH_ERROR_REASONS: Record<string, string> = {
   access_denied: '您已取消 Shopify 店铺授权。',
@@ -62,6 +78,7 @@ function formatSafeOAuthReason(raw: string | null): string {
 
 export function BrandsWorkspace() {
   const consoleCtx = useConsoleContext();
+  const feedback = useUxFeedback();
   const state = useWorkspaceStore();
   const activeBrand = selectActiveBrand(state);
   const activeBrandMarket = selectActiveBrandMarket(state);
@@ -80,11 +97,18 @@ export function BrandsWorkspace() {
   const [shopifyOAuthBanner, setShopifyOAuthBanner] = useState<ShopifyOAuthBannerState | null>(
     null,
   );
+  const [activeAnchorId, setActiveAnchorId] = useState<string>('brand-section-identity');
+  const [identityDirty, setIdentityDirty] = useState(false);
 
   const loadSeqRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const activeBrandIdRef = useRef<string | null>(activeBrandId);
   activeBrandIdRef.current = activeBrandId;
+
+  const visibleAnchors = useMemo(
+    () => BRAND_SECTION_ANCHORS.filter((anchor) => !anchor.cnOnly || state.activeMarket === 'CN'),
+    [state.activeMarket],
+  );
 
   const fetchBrandAssets = useCallback((brandId: string, options?: { silent?: boolean }) => {
     controllerRef.current?.abort();
@@ -139,6 +163,7 @@ export function BrandsWorkspace() {
   }, []);
 
   useEffect(() => {
+    setIdentityDirty(false);
     if (!activeBrandId) {
       controllerRef.current?.abort();
       loadSeqRef.current += 1;
@@ -235,17 +260,56 @@ export function BrandsWorkspace() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (state.activeMarket !== 'CN') return;
+    if (state.activeMarket !== 'CN') {
+      setActiveAnchorId((prev) =>
+        prev === 'brand-section-extension' ? 'brand-section-identity' : prev,
+      );
+      return;
+    }
     const rawSearch = urlSearch || window.location.search;
     const params = new URLSearchParams(rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch);
     const section = params.get('section');
     if (section === 'extension' || window.location.hash === '#brand-section-extension') {
+      setActiveAnchorId('brand-section-extension');
       const target = document.getElementById('brand-section-extension');
       if (target && typeof target.scrollIntoView === 'function') {
         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
   }, [urlSearch, state.activeMarket, activeBrandId]);
+
+  useEffect(() => {
+    if (
+      !activeBrandId ||
+      typeof window === 'undefined' ||
+      typeof window.IntersectionObserver !== 'function'
+    ) {
+      return undefined;
+    }
+    const elements = visibleAnchors
+      .map((anchor) => document.getElementById(anchor.id))
+      .filter((el): el is HTMLElement => Boolean(el));
+    if (elements.length === 0) return undefined;
+
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        const topEntry = visible[0];
+        if (topEntry?.target.id) {
+          setActiveAnchorId(topEntry.target.id);
+        }
+      },
+      { rootMargin: '-12% 0px -65% 0px', threshold: 0 },
+    );
+    for (const el of elements) {
+      observer.observe(el);
+    }
+    return () => {
+      observer.disconnect();
+    };
+  }, [activeBrandId, visibleAnchors]);
 
   // Cold-load skeleton state (zero 0-count or empty-state flash)
   if (state.brandsLoading) {
@@ -256,7 +320,7 @@ export function BrandsWorkspace() {
         aria-busy="true"
         data-testid="brands-loading"
       >
-        <div className="gm-brand-section">
+        <div className="gm-brand-loading-header">
           <Skeleton active paragraph={{ rows: 1 }} />
         </div>
         <SignalSkeleton variant="block" height={180} />
@@ -285,14 +349,18 @@ export function BrandsWorkspace() {
   if (state.brandsLoaded && (!activeBrand || state.brands.length === 0)) {
     return (
       <section className="gm-brands-page" aria-label="品牌资产">
-        <div className="gm-brand-section">
-          <SignalEmpty
-            title="还没有创建任何品牌"
-            description="完成 60 秒极速建档，AI 自动提炼 4 块品牌事实卡，立即开启双市场 AI 可见度监测与 GEO 写作闭环。"
-            actionText={readOnly ? undefined : '60 秒创建首个品牌'}
-            onAction={readOnly ? undefined : () => consoleCtx?.openCreateBrandModal()}
-          />
-        </div>
+        <EmptyState
+          size="full"
+          title="还没有创建任何品牌"
+          description="完成 60 秒极速建档，AI 自动提炼 4 块品牌事实卡，立即开启双市场 AI 可见度监测与 GEO 写作闭环。"
+          action={
+            readOnly ? undefined : (
+              <Button type="default" onClick={() => consoleCtx?.openCreateBrandModal()}>
+                60 秒创建首个品牌
+              </Button>
+            )
+          }
+        />
       </section>
     );
   }
@@ -304,6 +372,34 @@ export function BrandsWorkspace() {
   const missingMarket: GeoMarket | null = hasCN && hasGlobal ? null : hasCN ? 'GLOBAL' : 'CN';
 
   const callbackBrandId = activeBrand.id;
+  const callbackBrandName = activeBrand.name;
+
+  const brandOverflowItems: readonly RowActionItem[] = [
+    {
+      key: 'delete-brand',
+      label: '删除品牌',
+      danger: true,
+      disabled: readOnly,
+      confirm: {
+        title: `确认删除品牌「${callbackBrandName}」？`,
+        content: '删除后将同步清除该品牌的市场配置、事实卡与产品实拍图，无法恢复。',
+        okText: '确认删除',
+        cancelText: '取消',
+        danger: true,
+      },
+      onClick: async () => {
+        try {
+          await deleteBrand(callbackBrandId, { storage: window.sessionStorage });
+          useWorkspaceStore.getState().removeBrand(callbackBrandId, window.localStorage);
+          feedback.notifySuccess(`已删除品牌「${callbackBrandName}」`);
+        } catch (reason: unknown) {
+          feedback.notifyError(
+            reason instanceof Error && reason.message ? reason.message : '删除品牌失败',
+          );
+        }
+      },
+    },
+  ];
 
   const handleFactsSaved = (res: BrandFactsResponse) => {
     if (res.truthAgreementSignedAt) {
@@ -318,53 +414,50 @@ export function BrandsWorkspace() {
 
   return (
     <section className="gm-brands-page" aria-label="品牌资产">
-      <div className="gm-workspace-context-bar gm-brand-context-bar">
-        <div className="gm-brand-context-left">
-          <Typography.Title level={3} style={{ margin: 0, color: 'var(--gm-fg-1)' }}>
-            品牌资产
-          </Typography.Title>
-          <Tag color="geekblue">{activeBrand.name}</Tag>
-          <Tag>{activeBrand.category}</Tag>
-          <Tag color="cyan">
-            {state.activeMarket === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[state.activeMarket]}
-            {activeBrandMarket ? ` · ${activeBrandMarket.locale}` : ''}
-          </Tag>
-          <span className="gm-brand-updated-at">
-            更新于 {formatShanghaiDateTime(activeBrand.updatedAt)}
-          </span>
-        </div>
-
-        <div className="gm-brand-context-actions">
-          <nav
-            className="gm-brand-jump-links"
-            aria-label="页面区块跳转"
-            style={{ flexWrap: 'wrap' }}
-          >
-            <a href="#brand-section-identity">基础身份</a>
-            <a href="#brand-section-facts">事实卡</a>
-            <a href="#brand-section-media">实拍图库</a>
-            <a href="#brand-section-connections">发布渠道</a>
-            {state.activeMarket === 'CN' ? <a href="#brand-section-extension">扩展配对</a> : null}
-          </nav>
-          {missingMarket ? (
-            <Button
-              size="small"
-              disabled={readOnly}
-              onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
-            >
-              {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
-            </Button>
-          ) : null}
+      <PageHeader
+        title="品牌资产"
+        tags={
+          <>
+            <Tag className="gm-brand-header-tag">{activeBrand.name}</Tag>
+            <Tag className="gm-brand-header-tag">{activeBrand.category}</Tag>
+            <StatusBadge
+              tone="neutral"
+              label={`${state.activeMarket === 'CN' ? '🇨🇳' : '🌐'} ${GEO_MARKET_LABELS[state.activeMarket]}${activeBrandMarket ? ` · ${activeBrandMarket.locale}` : ''}`}
+            />
+          </>
+        }
+        meta={`更新于 ${formatShanghaiDateTime(activeBrand.updatedAt)}`}
+        extra={
+          <div className="gm-brand-header-extra">
+            {missingMarket ? (
+              <Button
+                size="small"
+                disabled={readOnly}
+                className="gm-brand-btn-nowrap"
+                onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
+              >
+                {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
+              </Button>
+            ) : null}
+            <RowActions
+              moreTestId="brand-actions-trigger"
+              moreAriaLabel="更多品牌操作"
+              menuItems={brandOverflowItems}
+            />
+          </div>
+        }
+        action={
           <Button
-            type="primary"
+            type={identityDirty ? 'default' : 'primary'}
             size="small"
             disabled={readOnly}
+            className="gm-brand-btn-nowrap"
             onClick={() => consoleCtx?.openCreateBrandModal()}
           >
             + 新建品牌
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       {shopifyOAuthBanner ? (
         <Alert
@@ -372,6 +465,7 @@ export function BrandsWorkspace() {
           showIcon
           closable
           data-testid="shopify-oauth-callback-banner"
+          className="gm-brand-oauth-banner"
           onClose={() => setShopifyOAuthBanner(null)}
           message={
             shopifyOAuthBanner.status === 'connected'
@@ -383,76 +477,100 @@ export function BrandsWorkspace() {
               ? '已加密保存店铺访问凭据并自动注册卸载同步 Webhook；可在下方「发布渠道」卡片测试连接或选择目标 Blog。'
               : shopifyOAuthBanner.reason
           }
-          style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
         />
       ) : null}
 
-      <BrandIdentitySection
-        key={`identity-${activeBrand.id}`}
-        brand={activeBrand}
-        activeMarket={state.activeMarket}
-        activeBrandMarket={activeBrandMarket}
-        readOnly={readOnly}
-        onBrandUpdated={(updated, market) => {
-          const isStillActive = useWorkspaceStore.getState().activeBrandId === updated.id;
-          useWorkspaceStore.getState().upsertBrand(updated, {
-            activate: isStillActive,
-            market: isStillActive ? market : undefined,
-            persistStorage: window.localStorage,
-          });
-        }}
-        onBrandDeleted={(deletedId) => {
-          useWorkspaceStore.getState().removeBrand(deletedId, window.localStorage);
-        }}
-        onOpenEnableMarket={(market) => consoleCtx?.openEnableMarketModal(market)}
-      />
+      <div className="gm-brands-settings-layout">
+        <nav className="gm-brand-anchor-nav" aria-label="页面区块跳转">
+          {visibleAnchors.map((anchor) => (
+            <a
+              key={anchor.id}
+              href={`#${anchor.id}`}
+              className={
+                activeAnchorId === anchor.id
+                  ? 'gm-brand-anchor-link is-active'
+                  : 'gm-brand-anchor-link'
+              }
+              aria-current={activeAnchorId === anchor.id ? 'location' : undefined}
+              onClick={() => setActiveAnchorId(anchor.id)}
+            >
+              {anchor.label}
+            </a>
+          ))}
+        </nav>
 
-      <BrandFactsSection
-        key={`facts-${activeBrand.id}`}
-        brand={activeBrand}
-        activeBrandMarket={activeBrandMarket}
-        facts={facts}
-        loading={factsLoading}
-        error={factsError}
-        truthSignedAt={truthSignedAt ?? activeBrand.truthAgreementSignedAt}
-        readOnly={readOnly}
-        onRetry={() => fetchBrandAssets(activeBrand.id)}
-        onFactsSaved={handleFactsSaved}
-      />
+        <div className="gm-brands-settings-content">
+          <BrandIdentitySection
+            key={`identity-${activeBrand.id}`}
+            brand={activeBrand}
+            activeMarket={state.activeMarket}
+            activeBrandMarket={activeBrandMarket}
+            readOnly={readOnly}
+            onDirtyChange={setIdentityDirty}
+            onBrandUpdated={(updated, market) => {
+              const storeState = useWorkspaceStore.getState();
+              if (!storeState.brands.some((item) => item.id === updated.id)) return;
+              const isStillActive = storeState.activeBrandId === updated.id;
+              storeState.upsertBrand(updated, {
+                activate: isStillActive,
+                market:
+                  isStillActive && market && storeState.activeMarket === market
+                    ? market
+                    : undefined,
+                persistStorage: window.localStorage,
+              });
+            }}
+            onOpenEnableMarket={(market) => consoleCtx?.openEnableMarketModal(market)}
+          />
 
-      <BrandMediaSection
-        key={`media-${activeBrand.id}`}
-        brand={activeBrand}
-        items={mediaItems}
-        storage={mediaStorage}
-        loading={mediaLoading}
-        error={mediaError}
-        readOnly={readOnly}
-        onRetry={() => fetchBrandAssets(activeBrand.id)}
-        onMediaChanged={(nextItems, nextStorage) => {
-          if (activeBrandIdRef.current !== callbackBrandId) return;
-          setMediaItems(nextItems);
-          setMediaStorage(nextStorage);
-        }}
-      />
+          <BrandFactsSection
+            key={`facts-${activeBrand.id}`}
+            brand={activeBrand}
+            activeBrandMarket={activeBrandMarket}
+            facts={facts}
+            loading={factsLoading}
+            error={factsError}
+            truthSignedAt={truthSignedAt ?? activeBrand.truthAgreementSignedAt}
+            readOnly={readOnly}
+            onRetry={() => fetchBrandAssets(activeBrand.id)}
+            onFactsSaved={handleFactsSaved}
+          />
 
-      <BrandChannelConnections
-        key={`connections-${activeBrand.id}-${state.activeMarket}`}
-        brandId={activeBrand.id}
-        activeMarket={state.activeMarket}
-        marketEnabled={Boolean(activeBrandMarket)}
-        supportedLocales={activeBrandMarket?.supportedLocales}
-        readOnly={readOnly}
-        onEnableMarket={() => consoleCtx?.openEnableMarketModal(state.activeMarket)}
-      />
+          <BrandMediaSection
+            key={`media-${activeBrand.id}`}
+            brand={activeBrand}
+            items={mediaItems}
+            storage={mediaStorage}
+            loading={mediaLoading}
+            error={mediaError}
+            readOnly={readOnly}
+            onRetry={() => fetchBrandAssets(activeBrand.id)}
+            onMediaChanged={(nextItems, nextStorage) => {
+              if (activeBrandIdRef.current !== callbackBrandId) return;
+              setMediaItems(nextItems);
+              setMediaStorage(nextStorage);
+            }}
+          />
 
-      {state.activeMarket === 'CN' ? (
-        <ExtensionPairingPanel
-          variant="brands"
-          readOnly={readOnly}
-          active={state.activeMarket === 'CN'}
-        />
-      ) : null}
+          <BrandChannelConnections
+            key={`connections-${activeBrand.id}-${state.activeMarket}`}
+            brandId={activeBrand.id}
+            activeMarket={state.activeMarket}
+            marketEnabled={Boolean(activeBrandMarket)}
+            supportedLocales={activeBrandMarket?.supportedLocales}
+            readOnly={readOnly}
+            onEnableMarket={() => consoleCtx?.openEnableMarketModal(state.activeMarket)}
+          />
+
+          {state.activeMarket === 'CN' ? (
+            <ExtensionPairingPanel
+              variant="brands"
+              readOnly={readOnly}
+              active={state.activeMarket === 'CN'}
+            />
+          ) : null}
+        </div>
+      </div>
     </section>
   );
 }

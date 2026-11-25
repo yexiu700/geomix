@@ -346,15 +346,13 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       expect(screen.getByTestId('fact-slot-PRODUCT_SPECS')).toBeTruthy();
     });
 
-    expect(
-      (screen.getByRole('button', { name: '保存基础信息' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect((screen.getByRole('button', { name: '删除品牌' }) as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect(
-      (screen.getByRole('button', { name: '保存市场配置' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByLabelText('编辑品牌名称') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText('当地品牌名') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByTestId('brand-dirty-save-bar')).toBeNull();
+    fireEvent.click(screen.getByTestId('brand-actions-trigger'));
+    const deleteMenuItem = await screen.findByText('删除品牌');
+    fireEvent.click(deleteMenuItem);
+    expect(confirmMock).not.toHaveBeenCalled();
     expect(
       (screen.getByRole('button', { name: '保存品牌事实卡' }) as HTMLButtonElement).disabled,
     ).toBe(true);
@@ -472,17 +470,20 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
 
     renderWorkspace();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '删除品牌' })).toBeTruthy();
+      expect(screen.getByTestId('brand-actions-trigger')).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '删除品牌' }));
+    // Trigger delete brand via PageHeader overflow menu -> RowActions confirm
+    fireEvent.click(screen.getByTestId('brand-actions-trigger'));
+    fireEvent.click(await screen.findByText('删除品牌'));
     await waitFor(() => {
       expect(notifyErrorMock).toHaveBeenCalledWith('该品牌存在进行中的监测任务');
     });
     expect(useWorkspaceStore.getState().activeBrandId).toBe('b-w7-1');
 
-    // Start saving Brand 1, switch to Brand 2 mid-flight, then resolve Brand 1 save
-    fireEvent.click(screen.getByRole('button', { name: '保存基础信息' }));
+    // Edit brand name so sticky dirty bar appears, start saving Brand 1, switch to Brand 2 mid-flight
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), { target: { value: '品牌甲-新名' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     act(() => {
       useWorkspaceStore.getState().setActiveBrand('b-w7-2', 'CN', window.localStorage);
     });
@@ -558,7 +559,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       target: { value: 'Best external SSD 2026' },
     });
     fireEvent.click(screen.getByTestId('add-control-prompt-btn'));
-    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await waitFor(() => {
       expect(updateBrandMarketMock).toHaveBeenCalledWith(
         'b-v22',
@@ -707,11 +708,14 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
 
     renderWorkspace();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '保存市场配置' })).toBeTruthy();
+      expect(screen.getByLabelText('当地品牌名')).toBeTruthy();
     });
 
-    // 1. Start CN save, switch to GLOBAL before it settles -> aborted & resolving it MUST NOT yank activeMarket back to CN
-    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    // 1. Edit CN market field to trigger sticky dirty bar, start CN save, switch to GLOBAL before it settles -> aborted & resolving it MUST NOT yank activeMarket back to CN
+    fireEvent.change(screen.getByLabelText('当地品牌名'), {
+      target: { value: '竞态测试品牌-CN改动' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await waitFor(() => expect(updateBrandMarketMock).toHaveBeenCalledTimes(1));
     expect(cnSignal?.aborted).toBe(false);
 
@@ -726,8 +730,11 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     });
     expect(useWorkspaceStore.getState().activeMarket).toBe('GLOBAL');
 
-    // 2. Start GLOBAL save, switch back to CN before it rejects -> stale GLOBAL error MUST NOT leak onto CN
-    fireEvent.click(screen.getByRole('button', { name: '保存市场配置' }));
+    // 2. Edit GLOBAL market field, start GLOBAL save, switch back to CN before it rejects -> stale GLOBAL error MUST NOT leak onto CN
+    fireEvent.change(screen.getByLabelText('当地品牌名'), {
+      target: { value: 'Race Global Edited' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await waitFor(() => expect(updateBrandMarketMock).toHaveBeenCalledTimes(2));
 
     act(() => {
@@ -738,5 +745,278 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       await Promise.resolve();
     });
     expect(screen.queryByText('STALE GLOBAL SAVE ERROR')).toBeNull();
+  });
+
+  it('0-brand empty state renders non-primary 60 秒创建首个品牌 button so ShellFrame banner remains the sole primary CTA', () => {
+    const openCreateBrandModal = vi.fn();
+    useWorkspaceStore.setState({
+      brands: [],
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      activeBrandId: null,
+    });
+
+    const { container } = renderWorkspace({ openCreateBrandModal });
+
+    const cta = screen.getByRole('button', { name: '60 秒创建首个品牌' });
+    expect(cta.classList.contains('ant-btn-primary')).toBe(false);
+    expect(container.querySelectorAll('.ant-btn-primary')).toHaveLength(0);
+
+    fireEvent.click(cta);
+    expect(openCreateBrandModal).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves activeMarket GLOBAL and skips zombie Step B when switching market or brand during in-flight updateBrand', async () => {
+    getBrandFactsMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeFactsResponse(brandId)),
+    );
+    listBrandMediaMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeMediaResponse(brandId)),
+    );
+    const dualBrand = makeBrand('b-dual-race', '双市场竞态品牌');
+    dualBrand.markets.push({
+      id: 'bm-gl-dual-race',
+      brandId: 'b-dual-race',
+      market: 'GLOBAL',
+      locale: 'en-US',
+      region: 'US',
+      localBrandName: 'DualRace Global',
+      localCategory: 'NAS',
+      aliases: [],
+      ownedDomains: ['dualrace.example.com'],
+      competitors: [],
+      seedPrompts: ['Best NAS 2026'],
+      supportedLocales: ['en-US'],
+      controlPrompts: [],
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    });
+    const otherBrand = makeBrand('b-other-race', '第二品牌');
+
+    let resolveBaseOnly!: (brand: BrandRecord) => void;
+    let resolveCombinedMarketSwitch!: (brand: BrandRecord) => void;
+    let resolveCombinedBrandSwitch!: (brand: BrandRecord) => void;
+    updateBrandMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<BrandRecord>((resolve) => {
+            resolveBaseOnly = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<BrandRecord>((resolve) => {
+            resolveCombinedMarketSwitch = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<BrandRecord>((resolve) => {
+            resolveCombinedBrandSwitch = resolve;
+          }),
+      );
+
+    useWorkspaceStore.getState().upsertBrand(otherBrand, {
+      activate: false,
+      market: 'CN',
+      persistStorage: window.localStorage,
+    });
+    useWorkspaceStore.getState().upsertBrand(dualBrand, {
+      activate: true,
+      market: 'CN',
+      persistStorage: window.localStorage,
+    });
+
+    renderWorkspace();
+    await waitFor(() => {
+      expect(screen.getByLabelText('编辑品牌名称')).toBeTruthy();
+    });
+
+    // 1. Base-only updateBrand in-flight + CN -> GLOBAL switch: must NOT yank activeMarket back to CN
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), {
+      target: { value: '双市场竞态品牌-改1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateBrandMock).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    const afterBase1: BrandRecord = { ...dualBrand, name: '双市场竞态品牌-改1' };
+    await act(async () => {
+      resolveBaseOnly(afterBase1);
+      await Promise.resolve();
+    });
+    expect(useWorkspaceStore.getState().activeMarket).toBe('GLOBAL');
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+
+    // 2. Switch back to CN, edit both base + market, switch CN -> GLOBAL during Step A -> activeMarket stays GLOBAL & updateBrandMarket NOT called
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('CN', window.localStorage);
+    });
+    await waitFor(() => {
+      expect((screen.getByLabelText('当地品牌名') as HTMLInputElement).value).toBe(
+        '双市场竞态品牌',
+      );
+    });
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), {
+      target: { value: '双市场竞态品牌-改2' },
+    });
+    fireEvent.change(screen.getByLabelText('当地品牌名'), {
+      target: { value: '双市场竞态品牌-CN改' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateBrandMock).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
+    });
+    const afterBase2: BrandRecord = { ...afterBase1, name: '双市场竞态品牌-改2' };
+    await act(async () => {
+      resolveCombinedMarketSwitch(afterBase2);
+      await Promise.resolve();
+    });
+    expect(useWorkspaceStore.getState().activeMarket).toBe('GLOBAL');
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+
+    // 3. Edit both base + GLOBAL market, switch Brand 1 -> Brand 2 during Step A -> Brand 1 base commits, activeBrandId stays b-other-race, updateBrandMarket NOT called
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), {
+      target: { value: '双市场竞态品牌-改3' },
+    });
+    fireEvent.change(screen.getByLabelText('当地品牌名'), {
+      target: { value: 'DualRace Global Edited' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateBrandMock).toHaveBeenCalledTimes(3));
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand('b-other-race', 'CN', window.localStorage);
+    });
+    const afterBase3: BrandRecord = { ...afterBase2, name: '双市场竞态品牌-改3' };
+    await act(async () => {
+      resolveCombinedBrandSwitch(afterBase3);
+      await Promise.resolve();
+    });
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-other-race');
+    expect(useWorkspaceStore.getState().brands.find((b) => b.id === 'b-dual-race')?.name).toBe(
+      '双市场竞态品牌-改3',
+    );
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+  });
+
+  it('DEFECT-4 regression (2 brands): does not resurrect a deleted brand when an in-flight updateBrand resolves late', async () => {
+    const b1 = makeBrand('b-1', '青松存储');
+    const b2 = makeBrand('b-2', '北极光存储');
+    getBrandFactsMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeFactsResponse(brandId)),
+    );
+    listBrandMediaMock.mockImplementation((brandId: string) =>
+      Promise.resolve(makeMediaResponse(brandId)),
+    );
+
+    let resolveUpdate!: (brand: BrandRecord) => void;
+    updateBrandMock.mockImplementationOnce(
+      () =>
+        new Promise<BrandRecord>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+    deleteBrandMock.mockResolvedValueOnce({ deleted: true, id: 'b-1' });
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      void onOk?.();
+    });
+
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+
+    renderWorkspace();
+    await waitFor(() => {
+      expect(screen.getByLabelText('编辑品牌名称')).toBeTruthy();
+    });
+
+    // Edit Brand 1 and start in-flight updateBrand('b-1')
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), {
+      target: { value: '青松存储-已改名' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateBrandMock).toHaveBeenCalledTimes(1));
+
+    // Delete Brand 1 via PageHeader overflow menu while save is still in-flight
+    fireEvent.click(screen.getByTestId('brand-actions-trigger'));
+    fireEvent.click(await screen.findByText('删除品牌'));
+    await waitFor(() => {
+      expect(deleteBrandMock).toHaveBeenCalledWith('b-1', expect.anything());
+      expect(useWorkspaceStore.getState().brands.map((b) => b.id)).toEqual(['b-2']);
+      expect(useWorkspaceStore.getState().activeBrandId).toBe('b-2');
+    });
+
+    // Late resolution of updateBrand('b-1') MUST NOT resurrect deleted b-1
+    await act(async () => {
+      resolveUpdate({ ...b1, name: '青松存储-已改名' });
+      await Promise.resolve();
+    });
+
+    expect(useWorkspaceStore.getState().brands.map((b) => b.id)).toEqual(['b-2']);
+    expect(useWorkspaceStore.getState().activeBrandId).toBe('b-2');
+  });
+
+  it('DEFECT-4 regression (1 brand): stays in 0-brand empty state when an in-flight updateBrand resolves after deleting the only brand', async () => {
+    const b1 = makeBrand('b-1', '唯一品牌');
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-1'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-1'));
+
+    let resolveUpdate!: (brand: BrandRecord) => void;
+    updateBrandMock.mockImplementationOnce(
+      () =>
+        new Promise<BrandRecord>((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
+    deleteBrandMock.mockResolvedValueOnce({ deleted: true, id: 'b-1' });
+    confirmMock.mockImplementationOnce(({ onOk }: { onOk?: () => Promise<void> | void }) => {
+      void onOk?.();
+    });
+
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+
+    renderWorkspace();
+    await waitFor(() => {
+      expect(screen.getByLabelText('编辑品牌名称')).toBeTruthy();
+    });
+
+    // Edit the only brand and start in-flight updateBrand('b-1')
+    fireEvent.change(screen.getByLabelText('编辑品牌名称'), {
+      target: { value: '唯一品牌-已改名' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(updateBrandMock).toHaveBeenCalledTimes(1));
+
+    // Delete the only brand while save is still in-flight -> enters 0-brand empty state
+    fireEvent.click(screen.getByTestId('brand-actions-trigger'));
+    fireEvent.click(await screen.findByText('删除品牌'));
+    await waitFor(() => {
+      expect(deleteBrandMock).toHaveBeenCalledWith('b-1', expect.anything());
+      expect(useWorkspaceStore.getState().brands).toEqual([]);
+      expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
+      expect(screen.getByText('还没有创建任何品牌')).toBeTruthy();
+    });
+
+    // Late resolution of updateBrand('b-1') MUST NOT resurrect b-1 or exit empty state
+    await act(async () => {
+      resolveUpdate({ ...b1, name: '唯一品牌-已改名' });
+      await Promise.resolve();
+    });
+
+    expect(useWorkspaceStore.getState().brands).toEqual([]);
+    expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
+    expect(screen.getByText('还没有创建任何品牌')).toBeTruthy();
+    expect(screen.getByRole('button', { name: '60 秒创建首个品牌' })).toBeTruthy();
   });
 });

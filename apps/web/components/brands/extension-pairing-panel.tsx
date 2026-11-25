@@ -6,7 +6,7 @@ import {
   formatShanghaiDateTime,
   type ExtensionTokenDto,
 } from '@geomix/shared';
-import { Alert, Button, Input, Modal, Tag } from 'antd';
+import { Alert, Button, Input, Modal } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { GatewayApiError } from '../../lib/envelope';
@@ -18,7 +18,8 @@ import {
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
+import { EmptyState, FormField, Section, StatusBadge, type StatusTone } from '../ui';
 
 export type ExtensionPairingPanelProps = {
   readOnly: boolean;
@@ -52,7 +53,7 @@ function formatExtensionError(err: unknown, fallback: string): string {
 }
 
 function resolveTokenStatus(token: ExtensionTokenDto): {
-  tone: 'cited' | 'warning' | 'neutral';
+  tone: StatusTone;
   label: string;
 } {
   if (token.revokedAt) {
@@ -62,7 +63,7 @@ function resolveTokenStatus(token: ExtensionTokenDto): {
   if (Number.isFinite(expiresMs) && expiresMs <= Date.now()) {
     return { tone: 'warning', label: '已过期' };
   }
-  return { tone: 'cited', label: '生效中' };
+  return { tone: 'success', label: '生效中' };
 }
 
 function formatScopeLabel(scope: string): string {
@@ -317,80 +318,39 @@ export function ExtensionPairingPanel({
 
   const sectionId = variant === 'brands' ? 'brand-section-extension' : 'account-section-extension';
   const headingTitle =
-    variant === 'brands' ? '5. 国内 L2 Chrome 扩展配对' : '国内 L2 Chrome 扩展配对令牌';
+    variant === 'brands' ? '国内 L2 Chrome 扩展配对' : '国内 L2 Chrome 扩展配对令牌';
 
   return (
-    <section
+    <Section
       id={sectionId}
-      className="gm-brand-section"
+      variant="plain"
       aria-label="国内 L2 Chrome 扩展配对"
       data-testid="extension-pairing-panel"
-      style={{ minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' }}
-    >
-      <div
-        className="gm-brand-section-head"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 12,
-        }}
-      >
-        <div style={{ minWidth: 0, flex: '1 1 320px' }}>
-          <div className="gm-brand-section-title-row">
-            <h4 className="gm-brand-section-title">{headingTitle}</h4>
-            <Tag color="cyan" style={{ margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              CN · Bridge v1
-            </Tag>
-          </div>
-          <p className="gm-brand-section-desc">
-            用于配对 GeoMix Chrome
-            扩展，将写作台排队的知乎、今日头条、什么值得买变体一键填充到平台草稿箱，并回传已发公网链接开启自动复测；扩展绝不读取平台
-            Cookie，绝不自动点击最终发布。
-          </p>
-        </div>
-
+      className="gm-brand-ext-section"
+      title={
+        <span className="gm-brand-section-title-row">
+          <span>{headingTitle}</span>
+          <StatusBadge tone="neutral" label="CN · Bridge v1" />
+        </span>
+      }
+      description="用于配对 GeoMix Chrome 扩展，将写作台排队的知乎、今日头条、什么值得买变体一键填充到平台草稿箱，并回传已发公网链接开启自动复测；扩展绝不读取平台 Cookie，绝不自动点击最终发布。"
+      actions={
         <Button
           size="small"
           data-testid="extension-token-refresh-btn"
           loading={loading}
-          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+          className="gm-brand-btn-nowrap"
           onClick={() => void loadTokens()}
         >
           刷新列表
         </Button>
-      </div>
-
+      }
+    >
       {/* Create Extension Pairing Token Form */}
-      <div
-        className="gm-brand-subcard"
-        style={{
-          marginBottom: 14,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-          minWidth: 0,
-          maxWidth: '100%',
-          boxSizing: 'border-box',
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--gm-fg-1)' }}>
-          生成新配对令牌（明文仅展示一次）
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'flex-end',
-            gap: 10,
-            minWidth: 0,
-          }}
-        >
-          <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-              设备或浏览器名称
-            </div>
+      <div className="gm-brand-ext-create-bar">
+        <div className="gm-brand-ext-create-title">生成新配对令牌（明文仅展示一次）</div>
+        <div className="gm-brand-ext-create-row">
+          <FormField label="设备或浏览器名称" className="gm-brand-ext-field-label">
             <Input
               aria-label="设备或浏览器名称"
               data-testid="extension-token-label-input"
@@ -404,17 +364,17 @@ export function ExtensionPairingPanel({
               }}
               onPressEnter={() => void handleCreateToken()}
             />
-          </div>
+          </FormField>
 
-          <div style={{ flex: '0 1 150px', minWidth: 130 }}>
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)', marginBottom: 4 }}>
-              有效期（1–{EXTENSION_MAX_TTL_DAYS} 天）
-            </div>
+          <FormField
+            label={`有效期（1–${EXTENSION_MAX_TTL_DAYS} 天）`}
+            className="gm-brand-ext-field-ttl"
+          >
             <Input
               aria-label="令牌有效期（天）"
               data-testid="extension-token-ttl-input"
               inputMode="numeric"
-              style={{ width: '100%' }}
+              className="gm-brand-w-full"
               disabled={readOnly || creating}
               value={ttlText}
               onChange={(e) => {
@@ -423,14 +383,14 @@ export function ExtensionPairingPanel({
               }}
               onPressEnter={() => void handleCreateToken()}
             />
-          </div>
+          </FormField>
 
           <Button
-            type="primary"
+            type="default"
             data-testid="extension-token-create-btn"
             loading={creating}
             disabled={readOnly}
-            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+            className="gm-brand-btn-nowrap"
             onClick={() => void handleCreateToken()}
           >
             生成扩展配对令牌
@@ -438,16 +398,11 @@ export function ExtensionPairingPanel({
         </div>
 
         {formError ? (
-          <Alert
-            type="error"
-            showIcon
-            message={formError}
-            style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}
-          />
+          <Alert type="error" showIcon message={formError} className="gm-brand-alert-wrap" />
         ) : null}
 
         {readOnly ? (
-          <div style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+          <div className="gm-brand-ext-readonly-note">
             当前账号处于只读状态，仅支持查看已有配对令牌，暂不可生成或吊销令牌。
           </div>
         ) : null}
@@ -459,99 +414,44 @@ export function ExtensionPairingPanel({
       ) : error ? (
         <SignalError message={error} onRetry={() => void loadTokens()} />
       ) : tokens.length === 0 ? (
-        <SignalEmpty
+        <EmptyState
+          size="compact"
           title="尚未配对任何 Chrome 扩展设备"
           description="点击上方「生成扩展配对令牌」获取一次性 gmext_ 令牌，粘贴至 GeoMix Chrome 扩展即可同步国内待发草稿队列。"
         />
       ) : (
-        <div
-          data-testid="extension-token-list"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))',
-            gap: 12,
-            minWidth: 0,
-          }}
-        >
+        <div data-testid="extension-token-list" className="gm-brand-ext-list">
           {tokens.map((token) => {
             const statusMeta = resolveTokenStatus(token);
             const isRevoked = Boolean(token.revokedAt);
             return (
               <div
                 key={token.id}
-                className="gm-brand-subcard"
+                className="gm-brand-ext-card"
                 data-testid={`extension-token-card-${token.id}`}
-                style={{
-                  minWidth: 0,
-                  maxWidth: '100%',
-                  boxSizing: 'border-box',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: 8,
-                  }}
-                >
-                  <div style={{ minWidth: 0, flex: '1 1 180px' }}>
+                <div className="gm-brand-ext-card-head">
+                  <div className="gm-brand-ext-card-identity">
+                    <div className="gm-brand-ext-card-title">{token.label}</div>
                     <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: 'var(--gm-fg-1)',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
-                      {token.label}
-                    </div>
-                    <div
-                      className="gm-mono"
+                      className="gm-mono gm-brand-ext-card-prefix"
                       data-testid={`extension-token-prefix-${token.id}`}
-                      style={{
-                        fontSize: 12,
-                        color: 'var(--gm-fg-2)',
-                        marginTop: 3,
-                        overflowWrap: 'anywhere',
-                      }}
                     >
                       {token.tokenPrefix}••••••••
                     </div>
                   </div>
-                  <SignalPill tone={statusMeta.tone}>{statusMeta.label}</SignalPill>
+                  <StatusBadge tone={statusMeta.tone} label={statusMeta.label} />
                 </div>
 
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div className="gm-brand-ext-scopes">
                   {token.scopes.map((scope) => (
-                    <Tag
-                      key={scope}
-                      color="blue"
-                      style={{
-                        margin: 0,
-                        maxWidth: '100%',
-                        whiteSpace: 'normal',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
+                    <span key={scope} className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
                       {formatScopeLabel(scope)}
-                    </Tag>
+                    </span>
                   ))}
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 3,
-                    fontSize: 12,
-                    color: 'var(--gm-fg-3)',
-                  }}
-                >
+                <div className="gm-brand-ext-meta">
                   <div>创建时间：{formatShanghaiDateTime(token.createdAt)}</div>
                   <div>
                     最近使用：
@@ -559,20 +459,21 @@ export function ExtensionPairingPanel({
                   </div>
                   <div>有效期至：{formatShanghaiDateTime(token.expiresAt)}</div>
                   {token.revokedAt ? (
-                    <div style={{ color: 'var(--gm-warning)' }}>
+                    <div className="gm-brand-ext-revoked-at">
                       吊销时间：{formatShanghaiDateTime(token.revokedAt)}
                     </div>
                   ) : null}
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
+                <div className="gm-brand-ext-card-actions">
                   <Button
                     size="small"
+                    type="text"
                     danger
                     data-testid={`extension-token-revoke-${token.id}`}
                     loading={revokingId === token.id}
                     disabled={readOnly || isRevoked}
-                    style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                    className="gm-brand-btn-nowrap"
                     onClick={() => handleRevokeToken(token)}
                   >
                     {isRevoked ? '已吊销' : '吊销令牌'}
@@ -593,14 +494,11 @@ export function ExtensionPairingPanel({
         maskClosable={false}
         onCancel={closeSecretModal}
         afterClose={closeSecretModal}
-        styles={{
-          body: { overflowX: 'hidden', maxHeight: '72vh', overflowY: 'auto' },
-        }}
         footer={
-          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>
+          <div className="gm-brand-modal-footer-wrap">
             <Button
               data-testid="extension-token-copy-btn"
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-brand-btn-nowrap"
               onClick={handleCopyPlainToken}
             >
               {copiedSecret ? '已复制令牌' : '复制令牌'}
@@ -608,7 +506,7 @@ export function ExtensionPairingPanel({
             <Button
               type="primary"
               data-testid="extension-token-modal-close-btn"
-              style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+              className="gm-brand-btn-nowrap"
               onClick={closeSecretModal}
             >
               我已复制并关闭
@@ -617,16 +515,7 @@ export function ExtensionPairingPanel({
         }
       >
         {issuedSecret ? (
-          <div
-            data-testid="extension-token-secret-modal"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              minWidth: 0,
-              maxWidth: '100%',
-            }}
-          >
+          <div data-testid="extension-token-secret-modal" className="gm-brand-ext-secret-body">
             <Alert
               type="warning"
               showIcon
@@ -634,44 +523,22 @@ export function ExtensionPairingPanel({
               description="关闭弹窗后系统将立即清除明文且无法再次查看；如遗失请吊销旧令牌并重新生成。"
             />
 
-            <div style={{ fontSize: 12, color: 'var(--gm-fg-2)' }}>
-              设备备注：<strong style={{ color: 'var(--gm-fg-1)' }}>{issuedSecret.label}</strong>
+            <div className="gm-brand-ext-secret-meta">
+              设备备注：<strong className="gm-brand-ext-secret-label">{issuedSecret.label}</strong>
               {' · '}
               有效期至：{formatShanghaiDateTime(issuedSecret.expiresAt)}
             </div>
 
-            <div
-              style={{
-                padding: '10px 12px',
-                borderRadius: 'var(--gm-radius-sm)',
-                border: '1px solid var(--gm-phosphor-a40)',
-                background: 'var(--gm-bg-base)',
-              }}
-            >
+            <div className="gm-brand-ext-secret-box">
               <code
                 data-testid="extension-token-plain-secret"
-                className="gm-num"
-                style={{
-                  display: 'block',
-                  fontFamily: 'var(--gm-font-mono)',
-                  fontSize: 13,
-                  color: 'var(--gm-fg-1)',
-                  wordBreak: 'break-all',
-                  overflowWrap: 'anywhere',
-                  userSelect: 'all',
-                }}
+                className="gm-num gm-brand-ext-secret-code"
               >
                 {issuedSecret.plainToken}
               </code>
             </div>
 
-            <div
-              style={{
-                fontSize: 12,
-                color: 'var(--gm-fg-3)',
-                lineHeight: 1.6,
-              }}
-            >
+            <div className="gm-brand-ext-secret-steps">
               <div>配对步骤：</div>
               <div>1. 在 Chrome 中安装并打开 GeoMix 扩展设置页；</div>
               <div>2. 粘贴上方 `gmext_` 配对令牌并点击验证连接；</div>
@@ -682,6 +549,6 @@ export function ExtensionPairingPanel({
           </div>
         ) : null}
       </Modal>
-    </section>
+    </Section>
   );
 }
