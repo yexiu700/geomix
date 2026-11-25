@@ -1734,6 +1734,19 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
         ).data.items.map((i) => i.taskId),
       ).toEqual(['task_l2_smzdm_pub']);
 
+      const byMultiStatus = await fetch(
+        `${baseUrl}/api/v2/extension/tasks?status=DRAFT_VARIANT,READY_TO_PUBLISH`,
+        {
+          headers: { Authorization: `Bearer ${plainToken}` },
+        },
+      );
+      expect(byMultiStatus.status).toBe(200);
+      expect(
+        (
+          (await byMultiStatus.json()) as { data: { items: Array<{ taskId: string }> } }
+        ).data.items.map((i) => i.taskId),
+      ).toEqual(['task_l2_zhihu', 'task_l2_toutiao']);
+
       const byLimit = await fetch(`${baseUrl}/api/v2/extension/tasks?limit=1`, {
         headers: { Authorization: `Bearer ${plainToken}` },
       });
@@ -1750,6 +1763,7 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
         'provider=SHOPIFY',
         'provider=REDDIT',
         'status=ARCHIVED',
+        'status=DRAFT_VARIANT,ARCHIVED',
         'status=FAILED',
         'limit=0',
         'limit=51',
@@ -2433,7 +2447,8 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
           headers: {
             Origin: VALID_EXT_ORIGIN,
             'Access-Control-Request-Method': 'POST',
-            'Access-Control-Request-Headers': 'Authorization, Content-Type, Idempotency-Key',
+            'Access-Control-Request-Headers':
+              'Authorization, Content-Type, Idempotency-Key, X-GeoMix-Extension-Version',
           },
         });
         expect(preflight.status, path).toBe(204);
@@ -2442,7 +2457,7 @@ describe('Extension Bridge & Token CRUD HTTP (full createApiApp)', () => {
           'GET, POST, OPTIONS',
         );
         expect(preflight.headers.get('access-control-allow-headers'), path).toBe(
-          'Authorization, Content-Type, Idempotency-Key',
+          'Authorization, Content-Type, Idempotency-Key, X-GeoMix-Extension-Version',
         );
         expect(preflight.headers.get('access-control-allow-credentials'), path).toBeNull();
         expect(preflight.headers.get('vary')?.toLowerCase()).toContain('origin');
