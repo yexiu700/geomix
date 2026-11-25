@@ -68,6 +68,7 @@ import { GatewayApiError, unwrapEnvelope } from '../../lib/envelope';
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
+import { ChannelConnectionCreateModal } from '../brands/channel-connection-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
 
@@ -467,7 +468,9 @@ export function StudioDistributionDrawer({
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [ackWarnings, setAckWarnings] = useState(false);
   const [pointsConfirmOpen, setPointsConfirmOpen] = useState(false);
+  const [inlineBindModalOpen, setInlineBindModalOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const skipNextSelfConnectionsRefreshRef = useRef(false);
   const [activeVariantJob, setActiveVariantJob] = useState<GeoVariantJobDto | null>(null);
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [publishingTaskId, setPublishingTaskId] = useState<string | null>(null);
@@ -548,6 +551,7 @@ export function StudioDistributionDrawer({
     setActiveTaskId(null);
     setAckWarnings(false);
     setPointsConfirmOpen(false);
+    setInlineBindModalOpen(false);
     setGenerating(false);
     setActiveVariantJob(null);
     setSavingTaskId(null);
@@ -827,6 +831,10 @@ export function StudioDistributionDrawer({
     domains: ['channel-connections'],
     refreshOnActivate: false,
     onRefresh: () => {
+      if (skipNextSelfConnectionsRefreshRef.current) {
+        skipNextSelfConnectionsRefreshRef.current = false;
+        return;
+      }
       void reloadConnections();
     },
   });
@@ -985,6 +993,11 @@ export function StudioDistributionDrawer({
     linkedBrief?.recommendedChannels,
     market,
   ]);
+
+  const disabledConnectionsCount = useMemo(
+    () => connections.filter((conn) => conn.status === 'DISABLED').length,
+    [connections],
+  );
 
   const targetOptions = useMemo<SelectableTargetOption[]>(() => {
     const list: SelectableTargetOption[] = [];
@@ -3219,28 +3232,40 @@ export function StudioDistributionDrawer({
                   ) : null}
 
                   {/* Group 1: Connected L1 Official Sites */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div className="gm-studio-publish-subcard-title">
-                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
-                        <span className="gm-studio-glossary-trigger">
-                          1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
-                        </span>
-                      </Tooltip>
+                  <div className="gm-dist-l1-section">
+                    <div className="gm-dist-l1-head-row">
+                      <div className="gm-studio-publish-subcard-title">
+                        <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
+                          <span className="gm-studio-glossary-trigger">
+                            1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
+                          </span>
+                        </Tooltip>
+                      </div>
+                      {brandId && brandMarketId ? (
+                        <Button
+                          size="small"
+                          type="default"
+                          data-testid="studio-inline-bind-connection-btn"
+                          disabled={readOnly}
+                          className="gm-brand-btn-nowrap"
+                          onClick={() => setInlineBindModalOpen(true)}
+                        >
+                          快捷绑站
+                        </Button>
+                      ) : null}
                     </div>
-                    {l1Options.length === 0 ? (
+                    {disabledConnectionsCount > 0 ? (
                       <div
-                        style={{
-                          padding: 10,
-                          borderRadius: 'var(--gm-radius-sm)',
-                          border: '1px dashed var(--gm-line-strong)',
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
+                        className="gm-dist-l1-disabled-hint"
+                        data-testid="studio-distribution-disabled-conns-hint"
                       >
-                        <span style={{ fontSize: 12, color: 'var(--gm-fg-3)' }}>
+                        已停用 {disabledConnectionsCount} 个连接（已自动隐藏，可在「品牌资产 →
+                        发布渠道」重新启用）
+                      </div>
+                    ) : null}
+                    {l1Options.length === 0 ? (
+                      <div className="gm-dist-l1-empty-box">
+                        <span className="gm-dist-l1-empty-text">
                           {market === 'CN'
                             ? '当前市场尚未绑定微信公众号草稿箱 / WordPress / Webhook 渠道连接。'
                             : '当前市场尚未绑定 Shopify / WordPress / Webflow / Ghost / Dev.to / Hashnode / GitHub MDX / Webhook 渠道连接。'}
@@ -3248,7 +3273,7 @@ export function StudioDistributionDrawer({
                         {onNavigateBrands ? (
                           <Button
                             size="small"
-                            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                            className="gm-brand-btn-nowrap"
                             onClick={() => {
                               onClose();
                               onNavigateBrands();
@@ -3688,6 +3713,46 @@ export function StudioDistributionDrawer({
           </div>
         </div>
       </Drawer>
+
+      {brandId && brandMarketId ? (
+        <ChannelConnectionCreateModal
+          open={inlineBindModalOpen}
+          brandId={brandId}
+          activeMarket={market}
+          readOnly={readOnly}
+          supportedLocales={effectiveSupportedLocales}
+          onClose={() => setInlineBindModalOpen(false)}
+          onSaved={(saved) => {
+            setConnections((prev) => [saved, ...prev.filter((c) => c.id !== saved.id)]);
+            skipNextSelfConnectionsRefreshRef.current = true;
+            try {
+              invalidateFreshness('channel-connections');
+            } finally {
+              skipNextSelfConnectionsRefreshRef.current = false;
+            }
+          }}
+          onTested={(connId, res) => {
+            setConnections((prev) =>
+              prev.map((item) =>
+                item.id === connId
+                  ? {
+                      ...item,
+                      status: res.status,
+                      lastTestedAt: res.testedAt,
+                      lastError: res.ok ? null : res.message,
+                    }
+                  : item,
+              ),
+            );
+            skipNextSelfConnectionsRefreshRef.current = true;
+            try {
+              invalidateFreshness('channel-connections');
+            } finally {
+              skipNextSelfConnectionsRefreshRef.current = false;
+            }
+          }}
+        />
+      ) : null}
 
       {/* Points Confirmation Modal */}
       <Modal

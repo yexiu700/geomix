@@ -20,6 +20,7 @@ import { GatewayApiError } from '../../lib/envelope';
 import * as studioLib from '../../lib/studio';
 import { StudioDistributionDrawer } from './studio-distribution-drawer';
 
+const createChannelConnectionMock = vi.fn();
 const runArticlePreflightMock = vi.fn();
 const listArticleDistributionsMock = vi.fn();
 const listChannelConnectionsMock = vi.fn();
@@ -36,6 +37,7 @@ vi.mock('../../lib/distribution', async () => {
     await vi.importActual<typeof import('../../lib/distribution')>('../../lib/distribution');
   return {
     ...actual,
+    createChannelConnection: (...args: unknown[]) => createChannelConnectionMock(...args),
     runArticlePreflight: (...args: unknown[]) => runArticlePreflightMock(...args),
     listArticleDistributions: (...args: unknown[]) => listArticleDistributionsMock(...args),
     listChannelConnections: (...args: unknown[]) => listChannelConnectionsMock(...args),
@@ -2088,5 +2090,105 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(getBriefSpy).not.toHaveBeenCalled();
 
     getBriefSpy.mockRestore();
+  });
+
+  it('#385: hides DISABLED connections with count notice and allows inline 快捷绑站 without leaving StudioDistributionDrawer', async () => {
+    const disabledConn: ChannelConnectionDto = {
+      id: 'conn_disabled_wh',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      provider: 'WEBHOOK',
+      displayName: 'Paused Webhook',
+      siteBaseUrl: 'https://hooks.example.com/paused',
+      credentialHint: 'whse****1234',
+      configJson: { defaultPublishAsDraft: true, inlineJsonLd: true },
+      status: 'DISABLED',
+      authType: 'API_KEY',
+      targetLocale: null,
+      externalShopDomain: null,
+      lastTestedAt: null,
+      lastError: null,
+      createdAt: '2026-11-25T09:00:00.000Z',
+      updatedAt: '2026-11-25T09:00:00.000Z',
+    };
+    const createdWpConn: ChannelConnectionDto = {
+      id: 'conn_inline_wp',
+      brandId: 'brand_1',
+      brandMarketId: 'bm_gl_1',
+      market: 'GLOBAL',
+      provider: 'WORDPRESS',
+      displayName: 'Studio Inline WP',
+      siteBaseUrl: 'https://blog.example.com',
+      credentialHint: 'edit****abcd',
+      configJson: { defaultPublishAsDraft: true, inlineJsonLd: true },
+      status: 'ACTIVE',
+      authType: 'API_KEY',
+      targetLocale: null,
+      externalShopDomain: null,
+      lastTestedAt: null,
+      lastError: null,
+      createdAt: '2026-11-25T10:00:00.000Z',
+      updatedAt: '2026-11-25T10:00:00.000Z',
+    };
+
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [disabledConn] });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [] });
+    createChannelConnectionMock.mockResolvedValueOnce(createdWpConn);
+
+    const onClose = vi.fn();
+    const onNavigateBrands = vi.fn();
+
+    render(
+      <StudioDistributionDrawer
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onClose={onClose}
+        onReturnToEditor={vi.fn()}
+        onNavigateBrands={onNavigateBrands}
+      />,
+    );
+
+    const hint = await screen.findByTestId('studio-distribution-disabled-conns-hint');
+    expect(hint.textContent).toContain('已停用 1 个连接');
+    expect(screen.queryByTestId('distribution-target-l1:conn_disabled_wh')).toBeNull();
+
+    // Open inline ChannelConnectionCreateModal without closing drawer or navigating away
+    fireEvent.click(screen.getByTestId('studio-inline-bind-connection-btn'));
+    const modal = await screen.findByTestId('channel-connection-modal');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onNavigateBrands).not.toHaveBeenCalled();
+
+    // Switch to Shopify Custom App Token tab and submit
+    fireEvent.click(within(modal).getByRole('tab', { name: 'Custom App Token' }));
+    fireEvent.change(within(modal).getByLabelText('连接名称'), {
+      target: { value: 'Studio Inline WP' },
+    });
+    fireEvent.change(within(modal).getByLabelText('站点地址'), {
+      target: { value: 'https://blog.example.com' },
+    });
+    fireEvent.change(within(modal).getByLabelText('Shopify Access Token'), {
+      target: { value: 'shpat_inline_secret_1234' },
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
+
+    await waitFor(() => {
+      expect(createChannelConnectionMock).toHaveBeenCalledTimes(1);
+    });
+
+    // Newly created connection immediately appears as L1 target card while disabled hint stays visible
+    expect(await screen.findByTestId('distribution-target-l1:conn_inline_wp')).toBeTruthy();
+    expect(screen.getByText('Studio Inline WP')).toBeTruthy();
+    expect(screen.getByTestId('studio-distribution-disabled-conns-hint')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onNavigateBrands).not.toHaveBeenCalled();
   });
 });

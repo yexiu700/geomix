@@ -459,4 +459,54 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.queryByLabelText('市场竞品名称 2')).toBeNull();
     expect(notifySuccessMock).toHaveBeenCalledWith('已保存国内市场配置');
   });
+
+  it('#385: blocks GLOBAL CJK identity save until explicit override checkbox is checked', async () => {
+    const brand = makeDualMarketBrand();
+    const globalMarket = brand.markets.find((m) => m.market === 'GLOBAL')!;
+    const updatedBrand = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, localBrandName: '青松海外拦截测试' } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    const localInput = screen.getByLabelText('当地品牌名') as HTMLInputElement;
+    fireEvent.change(localInput, { target: { value: '青松海外拦截测试' } });
+
+    // Guard checkbox appears inside global-guard-slot; 保存修改 remains clickable
+    const overrideCheckbox = await screen.findByTestId('allow-cjk-global-identity-checkbox');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(await screen.findByTestId('brand-market-error')).toBeTruthy();
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+
+    // Check override and save again -> passes allowCjkGlobalIdentity: true
+    fireEvent.click(overrideCheckbox);
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledWith(
+        brand.id,
+        'GLOBAL',
+        expect.objectContaining({
+          localBrandName: '青松海外拦截测试',
+          allowCjkGlobalIdentity: true,
+        }),
+        expect.anything(),
+      );
+    });
+  });
 });

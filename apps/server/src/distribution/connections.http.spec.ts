@@ -1191,4 +1191,142 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
     expect(clearLocaleRes.status).toBe(200);
     expect(clearLocaleRes.json.data.targetLocale).toBeNull();
   });
+
+  it('blocks activating revoked Shopify OAuth without credentials while allowing credential rotation and normal DISABLED <-> ACTIVE toggle (#385)', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+
+    // 1. Normal connection pause -> resume (intact ciphertext) succeeds
+    const created = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Toggle Shopify Store',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { accessToken: 'shpat_toggle_valid_11111' },
+      },
+    });
+    expect(created.status).toBe(200);
+    const connId = created.json.data.id;
+
+    const disableRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: { status: 'DISABLED' },
+      },
+    );
+    expect(disableRes.status).toBe(200);
+    expect(disableRes.json.data.status).toBe('DISABLED');
+
+    const resumeRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: { status: 'ACTIVE' },
+      },
+    );
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.json.data.status).toBe('ACTIVE');
+
+    // 2. Simulate Shopify app/uninstalled webhook revoking OAuth credentials
+    const row = db.connections.find((c) => c.id === connId);
+    expect(row).toBeDefined();
+    row!.authType = 'OAUTH';
+    row!.status = 'DISABLED';
+    row!.credentialsCiphertext = '';
+    row!.credentialsIv = '';
+    row!.credentialsTag = '';
+    row!.credentialHint = '';
+
+    // Fake-activating revoked OAuth connection without credentials MUST return 400
+    const blockedActivate = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'ACTIVE' },
+    });
+    expect(blockedActivate.status).toBe(400);
+    expect(blockedActivate.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(blockedActivate.json.msg).toContain('重新授权');
+    expect(row!.status).toBe('DISABLED');
+
+    // Forged oauthAccessToken on POST /connections MUST be rejected with 400
+    const forgedCreate = await apiFetch('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Forged OAuth Create',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { oauthAccessToken: 'forged_oauth_create_token' },
+      },
+    });
+    expect(forgedCreate.status).toBe(400);
+    expect(forgedCreate.json.code).toBe(API_ERROR.BAD_REQUEST);
+
+    const forgedCreateWithAccessToken = await apiFetch('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Forged OAuth Create 2',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: {
+          accessToken: 'shpat_valid_12345',
+          oauthAccessToken: 'forged_oauth_create_token',
+        },
+      },
+    });
+    expect(forgedCreateWithAccessToken.status).toBe(400);
+    expect(forgedCreateWithAccessToken.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(forgedCreateWithAccessToken.json.msg).toContain('重新授权');
+
+    // Forged oauthAccessToken on PATCH revoked OAuth MUST be rejected with 400 and keep status DISABLED
+    const forgedPatch = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: {
+        status: 'ACTIVE',
+        credentials: { oauthAccessToken: 'forged_oauth_token_12345' },
+      },
+    });
+    expect(forgedPatch.status).toBe(400);
+    expect(forgedPatch.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(forgedPatch.json.msg).toContain('重新授权');
+    expect(row!.status).toBe('DISABLED');
+
+    // Forged oauthAccessToken paired with blank accessToken MUST also be rejected with 400
+    const forgedPatchVariant = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: {
+        status: 'ACTIVE',
+        credentials: { accessToken: '   ', oauthAccessToken: 'forged_2' },
+      },
+    });
+    expect(forgedPatchVariant.status).toBe(400);
+    expect(forgedPatchVariant.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(row!.status).toBe('DISABLED');
+
+    // Simultaneous credential rotation + status: 'ACTIVE' succeeds and switches to API_KEY
+    const rotateRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: {
+          status: 'ACTIVE',
+          credentials: { accessToken: 'shpat_rotated_valid_99999' },
+        },
+      },
+    );
+    expect(rotateRes.status).toBe(200);
+    expect(rotateRes.json.data.status).toBe('ACTIVE');
+    expect(rotateRes.json.data.authType).toBe('API_KEY');
+  });
 });

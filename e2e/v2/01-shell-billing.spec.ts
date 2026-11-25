@@ -1275,6 +1275,7 @@ v2Describe(
 
           const dialog = page.getByRole('dialog', { name: /开启海外市场|开启另一市场/ });
           await expect(dialog).toBeVisible();
+          await dialog.getByLabel('当地品牌名称').fill(`AstraVault ${tag}`);
           await dialog.getByRole('button', { name: '确认开启' }).click();
 
           await expectUrlContext(page, { brandId: brand.id, market: 'GLOBAL' });

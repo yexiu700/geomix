@@ -354,7 +354,7 @@ describe('BrandsService unit tests (F6 full CRUD & dual-market identity)', () =>
           ownedDomains: ['https://WWW.QingSong.cn/products'],
           competitors: [{ name: '正浩', domains: ['https://www.ecoflow.com/cn'] }],
         },
-        'GLOBAL',
+        { market: 'GLOBAL', localBrandName: 'QingSong Power' },
       ],
       truthAgreed: true,
     });
@@ -926,5 +926,192 @@ describe('API v1/v2 URI versioning & BrandsController HTTP CRUD + Guard Matrix',
       headers: { authorization: `Bearer ${activeToken}` },
     });
     expect(afterDelGet.status).toBe(404);
+  });
+
+  it('enforces GLOBAL CJK identity hard guard and allowCjkGlobalIdentity override across create/enable/update (#385)', async () => {
+    const activeToken = makeAccessToken('u_active', 'tenant_active');
+    const authHeaders = {
+      authorization: `Bearer ${activeToken}`,
+      'content-type': 'application/json',
+    };
+
+    // 1. POST /brands: GLOBAL CJK localBrandName blocked (400)
+    const cjkBrandRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: 'PureEnglishBase',
+        category: '便携储能',
+        markets: [{ market: 'GLOBAL', localBrandName: '星曜海外测试' }],
+      }),
+    });
+    expect(cjkBrandRes.status).toBe(400);
+    expect(((await cjkBrandRes.json()) as { code: number }).code).toBe(API_ERROR.BAD_REQUEST);
+
+    // 2. POST /brands: GLOBAL omitted localBrandName falling back to CJK brand.name blocked (400)
+    const fallbackCjkRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: '纯中文母品牌',
+        category: '便携储能',
+        markets: [{ market: 'GLOBAL' }],
+      }),
+    });
+    expect(fallbackCjkRes.status).toBe(400);
+
+    // 3. POST /brands: GLOBAL explicit CJK localCategory blocked (400)
+    const cjkCatRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: 'AstraVoltCat',
+        category: '便携储能',
+        markets: [
+          { market: 'GLOBAL', localBrandName: 'AstraVoltCat', localCategory: '便携储能电源' },
+        ],
+      }),
+    });
+    expect(cjkCatRes.status).toBe(400);
+
+    // 4. POST /brands: GLOBAL with allowCjkGlobalIdentity: true succeeds (200)
+    const overrideCreateRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: '星曜出海',
+        category: '便携储能',
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '星曜出海',
+            localCategory: '便携储能电源',
+            allowCjkGlobalIdentity: true,
+          },
+        ],
+      }),
+    });
+    expect(overrideCreateRes.status).toBe(200);
+    const overrideBrandId = ((await overrideCreateRes.json()) as { data: { id: string } }).data.id;
+
+    // 4b. Partial PATCH of non-identity field on CJK-override GLOBAL market stays 200 (partial-update safety)
+    const partialPatchOverride = await fetch(
+      `${baseUrl}/api/v2/brands/${overrideBrandId}/markets/GLOBAL`,
+      {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({ ownedDomains: ['astravolt.io'] }),
+      },
+    );
+    expect(partialPatchOverride.status).toBe(200);
+
+    // 5. CN brand creation unaffected
+    const cnRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: '星曜智储CN',
+        category: '便携储能',
+        markets: [{ market: 'CN', localBrandName: '星曜智储CN' }],
+      }),
+    });
+    expect(cnRes.status).toBe(200);
+    const cnBrandId = ((await cnRes.json()) as { data: { id: string } }).data.id;
+
+    // 6. POST /brands/:id/markets/GLOBAL with omitted localBrandName on CJK brand blocked (400)
+    const enableFallbackCjk = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({}),
+    });
+    expect(enableFallbackCjk.status).toBe(400);
+
+    // 7. POST /brands/:id/markets/GLOBAL with explicit CJK localBrandName blocked (400)
+    const enableExplicitCjk = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ localBrandName: '星曜中文名' }),
+    });
+    expect(enableExplicitCjk.status).toBe(400);
+
+    // 8. POST /brands/:id/markets/GLOBAL with English localBrandName succeeds (200)
+    const enableEn = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        localBrandName: 'AstraVolt Global',
+        localCategory: 'Portable Power Station',
+      }),
+    });
+    expect(enableEn.status).toBe(200);
+
+    // 9. PATCH /brands/:id/markets/GLOBAL with CJK localBrandName or localCategory blocked (400)
+    const patchCjkName = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ localBrandName: '被拦截中文名' }),
+    });
+    expect(patchCjkName.status).toBe(400);
+
+    const patchCjkCat = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ localCategory: '非法中文品类' }),
+    });
+    expect(patchCjkCat.status).toBe(400);
+
+    // 10. PATCH /brands/:id/markets/GLOBAL with allowCjkGlobalIdentity: true succeeds (200)
+    const patchOverride = await fetch(`${baseUrl}/api/v2/brands/${cnBrandId}/markets/GLOBAL`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ localBrandName: '显式放行中文名', allowCjkGlobalIdentity: true }),
+    });
+    expect(patchOverride.status).toBe(200);
+    const patchBody = (await patchOverride.json()) as {
+      data: { markets: Array<{ market: string; localBrandName: string }> };
+    };
+    expect(patchBody.data.markets.find((m) => m.market === 'GLOBAL')?.localBrandName).toBe(
+      '显式放行中文名',
+    );
+
+    // 11. Explicit per-market allowCjkGlobalIdentity: false MUST override top-level true (C1-2)
+    const perMarketFalseRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: '星曜覆写',
+        category: '便携储能',
+        allowCjkGlobalIdentity: true,
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '星曜覆写',
+            allowCjkGlobalIdentity: false,
+          },
+        ],
+      }),
+    });
+    expect(perMarketFalseRes.status).toBe(400);
+
+    // Direct service-level precedence guard (bypassing HTTP Zod parse)
+    const brandsService = app.get(BrandsService);
+    await expect(
+      brandsService.create('tenant_http', 'user_http', {
+        name: '星曜直调',
+        category: '便携储能',
+        allowCjkGlobalIdentity: true,
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '星曜直调',
+            aliases: [],
+            ownedDomains: [],
+            competitors: [],
+            seedPrompts: [],
+            allowCjkGlobalIdentity: false,
+          },
+        ],
+      }),
+    ).rejects.toThrow();
   });
 });

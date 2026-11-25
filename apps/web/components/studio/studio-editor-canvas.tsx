@@ -25,6 +25,7 @@ import { resolveMediaUrl } from '../../lib/brands';
 import { rewritePreviewRelativeMediaUrls } from '../../lib/studio';
 import { hasOpenFloatingOverlay } from '../../lib/ux-foundation';
 import { SignalEmpty } from '../geo/primitives';
+import { groupMissingFactSlots } from './studio-batch-tbd-helpers';
 
 const PreviewHtmlContent = memo(function PreviewHtmlContent({ html }: { html: string }) {
   const markup = useMemo(() => ({ __html: html }), [html]);
@@ -278,6 +279,11 @@ export function StudioEditorCanvas({
     () => (streaming ? [] : extractMissingFactSlots(draftMarkdown)),
     [draftMarkdown, streaming],
   );
+  const missingSlotGroupCount = useMemo(
+    () =>
+      missingSlots.length === 0 ? 0 : groupMissingFactSlots(draftMarkdown, missingSlots).length,
+    [draftMarkdown, missingSlots],
+  );
 
   const effectiveMarkdown = streaming ? streamMarkdown : draftMarkdown;
   const renderedHtml = useMemo(() => {
@@ -483,10 +489,6 @@ export function StudioEditorCanvas({
   const openSlotByIndex = (slotIdx: number) => {
     const slot = missingSlots[slotIdx];
     if (!slot) return;
-    if (onOpenBatchMissingFact) {
-      onOpenBatchMissingFact();
-      return;
-    }
     const key = `${slot.index}-${slot.raw}`;
     setOpenSlotKey(key);
     setSlotInputValue('');
@@ -842,6 +844,17 @@ export function StudioEditorCanvas({
                   );
                 })}
               </div>
+              {onOpenBatchMissingFact ? (
+                <Button
+                  size="small"
+                  type="default"
+                  data-testid="studio-missing-bar-batch-btn"
+                  disabled={readOnly}
+                  onClick={onOpenBatchMissingFact}
+                >
+                  批量补填（{missingSlotGroupCount} 组）
+                </Button>
+              ) : null}
             </div>
           ) : null}
 

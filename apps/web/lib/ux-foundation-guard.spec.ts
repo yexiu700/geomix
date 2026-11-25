@@ -152,8 +152,8 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 600,
-  inlineFontSize: 158,
+  inlineStyleBlocks: 596,
+  inlineFontSize: 157,
 } as const;
 
 const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {

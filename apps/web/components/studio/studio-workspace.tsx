@@ -1,17 +1,18 @@
 'use client';
 
 import {
+  BRAND_FACT_CARD_MAX,
   BRAND_FACT_SLOT_LABELS,
   GEO_MARKET_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
   GLOBAL_SUPPORTED_LOCALES,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   defaultTargetFormatForMarket,
-  extractMissingFactSlots,
   resolveEffectiveLocale,
   targetFormatsForMarket,
   type BrandFactRecord,
   type BrandFactSlot,
+  type BrandFactsResponse,
   type BrandMediaAssetRecord,
   type GeoArticleRecord,
   type GeoArticleStatus,
@@ -76,10 +77,13 @@ import {
   selectActiveBrandMarket,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { QuickFactExtractModal } from '../brands/quick-fact-extract-modal';
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { StudioBatchTbdDrawer, type BatchTbdSubmitEntry } from './studio-batch-tbd-drawer';
+import { batchReplaceMissingFactSlots, groupMissingFactSlots } from './studio-batch-tbd-helpers';
 import { StudioDeliveryPack } from './studio-delivery-pack';
 import { StudioDistributionDrawer } from './studio-distribution-drawer';
 import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
@@ -155,6 +159,10 @@ function formatStudioError(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function hasValidBrandFacts(items: readonly BrandFactRecord[]): boolean {
+  return items.some((fact) => fact.content.trim().length > 0);
+}
+
 export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Element {
   const state = useWorkspaceStore();
   const activeBrand = selectActiveBrand(state);
@@ -196,8 +204,20 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [brandMedia, setBrandMedia] = useState<BrandMediaAssetRecord[]>([]);
   const [brandMediaLoading, setBrandMediaLoading] = useState(false);
   const [counterModalOpen, setCounterModalOpen] = useState(false);
+  const [quickExtractModalOpen, setQuickExtractModalOpen] = useState(false);
+  const [batchTbdDrawerOpen, setBatchTbdDrawerOpen] = useState(false);
   const [promptPreference, setPromptPreference] = useState<PromptPreferenceRecord>(EMPTY_PREF);
   const [prefsSaving, setPrefsSaving] = useState(false);
+
+  const brandFactsRef = useRef<BrandFactRecord[]>([]);
+  const brandFactsLoadedRef = useRef(false);
+  const brandFactsPromiseRef = useRef<{
+    seq: number;
+    promise: Promise<BrandFactRecord[] | null>;
+  } | null>(null);
+  const checkingFactsRef = useRef(false);
+  const streamingRef = useRef(false);
+  const skipNextSelfWorkspaceRefreshRef = useRef(false);
 
   const supportedLocalesKey = (activeBrandMarket?.supportedLocales ?? []).join(',');
 
@@ -400,6 +420,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       setSupplementingTerm(null);
       setRetestingRecordId(null);
       setRetestModalRecord(null);
+      setBatchTbdDrawerOpen(false);
       if (nextArticleId === null) {
         setDistributionDrawerOpen(false);
       } else {
@@ -444,6 +465,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       const urlParams = readStudioUrlParams();
       const { status: currentStatus, tag: currentTag } = articleFiltersRef.current;
 
+      const factsReq = getBrandFacts(brandId, { signal: ctrl.signal });
+      brandFactsPromiseRef.current = {
+        seq,
+        promise: factsReq.then((res) => res.items).catch(() => null),
+      };
+
       const [briefsRes, articlesRes, batchRes, factsRes, prefRes, mediaRes] =
         await Promise.allSettled([
           fetchBriefs(brandId, market, { status: 'OPEN', pageSize: 50 }, { signal: ctrl.signal }),
@@ -458,7 +485,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             { signal: ctrl.signal },
           ),
           fetchBatchJobs(brandId, market, { signal: ctrl.signal }),
-          getBrandFacts(brandId, { signal: ctrl.signal }),
+          factsReq,
           getPromptPreferences({ signal: ctrl.signal }),
           listBrandMedia(brandId, { signal: ctrl.signal }),
         ]);
@@ -468,12 +495,17 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       const loadedBriefs = briefsRes.status === 'fulfilled' ? briefsRes.value.items : [];
       const loadedArticles = articlesRes.status === 'fulfilled' ? articlesRes.value.items : [];
       const loadedBatches = batchRes.status === 'fulfilled' ? batchRes.value.items : [];
-      const loadedFacts = factsRes.status === 'fulfilled' ? factsRes.value.items : [];
 
       setBriefs(loadedBriefs);
       setArticles(loadedArticles);
       setBatchJobs(loadedBatches);
-      setBrandFacts(loadedFacts);
+      if (factsRes.status === 'fulfilled') {
+        setBrandFacts(factsRes.value.items);
+        brandFactsRef.current = factsRes.value.items;
+        brandFactsLoadedRef.current = true;
+      } else {
+        brandFactsLoadedRef.current = false;
+      }
       if (prefRes.status === 'fulfilled') {
         setPromptPreference(prefRes.value);
       }
@@ -707,7 +739,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setRetestCheckedEngines([]);
     setRetestEnginesError(null);
     setCounterModalOpen(false);
+    setQuickExtractModalOpen(false);
+    setBatchTbdDrawerOpen(false);
     setDistributionDrawerOpen(false);
+    checkingFactsRef.current = false;
+    streamingRef.current = false;
+    brandFactsPromiseRef.current = null;
     if (returnFocusTimerRef.current) {
       clearTimeout(returnFocusTimerRef.current);
       returnFocusTimerRef.current = null;
@@ -723,6 +760,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     pendingUsedMediaIdsRef.current = [];
     if (lastLoadedBrandIdRef.current !== activeBrandId) {
       setBrandMedia([]);
+      setBrandFacts([]);
+      brandFactsRef.current = [];
+      brandFactsLoadedRef.current = false;
       lastLoadedBrandIdRef.current = activeBrandId;
     }
 
@@ -1123,6 +1163,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     active: Boolean(activeBrandId && activeBrandMarket && !streaming),
     refreshOnActivate: false,
     onRefresh: () => {
+      if (skipNextSelfWorkspaceRefreshRef.current) {
+        skipNextSelfWorkspaceRefreshRef.current = false;
+        return;
+      }
       if (!activeBrandId || !activeBrandMarket || streaming) return;
       void loadWorkspaceData(activeBrandId, activeMarket, contextSeqRef.current, {
         preserveSelection: true,
@@ -1182,11 +1226,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
-  const handleStartStream = async () => {
-    if (!activeBrandId || !activeBrandMarket || readOnly || streaming) return;
+  const executeStartStream = async () => {
+    if (!activeBrandId || !activeBrandMarket || readOnly || streaming || streamingRef.current) {
+      return;
+    }
     const promptTrimmed = targetPrompt.trim();
     if (promptTrimmed.length < 2) return;
 
+    streamingRef.current = true;
     streamCtrlRef.current?.abort();
     const ctrl = new AbortController();
     streamCtrlRef.current = ctrl;
@@ -1310,10 +1357,76 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       void consoleCtx?.refreshWallet();
     } finally {
       if (seq === contextSeqRef.current) {
+        streamingRef.current = false;
         setStreaming(false);
         setStreamMarkdown('');
       }
     }
+  };
+
+  const handleRequestStartStream = async () => {
+    if (
+      !activeBrandId ||
+      !activeBrandMarket ||
+      readOnly ||
+      streaming ||
+      streamingRef.current ||
+      checkingFactsRef.current
+    ) {
+      return;
+    }
+    const promptTrimmed = targetPrompt.trim();
+    if (promptTrimmed.length < 2) return;
+
+    if (brandFactsLoadedRef.current) {
+      if (!hasValidBrandFacts(brandFactsRef.current)) {
+        setQuickExtractModalOpen(true);
+        return;
+      }
+      void executeStartStream();
+      return;
+    }
+
+    const seq = contextSeqRef.current;
+    checkingFactsRef.current = true;
+    let resolvedFacts: BrandFactRecord[] | null = null;
+    try {
+      const pending = brandFactsPromiseRef.current;
+      if (pending && pending.seq === seq) {
+        resolvedFacts = await pending.promise;
+      } else {
+        resolvedFacts = await getBrandFacts(activeBrandId)
+          .then((res) => res.items)
+          .catch(() => null);
+      }
+    } finally {
+      if (seq === contextSeqRef.current) {
+        checkingFactsRef.current = false;
+      }
+    }
+
+    if (seq !== contextSeqRef.current) return;
+
+    if (resolvedFacts !== null) {
+      setBrandFacts(resolvedFacts);
+      brandFactsRef.current = resolvedFacts;
+      brandFactsLoadedRef.current = true;
+      if (!hasValidBrandFacts(resolvedFacts)) {
+        setQuickExtractModalOpen(true);
+        return;
+      }
+    }
+
+    void executeStartStream();
+  };
+
+  const handleQuickFactsSaved = (saved: BrandFactsResponse) => {
+    skipNextSelfWorkspaceRefreshRef.current = true;
+    setBrandFacts(saved.items);
+    brandFactsRef.current = saved.items;
+    brandFactsLoadedRef.current = true;
+    setQuickExtractModalOpen(false);
+    void executeStartStream();
   };
 
   const handleAbortStream = () => {
@@ -1550,6 +1663,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         factsSynced = true;
         if (seq === contextSeqRef.current) {
           setBrandFacts(factRes.items);
+          brandFactsRef.current = factRes.items;
+          brandFactsLoadedRef.current = true;
         }
       }
 
@@ -1572,6 +1687,98 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       }
       if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
         feedback.notifyError(formatStudioError(err, '回填缺失事实失败'));
+      }
+      throw err;
+    }
+  };
+
+  const handleBatchBackfillMissingFacts = async (
+    entries: readonly BatchTbdSubmitEntry[],
+    options: { syncToFact: boolean; factSlot: BrandFactSlot },
+  ) => {
+    if (!activeArticle || !activeBrandId || readOnly || entries.length === 0) return;
+    const targetArticle = activeArticle;
+    const targetBrandId = activeBrandId;
+    const targetTitle = draftTitle.trim() || targetArticle.title;
+    const seq = contextSeqRef.current;
+    const artSeq = articleSeqRef.current;
+
+    const flatReplacements = entries.flatMap((entry) =>
+      entry.group.slots.map((slot) => ({ slot, value: entry.value })),
+    );
+    const nextMarkdown = batchReplaceMissingFactSlots(draftMarkdown, flatReplacements);
+    let factsSynced = false;
+
+    try {
+      if (options.syncToFact) {
+        // Must fetch latest server facts before merging so existing slot facts are never overwritten with stale/empty local cache
+        const latest = await getBrandFacts(targetBrandId);
+        const currentFacts = latest.items;
+
+        const bySlot = new Map<BrandFactSlot, { existing?: BrandFactRecord; content: string }>();
+        for (const entry of entries) {
+          let bucket = bySlot.get(options.factSlot);
+          if (!bucket) {
+            const existing = currentFacts.find(
+              (f) => f.slot === options.factSlot && !f.productLineId,
+            );
+            bucket = { existing, content: existing?.content ?? '' };
+            bySlot.set(options.factSlot, bucket);
+          }
+          bucket.content = mergeFactFeedbackContent(bucket.content, entry.group.hint, entry.value);
+        }
+
+        const factItems = Array.from(bySlot.entries()).map(([slot, bucket]) => ({
+          ...(bucket.existing ? { id: bucket.existing.id } : {}),
+          slot,
+          title: bucket.existing?.title || BRAND_FACT_SLOT_LABELS[slot],
+          content: bucket.content.slice(0, BRAND_FACT_CARD_MAX),
+          sourceType: 'STUDIO_FEEDBACK' as const,
+          ...(bucket.existing?.sourceUrl ? { sourceUrl: bucket.existing.sourceUrl } : {}),
+        }));
+
+        const factRes = await saveBrandFacts(targetBrandId, {
+          facts: factItems,
+          ...(!activeBrand?.truthAgreementSignedAt ? { truthAgreed: true } : {}),
+        });
+        if (factRes.truthAgreementSignedAt) {
+          useWorkspaceStore
+            .getState()
+            .markBrandTruthSigned(targetBrandId, factRes.truthAgreementSignedAt);
+        }
+        factsSynced = true;
+        if (seq === contextSeqRef.current) {
+          setBrandFacts(factRes.items);
+          brandFactsRef.current = factRes.items;
+          brandFactsLoadedRef.current = true;
+        }
+      }
+
+      const updatedArticle = await updateArticle(targetArticle.id, {
+        title: targetTitle,
+        contentMarkdown: nextMarkdown,
+      });
+      skipNextSelfWorkspaceRefreshRef.current = true;
+      if (factsSynced) {
+        invalidateFreshness('brand-facts', 'articles');
+      } else {
+        invalidateFreshness('articles');
+      }
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
+      applyArticleToCanvas(updatedArticle);
+      setArticles((prev) => prev.map((a) => (a.id === updatedArticle.id ? updatedArticle : a)));
+      setBatchTbdDrawerOpen(false);
+      feedback.notifySuccess(
+        options.syncToFact
+          ? `已批量填入 ${entries.length} 组事实并同步反哺品牌事实卡`
+          : `已批量填入 ${entries.length} 组事实并保存正文`,
+      );
+    } catch (err) {
+      if (factsSynced) {
+        invalidateFreshness('brand-facts');
+      }
+      if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
+        feedback.notifyError(formatStudioError(err, '批量回填缺失事实失败'));
       }
       throw err;
     }
@@ -2061,6 +2268,18 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
+  const missingSlotGroups = useMemo(
+    () => (streaming || !activeArticle ? [] : groupMissingFactSlots(draftMarkdown)),
+    [streaming, activeArticle, draftMarkdown],
+  );
+  const missingSlotCount = missingSlotGroups.length;
+
+  useEffect(() => {
+    if (batchTbdDrawerOpen && missingSlotGroups.length === 0) {
+      setBatchTbdDrawerOpen(false);
+    }
+  }, [batchTbdDrawerOpen, missingSlotGroups.length]);
+
   // Cold-load Skeleton (ZERO 0 点 / 免费体验期 / ¥0.00 flash!)
   if (state.brandsLoading) {
     return (
@@ -2129,8 +2348,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   );
 
   const isPrewriteCollapsed = Boolean(activeArticle) && !streaming && !prewriteExpanded;
-  const missingSlotCount =
-    streaming || !activeArticle ? 0 : extractMissingFactSlots(draftMarkdown).length;
   const scopedPublishRecords =
     activeArticleMatchesContext && activeArticle
       ? publishRecords.filter((rec) => rec.articleId === activeArticle.id)
@@ -2207,7 +2424,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       onChangeTags={handleChangeTags}
       onFocusMissingFacts={() => {
         setMobileRightDrawerOpen(false);
-        handleReturnToEditorForFix('MISSING_FACT_SLOTS');
+        setBatchTbdDrawerOpen(true);
       }}
       onOpenDistributionDrawer={() => {
         setMobileRightDrawerOpen(false);
@@ -2317,7 +2534,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             streaming={streaming}
             streamError={streamError}
             onDismissStreamError={() => setStreamError(null)}
-            onStartStream={() => void handleStartStream()}
+            onStartStream={() => void handleRequestStartStream()}
             onAbortStream={handleAbortStream}
             readOnly={readOnly}
             availableLocales={availableLocales}
@@ -2344,7 +2561,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             streamMarkdown={streamMarkdown}
             partialDraft={partialDraft}
             onCopyPartialDraft={() => void handleCopyPartialDraft()}
-            onRetryPartialDraft={() => void handleStartStream()}
+            onRetryPartialDraft={() => void executeStartStream()}
             onDismissPartialDraft={handleDismissPartialDraft}
             draftTitle={draftTitle}
             draftMarkdown={draftMarkdown}
@@ -2354,6 +2571,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             onDraftMarkdownChange={setDraftMarkdown}
             onSaveArticle={handleSaveArticle}
             onBackfillMissingFact={handleBackfillMissingFact}
+            onOpenBatchMissingFact={() => setBatchTbdDrawerOpen(true)}
             onRewriteSection={handleRewriteSection}
             onApplyRewrittenText={handleApplyRewrittenText}
             onCursorChange={handleEditorCursorChange}
@@ -2607,6 +2825,30 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           </div>
         </div>
       </Modal>
+
+      <QuickFactExtractModal
+        open={quickExtractModalOpen}
+        brandId={activeBrand.id}
+        brandName={activeBrand.name}
+        defaultDomain={activeBrandMarket.ownedDomains[0] ?? null}
+        truthSignedAt={activeBrand.truthAgreementSignedAt}
+        readOnly={readOnly}
+        onClose={() => setQuickExtractModalOpen(false)}
+        onSkipAndGenerate={() => {
+          setQuickExtractModalOpen(false);
+          void executeStartStream();
+        }}
+        onSaved={handleQuickFactsSaved}
+      />
+
+      <StudioBatchTbdDrawer
+        open={batchTbdDrawerOpen}
+        articleId={activeArticle?.id ?? null}
+        groups={missingSlotGroups}
+        readOnly={readOnly}
+        onClose={() => setBatchTbdDrawerOpen(false)}
+        onSubmit={handleBatchBackfillMissingFacts}
+      />
     </section>
   );
 }

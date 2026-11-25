@@ -1539,4 +1539,176 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     };
     expect(patchPayload.credentials).toBeUndefined();
   });
+
+  it('#385: supports disable (via feedback.confirm) -> re-enable (direct without confirm) and hides toggle for disabled Shopify OAuth', async () => {
+    const webhookConn = makeConn({
+      id: 'conn_wh_toggle',
+      provider: 'WEBHOOK',
+      authType: 'API_KEY',
+      displayName: 'Toggle Webhook',
+      siteBaseUrl: 'https://hooks.example.com/toggle',
+      status: 'ACTIVE',
+    });
+    const disabledOAuthConn = makeConn({
+      id: 'conn_oauth_revoked',
+      provider: 'SHOPIFY',
+      authType: 'OAUTH',
+      displayName: 'Revoked Shopify',
+      siteBaseUrl: 'https://revoked.myshopify.com',
+      status: 'DISABLED',
+      credentialHint: '',
+    });
+
+    listChannelConnectionsMock.mockResolvedValueOnce({
+      items: [webhookConn, disabledOAuthConn],
+    });
+    updateChannelConnectionMock
+      .mockResolvedValueOnce({ ...webhookConn, status: 'DISABLED' })
+      .mockResolvedValueOnce({ ...webhookConn, status: 'ACTIVE' });
+
+    confirmMock.mockImplementation((opts: { onOk?: () => Promise<void> | void }) => {
+      void opts.onOk?.();
+    });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    // 1. Revoked Shopify OAuth hides toggle button and keeps 重新授权 alert
+    const oauthCard = await screen.findByTestId('channel-connection-card-conn_oauth_revoked');
+    expect(
+      within(oauthCard).queryByTestId('channel-connection-toggle-btn-conn_oauth_revoked'),
+    ).toBeNull();
+    expect(within(oauthCard).getByRole('button', { name: '重新授权' })).toBeTruthy();
+
+    // 2. Disable active Webhook via feedback.confirm
+    const toggleBtn = await screen.findByTestId('channel-connection-toggle-btn-conn_wh_toggle');
+    expect(toggleBtn.textContent).toContain('停用');
+    fireEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(updateChannelConnectionMock).toHaveBeenNthCalledWith(
+        1,
+        'brand_1',
+        'conn_wh_toggle',
+        { status: 'DISABLED' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    // 3. Re-enable disabled Webhook DIRECTLY (no second confirm dialog!)
+    await waitFor(() => {
+      const btn = screen.getByTestId('channel-connection-toggle-btn-conn_wh_toggle');
+      expect(btn.textContent).toContain('重新启用');
+      expect(btn.classList.contains('ant-btn-loading')).toBe(false);
+    });
+    fireEvent.click(screen.getByTestId('channel-connection-toggle-btn-conn_wh_toggle'));
+
+    await waitFor(() => {
+      expect(updateChannelConnectionMock).toHaveBeenNthCalledWith(
+        2,
+        'brand_1',
+        'conn_wh_toggle',
+        { status: 'ACTIVE' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('#385 C2-3 regression: manually paused Shopify OAuth (non-empty credentialHint) keeps direct 重新启用 toggle while revoked OAuth (empty credentialHint) hides toggle', async () => {
+    const activeOAuthConn = makeConn({
+      id: 'conn_oauth_active',
+      provider: 'SHOPIFY',
+      authType: 'OAUTH',
+      displayName: 'Active Shopify OAuth',
+      siteBaseUrl: 'https://active.myshopify.com',
+      externalShopDomain: 'active.myshopify.com',
+      status: 'ACTIVE',
+      credentialHint: 'shpat_****1234',
+    });
+    const revokedOAuthConn = makeConn({
+      id: 'conn_oauth_revoked_2',
+      provider: 'SHOPIFY',
+      authType: 'OAUTH',
+      displayName: 'Revoked Shopify OAuth',
+      siteBaseUrl: 'https://revoked2.myshopify.com',
+      externalShopDomain: 'revoked2.myshopify.com',
+      status: 'DISABLED',
+      credentialHint: '',
+    });
+
+    listChannelConnectionsMock.mockResolvedValueOnce({
+      items: [activeOAuthConn, revokedOAuthConn],
+    });
+    updateChannelConnectionMock
+      .mockResolvedValueOnce({ ...activeOAuthConn, status: 'DISABLED' })
+      .mockResolvedValueOnce({ ...activeOAuthConn, status: 'ACTIVE' });
+
+    confirmMock.mockImplementation((opts: { onOk?: () => Promise<void> | void }) => {
+      void opts.onOk?.();
+    });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    // 1. Revoked Shopify OAuth (empty credentialHint) hides toggle and shows 重新授权 alert
+    const revokedCard = await screen.findByTestId('channel-connection-card-conn_oauth_revoked_2');
+    expect(
+      within(revokedCard).queryByTestId('channel-connection-toggle-btn-conn_oauth_revoked_2'),
+    ).toBeNull();
+    expect(within(revokedCard).getByRole('button', { name: '重新授权' })).toBeTruthy();
+
+    // 2. Manually pause active Shopify OAuth connection (retains credentialHint: 'shpat_****1234')
+    const pauseBtn = await screen.findByTestId('channel-connection-toggle-btn-conn_oauth_active');
+    expect(pauseBtn.textContent).toContain('停用');
+    fireEvent.click(pauseBtn);
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledTimes(1);
+      expect(updateChannelConnectionMock).toHaveBeenNthCalledWith(
+        1,
+        'brand_1',
+        'conn_oauth_active',
+        { status: 'DISABLED' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    // 3. Paused Shopify OAuth MUST keep 重新启用 button (and NOT show revoked alert)
+    await waitFor(() => {
+      const reenableBtn = screen.getByTestId('channel-connection-toggle-btn-conn_oauth_active');
+      expect(reenableBtn.textContent).toContain('重新启用');
+      expect(reenableBtn.classList.contains('ant-btn-loading')).toBe(false);
+    });
+    const activeCard = screen.getByTestId('channel-connection-card-conn_oauth_active');
+    expect(within(activeCard).queryByRole('button', { name: '重新授权' })).toBeNull();
+
+    // 4. Clicking 重新启用 sends PATCH { status: 'ACTIVE' } directly without second confirm
+    fireEvent.click(screen.getByTestId('channel-connection-toggle-btn-conn_oauth_active'));
+    await waitFor(() => {
+      expect(updateChannelConnectionMock).toHaveBeenNthCalledWith(
+        2,
+        'brand_1',
+        'conn_oauth_active',
+        { status: 'ACTIVE' },
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+  });
 });

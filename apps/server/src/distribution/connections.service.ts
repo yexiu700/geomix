@@ -178,6 +178,17 @@ export class ConnectionsService {
     await this.assertSafeOptionalApiBaseUrl(input.configJson);
     const targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, input.market);
 
+    if (
+      input.provider === 'SHOPIFY' &&
+      Object.prototype.hasOwnProperty.call(input.credentials, 'oauthAccessToken')
+    ) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        'Shopify OAuth 令牌只能通过「重新授权」完成 OAuth 流程写入，手动更新请填写 accessToken',
+      );
+    }
+
     const trimmedCredentials = this.trimCredentials(input.credentials);
     this.validateProviderCredentials(input.provider, trimmedCredentials);
 
@@ -251,16 +262,23 @@ export class ConnectionsService {
       updateData.configJson = mergedConfig as Prisma.InputJsonValue;
     }
 
-    if (input.status !== undefined) {
-      updateData.status = input.status;
-    }
-
     if (input.targetLocale !== undefined) {
       const market = (existing.brandMarket?.market === 'CN' ? 'CN' : 'GLOBAL') as GeoMarket;
       updateData.targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, market);
     }
 
+    let hasNewCredentials = false;
     if (input.credentials !== undefined) {
+      if (
+        existing.provider === 'SHOPIFY' &&
+        Object.prototype.hasOwnProperty.call(input.credentials, 'oauthAccessToken')
+      ) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          'Shopify OAuth 令牌只能通过「重新授权」完成 OAuth 流程写入，手动更新请填写 accessToken',
+        );
+      }
       const nonBlankPatch = this.extractNonBlankCredentials(input.credentials);
       if (Object.keys(nonBlankPatch).length > 0) {
         let baseCredentials: ConnectorSecrets = {};
@@ -296,7 +314,25 @@ export class ConnectionsService {
         updateData.credentialsTag = envelope.tag;
         updateData.keyVersion = envelope.keyVersion;
         updateData.credentialHint = this.buildCredentialHint(existing.provider, mergedCredentials);
+        hasNewCredentials = true;
       }
+    }
+
+    if (input.status !== undefined) {
+      if (input.status === 'ACTIVE' && !hasNewCredentials) {
+        const hasStoredCredentials =
+          Boolean(existing.credentialsCiphertext?.trim()) &&
+          Boolean(existing.credentialsIv?.trim()) &&
+          Boolean(existing.credentialsTag?.trim());
+        if (!hasStoredCredentials) {
+          const message =
+            existing.provider === 'SHOPIFY' && existing.authType === 'OAUTH'
+              ? '该 Shopify OAuth 连接授权凭据已清除或失效，无法直接重新启用，请点击「重新授权」完成 OAuth 授权'
+              : '该渠道连接缺少有效凭据，请先更新凭据后再重新启用';
+          throw new ApiError(400, API_ERROR.BAD_REQUEST, message);
+        }
+      }
+      updateData.status = input.status;
     }
 
     const updated = await this.prisma.scoped.channelConnection.update({

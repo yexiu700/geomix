@@ -3733,4 +3733,323 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(updatedMd).toContain('实测 18.5dB 实测曲线图');
     expect(updatedMd).not.toContain('实测 [TBD: 图注]');
   });
+
+  it('#385: opens QuickFactExtractModal for 0-fact brand and supports skip escape hatch + deduplicated batch [TBD] fill merging facts safely', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    // Part A: 0-fact brand clicking studio-stream-btn -> opens QuickFactExtractModal (no premature stream) -> skip resumes stream
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValueOnce({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+    const streamSpy = vi.spyOn(studioApi, 'streamGenerateArticle').mockResolvedValue({
+      aborted: false,
+      receivedEvents: 0,
+    });
+
+    render(<StudioWorkspace />);
+    const promptInput = await screen.findByLabelText('目标问题');
+    fireEvent.change(promptInput, { target: { value: '2026 便携储能哪款静音表现最好' } });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    expect(await screen.findByTestId('quick-fact-extract-modal')).toBeTruthy();
+    expect(streamSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('quick-fact-skip-btn'));
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    cleanup();
+
+    // Part B: Article with 3 [待补充] tokens across 2 unique hints -> deduplicated batch drawer merges onto existing PRODUCT_SPECS fact without overwriting
+    const multiTbdArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_batch_tbd',
+      title: '便携储能实测报告',
+      contentMarkdown: [
+        '# 便携储能实测报告',
+        '',
+        '实测满载功耗为 [待补充：满载功耗]，静音控制出色。',
+        '',
+        '| 项目 | 数值 |',
+        '| --- | --- |',
+        '| 满载功耗 | [待补充：满载功耗] |',
+        '| 官方质保 | [待补充：质保周期] |',
+      ].join('\n'),
+    };
+    const existingFact = {
+      ...SAMPLE_FACT,
+      id: 'fact_specs_existing',
+      slot: 'PRODUCT_SPECS' as const,
+      content: '- 满载噪音：18.5dB',
+    };
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [multiTbdArticle],
+      total: 1,
+    });
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: 'brand_1',
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: existingFact.content.length,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [existingFact],
+    });
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts').mockResolvedValue({
+      brandId: 'brand_1',
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: 64,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [existingFact],
+    });
+    const updateArticleSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      .mockImplementation(async (_id, payload) => ({
+        ...multiTbdArticle,
+        title: payload.title ?? multiTbdArticle.title,
+        contentMarkdown: payload.contentMarkdown ?? multiTbdArticle.contentMarkdown,
+      }));
+
+    render(<StudioWorkspace />);
+    fireEvent.click(await screen.findByText('便携储能实测报告'));
+
+    // Strictly 1 primary CTA in workspace even with studio-missing-bar-batch-btn rendered
+    const batchFooterBtn = await screen.findByTestId('studio-batch-tbd-open-btn');
+    expect(batchFooterBtn.textContent).toContain('补齐 2 组待补充事实');
+    const barBatchBtn = screen.getByTestId('studio-missing-bar-batch-btn');
+    expect(barBatchBtn.textContent).toContain('批量补填（2 组）');
+    expect(
+      screen.getByTestId('studio-workspace').querySelectorAll('button.ant-btn-primary'),
+    ).toHaveLength(1);
+
+    // Open deduplicated batch drawer
+    fireEvent.click(batchFooterBtn);
+    const batchDrawer = await screen.findByTestId('studio-batch-tbd-drawer');
+    expect(batchDrawer.textContent).toContain('出现 2 处');
+    expect(batchDrawer.querySelectorAll('input[type="text"], textarea')).toHaveLength(2);
+
+    fireEvent.change(within(batchDrawer).getByLabelText('满载功耗'), { target: { value: '42W' } });
+    fireEvent.change(within(batchDrawer).getByLabelText('质保周期'), {
+      target: { value: '3 年质保' },
+    });
+    fireEvent.click(screen.getByTestId('batch-tbd-submit-btn'));
+
+    await waitFor(() => {
+      expect(saveFactsSpy).toHaveBeenCalledTimes(1);
+      expect(updateArticleSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // Existing fact content MUST be preserved alongside BOTH newly added facts in a single slot item!
+    const savedFactItems = saveFactsSpy.mock.calls[0]?.[1]?.facts ?? [];
+    expect(savedFactItems).toHaveLength(1);
+    expect(savedFactItems[0]?.id).toBe('fact_specs_existing');
+    expect(savedFactItems[0]?.content).toContain('满载噪音：18.5dB');
+    expect(savedFactItems[0]?.content).toContain('42W');
+    expect(savedFactItems[0]?.content).toContain('3 年质保');
+
+    // Updated markdown replaces all 3 tokens and footer CTA transitions to 进入分发工作台
+    const updatedMarkdown = updateArticleSpy.mock.calls[0]?.[1]?.contentMarkdown ?? '';
+    expect(updatedMarkdown).not.toContain('[待补充');
+    expect(updatedMarkdown.match(/42W/g)).toHaveLength(2);
+    expect(updatedMarkdown).toContain('| 官方质保 | 3 年质保 |');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('studio-open-distribution-btn').textContent).toContain(
+        '进入分发工作台',
+      );
+    });
+  });
+
+  it('#385 C2-1 regression: aborts batch [TBD] sync without overwriting facts or closing drawer when getBrandFacts fails', async () => {
+    const tbdArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_batch_tbd_err',
+      title: '事实拉取失败防覆盖文章',
+      contentMarkdown: '# 实测\n\n满载噪音实测为 [待补充：满载噪音]。',
+    };
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [tbdArticle],
+      total: 1,
+    });
+    const getFactsSpy = vi
+      .spyOn(brandsApi, 'getBrandFacts')
+      .mockRejectedValue(new Error('500 Server Error'));
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts');
+    const updateArticleSpy = vi.spyOn(studioApi, 'updateArticle');
+
+    render(<StudioWorkspace />);
+    fireEvent.click(await screen.findByText('事实拉取失败防覆盖文章'));
+    fireEvent.click(await screen.findByTestId('studio-batch-tbd-open-btn'));
+
+    const batchDrawer = await screen.findByTestId('studio-batch-tbd-drawer');
+    const noiseInput = within(batchDrawer).getByLabelText('满载噪音') as HTMLInputElement;
+    fireEvent.change(noiseInput, { target: { value: '18.5 dB' } });
+
+    const callsBeforeSubmit = getFactsSpy.mock.calls.length;
+    fireEvent.click(screen.getByTestId('batch-tbd-submit-btn'));
+
+    await waitFor(() => {
+      expect(getFactsSpy.mock.calls.length).toBeGreaterThan(callsBeforeSubmit);
+      expect(mockNotifyError).toHaveBeenCalled();
+    });
+
+    // Existing server facts MUST NOT be overwritten and article MUST NOT be updated
+    expect(saveFactsSpy).not.toHaveBeenCalled();
+    expect(updateArticleSpy).not.toHaveBeenCalled();
+    // Drawer stays open with user-typed value preserved for retry
+    expect(screen.getByTestId('studio-batch-tbd-drawer')).toBeTruthy();
+    expect((within(batchDrawer).getByLabelText('满载噪音') as HTMLInputElement).value).toBe(
+      '18.5 dB',
+    );
+  });
+
+  it('#385 C2-2 regression: stale Brand B getBrandFacts settlement across brand switch cannot clobber Brand C mutex or fire duplicate SSE streams', async () => {
+    const brandB: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_b_race',
+      name: '品牌B',
+      markets: DUAL_BRAND.markets.map((m) => ({
+        ...m,
+        id: `${m.id}_b`,
+        brandId: 'brand_b_race',
+      })),
+    };
+    const brandC: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_c_race',
+      name: '品牌C',
+      markets: DUAL_BRAND.markets.map((m) => ({
+        ...m,
+        id: `${m.id}_c`,
+        brandId: 'brand_c_race',
+      })),
+    };
+
+    const createDeferred = <T,>() => {
+      let resolve!: (val: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+
+    const brandBFacts = createDeferred<Awaited<ReturnType<typeof brandsApi.getBrandFacts>>>();
+    const brandCFacts = createDeferred<Awaited<ReturnType<typeof brandsApi.getBrandFacts>>>();
+
+    const getFactsSpy = vi.spyOn(brandsApi, 'getBrandFacts').mockImplementation((brandId) => {
+      if (brandId === 'brand_b_race') return brandBFacts.promise;
+      if (brandId === 'brand_c_race') return brandCFacts.promise;
+      return Promise.resolve({
+        brandId,
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+    });
+
+    const streamDeferred = createDeferred<{ aborted: boolean; receivedEvents: number }>();
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockImplementation(() => streamDeferred.promise);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [brandB, brandC],
+      activeBrandId: brandB.id,
+      activeMarket: 'CN',
+    });
+
+    render(<StudioWorkspace />);
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledWith('brand_b_race', expect.anything());
+    });
+
+    // 1. On Brand B (facts pending), click start stream -> enters checkingFactsRef
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: '品牌B 核心参数对比' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 2. Switch to Brand C while Brand B's getBrandFacts is still pending
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand(brandC.id, 'CN', window.localStorage);
+    });
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledWith('brand_c_race', expect.anything());
+    });
+
+    // 3. On Brand C (facts pending), click start stream once
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: '品牌C 实测静音对比' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 4. Stale Brand B promise settles -> MUST NOT clear Brand C's checkingFactsRef
+    await act(async () => {
+      brandBFacts.resolve({
+        brandId: 'brand_b_race',
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 5. Second click on Brand C while Brand C facts are still pending
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 6. Now Brand C facts resolve with valid fact -> MUST trigger strictly 1 SSE stream
+    await act(async () => {
+      brandCFacts.resolve({
+        brandId: 'brand_c_race',
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: SAMPLE_FACT.content.length,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [{ ...SAMPLE_FACT, brandId: 'brand_c_race' }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(streamSpy).toHaveBeenCalledWith(
+      'brand_c_race',
+      expect.objectContaining({ targetPrompt: '品牌C 实测静音对比' }),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      streamDeferred.resolve({ aborted: false, receivedEvents: 0 });
+      await Promise.resolve();
+    });
+  });
 });

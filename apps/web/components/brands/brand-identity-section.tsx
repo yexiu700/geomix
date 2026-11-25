@@ -7,18 +7,20 @@ import {
   BRAND_MAX_CONTROL_PROMPTS,
   BRAND_NAME_MAX,
   GEO_MARKET_LABELS,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
   GLOBAL_SUPPORTED_LOCALES,
   SUPPORTED_LOCALES,
   containsCjk,
   generateBrandSeedPrompts,
   normalizeBrandDomain,
   validateControlPromptsAgainstSeeds,
+  validateGlobalMarketIdentity,
   type BrandMarketRecord,
   type BrandRecord,
   type GeoMarket,
   type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Input, Select, Tag } from 'antd';
+import { Alert, Button, Checkbox, Input, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { updateBrand, updateBrandMarket } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
@@ -191,6 +193,7 @@ export function BrandIdentitySection({
     activeBrandMarket?.controlPrompts ?? [],
   );
   const [controlPromptInput, setControlPromptInput] = useState('');
+  const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
 
@@ -253,6 +256,7 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setAllowCjkGlobalIdentity(false);
     setMarketError(null);
     // Intentionally keyed on value-based activeBrandMarketSignature so base-only updates
     // (brand.name / brand.category) never discard unsaved market edits or partial-failure errors.
@@ -390,6 +394,7 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setAllowCjkGlobalIdentity(false);
     setMarketError(null);
   };
 
@@ -418,8 +423,17 @@ export function BrandIdentitySection({
     const trimmedLocal = localBrandName.trim();
     let serializedCompetitors: ReturnType<typeof serializeCompetitorRows>['competitors'] = [];
     if (saveMarket) {
+      const globalIdentityCheck = validateGlobalMarketIdentity({
+        market: activeMarket,
+        localBrandName: trimmedLocal,
+        localCategory: localCategory.trim() || null,
+        allowCjkGlobalIdentity,
+      });
       if (!trimmedLocal) {
         setMarketError('请填写当地品牌名称');
+        hasValidationError = true;
+      } else if (!globalIdentityCheck.ok) {
+        setMarketError(globalIdentityCheck.message);
         hasValidationError = true;
       } else if (activeMarket === 'GLOBAL' && supportedLocales.length === 0) {
         setMarketError('请至少保留 1 个支持语种');
@@ -502,6 +516,9 @@ export function BrandIdentitySection({
             competitors: serializedCompetitors,
             seedPrompts,
             ...(targetMarket === 'GLOBAL' ? { supportedLocales } : {}),
+            ...(targetMarket === 'GLOBAL' && allowCjkGlobalIdentity
+              ? { allowCjkGlobalIdentity: true }
+              : {}),
             controlPrompts,
           },
           { storage: window.sessionStorage, signal: ctrl.signal },
@@ -519,6 +536,7 @@ export function BrandIdentitySection({
           setSupportedLocales(resolveInitialLocales(targetMarket, savedBm));
           setControlPrompts(savedBm.controlPrompts ?? []);
         }
+        setAllowCjkGlobalIdentity(false);
         marketSaved = true;
       } catch (reason: unknown) {
         if (ctrl.signal.aborted || seq !== marketSeqRef.current || !mountedRef.current) return;
@@ -698,7 +716,14 @@ export function BrandIdentitySection({
                     value={localBrandName}
                     disabled={readOnly || saving}
                     placeholder={activeMarket === 'GLOBAL' ? '例如：ExampleBrand' : '例如：绿联'}
-                    onChange={(event) => setLocalBrandName(event.target.value)}
+                    onChange={(event) => {
+                      const nextVal = event.target.value;
+                      setLocalBrandName(nextVal);
+                      if (!containsCjk(nextVal) && !containsCjk(localCategory)) {
+                        setAllowCjkGlobalIdentity(false);
+                      }
+                      if (marketError) setMarketError(null);
+                    }}
                   />
                 </FormField>
 
@@ -717,12 +742,42 @@ export function BrandIdentitySection({
                         ? '例如：Home NAS / Portable Power Station（留空将自动回退英文品类）'
                         : `留空默认继承主档案品类（${brand.category}）`
                     }
-                    onChange={(event) => setLocalCategory(event.target.value)}
+                    onChange={(event) => {
+                      const nextVal = event.target.value;
+                      setLocalCategory(nextVal);
+                      if (!containsCjk(localBrandName) && !containsCjk(nextVal)) {
+                        setAllowCjkGlobalIdentity(false);
+                      }
+                      if (marketError) setMarketError(null);
+                    }}
                   />
                 </FormField>
               </div>
 
-              {activeMarket === 'GLOBAL' ? <div className="gm-brand-global-guard-slot" /> : null}
+              {activeMarket === 'GLOBAL' ? (
+                <div className="gm-brand-global-guard-slot">
+                  {containsCjk(localBrandName) || containsCjk(localCategory) ? (
+                    <div
+                      className="gm-brand-global-cjk-guard"
+                      data-testid="global-cjk-identity-guard"
+                    >
+                      <Checkbox
+                        data-testid="allow-cjk-global-identity-checkbox"
+                        checked={allowCjkGlobalIdentity}
+                        disabled={readOnly || saving}
+                        onChange={(event) => {
+                          setAllowCjkGlobalIdentity(event.target.checked);
+                          if (event.target.checked && marketError) {
+                            setMarketError(null);
+                          }
+                        }}
+                      >
+                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                      </Checkbox>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <FormField label="当地品牌别名 / SKU 词（最多 20 个）">
                 <div className="gm-brand-field-stack">

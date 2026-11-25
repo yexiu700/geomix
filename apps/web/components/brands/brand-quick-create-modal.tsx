@@ -8,6 +8,9 @@ import {
   BRAND_TRUTH_AGREEMENT_PARAGRAPHS,
   BRAND_TRUTH_AGREEMENT_TITLE,
   BRAND_TRUTH_CHECKBOX_LABEL,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
+  containsCjk,
+  validateGlobalMarketIdentity,
   type BrandFactCoreSlot,
   type BrandFactsResponse,
   type BrandRecord,
@@ -96,10 +99,18 @@ export function BrandQuickCreateModal({
   const feedback = useUxFeedback();
   const [form] = Form.useForm<Step1FormValues>();
   const watchedMarkets = Form.useWatch('markets', form);
+  const watchedName = Form.useWatch('name', form);
+  const watchedGlobalName = Form.useWatch('globalLocalBrandName', form);
+  const watchedGlobalCategory = Form.useWatch('globalLocalCategory', form);
   const hasGlobalSelected = Array.isArray(watchedMarkets) && watchedMarkets.includes('GLOBAL');
+  const effectiveGlobalName = watchedGlobalName?.trim() || watchedName?.trim() || '';
+  const hasGlobalCjkIdentity =
+    hasGlobalSelected &&
+    (containsCjk(effectiveGlobalName) || containsCjk(watchedGlobalCategory?.trim() || ''));
   const [step, setStep] = useState<'create' | 'extract'>('create');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
 
   // Step 1 extra state: aliases chips + structured competitor rows
   const [aliases, setAliases] = useState<string[]>([]);
@@ -127,6 +138,7 @@ export function BrandQuickCreateModal({
     setStep('create');
     setSubmitting(false);
     setError(null);
+    setAllowCjkGlobalIdentity(false);
     setAliases([]);
     setAliasInput('');
     setCompetitorRows([]);
@@ -203,9 +215,25 @@ export function BrandQuickCreateModal({
 
     const globalLocalBrandName = values.globalLocalBrandName?.trim() || undefined;
     const globalLocalCategory = values.globalLocalCategory?.trim() || undefined;
+    if (values.markets.includes('GLOBAL')) {
+      const globalCheck = validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: globalLocalBrandName,
+        fallbackBrandName: values.name.trim(),
+        localCategory: globalLocalCategory ?? null,
+        allowCjkGlobalIdentity,
+      });
+      if (!globalCheck.ok) {
+        setError(globalCheck.message);
+        return;
+      }
+    }
     const hasGlobalOverrides = Boolean(
       values.markets.includes('GLOBAL') &&
-      (globalLocalBrandName || globalLocalCategory || globalDomains.length > 0),
+      (globalLocalBrandName ||
+        globalLocalCategory ||
+        globalDomains.length > 0 ||
+        allowCjkGlobalIdentity),
     );
 
     setSubmitting(true);
@@ -221,6 +249,7 @@ export function BrandQuickCreateModal({
                       market,
                       ...(globalLocalBrandName ? { localBrandName: globalLocalBrandName } : {}),
                       ...(globalLocalCategory ? { localCategory: globalLocalCategory } : {}),
+                      ...(allowCjkGlobalIdentity ? { allowCjkGlobalIdentity: true } : {}),
                       aliases,
                       ownedDomains: globalDomains.length > 0 ? globalDomains : ownedDomains,
                       competitors,
@@ -570,6 +599,21 @@ export function BrandQuickCreateModal({
                       placeholder="例如：example.com（留空默认继承上方官网域名）"
                     />
                   </Form.Item>
+                  {hasGlobalCjkIdentity ? (
+                    <div className="gm-brand-global-cjk-guard gm-brand-mt-sm">
+                      <Checkbox
+                        data-testid="quick-create-allow-cjk-global-checkbox"
+                        checked={allowCjkGlobalIdentity}
+                        disabled={readOnly || submitting}
+                        onChange={(event) => {
+                          setAllowCjkGlobalIdentity(event.target.checked);
+                          if (event.target.checked && error) setError(null);
+                        }}
+                      >
+                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                      </Checkbox>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

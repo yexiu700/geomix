@@ -11,6 +11,7 @@ import {
   normalizeBrandDomain,
   supportedLocalesForMarket,
   validateControlPromptsAgainstSeeds,
+  validateGlobalMarketIdentity,
   type BrandCompetitor,
   type BrandDeleteResponse,
   type BrandListResponse,
@@ -30,6 +31,15 @@ import { ComplianceService } from '../infra/compliance';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeClientIp, objectNameFromKey } from './brands.http-utils';
+
+function assertGlobalMarketIdentity(
+  input: Parameters<typeof validateGlobalMarketIdentity>[0],
+): void {
+  const result = validateGlobalMarketIdentity(input);
+  if (!result.ok) {
+    throw new ApiError(400, API_ERROR.BAD_REQUEST, result.message);
+  }
+}
 
 const BRAND_DETAIL_INCLUDE = {
   markets: {
@@ -135,11 +145,19 @@ export class BrandsService {
         supportedLocales?: string[];
         controlPrompts?: string[];
         monthlyRetestPointCap?: number | null;
+        allowCjkGlobalIdentity?: boolean;
       };
       const defaults = GEO_MARKET_DEFAULTS[entry.market];
       const locale = entry.locale?.trim() || defaults.locale;
       const localBrandName = entry.localBrandName?.trim() || name;
       const localCategory = entry.localCategory?.trim() || null;
+      assertGlobalMarketIdentity({
+        market: entry.market,
+        localBrandName,
+        localCategory,
+        allowCjkGlobalIdentity:
+          (entry.allowCjkGlobalIdentity ?? input.allowCjkGlobalIdentity) === true,
+      });
       const aliases = dedupeStrings(entry.aliases.length > 0 ? entry.aliases : fallbackAliases);
       const ownedDomains = normalizeDomains(
         entry.ownedDomains.length > 0 ? entry.ownedDomains : fallbackDomains,
@@ -403,6 +421,12 @@ export class BrandsService {
     const locale = input.locale?.trim() || defaults.locale;
     const localBrandName = input.localBrandName?.trim() || brand.name;
     const localCategory = input.localCategory?.trim() || null;
+    assertGlobalMarketIdentity({
+      market,
+      localBrandName,
+      localCategory,
+      allowCjkGlobalIdentity: input.allowCjkGlobalIdentity === true,
+    });
     const aliases = dedupeStrings(input.aliases);
     const ownedDomains = normalizeDomains(input.ownedDomains);
     const competitors = normalizeCompetitors(input.competitors);
@@ -501,6 +525,22 @@ export class BrandsService {
       input.localCategory !== undefined
         ? input.localCategory?.trim() || null
         : (existingMarket.localCategory ?? null);
+    if (market === 'GLOBAL' && input.allowCjkGlobalIdentity !== true) {
+      if (input.localBrandName !== undefined) {
+        assertGlobalMarketIdentity({
+          market,
+          localBrandName: nextLocalBrandName,
+          allowCjkGlobalIdentity: false,
+        });
+      }
+      if (input.localCategory !== undefined) {
+        assertGlobalMarketIdentity({
+          market,
+          localCategory: nextLocalCategory,
+          allowCjkGlobalIdentity: false,
+        });
+      }
+    }
     const nextLocale = input.locale !== undefined ? input.locale.trim() : existingMarket.locale;
     const nextRegion = input.region !== undefined ? input.region.trim() : existingMarket.region;
     const nextAliases =
