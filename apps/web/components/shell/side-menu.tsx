@@ -7,6 +7,7 @@ import { useMemo, type ReactNode } from 'react';
 import type { AccountProfile } from '../../lib/api';
 import { HOME_ROUTE, buildMenu, menuSelection } from '../../lib/routes';
 import { displayName } from '../../lib/shell-copy';
+import { GeoMixIcon, GeoMixLockup } from '../brand/geomix-logo';
 
 export type SideMenuProps = {
   activePath: string;
@@ -94,8 +95,8 @@ export function SideMenu({
           title={SITE_NAME}
           onClick={() => onNavigate(HOME_ROUTE)}
         >
-          <BrandMark />
-          <span className={collapsed ? 'gm-sr-only' : undefined}>{SITE_NAME}</span>
+          {collapsed ? <BrandMark /> : <GeoMixLockup height={22} className="gm-brand-lockup" />}
+          <span className="gm-sr-only">{SITE_NAME}</span>
         </button>
       </div>
       <nav className="gm-sider-nav" aria-label="主导航">
@@ -346,11 +347,5 @@ function CollapseArrowIcon({ collapsed }: { collapsed: boolean }) {
 }
 
 export function BrandMark() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-      <circle cx="10" cy="10" r="9" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="6" fill="none" stroke="var(--gm-fg-3)" strokeWidth="1.2" />
-      <circle cx="10" cy="10" r="3" fill="var(--gm-phosphor)" />
-    </svg>
-  );
+  return <GeoMixIcon size={20} className="gm-brand-mark" />;
 }

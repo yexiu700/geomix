@@ -10,7 +10,7 @@ import {
   type MarketingLocale,
 } from '../../lib/marketing-i18n';
 import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, decodeJwtClaims } from '../../lib/session';
-import { MarketingBrandMark } from './marketing-brand-mark';
+import { GeoMixLockup } from '../brand/geomix-logo';
 
 function isActiveSessionToken(token: string | null): boolean {
   if (!token) return false;
@@ -149,8 +149,8 @@ export function MarketingHeader() {
             aria-label={copy.homeAriaLabel}
             onClick={() => setMobileOpen(false)}
           >
-            <MarketingBrandMark size={20} />
-            <span>{SITE_NAME}</span>
+            <GeoMixLockup height={24} className="gm-mkt-brand-lockup" />
+            <span className="gm-sr-only">{SITE_NAME}</span>
           </Link>
 
           <nav className="gm-mkt-nav" aria-label={copy.navAriaLabel}>

@@ -7184,9 +7184,18 @@ input:not([class*='ant-']):hover {
   flex-shrink: 0;
 }
 
-.gm-mkt-brand-mark {
+.gm-mkt-brand-mark,
+.gm-brand-mark,
+.gm-brand-lockup,
+.gm-mkt-brand-lockup {
   display: block;
   flex-shrink: 0;
+}
+
+.gm-login-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .gm-mkt-nav {

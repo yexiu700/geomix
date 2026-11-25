@@ -19,7 +19,8 @@ export const EXTENSION_BRIDGE_CORS_PATH_RE =
   /^\/api\/v2\/extension\/(?:me|tasks|tasks\/[A-Za-z0-9_-]{1,64}\/confirm-published)\/?$/;
 
 export const EXTENSION_BRIDGE_CORS_ALLOW_METHODS = 'GET, POST, OPTIONS';
-export const EXTENSION_BRIDGE_CORS_ALLOW_HEADERS = 'Authorization, Content-Type, Idempotency-Key';
+export const EXTENSION_BRIDGE_CORS_ALLOW_HEADERS =
+  'Authorization, Content-Type, Idempotency-Key, X-GeoMix-Extension-Version';
 
 export type CorsRequestLike = {
   method?: string;

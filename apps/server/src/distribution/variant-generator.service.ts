@@ -93,7 +93,8 @@ const DEFAULT_GEO_VARIANT_FREE_MAX = 20;
 const DEFAULT_GEO_VARIANT_FREE_WINDOW_SECONDS = 60;
 const DEFAULT_GEO_VARIANT_CONCURRENCY = 3;
 const MAX_GEO_VARIANT_CONCURRENCY = 6;
-const DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS = 45_000;
+const DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS = 120_000;
+const MAX_GEO_VARIANT_CHANNEL_TIMEOUT_MS = 300_000;
 const MAX_TARGETS_PER_BATCH = 10;
 
 const CHANNEL_PROVIDER_SET = new Set<string>(CHANNEL_PROVIDERS);
@@ -141,7 +142,7 @@ export function readGeoVariantChannelTimeoutMs(
     env.GEO_VARIANT_CHANNEL_TIMEOUT_MS,
     DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS,
   );
-  return Math.min(180_000, Math.max(1_000, value));
+  return Math.min(MAX_GEO_VARIANT_CHANNEL_TIMEOUT_MS, Math.max(1_000, value));
 }
 
 async function withChannelTimeout<T>(
@@ -1990,6 +1991,7 @@ export class VariantGeneratorService {
                 promptCtx,
                 reservationShadow,
                 channelSignal,
+                channelTimeoutMs,
               ),
           );
 
@@ -2335,6 +2337,7 @@ export class VariantGeneratorService {
     ctx: VariantPromptContext,
     reservationShadow: boolean,
     signal?: AbortSignal,
+    channelTimeoutMs: number = DEFAULT_GEO_VARIANT_CHANNEL_TIMEOUT_MS,
   ): Promise<{
     draft: GeneratedVariantDraft;
     model: string;
@@ -2342,10 +2345,12 @@ export class VariantGeneratorService {
     tokensOut: number;
   }> {
     let lastParseError: unknown = null;
+    const deadlineAt = Date.now() + channelTimeoutMs;
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const llmKey =
         attempt === 0 ? `gv:${batchRefId}:${targetIndex}` : `gv:${batchRefId}:${targetIndex}:r1`;
+      const remainingTimeoutMs = Math.max(1_000, deadlineAt - Date.now());
 
       const completion = await this.llm.complete({
         tenantId,
@@ -2353,6 +2358,7 @@ export class VariantGeneratorService {
         messages: buildVariantPromptMessages(ctx, attempt > 0),
         idempotencyKey: llmKey,
         signal,
+        timeoutMs: remainingTimeoutMs,
         temperature: 0.3,
         maxTokens: 3200,
         disableThinking: true,
@@ -2385,6 +2391,9 @@ export class VariantGeneratorService {
       } catch (err) {
         lastParseError = err;
         // 格式异常或 GLOBAL 中文字符泄漏时自动纠正重试 1 次
+        this.logger.warn(
+          `variant draft attempt ${attempt + 1}/2 failed (${ctx.provider}/${ctx.templateKey}, locale=${ctx.targetLocale ?? ctx.market}): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 

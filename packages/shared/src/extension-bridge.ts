@@ -76,10 +76,31 @@ export const EXTENSION_TASK_FILTER_STATUSES = [
 ] as const;
 export type ExtensionTaskFilterStatus = (typeof EXTENSION_TASK_FILTER_STATUSES)[number];
 
+const extensionTaskFilterStatusEnum = z.enum(EXTENSION_TASK_FILTER_STATUSES);
+
+const extensionTasksStatusFilterSchema = z.preprocess(
+  (raw) => {
+    if (raw === undefined || raw === null) return undefined;
+    if (typeof raw !== 'string') return raw;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return '';
+    if (!trimmed.includes(',')) return trimmed;
+    const parts = trimmed.split(',').map((part) => part.trim());
+    if (parts.some((part) => part.length === 0)) {
+      return parts;
+    }
+    const unique = Array.from(new Set(parts));
+    return unique.length === 1 ? unique[0] : unique;
+  },
+  z
+    .union([extensionTaskFilterStatusEnum, z.array(extensionTaskFilterStatusEnum).min(1)])
+    .optional(),
+);
+
 export const extensionTasksQuerySchema = z.object({
   brandId: z.string().trim().min(1).max(64).optional(),
   provider: z.enum(L2_EXTENSION_PROVIDERS).optional(),
-  status: z.enum(EXTENSION_TASK_FILTER_STATUSES).optional(),
+  status: extensionTasksStatusFilterSchema,
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
 });
 export type ExtensionTasksQueryInput = z.input<typeof extensionTasksQuerySchema>;

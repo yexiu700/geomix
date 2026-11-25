@@ -1,15 +1,15 @@
 <div align="center">
 
-```text
-    ╭─────╮      ██████╗ ███████╗ ██████╗ ███╗   ███╗██╗██╗  ██╗
-   ╱ ╭───╮ ╲    ██╔════╝ ██╔════╝██╔═══██╗████╗ ████║██║╚██╗██╔╝
-  │  │  ╱│  │   ██║  ███╗█████╗  ██║   ██║██╔████╔██║██║ ╚███╔╝
-  │ ─┼─*─┼─ │   ██║   ██║██╔══╝  ██║   ██║██║╚██╔╝██║██║ ██╔██╗
-   ╲ ╰───╯ ╱    ╚██████╔╝███████╗╚██████╔╝██║ ╚═╝ ██║██║██╔╝ ██╗
-    ╰─────╯      ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═╝
+<br />
 
-  GEO CONTENT CREATION   /   AI VISIBILITY RADAR   /   SONAR INK
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./apps/web/public/brand/formal_logo.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="./apps/web/public/brand/formal_logo_light.svg" />
+  <img alt="GeoMix" src="./apps/web/public/brand/formal_logo.svg" width="280" />
+</picture>
+
+<br />
+<br />
 
 **多租户生成式引擎优化（GEO）增长与 AI 可见度平台**
 
@@ -20,7 +20,7 @@
 ![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)
 ![NestJS 10](https://img.shields.io/badge/NestJS-10-E0234E?logo=nestjs&logoColor=white)
 
-[English](./README.md) · **简体中文**
+[English](./README.md) · **简体中文** · [伴生浏览器扩展 (`geomix-extension`)](https://github.com/yexiu700/geomix-extension)
 
 </div>
 
@@ -28,7 +28,7 @@
 
 ## 项目简介
 
-**GeoMix**（GeoMix 2.0 / v2.1）是一个基于 TypeScript Monorepo 的多租户双市场（**国内 `CN` / 海外 `GLOBAL`**）**GEO（Generative Engine Optimization）** 内容增长、多渠道分发与 **AI 可见度诊断**平台。全站品牌、文案、**Sonar Ink（声呐墨）** 暗色设计令牌与合规承诺协议均为原创自制。
+**GeoMix**（v2.2）是一个基于 TypeScript Monorepo 的多租户双市场（**国内 `CN` / 海外 `GLOBAL`**）**GEO（Generative Engine Optimization）** 内容增长、多渠道 L1/L2/L3 分发、**Near-Miss 引用掘金**与**可证明 AI 可见度 ROI** 平台。全站品牌、v2.2 视觉资产包、文案、**Sonar Ink（声呐墨）** 暗色设计令牌与合规承诺协议均为原创自制。
 
 本地开发与 CI 默认启用确定性假模型/内存存储适配器以及 `BILLING_MODE=SHADOW`（完整记账、不实扣点数），无需配置外部真实密钥即可一键启动并运行完整端到端测试。
 
@@ -42,12 +42,12 @@
   - 结构化品牌事实卡（4 大核心槽位 + 补充长文档）支持 URL / 粘贴文本 / `.txt` / `.md` / `.pdf` 上传 0 点 AI 提炼，超长文档经 `fact-index` 队列自动切片并建立 1024 维 `pgvector` HNSW 向量索引；品牌素材库支持自动压缩、去 EXIF、缩略图、S3/MinIO 存储及受 `FEATURE_AI_IMAGE` 控制的行内 AI 配图。
 - **AI 可见度诊断与写作意见引擎**
   - 受 `FEATURE_VISIBILITY` 开关控制的 AI 可见度诊断：支持国内 8 引擎（DeepSeek / 豆包 / 元宝 / 通义 / 文心 / 纳米 / Kimi / 智谱）与海外 5 引擎（ChatGPT / Perplexity / Claude / Gemini / Google AI Overviews），内置引擎健康探测、LLM 裁判评分、趋势图、引用源追踪与机会缺口分析。
-  - GEO 写作意见引擎（`briefs`）：支持诊断完成后自动生成机会意见、手工自由选题以及竞品高引用 URL 反制生成（内置 SSRF 校验、DNS 钉住与 `robots.txt` 校验）。
-- **GEO 写作台、全球分发与归因复测闭环**
-  - 基于 SSE 的靶向流式写作（4 套 GEO 配方 × 市场专属成稿格式）与基于 BullMQ `geo-batch` 队列的 2–20 篇批量生成。
-  - Markdown/预览一体化编辑器，支持行内插图与局部划词改写、双轨合规与发布前硬门禁（国内广告法 + 海外 FTC/宣称校验）、5 维 GEO 体检与 Schema JSON-LD / `llms.txt` 生成、`Markdown` / `HTML` / `Docx` / ZIP 交付包导出；支持异步 1→N 多渠道变体生成（`distribution` 队列）、海外 L1 CMS 直发（Shopify / WordPress / Webflow / 签名 Webhook + IndexNow）、免登录外部 PR/KOL 供稿单（`/share/pr/[token]`）、T+1 线上抓取/Schema 体检与 T+7/14/30 自动阶梯复测归因看板（`/home`）。
-- **极简 5 工作区壳与工程交付**
-  - 品牌 + 双市场作用域驱动的极简 5 工作区控制台（`/home`、`/brands`、`/visibility`、`/studio`、`/account`），支持侧栏折叠偏好持久化（`User.uiPrefs`）、`⌘K` 命令面板与 23 条旧入口 307 重定向（`/dashboard`、`/me/*`、`/visibility/*`、`/user/*`）。
+  - GEO 写作意见引擎（`briefs`）：支持诊断后自动生成机会意见、手工自由选题、竞品高引用 URL 反制生成与 **4 层 Near-Miss 差一步被引用掘金**（`NEAR_MISS_BOOST`），内置 SSRF 校验、DNS 钉住与 `robots.txt` 校验。
+- **GEO 写作台、全渠道分发与可证明 ROI 闭环**
+  - 基于 SSE 的靶向流式写作（4 套 GEO 配方 × 市场专属成稿格式）、轻量**多语种直出**（`en-US` / `en-GB` / `de-DE` / `ja-JP` / `es-ES` / `fr-FR` / `zh-CN`）与基于 BullMQ `geo-batch` 队列的 2–20 篇批量生成。
+  - Markdown/预览一体化编辑器，支持行内插图与局部划词改写、双轨与多语种合规硬门禁、5 维 GEO 体检与 Schema JSON-LD / `llms.txt` 生成、`Markdown` / `HTML` / `Docx` / ZIP 交付包导出；支持异步 1→N 多渠道变体生成（`distribution` 队列）、L1 官方连接器（**Shopify OAuth 2.0** / WordPress / Webflow / **Ghost** / **Dev.to** / **Hashnode** / **GitHub MDX** / **微信公众号草稿箱** / 签名 Webhook + IndexNow）、**L2 伴生 Chrome 扩展桥接**（[`yexiu700/geomix-extension`](https://github.com/yexiu700/geomix-extension)，知乎/今日头条/什么值得买本地草稿箱写入与公网 URL 自动回传）、免登录外部 PR/KOL 供稿单（`/share/pr/[token]`）、T+1 线上抓取/Schema 体检、T+7/14/30 **对照组 DiD** 自动复测，以及**月度 GEO ROI 报告**（Wilson 95% 置信区间、内联 SVG HTML/PDF 导出与可选白标分享页 `/share/report/[token]`）。
+- **极简 5 工作区壳、中英双语官网与工程交付**
+  - 品牌 + 双市场作用域驱动的极简 5 工作区控制台（`/home`、`/brands`、`/visibility`、`/studio`、`/account`）、中英双语品牌官网（`(marketing)` 交互沙盒、点数预算计算器与 `/admin/leads` 线索后台）、侧栏折叠偏好持久化（`User.uiPrefs`）、`⌘K` 命令面板与 23 条旧入口 307 重定向。
   - 全仓 Vitest 单元测试与契约守卫、Playwright 全栈端到端测试（含 `e2e/v2/` 四层与 Tier 5 对抗套件），以及 GHCR + Self-Hosted Runner 自动发布流水线。
 
 ## 系统架构
