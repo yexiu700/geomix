@@ -1246,7 +1246,9 @@ export function StudioDistributionDrawer({
             ? {
                 variantSlug: draft.variantSlug.trim() || null,
                 variantMetaDesc: draft.variantMetaDesc.trim() || null,
-                connectionId: draft.connectionId,
+                ...(draft.connectionId !== task.connectionId
+                  ? { connectionId: draft.connectionId }
+                  : {}),
               }
             : {}),
         },

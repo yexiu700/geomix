@@ -369,4 +369,55 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
       );
     });
   });
+
+  it('Tier 5 #8: preserves activeProductLineId on navigateWorkspace across business workspaces, omits it on /account, and syncs popstate back to unscoped URL', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    mockPathname = '/home';
+    mockSearchParams = new URLSearchParams('brandId=b-1&market=CN&productLineId=pl-1');
+    window.history.replaceState(null, '', '/home?brandId=b-1&market=CN&productLineId=pl-1');
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+    listBrandProductLinesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'pl-1',
+          brandId: 'b-1',
+          name: '家用 NAS',
+          localNamesJson: {},
+          category: '家用 NAS',
+          localCategoriesJson: {},
+          seedPromptsJson: {},
+          competitorsJson: {},
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    render(
+      <ConsoleShell>
+        <div>首页内容</div>
+      </ConsoleShell>,
+    );
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().productLinesLoaded).toBe(true);
+      expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-1');
+    });
+
+    // Click sidebar nav to /visibility -> pushes URL WITH productLineId=pl-1
+    fireEvent.click(screen.getByText('可见度诊断'));
+    expect(pushMock).toHaveBeenCalledWith('/visibility?brandId=b-1&market=CN&productLineId=pl-1');
+
+    // Click account entry -> /account omits productLineId via QUERY_KEYS
+    fireEvent.click(screen.getByTestId('sider-account-entry'));
+    expect(pushMock).toHaveBeenLastCalledWith('/account');
+
+    // Browser Back (popstate) to /home?brandId=b-1&market=CN (without productLineId) clears activeProductLineId
+    window.history.replaceState(null, '', '/home?brandId=b-1&market=CN');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+  });
 });

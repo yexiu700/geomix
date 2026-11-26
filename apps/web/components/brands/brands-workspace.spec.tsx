@@ -1178,4 +1178,32 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       );
     });
   });
+
+  it('Tier 5 #10: skips redundant loadProductLines call when mounted inside ConsoleShell (managesProductLines: true)', async () => {
+    const b1 = makeBrand('b-dup-1', '品牌甲');
+    const b2 = makeBrand('b-dup-2', '品牌乙');
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-dup-1'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-dup-1'));
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+
+    renderWorkspace({ managesProductLines: true });
+    await waitFor(() => {
+      expect(getBrandFactsMock).toHaveBeenCalledWith('b-dup-1', expect.anything());
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
+
+    // Switch brand while on /brands -> BrandsWorkspace still leaves product-line loading to ConsoleShell
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand('b-dup-2', undefined, window.localStorage);
+    });
+    await waitFor(() => {
+      expect(getBrandFactsMock).toHaveBeenCalledWith('b-dup-2', expect.anything());
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
+  });
 });

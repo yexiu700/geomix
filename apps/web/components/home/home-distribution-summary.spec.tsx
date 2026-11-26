@@ -478,4 +478,166 @@ describe('HomeDistributionSummary (M6B #355)', () => {
     expect(board.textContent).toContain('剩余 0 点');
     expect(board.textContent).not.toContain('-150');
   });
+
+  it('Tier 5 #9: sanitizes NaN, Infinity, and non-positive capPoints=0 without leaking NaN/Infinity/上限 0 点 into DOM or aria-valuenow', () => {
+    const { rerender } = render(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 100,
+          usedPoints: Number.NaN,
+          remainingPoints: Number.NaN,
+          skippedCount: Number.NaN,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    let board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).not.toContain('NaN');
+    expect(board.textContent).toContain('已消耗 0 点 / 上限 100 点');
+    expect(board.textContent).toContain('剩余 100 点（0%）');
+    expect(screen.getByTestId('home-retest-budget-bar').getAttribute('aria-valuenow')).toBe('0');
+
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 100,
+          usedPoints: Number.POSITIVE_INFINITY,
+          remainingPoints: -50,
+          skippedCount: Number.POSITIVE_INFINITY,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).not.toContain('Infinity');
+    expect(board.textContent).toContain('已消耗 0 点 / 上限 100 点');
+    expect(screen.getByTestId('home-retest-budget-bar').getAttribute('aria-valuenow')).toBe('0');
+
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 0,
+          usedPoints: 25,
+          remainingPoints: 0,
+          skippedCount: 1,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).not.toContain('上限 0 点');
+    expect(board.textContent).toContain('本月已消耗 25 点');
+    expect(board.textContent).toContain('未设上限');
+    const bar = screen.getByTestId('home-retest-budget-bar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('0');
+    expect(bar.getAttribute('data-empty')).toBe('true');
+    expect(bar.querySelector('rect')).toBeNull();
+  });
+
+  it('Tier 5 R2: handles sub-1 fractional capPoints (0.5) and float-overflow usedPoints (1e308) without NaN%, Infinity%, or 上限 0 点', () => {
+    // 1. capPoints: 0.5, usedPoints: 0, skippedCount: 0 -> truncated cap becomes null, hides empty budget board cleanly
+    const { rerender } = render(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 0.5,
+          usedPoints: 0,
+          remainingPoints: 0.5,
+          skippedCount: 0,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    const containerText = screen.getByTestId('home-distribution-summary').textContent ?? '';
+    expect(screen.queryByTestId('home-retest-budget-board')).toBeNull();
+    expect(containerText).not.toContain('NaN');
+    expect(containerText).not.toContain('Infinity');
+    expect(containerText).not.toContain('上限 0 点');
+
+    // 2. capPoints: 0.5, usedPoints: 0, skippedCount: 1 -> renders 未设上限, zero NaN%, zero 上限 0 点, aria-valuenow="0"
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 0.5,
+          usedPoints: 0,
+          remainingPoints: 0.5,
+          skippedCount: 1,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    let board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).toContain('未设上限');
+    expect(board.textContent).not.toContain('NaN%');
+    expect(board.textContent).not.toContain('NaN');
+    expect(board.textContent).not.toContain('上限 0 点');
+    let bar = screen.getByTestId('home-retest-budget-bar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('0');
+    expect(bar.getAttribute('data-empty')).toBe('true');
+    expect(bar.querySelector('rect')).toBeNull();
+
+    // 3. capPoints: 0.5, usedPoints: 10 -> renders 未设上限, zero Infinity%, zero 上限 0 点
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 0.5,
+          usedPoints: 10,
+          remainingPoints: 0,
+          skippedCount: 0,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).toContain('本月已消耗 10 点');
+    expect(board.textContent).toContain('未设上限');
+    expect(board.textContent).not.toContain('Infinity%');
+    expect(board.textContent).not.toContain('Infinity');
+    expect(board.textContent).not.toContain('上限 0 点');
+    bar = screen.getByTestId('home-retest-budget-bar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('0');
+    expect(bar.getAttribute('data-empty')).toBe('true');
+    expect(bar.querySelector('rect')).toBeNull();
+
+    // 4. capPoints: 1, usedPoints: 1e308 -> renders finite 100%, zero Infinity%
+    rerender(
+      <HomeDistributionSummary
+        summary={{ crawlAlerts: [], upcomingRetests: [], channelAttribution: [] }}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 1,
+          usedPoints: 1e308,
+          remainingPoints: 0,
+          skippedCount: 0,
+        }}
+        onOpenArticle={vi.fn()}
+      />,
+    );
+
+    board = screen.getByTestId('home-retest-budget-board');
+    expect(board.textContent).toContain('（100%）');
+    expect(board.textContent).not.toContain('Infinity%');
+    expect(board.textContent).not.toContain('Infinity');
+    bar = screen.getByTestId('home-retest-budget-bar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('100');
+    expect(bar.getAttribute('data-empty')).toBe('false');
+    expect(bar.querySelector('rect')?.getAttribute('width')).toBe('100');
+  });
 });

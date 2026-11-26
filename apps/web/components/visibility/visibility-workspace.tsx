@@ -1553,6 +1553,9 @@ export function VisibilityWorkspace(): JSX.Element {
   };
 
   const handleNavigateToStudioWithBrief = (brief: GeoBriefRecord) => {
+    if (!brief.productLineId && activeProductLineId) {
+      useWorkspaceStore.getState().setActiveProductLine(null);
+    }
     const href = buildWorkspaceHref('/studio', brief.brandId, brief.market, {
       briefId: brief.id,
       ...(brief.productLineId ? { productLineId: brief.productLineId } : {}),

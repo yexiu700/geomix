@@ -563,4 +563,52 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     });
     expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'GLOBAL');
   });
+
+  it('Tier 5 #3: allows saving unrelated GLOBAL market fields on existing CJK-confirmed brands without re-triggering CJK validation', async () => {
+    const baseBrand = makeDualMarketBrand();
+    const cjkGlobalBrand: BrandRecord = {
+      ...baseBrand,
+      markets: baseBrand.markets.map((m) =>
+        m.market === 'GLOBAL'
+          ? { ...m, localBrandName: '茶颜悦色', localCategory: 'Tea Beverage' }
+          : m,
+      ),
+    };
+    const globalMarket = cjkGlobalBrand.markets.find((m) => m.market === 'GLOBAL')!;
+    const updatedBrand: BrandRecord = {
+      ...cjkGlobalBrand,
+      markets: cjkGlobalBrand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, monthlyRetestPointCap: 120 } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={cjkGlobalBrand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    // Override checkbox should not block or appear when unchanged CJK identity is untouched
+    expect(screen.queryByTestId('allow-cjk-global-identity-checkbox')).toBeNull();
+
+    const capInput = screen.getByLabelText('本月自动复测点数上限') as HTMLInputElement;
+    fireEvent.change(capInput, { target: { value: '120' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledTimes(1);
+    });
+    const sentPayload = updateBrandMarketMock.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(sentPayload.monthlyRetestPointCap).toBe(120);
+    expect(sentPayload).not.toHaveProperty('localBrandName');
+    expect(screen.queryByTestId('brand-market-error')).toBeNull();
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'GLOBAL');
+  });
 });

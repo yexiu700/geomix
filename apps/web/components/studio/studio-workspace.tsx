@@ -1516,8 +1516,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
   const handleQuickFactsSaved = (saved: BrandFactsResponse) => {
     skipNextSelfWorkspaceRefreshRef.current = true;
-    setBrandFacts(saved.items);
-    brandFactsRef.current = saved.items;
+    const scopedItems = activeProductLineId
+      ? saved.items.filter(
+          (item) => item.productLineId == null || item.productLineId === activeProductLineId,
+        )
+      : saved.items;
+    setBrandFacts(scopedItems);
+    brandFactsRef.current = scopedItems;
     brandFactsLoadedRef.current = true;
     setQuickExtractModalOpen(false);
     void executeStartStream();
@@ -1762,8 +1767,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         }
         factsSynced = true;
         if (seq === contextSeqRef.current) {
-          setBrandFacts(factRes.items);
-          brandFactsRef.current = factRes.items;
+          const scopedItems = activeProductLineId
+            ? factRes.items.filter(
+                (item) => item.productLineId == null || item.productLineId === activeProductLineId,
+              )
+            : factRes.items;
+          setBrandFacts(scopedItems);
+          brandFactsRef.current = scopedItems;
           brandFactsLoadedRef.current = true;
         }
       }
@@ -1853,8 +1863,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         }
         factsSynced = true;
         if (seq === contextSeqRef.current) {
-          setBrandFacts(factRes.items);
-          brandFactsRef.current = factRes.items;
+          const scopedItems = activeProductLineId
+            ? factRes.items.filter(
+                (item) => item.productLineId == null || item.productLineId === activeProductLineId,
+              )
+            : factRes.items;
+          setBrandFacts(scopedItems);
+          brandFactsRef.current = scopedItems;
           brandFactsLoadedRef.current = true;
         }
       }
@@ -2938,6 +2953,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         open={quickExtractModalOpen}
         brandId={activeBrand.id}
         brandName={activeBrand.name}
+        productLineId={activeProductLineId}
+        productLineName={activeProductLine?.name ?? null}
         defaultDomain={activeBrandMarket.ownedDomains[0] ?? null}
         truthSignedAt={activeBrand.truthAgreementSignedAt}
         readOnly={readOnly}

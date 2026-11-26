@@ -32,6 +32,8 @@ export type QuickFactExtractModalProps = {
   open: boolean;
   brandId: string;
   brandName?: string;
+  productLineId?: string | null;
+  productLineName?: string | null;
   defaultDomain?: string | null;
   truthSignedAt?: string | null;
   readOnly?: boolean;
@@ -76,6 +78,8 @@ export function QuickFactExtractModal({
   open,
   brandId,
   brandName,
+  productLineId = null,
+  productLineName = null,
   defaultDomain,
   truthSignedAt,
   readOnly = false,
@@ -136,7 +140,7 @@ export function QuickFactExtractModal({
     setHasExtracted(false);
     setReviewDrafts(buildEmptyReviewDrafts());
     setTruthAgreed(Boolean(truthSignedAt));
-  }, [open, brandId, defaultDomain, truthSignedAt]);
+  }, [open, brandId, productLineId, defaultDomain, truthSignedAt]);
 
   const busy = extracting || saving;
 
@@ -248,6 +252,7 @@ export function QuickFactExtractModal({
             content: item.content.trim().slice(0, BRAND_FACT_CARD_MAX),
             sourceType: sourceMeta?.sourceType ?? 'MANUAL',
             sourceUrl: sourceMeta?.sourceUrl ?? null,
+            ...(productLineId ? { productLineId } : {}),
           })),
           truthAgreed: true,
         },
@@ -290,6 +295,7 @@ export function QuickFactExtractModal({
       <div className="gm-brand-extract-step" data-testid="quick-fact-extract-modal">
         <p className="gm-brand-section-desc">
           当前品牌{brandName ? `「${brandName}」` : ''}
+          {productLineName ? `（产品线：${productLineName}）` : ''}
           尚未维护任何品牌事实卡。输入官网/商品页链接或粘贴产品参数，系统可 0
           点自动提炼核心事实并直接续跑写作。
         </p>

@@ -597,4 +597,59 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     expect(commit1Classes[0]).toContain('gm-sider-rail');
     expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
   });
+
+  it('Tier 5 #5: resets enableAllowCjkGlobal checkbox in Enable-Market modal when CJK is cleared and later re-entered', async () => {
+    const cnOnlyBrand = makeBrand('b-cn-only', '绿联', ['CN']);
+
+    render(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/home"
+        brands={[cnOnlyBrand]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-cn-only"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        enableMarketModalTarget="GLOBAL"
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>首页</div>
+      </ShellFrame>,
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    const cjkCheckbox = (await within(dialog).findByTestId(
+      'enable-market-allow-cjk-global-checkbox',
+    )) as HTMLInputElement;
+    fireEvent.click(cjkCheckbox);
+    expect(cjkCheckbox.checked).toBe(true);
+
+    // Replace Chinese localBrandName with English -> checkbox unmounts and resets
+    fireEvent.change(within(dialog).getByLabelText('当地品牌名称'), {
+      target: { value: 'UGREEN' },
+    });
+    await waitFor(() => {
+      expect(within(dialog).queryByTestId('enable-market-allow-cjk-global-checkbox')).toBeNull();
+    });
+
+    // Enter CJK in localCategory -> checkbox MUST reappear UNCHECKED
+    fireEvent.change(within(dialog).getByLabelText('当地品类名称'), {
+      target: { value: '氮化镓快充' },
+    });
+    const reappeared = (await within(dialog).findByTestId(
+      'enable-market-allow-cjk-global-checkbox',
+    )) as HTMLInputElement;
+    expect(reappeared.checked).toBe(false);
+  });
 });

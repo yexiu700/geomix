@@ -4298,4 +4298,135 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
     expect(streamSpy).not.toHaveBeenCalled();
   });
+
+  it('Tier 5 #2: passes activeProductLineId to QuickFactExtractModal and filters cross-line facts out of Studio cache on save', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    const lineCharger = {
+      id: 'pl_charger',
+      brandId: DUAL_BRAND.id,
+      name: '快充产品线',
+      localNamesJson: {},
+      category: 'GaN Charger',
+      localCategoriesJson: { GLOBAL: 'GaN Charger' },
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: now,
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+    vi.spyOn(brandsApi, 'extractBrandFacts').mockResolvedValue({
+      sourceType: 'MANUAL',
+      sourceUrl: null,
+      fileName: null,
+      extractedChars: 24,
+      fake: true,
+      warnings: [],
+      facts: [
+        {
+          slot: 'PRODUCT_SPECS',
+          title: '快充参数',
+          content: '140W GaN 四口快充',
+        },
+      ],
+    });
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: now,
+      totalChars: 40,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      // Server returns unfiltered cross-line facts; Studio MUST filter sibling line pl_nas out
+      items: [
+        {
+          id: 'fact_charger_1',
+          brandId: DUAL_BRAND.id,
+          productLineId: 'pl_charger',
+          slot: 'PRODUCT_SPECS',
+          title: '快充参数',
+          content: '140W GaN 四口快充',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'fact_nas_sibling',
+          brandId: DUAL_BRAND.id,
+          productLineId: 'pl_nas',
+          slot: 'DIFFERENTIATORS',
+          title: 'NAS 差异化',
+          content: '8-bay 10GbE NAS',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockResolvedValue({ aborted: false, receivedEvents: 0 });
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineCharger],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_charger',
+    });
+
+    render(<StudioWorkspace />);
+
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: 'Best 140W GaN charger 2026' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    const modal = await screen.findByTestId('quick-fact-extract-modal');
+    expect(modal.textContent).toContain('快充产品线');
+
+    fireEvent.click(within(modal).getByRole('tab', { name: '粘贴资料' }));
+    fireEvent.change(within(modal).getByLabelText('粘贴产品资料'), {
+      target: { value: '140W GaN 四口快充，支持 PD3.1 协议与智能温控。' },
+    });
+    fireEvent.click(within(modal).getByTestId('quick-fact-extract-btn'));
+
+    const truthCheckbox = (await within(modal).findByTestId(
+      'quick-fact-truth-checkbox',
+    )) as HTMLInputElement;
+    if (!truthCheckbox.checked) {
+      fireEvent.click(truthCheckbox);
+    }
+    const saveBtn = await within(modal).findByTestId('quick-fact-save-btn');
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(saveFactsSpy).toHaveBeenCalledWith(
+        DUAL_BRAND.id,
+        expect.objectContaining({
+          facts: [expect.objectContaining({ productLineId: 'pl_charger', slot: 'PRODUCT_SPECS' })],
+        }),
+        expect.anything(),
+      );
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    // Sibling line pl_nas fact MUST NOT leak into Studio's active fact cache
+    expect(document.body.textContent ?? '').not.toContain('8-bay 10GbE NAS');
+  });
 });

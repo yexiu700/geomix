@@ -189,7 +189,7 @@ const CN_TO_EN_CATEGORY_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/工业设备/i, 'industrial equipment'],
 ];
 
-const CJK_CHAR_RE = /[\u3400-\u9fff\uf900-\ufaff]/;
+const CJK_CHAR_RE = /\p{Script=Han}/u;
 
 export function containsCjk(value: string): boolean {
   return CJK_CHAR_RE.test(value);

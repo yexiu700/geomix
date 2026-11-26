@@ -326,7 +326,7 @@ export function BrandChannelConnections({
   };
 
   const handleToggleStatus = (conn: ChannelConnectionDto) => {
-    if (readOnly || togglingCardsRef.current.has(conn.id)) return;
+    if (readOnly || conn.status === 'INVALID' || togglingCardsRef.current.has(conn.id)) return;
     const seq = contextSeqRef.current;
 
     if (conn.status === 'DISABLED') {
@@ -651,7 +651,7 @@ export function BrandChannelConnections({
                   >
                     测试连接
                   </Button>
-                  {!isShopifyOAuthRevoked ? (
+                  {!isShopifyOAuthRevoked && conn.status !== 'INVALID' ? (
                     <Button
                       size="small"
                       autoInsertSpace={false}

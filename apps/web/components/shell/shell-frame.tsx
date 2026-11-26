@@ -384,6 +384,12 @@ export function ShellFrame({
     (containsCjk(effectiveEnableLocalName) ||
       containsCjk(watchedEnableLocalCategory?.trim() || ''));
 
+  useEffect(() => {
+    if (!hasEnableGlobalCjk) {
+      setEnableAllowCjkGlobal(false);
+    }
+  }, [hasEnableGlobalCjk]);
+
   return (
     <Layout className="gm-shell-layout">
       {isMobile && mobileMenuOpen ? (

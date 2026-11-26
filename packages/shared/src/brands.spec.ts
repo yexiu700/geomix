@@ -16,6 +16,7 @@ import {
   checkImageWidthWarning,
   chunkKnowledgeText,
   classifyBrandCategorySegment,
+  containsCjk,
   createBrandSchema,
   extractBrandFactsSchema,
   formatCompanyBrandLabel,
@@ -555,6 +556,33 @@ describe('brands v2 contracts and extracted utilities', () => {
     expect(
       updateBrandMarketSchema.safeParse({
         localBrandName: '显式放行中文',
+        allowCjkGlobalIdentity: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('detects CJK Extension B-I surrogate-pair ideographs while allowing Japanese Kana (Tier 5 #6)', () => {
+    expect(containsCjk('Brand𠮷')).toBe(true);
+    expect(containsCjk('Brand𠀀')).toBe(true);
+    expect(containsCjk('ひらがなカタカナ')).toBe(false);
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: '𠮷Brand',
+      }),
+    ).toEqual({ ok: false, field: 'localBrandName', message: GLOBAL_CJK_BRAND_NAME_ERROR });
+    expect(
+      createBrandSchema.safeParse({
+        name: 'Brand𠀀',
+        category: 'Smart Home',
+        markets: ['GLOBAL'],
+      }).success,
+    ).toBe(false);
+    expect(
+      createBrandSchema.safeParse({
+        name: 'Brand𠀀',
+        category: 'Smart Home',
+        markets: ['GLOBAL'],
         allowCjkGlobalIdentity: true,
       }).success,
     ).toBe(true);

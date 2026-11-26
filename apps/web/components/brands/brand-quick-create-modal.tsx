@@ -164,6 +164,12 @@ export function BrandQuickCreateModal({
     });
   }, [form, open]);
 
+  useEffect(() => {
+    if (!hasGlobalCjkIdentity) {
+      setAllowCjkGlobalIdentity(false);
+    }
+  }, [hasGlobalCjkIdentity]);
+
   const busy = submitting || extracting || savingFacts;
 
   const handleClose = () => {

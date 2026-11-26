@@ -167,4 +167,43 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     fireEvent.click(skipBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('Tier 5 #5: resets allowCjkGlobalIdentity checkbox when CJK is cleared and later re-entered in another GLOBAL field', async () => {
+    render(
+      <BrandQuickCreateModal
+        open={true}
+        onClose={vi.fn()}
+        onCreateBrand={vi.fn(async () => createdBrandStub)}
+        onExtractFacts={vi.fn()}
+        onSaveFacts={vi.fn()}
+      />,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '绿联' } });
+    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
+
+    const cjkCheckbox = (await within(dialog).findByTestId(
+      'quick-create-allow-cjk-global-checkbox',
+    )) as HTMLInputElement;
+    fireEvent.click(cjkCheckbox);
+    expect(cjkCheckbox.checked).toBe(true);
+
+    // Clear CJK by providing English global local brand name -> checkbox unmounts and resets
+    fireEvent.change(within(dialog).getByLabelText('海外英文品牌名'), {
+      target: { value: 'UGREEN' },
+    });
+    await waitFor(() => {
+      expect(within(dialog).queryByTestId('quick-create-allow-cjk-global-checkbox')).toBeNull();
+    });
+
+    // Re-enter CJK in global local category -> checkbox MUST reappear UNCHECKED
+    fireEvent.change(within(dialog).getByLabelText('海外英文品类'), {
+      target: { value: '氮化镓快充' },
+    });
+    const reappeared = (await within(dialog).findByTestId(
+      'quick-create-allow-cjk-global-checkbox',
+    )) as HTMLInputElement;
+    expect(reappeared.checked).toBe(false);
+  });
 });

@@ -51,7 +51,11 @@ export type WorkspaceState = {
 
 type WorkspaceActions = {
   hydrate: (search?: string | URLSearchParams, persistStorage?: KeyValueStorage) => void;
-  syncFromUrl: (search: string | URLSearchParams, persistStorage?: KeyValueStorage) => void;
+  syncFromUrl: (
+    search: string | URLSearchParams,
+    persistStorage?: KeyValueStorage,
+    options?: { clearMissingProductLine?: boolean },
+  ) => void;
   loadBrands: (options?: {
     storage?: SessionStorageLike;
     persistStorage?: KeyValueStorage;
@@ -325,13 +329,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
   },
 
-  syncFromUrl: (search, persistStorage) => {
+  syncFromUrl: (search, persistStorage, options) => {
     const params = parseSearchParams(search);
     const rawBrandId = params.get('brandId')?.trim() || null;
     const rawMarket = parseGeoMarket(params.get('market'));
     const hasProductLineParam = params.has('productLineId');
     const rawProductLineId = normalizeProductLineId(params.get('productLineId'));
-    if (!rawBrandId && !rawMarket && !hasProductLineParam) return;
+    const clearMissingProductLine = Boolean(options?.clearMissingProductLine);
+    if (!rawBrandId && !rawMarket && !hasProductLineParam && !clearMissingProductLine) return;
 
     const state = get();
     if (!state.brandsLoaded) {
@@ -344,7 +349,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           ? resetProductLinesSlice(state.productLinesLoadSeq, rawProductLineId)
           : hasProductLineParam
             ? { activeProductLineId: rawProductLineId }
-            : {}),
+            : clearMissingProductLine
+              ? { activeProductLineId: null }
+              : {}),
       });
       return;
     }
@@ -372,6 +379,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       } else {
         nextProductLineId = rawProductLineId;
       }
+    } else if (clearMissingProductLine) {
+      nextProductLineId = null;
     }
 
     const lineChanged = nextProductLineId !== state.activeProductLineId;
@@ -395,7 +404,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       }
     }
     syncWorkspaceQueryInUrl(resolved.activeBrandId, resolved.activeMarket, {
-      ...(brandChanged || hasProductLineParam ? { productLineId: nextProductLineId } : {}),
+      ...(brandChanged || hasProductLineParam || clearMissingProductLine
+        ? { productLineId: nextProductLineId }
+        : {}),
     });
   },
 
@@ -567,12 +578,24 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (latest.productLinesLoadSeq !== seq || latest.activeBrandId !== trimmedBrandId) return;
       const message =
         error instanceof Error && error.message ? error.message : '无法加载产品线列表';
+      const hadFreshListForBrand =
+        latest.productLinesLoaded && latest.productLinesBrandId === trimmedBrandId;
+      const clearedUnverifiedActive = !hadFreshListForBrand && latest.activeProductLineId !== null;
       set({
         productLinesLoading: false,
-        productLinesLoaded: true,
-        productLinesBrandId: trimmedBrandId,
         productLinesError: message,
+        ...(hadFreshListForBrand
+          ? {}
+          : {
+              productLines: [],
+              productLinesLoaded: false,
+              productLinesBrandId: null,
+              activeProductLineId: null,
+            }),
       });
+      if (clearedUnverifiedActive) {
+        syncProductLineQueryInUrl(null);
+      }
     }
   },
 

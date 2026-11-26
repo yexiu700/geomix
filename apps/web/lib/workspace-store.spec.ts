@@ -664,4 +664,78 @@ describe('useWorkspaceStore', () => {
     expect(params.get('batchJobId')).toBeNull();
     expect(window.history.state).toEqual(customState);
   });
+
+  it('Tier 5 #11: does not mark productLinesLoaded=true or retain unverified stale URL productLineId on loadProductLines 5xx failure', async () => {
+    const b1 = makeBrand('brand-err-1', '测试品牌', ['CN']);
+    window.history.replaceState(
+      null,
+      '',
+      '/home?brandId=brand-err-1&market=CN&productLineId=deleted_line_xyz',
+    );
+    useWorkspaceStore
+      .getState()
+      .hydrate(
+        '?brandId=brand-err-1&market=CN&productLineId=deleted_line_xyz',
+        window.localStorage,
+      );
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      fetcher: async () => ({ items: [b1] }),
+    });
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('deleted_line_xyz');
+
+    await useWorkspaceStore.getState().loadProductLines('brand-err-1', {
+      fetcher: async () => {
+        throw new Error('500 Internal Server Error');
+      },
+    });
+
+    const state = useWorkspaceStore.getState();
+    expect(state.productLinesLoading).toBe(false);
+    expect(state.productLinesLoaded).toBe(false);
+    expect(state.productLinesBrandId).toBeNull();
+    expect(state.productLines).toEqual([]);
+    expect(state.productLinesError).toBe('500 Internal Server Error');
+    expect(state.activeProductLineId).toBeNull();
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBeNull();
+  });
+
+  it('Tier 5 #8: syncFromUrl with clearMissingProductLine resets activeProductLineId when navigating back to an unscoped business URL', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    const b1 = makeBrand('brand-pop-1', '测试品牌', ['CN']);
+    const lineA = {
+      id: 'pl-pop-a',
+      brandId: 'brand-pop-1',
+      name: 'Line A',
+      localNamesJson: {},
+      category: '家用 NAS',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await useWorkspaceStore.getState().loadBrands({
+      persistStorage: window.localStorage,
+      fetcher: async () => ({ items: [b1] }),
+    });
+    await useWorkspaceStore.getState().loadProductLines('brand-pop-1', {
+      fetcher: async () => ({ items: [lineA] }),
+    });
+    useWorkspaceStore.getState().setActiveProductLine('pl-pop-a');
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-pop-a');
+
+    // Without clearMissingProductLine (e.g. /account), activeProductLineId stays in memory
+    useWorkspaceStore.getState().syncFromUrl('?brandId=brand-pop-1&market=CN', window.localStorage);
+    expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-pop-a');
+
+    // With clearMissingProductLine (popstate on business workspace without productLineId), clears cleanly
+    useWorkspaceStore
+      .getState()
+      .syncFromUrl('?brandId=brand-pop-1&market=CN', window.localStorage, {
+        clearMissingProductLine: true,
+      });
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+  });
 });

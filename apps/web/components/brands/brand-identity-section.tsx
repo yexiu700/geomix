@@ -324,6 +324,23 @@ export function BrandIdentitySection({
     };
   }, [onDirtyChange]);
 
+  const trimmedLocalBrandName = localBrandName.trim();
+  const trimmedLocalCategory = localCategory.trim() || null;
+  const savedLocalBrandName = (activeBrandMarket?.localBrandName ?? brand.name).trim();
+  const savedLocalCategory = activeBrandMarket?.localCategory?.trim() || null;
+  const localNameChanged = trimmedLocalBrandName !== savedLocalBrandName;
+  const localCategoryChanged = trimmedLocalCategory !== savedLocalCategory;
+  const needsGlobalCjkOverride =
+    activeMarket === 'GLOBAL' &&
+    ((localNameChanged && containsCjk(trimmedLocalBrandName)) ||
+      (localCategoryChanged && trimmedLocalCategory !== null && containsCjk(trimmedLocalCategory)));
+
+  useEffect(() => {
+    if (!needsGlobalCjkOverride) {
+      setAllowCjkGlobalIdentity(false);
+    }
+  }, [needsGlobalCjkOverride]);
+
   const hasCN = brand.markets.some((m) => m.market === 'CN');
   const hasGlobal = brand.markets.some((m) => m.market === 'GLOBAL');
 
@@ -435,15 +452,18 @@ export function BrandIdentitySection({
       }
     }
 
-    const trimmedLocal = localBrandName.trim();
+    const trimmedLocal = trimmedLocalBrandName;
     let serializedCompetitors: ReturnType<typeof serializeCompetitorRows>['competitors'] = [];
     if (saveMarket) {
-      const globalIdentityCheck = validateGlobalMarketIdentity({
-        market: activeMarket,
-        localBrandName: trimmedLocal,
-        localCategory: localCategory.trim() || null,
-        allowCjkGlobalIdentity,
-      });
+      const globalIdentityCheck =
+        localNameChanged || localCategoryChanged
+          ? validateGlobalMarketIdentity({
+              market: activeMarket,
+              ...(localNameChanged ? { localBrandName: trimmedLocal } : {}),
+              ...(localCategoryChanged ? { localCategory: trimmedLocalCategory } : {}),
+              allowCjkGlobalIdentity,
+            })
+          : { ok: true as const };
       if (!trimmedLocal) {
         setMarketError('请填写当地品牌名称');
         hasValidationError = true;
@@ -528,12 +548,21 @@ export function BrandIdentitySection({
 
       setSavingMarket(true);
       try {
+        const includeLocalBrandName =
+          localNameChanged || !(targetMarket === 'GLOBAL' && containsCjk(trimmedLocal));
+        const includeLocalCategory =
+          localCategoryChanged ||
+          !(
+            targetMarket === 'GLOBAL' &&
+            trimmedLocalCategory !== null &&
+            containsCjk(trimmedLocalCategory)
+          );
         const updatedMarket = await updateBrandMarket(
           saveBrandId,
           targetMarket,
           {
-            localBrandName: trimmedLocal,
-            localCategory: localCategory.trim() || null,
+            ...(includeLocalBrandName ? { localBrandName: trimmedLocal } : {}),
+            ...(includeLocalCategory ? { localCategory: trimmedLocalCategory } : {}),
             aliases,
             ownedDomains,
             competitors: serializedCompetitors,
@@ -781,7 +810,7 @@ export function BrandIdentitySection({
 
               {activeMarket === 'GLOBAL' ? (
                 <div className="gm-brand-global-guard-slot">
-                  {containsCjk(localBrandName) || containsCjk(localCategory) ? (
+                  {needsGlobalCjkOverride ? (
                     <div
                       className="gm-brand-global-cjk-guard"
                       data-testid="global-cjk-identity-guard"

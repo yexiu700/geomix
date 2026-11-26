@@ -176,4 +176,86 @@ describe('QuickFactExtractModal (#385)', () => {
     fireEvent.click(screen.getByTestId('quick-fact-extract-btn'));
     expect(await screen.findByText(/仅支持上传 TXT、MD、PDF/)).toBeTruthy();
   });
+
+  it('Tier 5 #2: attaches active productLineId to saved facts and shows target productLineName', async () => {
+    extractMock.mockResolvedValueOnce({
+      sourceType: 'MANUAL',
+      sourceUrl: null,
+      fileName: null,
+      extractedChars: 24,
+      fake: true,
+      warnings: [],
+      facts: [
+        {
+          slot: 'PRODUCT_SPECS',
+          title: '充电器参数',
+          content: '140W GaN 氮化镓四口快充',
+        },
+      ],
+    });
+    saveMock.mockResolvedValueOnce({
+      brandId: 'brand_1',
+      truthAgreementSignedAt: '2026-11-25T10:00:00.000Z',
+      totalChars: 20,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [
+        {
+          id: 'fact_charger_1',
+          brandId: 'brand_1',
+          productLineId: 'pl_charger',
+          slot: 'PRODUCT_SPECS',
+          title: '充电器参数',
+          content: '140W GaN 氮化镓四口快充',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: '2026-11-25T10:00:00.000Z',
+          updatedAt: '2026-11-25T10:00:00.000Z',
+        },
+      ],
+    });
+
+    const onSaved = vi.fn();
+    render(
+      <QuickFactExtractModal
+        open={true}
+        brandId="brand_1"
+        brandName="绿联"
+        productLineId="pl_charger"
+        productLineName="快充产品线"
+        truthSignedAt="2026-11-20T00:00:00.000Z"
+        onClose={vi.fn()}
+        onSkipAndGenerate={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    expect(screen.getByTestId('quick-fact-extract-modal').textContent).toContain('快充产品线');
+    fireEvent.click(screen.getByRole('tab', { name: '粘贴资料' }));
+    fireEvent.change(screen.getByLabelText('粘贴产品资料'), {
+      target: { value: '140W GaN 氮化镓四口快充，支持 PD3.1 协议。' },
+    });
+    fireEvent.click(screen.getByTestId('quick-fact-extract-btn'));
+
+    const saveBtn = await screen.findByTestId('quick-fact-save-btn');
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(saveMock).toHaveBeenCalledWith(
+        'brand_1',
+        expect.objectContaining({
+          facts: [
+            expect.objectContaining({
+              slot: 'PRODUCT_SPECS',
+              productLineId: 'pl_charger',
+            }),
+          ],
+          truthAgreed: true,
+        }),
+        expect.anything(),
+      );
+    });
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
 });

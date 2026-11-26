@@ -88,6 +88,7 @@ export function BrandsWorkspace() {
   const activeBrandMarket = selectActiveBrandMarket(state);
   const activeBrandId = activeBrand?.id ?? null;
   const readOnly = Boolean(consoleCtx?.readOnly);
+  const shellManagesProductLines = Boolean(consoleCtx?.managesProductLines);
 
   const [factsLoading, setFactsLoading] = useState(false);
   const [factsError, setFactsError] = useState<string | null>(null);
@@ -183,14 +184,16 @@ export function BrandsWorkspace() {
       return undefined;
     }
     fetchBrandAssets(activeBrandId);
-    const storeState = useWorkspaceStore.getState();
-    if (!storeState.productLinesLoading && storeState.productLinesBrandId !== activeBrandId) {
-      void storeState.loadProductLines(activeBrandId, { storage: window.sessionStorage });
+    if (!shellManagesProductLines) {
+      const storeState = useWorkspaceStore.getState();
+      if (!storeState.productLinesLoading && storeState.productLinesBrandId !== activeBrandId) {
+        void storeState.loadProductLines(activeBrandId, { storage: window.sessionStorage });
+      }
     }
     return () => {
       controllerRef.current?.abort();
     };
-  }, [activeBrandId, fetchBrandAssets]);
+  }, [activeBrandId, fetchBrandAssets, shellManagesProductLines]);
 
   useEffect(() => {
     setRetestBudget(null);

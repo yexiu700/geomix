@@ -43,6 +43,7 @@ import {
 import { safeConsoleHref } from '../../lib/route-map';
 import {
   HOME_ROUTE,
+  STATIC_ROUTES,
   buildWorkspaceHref,
   isConsoleRouteAccessible,
   matchRoute,
@@ -250,7 +251,10 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onPopState = () => {
-      useWorkspaceStore.getState().syncFromUrl(window.location.search, window.localStorage);
+      const matched = matchRoute(window.location.pathname);
+      useWorkspaceStore.getState().syncFromUrl(window.location.search, window.localStorage, {
+        clearMissingProductLine: Boolean(matched && STATIC_ROUTES[matched.path].businessWorkspace),
+      });
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -281,8 +285,21 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
         router.push(targetHref);
         return;
       }
-      const { activeBrandId, activeMarket } = useWorkspaceStore.getState();
-      const nextHref = buildWorkspaceHref(targetHref, activeBrandId, activeMarket);
+      const { activeBrandId, activeMarket, activeProductLineId } = useWorkspaceStore.getState();
+      const qIndex = targetHref.indexOf('?');
+      const hasExplicitProductLine =
+        qIndex !== -1 &&
+        new URLSearchParams((targetHref.slice(qIndex + 1).split('#', 1)[0] ?? '').trim()).has(
+          'productLineId',
+        );
+      const nextHref = buildWorkspaceHref(
+        targetHref,
+        activeBrandId,
+        activeMarket,
+        !hasExplicitProductLine && activeProductLineId
+          ? { productLineId: activeProductLineId }
+          : undefined,
+      );
       router.push(nextHref);
     },
     [router],
@@ -339,6 +356,7 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
             wallet,
             walletLoading,
             urlSearch: search,
+            managesProductLines: true,
             openCreateBrandModal: () => setCreateBrandModalOpen(true),
             openEnableMarketModal: (market: GeoMarket) => setEnableMarketModalTarget(market),
             refreshWallet,

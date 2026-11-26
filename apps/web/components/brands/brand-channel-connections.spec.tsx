@@ -1711,4 +1711,30 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     });
     expect(confirmMock).toHaveBeenCalledTimes(1);
   });
+
+  it('Tier 5 #1: hides Disable/Re-enable toggle on INVALID connection cards so broken credentials must be edited or tested first', async () => {
+    const invalidConn = makeConn({
+      id: 'conn_invalid_1',
+      provider: 'WORDPRESS',
+      displayName: 'Broken WP',
+      status: 'INVALID',
+      lastError: '401 Unauthorized: token revoked',
+    });
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [invalidConn] });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="GLOBAL"
+        marketEnabled
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    const card = await screen.findByTestId('channel-connection-card-conn_invalid_1');
+    expect(within(card).queryByTestId('channel-connection-toggle-btn-conn_invalid_1')).toBeNull();
+    expect(within(card).getByTestId('channel-connection-test-btn-conn_invalid_1')).toBeTruthy();
+    expect(within(card).getByTestId('channel-connection-edit-btn-conn_invalid_1')).toBeTruthy();
+  });
 });

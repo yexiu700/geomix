@@ -287,30 +287,34 @@ export function HomeDistributionSummary({
         (row.citationHitWilson.confidenceLevel === 'LOW' || row.citationHitWilson.trials < 5),
     );
 
+  const budgetUsedPoints = isFiniteNumber(retestBudget?.usedPoints)
+    ? Math.max(0, Math.trunc(retestBudget.usedPoints))
+    : 0;
+  const truncatedCapPoints = isFiniteNumber(retestBudget?.capPoints)
+    ? Math.trunc(retestBudget.capPoints)
+    : null;
+  const budgetCapPoints =
+    truncatedCapPoints !== null && truncatedCapPoints > 0 ? truncatedCapPoints : null;
+  const budgetSkippedCount = isFiniteNumber(retestBudget?.skippedCount)
+    ? Math.max(0, Math.trunc(retestBudget.skippedCount))
+    : 0;
+
   const showBudgetBoard = Boolean(
-    retestBudget &&
-    (retestBudget.capPoints !== null ||
-      retestBudget.usedPoints > 0 ||
-      retestBudget.skippedCount > 0),
+    retestBudget && (budgetCapPoints !== null || budgetUsedPoints > 0 || budgetSkippedCount > 0),
   );
 
-  const budgetUsedPoints = Math.max(0, retestBudget?.usedPoints ?? 0);
-  const budgetCapPoints = retestBudget?.capPoints ?? null;
   const budgetRemainingPoints =
     budgetCapPoints !== null
-      ? retestBudget?.remainingPoints !== null && retestBudget?.remainingPoints !== undefined
-        ? Math.max(0, retestBudget.remainingPoints)
+      ? isFiniteNumber(retestBudget?.remainingPoints)
+        ? Math.max(0, Math.trunc(retestBudget.remainingPoints))
         : Math.max(0, budgetCapPoints - budgetUsedPoints)
       : null;
-  const budgetRawPct =
-    budgetCapPoints !== null && budgetCapPoints > 0
-      ? Math.round((budgetUsedPoints / budgetCapPoints) * 100)
-      : 0;
+  const rawBudgetPct =
+    budgetCapPoints !== null ? Math.round((budgetUsedPoints / budgetCapPoints) * 100) : 0;
+  const budgetRawPct = Number.isFinite(rawBudgetPct) ? rawBudgetPct : 100;
   const budgetClampedPct = Math.max(0, Math.min(100, budgetRawPct));
-  const budgetAtOrOverCap =
-    budgetCapPoints !== null && budgetCapPoints > 0 && budgetUsedPoints >= budgetCapPoints;
-  const budgetNearCap =
-    budgetCapPoints !== null && budgetCapPoints > 0 && !budgetAtOrOverCap && budgetClampedPct >= 80;
+  const budgetAtOrOverCap = budgetCapPoints !== null && budgetUsedPoints >= budgetCapPoints;
+  const budgetNearCap = budgetCapPoints !== null && !budgetAtOrOverCap && budgetClampedPct >= 80;
 
   const isEmpty =
     visibleCrawlAlerts.length === 0 &&
@@ -492,14 +496,14 @@ export function HomeDistributionSummary({
                 </svg>
               </div>
 
-              {retestBudget.skippedCount > 0 ? (
+              {budgetSkippedCount > 0 ? (
                 <div
                   className="gm-home-budget-alert"
                   data-testid="home-retest-budget-skipped-alert"
                 >
                   <StatusBadge
                     tone="warning"
-                    label={`已达月度预算上限，已跳过 ${retestBudget.skippedCount} 次自动复测`}
+                    label={`已达月度预算上限，已跳过 ${budgetSkippedCount} 次自动复测`}
                   />
                   <span className="gm-home-budget-hint">
                     手动写作、可见度监测与手动复测不受此上限影响。
