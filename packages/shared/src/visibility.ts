@@ -30,16 +30,19 @@ export const VISIBILITY_ENGINE_KEYS = VISIBILITY_ENGINES.map((item) => item.key)
   ...VisibilityEngineKey[],
 ];
 
-export const DOMESTIC_VISIBILITY_ENGINE_KEYS = [
-  'deepseek',
-  'doubao',
-  'yuanbao',
-  'tongyi',
-  'wenxin',
-  'nami',
-  'kimi',
-  'zhipu',
-] as const;
+export const RETIRED_VISIBILITY_ENGINE_KEYS = ['wenxin', 'nami', 'kimi', 'zhipu'] as const;
+export type RetiredVisibilityEngineKey = (typeof RETIRED_VISIBILITY_ENGINE_KEYS)[number];
+const RETIRED_ENGINE_SET = new Set<string>(RETIRED_VISIBILITY_ENGINE_KEYS);
+
+export function isRetiredVisibilityEngine(value: string): value is RetiredVisibilityEngineKey {
+  return RETIRED_ENGINE_SET.has(value);
+}
+
+/**
+ * 现役国内核心 AI 引擎（Issue #411：聚焦高市占率 4 引擎）。
+ * 已下线引擎（wenxin / nami / kimi / zhipu）保留在 VISIBILITY_ENGINES 与 VISIBILITY_ENGINE_LABELS 中用于历史数据读取与渲染兜底。
+ */
+export const DOMESTIC_VISIBILITY_ENGINE_KEYS = ['deepseek', 'doubao', 'yuanbao', 'tongyi'] as const;
 export type DomesticVisibilityEngineKey = (typeof DOMESTIC_VISIBILITY_ENGINE_KEYS)[number];
 
 export const GLOBAL_VISIBILITY_ENGINE_KEYS = [
@@ -51,13 +54,36 @@ export const GLOBAL_VISIBILITY_ENGINE_KEYS = [
 ] as const;
 export type GlobalVisibilityEngineKey = (typeof GLOBAL_VISIBILITY_ENGINE_KEYS)[number];
 
+export const ACTIVE_VISIBILITY_ENGINE_KEYS = [
+  ...DOMESTIC_VISIBILITY_ENGINE_KEYS,
+  ...GLOBAL_VISIBILITY_ENGINE_KEYS,
+] as const;
+export type ActiveVisibilityEngineKey = (typeof ACTIVE_VISIBILITY_ENGINE_KEYS)[number];
+const ACTIVE_ENGINE_SET = new Set<string>(ACTIVE_VISIBILITY_ENGINE_KEYS);
+
+export const ACTIVE_VISIBILITY_ENGINES: readonly VisibilityEngineItem[] = VISIBILITY_ENGINES.filter(
+  (item) => !RETIRED_ENGINE_SET.has(item.key),
+);
+
+export function isActiveVisibilityEngine(value: string): value is ActiveVisibilityEngineKey {
+  return ACTIVE_ENGINE_SET.has(value);
+}
+
+export function findRetiredVisibilityEngines(
+  engines: readonly VisibilityEngineKey[],
+): RetiredVisibilityEngineKey[] {
+  return engines.filter((engine): engine is RetiredVisibilityEngineKey =>
+    RETIRED_ENGINE_SET.has(engine),
+  );
+}
+
 export function enginesForMarket(market: GeoMarket): readonly VisibilityEngineKey[] {
   return market === 'GLOBAL' ? GLOBAL_VISIBILITY_ENGINE_KEYS : DOMESTIC_VISIBILITY_ENGINE_KEYS;
 }
 
 export const VISIBILITY_ENGINES_BY_MARKET: Record<GeoMarket, readonly VisibilityEngineItem[]> = {
-  CN: VISIBILITY_ENGINES.filter((item) => item.domestic),
-  GLOBAL: VISIBILITY_ENGINES.filter((item) => !item.domestic),
+  CN: ACTIVE_VISIBILITY_ENGINES.filter((item) => item.domestic),
+  GLOBAL: ACTIVE_VISIBILITY_ENGINES.filter((item) => !item.domestic),
 };
 
 export function enginesMetaForMarket(market: GeoMarket): readonly VisibilityEngineItem[] {
@@ -3072,10 +3098,24 @@ export const visibilityRunCreateSchema = z
       .default([])
       .transform((items) => dedupeTrimmedStrings(items)),
   })
-  .refine(
-    (data) => data.questionIds.length > 0 || data.customPrompts.length > 0,
-    '请至少选择一个已有问题或填写一条自定义监测问题',
-  );
+  .superRefine((data, ctx) => {
+    if (data.questionIds.length === 0 && data.customPrompts.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['customPrompts'],
+        message: '请至少选择一个已有问题或填写一条自定义监测问题',
+      });
+    }
+    const retired = findRetiredVisibilityEngines(data.engines);
+    if (retired.length > 0) {
+      const labels = retired.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key).join('、');
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['engines'],
+        message: `以下 AI 引擎已下线，不再支持新建监测：${labels}`,
+      });
+    }
+  });
 
 export type VisibilityRunCreateInput = z.input<typeof visibilityRunCreateSchema>;
 
@@ -3120,6 +3160,16 @@ export const visibilityRunV2CreateSchema = z
         path: ['prompts'],
         message: '请至少填写一条监测问题',
       });
+    }
+    const retired = findRetiredVisibilityEngines(data.engines);
+    if (retired.length > 0) {
+      const labels = retired.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key).join('、');
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['engines'],
+        message: `以下 AI 引擎已下线，不再支持新建监测：${labels}`,
+      });
+      return;
     }
     if (!data.market) return;
     const disallowed = findDisallowedMarketEngines(data.engines, data.market);

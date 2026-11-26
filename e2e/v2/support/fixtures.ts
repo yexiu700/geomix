@@ -39,16 +39,7 @@ export const E2E_SENTINELS = {
   IMAGE_FAIL: '[E2E_IMAGE_FAIL]',
 } as const;
 
-export const CN_ENGINES = [
-  'deepseek',
-  'doubao',
-  'yuanbao',
-  'tongyi',
-  'wenxin',
-  'nami',
-  'kimi',
-  'zhipu',
-] as const;
+export const CN_ENGINES = ['deepseek', 'doubao', 'yuanbao', 'tongyi'] as const;
 
 export const CN_ENGINE_KEYS = CN_ENGINES;
 

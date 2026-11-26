@@ -416,6 +416,7 @@ export function RunWorkspace({
           <div className="gm-run-ws-seg">
             <Segmented
               size="small"
+              aria-label="切换观测视图"
               value={viewMode}
               onChange={(v) => setViewMode(v as 'detail' | 'topology')}
               options={[

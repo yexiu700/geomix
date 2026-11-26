@@ -11,6 +11,7 @@ import {
   containsCjk,
   detectLocaleLeakage,
   evaluateGeoArticle,
+  formatComplianceBlockMessage,
   markdownToSanitizedHtml,
   normalizeMissingFactPlaceholdersForMarket,
   postProcessArticleMarkdown,
@@ -293,7 +294,10 @@ export class StudioGenerationService {
     if (bodyScan.blocked) {
       throw new ProviderError(
         PROVIDER_KIND.CONTRACT,
-        '生成结果命中禁做行业或违规词，已拦截并退还本次点数',
+        formatComplianceBlockMessage(
+          bodyScan.hits.map((hit) => hit.label),
+          { market: params.market.market, context: 'generate' },
+        ),
         'compliance_blocked',
       );
     }
@@ -444,7 +448,14 @@ export class StudioGenerationService {
       customForbiddenWords: params.customForbiddenWords,
     });
     if (scanned.blocked) {
-      throw new ProviderError(PROVIDER_KIND.CONTRACT, '改写结果触发合规拦截', 'compliance_blocked');
+      throw new ProviderError(
+        PROVIDER_KIND.CONTRACT,
+        formatComplianceBlockMessage(
+          scanned.hits.map((hit) => hit.label),
+          { market: params.market.market, context: 'rewrite' },
+        ),
+        'compliance_blocked',
+      );
     }
 
     const finalRewritten = scanned.text.trim();

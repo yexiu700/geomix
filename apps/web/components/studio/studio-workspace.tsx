@@ -2627,7 +2627,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         {!focusMode && !isNarrowDrawerViewport ? renderLeftPane(false) : null}
 
         {/* Center Pane: Collapsible Prewrite Bar + Live SSE Editor & Preview */}
-        <main
+        <section
           ref={centerPaneRef}
           className="gm-studio-pane gm-studio-pane--center"
           aria-label="GEO 流式精写画布"
@@ -2723,7 +2723,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
               )
             }
           />
-        </main>
+        </section>
 
         {/* Right Pane: Dual-Tab (体检 | 交付) + Sticky Single-CTA Footer */}
         {!focusMode && !isNarrowDrawerViewport ? renderRightPane() : null}

@@ -860,7 +860,7 @@ async function bootstrap() {
     (process.env.VISIBILITY_COLLECTOR || 'fake').trim().toLowerCase() === 'fake' &&
     process.env.VISIBILITY_DISABLED_ENGINES === undefined
   ) {
-    process.env.VISIBILITY_DISABLED_ENGINES = 'yuanbao,tongyi,wenxin,nami,kimi,zhipu';
+    process.env.VISIBILITY_DISABLED_ENGINES = 'yuanbao,tongyi';
   }
   resetRobotsCache();
   const env = parseEnv();

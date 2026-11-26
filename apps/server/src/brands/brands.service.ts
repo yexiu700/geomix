@@ -152,19 +152,32 @@ export class BrandsService {
       const locale = entry.locale?.trim() || defaults.locale;
       const localBrandName = entry.localBrandName?.trim() || name;
       const localCategory = entry.localCategory?.trim() || null;
+      const allowCjk = (entry.allowCjkGlobalIdentity ?? input.allowCjkGlobalIdentity) === true;
       assertGlobalMarketIdentity({
         market: entry.market,
         localBrandName,
         localCategory,
-        allowCjkGlobalIdentity:
-          (entry.allowCjkGlobalIdentity ?? input.allowCjkGlobalIdentity) === true,
+        allowCjkGlobalIdentity: allowCjk,
       });
-      const aliases = dedupeStrings(entry.aliases.length > 0 ? entry.aliases : fallbackAliases);
+      const inheritedAliases =
+        entry.market === 'GLOBAL' && !allowCjk
+          ? fallbackAliases.filter((alias) => !containsCjk(alias))
+          : fallbackAliases;
+      const inheritedCompetitors =
+        entry.market === 'GLOBAL' && !allowCjk
+          ? fallbackCompetitors
+              .filter((comp) => !containsCjk(comp.name))
+              .map((comp) => ({
+                ...comp,
+                aliases: comp.aliases.filter((alias) => !containsCjk(alias)),
+              }))
+          : fallbackCompetitors;
+      const aliases = dedupeStrings(entry.aliases.length > 0 ? entry.aliases : inheritedAliases);
       const ownedDomains = normalizeDomains(
         entry.ownedDomains.length > 0 ? entry.ownedDomains : fallbackDomains,
       );
       const competitors = normalizeCompetitors(
-        entry.competitors.length > 0 ? entry.competitors : fallbackCompetitors,
+        entry.competitors.length > 0 ? entry.competitors : inheritedCompetitors,
       );
       const customSeeds = dedupeStrings(entry.seedPrompts);
       const seedPrompts =

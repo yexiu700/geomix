@@ -744,7 +744,7 @@ v2Describe(
         const serialized = JSON.stringify(rights.body?.data).toLowerCase();
         expect(serialized).not.toContain('"qwen"');
         expect(CN_ENGINE_KEYS).toContain('tongyi');
-        expect(CN_ENGINE_KEYS).toHaveLength(8);
+        expect(CN_ENGINE_KEYS).toHaveLength(4);
       },
     );
 

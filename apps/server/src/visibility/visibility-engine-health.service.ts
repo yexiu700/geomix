@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, Optional, type OnModuleDestroy } from '@nestjs/common';
 import {
-  VISIBILITY_ENGINES,
+  ACTIVE_VISIBILITY_ENGINES,
   VISIBILITY_ENGINE_KEYS,
   enginesMetaForMarket,
   isVisibilityEngine,
@@ -249,7 +249,7 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
   ): Promise<VisibilityEngineKey[]> {
     const availability = await this.getAvailability();
     const map = new Map(availability.engines.map((item) => [item.key, item.available]));
-    return engines.filter((key) => map.get(key) === false);
+    return engines.filter((key) => map.get(key) !== true);
   }
 
   async refreshHealth(): Promise<VisibilityEngineAvailabilityResponse> {
@@ -521,7 +521,7 @@ export class VisibilityEngineHealthService implements OnModuleDestroy {
       ? new Set(this.config.disabledEngines)
       : null;
 
-    const targetEngines = market ? enginesMetaForMarket(market) : VISIBILITY_ENGINES;
+    const targetEngines = market ? enginesMetaForMarket(market) : ACTIVE_VISIBILITY_ENGINES;
 
     return {
       collector: this.config.collector,

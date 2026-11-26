@@ -16,7 +16,11 @@ import {
   type GeoRecipe,
   type GeoTargetFormat,
 } from './geo-studio';
-import { VISIBILITY_ENGINE_KEYS } from './visibility';
+import {
+  VISIBILITY_ENGINE_KEYS,
+  VISIBILITY_ENGINE_LABELS,
+  findRetiredVisibilityEngines,
+} from './visibility';
 import type {
   ChannelProvider,
   CrawlProbeReport,
@@ -3129,6 +3133,16 @@ export const publishRecordRetestSchema = z
       .min(1, '请至少选择 1 个监测引擎')
       .max(VISIBILITY_ENGINE_KEYS.length)
       .transform((arr) => [...new Set(arr)])
+      .superRefine((arr, ctx) => {
+        const retired = findRetiredVisibilityEngines(arr);
+        if (retired.length > 0) {
+          const labels = retired.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key).join('、');
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `以下 AI 引擎已下线，不再支持新建复测：${labels}`,
+          });
+        }
+      })
       .optional(),
   })
   .optional()
@@ -3356,27 +3370,105 @@ function stripOuterBoldMarkers(raw: string): string {
   return s;
 }
 
+function stripListAndQuotePrefix(raw: string): { text: string; hadListPrefix: boolean } {
+  let s = raw.trim();
+  let hadListPrefix = false;
+  for (let depth = 0; depth < 3; depth += 1) {
+    let changed = false;
+    while (s.startsWith('>')) {
+      s = s.slice(1).trimStart();
+      changed = true;
+    }
+    if (
+      s.length >= 2 &&
+      (s[0] === '-' || s[0] === '*' || s[0] === '+' || s[0] === '•') &&
+      (s[1] === ' ' || s[1] === '\t')
+    ) {
+      s = s.slice(2).trimStart();
+      hadListPrefix = true;
+      changed = true;
+      continue;
+    }
+    let p = 0;
+    while (p < s.length && p < 4 && s.charCodeAt(p) >= 48 && s.charCodeAt(p) <= 57) {
+      p += 1;
+    }
+    if (p > 0 && p < s.length) {
+      const sep = s[p];
+      if (sep === '、') {
+        s = s.slice(p + 1).trimStart();
+        hadListPrefix = true;
+        changed = true;
+        continue;
+      }
+      if (
+        (sep === '.' || sep === ')') &&
+        p + 1 < s.length &&
+        (s[p + 1] === ' ' || s[p + 1] === '\t')
+      ) {
+        s = s.slice(p + 2).trimStart();
+        hadListPrefix = true;
+        changed = true;
+        continue;
+      }
+    }
+    if (!changed) break;
+  }
+  return { text: s, hadListPrefix };
+}
+
+function stripFaqHeadingPrefix(raw: string): { text: string; isHeading: boolean } {
+  const s = raw.trimStart();
+  if (s.startsWith('####')) {
+    const after = s.slice(4);
+    if (after && (after[0] === ' ' || after[0] === '\t')) {
+      return { text: after.trimStart(), isHeading: true };
+    }
+  } else if (s.startsWith('###')) {
+    const after = s.slice(3);
+    if (after && (after[0] === ' ' || after[0] === '\t')) {
+      return { text: after.trimStart(), isHeading: true };
+    }
+  }
+  return { text: s, isHeading: false };
+}
+
 function parseFaqQuestionLine(rawLine: string): string | null {
-  let s = rawLine.trim();
+  const { text: withoutList } = stripListAndQuotePrefix(rawLine);
+  const { text: withoutHeading } = stripFaqHeadingPrefix(withoutList);
+  let s = withoutHeading.trim();
   if (!s) return null;
-  if (s.startsWith('###')) {
-    const afterHashes = s.slice(3);
-    if (!afterHashes || (afterHashes[0] !== ' ' && afterHashes[0] !== '\t')) return null;
-    s = afterHashes.trimStart();
-  } else if (s.startsWith('**')) {
+  if (s.startsWith('**')) {
     s = s.slice(2).trimStart();
   }
   const first = s[0];
   if (first !== 'Q' && first !== 'q' && first !== '问') return null;
   let p = 1;
   while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
-  if (p >= s.length || (s[p] !== ':' && s[p] !== '：')) return null;
+  const digitStart = p;
+  while (p < s.length && p - digitStart < 4 && s.charCodeAt(p) >= 48 && s.charCodeAt(p) <= 57) {
+    p += 1;
+  }
+  const hasNumber = p > digitStart;
+  while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
+  if (s.startsWith('**', p)) {
+    p += 2;
+    while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
+  }
+  if (p >= s.length) return null;
+  const delim = s[p];
+  const validDelim =
+    delim === ':' ||
+    delim === '：' ||
+    (hasNumber && delim === '.' && p + 1 < s.length && (s[p + 1] === ' ' || s[p + 1] === '\t'));
+  if (!validDelim) return null;
   const rest = stripOuterBoldMarkers(s.slice(p + 1));
   return rest || null;
 }
 
 function parseFaqAnswerStartLine(rawLine: string): string | null {
-  let s = rawLine.trim();
+  const { text: withoutList } = stripListAndQuotePrefix(rawLine);
+  let s = withoutList.trim();
   if (!s) return null;
   if (s.startsWith('**')) {
     s = s.slice(2).trimStart();
@@ -3385,8 +3477,63 @@ function parseFaqAnswerStartLine(rawLine: string): string | null {
   if (first !== 'A' && first !== 'a' && first !== '答') return null;
   let p = 1;
   while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
+  const digitStart = p;
+  while (p < s.length && p - digitStart < 4 && s.charCodeAt(p) >= 48 && s.charCodeAt(p) <= 57) {
+    p += 1;
+  }
+  while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
+  if (s.startsWith('**', p)) {
+    p += 2;
+    while (p < s.length && (s[p] === ' ' || s[p] === '\t')) p += 1;
+  }
   if (p >= s.length || (s[p] !== ':' && s[p] !== '：')) return null;
   return stripOuterBoldMarkers(s.slice(p + 1));
+}
+
+function isFaqSectionH2(rawLine: string): boolean {
+  if (!/^##[ \t]+/.test(rawLine)) return false;
+  const lower = rawLine.toLowerCase();
+  return (
+    lower.includes('faq') ||
+    lower.includes('常见问题') ||
+    lower.includes('高频问答') ||
+    lower.includes('常见疑问') ||
+    lower.includes('frequently asked questions')
+  );
+}
+
+function parseFaqSectionQuestionLine(rawLine: string): string | null {
+  const explicit = parseFaqQuestionLine(rawLine);
+  if (explicit) return explicit;
+  if (parseFaqAnswerStartLine(rawLine) !== null) return null;
+
+  const trimmed = rawLine.trim();
+  if (!trimmed || /^##[ \t]+/.test(trimmed)) return null;
+
+  const { text: headingText, isHeading } = stripFaqHeadingPrefix(trimmed);
+  if (isHeading) {
+    const cleaned = stripOuterBoldMarkers(stripListAndQuotePrefix(headingText).text);
+    return cleaned || null;
+  }
+
+  const { text: afterList, hadListPrefix } = stripListAndQuotePrefix(trimmed);
+  if (hadListPrefix) {
+    const isBoldQuestion =
+      afterList.startsWith('**') && afterList.endsWith('**') && afterList.length > 4;
+    const endsWithQuestionMark = afterList.endsWith('?') || afterList.endsWith('？');
+    if (isBoldQuestion || endsWithQuestionMark) {
+      const cleaned = stripOuterBoldMarkers(afterList);
+      return cleaned || null;
+    }
+    return null;
+  }
+
+  if (trimmed.startsWith('**') && trimmed.endsWith('**') && trimmed.length > 4) {
+    const cleaned = stripOuterBoldMarkers(trimmed);
+    return cleaned || null;
+  }
+
+  return null;
 }
 
 function extractFaqPairs(
@@ -3397,6 +3544,19 @@ function extractFaqPairs(
   const pairs: Array<{ question: string; answer: string }> = [];
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
 
+  // Precompute whether each line lies inside a `## FAQ / 常见问题` section (O(N))
+  const inFaqSection: boolean[] = new Array(lines.length).fill(false);
+  let insideFaq = false;
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const line = lines[idx]!;
+    if (/^##[ \t]+/.test(line)) {
+      insideFaq = isFaqSectionH2(line);
+    } else if (insideFaq) {
+      inFaqSection[idx] = true;
+    }
+  }
+
+  // Pass 1: Explicit Q:/Q1:/问:/问1: pairs (with optional list, bold, or ###/#### heading wrappers)
   let i = 0;
   while (i < lines.length && pairs.length < 6) {
     const qRaw = parseFaqQuestionLine(lines[i]!);
@@ -3409,21 +3569,37 @@ function extractFaqPairs(
       j += 1;
     }
     if (j >= lines.length) break;
-    const aFirst = parseFaqAnswerStartLine(lines[j]!);
-    if (aFirst === null) {
+
+    const aFirstExplicit = parseFaqAnswerStartLine(lines[j]!);
+    const nextTrimmedAtJ = lines[j]!.trim();
+    const allowImplicitAnswer =
+      aFirstExplicit === null &&
+      (inFaqSection[i] || qRaw.endsWith('?') || qRaw.endsWith('？')) &&
+      !/^#{2,4}[ \t]+/.test(nextTrimmedAtJ) &&
+      parseFaqQuestionLine(nextTrimmedAtJ) === null &&
+      !(inFaqSection[j] && parseFaqSectionQuestionLine(nextTrimmedAtJ) !== null);
+
+    if (aFirstExplicit === null && !allowImplicitAnswer) {
       i += 1;
       continue;
     }
+
     const answerParts: string[] = [];
-    if (aFirst) answerParts.push(aFirst);
+    if (aFirstExplicit !== null) {
+      if (aFirstExplicit) answerParts.push(aFirstExplicit);
+    } else if (nextTrimmedAtJ) {
+      answerParts.push(nextTrimmedAtJ);
+    }
+
     let k = j + 1;
     while (k < lines.length) {
       const nextTrimmed = lines[k]!.trim();
       if (
         !nextTrimmed ||
-        nextTrimmed.startsWith('**') ||
         nextTrimmed.startsWith('##') ||
-        parseFaqQuestionLine(nextTrimmed) !== null
+        parseFaqQuestionLine(nextTrimmed) !== null ||
+        (inFaqSection[k] && parseFaqSectionQuestionLine(nextTrimmed) !== null) ||
+        (nextTrimmed.startsWith('**') && nextTrimmed.endsWith('**'))
       ) {
         break;
       }
@@ -3438,49 +3614,46 @@ function extractFaqPairs(
     i = k;
   }
 
+  // Pass 2: FAQ section entries without explicit `Q:` prefix (###, ####, 1. **...**, - **...**, **...**)
   if (pairs.length === 0) {
-    let faqStartIdx = -1;
-    for (let idx = 0; idx < lines.length; idx += 1) {
-      const line = lines[idx]!;
-      if (/^##[ \t]+/.test(line)) {
-        const lower = line.toLowerCase();
-        if (
-          lower.includes('faq') ||
-          lower.includes('常见问题') ||
-          lower.includes('frequently asked questions')
-        ) {
-          faqStartIdx = idx + 1;
-          break;
-        }
-      }
-    }
-
-    if (faqStartIdx !== -1) {
-      let idx = faqStartIdx;
-      while (idx < lines.length && pairs.length < 6) {
-        const line = lines[idx]!;
-        if (/^##[ \t]+/.test(line)) break;
-        if (/^###[ \t]+/.test(line)) {
-          const qRaw = line.slice(3).trim();
-          let j = idx + 1;
-          while (j < lines.length && lines[j]!.trim() === '') j += 1;
-          const answerParts: string[] = [];
-          while (j < lines.length) {
-            const trimmed = lines[j]!.trim();
-            if (!trimmed || trimmed.startsWith('##')) break;
-            answerParts.push(trimmed);
-            j += 1;
-          }
-          const q = sanitizeJsonLdText(qRaw);
-          const a = sanitizeJsonLdText(answerParts.join(' '));
-          if (q && a) {
-            pairs.push({ question: q, answer: a });
-          }
-          idx = j;
-          continue;
-        }
+    let idx = 0;
+    while (idx < lines.length && pairs.length < 6) {
+      if (!inFaqSection[idx]) {
         idx += 1;
+        continue;
       }
+      const qRaw = parseFaqSectionQuestionLine(lines[idx]!);
+      if (!qRaw) {
+        idx += 1;
+        continue;
+      }
+      let j = idx + 1;
+      while (j < lines.length && inFaqSection[j] && lines[j]!.trim() === '') {
+        j += 1;
+      }
+      const answerParts: string[] = [];
+      while (j < lines.length && inFaqSection[j]) {
+        const trimmed = lines[j]!.trim();
+        if (!trimmed || trimmed.startsWith('##')) break;
+        if (answerParts.length > 0 && parseFaqSectionQuestionLine(trimmed) !== null) break;
+        if (answerParts.length === 0) {
+          const explicitAns = parseFaqAnswerStartLine(trimmed);
+          if (explicitAns !== null) {
+            if (explicitAns) answerParts.push(explicitAns);
+            j += 1;
+            continue;
+          }
+          if (parseFaqSectionQuestionLine(trimmed) !== null) break;
+        }
+        answerParts.push(trimmed);
+        j += 1;
+      }
+      const q = sanitizeJsonLdText(qRaw);
+      const a = sanitizeJsonLdText(answerParts.join(' '));
+      if (q && a) {
+        pairs.push({ question: q, answer: a });
+      }
+      idx = j;
     }
   }
 
@@ -3769,7 +3942,10 @@ export function evaluateGeoArticle(input: EvaluateGeoArticleInput): GeoEvaluatio
   if (hasList) structuredScore += 3;
   else structuredHints.push('建议增加要点清单方便 AI 快速摘录');
 
-  const hasFaq = /FAQ|常见问题|Frequently Asked Questions|\*\*Q[:：]|\*\*问[:：]/i.test(md);
+  const hasFaq =
+    /FAQ|常见问题|高频问答|Frequently Asked Questions|\*\*Q\s*\d*\s*[:：]|\*\*问\s*\d*\s*[:：]|^#{3,4}[ \t]+(?:Q|问)\s*\d*\s*[:：]/im.test(
+      md,
+    );
   if (hasFaq) structuredScore += 3;
   else structuredHints.push('建议在文末补充 2–5 组 FAQ 问答块');
 

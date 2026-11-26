@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   API_ERROR,
   CN_SENSITIVE_TERMS,
+  formatComplianceBlockMessage,
   scanDualTrackCompliance,
   type DualTrackComplianceOptions,
   type GeoComplianceFlag,
@@ -121,6 +122,13 @@ export class ComplianceService {
     } catch {
       // 审计写失败仍然拦截，避免因为日志故障放行。
     }
-    throw new ApiError(403, API_ERROR.FORBIDDEN_INDUSTRY, '包含禁做行业或敏感内容');
+    throw new ApiError(
+      403,
+      API_ERROR.FORBIDDEN_INDUSTRY,
+      formatComplianceBlockMessage(
+        report.hits.map((hit) => hit.label),
+        { market: input.market, context: 'input' },
+      ),
+    );
   }
 }

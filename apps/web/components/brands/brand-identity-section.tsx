@@ -665,7 +665,11 @@ export function BrandIdentitySection({
     }
   };
 
-  const openAiSuggest = async (mode: BrandMarketAiSuggestMode, customSourceUrl?: string) => {
+  const openAiSuggest = async (
+    mode: BrandMarketAiSuggestMode,
+    customSourceUrl?: string,
+    customFields?: BrandMarketAiSuggestField[],
+  ) => {
     if (readOnly || saving || !activeBrandMarket) return;
 
     aiSuggestCtrlRef.current?.abort();
@@ -675,11 +679,13 @@ export function BrandIdentitySection({
 
     const urlToSend = (customSourceUrl ?? (mode === 'full' ? aiSourceUrl : '')).trim();
     const fields: BrandMarketAiSuggestField[] | undefined =
-      mode === 'seedPrompts'
-        ? ['seedPrompts']
-        : mode === 'localIdentity'
-          ? ['localIdentity']
-          : undefined;
+      customFields && customFields.length > 0
+        ? customFields
+        : mode === 'seedPrompts'
+          ? ['seedPrompts']
+          : mode === 'localIdentity'
+            ? ['localIdentity']
+            : undefined;
 
     setAiModalMode(mode);
     setAiModalOpen(true);
@@ -739,7 +745,28 @@ export function BrandIdentitySection({
   };
 
   const handleApplyAiSelection = (selection: BrandMarketAiSuggestSelection) => {
-    const existingNonBlankRows = competitorRows.filter((row) => row.name.trim().length > 0);
+    const cleanGlobalCjkOnLocalize = activeMarket === 'GLOBAL' && aiModalMode === 'localIdentity';
+    const baseAliases = cleanGlobalCjkOnLocalize
+      ? aliases.filter((item) => !containsCjk(item))
+      : aliases;
+    const baseCompetitorRows = cleanGlobalCjkOnLocalize
+      ? competitorRows
+          .filter((row) => !containsCjk(row.name))
+          .map((row) => ({
+            ...row,
+            aliasesText: parseCompetitorAliases(row.aliasesText)
+              .filter((alias) => !containsCjk(alias))
+              .join(', '),
+          }))
+      : competitorRows;
+    const baseSeedPrompts = cleanGlobalCjkOnLocalize
+      ? seedPrompts.filter((item) => !containsCjk(item))
+      : seedPrompts;
+    const baseControlPrompts = cleanGlobalCjkOnLocalize
+      ? controlPrompts.filter((item) => !containsCjk(item))
+      : controlPrompts;
+
+    const existingNonBlankRows = baseCompetitorRows.filter((row) => row.name.trim().length > 0);
     const existingSerialized = serializeCompetitorRows(existingNonBlankRows).competitors;
 
     const merged = mergeAiMarketSuggestions({
@@ -747,10 +774,10 @@ export function BrandIdentitySection({
       current: {
         localBrandName,
         localCategory,
-        aliases,
+        aliases: baseAliases,
         competitors: existingSerialized,
-        seedPrompts,
-        controlPrompts,
+        seedPrompts: baseSeedPrompts,
+        controlPrompts: baseControlPrompts,
       },
       selection,
     });
@@ -761,23 +788,29 @@ export function BrandIdentitySection({
     if (merged.addedCounts.localCategory) {
       setLocalCategory(merged.localCategory);
     }
-    if (merged.addedCounts.aliases > 0) {
+    if (merged.addedCounts.aliases > 0 || baseAliases.length !== aliases.length) {
       setAliases(merged.aliases);
     }
-    if (merged.addedCounts.competitors > 0) {
+    if (
+      merged.addedCounts.competitors > 0 ||
+      baseCompetitorRows.length !== competitorRows.length ||
+      cleanGlobalCjkOnLocalize
+    ) {
       const newlyAdded = merged.competitors.slice(existingSerialized.length);
-      setCompetitorRows((prev) => {
-        const preserved = prev.filter((row) => row.name.trim().length > 0);
-        return [...preserved, ...newlyAdded.map(createCompetitorRowFromSuggestion)].slice(
+      setCompetitorRows(
+        [...existingNonBlankRows, ...newlyAdded.map(createCompetitorRowFromSuggestion)].slice(
           0,
           BRAND_MAX_COMPETITORS,
-        );
-      });
+        ),
+      );
     }
-    if (merged.addedCounts.seedPrompts > 0) {
+    if (merged.addedCounts.seedPrompts > 0 || baseSeedPrompts.length !== seedPrompts.length) {
       setSeedPrompts(merged.seedPrompts);
     }
-    if (merged.addedCounts.controlPrompts > 0) {
+    if (
+      merged.addedCounts.controlPrompts > 0 ||
+      baseControlPrompts.length !== controlPrompts.length
+    ) {
       setControlPrompts(merged.controlPrompts);
     }
 
@@ -959,33 +992,69 @@ export function BrandIdentitySection({
 
           {activeBrandMarket ? (
             <div className="gm-brand-market-fields">
-              {activeMarket === 'GLOBAL' &&
-              (containsCjk(localBrandName) ||
-                (!localCategory.trim() && containsCjk(brand.category)) ||
-                ownedDomains.some((d) => d.endsWith('.cn'))) ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  data-testid="global-localization-guide"
-                  className="gm-brand-inline-alert"
-                  message="建议完善海外市场英文身份"
-                  description="检测到海外市场仍包含中文品牌名、未设置英文品类或使用 .cn 域名，建议补全纯英文当地品牌名、当地品类与海外官网域名，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。"
-                  action={
-                    !readOnly ? (
-                      <Button
-                        size="small"
-                        data-testid="global-ai-localize-btn"
-                        aria-label="AI 一键英文本地化"
-                        disabled={saving}
-                        className="gm-brand-btn-nowrap"
-                        onClick={() => void openAiSuggest('localIdentity')}
-                      >
-                        AI 一键英文本地化
-                      </Button>
-                    ) : undefined
-                  }
-                />
-              ) : null}
+              {(() => {
+                if (activeMarket !== 'GLOBAL') return null;
+                const hasIdentityCjkOrCn =
+                  containsCjk(localBrandName) ||
+                  containsCjk(localCategory) ||
+                  (!localCategory.trim() && containsCjk(brand.category)) ||
+                  ownedDomains.some((d) => d.endsWith('.cn'));
+                const hasAliasCjk = aliases.some((item) => containsCjk(item));
+                const hasCompetitorCjk = competitorRows.some(
+                  (row) =>
+                    containsCjk(row.name) ||
+                    parseCompetitorAliases(row.aliasesText).some((alias) => containsCjk(alias)),
+                );
+                const hasSeedCjk = seedPrompts.some((item) => containsCjk(item));
+                const hasControlCjk = controlPrompts.some((item) => containsCjk(item));
+                const hasExtraCjk = hasAliasCjk || hasCompetitorCjk || hasSeedCjk || hasControlCjk;
+                if (!hasIdentityCjkOrCn && !hasExtraCjk) return null;
+
+                const issueParts: string[] = [];
+                if (hasIdentityCjkOrCn) issueParts.push('品牌名/品类或 .cn 域名');
+                if (hasAliasCjk) issueParts.push('品牌别名');
+                if (hasCompetitorCjk) issueParts.push('竞品名称/别名');
+                if (hasSeedCjk) issueParts.push('种子监控问句');
+                if (hasControlCjk) issueParts.push('对照组问句');
+
+                const localizeFields: BrandMarketAiSuggestField[] = [];
+                if (hasIdentityCjkOrCn || !hasExtraCjk) localizeFields.push('localIdentity');
+                if (hasAliasCjk) localizeFields.push('aliases');
+                if (hasCompetitorCjk) localizeFields.push('competitors');
+                if (hasSeedCjk) localizeFields.push('seedPrompts');
+                if (hasControlCjk) localizeFields.push('controlPrompts');
+
+                return (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    data-testid="global-localization-guide"
+                    className="gm-brand-inline-alert"
+                    message="建议完善海外市场英文身份"
+                    description={`检测到海外市场（GLOBAL）的${issueParts.join('、')}包含中文或国内域名，建议点击右侧「AI 一键英文本地化」清理并替换为纯英文配置，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。`}
+                    action={
+                      !readOnly ? (
+                        <Button
+                          size="small"
+                          data-testid="global-ai-localize-btn"
+                          aria-label="AI 一键英文本地化"
+                          disabled={saving}
+                          className="gm-brand-btn-nowrap"
+                          onClick={() =>
+                            void openAiSuggest(
+                              'localIdentity',
+                              undefined,
+                              hasExtraCjk ? localizeFields : ['localIdentity'],
+                            )
+                          }
+                        >
+                          AI 一键英文本地化
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                );
+              })()}
 
               <div className="gm-brand-form-grid-2">
                 <FormField label="当地品牌名" htmlFor="gm-market-local-name">

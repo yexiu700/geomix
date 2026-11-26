@@ -283,7 +283,12 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
 
     // Step 3 opens automatically via onSuggestMarketConfig
     await waitFor(() => {
-      expect(onSuggestMarketConfig).toHaveBeenCalledWith('brand_new_1', 'CN', {});
+      expect(onSuggestMarketConfig).toHaveBeenCalledWith(
+        'brand_new_1',
+        'CN',
+        {},
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     });
     expect(onClose).not.toHaveBeenCalled();
 
@@ -493,7 +498,12 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     fireEvent.click(saveFactsBtn);
 
     await waitFor(() => {
-      expect(onSuggestMarketConfig).toHaveBeenCalledWith('brand_global_cjk_1', 'GLOBAL', {});
+      expect(onSuggestMarketConfig).toHaveBeenCalledWith(
+        'brand_global_cjk_1',
+        'GLOBAL',
+        {},
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
     });
 
     const prefillModal = await screen.findByTestId('brand-ai-suggest-modal');
@@ -714,5 +724,100 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     ) as HTMLButtonElement;
     expect(confirmBtn.disabled).toBe(true);
     expect(onSaveMarketConfig).not.toHaveBeenCalled();
+  });
+
+  it('filters CJK aliases and competitors out of GLOBAL during dual-market creation and aligns Step 2 buttons horizontally (#408)', async () => {
+    const onCreateBrand = vi.fn(async (_input: unknown) => ({
+      ...createdBrandStub,
+      markets: [
+        createdBrandStub.markets[0]!,
+        {
+          ...createdBrandStub.markets[0]!,
+          id: 'bm_new_global',
+          market: 'GLOBAL' as const,
+          locale: 'en-US',
+          region: 'US',
+          localBrandName: 'PineVault',
+          localCategory: 'Home NAS',
+        },
+      ],
+    }));
+    const onExtractFacts = vi.fn();
+    const onSaveFacts = vi.fn();
+
+    render(
+      <BrandQuickCreateModal
+        open={true}
+        onClose={vi.fn()}
+        onCreateBrand={onCreateBrand}
+        onExtractFacts={onExtractFacts}
+        onSaveFacts={onSaveFacts}
+      />,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
+    // Add both CJK alias and English SKU alias
+    const aliasInput = within(dialog).getByLabelText('品牌别名');
+    fireEvent.change(aliasInput, { target: { value: '示例私有云' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加' }));
+    fireEvent.change(aliasInput, { target: { value: 'PV-4800' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加' }));
+
+    fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
+    // Enable GLOBAL alongside CN
+    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
+    fireEvent.change(within(dialog).getByLabelText('官网域名'), {
+      target: { value: 'pinevault.example' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('海外英文品牌名'), {
+      target: { value: 'PineVault' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('海外英文品类'), {
+      target: { value: 'Home NAS' },
+    });
+
+    // Add both Chinese competitor and English competitor
+    fireEvent.click(within(dialog).getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.change(within(dialog).getByLabelText('竞品名称 1'), { target: { value: '竞品甲' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.change(within(dialog).getByLabelText('竞品名称 2'), {
+      target: { value: 'Synology' },
+    });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+
+    await waitFor(() => {
+      expect(onCreateBrand).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = onCreateBrand.mock.calls[0]?.[0] as {
+      markets: Array<{
+        market: string;
+        aliases: string[];
+        competitors: Array<{ name: string }>;
+      }>;
+      aliases?: string[];
+      competitors?: Array<{ name: string }>;
+    };
+    const cnEntry = payload.markets.find((m) => m.market === 'CN');
+    const globalEntry = payload.markets.find((m) => m.market === 'GLOBAL');
+    expect(cnEntry?.aliases).toEqual(['示例私有云', 'PV-4800']);
+    expect(cnEntry?.competitors.map((c) => c.name)).toEqual(['竞品甲', 'Synology']);
+    expect(globalEntry?.aliases).toEqual(['PV-4800']);
+    expect(globalEntry?.competitors.map((c) => c.name)).toEqual(['Synology']);
+    // Top-level CN fallback must not be sent on dual-market payloads
+    expect(payload.aliases).toBeUndefined();
+    expect(payload.competitors).toBeUndefined();
+
+    // Step 2 buttons live together in a single horizontal .gm-brand-modal-footer
+    const footer = dialog.querySelector('.gm-brand-modal-footer');
+    expect(footer).toBeTruthy();
+    expect(
+      within(footer as HTMLElement).getByRole('button', { name: '跳过，直接进入' }),
+    ).toBeTruthy();
+    expect(
+      within(footer as HTMLElement).getByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
+    ).toBeTruthy();
   });
 });

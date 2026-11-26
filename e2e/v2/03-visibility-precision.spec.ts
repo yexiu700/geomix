@@ -100,7 +100,7 @@ v2Describe(
     );
 
     test(
-      'T1-F09-02 Engine list strictly isolates CN (8 engines incl. tongyi) vs GLOBAL (5 engines)',
+      'T1-F09-02 Engine list strictly isolates CN (4 engines incl. tongyi) vs GLOBAL (5 engines)',
       { tag: ['@tier1', '@F9', '@M2'] },
       async ({ browser }, testInfo) => {
         const tag = uniqueTag(testInfo, 'f09t2');
@@ -305,13 +305,13 @@ v2Describe(
           .id;
 
         const engines = await fetchEngines(tenant.accessToken, brandId, 'CN');
-        expect(engines).toHaveLength(8);
+        expect(engines).toHaveLength(4);
         const offline = engines.filter(
           (e) => e.available === false || e.online === false || e.status === 'offline',
         );
         expect(
           offline.length,
-          'Expected at least one offline CN engine (暂未上线) in CN 8-engine catalog',
+          'Expected at least one offline CN engine (暂未上线) in CN 4-engine catalog',
         ).toBeGreaterThan(0);
 
         const { context, page } = await createAuthenticatedContext(browser, tenant);

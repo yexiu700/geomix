@@ -26,7 +26,7 @@ unstableSetRender((node, container) => {
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider locale={zhCN} theme={GM_ANTD_THEME} button={{ autoInsertSpace: false }}>
-      <App>
+      <App message={{ top: 64 }}>
         <UxFeedbackProvider>{children}</UxFeedbackProvider>
       </App>
     </ConfigProvider>

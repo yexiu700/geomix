@@ -1545,7 +1545,7 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
       expect(res.status).toBe(404);
     }
 
-    // CN = 8 engines (canonical tongyi), GLOBAL = 5 engines
+    // CN = 4 active engines (canonical tongyi), GLOBAL = 5 engines (#411)
     const cnEngines = await httpJson<VisibilityEngineAvailabilityResponse>(
       base,
       'GET',
@@ -1554,9 +1554,27 @@ describe('visibility v2 HTTP, dual-market isolation, billing settlement, F10 pre
     );
     expect(cnEngines.status).toBe(200);
     expect(cnEngines.data.market).toBe('CN');
-    expect(cnEngines.data.engines).toHaveLength(8);
-    expect(cnEngines.data.engines.map((e) => e.key)).toContain('tongyi');
+    expect(cnEngines.data.engines).toHaveLength(4);
+    expect(cnEngines.data.engines.map((e) => e.key)).toEqual([
+      'deepseek',
+      'doubao',
+      'yuanbao',
+      'tongyi',
+    ]);
     expect(cnEngines.data.engines.map((e) => e.key)).not.toContain('chatgpt');
+    expect(cnEngines.data.engines.map((e) => e.key)).not.toContain('kimi');
+
+    // Retired CN engines rejected on createRun
+    const retiredRunRes = await httpJson(
+      base,
+      'POST',
+      `/api/v2/brands/${dualBrandAId}/visibility/runs`,
+      {
+        token: tokenStrictA,
+        body: { market: 'CN', engines: ['kimi', 'wenxin'], prompts: ['家用 NAS 推荐'] },
+      },
+    );
+    expect(retiredRunRes.status).toBe(400);
 
     const globalEngines = await httpJson<VisibilityEngineAvailabilityResponse>(
       base,

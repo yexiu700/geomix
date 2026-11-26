@@ -629,6 +629,7 @@ function sanitizeAliases(rawAliases: readonly string[], ctx: SuggestContext): st
   for (const raw of rawAliases) {
     const cleaned = raw.trim().slice(0, BRAND_NAME_MAX);
     if (!cleaned) continue;
+    if (ctx.market === 'GLOBAL' && containsCjk(cleaned)) continue;
     const key = cleaned.toLowerCase();
     if (excluded.has(key)) continue;
     excluded.add(key);
@@ -653,6 +654,7 @@ function sanitizeCompetitors(
   for (const item of rawCompetitors) {
     const name = item.name.trim().slice(0, BRAND_NAME_MAX);
     if (!name) continue;
+    if (ctx.market === 'GLOBAL' && containsCjk(name)) continue;
     const key = name.toLowerCase();
     if (excluded.has(key)) continue;
     excluded.add(key);
@@ -662,6 +664,7 @@ function sanitizeCompetitors(
     for (const rawAlias of item.aliases ?? []) {
       const a = rawAlias.trim().slice(0, BRAND_NAME_MAX);
       if (!a || aliasSeen.has(a.toLowerCase())) continue;
+      if (ctx.market === 'GLOBAL' && containsCjk(a)) continue;
       aliasSeen.add(a.toLowerCase());
       aliases.push(a);
       if (aliases.length >= BRAND_MAX_ALIASES) break;
@@ -717,6 +720,7 @@ function sanitizeSeedPrompts(
     const rawPrompt = typeof entry === 'string' ? entry : entry.prompt;
     const prompt = rawPrompt.trim().slice(0, 300);
     if (prompt.length < 2) continue;
+    if (ctx.market === 'GLOBAL' && containsCjk(prompt)) continue;
     const key = normalizePromptKey(prompt);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -744,6 +748,7 @@ function sanitizeControlPrompts(
   for (const raw of rawControls) {
     const cleaned = raw.trim().slice(0, 300);
     if (cleaned.length < 2) continue;
+    if (ctx.market === 'GLOBAL' && containsCjk(cleaned)) continue;
     const key = normalizePromptKey(cleaned);
     if (seen.has(key)) continue;
     // Enforce non-overlap with both existing and newly suggested seedPrompts via shared validator
@@ -902,8 +907,16 @@ export function buildFallbackMarketSuggestions(ctx: SuggestContext): DraftSugges
       ? localCategory || resolveGlobalCategoryLabel(ctx.brandCategory, ctx.localCategory)
       : ctx.localCategory?.trim() || ctx.brandCategory;
 
-  const primarySku = aliases[0] ?? ctx.existingAliases[0];
-  const comp1 = ctx.existingCompetitors[0]?.name;
+  const eligibleExistingAliases =
+    ctx.market === 'GLOBAL'
+      ? ctx.existingAliases.filter((a) => !containsCjk(a))
+      : ctx.existingAliases;
+  const eligibleExistingCompetitors =
+    ctx.market === 'GLOBAL'
+      ? ctx.existingCompetitors.filter((c) => !containsCjk(c.name))
+      : ctx.existingCompetitors;
+  const primarySku = aliases[0] ?? eligibleExistingAliases[0];
+  const comp1 = eligibleExistingCompetitors[0]?.name;
   const segment = classifyBrandCategorySegment(`${ctx.localCategory ?? ''} ${ctx.brandCategory}`);
 
   let seedPrompts: BrandSeedPromptSuggestion[] = [];
@@ -913,7 +926,7 @@ export function buildFallbackMarketSuggestions(ctx: SuggestContext): DraftSugges
       brandName: effectiveBrandName,
       category: ctx.brandCategory,
       localCategory: ctx.market === 'GLOBAL' ? effectiveCategory : ctx.localCategory,
-      competitors: ctx.existingCompetitors,
+      competitors: eligibleExistingCompetitors,
     });
 
     const expanded: Array<{ prompt: string; intent: BrandSeedPromptIntent }> = [

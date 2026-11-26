@@ -264,7 +264,7 @@ describe.skipIf(process.env.GEOMIX_DB_INTEGRATION !== '1')(
       const storage = rights.data.cards.find((card) => card.key === 'STORAGE_BYTES')?.text ?? '';
       expect(storage).toContain('2 KB');
       expect(storage).toContain('100 MB');
-      expect(rights.data.models).toHaveLength(8);
+      expect(rights.data.models).toHaveLength(4);
       expect(rights.data.models.every((item) => item.count === 0)).toBe(true);
 
       const held = await billing.reserve({

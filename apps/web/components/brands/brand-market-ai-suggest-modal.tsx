@@ -585,7 +585,10 @@ export function BrandMarketAiSuggestModal({
                           </div>
                           <div className="gm-brand-ai-rows">
                             {group.items.map((item) => (
-                              <div key={item.id} className="gm-brand-ai-row">
+                              <div
+                                key={item.id}
+                                className="gm-brand-ai-row gm-brand-ai-row--multiline"
+                              >
                                 <Checkbox
                                   aria-label={`勾选种子问句 ${item.prompt}`}
                                   checked={item.checked}
@@ -600,10 +603,11 @@ export function BrandMarketAiSuggestModal({
                                     )
                                   }
                                 />
-                                <Input
+                                <Input.TextArea
                                   aria-label={`编辑种子问句 ${item.id}`}
                                   value={item.prompt}
                                   maxLength={300}
+                                  autoSize={{ minRows: 1, maxRows: 4 }}
                                   disabled={saving}
                                   onChange={(event) =>
                                     setSeedItems((prev) =>
@@ -656,7 +660,7 @@ export function BrandMarketAiSuggestModal({
                     </div>
                     <div className="gm-brand-ai-rows">
                       {controlItems.map((item, idx) => (
-                        <div key={item.id} className="gm-brand-ai-row">
+                        <div key={item.id} className="gm-brand-ai-row gm-brand-ai-row--multiline">
                           <Checkbox
                             aria-label={`勾选对照组问句 ${idx + 1}`}
                             checked={item.checked}
@@ -671,10 +675,11 @@ export function BrandMarketAiSuggestModal({
                               )
                             }
                           />
-                          <Input
+                          <Input.TextArea
                             aria-label={`编辑对照组问句 ${idx + 1}`}
                             value={item.prompt}
                             maxLength={300}
+                            autoSize={{ minRows: 1, maxRows: 4 }}
                             disabled={saving}
                             onChange={(event) =>
                               setControlItems((prev) =>

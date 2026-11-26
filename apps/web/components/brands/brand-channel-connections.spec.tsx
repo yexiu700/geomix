@@ -70,7 +70,10 @@ async function selectAntdOption(selectWrapper: HTMLElement, optionLabel: string)
     selectWrapper.querySelector('input[role="combobox"]') ??
     within(selectWrapper).getByRole('combobox');
   fireEvent.mouseDown(combobox);
-  const option = await screen.findByTitle(optionLabel);
+  const matches = await screen.findAllByTitle(optionLabel);
+  const option =
+    matches.find((el) => el.classList.contains('ant-select-item-option')) ??
+    matches[matches.length - 1]!;
   fireEvent.click(option);
 }
 
@@ -1736,5 +1739,26 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     expect(within(card).queryByTestId('channel-connection-toggle-btn-conn_invalid_1')).toBeNull();
     expect(within(card).getByTestId('channel-connection-test-btn-conn_invalid_1')).toBeTruthy();
     expect(within(card).getByTestId('channel-connection-edit-btn-conn_invalid_1')).toBeTruthy();
+  });
+
+  it('defaults create modal provider to WECHAT_OFFICIAL (not Shopify) when activeMarket is CN (#408)', async () => {
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [] });
+
+    render(
+      <BrandChannelConnections
+        brandId="brand_1"
+        activeMarket="CN"
+        marketEnabled
+        readOnly={false}
+        onEnableMarket={vi.fn()}
+      />,
+    );
+
+    const addBtn = await screen.findByRole('button', { name: /新增渠道连接|添加渠道连接/ });
+    fireEvent.click(addBtn);
+
+    const modal = await screen.findByTestId('channel-connection-modal');
+    expect(within(modal).getByTestId('wechat-modal-draft-notice')).toBeTruthy();
+    expect(within(modal).queryByTestId('shopify-oauth-start-btn')).toBeNull();
   });
 });

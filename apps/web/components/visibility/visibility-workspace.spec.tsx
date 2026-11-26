@@ -120,46 +120,6 @@ const CN_ENGINES_RES: VisibilityEngineAvailabilityResponse = {
       defaultChecked: false,
       unavailableReason: '暂未上线',
     },
-    {
-      key: 'wenxin',
-      label: '文心一言',
-      domestic: true,
-      market: 'CN',
-      available: false,
-      status: 'offline',
-      defaultChecked: false,
-      unavailableReason: '暂未上线',
-    },
-    {
-      key: 'nami',
-      label: '纳米',
-      domestic: true,
-      market: 'CN',
-      available: false,
-      status: 'offline',
-      defaultChecked: false,
-      unavailableReason: '暂未上线',
-    },
-    {
-      key: 'kimi',
-      label: 'Kimi',
-      domestic: true,
-      market: 'CN',
-      available: false,
-      status: 'offline',
-      defaultChecked: false,
-      unavailableReason: '暂未上线',
-    },
-    {
-      key: 'zhipu',
-      label: '智谱',
-      domestic: true,
-      market: 'CN',
-      available: false,
-      status: 'offline',
-      defaultChecked: false,
-      unavailableReason: '暂未上线',
-    },
   ],
 };
 
@@ -584,13 +544,13 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       </ConsoleProvider>,
     );
 
-    // Tab 1: CN SonarDial has exactly 8 spokes
+    // Tab 1: CN SonarDial has exactly 4 active spokes (#411)
     await waitFor(() => {
-      expect(document.querySelector('.gm-sonar')?.getAttribute('data-engine-count')).toBe('8');
+      expect(document.querySelector('.gm-sonar')?.getAttribute('data-engine-count')).toBe('4');
     });
     expect(screen.getAllByText('75.0%').length).toBeGreaterThan(0);
 
-    // Switch to Tab 2 (Runs): 8 CN engines, ONLY 2 online pre-checked, 6 offline disabled with 暂未上线
+    // Switch to Tab 2 (Runs): 4 CN engines, ONLY 2 online pre-checked, 2 offline disabled with 暂未上线
     fireEvent.click(screen.getByTestId('visibility-tab-runs'));
     expect(window.location.search).toContain('tab=runs');
 
@@ -598,7 +558,7 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       expect(screen.getByTestId('engine-option-deepseek')).toBeTruthy();
       expect(screen.getByTestId('engine-option-yuanbao')).toBeTruthy();
     });
-    expect(document.querySelectorAll('[data-testid^="engine-option-"]')).toHaveLength(8);
+    expect(document.querySelectorAll('[data-testid^="engine-option-"]')).toHaveLength(4);
     expect(screen.queryByTestId('engine-option-chatgpt')).toBeNull();
 
     const deepseekBox = within(screen.getByTestId('engine-option-deepseek')).getByRole('checkbox');
@@ -1623,5 +1583,69 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     expect(navigateWorkspace).toHaveBeenCalledWith(
       '/studio?brandId=brand_dual_1&market=CN&briefId=brief_general_1',
     );
+  });
+
+  it('disables observation brief button on failed/empty observations and collapses >6 seed prompts by default (#410)', async () => {
+    const manySeeds = Array.from(
+      { length: 10 },
+      (_, idx) => `2026 家用 NAS 选购高频问句 ${idx + 1}`,
+    );
+    const brandWithManySeeds: BrandRecord = {
+      ...DUAL_BRAND,
+      markets: DUAL_BRAND.markets.map((m) =>
+        m.market === 'CN' ? { ...m, seedPrompts: manySeeds } : m,
+      ),
+    };
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [brandWithManySeeds],
+      activeBrandId: brandWithManySeeds.id,
+      activeMarket: 'CN',
+      activeProductLineId: null,
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue({
+      ...SAMPLE_RUN_DETAIL,
+      observations: [
+        {
+          ...SAMPLE_RUN_DETAIL.observations[0]!,
+          id: 'obs_failed_timeout',
+          status: 'FAILED',
+          answerText: null,
+          error: '远端采集服务超时',
+        },
+      ],
+    });
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ total: 0, items: [] });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByTestId('visibility-tab-runs'));
+
+    // Seed prompts collapsed to 6 initially, expanding shows all 10
+    await waitFor(() => {
+      expect(document.querySelectorAll('.gm-vis-seed-chip')).toHaveLength(6);
+    });
+    const toggleBtn = screen.getByTestId('vis-seed-toggle-btn');
+    expect(toggleBtn.textContent).toContain('展开全部（10）');
+    fireEvent.click(toggleBtn);
+    expect(document.querySelectorAll('.gm-vis-seed-chip')).toHaveLength(10);
+    expect(toggleBtn.textContent).toBe('收起');
+
+    // Failed/empty observation disables answer-brief-btn
+    const briefBtn = (await screen.findByTestId('answer-brief-btn')) as HTMLButtonElement;
+    expect(briefBtn.disabled).toBe(true);
   });
 });

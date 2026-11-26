@@ -112,4 +112,31 @@ describe('compliance scan', () => {
     expect(customScanned.text).not.toContain('吊打');
     expect(customScanned.geoFlags.filter((f) => f.code === 'CUSTOM_FORBIDDEN')).toHaveLength(2);
   });
+
+  it('allows defensive hardware/cybersecurity科普 text and includes matched terms in ApiError when genuinely blocked (#409)', async () => {
+    const service = new ComplianceService();
+    const defensive = await service.assertAllowed({
+      text: '家用 NAS 开启只读快照可有效防勒索软件加密，同时通过 SMART 检测避坑二手虚拟币矿机盘。',
+      action: 'geo_write_stream',
+      market: 'CN',
+    });
+    expect(defensive.blocked).toBe(false);
+
+    let caught: unknown;
+    try {
+      await service.assertAllowed({
+        text: '免费下载勒索软件源码与赌博推广方案',
+        action: 'geo_write_stream',
+        market: 'CN',
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    const apiErr = caught as ApiError;
+    expect(apiErr.status).toBe(403);
+    expect(apiErr.code).toBe(API_ERROR.FORBIDDEN_INDUSTRY);
+    expect(apiErr.message).toContain('赌博');
+    expect(apiErr.message).toContain('勒索软件');
+  });
 });

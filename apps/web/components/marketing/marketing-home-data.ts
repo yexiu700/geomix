@@ -112,9 +112,8 @@ export const HERO_ENGINES: Record<EngineMarketKey, readonly EngineBadgeItem[]> =
     { id: 'google_aio', label: 'Google AI Overviews', detail: 'SERP Top Summary' },
   ],
   CN: [
-    { id: 'doubao', label: '豆包', detail: '联网信源引用' },
     { id: 'deepseek', label: 'DeepSeek', detail: '深度推理参考' },
-    { id: 'kimi', label: 'Kimi', detail: '长文检索溯源' },
+    { id: 'doubao', label: '豆包', detail: '联网信源引用' },
     { id: 'yuanbao', label: '元宝', detail: '生态内容聚合' },
     { id: 'tongyi', label: '通义', detail: '多轮问答引用' },
   ],
@@ -200,7 +199,7 @@ export const DIAGNOSIS_FIXTURES: Record<EngineMarketKey, DiagnosisFixture> = {
       },
       {
         id: 'c3',
-        engine: 'Kimi',
+        engine: 'DeepSeek',
         prompt: '支持 USB-C 无损直连的编曲监听耳机怎么选',
         status: 'MENTIONED',
         domain: 'acoustics-review.example/zh/usb-c-list',
@@ -564,7 +563,7 @@ export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]
       id: 'geo-vs-seo',
       question: 'GEO（生成式引擎优化）与传统 SEO 有什么本质区别？',
       answer:
-        '传统 SEO 聚焦网页在搜索结果页中的蓝色链接排名；GEO 则围绕已核验的品牌事实库、高信息密度对比结构与可抓取 Schema，让 ChatGPT、Perplexity、Google AI Overviews、豆包、DeepSeek、Kimi 等 AI 引擎在生成答案时，直接将你的官网或权威内容作为「首选信源」引用，而不只是顺带提及品牌名。',
+        '传统 SEO 聚焦网页在搜索结果页中的蓝色链接排名；GEO 则围绕已核验的品牌事实库、高信息密度对比结构与可抓取 Schema，让 ChatGPT、Perplexity、Google AI Overviews、豆包、DeepSeek、腾讯元宝、通义千问等 AI 引擎在生成答案时，直接将你的官网或权威内容作为「首选信源」引用，而不只是顺带提及品牌名。',
     },
     {
       id: 'points-billing',

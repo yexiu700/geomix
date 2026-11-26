@@ -7,6 +7,7 @@ import {
   VISIBILITY_ENGINE_LABELS,
   escapeLikeLiteral,
   findDisallowedMarketEngines,
+  findRetiredVisibilityEngines,
   readProductLineMarketSeedPrompts,
   recomputeRunMetrics,
   toShanghaiDateKey,
@@ -309,6 +310,15 @@ export class VisibilityRunLifecycleService {
     const { brand, market } = await this.brands.resolveBrandMarket(brandId, effectiveMarket);
 
     const engines = [...new Set(input.engines)];
+    const retiredEngines = findRetiredVisibilityEngines(engines);
+    if (retiredEngines.length > 0) {
+      const labels = retiredEngines.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key);
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `以下 AI 引擎已下线，不再支持新建监测：${labels.join('、')}`,
+      );
+    }
     const disallowedEngines = findDisallowedMarketEngines(engines, market.market);
     if (disallowedEngines.length > 0) {
       const labels = disallowedEngines.map((key) => VISIBILITY_ENGINE_LABELS[key] ?? key);

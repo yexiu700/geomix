@@ -80,10 +80,6 @@ function rightsViewStub(): RightsView {
       { key: 'doubao', label: '豆包', count: 0 },
       { key: 'yuanbao', label: '腾讯元宝', count: 0 },
       { key: 'tongyi', label: '通义千问', count: 0 },
-      { key: 'wenxin', label: '文心一言', count: 0 },
-      { key: 'nami', label: '纳米', count: 0 },
-      { key: 'kimi', label: 'Kimi', count: 0 },
-      { key: 'zhipu', label: '智谱', count: 0 },
     ],
   };
 }
@@ -265,14 +261,14 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(exportFile).not.toHaveBeenCalled();
   });
 
-  it('shows 9 v2 quota/rights cards (no MONEY card) and eight model cards', async () => {
+  it('shows 9 v2 quota/rights cards (no MONEY card) and four active CN model cards (#411)', async () => {
     render(<RightsScreen title="账号权益" load={async () => rightsViewStub()} />);
     expect(await screen.findByText('2 KB / 100 MB')).toBeTruthy();
     expect(screen.getByText('1500')).toBeTruthy();
-    expect(screen.getAllByText('0')).toHaveLength(8);
+    expect(screen.getAllByText('0')).toHaveLength(4);
     expect(screen.getByRole('article', { name: '品牌数量' }).textContent).toContain('1 / 100');
     expect(screen.queryByRole('article', { name: '余额' })).toBeNull();
-    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(17);
+    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(13);
   });
 
   it('refreshes /me/rights usage when returning to the active tab (#195)', async () => {

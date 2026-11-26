@@ -271,7 +271,12 @@ export function generateBrandSeedPrompts(input: {
     new Set(
       (input.competitors ?? [])
         .map((c) => c.name.trim())
-        .filter((name) => name.length > 0 && name.toLowerCase() !== brand.toLowerCase()),
+        .filter(
+          (name) =>
+            name.length > 0 &&
+            name.toLowerCase() !== brand.toLowerCase() &&
+            (input.market !== 'GLOBAL' || !containsCjk(name)),
+        ),
     ),
   );
   const comp1 = compNames[0];

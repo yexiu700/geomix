@@ -505,4 +505,26 @@ describe('HomeRoiReportModal (#372)', () => {
     });
     expect(screen.queryByTestId('roi-report-item-rep_stale_brand1')).toBeNull();
   });
+
+  it('closes via window Escape shortcut even when focus is outside modal wrap (#410)', async () => {
+    vi.spyOn(reportsApi, 'fetchGeoRoiReports').mockResolvedValueOnce({
+      items: [makeReport()],
+    });
+    const onClose = vi.fn();
+
+    render(
+      <HomeRoiReportModal
+        open
+        brandId="brand_1"
+        brandName="AstraVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={onClose}
+      />,
+    );
+
+    await screen.findByTestId('home-roi-report-modal');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

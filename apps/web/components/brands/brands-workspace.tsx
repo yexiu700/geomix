@@ -195,9 +195,11 @@ export function BrandsWorkspace() {
     };
   }, [activeBrandId, fetchBrandAssets, shellManagesProductLines]);
 
+  const activeBrandMarketId = activeBrandMarket?.id ?? null;
+
   useEffect(() => {
     setRetestBudget(null);
-    if (!activeBrandId || !activeBrandMarket) return undefined;
+    if (!activeBrandId || !activeBrandMarketId) return undefined;
     const ctrl = new AbortController();
     void fetchActionHome(activeBrandId, state.activeMarket, {
       storage: window.sessionStorage,
@@ -211,7 +213,7 @@ export function BrandsWorkspace() {
     return () => {
       ctrl.abort();
     };
-  }, [activeBrandId, activeBrandMarket, state.activeMarket]);
+  }, [activeBrandId, activeBrandMarketId, state.activeMarket]);
 
   useTabFreshness({
     active: Boolean(activeBrandId),

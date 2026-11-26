@@ -17,7 +17,7 @@ export type VisibilityTrendChartProps = {
 const W = 640;
 const H = 200;
 const PAD_L = 46;
-const PAD_R = 16;
+const PAD_R = 28;
 const PAD_T = 18;
 const PAD_B = 30;
 const PLOT_W = W - PAD_L - PAD_R;
@@ -170,13 +170,14 @@ export function VisibilityTrendChart({
 
         {geometry.coords.map(({ idx, x, y, pt }) => {
           const active = hoveredIdx === idx;
+          const isLastTick = geometry.coords.length > 1 && idx === geometry.coords.length - 1;
           return (
             <g key={`${pt.engine}-${pt.date}`}>
               {geometry.xLabelIndices.has(idx) ? (
                 <text
                   x={x}
                   y={H - 8}
-                  textAnchor="middle"
+                  textAnchor={isLastTick ? 'end' : 'middle'}
                   fontSize={12}
                   fill={GM.chart.axis}
                   className="gm-num"

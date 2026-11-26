@@ -1143,5 +1143,50 @@ describe('API v1/v2 URI versioning & BrandsController HTTP CRUD + Guard Matrix',
         ],
       }),
     ).rejects.toThrow();
+
+    // 12. Dual-market create filters CJK fallback aliases/competitors out of GLOBAL (#408)
+    const dualCleanRes = await fetch(`${baseUrl}/api/v2/brands`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        name: '极云存储',
+        category: '家用 NAS',
+        aliases: ['极云私有云', 'JYC-400'],
+        ownedDomains: ['jiyun.example'],
+        competitors: [
+          { name: '群晖中文', aliases: ['群晖'], domains: ['synology.cn'] },
+          { name: 'Synology', aliases: ['群晖别名', 'DSM'], domains: ['synology.com'] },
+        ],
+        markets: [
+          { market: 'CN' },
+          {
+            market: 'GLOBAL',
+            localBrandName: 'JiyunVault',
+            localCategory: 'Home NAS',
+          },
+        ],
+      }),
+    });
+    expect(dualCleanRes.status).toBe(200);
+    const dualCleanBody = (await dualCleanRes.json()) as {
+      data: {
+        markets: Array<{
+          market: string;
+          aliases: string[];
+          competitors: Array<{ name: string; aliases: string[] }>;
+          seedPrompts: string[];
+        }>;
+      };
+    };
+    const cnRow = dualCleanBody.data.markets.find((m) => m.market === 'CN')!;
+    const globalRow = dualCleanBody.data.markets.find((m) => m.market === 'GLOBAL')!;
+    expect(cnRow.aliases).toEqual(['极云私有云', 'JYC-400']);
+    expect(cnRow.competitors.map((c) => c.name)).toEqual(['群晖中文', 'Synology']);
+    expect(globalRow.aliases).toEqual(['JYC-400']);
+    expect(globalRow.competitors).toEqual([
+      expect.objectContaining({ name: 'Synology', aliases: ['DSM'] }),
+    ]);
+    expect(globalRow.seedPrompts.length).toBeGreaterThan(0);
+    expect(globalRow.seedPrompts.some((p) => /[\u4e00-\u9fff]/.test(p))).toBe(false);
   });
 });

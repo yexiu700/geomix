@@ -52,10 +52,6 @@ export const MODEL_INCLUSION_CARDS = [
   { key: 'doubao', label: '豆包' },
   { key: 'yuanbao', label: '腾讯元宝' },
   { key: 'tongyi', label: '通义千问' },
-  { key: 'wenxin', label: '文心一言' },
-  { key: 'nami', label: '纳米' },
-  { key: 'kimi', label: 'Kimi' },
-  { key: 'zhipu', label: '智谱' },
 ] as const;
 
 export type ModelInclusionKey = (typeof MODEL_INCLUSION_CARDS)[number]['key'];

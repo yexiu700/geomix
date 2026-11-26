@@ -715,7 +715,7 @@ export const MARKETING_GUIDES: readonly MarketingGuide[] = [
       tags: ['Citation Taxonomy', 'Dual-Market AI', 'Brand Fact Cards'],
       keyTakeaways: [
         'Track CITED (clickable owned or third-party source link) separately from unlinked MENTIONED brand recall.',
-        'Monitor Global engines (ChatGPT, Perplexity, Google AI Overviews, Gemini) and China engines (Doubao, DeepSeek, Kimi, Yuanbao, Qwen) with market-specific prompt sets.',
+        'Monitor Global engines (ChatGPT, Perplexity, Google AI Overviews, Gemini) and China engines (Doubao, DeepSeek, Yuanbao, Qwen) with market-specific prompt sets.',
         'Ground every draft in verified Brand Fact Cards and enforce [TBD] placeholder gates so models cite concrete specifications instead of generic marketing claims.',
       ],
       sections: [
@@ -738,11 +738,11 @@ export const MARKETING_GUIDES: readonly MarketingGuide[] = [
           heading: '2. Owned-Domain Citation Share Across Global and China Engines',
           paragraphs: [
             'Answer engines do not retrieve from identical indexes. Global buyers predominantly query ChatGPT, Perplexity, Google AI Overviews, and Gemini, where structured docs, independent community discussions, and crisp comparison tables dominate citation share.',
-            'In the China market, teams must independently track Doubao, DeepSeek, Kimi, Tencent Yuanbao, and Qwen using native Chinese buyer phrasing. Splitting a brand into separate GLOBAL and CN markets prevents language drift and exposes which domains actually earn clickable authority.',
+            'In the China market, teams must independently track Doubao, DeepSeek, Tencent Yuanbao, and Qwen using native Chinese buyer phrasing. Splitting a brand into separate GLOBAL and CN markets prevents language drift and exposes which domains actually earn clickable authority.',
           ],
           bullets: [
             'Global target matrix: ChatGPT, Perplexity, Google AI Overviews, Gemini.',
-            'China target matrix: 豆包 (Doubao), DeepSeek, Kimi, 腾讯元宝 (Yuanbao), 通义千问 (Qwen).',
+            'China target matrix: 豆包 (Doubao), DeepSeek, 腾讯元宝 (Yuanbao), 通义千问 (Qwen).',
             'Track Owned Citation Share = (Observations citing your official domains) / (Total observations citing any source for your target prompts).',
           ],
         },
@@ -774,7 +774,7 @@ export const MARKETING_GUIDES: readonly MarketingGuide[] = [
       tags: ['引用拓扑', '双市场引擎', '品牌事实卡'],
       keyTakeaways: [
         '将「带链接引用（CITED）」与「无链接提及（MENTIONED）」严格拆开统计，重点跟踪自有域名引用占比。',
-        '海外市场与国内市场需按独立 Prompt 集分轨监测，覆盖 ChatGPT/Perplexity/Gemini 与豆包/DeepSeek/Kimi/元宝/通义千问。',
+        '海外市场与国内市场需按独立 Prompt 集分轨监测，覆盖 ChatGPT/Perplexity/Gemini 与豆包/DeepSeek/元宝/通义千问。',
         '所有写作必须以品牌事实卡为底稿，缺失参数以 [TBD] 占位并在发布门禁拦截，杜绝模型幻觉编造参数。',
       ],
       sections: [
@@ -797,11 +797,11 @@ export const MARKETING_GUIDES: readonly MarketingGuide[] = [
           heading: '二、海外与国内双市场引擎的自有引用占比',
           paragraphs: [
             '不同区域的 AI 检索索引结构差异显著。海外用户高频使用 ChatGPT、Perplexity、Google AI Overviews 与 Gemini，这些引擎高度偏好结构化文档、清晰的参数对比表与高可信社区讨论。',
-            '国内市场则需要围绕豆包、DeepSeek、Kimi、腾讯元宝与通义千问建立独立的中文问法集合。在品牌管理中按 GLOBAL 与 CN 拆分子市场，既能避免中英文混写导致的语义稀释，也能清晰对比不同渠道的信源贡献。',
+            '国内市场则需要围绕豆包、DeepSeek、腾讯元宝与通义千问建立独立的中文问法集合。在品牌管理中按 GLOBAL 与 CN 拆分子市场，既能避免中英文混写导致的语义稀释，也能清晰对比不同渠道的信源贡献。',
           ],
           bullets: [
             '海外监测矩阵：ChatGPT、Perplexity、Google AI Overviews、Gemini。',
-            '国内监测矩阵：豆包、DeepSeek、Kimi、腾讯元宝、通义千问。',
+            '国内监测矩阵：豆包、DeepSeek、腾讯元宝、通义千问。',
             '核心北极星指标：自有域名引用率 = 引用官方域名的观测次数 ÷ 目标问题集下产生有效引用的总观测次数。',
           ],
         },

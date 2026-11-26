@@ -137,6 +137,10 @@ describe('VisibilityTrendChart', () => {
     expect(screen.getByRole('button', { name: '2026-11-18 提及率 100.0%' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '2026-11-19 提及率 50.0%' })).toBeTruthy();
 
+    // #410: rightmost X-axis date label uses text-anchor="end" to prevent SVG edge clipping
+    const lastDateLabel = screen.getByText('11-19');
+    expect(lastDateLabel.getAttribute('text-anchor')).toBe('end');
+
     // Engine absent from trend points shows clean empty state
     rerender(<VisibilityTrendChart points={multiSeriesPoints} selectedEngine="kimi" />);
     expect(screen.getByText('所选时间窗口暂无趋势数据')).toBeTruthy();

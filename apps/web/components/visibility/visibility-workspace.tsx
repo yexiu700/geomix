@@ -22,7 +22,7 @@ import type {
   VisibilityRunRecord,
 } from '@geomix/shared';
 import { GEO_MARKET_LABELS, sanitizeEntityTitleSegment } from '@geomix/shared';
-import { Button, Skeleton, Tabs } from 'antd';
+import { Button, Skeleton, Tabs, Tooltip } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
@@ -1397,6 +1397,7 @@ export function VisibilityWorkspace(): JSX.Element {
   };
 
   const handleGenerateFromObservation = (obs: VisibilityObservationRecord) => {
+    if (obs.status !== 'SUCCESS' || !obs.answerText?.trim()) return;
     void handleGenerateBrief(`obs:${obs.id}`, {
       market: activeMarket,
       sourceType: deriveObservationBriefSource(obs),
@@ -1647,7 +1648,7 @@ export function VisibilityWorkspace(): JSX.Element {
         <EmptyState
           size="full"
           title="尚未创建品牌资产"
-          description="先用 60 秒完成品牌与竞品配置，即可开启国内 8 引擎与海外 5 引擎 AI 可见度诊断。"
+          description="先用 60 秒完成品牌与竞品配置，即可开启国内 4 引擎与海外 5 引擎 AI 可见度诊断。"
           action={
             readOnly ? undefined : (
               <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
@@ -1843,17 +1844,34 @@ export function VisibilityWorkspace(): JSX.Element {
             setObsMentionFilter('all');
             setObsSentimentFilter('');
           }}
-          renderObservationAction={(obs) => (
-            <Button
-              size="small"
-              data-testid="answer-brief-btn"
-              disabled={readOnly || generatingBriefKey !== null}
-              loading={generatingBriefKey === `obs:${obs.id}`}
-              onClick={() => handleGenerateFromObservation(obs)}
-            >
-              针对此条提写作意见
-            </Button>
-          )}
+          renderObservationAction={(obs) => {
+            const notSuccess = obs.status !== 'SUCCESS';
+            const emptyAnswer = !obs.answerText?.trim();
+            const unavailableReason = notSuccess
+              ? '该条观测未采集成功，无法基于其生成写作意见'
+              : emptyAnswer
+                ? '该条观测暂无有效 AI 回答正文，无法生成写作意见'
+                : null;
+            const disabled = readOnly || generatingBriefKey !== null || unavailableReason !== null;
+            const btn = (
+              <Button
+                size="small"
+                data-testid="answer-brief-btn"
+                disabled={disabled}
+                loading={generatingBriefKey === `obs:${obs.id}`}
+                onClick={() => handleGenerateFromObservation(obs)}
+              >
+                针对此条提写作意见
+              </Button>
+            );
+            return unavailableReason ? (
+              <Tooltip title={unavailableReason}>
+                <span className="gm-inline-tooltip-wrap">{btn}</span>
+              </Tooltip>
+            ) : (
+              btn
+            );
+          }}
         />
       ),
     },

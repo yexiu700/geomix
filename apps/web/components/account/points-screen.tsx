@@ -364,14 +364,8 @@ export function PointsScreen({
               title: '项目',
               dataIndex: 'title',
               key: 'title',
-              ellipsis: { showTitle: false },
               render: (value: string) => (
-                <TableClampText
-                  text={sanitizeLedgerTitle(value)}
-                  lines={1}
-                  maxWidth={280}
-                  tooltipThreshold={24}
-                />
+                <TableClampText text={sanitizeLedgerTitle(value)} lines={1} tooltipThreshold={24} />
               ),
             },
             {
