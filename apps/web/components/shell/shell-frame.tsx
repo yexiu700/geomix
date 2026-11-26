@@ -8,10 +8,13 @@ import {
   validateGlobalMarketIdentity,
   type BrandCompetitor,
   type BrandFactsResponse,
+  type BrandMarketAiSuggestInput,
+  type BrandMarketAiSuggestResponse,
   type BrandRecord,
   type CreateBrandInput,
   type ExtractBrandFactsResponse,
   type GeoMarket,
+  type UpdateBrandMarketInput,
   type UpsertBrandFactsInput,
   type UpsertBrandMarketInput,
 } from '@geomix/shared';
@@ -123,6 +126,16 @@ export type ShellFrameProps = {
   ) => Promise<ExtractBrandFactsResponse>;
   onSaveBrandFacts?: (brandId: string, input: UpsertBrandFactsInput) => Promise<BrandFactsResponse>;
   onBrandFactsSaved?: (brandId: string, signedAt: string | null) => void;
+  onSuggestBrandMarketConfig?: (
+    brandId: string,
+    market: GeoMarket,
+    input?: BrandMarketAiSuggestInput,
+  ) => Promise<BrandMarketAiSuggestResponse>;
+  onSaveBrandMarketConfig?: (
+    brandId: string,
+    market: GeoMarket,
+    input: UpdateBrandMarketInput,
+  ) => Promise<BrandRecord>;
   onEnableMarket: (
     brandId: string,
     market: GeoMarket,
@@ -164,6 +177,8 @@ export function ShellFrame({
   onExtractBrandFacts,
   onSaveBrandFacts,
   onBrandFactsSaved,
+  onSuggestBrandMarketConfig,
+  onSaveBrandMarketConfig,
   onEnableMarket,
   onToggleMenu,
   onLogout,
@@ -665,6 +680,8 @@ export function ShellFrame({
         onExtractFacts={onExtractBrandFacts}
         onSaveFacts={onSaveBrandFacts}
         onBrandFactsSaved={onBrandFactsSaved}
+        onSuggestMarketConfig={onSuggestBrandMarketConfig}
+        onSaveMarketConfig={onSaveBrandMarketConfig}
       />
 
       <Modal

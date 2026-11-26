@@ -5,12 +5,19 @@ import {
   BRAND_FACT_EXTRACT_MAX_FILE_BYTES,
   BRAND_FACT_FULL_INJECT_MAX,
   BRAND_FACT_SLOTS,
+  BRAND_MARKET_AI_SUGGEST_FIELDS,
+  BRAND_MAX_ALIASES,
   BRAND_MAX_COMPETITORS,
   BRAND_MAX_CONTROL_PROMPTS,
+  BRAND_MAX_SEED_PROMPTS,
+  BRAND_SEED_PROMPT_INTENTS,
+  BRAND_SEED_PROMPT_INTENT_LABELS,
   GEO_MARKETS,
   GLOBAL_CJK_BRAND_NAME_ERROR,
   GLOBAL_CJK_CATEGORY_ERROR,
   GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
+  brandMarketAiSuggestResponseSchema,
+  brandMarketAiSuggestSchema,
   brandMarketConfigSchema,
   buildStorageSummary,
   checkImageWidthWarning,
@@ -586,5 +593,118 @@ describe('brands v2 contracts and extracted utilities', () => {
         allowCjkGlobalIdentity: true,
       }).success,
     ).toBe(true);
+  });
+
+  it('validates brandMarketAiSuggestSchema and brandMarketAiSuggestResponseSchema (#405)', () => {
+    expect(BRAND_MAX_ALIASES).toBe(20);
+    expect(BRAND_MAX_SEED_PROMPTS).toBe(50);
+    expect(BRAND_MARKET_AI_SUGGEST_FIELDS).toEqual([
+      'aliases',
+      'competitors',
+      'seedPrompts',
+      'controlPrompts',
+      'localIdentity',
+    ]);
+    expect(BRAND_SEED_PROMPT_INTENTS).toEqual([
+      'BUYING_GUIDE',
+      'SCENARIO_PAIN',
+      'BRAND_REPUTATION',
+      'COMPETITOR_VS',
+      'SKU_REVIEW',
+    ]);
+    expect(Object.keys(BRAND_SEED_PROMPT_INTENT_LABELS)).toEqual([...BRAND_SEED_PROMPT_INTENTS]);
+
+    // Empty body is valid
+    expect(brandMarketAiSuggestSchema.parse({})).toEqual({});
+    // Blank sourceUrl / focusHint collapse to undefined; duplicate fields dedupe
+    expect(
+      brandMarketAiSuggestSchema.parse({
+        sourceUrl: '   ',
+        focusHint: '',
+        fields: ['seedPrompts', 'aliases', 'seedPrompts'],
+      }),
+    ).toEqual({
+      sourceUrl: undefined,
+      focusHint: undefined,
+      fields: ['seedPrompts', 'aliases'],
+    });
+    // Valid https sourceUrl
+    expect(
+      brandMarketAiSuggestSchema.parse({
+        sourceUrl: 'https://example.com/product/p100',
+        focusHint: '静音四盘位家用场景',
+      }),
+    ).toEqual({
+      sourceUrl: 'https://example.com/product/p100',
+      focusHint: '静音四盘位家用场景',
+    });
+    // Reject non-http(s) protocols and invalid URLs
+    expect(brandMarketAiSuggestSchema.safeParse({ sourceUrl: 'javascript:alert(1)' }).success).toBe(
+      false,
+    );
+    expect(brandMarketAiSuggestSchema.safeParse({ sourceUrl: 'ftp://example.com/a' }).success).toBe(
+      false,
+    );
+    expect(brandMarketAiSuggestSchema.safeParse({ sourceUrl: 'not-a-url' }).success).toBe(false);
+    expect(brandMarketAiSuggestSchema.safeParse({ focusHint: 'a'.repeat(301) }).success).toBe(
+      false,
+    );
+
+    // Response schema normalizes domains/aliases and validates controlPrompt non-overlap
+    const parsedResponse = brandMarketAiSuggestResponseSchema.parse({
+      market: 'GLOBAL',
+      localBrandName: 'PineVault',
+      localCategory: 'Home NAS',
+      aliases: ['PV-400', 'pv-400', 'PV-800'],
+      competitors: [
+        {
+          name: 'RivalBox',
+          aliases: ['RB', 'rb'],
+          domains: ['https://www.rivalbox.example.com/nas'],
+        },
+      ],
+      seedPrompts: [
+        { prompt: 'Best quiet 4-bay NAS 2026', intent: 'BUYING_GUIDE' },
+        { prompt: 'PineVault PV-400 noise review', intent: 'SKU_REVIEW' },
+      ],
+      controlPrompts: ['Best fiber Wi-Fi router 2026', 'best fiber wi-fi router 2026'],
+      fallbackUsed: false,
+    });
+    expect(parsedResponse.aliases).toEqual(['PV-400', 'PV-800']);
+    expect(parsedResponse.competitors[0]).toEqual({
+      name: 'RivalBox',
+      aliases: ['RB'],
+      domains: ['rivalbox.example.com'],
+    });
+    expect(parsedResponse.controlPrompts).toEqual(['Best fiber Wi-Fi router 2026']);
+
+    // Overlapping controlPrompt & seedPrompt rejected by response schema
+    const overlapping = brandMarketAiSuggestResponseSchema.safeParse({
+      market: 'CN',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [{ prompt: '2026年家用 NAS 哪个品牌好？', intent: 'BUYING_GUIDE' }],
+      controlPrompts: ['  2026年家用  nas 哪个品牌好？ '],
+      fallbackUsed: true,
+    });
+    expect(overlapping.success).toBe(false);
+
+    // > 5 control prompts rejected
+    const tooManyControls = brandMarketAiSuggestResponseSchema.safeParse({
+      market: 'CN',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [],
+      controlPrompts: [
+        '对照问题一',
+        '对照问题二',
+        '对照问题三',
+        '对照问题四',
+        '对照问题五',
+        '对照问题六',
+      ],
+      fallbackUsed: false,
+    });
+    expect(tooManyControls.success).toBe(false);
   });
 });

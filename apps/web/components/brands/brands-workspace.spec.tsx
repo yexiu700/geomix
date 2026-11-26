@@ -30,6 +30,7 @@ vi.mock('../../lib/brands', () => ({
   deleteBrand: (...args: unknown[]) => deleteBrandMock(...args),
   enableBrandMarket: vi.fn(),
   updateBrandMarket: (...args: unknown[]) => updateBrandMarketMock(...args),
+  suggestBrandMarketConfig: vi.fn(),
   listBrandProductLines: (...args: unknown[]) => listBrandProductLinesMock(...args),
   createBrandProductLine: vi.fn(),
   updateBrandProductLine: vi.fn(),

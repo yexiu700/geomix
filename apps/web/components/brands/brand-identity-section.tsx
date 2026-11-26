@@ -11,10 +11,12 @@ import {
   GLOBAL_SUPPORTED_LOCALES,
   SUPPORTED_LOCALES,
   containsCjk,
-  generateBrandSeedPrompts,
   normalizeBrandDomain,
   validateControlPromptsAgainstSeeds,
   validateGlobalMarketIdentity,
+  type BrandCompetitor,
+  type BrandMarketAiSuggestField,
+  type BrandMarketAiSuggestResponse,
   type BrandMarketRecord,
   type BrandRecord,
   type GeoMarket,
@@ -23,18 +25,25 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, InputNumber, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { updateBrand, updateBrandMarket } from '../../lib/brands';
+import { suggestBrandMarketConfig, updateBrand, updateBrandMarket } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { FormField, Section, StatusBadge } from '../ui';
 import {
+  buildFallbackSeedPromptSuggestionResponse,
   hydrateCompetitorRows,
+  mergeAiMarketSuggestions,
   parseCompetitorAliases,
   parseDomainTokens,
   serializeCompetitorRows,
+  type BrandMarketAiSuggestSelection,
   type CompetitorDraftRow,
 } from './brand-form-helpers';
+import {
+  BrandMarketAiSuggestModal,
+  type BrandMarketAiSuggestMode,
+} from './brand-market-ai-suggest-modal';
 
 export type BrandIdentitySectionProps = {
   brand: BrandRecord;
@@ -51,6 +60,16 @@ let identityCompSeq = 1;
 function createBlankCompetitor(): CompetitorDraftRow {
   identityCompSeq += 1;
   return { key: `id-comp-${identityCompSeq}`, name: '', domainsText: '', aliasesText: '' };
+}
+
+function createCompetitorRowFromSuggestion(comp: BrandCompetitor): CompetitorDraftRow {
+  identityCompSeq += 1;
+  return {
+    key: `id-comp-ai-${identityCompSeq}`,
+    name: comp.name,
+    domainsText: comp.domains.join(', '),
+    aliasesText: comp.aliases.join(', '),
+  };
 }
 
 function resolveInitialLocales(market: GeoMarket, bm: BrandMarketRecord | null): SupportedLocale[] {
@@ -207,9 +226,19 @@ export function BrandIdentitySection({
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
 
+  // AI market prefill modal state
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiModalMode, setAiModalMode] = useState<BrandMarketAiSuggestMode>('full');
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+  const [aiSuggestError, setAiSuggestError] = useState<string | null>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<BrandMarketAiSuggestResponse | null>(null);
+  const [aiSourceUrl, setAiSourceUrl] = useState('');
+
   const mountedRef = useRef(true);
   const marketSeqRef = useRef(0);
   const marketSaveCtrlRef = useRef<AbortController | null>(null);
+  const aiSuggestSeqRef = useRef(0);
+  const aiSuggestCtrlRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -228,12 +257,23 @@ export function BrandIdentitySection({
     marketSeqRef.current += 1;
     marketSaveCtrlRef.current?.abort();
     marketSaveCtrlRef.current = null;
+    aiSuggestSeqRef.current += 1;
+    aiSuggestCtrlRef.current?.abort();
+    aiSuggestCtrlRef.current = null;
     setSavingMarket(false);
     setMarketError(null);
+    setAiModalOpen(false);
+    setAiSuggestLoading(false);
+    setAiSuggestError(null);
+    setAiSuggestion(null);
+    setAiSourceUrl('');
     return () => {
       marketSeqRef.current += 1;
       marketSaveCtrlRef.current?.abort();
       marketSaveCtrlRef.current = null;
+      aiSuggestSeqRef.current += 1;
+      aiSuggestCtrlRef.current?.abort();
+      aiSuggestCtrlRef.current = null;
     };
   }, [brand.id, activeMarket]);
 
@@ -625,6 +665,163 @@ export function BrandIdentitySection({
     }
   };
 
+  const openAiSuggest = async (mode: BrandMarketAiSuggestMode, customSourceUrl?: string) => {
+    if (readOnly || saving || !activeBrandMarket) return;
+
+    aiSuggestCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    aiSuggestCtrlRef.current = ctrl;
+    const seq = ++aiSuggestSeqRef.current;
+
+    const urlToSend = (customSourceUrl ?? (mode === 'full' ? aiSourceUrl : '')).trim();
+    const fields: BrandMarketAiSuggestField[] | undefined =
+      mode === 'seedPrompts'
+        ? ['seedPrompts']
+        : mode === 'localIdentity'
+          ? ['localIdentity']
+          : undefined;
+
+    setAiModalMode(mode);
+    setAiModalOpen(true);
+    setAiSuggestLoading(true);
+    setAiSuggestError(null);
+    setAiSuggestion(null);
+
+    try {
+      const response = await suggestBrandMarketConfig(
+        brand.id,
+        activeMarket,
+        {
+          ...(fields ? { fields } : {}),
+          ...(urlToSend ? { sourceUrl: urlToSend } : {}),
+        },
+        { storage: window.sessionStorage, signal: ctrl.signal },
+      );
+      if (ctrl.signal.aborted || seq !== aiSuggestSeqRef.current || !mountedRef.current) return;
+      setAiSuggestion(response);
+      setAiSuggestError(null);
+    } catch (reason: unknown) {
+      if (ctrl.signal.aborted || seq !== aiSuggestSeqRef.current || !mountedRef.current) return;
+      if (mode === 'seedPrompts') {
+        const fallback = buildFallbackSeedPromptSuggestionResponse({
+          market: activeMarket,
+          brandName: localBrandName.trim() || brand.name,
+          category: brand.category,
+          localCategory: localCategory.trim() || null,
+          competitors: serializeCompetitorRows(competitorRows).competitors,
+          existingSeedPrompts: seedPrompts,
+        });
+        setAiSuggestion(fallback);
+        setAiSuggestError(null);
+      } else {
+        setAiSuggestError(
+          reason instanceof Error && reason.message
+            ? reason.message
+            : 'AI 市场配置建议生成失败，请稍后重试',
+        );
+      }
+    } finally {
+      if (aiSuggestCtrlRef.current === ctrl) {
+        aiSuggestCtrlRef.current = null;
+      }
+      if (!ctrl.signal.aborted && seq === aiSuggestSeqRef.current && mountedRef.current) {
+        setAiSuggestLoading(false);
+      }
+    }
+  };
+
+  const handleCloseAiModal = () => {
+    aiSuggestSeqRef.current += 1;
+    aiSuggestCtrlRef.current?.abort();
+    aiSuggestCtrlRef.current = null;
+    setAiSuggestLoading(false);
+    setAiModalOpen(false);
+  };
+
+  const handleApplyAiSelection = (selection: BrandMarketAiSuggestSelection) => {
+    const existingNonBlankRows = competitorRows.filter((row) => row.name.trim().length > 0);
+    const existingSerialized = serializeCompetitorRows(existingNonBlankRows).competitors;
+
+    const merged = mergeAiMarketSuggestions({
+      market: activeMarket,
+      current: {
+        localBrandName,
+        localCategory,
+        aliases,
+        competitors: existingSerialized,
+        seedPrompts,
+        controlPrompts,
+      },
+      selection,
+    });
+
+    if (merged.addedCounts.localBrandName) {
+      setLocalBrandName(merged.localBrandName);
+    }
+    if (merged.addedCounts.localCategory) {
+      setLocalCategory(merged.localCategory);
+    }
+    if (merged.addedCounts.aliases > 0) {
+      setAliases(merged.aliases);
+    }
+    if (merged.addedCounts.competitors > 0) {
+      const newlyAdded = merged.competitors.slice(existingSerialized.length);
+      setCompetitorRows((prev) => {
+        const preserved = prev.filter((row) => row.name.trim().length > 0);
+        return [...preserved, ...newlyAdded.map(createCompetitorRowFromSuggestion)].slice(
+          0,
+          BRAND_MAX_COMPETITORS,
+        );
+      });
+    }
+    if (merged.addedCounts.seedPrompts > 0) {
+      setSeedPrompts(merged.seedPrompts);
+    }
+    if (merged.addedCounts.controlPrompts > 0) {
+      setControlPrompts(merged.controlPrompts);
+    }
+
+    setMarketError(null);
+    handleCloseAiModal();
+
+    const totalAdded =
+      (merged.addedCounts.localBrandName ? 1 : 0) +
+      (merged.addedCounts.localCategory ? 1 : 0) +
+      merged.addedCounts.aliases +
+      merged.addedCounts.competitors +
+      merged.addedCounts.seedPrompts +
+      merged.addedCounts.controlPrompts;
+
+    const truncatedParts: string[] = [];
+    if (merged.truncatedCounts.aliases > 0) {
+      truncatedParts.push(`别名截断 ${merged.truncatedCounts.aliases} 项`);
+    }
+    if (merged.truncatedCounts.competitors > 0) {
+      truncatedParts.push(`竞品截断 ${merged.truncatedCounts.competitors} 项`);
+    }
+    if (merged.truncatedCounts.seedPrompts > 0) {
+      truncatedParts.push(`种子问句截断 ${merged.truncatedCounts.seedPrompts} 条`);
+    }
+    if (merged.truncatedCounts.controlPrompts > 0) {
+      truncatedParts.push(`对照组截断 ${merged.truncatedCounts.controlPrompts} 条`);
+    }
+    if (merged.skippedControlOverlaps > 0) {
+      truncatedParts.push(`已自动跳过 ${merged.skippedControlOverlaps} 条与种子重复的对照问句`);
+    }
+
+    if (truncatedParts.length > 0) {
+      feedback.notifyWarning(
+        `已追加 ${totalAdded} 项建议至表单（${truncatedParts.join('，')}），请核对后点击底部「保存修改」落库`,
+      );
+    } else if (totalAdded > 0) {
+      feedback.notifySuccess(
+        `已追加 ${totalAdded} 项 AI 建议至表单，请核对后点击底部「保存修改」落库`,
+      );
+    } else {
+      feedback.notifyWarning('所选建议均已在当前表单中存在，未产生重复追加');
+    }
+  };
+
   return (
     <Section
       id="brand-section-identity"
@@ -738,10 +935,25 @@ export function BrandIdentitySection({
               {activeMarket === 'CN' ? '🇨🇳 国内市场身份与竞品雷达' : '🌐 海外市场身份与竞品雷达'}
             </h3>
             {activeBrandMarket ? (
-              <StatusBadge
-                tone="neutral"
-                label={`${activeBrandMarket.locale} / ${activeBrandMarket.region}`}
-              />
+              <div className="gm-brand-subcard-head-actions">
+                <StatusBadge
+                  tone="neutral"
+                  label={`${activeBrandMarket.locale} / ${activeBrandMarket.region}`}
+                />
+                {!readOnly ? (
+                  <Button
+                    type="default"
+                    size="small"
+                    data-testid="brand-ai-prefill-btn"
+                    aria-label="AI 一键补全（免费）"
+                    disabled={saving}
+                    className="gm-brand-btn-nowrap"
+                    onClick={() => void openAiSuggest('full')}
+                  >
+                    AI 一键补全（免费）
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -758,6 +970,20 @@ export function BrandIdentitySection({
                   className="gm-brand-inline-alert"
                   message="建议完善海外市场英文身份"
                   description="检测到海外市场仍包含中文品牌名、未设置英文品类或使用 .cn 域名，建议补全纯英文当地品牌名、当地品类与海外官网域名，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。"
+                  action={
+                    !readOnly ? (
+                      <Button
+                        size="small"
+                        data-testid="global-ai-localize-btn"
+                        aria-label="AI 一键英文本地化"
+                        disabled={saving}
+                        className="gm-brand-btn-nowrap"
+                        onClick={() => void openAiSuggest('localIdentity')}
+                      >
+                        AI 一键英文本地化
+                      </Button>
+                    ) : undefined
+                  }
                 />
               ) : null}
 
@@ -1021,18 +1247,7 @@ export function BrandIdentitySection({
                       aria-label="按当前品类重新生成种子问句"
                       disabled={saving}
                       className="gm-brand-btn-nowrap"
-                      onClick={() => {
-                        const regenerated = generateBrandSeedPrompts({
-                          market: activeMarket,
-                          brandName: localBrandName.trim() || brand.name,
-                          category: brand.category,
-                          localCategory: localCategory.trim() || null,
-                          competitors: competitorRows
-                            .map((row) => ({ name: row.name.trim(), aliases: [], domains: [] }))
-                            .filter((c) => c.name.length > 0),
-                        });
-                        setSeedPrompts(regenerated);
-                      }}
+                      onClick={() => void openAiSuggest('seedPrompts')}
                     >
                       按当前品类重新生成种子问句
                     </Button>
@@ -1296,6 +1511,22 @@ export function BrandIdentitySection({
           </div>
         </div>
       ) : null}
+      <BrandMarketAiSuggestModal
+        open={aiModalOpen}
+        market={activeMarket}
+        mode={aiModalMode}
+        loading={aiSuggestLoading}
+        error={aiSuggestError}
+        suggestion={aiSuggestion}
+        currentLocalBrandName={localBrandName}
+        currentLocalCategory={localCategory}
+        sourceUrl={aiSourceUrl}
+        allowSourceUrl={aiModalMode === 'full'}
+        onSourceUrlChange={setAiSourceUrl}
+        onRegenerate={(url) => void openAiSuggest(aiModalMode, url)}
+        onConfirm={handleApplyAiSelection}
+        onCancel={handleCloseAiModal}
+      />
     </Section>
   );
 }

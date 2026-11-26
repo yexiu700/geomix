@@ -64,7 +64,9 @@ export type BrandMediaOrigin = (typeof BRAND_MEDIA_ORIGINS)[number];
 export const BRAND_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const BRAND_NAME_MAX = 80 as const;
 export const BRAND_CATEGORY_MAX = 60 as const;
+export const BRAND_MAX_ALIASES = 20 as const;
 export const BRAND_MAX_COMPETITORS = 10 as const;
+export const BRAND_MAX_SEED_PROMPTS = 50 as const;
 
 export const BRAND_FACT_FULL_INJECT_MAX = 6000 as const;
 export const BRAND_FACT_CHUNK_SIZE = 600 as const;
@@ -651,7 +653,7 @@ function brandDomainArraySchema(max: number) {
 function brandAliasArraySchema() {
   return z
     .array(z.string().trim().min(1, '别名不能为空').max(BRAND_NAME_MAX))
-    .max(20, '最多填写 20 个别名')
+    .max(BRAND_MAX_ALIASES, `最多填写 ${BRAND_MAX_ALIASES} 个别名`)
     .transform((items) => {
       const seen = new Set<string>();
       const out: string[] = [];
@@ -668,7 +670,7 @@ function brandAliasArraySchema() {
 function brandSeedPromptArraySchema() {
   return z
     .array(z.string().trim().min(2, '监控问题至少 2 个字').max(300, '监控问题最多 300 字'))
-    .max(50, '最多配置 50 条监控问题');
+    .max(BRAND_MAX_SEED_PROMPTS, `最多配置 ${BRAND_MAX_SEED_PROMPTS} 条监控问题`);
 }
 
 export const brandCompetitorSchema = z.object({
@@ -1082,3 +1084,101 @@ export type BrandMediaDeleteResponse = {
   releasedBytes: number;
   storage: MediaStorageSummary;
 };
+
+// ==================== 品牌市场配置 AI 一键补全契约（Issue #405） ====================
+
+export const BRAND_MARKET_AI_SUGGEST_FIELDS = [
+  'aliases',
+  'competitors',
+  'seedPrompts',
+  'controlPrompts',
+  'localIdentity',
+] as const;
+export type BrandMarketAiSuggestField = (typeof BRAND_MARKET_AI_SUGGEST_FIELDS)[number];
+
+export const BRAND_SEED_PROMPT_INTENTS = [
+  'BUYING_GUIDE',
+  'SCENARIO_PAIN',
+  'BRAND_REPUTATION',
+  'COMPETITOR_VS',
+  'SKU_REVIEW',
+] as const;
+export type BrandSeedPromptIntent = (typeof BRAND_SEED_PROMPT_INTENTS)[number];
+
+export const BRAND_SEED_PROMPT_INTENT_LABELS: Record<BrandSeedPromptIntent, string> = {
+  BUYING_GUIDE: '选购避坑',
+  SCENARIO_PAIN: '场景痛点',
+  BRAND_REPUTATION: '品牌口碑',
+  COMPETITOR_VS: '竞品对比',
+  SKU_REVIEW: 'SKU 评测',
+};
+
+const optionalSuggestSourceUrlSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z
+    .string()
+    .trim()
+    .url('商品或产品页链接格式不正确')
+    .max(2048, '链接长度不超过 2048 字符')
+    .refine((raw) => /^https?:\/\//i.test(raw), '仅支持 http:// 或 https:// 协议的公开网页链接')
+    .optional(),
+);
+
+const optionalSuggestFocusHintSchema = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z.string().trim().max(300, '补充侧重点不超过 300 字').optional(),
+);
+
+export const brandMarketAiSuggestSchema = z.object({
+  sourceUrl: optionalSuggestSourceUrlSchema,
+  focusHint: optionalSuggestFocusHintSchema,
+  fields: z
+    .array(z.enum(BRAND_MARKET_AI_SUGGEST_FIELDS))
+    .max(BRAND_MARKET_AI_SUGGEST_FIELDS.length)
+    .transform((items) => [...new Set(items)])
+    .optional(),
+});
+
+export type BrandMarketAiSuggestInput = z.input<typeof brandMarketAiSuggestSchema>;
+export type ParsedBrandMarketAiSuggestInput = z.output<typeof brandMarketAiSuggestSchema>;
+
+export const brandSeedPromptSuggestionSchema = z.object({
+  prompt: z.string().trim().min(2, '监控问题至少 2 个字').max(300, '监控问题最多 300 字'),
+  intent: z.enum(BRAND_SEED_PROMPT_INTENTS),
+});
+
+export type BrandSeedPromptSuggestion = z.output<typeof brandSeedPromptSuggestionSchema>;
+
+export const brandMarketAiSuggestResponseSchema = z
+  .object({
+    market: z.enum(GEO_MARKETS),
+    localBrandName: z.string().trim().min(1).max(BRAND_NAME_MAX).optional(),
+    localCategory: z.string().trim().min(1).max(BRAND_CATEGORY_MAX).optional(),
+    aliases: brandAliasArraySchema().default([]),
+    competitors: z
+      .array(brandCompetitorSchema)
+      .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
+      .default([]),
+    seedPrompts: z
+      .array(brandSeedPromptSuggestionSchema)
+      .max(BRAND_MAX_SEED_PROMPTS, `最多配置 ${BRAND_MAX_SEED_PROMPTS} 条监控问题`)
+      .default([]),
+    controlPrompts: brandControlPromptArraySchema().default([]),
+    fallbackUsed: z.boolean(),
+    warnings: z.array(z.string().trim().min(1).max(300)).optional(),
+  })
+  .superRefine((data, ctx) => {
+    const overlap = validateControlPromptsAgainstSeeds(
+      data.controlPrompts,
+      data.seedPrompts.map((item) => item.prompt),
+    );
+    if (!overlap.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['controlPrompts'],
+        message: `对照组问句不能与种子问句重复：${overlap.duplicates[0]}`,
+      });
+    }
+  });
+
+export type BrandMarketAiSuggestResponse = z.output<typeof brandMarketAiSuggestResponseSchema>;
