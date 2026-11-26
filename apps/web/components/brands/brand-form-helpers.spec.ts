@@ -1,3 +1,4 @@
+import { validateControlPromptsAgainstSeeds } from '@geomix/shared';
 import { describe, expect, it } from 'vitest';
 import {
   buildFallbackSeedPromptSuggestionResponse,
@@ -120,5 +121,53 @@ describe('brand-form-helpers AI prefill merge & fallback (#405)', () => {
         (item) => item.prompt === 'What is the best Home NAS to buy in 2026?',
       ),
     ).toBe(false);
+  });
+
+  it('skips selection.seedPrompts colliding with current.controlPrompts so seed/control disjoint invariant holds (Bug #2)', () => {
+    const merged = mergeAiMarketSuggestions({
+      market: 'CN',
+      current: {
+        localBrandName: '青松存储',
+        localCategory: '家用 NAS',
+        aliases: [],
+        competitors: [],
+        seedPrompts: ['已有种子问句 A'],
+        controlPrompts: ['2026年精品咖啡品牌推荐', 'Existing  Control  Prompt'],
+      },
+      selection: {
+        aliases: [],
+        competitors: [],
+        seedPrompts: [
+          '2026年精品咖啡品牌推荐',
+          'existing control prompt',
+          '2026年四盘位静音 NAS 值得买吗？',
+        ],
+        controlPrompts: ['2026年四盘位静音 NAS 值得买吗？', 'NAS 硬盘休眠设置建议'],
+      },
+    });
+
+    expect(merged.seedPrompts).toEqual(['已有种子问句 A', '2026年四盘位静音 NAS 值得买吗？']);
+    expect(merged.addedCounts.seedPrompts).toBe(1);
+    expect(merged.controlPrompts).toEqual([
+      '2026年精品咖啡品牌推荐',
+      'Existing  Control  Prompt',
+      'NAS 硬盘休眠设置建议',
+    ]);
+    expect(validateControlPromptsAgainstSeeds(merged.controlPrompts, merged.seedPrompts)).toEqual({
+      ok: true,
+    });
+
+    const fallback = buildFallbackSeedPromptSuggestionResponse({
+      market: 'CN',
+      brandName: '青松存储',
+      category: '家用 NAS',
+      existingControlPrompts: ['2026年家用 NAS哪个品牌好？值得推荐的型号有哪些？'],
+    });
+    expect(
+      validateControlPromptsAgainstSeeds(
+        ['2026年家用 NAS哪个品牌好？值得推荐的型号有哪些？'],
+        fallback.seedPrompts.map((item) => item.prompt),
+      ),
+    ).toEqual({ ok: true });
   });
 });

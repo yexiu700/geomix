@@ -489,6 +489,31 @@ export function BrandQuickCreateModal({
       merged.addedCounts.localCategory ||
       !(prefillMarket === 'GLOBAL' && nextLocalCategory !== null && containsCjk(nextLocalCategory));
 
+    if (prefillMarket === 'GLOBAL') {
+      if (includeLocalBrandName) {
+        const nameCheck = validateGlobalMarketIdentity({
+          market: 'GLOBAL',
+          localBrandName: nextLocalBrandName,
+          allowCjkGlobalIdentity: false,
+        });
+        if (!nameCheck.ok) {
+          setPrefillError(nameCheck.message);
+          return;
+        }
+      }
+      if (includeLocalCategory) {
+        const categoryCheck = validateGlobalMarketIdentity({
+          market: 'GLOBAL',
+          localCategory: nextLocalCategory,
+          allowCjkGlobalIdentity: false,
+        });
+        if (!categoryCheck.ok) {
+          setPrefillError(categoryCheck.message);
+          return;
+        }
+      }
+    }
+
     setPrefillSaving(true);
     setPrefillError(null);
     try {

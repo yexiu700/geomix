@@ -6,6 +6,7 @@ import {
   BILLING_ERROR,
   BRAND_MAX_CONTROL_PROMPTS,
   GEO_MARKET_DEFAULTS,
+  containsCjk,
   generateBrandSeedPrompts,
   isSupportedLocale,
   normalizeBrandDomain,
@@ -561,7 +562,7 @@ export class BrandsService {
       nextLocalBrandName !== existingMarket.localBrandName ||
       nextLocalCategory !== (existingMarket.localCategory ?? null);
     const hasCjkInGlobalSeeds =
-      market === 'GLOBAL' && rawSeedPrompts.some((prompt) => /[\u4e00-\u9fff]/.test(prompt));
+      market === 'GLOBAL' && rawSeedPrompts.some((prompt) => containsCjk(prompt));
     const seedPromptsUnchanged =
       input.seedPrompts === undefined ||
       (rawSeedPrompts.length === existingMarket.seedPrompts.length &&

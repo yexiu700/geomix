@@ -844,4 +844,66 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(updateBrandMarketMock).not.toHaveBeenCalled();
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
   });
+
+  it('skips AI-suggested seedPrompts colliding with existing controlPrompts so 保存修改 succeeds cleanly (Bug #2 / P2-4)', async () => {
+    const brand = makeDualMarketBrand();
+    brand.markets[0]!.controlPrompts = ['2026年精品咖啡品牌推荐'];
+    const updatedBrand: BrandRecord = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'CN'
+          ? {
+              ...m,
+              seedPrompts: [...m.seedPrompts, '2026年四盘位静音 NAS 真实口碑推荐'],
+            }
+          : m,
+      ),
+    };
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'CN',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [
+        { prompt: '2026年精品咖啡品牌推荐', intent: 'BUYING_GUIDE' },
+        { prompt: '2026年四盘位静音 NAS 真实口碑推荐', intent: 'BRAND_REPUTATION' },
+      ],
+      controlPrompts: [],
+      fallbackUsed: false,
+    });
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="CN"
+        activeBrandMarket={brand.markets[0]!}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
+    await screen.findByTestId('ai-suggest-group-seedPrompts');
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    expect(screen.getByText('2026年四盘位静音 NAS 真实口碑推荐')).toBeTruthy();
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledTimes(1);
+    });
+    const sentPayload = updateBrandMarketMock.mock.calls[0]?.[2] as {
+      seedPrompts?: string[];
+      controlPrompts?: string[];
+    };
+    expect(sentPayload.seedPrompts).toContain('2026年四盘位静音 NAS 真实口碑推荐');
+    expect(sentPayload.seedPrompts).not.toContain('2026年精品咖啡品牌推荐');
+    expect(sentPayload.controlPrompts).toEqual(['2026年精品咖啡品牌推荐']);
+    expect(screen.queryByTestId('brand-market-error')).toBeNull();
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'CN');
+  });
 });

@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import type { AddressInfo } from 'node:net';
 import type { INestApplication } from '@nestjs/common';
-import { API_ERROR, AUTH_ERROR, createBrandSchema, parseEnv } from '@geomix/shared';
+import { API_ERROR, AUTH_ERROR, containsCjk, createBrandSchema, parseEnv } from '@geomix/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { passwordFingerprint } from '../auth/auth.service';
 import { PrismaAuthStore } from '../auth/prisma-auth.store';
@@ -576,6 +576,36 @@ describe('BrandsService unit tests (F6 full CRUD & dual-market identity)', () =>
       status: 400,
       code: API_ERROR.BAD_REQUEST,
     });
+  });
+
+  it('auto-regenerates GLOBAL seedPrompts containing CJK Extension B characters when renamed to English (Bug #4)', async () => {
+    const created = await service.create(
+      'tenant_a',
+      'user_a',
+      createBrandSchema.parse({
+        name: '𠀀𠀁',
+        category: '家用NAS',
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '𠀀𠀁',
+            localCategory: 'Home NAS',
+            allowCjkGlobalIdentity: true,
+            seedPrompts: ['Is 𠀀𠀁 Home NAS worth buying? Pros, cons, and real reviews'],
+          },
+        ],
+      }),
+    );
+
+    const updated = await service.updateMarket('tenant_a', 'user_a', created.id, 'GLOBAL', {
+      localBrandName: 'AlphaNAS',
+    });
+
+    const globalMarket = updated.markets.find((m) => m.market === 'GLOBAL');
+    expect(globalMarket).toBeDefined();
+    expect(globalMarket!.seedPrompts.length).toBeGreaterThan(0);
+    expect(globalMarket!.seedPrompts.every((prompt) => !containsCjk(prompt))).toBe(true);
+    expect(globalMarket!.seedPrompts.some((prompt) => prompt.includes('AlphaNAS'))).toBe(true);
   });
 });
 

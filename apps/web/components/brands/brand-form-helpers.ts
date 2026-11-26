@@ -301,16 +301,19 @@ export function mergeAiMarketSuggestions(
     addedCompetitors += 1;
   }
 
-  // 3. Seed prompts (append-only, normalized dedupe, cap 50)
+  // 3. Seed prompts (append-only, normalized dedupe against existing seeds & controls, cap 50)
   const nextSeedPrompts = [...current.seedPrompts];
   const seedSeen = new Set(nextSeedPrompts.map(normalizePromptComparison).filter(Boolean));
+  const existingControlKeys = new Set(
+    current.controlPrompts.map(normalizePromptComparison).filter(Boolean),
+  );
   let addedSeedPrompts = 0;
   let truncatedSeedPrompts = 0;
   for (const raw of selection.seedPrompts) {
     const cleaned = raw.trim().slice(0, 300);
     if (cleaned.length < 2) continue;
     const key = normalizePromptComparison(cleaned);
-    if (seedSeen.has(key)) continue;
+    if (seedSeen.has(key) || existingControlKeys.has(key)) continue;
     if (nextSeedPrompts.length >= BRAND_MAX_SEED_PROMPTS) {
       truncatedSeedPrompts += 1;
       continue;
@@ -391,9 +394,12 @@ export function buildFallbackSeedPromptSuggestionResponse(input: {
   localCategory?: string | null;
   competitors?: ReadonlyArray<{ name: string }>;
   existingSeedPrompts?: readonly string[];
+  existingControlPrompts?: readonly string[];
 }): BrandMarketAiSuggestResponse {
   const existingSet = new Set(
-    (input.existingSeedPrompts ?? []).map(normalizePromptComparison).filter(Boolean),
+    [...(input.existingSeedPrompts ?? []), ...(input.existingControlPrompts ?? [])]
+      .map(normalizePromptComparison)
+      .filter(Boolean),
   );
   const generated = generateBrandSeedPrompts({
     market: input.market,
