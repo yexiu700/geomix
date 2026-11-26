@@ -1,7 +1,7 @@
 'use client';
 
 import { formatCountNumber, sanitizeLedgerTitle, type PointListQuery } from '@geomix/shared';
-import { Alert, Button, Input, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Input, Table, Typography } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccountApiError,
@@ -17,6 +17,7 @@ import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalSkeleton } from '../geo/primitives';
+import { StatusBadge } from '../ui';
 
 const EMPTY: PointListQuery = {
   page: 1,
@@ -186,7 +187,7 @@ export function PointsScreen({
 
   return (
     <section aria-label="点数明细">
-      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 12 }}>
+      <Typography.Title level={3} className="gm-account-section-title">
         {title}
       </Typography.Title>
       <div className="gm-ledger-summary-grid" aria-label="点数概览">
@@ -216,11 +217,11 @@ export function PointsScreen({
         ) : (
           <div className="gm-kpi gm-kpi-compact">
             <div className="gm-kpi-label">当前计费模式</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="gm-points-mode-row">
               {summary ? (
-                <Tag color={isShadow ? 'gold' : 'blue'}>
+                <StatusBadge tone={isShadow ? 'warning' : 'active'}>
                   {isShadow ? UX_TERMS.billingShadow : UX_TERMS.billingStrict}
-                </Tag>
+                </StatusBadge>
               ) : (
                 <span className="gm-kpi-value gm-kpi-value-sm">—</span>
               )}
@@ -253,7 +254,7 @@ export function PointsScreen({
         <Input
           aria-label="项目名称"
           placeholder="项目名称"
-          style={{ width: 170 }}
+          className="gm-points-input-title"
           value={draft.title}
           onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
           onPressEnter={applyFilter}
@@ -261,7 +262,7 @@ export function PointsScreen({
         <Input
           aria-label="点数变动"
           placeholder="点数变动"
-          style={{ width: 112 }}
+          className="gm-points-input-delta"
           value={draft.delta}
           onChange={(event) => setDraft((current) => ({ ...current, delta: event.target.value }))}
           onPressEnter={applyFilter}
@@ -269,14 +270,14 @@ export function PointsScreen({
         <Input
           aria-label="开始时间"
           type="datetime-local"
-          style={{ width: 186 }}
+          className="gm-points-input-time"
           value={draft.from}
           onChange={(event) => setDraft((current) => ({ ...current, from: event.target.value }))}
         />
         <Input
           aria-label="结束时间"
           type="datetime-local"
-          style={{ width: 186 }}
+          className="gm-points-input-time"
           value={draft.to}
           onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))}
         />
@@ -325,10 +326,10 @@ export function PointsScreen({
           closable
           message={emptyNotice}
           onClose={() => setEmptyNotice(null)}
-          style={{ marginBottom: 12 }}
+          className="gm-account-alert"
         />
       ) : null}
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-account-alert" /> : null}
       {loading && page === null ? (
         <div data-testid="points-table-skeleton">
           <SignalSkeleton variant="row" rows={5} />

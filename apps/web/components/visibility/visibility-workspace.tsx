@@ -61,8 +61,10 @@ import {
 import {
   selectActiveBrand,
   selectActiveBrandMarket,
+  selectActiveProductLine,
   useWorkspaceStore,
 } from '../../lib/workspace-store';
+import { ProductLineSelectorPill } from '../brands/product-line-selector-pill';
 import { BriefListPanel, type BriefStatusFilterValue } from '../briefs/brief-list-panel';
 import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
@@ -133,8 +135,10 @@ export function VisibilityWorkspace(): JSX.Element {
   const state = useWorkspaceStore();
   const activeBrand = selectActiveBrand(state);
   const activeBrandMarket = selectActiveBrandMarket(state);
+  const activeProductLine = selectActiveProductLine(state);
   const activeBrandId = activeBrand?.id ?? null;
   const activeMarket: GeoMarket = activeBrandMarket?.market ?? state.activeMarket;
+  const activeProductLineId = state.activeProductLineId;
   const readOnly = Boolean(consoleCtx?.readOnly);
 
   const [activeTab, setActiveTab] = useState<VisibilityTabKey>(() => readInitialTab());
@@ -168,7 +172,9 @@ export function VisibilityWorkspace(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<TaskStatusName | ''>('');
   const [keywordFilter, setKeywordFilter] = useState('');
 
-  const currentContextKey = activeBrandId ? `${activeBrandId}::${activeMarket}` : null;
+  const currentContextKey = activeBrandId
+    ? `${activeBrandId}::${activeMarket}::${activeProductLineId ?? ''}`
+    : null;
   const [activeRunState, setActiveRunState] = useState<{
     id: string;
     contextKey: string | null;
@@ -287,6 +293,7 @@ export function VisibilityWorkspace(): JSX.Element {
       seq: number,
       windowDays: number,
       engine?: VisibilityEngineKey,
+      productLineId?: string | null,
     ) => {
       overviewCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -297,7 +304,7 @@ export function VisibilityWorkspace(): JSX.Element {
         const data = await fetchVisibilityOverview(
           brandId,
           market,
-          { days: windowDays, engine },
+          { days: windowDays, engine, ...(productLineId ? { productLineId } : {}) },
           { signal: ctrl.signal },
         );
         if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
@@ -372,6 +379,7 @@ export function VisibilityWorkspace(): JSX.Element {
       seq: number,
       params: { page: number; status: TaskStatusName | ''; keyword: string },
       silent = false,
+      productLineId?: string | null,
     ) => {
       runsCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -389,6 +397,7 @@ export function VisibilityWorkspace(): JSX.Element {
             pageSize: runsPageSize,
             ...(params.status ? { status: params.status } : {}),
             ...(params.keyword.trim() ? { keyword: params.keyword.trim() } : {}),
+            ...(productLineId ? { productLineId } : {}),
           },
           { signal: ctrl.signal },
         );
@@ -396,7 +405,7 @@ export function VisibilityWorkspace(): JSX.Element {
         setRuns(res.items);
         setRunsTotal(res.total);
         setRunsError(null);
-        const runContextKey = `${brandId}::${market}`;
+        const runContextKey = `${brandId}::${market}::${productLineId ?? ''}`;
         setActiveRunState((curr) => {
           if (
             curr &&
@@ -429,6 +438,7 @@ export function VisibilityWorkspace(): JSX.Element {
       seq: number,
       windowDays: number,
       kind?: CitationSourceKind,
+      productLineId?: string | null,
     ) => {
       citationsCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -439,7 +449,11 @@ export function VisibilityWorkspace(): JSX.Element {
         const res = await fetchVisibilityCitations(
           brandId,
           market,
-          { days: windowDays, ...(kind ? { sourceKind: kind } : {}) },
+          {
+            days: windowDays,
+            ...(kind ? { sourceKind: kind } : {}),
+            ...(productLineId ? { productLineId } : {}),
+          },
           { signal: ctrl.signal },
         );
         if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
@@ -457,7 +471,13 @@ export function VisibilityWorkspace(): JSX.Element {
   );
 
   const loadOpportunities = useCallback(
-    async (brandId: string, market: GeoMarket, seq: number, windowDays: number) => {
+    async (
+      brandId: string,
+      market: GeoMarket,
+      seq: number,
+      windowDays: number,
+      productLineId?: string | null,
+    ) => {
       opportunitiesCtrlRef.current?.abort();
       const ctrl = new AbortController();
       opportunitiesCtrlRef.current = ctrl;
@@ -467,7 +487,7 @@ export function VisibilityWorkspace(): JSX.Element {
         const res = await fetchVisibilityOpportunities(
           brandId,
           market,
-          { days: windowDays, limit: 50 },
+          { days: windowDays, limit: 50, ...(productLineId ? { productLineId } : {}) },
           { signal: ctrl.signal },
         );
         if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
@@ -492,6 +512,7 @@ export function VisibilityWorkspace(): JSX.Element {
       windowDays: number,
       tier?: NearMissTier,
       ownership: NearMissOwnershipFilter = 'ALL',
+      productLineId?: string | null,
     ) => {
       nearMissCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -503,11 +524,12 @@ export function VisibilityWorkspace(): JSX.Element {
         // For THIRD_PARTY, omit sourceKind & tier so client filters !isOwned and recomputes all 4 tierCounts accurately.
         const queryParams =
           ownership === 'THIRD_PARTY'
-            ? { days: windowDays, limit: 100 }
+            ? { days: windowDays, limit: 100, ...(productLineId ? { productLineId } : {}) }
             : {
                 days: windowDays,
                 ...(tier ? { tier } : {}),
                 ...(ownership === 'OWNED' ? { sourceKind: 'OWNED' as const } : {}),
+                ...(productLineId ? { productLineId } : {}),
                 limit: 50,
               };
         const res = await fetchVisibilityNearMiss(brandId, market, queryParams, {
@@ -534,6 +556,7 @@ export function VisibilityWorkspace(): JSX.Element {
       seq: number,
       filters: { status: BriefStatusFilterValue; sourceType: GeoBriefSource | '' },
       silent = false,
+      productLineId?: string | null,
     ) => {
       briefsCtrlRef.current?.abort();
       const ctrl = new AbortController();
@@ -549,6 +572,7 @@ export function VisibilityWorkspace(): JSX.Element {
           {
             ...(filters.status !== 'ACTIVE' ? { status: filters.status } : {}),
             ...(filters.sourceType ? { sourceType: filters.sourceType } : {}),
+            ...(productLineId ? { productLineId } : {}),
             includeDismissed: filters.status === 'DISMISSED',
             pageSize: 50,
           },
@@ -575,13 +599,15 @@ export function VisibilityWorkspace(): JSX.Element {
     [],
   );
 
-  // Synchronous reset + fresh load on global brand/market/epoch switch
+  // Synchronous reset + fresh load on global brand/market/productLine/epoch switch
   useEffect(() => {
     abortAllControllers();
     contextSeqRef.current += 1;
     const seq = contextSeqRef.current;
 
-    const nextContextKey = activeBrandId ? `${activeBrandId}::${activeMarket}` : null;
+    const nextContextKey = activeBrandId
+      ? `${activeBrandId}::${activeMarket}::${activeProductLineId ?? ''}`
+      : null;
     const contextChanged =
       prevContextKeyRef.current !== null && prevContextKeyRef.current !== nextContextKey;
     prevContextKeyRef.current = nextContextKey;
@@ -664,18 +690,48 @@ export function VisibilityWorkspace(): JSX.Element {
     }
 
     const windowDays = daysRef.current;
-    void loadOverview(activeBrandId, activeMarket, seq, windowDays, undefined);
+    void loadOverview(activeBrandId, activeMarket, seq, windowDays, undefined, activeProductLineId);
     void loadEngines(activeBrandId, activeMarket, seq);
-    void loadRuns(activeBrandId, activeMarket, seq, { page: 1, status: '', keyword: '' }, false);
-    void loadCitations(activeBrandId, activeMarket, seq, windowDays, undefined);
-    void loadOpportunities(activeBrandId, activeMarket, seq, windowDays);
-    void loadNearMiss(activeBrandId, activeMarket, seq, windowDays, undefined, 'ALL');
-    void loadBriefs(activeBrandId, activeMarket, seq, { status: 'OPEN', sourceType: '' }, false);
+    void loadRuns(
+      activeBrandId,
+      activeMarket,
+      seq,
+      { page: 1, status: '', keyword: '' },
+      false,
+      activeProductLineId,
+    );
+    void loadCitations(
+      activeBrandId,
+      activeMarket,
+      seq,
+      windowDays,
+      undefined,
+      activeProductLineId,
+    );
+    void loadOpportunities(activeBrandId, activeMarket, seq, windowDays, activeProductLineId);
+    void loadNearMiss(
+      activeBrandId,
+      activeMarket,
+      seq,
+      windowDays,
+      undefined,
+      'ALL',
+      activeProductLineId,
+    );
+    void loadBriefs(
+      activeBrandId,
+      activeMarket,
+      seq,
+      { status: 'OPEN', sourceType: '' },
+      false,
+      activeProductLineId,
+    );
   }, [
     abortAllControllers,
     activeBrandId,
     activeBrandMarket?.id,
     activeMarket,
+    activeProductLineId,
     loadBriefs,
     loadCitations,
     loadEngines,
@@ -689,18 +745,23 @@ export function VisibilityWorkspace(): JSX.Element {
   // Lazily fetch BrandFacts when GeoBriefDrawer opens so matchedFactIds resolve to human-readable titles (never CUIDs)
   useEffect(() => {
     if (!activeBrief) return;
-    if (brandFactsLoadedBrandIdRef.current === activeBrief.brandId) return;
+    const targetProductLineId = activeBrief.productLineId ?? activeProductLineId;
+    const cacheKey = `${activeBrief.brandId}::${targetProductLineId ?? ''}`;
+    if (brandFactsLoadedBrandIdRef.current === cacheKey) return;
     factsCtrlRef.current?.abort();
     const ctrl = new AbortController();
     factsCtrlRef.current = ctrl;
     const seq = contextSeqRef.current;
     const targetBrandId = activeBrief.brandId;
     setBrandFactsLoading(true);
-    void getBrandFacts(targetBrandId, { signal: ctrl.signal })
+    void getBrandFacts(targetBrandId, {
+      signal: ctrl.signal,
+      productLineId: targetProductLineId,
+    })
       .then((res) => {
         if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
         setBrandFacts(res.items);
-        brandFactsLoadedBrandIdRef.current = targetBrandId;
+        brandFactsLoadedBrandIdRef.current = cacheKey;
       })
       .catch(() => {
         // Fallback count message handles failed fact lookup without exposing CUIDs
@@ -710,7 +771,7 @@ export function VisibilityWorkspace(): JSX.Element {
           setBrandFactsLoading(false);
         }
       });
-  }, [activeBrief]);
+  }, [activeBrief, activeProductLineId]);
 
   // Load selected run detail whenever activeRunId changes within the active brand+market context
   useEffect(() => {
@@ -733,9 +794,23 @@ export function VisibilityWorkspace(): JSX.Element {
     setDays(nextDays);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadOverview(activeBrandId, activeMarket, seq, nextDays, selectedEngine);
-    void loadCitations(activeBrandId, activeMarket, seq, nextDays, sourceFilter);
-    void loadOpportunities(activeBrandId, activeMarket, seq, nextDays);
+    void loadOverview(
+      activeBrandId,
+      activeMarket,
+      seq,
+      nextDays,
+      selectedEngine,
+      activeProductLineId,
+    );
+    void loadCitations(
+      activeBrandId,
+      activeMarket,
+      seq,
+      nextDays,
+      sourceFilter,
+      activeProductLineId,
+    );
+    void loadOpportunities(activeBrandId, activeMarket, seq, nextDays, activeProductLineId);
     void loadNearMiss(
       activeBrandId,
       activeMarket,
@@ -743,6 +818,7 @@ export function VisibilityWorkspace(): JSX.Element {
       nextDays,
       nearMissTierFilter,
       nearMissOwnershipFilter,
+      activeProductLineId,
     );
   };
 
@@ -750,14 +826,14 @@ export function VisibilityWorkspace(): JSX.Element {
     setSelectedEngine(nextEngine);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadOverview(activeBrandId, activeMarket, seq, days, nextEngine);
+    void loadOverview(activeBrandId, activeMarket, seq, days, nextEngine, activeProductLineId);
   };
 
   const handleSourceFilterChange = (nextKind: CitationSourceKind | undefined) => {
     setSourceFilter(nextKind);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadCitations(activeBrandId, activeMarket, seq, days, nextKind);
+    void loadCitations(activeBrandId, activeMarket, seq, days, nextKind, activeProductLineId);
   };
 
   const handleNearMissTierChange = (nextTier: NearMissTier | undefined) => {
@@ -767,7 +843,15 @@ export function VisibilityWorkspace(): JSX.Element {
     if (!activeBrandId) return;
     if (currentOwnership === 'THIRD_PARTY') return;
     const seq = contextSeqRef.current;
-    void loadNearMiss(activeBrandId, activeMarket, seq, days, nextTier, currentOwnership);
+    void loadNearMiss(
+      activeBrandId,
+      activeMarket,
+      seq,
+      days,
+      nextTier,
+      currentOwnership,
+      activeProductLineId,
+    );
   };
 
   const handleNearMissOwnershipChange = (nextOwnership: NearMissOwnershipFilter) => {
@@ -776,7 +860,15 @@ export function VisibilityWorkspace(): JSX.Element {
     setNearMissOwnershipFilter(nextOwnership);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadNearMiss(activeBrandId, activeMarket, seq, days, currentTier, nextOwnership);
+    void loadNearMiss(
+      activeBrandId,
+      activeMarket,
+      seq,
+      days,
+      currentTier,
+      nextOwnership,
+      activeProductLineId,
+    );
   };
 
   const handleResetNearMissFilters = () => {
@@ -785,7 +877,15 @@ export function VisibilityWorkspace(): JSX.Element {
     setNearMissOwnershipFilter('ALL');
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadNearMiss(activeBrandId, activeMarket, seq, days, undefined, 'ALL');
+    void loadNearMiss(
+      activeBrandId,
+      activeMarket,
+      seq,
+      days,
+      undefined,
+      'ALL',
+      activeProductLineId,
+    );
   };
 
   const handleRunsFilterChange = (next: {
@@ -801,7 +901,14 @@ export function VisibilityWorkspace(): JSX.Element {
     setKeywordFilter(keyword);
     if (!activeBrandId) return;
     const seq = contextSeqRef.current;
-    void loadRuns(activeBrandId, activeMarket, seq, { page, status, keyword }, false);
+    void loadRuns(
+      activeBrandId,
+      activeMarket,
+      seq,
+      { page, status, keyword },
+      false,
+      activeProductLineId,
+    );
   };
 
   const handleTabChange = (nextKey: string) => {
@@ -818,6 +925,7 @@ export function VisibilityWorkspace(): JSX.Element {
         contextSeqRef.current,
         { status: briefStatusFilter, sourceType: briefSourceFilter },
         true,
+        activeProductLineId,
       );
     }
   };
@@ -852,9 +960,16 @@ export function VisibilityWorkspace(): JSX.Element {
     } else if (hadLiveRunsRef.current && activeBrandId) {
       hadLiveRunsRef.current = false;
       const seq = contextSeqRef.current;
-      void loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine);
-      void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter);
-      void loadOpportunities(activeBrandId, activeMarket, seq, days);
+      void loadOverview(
+        activeBrandId,
+        activeMarket,
+        seq,
+        days,
+        selectedEngine,
+        activeProductLineId,
+      );
+      void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter, activeProductLineId);
+      void loadOpportunities(activeBrandId, activeMarket, seq, days, activeProductLineId);
       void loadNearMiss(
         activeBrandId,
         activeMarket,
@@ -862,8 +977,16 @@ export function VisibilityWorkspace(): JSX.Element {
         days,
         nearMissFilterRef.current.tier,
         nearMissFilterRef.current.ownership,
+        activeProductLineId,
       );
-      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      void loadBriefs(
+        activeBrandId,
+        activeMarket,
+        seq,
+        briefFilterRef.current,
+        true,
+        activeProductLineId,
+      );
       if (typeof window !== 'undefined') {
         if (postRunBriefTimerRef.current !== null) {
           window.clearTimeout(postRunBriefTimerRef.current);
@@ -871,7 +994,14 @@ export function VisibilityWorkspace(): JSX.Element {
         postRunBriefTimerRef.current = window.setTimeout(() => {
           postRunBriefTimerRef.current = null;
           if (seq !== contextSeqRef.current) return;
-          void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+          void loadBriefs(
+            activeBrandId,
+            activeMarket,
+            seq,
+            briefFilterRef.current,
+            true,
+            activeProductLineId,
+          );
         }, 1500);
       }
       void consoleCtx?.refreshWallet();
@@ -879,6 +1009,7 @@ export function VisibilityWorkspace(): JSX.Element {
   }, [
     activeBrandId,
     activeMarket,
+    activeProductLineId,
     consoleCtx,
     days,
     hasLiveRuns,
@@ -903,6 +1034,7 @@ export function VisibilityWorkspace(): JSX.Element {
         seq,
         { page: runsPage, status: statusFilter, keyword: keywordFilter },
         true,
+        activeProductLineId,
       );
       if (activeRunId) {
         await loadRunDetail(activeBrandId, activeRunId, activeMarket, seq, true);
@@ -912,21 +1044,22 @@ export function VisibilityWorkspace(): JSX.Element {
 
   useTabFreshness({
     active: true,
-    domains: ['visibility-runs', 'brands', 'briefs', 'publish-records'],
+    domains: ['visibility-runs', 'brands', 'product-lines', 'briefs', 'publish-records'],
     onRefresh: async () => {
       if (!activeBrandId) return;
       const seq = contextSeqRef.current;
       await Promise.all([
-        loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine),
+        loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine, activeProductLineId),
         loadRuns(
           activeBrandId,
           activeMarket,
           seq,
           { page: runsPage, status: statusFilter, keyword: keywordFilter },
           true,
+          activeProductLineId,
         ),
-        loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter),
-        loadOpportunities(activeBrandId, activeMarket, seq, days),
+        loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter, activeProductLineId),
+        loadOpportunities(activeBrandId, activeMarket, seq, days, activeProductLineId),
         loadNearMiss(
           activeBrandId,
           activeMarket,
@@ -934,8 +1067,16 @@ export function VisibilityWorkspace(): JSX.Element {
           days,
           nearMissFilterRef.current.tier,
           nearMissFilterRef.current.ownership,
+          activeProductLineId,
         ),
-        loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true),
+        loadBriefs(
+          activeBrandId,
+          activeMarket,
+          seq,
+          briefFilterRef.current,
+          true,
+          activeProductLineId,
+        ),
       ]);
     },
   });
@@ -966,6 +1107,7 @@ export function VisibilityWorkspace(): JSX.Element {
         activeBrandId,
         {
           market: activeMarket,
+          ...(activeProductLineId ? { productLineId: activeProductLineId } : {}),
           ...(runName.trim() ? { name: runName.trim() } : {}),
           prompts,
           engines: selectedOnline,
@@ -975,7 +1117,10 @@ export function VisibilityWorkspace(): JSX.Element {
       if (seq !== contextSeqRef.current) return;
       feedback.notifySuccess('监测任务已提交，正在后台依次采集各引擎回答');
       setRunName('');
-      setActiveRunState({ id: created.id, contextKey: `${activeBrandId}::${activeMarket}` });
+      setActiveRunState({
+        id: created.id,
+        contextKey: `${activeBrandId}::${activeMarket}::${activeProductLineId ?? ''}`,
+      });
       setActiveRunDetail(created);
       syncUrlParams({ tab: 'runs', runId: created.id });
       invalidateFreshness('visibility-runs');
@@ -987,6 +1132,7 @@ export function VisibilityWorkspace(): JSX.Element {
         seq,
         { page: 1, status: statusFilter, keyword: keywordFilter },
         true,
+        activeProductLineId,
       );
     } catch (err) {
       if (seq !== contextSeqRef.current) return;
@@ -1015,6 +1161,7 @@ export function VisibilityWorkspace(): JSX.Element {
         seq,
         { page: runsPage, status: statusFilter, keyword: keywordFilter },
         true,
+        activeProductLineId,
       );
     } catch (err) {
       if (seq !== contextSeqRef.current) return;
@@ -1041,6 +1188,7 @@ export function VisibilityWorkspace(): JSX.Element {
         seq,
         { page: runsPage, status: statusFilter, keyword: keywordFilter },
         true,
+        activeProductLineId,
       );
     } catch (err) {
       if (seq !== contextSeqRef.current) return;
@@ -1077,6 +1225,7 @@ export function VisibilityWorkspace(): JSX.Element {
             seq,
             { page: runsPage, status: statusFilter, keyword: keywordFilter },
             true,
+            activeProductLineId,
           );
         } catch (err) {
           if (seq !== contextSeqRef.current) return;
@@ -1116,10 +1265,25 @@ export function VisibilityWorkspace(): JSX.Element {
             seq,
             { page: runsPage, status: statusFilter, keyword: keywordFilter },
             false,
+            activeProductLineId,
           );
-          void loadOverview(activeBrandId, activeMarket, seq, days, selectedEngine);
-          void loadCitations(activeBrandId, activeMarket, seq, days, sourceFilter);
-          void loadOpportunities(activeBrandId, activeMarket, seq, days);
+          void loadOverview(
+            activeBrandId,
+            activeMarket,
+            seq,
+            days,
+            selectedEngine,
+            activeProductLineId,
+          );
+          void loadCitations(
+            activeBrandId,
+            activeMarket,
+            seq,
+            days,
+            sourceFilter,
+            activeProductLineId,
+          );
+          void loadOpportunities(activeBrandId, activeMarket, seq, days, activeProductLineId);
           void loadNearMiss(
             activeBrandId,
             activeMarket,
@@ -1127,6 +1291,7 @@ export function VisibilityWorkspace(): JSX.Element {
             days,
             nearMissFilterRef.current.tier,
             nearMissFilterRef.current.ownership,
+            activeProductLineId,
           );
         } catch (err) {
           if (seq !== contextSeqRef.current) return;
@@ -1161,6 +1326,7 @@ export function VisibilityWorkspace(): JSX.Element {
       contextSeqRef.current,
       { status: briefStatusFilter, sourceType: nextSource },
       false,
+      activeProductLineId,
     );
   };
 
@@ -1174,6 +1340,7 @@ export function VisibilityWorkspace(): JSX.Element {
       contextSeqRef.current,
       { status: nextStatus, sourceType: briefSourceFilter },
       false,
+      activeProductLineId,
     );
   };
 
@@ -1189,7 +1356,13 @@ export function VisibilityWorkspace(): JSX.Element {
     const seq = contextSeqRef.current;
     setGeneratingBriefKey(triggerKey);
     try {
-      const created = await generateBrief(activeBrandId, input, { signal: ctrl.signal });
+      const payload: GeoBriefGenerateInput = {
+        ...input,
+        ...(activeProductLineId && input.productLineId === undefined
+          ? { productLineId: activeProductLineId }
+          : {}),
+      };
+      const created = await generateBrief(activeBrandId, payload, { signal: ctrl.signal });
       if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
       setActiveBrief(created);
       if (options?.clearFanOuts) {
@@ -1197,7 +1370,14 @@ export function VisibilityWorkspace(): JSX.Element {
       }
       feedback.notifySuccess('已生成 GEO 写作意见（0 点免费）');
       invalidateFreshness('briefs');
-      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      void loadBriefs(
+        activeBrandId,
+        activeMarket,
+        seq,
+        briefFilterRef.current,
+        true,
+        activeProductLineId,
+      );
     } catch (err) {
       if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
       feedback.notifyError(extractErrorMessage(err, '生成写作意见失败，请稍后重试'));
@@ -1241,6 +1421,7 @@ export function VisibilityWorkspace(): JSX.Element {
         activeBrandId,
         {
           market: activeMarket,
+          ...(activeProductLineId ? { productLineId: activeProductLineId } : {}),
           citationUrl: row.url,
           ...(trimmedTitle.length >= 2 ? { targetPrompt: trimmedTitle.slice(0, 300) } : {}),
         },
@@ -1250,7 +1431,14 @@ export function VisibilityWorkspace(): JSX.Element {
       setActiveBrief(created);
       feedback.notifySuccess('已生成高引用信源反制意见（0 点免费）');
       invalidateFreshness('briefs');
-      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      void loadBriefs(
+        activeBrandId,
+        activeMarket,
+        seq,
+        briefFilterRef.current,
+        true,
+        activeProductLineId,
+      );
     } catch (err) {
       if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
       if (isCitationCounterFallbackError(err)) {
@@ -1293,14 +1481,24 @@ export function VisibilityWorkspace(): JSX.Element {
     const seq = contextSeqRef.current;
     setGeneratingBriefKey(`near-miss:${item.id}`);
     try {
-      const payload = buildNearMissBoostInput(item, activeMarket);
+      const payload = {
+        ...buildNearMissBoostInput(item, activeMarket),
+        ...(activeProductLineId ? { productLineId: activeProductLineId } : {}),
+      };
       const created = await createBriefFromNearMiss(activeBrandId, payload, {
         signal: ctrl.signal,
       });
       if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
       invalidateFreshness('briefs');
       feedback.notifySuccess('已生成补强意见卡（免费），正在前往 GEO 写作台');
-      void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+      void loadBriefs(
+        activeBrandId,
+        activeMarket,
+        seq,
+        briefFilterRef.current,
+        true,
+        activeProductLineId,
+      );
       handleNavigateToStudioWithBrief(created);
     } catch (err) {
       if (ctrl.signal.aborted || isAbortError(err) || seq !== contextSeqRef.current) return;
@@ -1339,7 +1537,14 @@ export function VisibilityWorkspace(): JSX.Element {
       feedback.notifySuccess('已忽略该写作意见');
       invalidateFreshness('briefs');
       if (activeBrandId) {
-        void loadBriefs(activeBrandId, activeMarket, seq, briefFilterRef.current, true);
+        void loadBriefs(
+          activeBrandId,
+          activeMarket,
+          seq,
+          briefFilterRef.current,
+          true,
+          activeProductLineId,
+        );
       }
     } catch (err) {
       if (seq !== contextSeqRef.current) return;
@@ -1348,7 +1553,13 @@ export function VisibilityWorkspace(): JSX.Element {
   };
 
   const handleNavigateToStudioWithBrief = (brief: GeoBriefRecord) => {
-    const href = buildWorkspaceHref('/studio', brief.brandId, brief.market, { briefId: brief.id });
+    if (!brief.productLineId && activeProductLineId) {
+      useWorkspaceStore.getState().setActiveProductLine(null);
+    }
+    const href = buildWorkspaceHref('/studio', brief.brandId, brief.market, {
+      briefId: brief.id,
+      ...(brief.productLineId ? { productLineId: brief.productLineId } : {}),
+    });
     setActiveBrief(null);
     if (consoleCtx?.navigateWorkspace) {
       consoleCtx.navigateWorkspace(href);
@@ -1471,6 +1682,7 @@ export function VisibilityWorkspace(): JSX.Element {
           days,
           nearMissFilterRef.current.tier,
           nearMissFilterRef.current.ownership,
+          activeProductLineId,
         );
       }}
       readOnly={readOnly}
@@ -1503,6 +1715,7 @@ export function VisibilityWorkspace(): JSX.Element {
               contextSeqRef.current,
               days,
               selectedEngine,
+              activeProductLineId,
             );
           }}
           onSwitchToRuns={handleJumpToRunsCreate}
@@ -1521,6 +1734,7 @@ export function VisibilityWorkspace(): JSX.Element {
                   contextSeqRef.current,
                   briefFilterRef.current,
                   false,
+                  activeProductLineId,
                 );
               }}
               sourceFilter={briefSourceFilter}
@@ -1552,6 +1766,7 @@ export function VisibilityWorkspace(): JSX.Element {
                   contextSeqRef.current,
                   briefFilterRef.current,
                   false,
+                  activeProductLineId,
                 );
               }}
             />
@@ -1567,6 +1782,7 @@ export function VisibilityWorkspace(): JSX.Element {
         <VisibilityRunsTab
           activeMarket={activeMarket}
           activeBrandMarket={activeBrandMarket}
+          activeProductLine={activeProductLine}
           readOnly={readOnly}
           runName={runName}
           onRunNameChange={setRunName}
@@ -1603,6 +1819,7 @@ export function VisibilityWorkspace(): JSX.Element {
               contextSeqRef.current,
               { page: runsPage, status: statusFilter, keyword: keywordFilter },
               false,
+              activeProductLineId,
             );
           }}
           activeRunId={activeRunId}
@@ -1658,6 +1875,7 @@ export function VisibilityWorkspace(): JSX.Element {
               contextSeqRef.current,
               days,
               sourceFilter,
+              activeProductLineId,
             );
           }}
           runs={runs}
@@ -1674,7 +1892,13 @@ export function VisibilityWorkspace(): JSX.Element {
           opportunitiesError={opportunitiesError}
           onRetryOpportunities={() => {
             if (!activeBrandId) return;
-            void loadOpportunities(activeBrandId, activeMarket, contextSeqRef.current, days);
+            void loadOpportunities(
+              activeBrandId,
+              activeMarket,
+              contextSeqRef.current,
+              days,
+              activeProductLineId,
+            );
           }}
           selectedFanOuts={selectedFanOuts}
           onSelectedFanOutsChange={setSelectedFanOuts}
@@ -1761,6 +1985,9 @@ export function VisibilityWorkspace(): JSX.Element {
         }
       />
 
+      {/* Progressive Multi-Product-Line Switcher (renders null for single-category brands) */}
+      <ProductLineSelectorPill />
+
       {/* 3-Tab Workspace */}
       <Tabs
         activeKey={activeTab}
@@ -1788,6 +2015,7 @@ export function VisibilityWorkspace(): JSX.Element {
           open={Boolean(citationFallback)}
           brandId={activeBrandId}
           market={activeMarket}
+          productLineId={activeProductLineId}
           readOnly={readOnly}
           mode="fallback"
           initialUrl={citationFallback?.url ?? ''}
@@ -1806,6 +2034,7 @@ export function VisibilityWorkspace(): JSX.Element {
               contextSeqRef.current,
               briefFilterRef.current,
               true,
+              activeProductLineId,
             );
           }}
         />

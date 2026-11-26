@@ -23,6 +23,21 @@ describe('home client & retest delta formatter', () => {
       storage: undefined,
       signal: controller.signal,
     });
+
+    mockAuthorizedV2Request.mockResolvedValueOnce({ brandId: 'brand_1', market: 'GLOBAL' });
+    await fetchActionHome('brand_1', 'GLOBAL', {
+      productLineId: ' pl_1 ',
+      days: 30,
+      signal: controller.signal,
+    });
+    expect(mockAuthorizedV2Request).toHaveBeenLastCalledWith(
+      '/brands/brand_1/home?market=GLOBAL&days=30&productLineId=pl_1',
+      {
+        method: 'GET',
+        storage: undefined,
+        signal: controller.signal,
+      },
+    );
   });
 
   it('formats Before -> After retest summaries accurately across transitions', () => {

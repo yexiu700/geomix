@@ -1,11 +1,12 @@
 'use client';
 
 import { formatBytes, QUOTA_DEFAULTS, type QuotaKeyName } from '@geomix/shared';
-import { Alert, Button, Form, Input, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Form, Input, Select, Space, Switch, Table, Typography } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
 import { formatShanghaiDate, UX_TERMS } from '../../lib/ux-foundation';
 import { CrudModal } from '../crud/crud-modal';
+import { StatusBadge } from '../ui';
 
 const QUOTA_FIELDS: ReadonlyArray<{
   key: QuotaKeyName;
@@ -331,17 +332,8 @@ export function TenantAdmin({
 
   return (
     <section aria-label="租户管理">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+      <div className="gm-admin-head">
+        <Typography.Title level={3} className="gm-admin-title">
           租户
         </Typography.Title>
         <Button
@@ -358,19 +350,19 @@ export function TenantAdmin({
         </Button>
       </div>
 
-      <Space wrap style={{ marginBottom: 12, width: '100%' }}>
+      <Space wrap className="gm-admin-filters">
         <Input
           aria-label="搜索租户"
           placeholder="搜索租户名称或用户名"
           allowClear
-          style={{ width: 240 }}
+          className="gm-admin-input-search"
           value={searchKeyword}
           onChange={(event) => setSearchKeyword(event.target.value)}
         />
         <Select
           aria-label="状态筛选"
           value={statusFilter}
-          style={{ width: 130 }}
+          className="gm-admin-select-sm"
           options={[
             { value: 'all', label: '全部状态' },
             { value: 'active', label: '正常' },
@@ -381,7 +373,7 @@ export function TenantAdmin({
         <Select
           aria-label="计费模式筛选"
           value={billingFilter}
-          style={{ width: 160 }}
+          className="gm-admin-select-md"
           options={[
             { value: 'all', label: '全部计费模式' },
             { value: 'SHADOW', label: UX_TERMS.billingShadow },
@@ -404,9 +396,9 @@ export function TenantAdmin({
         ) : null}
       </Space>
 
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-admin-alert" /> : null}
       {notice ? (
-        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={notice} className="gm-admin-alert" />
       ) : null}
 
       <Table<TenantRow>
@@ -443,21 +435,16 @@ export function TenantAdmin({
             title: '有效期',
             width: 96,
             render: (_value, row) => (
-              <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-                {formatShanghaiDate(row.expiresAt)}
-              </span>
+              <span className="gm-num gm-admin-nowrap">{formatShanghaiDate(row.expiresAt)}</span>
             ),
           },
           {
             title: '状态',
-            width: 66,
+            width: 82,
             render: (_value, row) => (
-              <Tag
-                color={row.isActive ? 'success' : 'default'}
-                style={{ marginInlineEnd: 0, whiteSpace: 'nowrap' }}
-              >
+              <StatusBadge tone={row.isActive ? 'success' : 'neutral'}>
                 {row.isActive ? '正常' : '已停用'}
-              </Tag>
+              </StatusBadge>
             ),
           },
           {
@@ -532,7 +519,7 @@ export function TenantAdmin({
                   size="small"
                   aria-label={`计费模式 ${row.name}`}
                   value={row.billingMode ?? 'inherit'}
-                  style={{ width: 112 }}
+                  className="gm-admin-select-inline"
                   options={[
                     { value: 'inherit', label: '跟随系统默认' },
                     { value: 'SHADOW', label: UX_TERMS.billingShadow },
@@ -806,7 +793,7 @@ export function TenantAdmin({
           </Button>
         }
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space direction="vertical" size={12} className="gm-admin-full-width">
           {quotaLoading ? (
             <Typography.Text type="secondary">正在同步最新已用量...</Typography.Text>
           ) : null}
@@ -819,20 +806,10 @@ export function TenantAdmin({
                 ? formatBytes(BigInt(currentVal.trim()))
                 : null;
             return (
-              <div
-                key={field.key}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 220px',
-                  gap: 12,
-                  alignItems: 'center',
-                  paddingBottom: 10,
-                  borderBottom: '1px solid var(--gm-line-1)',
-                }}
-              >
+              <div key={field.key} className="gm-admin-quota-row">
                 <div>
-                  <div style={{ fontWeight: 500, color: 'var(--gm-fg-1)' }}>{field.label}</div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  <div className="gm-admin-quota-label">{field.label}</div>
+                  <Typography.Text type="secondary" className="gm-admin-quota-meta">
                     当前已用：{usedDisplay}
                     {field.key !== 'STORAGE_BYTES' ? ` ${field.unit}` : ''}
                     {storageReadable ? ` · 当前上限约 ${storageReadable}` : ''}

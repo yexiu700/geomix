@@ -1539,4 +1539,89 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     expect(resetCalls[0]?.sourceKind).toBeUndefined();
     expect(resetCalls[0]?.signal?.aborted).toBe(false);
   });
+
+  it('Tier 5 #8: clears activeProductLineId before navigating to /studio for a brand-general brief', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+      productLines: [
+        {
+          id: 'pl_nas',
+          brandId: DUAL_BRAND.id,
+          name: '家用 NAS',
+          localNamesJson: {},
+          category: '家用 NAS',
+          localCategoriesJson: {},
+          seedPromptsJson: {},
+          competitorsJson: {},
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_nas',
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue(CN_OVERVIEW_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 'brief_general_1',
+          brandId: DUAL_BRAND.id,
+          brandMarketId: 'bm_cn_1',
+          market: 'CN',
+          productLineId: null,
+          sourceType: 'AUTO_GAP',
+          sourceRunId: 'vrun_sample_1',
+          sourceObservationIds: ['obs_1'],
+          sourceCitationUrl: null,
+          targetPrompt: '家用NAS怎么选',
+          priorityScore: 95,
+          diagnosisSummary: '通用问句缺失覆盖',
+          recommendedRecipe: 'AUTHORITY_GUIDE',
+          targetFormat: 'CN_DEEP_REVIEW',
+          suggestedTitle: '品牌通用选型指南',
+          outlineH2: [{ heading: '一、核心选型指标', intent: '首段直答' }],
+          targetFanOuts: ['家用NAS'],
+          competitorFocus: ['群晖'],
+          matchedFactIds: [],
+          missingFactHints: [],
+          recommendedChannels: [{ channel: '知乎', reason: '高权重问答社区' }],
+          status: 'OPEN',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    const navigateWorkspace = vi.fn();
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const writeBtn = await screen.findByRole('button', { name: /一键去写/ });
+    fireEvent.click(writeBtn);
+
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
+    expect(navigateWorkspace).toHaveBeenCalledWith(
+      '/studio?brandId=brand_dual_1&market=CN&briefId=brief_general_1',
+    );
+  });
 });

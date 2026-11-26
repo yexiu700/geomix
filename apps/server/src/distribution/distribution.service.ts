@@ -553,7 +553,8 @@ export class DistributionService {
         if (conn.provider !== existing.provider) {
           throw new ApiError(400, API_ERROR.BAD_REQUEST, '渠道连接类型与分发任务渠道不一致');
         }
-        if (conn.status !== 'ACTIVE') {
+        const isRebindingConnection = input.connectionId !== existing.connectionId;
+        if (conn.status !== 'ACTIVE' && isRebindingConnection) {
           throw new ApiError(
             400,
             API_ERROR.BAD_REQUEST,

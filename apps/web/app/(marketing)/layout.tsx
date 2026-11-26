@@ -1,3 +1,4 @@
+import './marketing.css';
 import { MarketingFooter } from '../../components/marketing/marketing-footer';
 import { MarketingHeader } from '../../components/marketing/marketing-header';
 

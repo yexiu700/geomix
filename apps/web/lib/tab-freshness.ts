@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 
 export type FreshnessDomain =
   | 'brands'
+  | 'product-lines'
   | 'brand-facts'
   | 'brand-media'
   | 'channel-connections'

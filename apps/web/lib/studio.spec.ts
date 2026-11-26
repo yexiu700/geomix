@@ -49,9 +49,9 @@ describe('Studio v2 client (studio.ts)', () => {
 
   it('calls exact /api/v2 studio REST routes with encoded params and headers', async () => {
     mockReq.mockResolvedValue({ items: [], total: 0 });
-    await fetchArticles('b/1', 'CN', { status: 'DRAFT', tag: 'NAS' });
+    await fetchArticles('b/1', 'CN', { status: 'DRAFT', tag: 'NAS', productLineId: ' pl_1 ' });
     expect(mockReq).toHaveBeenLastCalledWith(
-      '/brands/b%2F1/articles?market=CN&status=DRAFT&tag=NAS',
+      '/brands/b%2F1/articles?market=CN&status=DRAFT&tag=NAS&productLineId=pl_1',
       expect.objectContaining({ method: 'GET' }),
     );
 
@@ -152,10 +152,18 @@ describe('Studio v2 client (studio.ts)', () => {
     expect(mergeFactFeedbackContent('- 满载噪音：18.5dB', '如待机功耗 W', '12.5W')).toBe(
       '- 满载噪音：18.5dB\n- 待机功耗 W：12.5W',
     );
-    // Deduplicates if value already present
+    // Deduplicates if value already present on matching line
     expect(mergeFactFeedbackContent('- 待机功耗：12.5W', '如待机功耗 W', '12.5W')).toBe(
       '- 待机功耗：12.5W',
     );
+    // Tier 5 #7: Must NOT drop distinct short/numeric facts due to substring match (e.g. '10' inside '1000W')
+    expect(mergeFactFeedbackContent('- 整机功率：1000W', '待机功率', '10')).toBe(
+      '- 整机功率：1000W\n- 待机功率：10',
+    );
+    expect(mergeFactFeedbackContent('- 保修年限：2', '盘位数', '2')).toBe(
+      '- 保修年限：2\n- 盘位数：2',
+    );
+    expect(mergeFactFeedbackContent('- 待机功率：10', '待机功率', '10')).toBe('- 待机功率：10');
   });
 
   it('builds sanitized Markdown image tokens, inserts at cursor, and rewrites relative preview media URLs', () => {

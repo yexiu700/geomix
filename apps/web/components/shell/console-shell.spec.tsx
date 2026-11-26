@@ -28,6 +28,7 @@ const loadAccountMock = vi.fn();
 const logoutSessionMock = vi.fn();
 const saveAccountUiPrefsMock = vi.fn();
 const listBrandsMock = vi.fn();
+const listBrandProductLinesMock = vi.fn();
 const httpWalletMock = vi.fn();
 const httpAnnouncementsMock = vi.fn();
 
@@ -43,8 +44,11 @@ vi.mock('../../lib/api', async (importOriginal) => {
 
 vi.mock('../../lib/brands', () => ({
   listBrands: (...args: unknown[]) => listBrandsMock(...args),
+  listBrandProductLines: (...args: unknown[]) => listBrandProductLinesMock(...args),
   createBrand: vi.fn(),
   enableBrandMarket: vi.fn(),
+  updateBrandMarket: vi.fn(),
+  suggestBrandMarketConfig: vi.fn(),
   extractBrandFacts: vi.fn(),
   saveBrandFacts: vi.fn(),
 }));
@@ -111,6 +115,7 @@ beforeEach(() => {
   logoutSessionMock.mockReset().mockResolvedValue(undefined);
   saveAccountUiPrefsMock.mockReset().mockResolvedValue(true);
   listBrandsMock.mockReset().mockResolvedValue({ items: [sampleBrand] });
+  listBrandProductLinesMock.mockReset().mockResolvedValue({ items: [] });
   httpWalletMock.mockReset().mockResolvedValue({
     points: 1000,
     pointsReserved: 0,
@@ -319,5 +324,102 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     expect(await screen.findByText('行动首页内容')).toBeTruthy();
     expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
     expect(useWorkspaceStore.getState().menuCollapsed).toBe(false);
+  });
+
+  it('does not fetch product lines for a stale/foreign brandId before brandsLoaded reconciles to an owned brand', async () => {
+    mockPathname = '/home';
+    mockSearchParams = new URLSearchParams('brandId=nonexistent_brand_123&market=CN');
+    window.history.replaceState(null, '', '/home?brandId=nonexistent_brand_123&market=CN');
+    window.localStorage.setItem(WORKSPACE_USER_KEY, merchantAccount.id);
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      JSON.stringify({
+        activeBrandId: 'nonexistent_brand_123',
+        activeMarket: 'CN',
+        menuCollapsed: false,
+      }),
+    );
+
+    let resolveBrands!: (value: { items: BrandRecord[] }) => void;
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+    listBrandsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveBrands = resolve;
+      }),
+    );
+
+    render(
+      <ConsoleShell>
+        <div>首页内容</div>
+      </ConsoleShell>,
+    );
+
+    await waitFor(() => {
+      expect(listBrandsMock).toHaveBeenCalledTimes(1);
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveBrands({ items: [sampleBrand] });
+    });
+
+    await waitFor(() => {
+      expect(listBrandProductLinesMock).toHaveBeenCalledTimes(1);
+      expect(listBrandProductLinesMock).toHaveBeenCalledWith(
+        'b-1',
+        expect.objectContaining({ storage: window.sessionStorage }),
+      );
+    });
+  });
+
+  it('Tier 5 #8: preserves activeProductLineId on navigateWorkspace across business workspaces, omits it on /account, and syncs popstate back to unscoped URL', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    mockPathname = '/home';
+    mockSearchParams = new URLSearchParams('brandId=b-1&market=CN&productLineId=pl-1');
+    window.history.replaceState(null, '', '/home?brandId=b-1&market=CN&productLineId=pl-1');
+    loadAccountMock.mockResolvedValue({ status: 'ok', account: merchantAccount });
+    listBrandProductLinesMock.mockResolvedValue({
+      items: [
+        {
+          id: 'pl-1',
+          brandId: 'b-1',
+          name: '家用 NAS',
+          localNamesJson: {},
+          category: '家用 NAS',
+          localCategoriesJson: {},
+          seedPromptsJson: {},
+          competitorsJson: {},
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    render(
+      <ConsoleShell>
+        <div>首页内容</div>
+      </ConsoleShell>,
+    );
+
+    await waitFor(() => {
+      expect(useWorkspaceStore.getState().productLinesLoaded).toBe(true);
+      expect(useWorkspaceStore.getState().activeProductLineId).toBe('pl-1');
+    });
+
+    // Click sidebar nav to /visibility -> pushes URL WITH productLineId=pl-1
+    fireEvent.click(screen.getByText('可见度诊断'));
+    expect(pushMock).toHaveBeenCalledWith('/visibility?brandId=b-1&market=CN&productLineId=pl-1');
+
+    // Click account entry -> /account omits productLineId via QUERY_KEYS
+    fireEvent.click(screen.getByTestId('sider-account-entry'));
+    expect(pushMock).toHaveBeenLastCalledWith('/account');
+
+    // Browser Back (popstate) to /home?brandId=b-1&market=CN (without productLineId) clears activeProductLineId
+    window.history.replaceState(null, '', '/home?brandId=b-1&market=CN');
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+    expect(useWorkspaceStore.getState().activeProductLineId).toBeNull();
   });
 });

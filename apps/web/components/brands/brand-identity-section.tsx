@@ -7,20 +7,23 @@ import {
   BRAND_MAX_CONTROL_PROMPTS,
   BRAND_NAME_MAX,
   GEO_MARKET_LABELS,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
   GLOBAL_SUPPORTED_LOCALES,
   SUPPORTED_LOCALES,
   containsCjk,
   normalizeBrandDomain,
   validateControlPromptsAgainstSeeds,
+  validateGlobalMarketIdentity,
   type BrandCompetitor,
   type BrandMarketAiSuggestField,
   type BrandMarketAiSuggestResponse,
   type BrandMarketRecord,
   type BrandRecord,
   type GeoMarket,
+  type RetestBudgetSummaryDto,
   type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Input, Select, Tag } from 'antd';
+import { Alert, Button, Checkbox, Input, InputNumber, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { suggestBrandMarketConfig, updateBrand, updateBrandMarket } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
@@ -46,6 +49,7 @@ export type BrandIdentitySectionProps = {
   brand: BrandRecord;
   activeMarket: GeoMarket;
   activeBrandMarket: BrandMarketRecord | null;
+  retestBudget?: RetestBudgetSummaryDto | null;
   readOnly: boolean;
   onBrandUpdated: (brand: BrandRecord, market?: GeoMarket) => void;
   onOpenEnableMarket: (market: GeoMarket) => void;
@@ -122,6 +126,7 @@ type MarketDirtyInput = {
   seedPrompts: readonly string[];
   supportedLocales: readonly SupportedLocale[];
   controlPrompts: readonly string[];
+  monthlyRetestPointCap: number | null;
 };
 
 function computeMarketDirty(input: MarketDirtyInput): boolean {
@@ -140,6 +145,9 @@ function computeMarketDirty(input: MarketDirtyInput): boolean {
     return true;
   }
   if (!stringArraysEqual(input.controlPrompts, activeBrandMarket.controlPrompts ?? [])) return true;
+  if ((input.monthlyRetestPointCap ?? null) !== (activeBrandMarket.monthlyRetestPointCap ?? null)) {
+    return true;
+  }
   return false;
 }
 
@@ -169,6 +177,7 @@ export function BrandIdentitySection({
   brand,
   activeMarket,
   activeBrandMarket,
+  retestBudget = null,
   readOnly,
   onBrandUpdated,
   onOpenEnableMarket,
@@ -210,6 +219,10 @@ export function BrandIdentitySection({
     activeBrandMarket?.controlPrompts ?? [],
   );
   const [controlPromptInput, setControlPromptInput] = useState('');
+  const [monthlyRetestPointCap, setMonthlyRetestPointCap] = useState<number | null>(
+    activeBrandMarket?.monthlyRetestPointCap ?? null,
+  );
+  const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
 
@@ -277,6 +290,7 @@ export function BrandIdentitySection({
       activeBrandMarket.seedPrompts ?? [],
       activeBrandMarket.supportedLocales ?? [],
       activeBrandMarket.controlPrompts ?? [],
+      activeBrandMarket.monthlyRetestPointCap ?? null,
     ]);
   }, [activeBrandMarket]);
 
@@ -293,6 +307,8 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setMonthlyRetestPointCap(activeBrandMarket?.monthlyRetestPointCap ?? null);
+    setAllowCjkGlobalIdentity(false);
     setMarketError(null);
     // Intentionally keyed on value-based activeBrandMarketSignature so base-only updates
     // (brand.name / brand.category) never discard unsaved market edits or partial-failure errors.
@@ -316,6 +332,7 @@ export function BrandIdentitySection({
         seedPrompts,
         supportedLocales,
         controlPrompts,
+        monthlyRetestPointCap,
       }),
     [
       activeMarket,
@@ -331,6 +348,7 @@ export function BrandIdentitySection({
       seedPrompts,
       supportedLocales,
       controlPrompts,
+      monthlyRetestPointCap,
     ],
   );
   const isDirty = isBaseDirty || isMarketDirty;
@@ -345,6 +363,23 @@ export function BrandIdentitySection({
       onDirtyChange?.(false);
     };
   }, [onDirtyChange]);
+
+  const trimmedLocalBrandName = localBrandName.trim();
+  const trimmedLocalCategory = localCategory.trim() || null;
+  const savedLocalBrandName = (activeBrandMarket?.localBrandName ?? brand.name).trim();
+  const savedLocalCategory = activeBrandMarket?.localCategory?.trim() || null;
+  const localNameChanged = trimmedLocalBrandName !== savedLocalBrandName;
+  const localCategoryChanged = trimmedLocalCategory !== savedLocalCategory;
+  const needsGlobalCjkOverride =
+    activeMarket === 'GLOBAL' &&
+    ((localNameChanged && containsCjk(trimmedLocalBrandName)) ||
+      (localCategoryChanged && trimmedLocalCategory !== null && containsCjk(trimmedLocalCategory)));
+
+  useEffect(() => {
+    if (!needsGlobalCjkOverride) {
+      setAllowCjkGlobalIdentity(false);
+    }
+  }, [needsGlobalCjkOverride]);
 
   const hasCN = brand.markets.some((m) => m.market === 'CN');
   const hasGlobal = brand.markets.some((m) => m.market === 'GLOBAL');
@@ -430,6 +465,8 @@ export function BrandIdentitySection({
     setSupportedLocales(initialSupportedLocales);
     setControlPrompts(activeBrandMarket?.controlPrompts ?? []);
     setControlPromptInput('');
+    setMonthlyRetestPointCap(activeBrandMarket?.monthlyRetestPointCap ?? null);
+    setAllowCjkGlobalIdentity(false);
     setMarketError(null);
   };
 
@@ -455,17 +492,37 @@ export function BrandIdentitySection({
       }
     }
 
-    const trimmedLocal = localBrandName.trim();
+    const trimmedLocal = trimmedLocalBrandName;
     let serializedCompetitors: ReturnType<typeof serializeCompetitorRows>['competitors'] = [];
     if (saveMarket) {
+      const globalIdentityCheck =
+        localNameChanged || localCategoryChanged
+          ? validateGlobalMarketIdentity({
+              market: activeMarket,
+              ...(localNameChanged ? { localBrandName: trimmedLocal } : {}),
+              ...(localCategoryChanged ? { localCategory: trimmedLocalCategory } : {}),
+              allowCjkGlobalIdentity,
+            })
+          : { ok: true as const };
       if (!trimmedLocal) {
         setMarketError('请填写当地品牌名称');
+        hasValidationError = true;
+      } else if (!globalIdentityCheck.ok) {
+        setMarketError(globalIdentityCheck.message);
         hasValidationError = true;
       } else if (activeMarket === 'GLOBAL' && supportedLocales.length === 0) {
         setMarketError('请至少保留 1 个支持语种');
         hasValidationError = true;
       } else if (controlPrompts.length > BRAND_MAX_CONTROL_PROMPTS) {
         setMarketError(`最多配置 ${BRAND_MAX_CONTROL_PROMPTS} 条对照组问句`);
+        hasValidationError = true;
+      } else if (
+        monthlyRetestPointCap !== null &&
+        (!Number.isInteger(monthlyRetestPointCap) ||
+          monthlyRetestPointCap < 1 ||
+          monthlyRetestPointCap > 1_000_000)
+      ) {
+        setMarketError('本月自动复测点数上限需为 1–1,000,000 的整数，或留空表示不限');
         hasValidationError = true;
       } else {
         const overlapCheck = validateControlPromptsAgainstSeeds(controlPrompts, seedPrompts);
@@ -531,18 +588,31 @@ export function BrandIdentitySection({
 
       setSavingMarket(true);
       try {
+        const includeLocalBrandName =
+          localNameChanged || !(targetMarket === 'GLOBAL' && containsCjk(trimmedLocal));
+        const includeLocalCategory =
+          localCategoryChanged ||
+          !(
+            targetMarket === 'GLOBAL' &&
+            trimmedLocalCategory !== null &&
+            containsCjk(trimmedLocalCategory)
+          );
         const updatedMarket = await updateBrandMarket(
           saveBrandId,
           targetMarket,
           {
-            localBrandName: trimmedLocal,
-            localCategory: localCategory.trim() || null,
+            ...(includeLocalBrandName ? { localBrandName: trimmedLocal } : {}),
+            ...(includeLocalCategory ? { localCategory: trimmedLocalCategory } : {}),
             aliases,
             ownedDomains,
             competitors: serializedCompetitors,
             seedPrompts,
             ...(targetMarket === 'GLOBAL' ? { supportedLocales } : {}),
+            ...(targetMarket === 'GLOBAL' && allowCjkGlobalIdentity
+              ? { allowCjkGlobalIdentity: true }
+              : {}),
             controlPrompts,
+            monthlyRetestPointCap,
           },
           { storage: window.sessionStorage, signal: ctrl.signal },
         );
@@ -558,7 +628,9 @@ export function BrandIdentitySection({
           setSeedPrompts(savedBm.seedPrompts ?? []);
           setSupportedLocales(resolveInitialLocales(targetMarket, savedBm));
           setControlPrompts(savedBm.controlPrompts ?? []);
+          setMonthlyRetestPointCap(savedBm.monthlyRetestPointCap ?? null);
         }
+        setAllowCjkGlobalIdentity(false);
         marketSaved = true;
       } catch (reason: unknown) {
         if (ctrl.signal.aborted || seq !== marketSeqRef.current || !mountedRef.current) return;
@@ -870,7 +942,7 @@ export function BrandIdentitySection({
                 />
                 {!readOnly ? (
                   <Button
-                    type="primary"
+                    type="default"
                     size="small"
                     data-testid="brand-ai-prefill-btn"
                     aria-label="AI 一键补全（免费）"
@@ -924,7 +996,14 @@ export function BrandIdentitySection({
                     value={localBrandName}
                     disabled={readOnly || saving}
                     placeholder={activeMarket === 'GLOBAL' ? '例如：ExampleBrand' : '例如：绿联'}
-                    onChange={(event) => setLocalBrandName(event.target.value)}
+                    onChange={(event) => {
+                      const nextVal = event.target.value;
+                      setLocalBrandName(nextVal);
+                      if (!containsCjk(nextVal) && !containsCjk(localCategory)) {
+                        setAllowCjkGlobalIdentity(false);
+                      }
+                      if (marketError) setMarketError(null);
+                    }}
                   />
                 </FormField>
 
@@ -943,12 +1022,42 @@ export function BrandIdentitySection({
                         ? '例如：Home NAS / Portable Power Station（留空将自动回退英文品类）'
                         : `留空默认继承主档案品类（${brand.category}）`
                     }
-                    onChange={(event) => setLocalCategory(event.target.value)}
+                    onChange={(event) => {
+                      const nextVal = event.target.value;
+                      setLocalCategory(nextVal);
+                      if (!containsCjk(localBrandName) && !containsCjk(nextVal)) {
+                        setAllowCjkGlobalIdentity(false);
+                      }
+                      if (marketError) setMarketError(null);
+                    }}
                   />
                 </FormField>
               </div>
 
-              {activeMarket === 'GLOBAL' ? <div className="gm-brand-global-guard-slot" /> : null}
+              {activeMarket === 'GLOBAL' ? (
+                <div className="gm-brand-global-guard-slot">
+                  {needsGlobalCjkOverride ? (
+                    <div
+                      className="gm-brand-global-cjk-guard"
+                      data-testid="global-cjk-identity-guard"
+                    >
+                      <Checkbox
+                        data-testid="allow-cjk-global-identity-checkbox"
+                        checked={allowCjkGlobalIdentity}
+                        disabled={readOnly || saving}
+                        onChange={(event) => {
+                          setAllowCjkGlobalIdentity(event.target.checked);
+                          if (event.target.checked && marketError) {
+                            setMarketError(null);
+                          }
+                        }}
+                      >
+                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                      </Checkbox>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <FormField label="当地品牌别名 / SKU 词（最多 20 个）">
                 <div className="gm-brand-field-stack">
@@ -1310,6 +1419,36 @@ export function BrandIdentitySection({
                     </div>
                   ) : null}
                 </div>
+              </FormField>
+
+              <FormField
+                data-testid="brand-retest-cap-field"
+                label="本月自动复测点数上限（选填，留空不限）"
+                htmlFor="market-retest-cap-input"
+                help={
+                  retestBudget
+                    ? `仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。本月（${retestBudget.monthKey}）已消耗 ${retestBudget.usedPoints} 点${retestBudget.capPoints !== null ? ` / 上限 ${retestBudget.capPoints} 点` : ''}。`
+                    : '仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。'
+                }
+              >
+                <InputNumber
+                  id="market-retest-cap-input"
+                  data-testid="market-retest-cap-input"
+                  aria-label="本月自动复测点数上限"
+                  min={1}
+                  max={1_000_000}
+                  precision={0}
+                  placeholder="留空不限"
+                  value={monthlyRetestPointCap}
+                  disabled={readOnly || saving}
+                  className="gm-brand-w-full"
+                  onChange={(val) => {
+                    setMonthlyRetestPointCap(
+                      typeof val === 'number' && Number.isFinite(val) ? Math.trunc(val) : null,
+                    );
+                    if (marketError) setMarketError(null);
+                  }}
+                />
               </FormField>
 
               {marketError ? (

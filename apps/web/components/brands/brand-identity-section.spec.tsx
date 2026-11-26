@@ -104,9 +104,11 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.queryByTestId('brand-dirty-save-bar')).toBeNull();
     expect(onDirtyChange).toHaveBeenCalledWith(false);
 
-    // Zero direct 删除品牌 button and zero red-bordered 移除 buttons
+    // Zero direct 删除品牌 button, zero red-bordered 移除 buttons, and zero primary CTA at rest
+    // (+ 新建品牌 in BrandsWorkspace is the sole primary CTA on /brands at rest)
     expect(screen.queryByRole('button', { name: '删除品牌' })).toBeNull();
     expect(container.querySelectorAll('button.ant-btn-dangerous')).toHaveLength(0);
+    expect(container.querySelectorAll('button.ant-btn-primary')).toHaveLength(0);
 
     // Heading has no numbered prefix
     const heading = container.querySelector('#brand-section-identity h2');
@@ -462,6 +464,158 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(notifySuccessMock).toHaveBeenCalledWith('已保存国内市场配置');
   });
 
+  it('#385: blocks GLOBAL CJK identity save until explicit override checkbox is checked', async () => {
+    const brand = makeDualMarketBrand();
+    const globalMarket = brand.markets.find((m) => m.market === 'GLOBAL')!;
+    const updatedBrand = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, localBrandName: '青松海外拦截测试' } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    const localInput = screen.getByLabelText('当地品牌名') as HTMLInputElement;
+    fireEvent.change(localInput, { target: { value: '青松海外拦截测试' } });
+
+    // Guard checkbox appears inside global-guard-slot; 保存修改 remains clickable
+    const overrideCheckbox = await screen.findByTestId('allow-cjk-global-identity-checkbox');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(await screen.findByTestId('brand-market-error')).toBeTruthy();
+    expect(updateBrandMarketMock).not.toHaveBeenCalled();
+
+    // Check override and save again -> passes allowCjkGlobalIdentity: true
+    fireEvent.click(overrideCheckbox);
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledWith(
+        brand.id,
+        'GLOBAL',
+        expect.objectContaining({
+          localBrandName: '青松海外拦截测试',
+          allowCjkGlobalIdentity: true,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('tracks monthlyRetestPointCap input, previews current month consumption, and saves via updateBrandMarket (#387)', async () => {
+    const brand = makeDualMarketBrand();
+    const globalMarket = brand.markets[1]!;
+    const updatedBrand: BrandRecord = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, monthlyRetestPointCap: 120 } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        retestBudget={{
+          monthKey: '2026-11',
+          capPoints: 200,
+          usedPoints: 40,
+          remainingPoints: 160,
+          skippedCount: 0,
+        }}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('2026-11');
+    expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('已消耗 40 点');
+
+    const capInput = screen.getByLabelText('本月自动复测点数上限') as HTMLInputElement;
+    expect(capInput.value).toBe('');
+
+    fireEvent.change(capInput, { target: { value: '120' } });
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledWith(
+        brand.id,
+        'GLOBAL',
+        expect.objectContaining({
+          monthlyRetestPointCap: 120,
+        }),
+        expect.anything(),
+      );
+    });
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'GLOBAL');
+  });
+
+  it('Tier 5 #3: allows saving unrelated GLOBAL market fields on existing CJK-confirmed brands without re-triggering CJK validation', async () => {
+    const baseBrand = makeDualMarketBrand();
+    const cjkGlobalBrand: BrandRecord = {
+      ...baseBrand,
+      markets: baseBrand.markets.map((m) =>
+        m.market === 'GLOBAL'
+          ? { ...m, localBrandName: '茶颜悦色', localCategory: 'Tea Beverage' }
+          : m,
+      ),
+    };
+    const globalMarket = cjkGlobalBrand.markets.find((m) => m.market === 'GLOBAL')!;
+    const updatedBrand: BrandRecord = {
+      ...cjkGlobalBrand,
+      markets: cjkGlobalBrand.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, monthlyRetestPointCap: 120 } : m,
+      ),
+    };
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={cjkGlobalBrand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    // Override checkbox should not block or appear when unchanged CJK identity is untouched
+    expect(screen.queryByTestId('allow-cjk-global-identity-checkbox')).toBeNull();
+
+    const capInput = screen.getByLabelText('本月自动复测点数上限') as HTMLInputElement;
+    fireEvent.change(capInput, { target: { value: '120' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledTimes(1);
+    });
+    const sentPayload = updateBrandMarketMock.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(sentPayload.monthlyRetestPointCap).toBe(120);
+    expect(sentPayload).not.toHaveProperty('localBrandName');
+    expect(screen.queryByTestId('brand-market-error')).toBeNull();
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'GLOBAL');
+  });
+
   it('opens grouped AI prefill modal with optional URL regenerate, supports uncheck & inline edit, appends without overwriting, and never silently saves (#405)', async () => {
     const brand = makeDualMarketBrand();
     suggestBrandMarketConfigMock
@@ -689,5 +843,67 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect((screen.getByLabelText('当地品类名称') as HTMLInputElement).value).toBe('Home NAS');
     expect(updateBrandMarketMock).not.toHaveBeenCalled();
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+  });
+
+  it('skips AI-suggested seedPrompts colliding with existing controlPrompts so 保存修改 succeeds cleanly (Bug #2 / P2-4)', async () => {
+    const brand = makeDualMarketBrand();
+    brand.markets[0]!.controlPrompts = ['2026年精品咖啡品牌推荐'];
+    const updatedBrand: BrandRecord = {
+      ...brand,
+      markets: brand.markets.map((m) =>
+        m.market === 'CN'
+          ? {
+              ...m,
+              seedPrompts: [...m.seedPrompts, '2026年四盘位静音 NAS 真实口碑推荐'],
+            }
+          : m,
+      ),
+    };
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'CN',
+      aliases: [],
+      competitors: [],
+      seedPrompts: [
+        { prompt: '2026年精品咖啡品牌推荐', intent: 'BUYING_GUIDE' },
+        { prompt: '2026年四盘位静音 NAS 真实口碑推荐', intent: 'BRAND_REPUTATION' },
+      ],
+      controlPrompts: [],
+      fallbackUsed: false,
+    });
+    updateBrandMarketMock.mockResolvedValueOnce(updatedBrand);
+    const onBrandUpdated = vi.fn();
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="CN"
+        activeBrandMarket={brand.markets[0]!}
+        readOnly={false}
+        onBrandUpdated={onBrandUpdated}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
+    await screen.findByTestId('ai-suggest-group-seedPrompts');
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    expect(screen.getByText('2026年四盘位静音 NAS 真实口碑推荐')).toBeTruthy();
+    expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(updateBrandMarketMock).toHaveBeenCalledTimes(1);
+    });
+    const sentPayload = updateBrandMarketMock.mock.calls[0]?.[2] as {
+      seedPrompts?: string[];
+      controlPrompts?: string[];
+    };
+    expect(sentPayload.seedPrompts).toContain('2026年四盘位静音 NAS 真实口碑推荐');
+    expect(sentPayload.seedPrompts).not.toContain('2026年精品咖啡品牌推荐');
+    expect(sentPayload.controlPrompts).toEqual(['2026年精品咖啡品牌推荐']);
+    expect(screen.queryByTestId('brand-market-error')).toBeNull();
+    expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'CN');
   });
 });

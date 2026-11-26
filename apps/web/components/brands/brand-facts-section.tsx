@@ -14,13 +14,14 @@ import {
   type BrandFactSlot,
   type BrandFactsResponse,
   type BrandMarketRecord,
+  type BrandProductLineDto,
   type BrandRecord,
   type ExtractedBrandFactDraft,
   type FactIndexStatus,
   type FactSourceType,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from 'antd';
-import { useEffect, useState } from 'react';
+import { Alert, Button, Checkbox, Input, Modal, Radio, Select, Space } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 import { extractBrandFacts, saveBrandFacts, type ExtractBrandFactsRequest } from '../../lib/brands';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
@@ -37,6 +38,7 @@ import {
 type SlotDraft = {
   id?: string;
   slot: BrandFactSlot;
+  productLineId: string | null;
   title: string;
   content: string;
   sourceType: FactSourceType;
@@ -47,9 +49,12 @@ type SlotDraft = {
 
 type ExtractSourceMode = 'URL_EXTRACT' | 'MANUAL' | 'DOC_UPLOAD';
 
+const GENERAL_SCOPE_VALUE = '__BRAND_GENERAL__';
+
 export type BrandFactsSectionProps = {
   brand: BrandRecord;
   activeBrandMarket: BrandMarketRecord | null;
+  productLines?: readonly BrandProductLineDto[];
   facts: readonly BrandFactRecord[];
   loading: boolean;
   error: string | null;
@@ -59,15 +64,21 @@ export type BrandFactsSectionProps = {
   onFactsSaved: (response: BrandFactsResponse) => void;
 };
 
-function buildInitialDrafts(facts: readonly BrandFactRecord[]): Record<BrandFactSlot, SlotDraft> {
+function buildInitialDrafts(
+  facts: readonly BrandFactRecord[],
+  scopeId: string | null,
+): Record<BrandFactSlot, SlotDraft> {
   const map = {} as Record<BrandFactSlot, SlotDraft>;
   const slots: readonly BrandFactSlot[] = [...CORE_FACT_SLOTS, 'EXTRA_DOC'];
   for (const slot of slots) {
-    const matched = facts.find((item) => item.slot === slot);
+    const matched = facts.find(
+      (item) => item.slot === slot && (item.productLineId ?? null) === scopeId,
+    );
     map[slot] = matched
       ? {
           id: matched.id,
           slot,
+          productLineId: matched.productLineId ?? null,
           title: matched.title || BRAND_FACT_SLOT_LABELS[slot],
           content: matched.content,
           sourceType: matched.sourceType,
@@ -77,6 +88,7 @@ function buildInitialDrafts(facts: readonly BrandFactRecord[]): Record<BrandFact
         }
       : {
           slot,
+          productLineId: scopeId,
           title: BRAND_FACT_SLOT_LABELS[slot],
           content: '',
           sourceType: 'MANUAL',
@@ -91,6 +103,7 @@ function buildInitialDrafts(facts: readonly BrandFactRecord[]): Record<BrandFact
 export function BrandFactsSection({
   brand,
   activeBrandMarket,
+  productLines = [],
   facts,
   loading,
   error,
@@ -100,8 +113,9 @@ export function BrandFactsSection({
   onFactsSaved,
 }: BrandFactsSectionProps) {
   const feedback = useUxFeedback();
+  const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<BrandFactSlot, SlotDraft>>(() =>
-    buildInitialDrafts(facts),
+    buildInitialDrafts(facts, null),
   );
   const [extraDocOpen, setExtraDocOpen] = useState(false);
   const [truthAgreed, setTruthAgreed] = useState(Boolean(truthSignedAt));
@@ -125,17 +139,41 @@ export function BrandFactsSection({
   } | null>(null);
   const [applyMode, setApplyMode] = useState<'replace' | 'append'>('replace');
 
-  const factsSignature = facts.map((f) => `${f.id}:${f.updatedAt}:${f.indexStatus}`).join('|');
+  const hasProductLines = productLines.length > 0;
+  const lineNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const line of productLines) {
+      map.set(line.id, line.name);
+    }
+    return map;
+  }, [productLines]);
+
+  const effectiveScopeId =
+    selectedScopeId && lineNameById.has(selectedScopeId) ? selectedScopeId : null;
 
   useEffect(() => {
-    const next = buildInitialDrafts(facts);
+    if (selectedScopeId && !lineNameById.has(selectedScopeId)) {
+      setSelectedScopeId(null);
+    }
+  }, [selectedScopeId, lineNameById]);
+
+  useEffect(() => {
+    setSelectedScopeId(null);
+  }, [brand.id]);
+
+  const factsSignature = facts
+    .map((f) => `${f.id}:${f.productLineId ?? ''}:${f.updatedAt}:${f.indexStatus}`)
+    .join('|');
+
+  useEffect(() => {
+    const next = buildInitialDrafts(facts, effectiveScopeId);
     setDrafts(next);
     if (next.EXTRA_DOC.content.trim().length > 0) {
       setExtraDocOpen(true);
     }
     setSaveError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brand.id, factsSignature]);
+  }, [brand.id, effectiveScopeId, factsSignature]);
 
   useEffect(() => {
     setTruthAgreed(Boolean(truthSignedAt));
@@ -164,7 +202,9 @@ export function BrandFactsSection({
 
   const updateSlotField = (
     slot: BrandFactSlot,
-    patch: Partial<Pick<SlotDraft, 'title' | 'content' | 'sourceType' | 'sourceUrl'>>,
+    patch: Partial<
+      Pick<SlotDraft, 'title' | 'content' | 'sourceType' | 'sourceUrl' | 'productLineId'>
+    >,
   ) => {
     setDrafts((prev) => ({
       ...prev,
@@ -179,19 +219,48 @@ export function BrandFactsSection({
       return;
     }
 
-    const payloadFacts = allSlots
+    const candidates = allSlots
       .map((slot) => drafts[slot])
       .filter(
-        (item) => item.slot !== 'EXTRA_DOC' || item.content.trim().length > 0 || Boolean(item.id),
-      )
-      .map((item) => ({
-        ...(item.id ? { id: item.id } : {}),
-        slot: item.slot,
-        title: item.title.trim() || BRAND_FACT_SLOT_LABELS[item.slot],
-        content: item.content.trim(),
-        sourceType: item.sourceType,
-        sourceUrl: item.sourceUrl,
-      }));
+        (item) =>
+          (item.slot !== 'EXTRA_DOC' &&
+            (item.content.trim().length > 0 || Boolean(item.id) || !hasProductLines)) ||
+          (item.slot === 'EXTRA_DOC' && (item.content.trim().length > 0 || Boolean(item.id))),
+      );
+
+    // Prevent accidental duplicate (slot, productLineId) collision when reassigning a card to another scope
+    for (const item of candidates) {
+      const targetScope = item.productLineId ?? null;
+      if (targetScope !== effectiveScopeId) {
+        const collision = facts.find(
+          (existing) =>
+            existing.slot === item.slot &&
+            (existing.productLineId ?? null) === targetScope &&
+            existing.id !== item.id,
+        );
+        if (collision) {
+          const scopeLabel = targetScope
+            ? (lineNameById.get(targetScope) ?? '目标产品线')
+            : '品牌通用';
+          setSaveError(
+            `「${scopeLabel}」下已存在「${BRAND_FACT_SLOT_LABELS[item.slot]}」事实卡，请切换到对应范围直接编辑。`,
+          );
+          return;
+        }
+      }
+    }
+
+    const payloadFacts = candidates.map((item) => ({
+      ...(item.id ? { id: item.id } : {}),
+      slot: item.slot,
+      title: item.title.trim() || BRAND_FACT_SLOT_LABELS[item.slot],
+      content: item.content.trim(),
+      sourceType: item.sourceType,
+      sourceUrl: item.sourceUrl,
+      ...(hasProductLines || item.productLineId !== null
+        ? { productLineId: item.productLineId ?? null }
+        : {}),
+    }));
 
     if (payloadFacts.every((item) => item.content.length === 0)) {
       setSaveError('请至少填写一张事实卡内容后再保存');
@@ -352,16 +421,110 @@ export function BrandFactsSection({
         <SignalError message={error} onRetry={onRetry} />
       ) : (
         <>
+          {hasProductLines ? (
+            <div className="gm-brand-fact-scope-bar" data-testid="brand-facts-scope-selector">
+              <div
+                className="gm-brand-mode-tabs gm-brand-fact-scope-tabs"
+                role="tablist"
+                aria-label="事实卡归属范围切换"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={effectiveScopeId === null}
+                  data-testid="fact-scope-tab-general"
+                  className={
+                    effectiveScopeId === null ? 'gm-brand-mode-btn is-active' : 'gm-brand-mode-btn'
+                  }
+                  onClick={() => setSelectedScopeId(null)}
+                >
+                  品牌通用（全部产品线共享）
+                </button>
+                {productLines.map((line) => {
+                  const lineFactCount = facts.filter(
+                    (f) => f.productLineId === line.id && f.content.trim().length > 0,
+                  ).length;
+                  return (
+                    <button
+                      key={line.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={effectiveScopeId === line.id}
+                      data-testid={`fact-scope-tab-${line.id}`}
+                      className={
+                        effectiveScopeId === line.id
+                          ? 'gm-brand-mode-btn is-active'
+                          : 'gm-brand-mode-btn'
+                      }
+                      onClick={() => setSelectedScopeId(line.id)}
+                    >
+                      <span>{line.name}</span>
+                      {lineFactCount > 0 ? (
+                        <span className="gm-brand-fact-scope-count gm-num">({lineFactCount})</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+              {facts.some(
+                (f) =>
+                  (f.productLineId ?? null) !== effectiveScopeId && f.content.trim().length > 0,
+              ) ? (
+                <div
+                  className="gm-brand-fact-other-scopes"
+                  data-testid="brand-facts-other-scopes-summary"
+                >
+                  <span className="gm-brand-fact-other-label">其他归属已存事实卡：</span>
+                  {facts
+                    .filter(
+                      (f) =>
+                        (f.productLineId ?? null) !== effectiveScopeId &&
+                        f.content.trim().length > 0,
+                    )
+                    .map((item) => {
+                      const scopeName = item.productLineId
+                        ? (lineNameById.get(item.productLineId) ?? '指定产品线')
+                        : '品牌通用';
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="gm-brand-fact-other-chip"
+                          onClick={() => setSelectedScopeId(item.productLineId ?? null)}
+                        >
+                          <StatusBadge
+                            tone={item.productLineId ? 'active' : 'neutral'}
+                            size="sm"
+                            label={scopeName}
+                          />
+                          <span>{item.title || BRAND_FACT_SLOT_LABELS[item.slot]}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="gm-brand-facts-grid">
             {CORE_FACT_SLOTS.map((slot) => {
               const card = drafts[slot];
               const charLen = card.content.length;
+              const cardScopeLabel = card.productLineId
+                ? (lineNameById.get(card.productLineId) ?? '指定产品线')
+                : '品牌通用';
               return (
                 <div key={slot} className="gm-brand-fact-card" data-testid={`fact-slot-${slot}`}>
                   <div className="gm-brand-fact-card-head">
                     <div className="gm-brand-fact-title-wrap">
                       <strong>{BRAND_FACT_SLOT_LABELS[slot]}</strong>
                       <StatusBadge tone="neutral" label={FACT_SOURCE_LABELS[card.sourceType]} />
+                      {hasProductLines ? (
+                        <StatusBadge
+                          tone={card.productLineId ? 'active' : 'neutral'}
+                          label={cardScopeLabel}
+                        />
+                      ) : null}
                     </div>
                     <div className="gm-brand-fact-meta">
                       <span className={charLen > 2000 ? 'gm-brand-char-warn' : undefined}>
@@ -372,6 +535,32 @@ export function BrandFactsSection({
                       </span>
                     </div>
                   </div>
+
+                  {hasProductLines ? (
+                    <div className="gm-brand-fact-card-scope-row">
+                      <span className="gm-brand-fact-card-scope-label">事实归属：</span>
+                      <Select<string>
+                        size="small"
+                        aria-label={`${BRAND_FACT_SLOT_LABELS[slot]}归属范围`}
+                        data-testid={`fact-scope-select-${slot}`}
+                        className="gm-brand-fact-scope-select"
+                        disabled={readOnly || saving}
+                        value={card.productLineId ?? GENERAL_SCOPE_VALUE}
+                        options={[
+                          { value: GENERAL_SCOPE_VALUE, label: '品牌通用（全部产品线共享）' },
+                          ...productLines.map((line) => ({
+                            value: line.id,
+                            label: line.name,
+                          })),
+                        ]}
+                        onChange={(val) =>
+                          updateSlotField(slot, {
+                            productLineId: val === GENERAL_SCOPE_VALUE ? null : val,
+                          })
+                        }
+                      />
+                    </div>
+                  ) : null}
 
                   <Input
                     size="small"

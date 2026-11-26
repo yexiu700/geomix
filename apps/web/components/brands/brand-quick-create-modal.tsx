@@ -8,6 +8,9 @@ import {
   BRAND_TRUTH_AGREEMENT_PARAGRAPHS,
   BRAND_TRUTH_AGREEMENT_TITLE,
   BRAND_TRUTH_CHECKBOX_LABEL,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
+  containsCjk,
+  validateGlobalMarketIdentity,
   type BrandFactCoreSlot,
   type BrandFactsResponse,
   type BrandMarketAiSuggestInput,
@@ -114,11 +117,19 @@ export function BrandQuickCreateModal({
   const feedback = useUxFeedback();
   const [form] = Form.useForm<Step1FormValues>();
   const watchedMarkets = Form.useWatch('markets', form);
+  const watchedName = Form.useWatch('name', form);
+  const watchedGlobalName = Form.useWatch('globalLocalBrandName', form);
+  const watchedGlobalCategory = Form.useWatch('globalLocalCategory', form);
   const hasGlobalSelected = Array.isArray(watchedMarkets) && watchedMarkets.includes('GLOBAL');
+  const effectiveGlobalName = watchedGlobalName?.trim() || watchedName?.trim() || '';
+  const hasGlobalCjkIdentity =
+    hasGlobalSelected &&
+    (containsCjk(effectiveGlobalName) || containsCjk(watchedGlobalCategory?.trim() || ''));
   const hasPrefillStep = Boolean(onSuggestMarketConfig && onSaveMarketConfig);
   const [step, setStep] = useState<'create' | 'extract' | 'prefill'>('create');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
 
   // Step 1 extra state: aliases chips + structured competitor rows
   const [aliases, setAliases] = useState<string[]>([]);
@@ -161,6 +172,7 @@ export function BrandQuickCreateModal({
     setStep('create');
     setSubmitting(false);
     setError(null);
+    setAllowCjkGlobalIdentity(false);
     setAliases([]);
     setAliasInput('');
     setCompetitorRows([]);
@@ -191,6 +203,12 @@ export function BrandQuickCreateModal({
       globalOwnedDomainsText: '',
     });
   }, [form, open]);
+
+  useEffect(() => {
+    if (!hasGlobalCjkIdentity) {
+      setAllowCjkGlobalIdentity(false);
+    }
+  }, [hasGlobalCjkIdentity]);
 
   const busy = submitting || extracting || savingFacts || prefillSaving;
 
@@ -243,9 +261,25 @@ export function BrandQuickCreateModal({
 
     const globalLocalBrandName = values.globalLocalBrandName?.trim() || undefined;
     const globalLocalCategory = values.globalLocalCategory?.trim() || undefined;
+    if (values.markets.includes('GLOBAL')) {
+      const globalCheck = validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: globalLocalBrandName,
+        fallbackBrandName: values.name.trim(),
+        localCategory: globalLocalCategory ?? null,
+        allowCjkGlobalIdentity,
+      });
+      if (!globalCheck.ok) {
+        setError(globalCheck.message);
+        return;
+      }
+    }
     const hasGlobalOverrides = Boolean(
       values.markets.includes('GLOBAL') &&
-      (globalLocalBrandName || globalLocalCategory || globalDomains.length > 0),
+      (globalLocalBrandName ||
+        globalLocalCategory ||
+        globalDomains.length > 0 ||
+        allowCjkGlobalIdentity),
     );
 
     setSubmitting(true);
@@ -261,6 +295,7 @@ export function BrandQuickCreateModal({
                       market,
                       ...(globalLocalBrandName ? { localBrandName: globalLocalBrandName } : {}),
                       ...(globalLocalCategory ? { localCategory: globalLocalCategory } : {}),
+                      ...(allowCjkGlobalIdentity ? { allowCjkGlobalIdentity: true } : {}),
                       aliases,
                       ownedDomains: globalDomains.length > 0 ? globalDomains : ownedDomains,
                       competitors,
@@ -445,12 +480,46 @@ export function BrandQuickCreateModal({
       selection,
     });
 
+    const nextLocalBrandName = merged.localBrandName.trim() || createdBrand.name;
+    const nextLocalCategory = merged.localCategory.trim() || null;
+    const includeLocalBrandName =
+      merged.addedCounts.localBrandName ||
+      !(prefillMarket === 'GLOBAL' && containsCjk(nextLocalBrandName));
+    const includeLocalCategory =
+      merged.addedCounts.localCategory ||
+      !(prefillMarket === 'GLOBAL' && nextLocalCategory !== null && containsCjk(nextLocalCategory));
+
+    if (prefillMarket === 'GLOBAL') {
+      if (includeLocalBrandName) {
+        const nameCheck = validateGlobalMarketIdentity({
+          market: 'GLOBAL',
+          localBrandName: nextLocalBrandName,
+          allowCjkGlobalIdentity: false,
+        });
+        if (!nameCheck.ok) {
+          setPrefillError(nameCheck.message);
+          return;
+        }
+      }
+      if (includeLocalCategory) {
+        const categoryCheck = validateGlobalMarketIdentity({
+          market: 'GLOBAL',
+          localCategory: nextLocalCategory,
+          allowCjkGlobalIdentity: false,
+        });
+        if (!categoryCheck.ok) {
+          setPrefillError(categoryCheck.message);
+          return;
+        }
+      }
+    }
+
     setPrefillSaving(true);
     setPrefillError(null);
     try {
       await onSaveMarketConfig(createdBrand.id, prefillMarket, {
-        localBrandName: merged.localBrandName.trim() || createdBrand.name,
-        localCategory: merged.localCategory.trim() || null,
+        ...(includeLocalBrandName ? { localBrandName: nextLocalBrandName } : {}),
+        ...(includeLocalCategory ? { localCategory: nextLocalCategory } : {}),
         aliases: merged.aliases,
         competitors: merged.competitors,
         seedPrompts: merged.seedPrompts,
@@ -705,6 +774,21 @@ export function BrandQuickCreateModal({
                       placeholder="例如：example.com（留空默认继承上方官网域名）"
                     />
                   </Form.Item>
+                  {hasGlobalCjkIdentity ? (
+                    <div className="gm-brand-global-cjk-guard gm-brand-mt-sm">
+                      <Checkbox
+                        data-testid="quick-create-allow-cjk-global-checkbox"
+                        checked={allowCjkGlobalIdentity}
+                        disabled={readOnly || submitting}
+                        onChange={(event) => {
+                          setAllowCjkGlobalIdentity(event.target.checked);
+                          if (event.target.checked && error) setError(null);
+                        }}
+                      >
+                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                      </Checkbox>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

@@ -29,6 +29,7 @@ export type FetchBriefsParams = {
   includeDismissed?: boolean;
   page?: number;
   pageSize?: number;
+  productLineId?: string | null;
 };
 
 function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
@@ -55,6 +56,7 @@ export async function fetchBriefs(
     includeDismissed: params?.includeDismissed,
     page: params?.page,
     pageSize: params?.pageSize,
+    productLineId: params?.productLineId?.trim() || undefined,
   });
   return authorizedV2Request<GeoBriefListResponse>(
     `/brands/${encodeURIComponent(brandId)}/briefs${query}`,

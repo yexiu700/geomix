@@ -43,6 +43,8 @@ describe('design-tokens', () => {
 
   it('configures AntD dark theme with Sonar Ink contrast tokens', () => {
     expect(GM_ANTD_THEME.token.colorPrimary).toBe('#C5F04A');
+    expect(GM_ANTD_THEME.token.fontSizeSM).toBe(12);
+    expect(GM_ANTD_THEME.components.Button.colorPrimary).toBe('#C5F04A');
     expect(GM_ANTD_THEME.components.Button.primaryColor).toBe('#0A0C0B');
     expect(GM_ANTD_THEME.components.Checkbox.colorWhite).toBe('#0A0C0B');
     expect(GM_ANTD_THEME.components.Tooltip.colorBgSpotlight).toBe('#1D2220');

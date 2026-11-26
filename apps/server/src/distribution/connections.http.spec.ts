@@ -86,6 +86,7 @@ type ConnectionRow = {
   authType: string;
   targetLocale?: string | null;
   externalShopDomain?: string | null;
+  oauthExpiresAt?: Date | null;
   lastTestedAt: Date | null;
   lastError: string | null;
   createdAt: Date;
@@ -1190,5 +1191,369 @@ describe('ConnectionsController & ConnectionsService HTTP Stack (/api/v2/brands/
     );
     expect(clearLocaleRes.status).toBe(200);
     expect(clearLocaleRes.json.data.targetLocale).toBeNull();
+  });
+
+  it('blocks activating revoked Shopify OAuth without credentials while allowing credential rotation and normal DISABLED <-> ACTIVE toggle (#385)', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+
+    // 1. Normal connection pause -> resume (intact ciphertext) succeeds
+    const created = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Toggle Shopify Store',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { accessToken: 'shpat_toggle_valid_11111' },
+      },
+    });
+    expect(created.status).toBe(200);
+    const connId = created.json.data.id;
+
+    const disableRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: { status: 'DISABLED' },
+      },
+    );
+    expect(disableRes.status).toBe(200);
+    expect(disableRes.json.data.status).toBe('DISABLED');
+
+    const resumeRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: { status: 'ACTIVE' },
+      },
+    );
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.json.data.status).toBe('ACTIVE');
+
+    // 2. Simulate Shopify app/uninstalled webhook revoking OAuth credentials
+    const row = db.connections.find((c) => c.id === connId);
+    expect(row).toBeDefined();
+    row!.authType = 'OAUTH';
+    row!.status = 'DISABLED';
+    row!.credentialsCiphertext = '';
+    row!.credentialsIv = '';
+    row!.credentialsTag = '';
+    row!.credentialHint = '';
+
+    // Fake-activating revoked OAuth connection without credentials MUST return 400
+    const blockedActivate = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'ACTIVE' },
+    });
+    expect(blockedActivate.status).toBe(400);
+    expect(blockedActivate.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(blockedActivate.json.msg).toContain('重新授权');
+    expect(row!.status).toBe('DISABLED');
+
+    // Forged oauthAccessToken on POST /connections MUST be rejected with 400
+    const forgedCreate = await apiFetch('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Forged OAuth Create',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { oauthAccessToken: 'forged_oauth_create_token' },
+      },
+    });
+    expect(forgedCreate.status).toBe(400);
+    expect(forgedCreate.json.code).toBe(API_ERROR.BAD_REQUEST);
+
+    const forgedCreateWithAccessToken = await apiFetch('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Forged OAuth Create 2',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: {
+          accessToken: 'shpat_valid_12345',
+          oauthAccessToken: 'forged_oauth_create_token',
+        },
+      },
+    });
+    expect(forgedCreateWithAccessToken.status).toBe(400);
+    expect(forgedCreateWithAccessToken.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(forgedCreateWithAccessToken.json.msg).toContain('重新授权');
+
+    // Forged oauthAccessToken on PATCH revoked OAuth MUST be rejected with 400 and keep status DISABLED
+    const forgedPatch = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: {
+        status: 'ACTIVE',
+        credentials: { oauthAccessToken: 'forged_oauth_token_12345' },
+      },
+    });
+    expect(forgedPatch.status).toBe(400);
+    expect(forgedPatch.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(forgedPatch.json.msg).toContain('重新授权');
+    expect(row!.status).toBe('DISABLED');
+
+    // Forged oauthAccessToken paired with blank accessToken MUST also be rejected with 400
+    const forgedPatchVariant = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: {
+        status: 'ACTIVE',
+        credentials: { accessToken: '   ', oauthAccessToken: 'forged_2' },
+      },
+    });
+    expect(forgedPatchVariant.status).toBe(400);
+    expect(forgedPatchVariant.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(row!.status).toBe('DISABLED');
+
+    // Simultaneous credential rotation + status: 'ACTIVE' succeeds and switches to API_KEY
+    const rotateRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: {
+          status: 'ACTIVE',
+          credentials: { accessToken: 'shpat_rotated_valid_99999' },
+        },
+      },
+    );
+    expect(rotateRes.status).toBe(200);
+    expect(rotateRes.json.data.status).toBe('ACTIVE');
+    expect(rotateRes.json.data.authType).toBe('API_KEY');
+  });
+
+  it('Tier 5 #1: enforces INVALID state-machine, corrupted-ciphertext/expired-OAuth re-enable guards, and preserves DISABLED on test() success', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+
+    const created = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'WORDPRESS',
+        displayName: 'WP State Guard',
+        siteBaseUrl: `${mockCmsBaseUrl}/wp`,
+        credentials: { username: 'admin', appPassword: 'wp_valid_secret_123456' },
+      },
+    });
+    expect(created.status).toBe(200);
+    const connId = created.json.data.id;
+    const getRow = (id: string) => db.connections.find((c) => c.id === id)!;
+
+    // 1. Manually DISABLED connection: test() succeeds WITHOUT flipping status back to ACTIVE
+    const disableRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${connId}`,
+      { method: 'PATCH', token: tokenA, body: { status: 'DISABLED' } },
+    );
+    expect(disableRes.status).toBe(200);
+    expect(disableRes.json.data.status).toBe('DISABLED');
+
+    const testWhileDisabled = await apiFetch<ChannelConnectionTestResultDto>(
+      `/api/v2/brands/brand_a/connections/${connId}/test`,
+      { method: 'POST', token: tokenA, body: {} },
+    );
+    expect(testWhileDisabled.status).toBe(200);
+    expect(testWhileDisabled.json.data.ok).toBe(true);
+    expect(testWhileDisabled.json.data.status).toBe('DISABLED');
+    expect(getRow(connId).status).toBe('DISABLED');
+    expect(getRow(connId).lastError).toBeNull();
+    expect(getRow(connId).lastTestedAt).toBeInstanceOf(Date);
+
+    // 2. Corrupted ciphertext on DISABLED connection -> PATCH ACTIVE rejected with 400
+    const rowBeforeCorrupt = getRow(connId);
+    const savedCiphertext = rowBeforeCorrupt.credentialsCiphertext;
+    const savedIv = rowBeforeCorrupt.credentialsIv;
+    const savedTag = rowBeforeCorrupt.credentialsTag;
+    rowBeforeCorrupt.credentialsCiphertext = 'NOT_VALID_CIPHERTEXT';
+    rowBeforeCorrupt.credentialsIv = 'NOT_VALID_IV';
+    rowBeforeCorrupt.credentialsTag = 'NOT_VALID_TAG';
+
+    const corruptActivate = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'ACTIVE' },
+    });
+    expect(corruptActivate.status).toBe(400);
+    expect(corruptActivate.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(connId).status).toBe('DISABLED');
+
+    // Restore valid ciphertext
+    getRow(connId).credentialsCiphertext = savedCiphertext;
+    getRow(connId).credentialsIv = savedIv;
+    getRow(connId).credentialsTag = savedTag;
+
+    // 3. INVALID connection -> rejects both INVALID->ACTIVE and INVALID->DISABLED without new credentials
+    getRow(connId).status = 'INVALID';
+    getRow(connId).lastError = '401 Unauthorized: token revoked';
+
+    const invalidToActive = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'ACTIVE' },
+    });
+    expect(invalidToActive.status).toBe(400);
+    expect(invalidToActive.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(connId).status).toBe('INVALID');
+
+    const invalidToDisabled = await apiFetch(`/api/v2/brands/brand_a/connections/${connId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'DISABLED' },
+    });
+    expect(invalidToDisabled.status).toBe(400);
+    expect(invalidToDisabled.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(connId).status).toBe('INVALID');
+
+    // Passing test() on INVALID connection recovers to ACTIVE
+    const testRecover = await apiFetch<ChannelConnectionTestResultDto>(
+      `/api/v2/brands/brand_a/connections/${connId}/test`,
+      { method: 'POST', token: tokenA, body: {} },
+    );
+    expect(testRecover.status).toBe(200);
+    expect(testRecover.json.data.ok).toBe(true);
+    expect(testRecover.json.data.status).toBe('ACTIVE');
+    expect(getRow(connId).status).toBe('ACTIVE');
+    expect(getRow(connId).lastError).toBeNull();
+
+    // 4. Expired Shopify OAuth connection -> rejects DISABLED->ACTIVE with 400
+    const shopifyRes = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Shopify Expired OAuth',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { accessToken: 'shpat_oauth_expired_test_1234' },
+      },
+    });
+    expect(shopifyRes.status).toBe(200);
+    const shopId = shopifyRes.json.data.id;
+    getRow(shopId).authType = 'OAUTH';
+    getRow(shopId).status = 'DISABLED';
+    getRow(shopId).oauthExpiresAt = new Date(Date.now() - 3600_000);
+
+    const expiredActivate = await apiFetch(`/api/v2/brands/brand_a/connections/${shopId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { status: 'ACTIVE' },
+    });
+    expect(expiredActivate.status).toBe(400);
+    expect(expiredActivate.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(expiredActivate.json.msg).toContain('过期');
+    expect(getRow(shopId).status).toBe('DISABLED');
+  });
+
+  it('Tier 5 R2: rejects arbitrary unknown credential keys (BYPASS-1A/1B/1C) and clears stale lastError on valid credential rotation (BYPASS-1D)', async () => {
+    const tokenA = tokenForUser(db.users[0]!);
+    const getRow = (id: string) => db.connections.find((c) => c.id === id)!;
+
+    // Unknown credential key on POST /connections is also rejected with 400
+    const badCreate = await apiFetch('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'WORDPRESS',
+        displayName: 'WP Unknown Key Create',
+        siteBaseUrl: `${mockCmsBaseUrl}/wp`,
+        credentials: { username: 'admin', appPassword: 'wp_secret_create_1234', noop: '1' },
+      },
+    });
+    expect(badCreate.status).toBe(400);
+    expect(badCreate.json.code).toBe(API_ERROR.BAD_REQUEST);
+
+    // Seed an INVALID WordPress connection with a stale lastError
+    const createdWp = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'WORDPRESS',
+        displayName: 'WP Bypass Guard',
+        siteBaseUrl: `${mockCmsBaseUrl}/wp`,
+        credentials: { username: 'admin', appPassword: 'wp_secret_before_rotation' },
+      },
+    });
+    expect(createdWp.status).toBe(200);
+    const wpId = createdWp.json.data.id;
+    getRow(wpId).status = 'INVALID';
+    getRow(wpId).lastError = '401 Unauthorized: token revoked';
+
+    // BYPASS-1A: INVALID WordPress + PATCH { credentials: { noop: '1' }, status: 'ACTIVE' } -> 400
+    const bypass1a = await apiFetch(`/api/v2/brands/brand_a/connections/${wpId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { credentials: { noop: '1' }, status: 'ACTIVE' },
+    });
+    expect(bypass1a.status).toBe(400);
+    expect(bypass1a.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(wpId).status).toBe('INVALID');
+    expect(getRow(wpId).lastError).toBe('401 Unauthorized: token revoked');
+
+    // BYPASS-1B: INVALID WordPress + PATCH { credentials: { noop: '1' }, status: 'DISABLED' } -> 400
+    const bypass1b = await apiFetch(`/api/v2/brands/brand_a/connections/${wpId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { credentials: { noop: '1' }, status: 'DISABLED' },
+    });
+    expect(bypass1b.status).toBe(400);
+    expect(bypass1b.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(wpId).status).toBe('INVALID');
+
+    // BYPASS-1C: DISABLED expired Shopify OAuth + PATCH { credentials: { noop: '1' }, status: 'ACTIVE' } -> 400
+    const createdShop = await apiFetch<ChannelConnectionDto>('/api/v2/brands/brand_a/connections', {
+      method: 'POST',
+      token: tokenA,
+      body: {
+        market: 'GLOBAL',
+        provider: 'SHOPIFY',
+        displayName: 'Shopify Expired OAuth Bypass Guard',
+        siteBaseUrl: `${mockCmsBaseUrl}/shopify`,
+        credentials: { accessToken: 'shpat_oauth_expired_bypass_1234' },
+      },
+    });
+    expect(createdShop.status).toBe(200);
+    const shopId = createdShop.json.data.id;
+    getRow(shopId).authType = 'OAUTH';
+    getRow(shopId).status = 'DISABLED';
+    getRow(shopId).oauthExpiresAt = new Date(Date.now() - 3600_000);
+
+    const bypass1c = await apiFetch(`/api/v2/brands/brand_a/connections/${shopId}`, {
+      method: 'PATCH',
+      token: tokenA,
+      body: { credentials: { noop: '1' }, status: 'ACTIVE' },
+    });
+    expect(bypass1c.status).toBe(400);
+    expect(bypass1c.json.code).toBe(API_ERROR.BAD_REQUEST);
+    expect(getRow(shopId).status).toBe('DISABLED');
+    expect(getRow(shopId).authType).toBe('OAUTH');
+
+    // BYPASS-1D: Legitimate credential rotation on INVALID connection with status: 'ACTIVE' clears stale lastError
+    const rotateRes = await apiFetch<ChannelConnectionDto>(
+      `/api/v2/brands/brand_a/connections/${wpId}`,
+      {
+        method: 'PATCH',
+        token: tokenA,
+        body: {
+          credentials: { appPassword: 'wp_rotated_valid_password_9999' },
+          status: 'ACTIVE',
+        },
+      },
+    );
+    expect(rotateRes.status).toBe(200);
+    expect(rotateRes.json.data.status).toBe('ACTIVE');
+    expect(rotateRes.json.data.lastError).toBeNull();
+    expect(getRow(wpId).status).toBe('ACTIVE');
+    expect(getRow(wpId).lastError).toBeNull();
   });
 });

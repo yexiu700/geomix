@@ -928,11 +928,27 @@ describe('DistributionController & DistributionService HTTP v2 (real ApiModule)'
     });
     expect(badConn.status).toBe(400);
 
-    // Disabled connection -> 400
+    // Disabled connection rebind -> 400
     const disabledConn = await req('PATCH', '/api/v2/distributions/task_wp_blocked', tokenA, {
       connectionId: 'conn_wp_disabled',
     });
     expect(disabledConn.status).toBe(400);
+
+    // Tier 5 #4: Saving edits with unchanged DISABLED connectionId succeeds (publish still blocks)
+    const prevConnId = tasks.get('task_wp_blocked')!.connectionId;
+    tasks.get('task_wp_blocked')!.connectionId = 'conn_wp_disabled';
+    const unchangedDisabledPatch = await req<GeoDistributionTaskDto>(
+      'PATCH',
+      '/api/v2/distributions/task_wp_blocked',
+      tokenA,
+      {
+        variantTitle: 'Edited While Connection Paused',
+        connectionId: 'conn_wp_disabled',
+      },
+    );
+    expect(unchangedDisabledPatch.status).toBe(200);
+    expect(unchangedDisabledPatch.body.data.variantTitle).toBe('Edited While Connection Paused');
+    tasks.get('task_wp_blocked')!.connectionId = prevConnId;
 
     // INVALID connection -> 400 (consistent with publishTask)
     const invalidConn = await req('PATCH', '/api/v2/distributions/task_wp_blocked', tokenA, {

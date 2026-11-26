@@ -67,6 +67,18 @@ type EncryptedRowSlice = {
   keyVersion: number;
 };
 
+const ALLOWED_CREDENTIAL_KEYS: Record<L1ChannelProvider, readonly string[]> = {
+  SHOPIFY: ['accessToken'],
+  WORDPRESS: ['username', 'appPassword'],
+  WEBFLOW: ['apiToken'],
+  WEBHOOK: ['signingSecret'],
+  GHOST: ['adminApiKey'],
+  DEVTO: ['apiKey'],
+  HASHNODE: ['apiToken'],
+  GITHUB_MDX: ['token'],
+  WECHAT_OFFICIAL: ['appId', 'appSecret'],
+};
+
 function normalizeConfigRecord(raw: unknown): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return {};
@@ -178,6 +190,18 @@ export class ConnectionsService {
     await this.assertSafeOptionalApiBaseUrl(input.configJson);
     const targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, input.market);
 
+    if (
+      input.provider === 'SHOPIFY' &&
+      Object.prototype.hasOwnProperty.call(input.credentials, 'oauthAccessToken')
+    ) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        'Shopify OAuth 令牌只能通过「重新授权」完成 OAuth 流程写入，手动更新请填写 accessToken',
+      );
+    }
+
+    this.assertAllowedCredentialKeys(input.provider, input.credentials);
     const trimmedCredentials = this.trimCredentials(input.credentials);
     this.validateProviderCredentials(input.provider, trimmedCredentials);
 
@@ -251,17 +275,25 @@ export class ConnectionsService {
       updateData.configJson = mergedConfig as Prisma.InputJsonValue;
     }
 
-    if (input.status !== undefined) {
-      updateData.status = input.status;
-    }
-
     if (input.targetLocale !== undefined) {
       const market = (existing.brandMarket?.market === 'CN' ? 'CN' : 'GLOBAL') as GeoMarket;
       updateData.targetLocale = this.validateTargetLocaleForMarket(input.targetLocale, market);
     }
 
+    let hasNewCredentials = false;
     if (input.credentials !== undefined) {
-      const nonBlankPatch = this.extractNonBlankCredentials(input.credentials);
+      if (
+        existing.provider === 'SHOPIFY' &&
+        Object.prototype.hasOwnProperty.call(input.credentials, 'oauthAccessToken')
+      ) {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          'Shopify OAuth 令牌只能通过「重新授权」完成 OAuth 流程写入，手动更新请填写 accessToken',
+        );
+      }
+      this.assertAllowedCredentialKeys(existing.provider, input.credentials);
+      const nonBlankPatch = this.extractNonBlankCredentials(input.credentials, existing.provider);
       if (Object.keys(nonBlankPatch).length > 0) {
         let baseCredentials: ConnectorSecrets = {};
         try {
@@ -296,7 +328,73 @@ export class ConnectionsService {
         updateData.credentialsTag = envelope.tag;
         updateData.keyVersion = envelope.keyVersion;
         updateData.credentialHint = this.buildCredentialHint(existing.provider, mergedCredentials);
+        hasNewCredentials = true;
       }
+    }
+
+    const effectiveAuthType =
+      typeof updateData.authType === 'string' ? updateData.authType : existing.authType;
+
+    if (hasNewCredentials) {
+      updateData.lastError = null;
+    }
+
+    if (input.status !== undefined) {
+      if (!hasNewCredentials && existing.status === 'INVALID') {
+        throw new ApiError(
+          400,
+          API_ERROR.BAD_REQUEST,
+          '该渠道连接当前处于异常状态，请先更新凭据或点击「测试连接」通过验证后再变更状态',
+        );
+      }
+      if (input.status === 'ACTIVE') {
+        if (!hasNewCredentials) {
+          const hasStoredCredentials =
+            Boolean(existing.credentialsCiphertext?.trim()) &&
+            Boolean(existing.credentialsIv?.trim()) &&
+            Boolean(existing.credentialsTag?.trim());
+          if (!hasStoredCredentials) {
+            const message =
+              existing.provider === 'SHOPIFY' && existing.authType === 'OAUTH'
+                ? '该 Shopify OAuth 连接授权凭据已清除或失效，无法直接重新启用，请点击「重新授权」完成 OAuth 授权'
+                : '该渠道连接缺少有效凭据，请先更新凭据后再重新启用';
+            throw new ApiError(400, API_ERROR.BAD_REQUEST, message);
+          }
+        }
+        if (
+          existing.provider === 'SHOPIFY' &&
+          effectiveAuthType === 'OAUTH' &&
+          existing.oauthExpiresAt &&
+          existing.oauthExpiresAt.getTime() <= Date.now()
+        ) {
+          throw new ApiError(
+            400,
+            API_ERROR.BAD_REQUEST,
+            '该 Shopify OAuth 授权已过期，无法直接重新启用，请点击「重新授权」完成 OAuth 授权',
+          );
+        }
+        if (!hasNewCredentials) {
+          let storedCredentials: ConnectorSecrets;
+          try {
+            storedCredentials = this.decryptCredentials(existing);
+          } catch (error) {
+            if (error instanceof SecretBoxError) {
+              if (error.code === 'MISSING_KEY' || error.code === 'INVALID_KEY') {
+                throw new ApiError(503, API_ERROR.UPSTREAM_UNAVAILABLE, error.message);
+              }
+              const message =
+                existing.provider === 'SHOPIFY' && existing.authType === 'OAUTH'
+                  ? '该 Shopify OAuth 连接授权凭据已损坏或失效，请点击「重新授权」完成 OAuth 授权'
+                  : '该渠道连接存储的凭据已损坏或无法解密，请先更新凭据后再重新启用';
+              throw new ApiError(400, API_ERROR.BAD_REQUEST, message);
+            }
+            throw error;
+          }
+          this.validateProviderCredentials(existing.provider, storedCredentials);
+        }
+        updateData.lastError = null;
+      }
+      updateData.status = input.status;
     }
 
     const updated = await this.prisma.scoped.channelConnection.update({
@@ -446,10 +544,11 @@ export class ConnectionsService {
       }
       const nextConfig = configChanged ? (backfilledConfig as Prisma.InputJsonValue) : undefined;
 
+      const nextStatus = existing.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE';
       await this.prisma.scoped.channelConnection.update({
         where: { id: existing.id },
         data: {
-          status: 'ACTIVE',
+          status: nextStatus,
           lastTestedAt: now,
           lastError: null,
           ...(nextConfig ? { configJson: nextConfig } : {}),
@@ -458,7 +557,7 @@ export class ConnectionsService {
 
       return {
         ok: true,
-        status: 'ACTIVE',
+        status: nextStatus,
         message: this.sanitizeConnectionError(result.message, credentials, configRecord),
         testedAt: now.toISOString(),
         targets: result.targets,
@@ -584,10 +683,29 @@ export class ConnectionsService {
     return out;
   }
 
-  private extractNonBlankCredentials(raw: Record<string, string>): ConnectorSecrets {
+  private assertAllowedCredentialKeys(
+    provider: L1ChannelProvider,
+    raw: Record<string, string>,
+  ): void {
+    const allowed = new Set(ALLOWED_CREDENTIAL_KEYS[provider]);
+    const unknownKeys = Object.keys(raw).filter((key) => !allowed.has(key));
+    if (unknownKeys.length > 0) {
+      throw new ApiError(
+        400,
+        API_ERROR.BAD_REQUEST,
+        `渠道 ${provider} 不支持的凭据字段：${unknownKeys.join(', ')}`,
+      );
+    }
+  }
+
+  private extractNonBlankCredentials(
+    raw: Record<string, string>,
+    provider: L1ChannelProvider,
+  ): ConnectorSecrets {
+    const allowed = new Set(ALLOWED_CREDENTIAL_KEYS[provider]);
     const out: ConnectorSecrets = {};
     for (const [key, value] of Object.entries(raw)) {
-      if (typeof value !== 'string') continue;
+      if (!allowed.has(key) || typeof value !== 'string') continue;
       const trimmed = value.trim();
       if (trimmed.length > 0) {
         out[key] = trimmed;

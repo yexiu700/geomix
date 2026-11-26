@@ -257,7 +257,7 @@ function AttributionSvgChart({ locale }: { locale: MarketingLocale }) {
                 y={y + 4}
                 textAnchor="end"
                 fill={GM.chart.axis}
-                fontSize="10"
+                fontSize="12"
                 className="gm-num"
               >
                 {tick}%
@@ -297,7 +297,7 @@ function AttributionSvgChart({ locale }: { locale: MarketingLocale }) {
                 y={pt.yCited - 9}
                 textAnchor="middle"
                 fill={isPeak ? GM.phosphor : GM.fg.f1}
-                fontSize="10.5"
+                fontSize="12"
                 fontWeight={isPeak ? '600' : '500'}
                 className="gm-num"
               >
@@ -308,7 +308,7 @@ function AttributionSvgChart({ locale }: { locale: MarketingLocale }) {
                 y={height - 10}
                 textAnchor="middle"
                 fill={GM.chart.axis}
-                fontSize="11"
+                fontSize="12"
                 className="gm-num"
               >
                 {pt.day}

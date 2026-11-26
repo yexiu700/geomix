@@ -19,6 +19,9 @@ const updateBrandMock = vi.fn();
 const updateBrandMarketMock = vi.fn();
 const deleteBrandMock = vi.fn();
 
+const listBrandProductLinesMock = vi.fn();
+const fetchActionHomeMock = vi.fn();
+
 vi.mock('../../lib/brands', () => ({
   listBrands: vi.fn(),
   getBrand: vi.fn(),
@@ -27,6 +30,11 @@ vi.mock('../../lib/brands', () => ({
   deleteBrand: (...args: unknown[]) => deleteBrandMock(...args),
   enableBrandMarket: vi.fn(),
   updateBrandMarket: (...args: unknown[]) => updateBrandMarketMock(...args),
+  suggestBrandMarketConfig: vi.fn(),
+  listBrandProductLines: (...args: unknown[]) => listBrandProductLinesMock(...args),
+  createBrandProductLine: vi.fn(),
+  updateBrandProductLine: vi.fn(),
+  deleteBrandProductLine: vi.fn(),
   getBrandFacts: (...args: unknown[]) => getBrandFactsMock(...args),
   saveBrandFacts: (...args: unknown[]) => saveBrandFactsMock(...args),
   extractBrandFacts: (...args: unknown[]) => extractBrandFactsMock(...args),
@@ -35,6 +43,10 @@ vi.mock('../../lib/brands', () => ({
   updateBrandMediaAlt: (...args: unknown[]) => updateBrandMediaAltMock(...args),
   deleteBrandMedia: (...args: unknown[]) => deleteBrandMediaMock(...args),
   resolveMediaUrl: (u: string | null | undefined) => u ?? '',
+}));
+
+vi.mock('../../lib/home', () => ({
+  fetchActionHome: (...args: unknown[]) => fetchActionHomeMock(...args),
 }));
 
 const listChannelConnectionsMock = vi.fn();
@@ -201,6 +213,23 @@ beforeEach(() => {
   vi.clearAllMocks();
   listChannelConnectionsMock.mockResolvedValue({ items: [] });
   listExtensionTokensMock.mockResolvedValue({ items: [] });
+  listBrandProductLinesMock.mockResolvedValue({ items: [] });
+  fetchActionHomeMock.mockResolvedValue({
+    brandId: 'b-1',
+    brandMarketId: 'b-1-CN',
+    market: 'CN',
+    health: {
+      days: 14,
+      mentionRatePct: 0,
+      shareOfVoicePct: 0,
+      avgPosition: null,
+      ownedCitationRatePct: 0,
+      completedChecks: 0,
+    },
+    topBriefs: [],
+    recentArticles: [],
+    retestBudget: null,
+  });
 });
 
 afterEach(async () => {
@@ -1018,5 +1047,164 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
     expect(screen.getByText('还没有创建任何品牌')).toBeTruthy();
     expect(screen.getByRole('button', { name: '60 秒创建首个品牌' })).toBeTruthy();
+  });
+
+  it('shows zero product-line scope UI when brand has 0 lines, and renders scoped fact tabs when >= 1 line (#387)', async () => {
+    const b1 = makeBrand('b-scope-1', '多线品牌');
+    const now = '2026-11-20T02:30:00.000Z';
+    listBrandProductLinesMock.mockResolvedValueOnce({
+      items: [
+        {
+          id: 'pl-power',
+          brandId: 'b-scope-1',
+          name: 'Power Station Series',
+          localNamesJson: {},
+          category: 'Portable Power Station',
+          localCategoriesJson: {},
+          seedPromptsJson: {},
+          competitorsJson: {},
+          sortOrder: 0,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'pl-nas',
+          brandId: 'b-scope-1',
+          name: 'Home NAS Series',
+          localNamesJson: {},
+          category: 'Home NAS',
+          localCategoriesJson: {},
+          seedPromptsJson: {},
+          competitorsJson: {},
+          sortOrder: 1,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+    getBrandFactsMock.mockResolvedValueOnce({
+      brandId: 'b-scope-1',
+      truthAgreementSignedAt: now,
+      totalChars: 60,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [
+        {
+          id: 'f-gen',
+          brandId: 'b-scope-1',
+          productLineId: null,
+          slot: 'CREDENTIALS',
+          title: 'Brand Master ISO',
+          content: 'Global ISO-9001 certified.',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'f-power',
+          brandId: 'b-scope-1',
+          productLineId: 'pl-power',
+          slot: 'PRODUCT_SPECS',
+          title: 'Power Station Specs',
+          content: '3600W pure sine wave.',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'f-nas',
+          brandId: 'b-scope-1',
+          productLineId: 'pl-nas',
+          slot: 'PRODUCT_SPECS',
+          title: 'Home NAS Specs',
+          content: '8-bay 10GbE RAID.',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+    listBrandMediaMock.mockResolvedValueOnce(makeMediaResponse('b-scope-1'));
+
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+
+    renderWorkspace();
+
+    const factsSection = await waitFor(() => {
+      const el = document.getElementById('brand-section-facts');
+      expect(el).toBeTruthy();
+      expect(el!.textContent).toContain('Power Station Series');
+      expect(el!.textContent).toContain('Home NAS Series');
+      return el!;
+    });
+
+    // Switch to Power Station Series tab -> shows its PRODUCT_SPECS fact without dropping Home NAS Specs
+    fireEvent.click(within(factsSection).getByTestId('fact-scope-tab-pl-power'));
+    const specsCard = within(factsSection).getByTestId('fact-slot-PRODUCT_SPECS');
+    expect((within(specsCard).getByLabelText('核心产品与参数') as HTMLTextAreaElement).value).toBe(
+      '3600W pure sine wave.',
+    );
+
+    // Save in Power Station scope submits productLineId: 'pl-power'
+    saveBrandFactsMock.mockResolvedValueOnce({
+      brandId: 'b-scope-1',
+      truthAgreementSignedAt: now,
+      totalChars: 60,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+    fireEvent.click(within(factsSection).getByRole('button', { name: '保存品牌事实卡' }));
+    await waitFor(() => {
+      expect(saveBrandFactsMock).toHaveBeenCalledWith(
+        'b-scope-1',
+        expect.objectContaining({
+          facts: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'f-power',
+              slot: 'PRODUCT_SPECS',
+              productLineId: 'pl-power',
+            }),
+          ]),
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('Tier 5 #10: skips redundant loadProductLines call when mounted inside ConsoleShell (managesProductLines: true)', async () => {
+    const b1 = makeBrand('b-dup-1', '品牌甲');
+    const b2 = makeBrand('b-dup-2', '品牌乙');
+    getBrandFactsMock.mockResolvedValue(makeFactsResponse('b-dup-1'));
+    listBrandMediaMock.mockResolvedValue(makeMediaResponse('b-dup-1'));
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b1, { activate: true, persistStorage: window.localStorage });
+    useWorkspaceStore
+      .getState()
+      .upsertBrand(b2, { activate: false, persistStorage: window.localStorage });
+
+    renderWorkspace({ managesProductLines: true });
+    await waitFor(() => {
+      expect(getBrandFactsMock).toHaveBeenCalledWith('b-dup-1', expect.anything());
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
+
+    // Switch brand while on /brands -> BrandsWorkspace still leaves product-line loading to ConsoleShell
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand('b-dup-2', undefined, window.localStorage);
+    });
+    await waitFor(() => {
+      expect(getBrandFactsMock).toHaveBeenCalledWith('b-dup-2', expect.anything());
+    });
+    expect(listBrandProductLinesMock).not.toHaveBeenCalled();
   });
 });

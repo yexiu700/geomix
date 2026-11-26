@@ -14,6 +14,7 @@ import {
   type AnnouncementRow,
   type PriceRow,
 } from '../../lib/admin-client';
+import { StatusBadge } from '../ui';
 
 type PriceDraft = {
   unitPoints: string;
@@ -156,24 +157,15 @@ export function PricingAdmin({
 
   return (
     <section aria-label="价格">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+      <div className="gm-admin-head">
+        <Typography.Title level={3} className="gm-admin-title">
           价格管理
         </Typography.Title>
         <Space wrap>
           {hasUnsaved ? (
-            <Tag color="warning">有 {dirtyRows.length} 项未保存修改</Tag>
+            <StatusBadge tone="warning">有 {dirtyRows.length} 项未保存修改</StatusBadge>
           ) : (
-            <Tag>全部已保存</Tag>
+            <StatusBadge tone="neutral">全部已保存</StatusBadge>
           )}
           <Button
             disabled={!hasUnsaved || savingBatch || savingAction !== null}
@@ -199,9 +191,9 @@ export function PricingAdmin({
           </Button>
         </Space>
       </div>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-admin-alert" /> : null}
       {notice ? (
-        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={notice} className="gm-admin-alert" />
       ) : null}
       <Table<PriceRow>
         rowKey="action"
@@ -217,7 +209,7 @@ export function PricingAdmin({
               return (
                 <Space size={6} wrap>
                   <Typography.Text strong>{`${label}（${unit}）`}</Typography.Text>
-                  {isRowDirty(row) ? <Tag color="warning">未保存</Tag> : null}
+                  {isRowDirty(row) ? <StatusBadge tone="warning">未保存</StatusBadge> : null}
                 </Space>
               );
             },
@@ -251,7 +243,7 @@ export function PricingAdmin({
                 <div>
                   <Input
                     aria-label={`${label} 点数`}
-                    style={{ width: 150 }}
+                    className="gm-admin-price-input"
                     status={invalid ? 'error' : undefined}
                     suffix={unit}
                     value={drafts[row.action]?.unitPoints ?? ''}
@@ -269,10 +261,7 @@ export function PricingAdmin({
                     }}
                   />
                   {invalid ? (
-                    <Typography.Text
-                      type="danger"
-                      style={{ display: 'block', fontSize: 12, marginTop: 2 }}
-                    >
+                    <Typography.Text type="danger" className="gm-admin-price-err">
                       {allowsZero(row.action)
                         ? '价格不正确（请填写 0~1000000 的非负整数）'
                         : '价格不正确（请填写 1~1000000 的正整数）'}
@@ -457,7 +446,7 @@ export function AnnouncementAdmin({
 
   return (
     <section aria-label="公告">
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
+      <Typography.Title level={3} className="gm-admin-title gm-admin-title--spaced">
         公告管理
       </Typography.Title>
       <Form
@@ -466,13 +455,13 @@ export function AnnouncementAdmin({
         scrollToFirstError
         initialValues={{ content: '' }}
         onFinish={(values) => void handlePublish(values)}
-        style={{ marginBottom: 12 }}
+        className="gm-admin-publish-form"
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <div className="gm-admin-publish-row">
           <Form.Item
             label="公告内容"
             name="content"
-            style={{ flex: 1, marginBottom: 0 }}
+            className="gm-admin-publish-field"
             rules={[
               { required: true, whitespace: true, message: '请填写公告内容' },
               { max: 200, message: '公告最多 200 字' },
@@ -484,16 +473,16 @@ export function AnnouncementAdmin({
               placeholder="写一条 GeoMix 公告（最多 200 字）"
             />
           </Form.Item>
-          <Form.Item label=" " style={{ marginBottom: 0 }}>
+          <Form.Item label=" " className="gm-admin-form-item-tight">
             <Button type="primary" htmlType="submit" loading={publishing}>
               发布
             </Button>
           </Form.Item>
         </div>
       </Form>
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-admin-alert" /> : null}
       {notice ? (
-        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={notice} className="gm-admin-alert" />
       ) : null}
       <Table<AnnouncementRow>
         rowKey="id"
@@ -572,7 +561,7 @@ export function AnnouncementAdmin({
       >
         <Form form={editForm} layout="vertical" scrollToFirstError>
           {editModalError ? (
-            <Alert type="error" showIcon message={editModalError} style={{ marginBottom: 12 }} />
+            <Alert type="error" showIcon message={editModalError} className="gm-admin-alert" />
           ) : null}
           <Form.Item
             label="公告内容"
@@ -589,17 +578,21 @@ export function AnnouncementAdmin({
               placeholder="请输入公告内容（最多 200 字）"
             />
           </Form.Item>
-          <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+          <Space wrap className="gm-admin-modal-row">
             <Form.Item
               label="启用状态"
               name="enabled"
               valuePropName="checked"
-              style={{ marginBottom: 0 }}
+              className="gm-admin-form-item-tight"
             >
               <Switch aria-label="编辑公告启用" />
             </Form.Item>
-            <Form.Item label="排序权重" name="sort" style={{ marginBottom: 0 }}>
-              <Input aria-label="编辑公告排序" style={{ width: 100 }} placeholder="0 ~ 9999" />
+            <Form.Item label="排序权重" name="sort" className="gm-admin-form-item-tight">
+              <Input
+                aria-label="编辑公告排序"
+                className="gm-admin-sort-input"
+                placeholder="0 ~ 9999"
+              />
             </Form.Item>
           </Space>
         </Form>

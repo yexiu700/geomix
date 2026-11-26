@@ -128,6 +128,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
   await page.getByTestId('enable-other-market-btn').click();
   const enableDialog = page.getByRole('dialog', { name: '开启海外市场' });
   await expect(enableDialog).toBeVisible();
+  await enableDialog.getByLabel('当地品牌名称').fill(`Zhizao Laser ${suffix}`);
 
   const enableResponsePromise = page.waitForResponse(
     (res) =>

@@ -59,6 +59,7 @@ export function fetchArticles(
     briefId?: string;
     batchJobId?: string;
     keyword?: string;
+    productLineId?: string | null;
     page?: number;
     pageSize?: number;
   },
@@ -71,6 +72,7 @@ export function fetchArticles(
   if (params?.briefId) qs.set('briefId', params.briefId);
   if (params?.batchJobId) qs.set('batchJobId', params.batchJobId);
   if (params?.keyword?.trim()) qs.set('keyword', params.keyword.trim());
+  if (params?.productLineId?.trim()) qs.set('productLineId', params.productLineId.trim());
   if (params?.page) qs.set('page', String(params.page));
   if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
   return authorizedV2Request<GeoArticleListResponse>(
@@ -255,7 +257,33 @@ export function mergeFactFeedbackContent(
   const entry = cleanHint ? `- ${cleanHint}：${cleanValue}` : `- ${cleanValue}`;
   const base = (existingContent ?? '').trim();
   if (!base) return entry;
-  if (base.includes(cleanValue)) return base;
+
+  const isDuplicate = base
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .some((line) => {
+      if (line === entry) return true;
+      const body = line.replace(/^[-*•]\s*/, '');
+      if (body === cleanValue) return true;
+      const colonIdx = body.search(/[：:]/);
+      if (colonIdx !== -1) {
+        const existingLabel = body.slice(0, colonIdx).trim();
+        const existingValue = body.slice(colonIdx + 1).trim();
+        if (existingValue === cleanValue) {
+          if (!cleanHint || !existingLabel) return true;
+          if (
+            existingLabel === cleanHint ||
+            cleanHint.includes(existingLabel) ||
+            existingLabel.includes(cleanHint)
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+
+  if (isDuplicate) return base;
   return `${base}\n${entry}`;
 }
 

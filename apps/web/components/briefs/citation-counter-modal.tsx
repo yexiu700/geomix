@@ -12,6 +12,7 @@ export type CitationCounterModalProps = {
   open: boolean;
   brandId: string;
   market: GeoMarket;
+  productLineId?: string | null;
   readOnly: boolean;
   /** 'url' for /studio fresh entry; 'fallback' for /visibility Tab 3 422/42201 recovery */
   mode: 'url' | 'fallback';
@@ -43,6 +44,7 @@ export function CitationCounterModal({
   open,
   brandId,
   market,
+  productLineId = null,
   readOnly,
   mode,
   initialUrl = '',
@@ -144,6 +146,7 @@ export function CitationCounterModal({
         brandId,
         {
           market,
+          ...(productLineId ? { productLineId } : {}),
           ...(trimmedUrl ? { citationUrl: trimmedUrl } : {}),
           ...(trimmedPrompt ? { targetPrompt: trimmedPrompt.slice(0, 300) } : {}),
           ...(showFallback

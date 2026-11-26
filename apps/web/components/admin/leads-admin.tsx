@@ -30,6 +30,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminApiError, type AdminClient, type AdminLeadsQuery } from '../../lib/admin-client';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { StatusBadge, type StatusTone } from '../ui';
 
 export type LeadsAdminClient = Pick<AdminClient, 'listAdminLeads' | 'updateAdminLead'>;
 
@@ -38,11 +39,11 @@ type LeadEditFormValues = {
   adminNote: string;
 };
 
-const STATUS_TAG_COLORS: Record<MarketingLeadStatus, string> = {
-  NEW: 'processing',
+const STATUS_BADGE_TONES: Record<MarketingLeadStatus, StatusTone> = {
+  NEW: 'active',
   CONTACTED: 'warning',
   TRIAL_PROVISIONED: 'success',
-  ARCHIVED: 'default',
+  ARCHIVED: 'neutral',
 };
 
 const STATUS_OPTIONS = MARKETING_LEAD_STATUSES.map((status) => ({
@@ -276,20 +277,12 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                   href={row.websiteUrl.trim()}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{
-                    display: 'block',
-                    color: 'var(--gm-info)',
-                    fontSize: 12,
-                    wordBreak: 'break-all',
-                  }}
+                  className="gm-admin-lead-url"
                 >
                   {row.websiteUrl.trim()}
                 </a>
               ) : (
-                <Typography.Text
-                  type="secondary"
-                  style={{ display: 'block', fontSize: 12, wordBreak: 'break-all' }}
-                >
+                <Typography.Text type="secondary" className="gm-admin-lead-url-plain">
                   {row.websiteUrl}
                 </Typography.Text>
               )
@@ -304,10 +297,10 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         render: (_value, row) => (
           <div>
             <div>{row.name}</div>
-            <Typography.Text type="secondary" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+            <Typography.Text type="secondary" className="gm-admin-lead-email">
               {row.email}
             </Typography.Text>
-            <div style={{ color: 'var(--gm-fg-3)', fontSize: 11 }}>
+            <div className="gm-admin-lead-meta">
               {row.locale === 'zh-CN' ? '中文' : 'EN'}
               {row.sourcePage ? ` · ${row.sourcePage}` : ''}
             </div>
@@ -320,7 +313,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         key: 'targetMarket',
         width: 118,
         render: (market: MarketingLeadMarket) => (
-          <Tag style={{ marginInlineEnd: 0 }}>
+          <Tag className="gm-admin-tag-tight">
             {MARKETING_LEAD_MARKET_LABELS[market]?.zh ?? market}
           </Tag>
         ),
@@ -339,7 +332,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
           return (
             <div>
               {hasPts ? (
-                <div className="gm-num" style={{ color: 'var(--gm-phosphor)' }}>
+                <div className="gm-num gm-admin-lead-pts">
                   约 {row.estimatedPts?.toLocaleString('en-US')} 点/月
                 </div>
               ) : null}
@@ -348,7 +341,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                 <Typography.Paragraph
                   type="secondary"
                   ellipsis={{ rows: 2, tooltip: row.notes }}
-                  style={{ margin: 0, fontSize: 12 }}
+                  className="gm-admin-lead-note"
                 >
                   {row.notes}
                 </Typography.Paragraph>
@@ -361,11 +354,11 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         title: '状态',
         dataIndex: 'status',
         key: 'status',
-        width: 88,
+        width: 96,
         render: (status: MarketingLeadStatus) => (
-          <Tag color={STATUS_TAG_COLORS[status]} style={{ marginInlineEnd: 0 }}>
+          <StatusBadge tone={STATUS_BADGE_TONES[status]}>
             {MARKETING_LEAD_STATUS_LABELS[status]}
-          </Tag>
+          </StatusBadge>
         ),
       },
       {
@@ -375,7 +368,10 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         width: '12%',
         render: (adminNote: string | null) =>
           adminNote ? (
-            <Typography.Paragraph ellipsis={{ rows: 2, tooltip: adminNote }} style={{ margin: 0 }}>
+            <Typography.Paragraph
+              ellipsis={{ rows: 2, tooltip: adminNote }}
+              className="gm-admin-note-clamp"
+            >
               {adminNote}
             </Typography.Paragraph>
           ) : (
@@ -388,9 +384,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         key: 'createdAt',
         width: 132,
         render: (createdAt: string) => (
-          <span className="gm-num" style={{ whiteSpace: 'nowrap' }}>
-            {formatShanghaiDateTime(createdAt)}
-          </span>
+          <span className="gm-num gm-admin-nowrap">{formatShanghaiDateTime(createdAt)}</span>
         ),
       },
       {
@@ -407,7 +401,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                 value={row.status}
                 disabled={isUpdating}
                 loading={isUpdating}
-                style={{ width: 102 }}
+                className="gm-admin-select-status-inline"
                 options={STATUS_OPTIONS}
                 onChange={(nextStatus: MarketingLeadStatus) =>
                   void handleQuickStatusChange(row, nextStatus)
@@ -431,54 +425,31 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
 
   return (
     <section aria-label="试用线索">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+      <div className="gm-admin-head">
+        <Typography.Title level={3} className="gm-admin-title">
           试用线索
         </Typography.Title>
         <Space wrap>
           <Button loading={loading} onClick={() => void loadLeads()}>
             刷新
           </Button>
-          <Link
-            href="/admin/tenants"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              height: 32,
-              padding: '0 14px',
-              borderRadius: 6,
-              background: 'var(--gm-phosphor)',
-              color: 'var(--gm-on-phosphor)',
-              fontWeight: 600,
-              textDecoration: 'none',
-              whiteSpace: 'nowrap',
-            }}
-          >
+          <Link href="/admin/tenants" className="gm-admin-cta-link">
             前往租户管理开通 Demo
           </Link>
         </Space>
       </div>
 
-      <Typography.Paragraph style={{ marginBottom: 12, color: 'var(--gm-fg-2)' }}>
+      <Typography.Paragraph className="gm-admin-lead-intro">
         查看官网预约演示与试用申请，支持按状态与目标市场筛选、记录跟进备注；审核通过后可前往租户管理开通
         1,000 点 / 365 天 Demo 试用账号。
       </Typography.Paragraph>
 
-      <Space wrap style={{ marginBottom: 12, width: '100%' }}>
+      <Space wrap className="gm-admin-filters">
         <Input
           aria-label="搜索线索"
           placeholder="搜索邮箱、品牌或联系人"
           allowClear
-          style={{ width: 260 }}
+          className="gm-admin-input-search-lg"
           value={keywordInput}
           onChange={(event) => {
             const next = event.target.value;
@@ -494,7 +465,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         <Select
           aria-label="状态筛选"
           value={statusFilter}
-          style={{ width: 144 }}
+          className="gm-admin-select-sm"
           options={FILTER_STATUS_OPTIONS}
           onChange={(value: 'ALL' | MarketingLeadStatus) => {
             setStatusFilter(value);
@@ -504,7 +475,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         <Select
           aria-label="目标市场筛选"
           value={marketFilter}
-          style={{ width: 168 }}
+          className="gm-admin-select-md"
           options={FILTER_MARKET_OPTIONS}
           onChange={(value: 'ALL' | MarketingLeadMarket) => {
             setMarketFilter(value);
@@ -518,9 +489,9 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         ) : null}
       </Space>
 
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-admin-alert" /> : null}
       {notice ? (
-        <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+        <Alert type="success" showIcon message={notice} className="gm-admin-alert" />
       ) : null}
 
       <Table<MarketingLeadDto>
@@ -563,18 +534,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         onCancel={closeEditModal}
       >
         {editing ? (
-          <div
-            style={{
-              background: 'var(--gm-bg-elevated)',
-              border: '1px solid var(--gm-line-1)',
-              borderRadius: 6,
-              padding: '10px 12px',
-              marginBottom: 16,
-              fontSize: 13,
-              display: 'grid',
-              gap: 4,
-            }}
-          >
+          <div className="gm-admin-lead-summary">
             <div>
               <strong>联系人：</strong>
               {editing.name}（{editing.email}）
@@ -583,7 +543,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
               <strong>目标市场：</strong>
               {MARKETING_LEAD_MARKET_LABELS[editing.targetMarket]?.zh ?? editing.targetMarket}
               {editing.estimatedPts !== null && editing.estimatedPts !== undefined ? (
-                <span className="gm-num" style={{ marginLeft: 10, color: 'var(--gm-phosphor)' }}>
+                <span className="gm-num gm-admin-lead-pts-inline">
                   约 {editing.estimatedPts.toLocaleString('en-US')} 点/月
                 </span>
               ) : null}
@@ -596,7 +556,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                     href={editing.websiteUrl.trim()}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ color: 'var(--gm-info)', wordBreak: 'break-all' }}
+                    className="gm-admin-lead-summary-link"
                   >
                     {editing.websiteUrl.trim()}
                   </a>
@@ -617,7 +577,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
                 {editing.notes}
               </div>
             ) : null}
-            <div style={{ color: 'var(--gm-fg-3)', fontSize: 12 }}>
+            <div className="gm-admin-lead-summary-time">
               提交时间：
               <span className="gm-num">{formatShanghaiDateTime(editing.createdAt)}</span>
             </div>
@@ -625,7 +585,7 @@ export function LeadsAdmin({ client }: { client: LeadsAdminClient }) {
         ) : null}
 
         {modalError ? (
-          <Alert type="error" showIcon message={modalError} style={{ marginBottom: 12 }} />
+          <Alert type="error" showIcon message={modalError} className="gm-admin-alert" />
         ) : null}
 
         <Form form={editForm} preserve={false} layout="vertical" scrollToFirstError>

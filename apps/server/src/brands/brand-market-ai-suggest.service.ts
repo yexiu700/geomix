@@ -203,9 +203,9 @@ export class BrandMarketAiSuggestService {
           if (error.kind === PROVIDER_KIND.CONTRACT) {
             throw new ApiError(400, API_ERROR.BAD_REQUEST, error.message || '链接格式不正确');
           }
-          warnings.push(
-            `商品页抓取失败（${error.message || '网页暂不可达'}），已基于品牌档案与事实卡生成建议。`,
-          );
+          const briefMessage =
+            (error.message || '网页暂不可达').trim().slice(0, 120) || '网页暂不可达';
+          warnings.push(`商品页抓取失败（${briefMessage}），已基于品牌档案与事实卡生成建议。`);
         } else {
           warnings.push('商品页抓取失败，已基于品牌档案与事实卡生成建议。');
         }
@@ -297,7 +297,7 @@ export class BrandMarketAiSuggestService {
         );
         draft = buildFallbackMarketSuggestions(context);
       } else {
-        draft = parseAndSanitizeLlmSuggestions(completion.text, context);
+        draft = parseAndSanitizeLlmSuggestions(completion.text, context, warnings);
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {
@@ -313,6 +313,9 @@ export class BrandMarketAiSuggestService {
 
     const sanitizedDraft = await this.enforceOutputCompliance(draft, market, tenantId, userId);
     const finalDraft = enforceFinalInvariants(sanitizedDraft, context);
+    const safeWarnings = warnings
+      .map((item) => item.trim().slice(0, 300))
+      .filter((item) => item.length > 0);
 
     return brandMarketAiSuggestResponseSchema.parse({
       market,
@@ -323,7 +326,7 @@ export class BrandMarketAiSuggestService {
       seedPrompts: finalDraft.seedPrompts,
       controlPrompts: finalDraft.controlPrompts,
       fallbackUsed,
-      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(safeWarnings.length > 0 ? { warnings: safeWarnings } : {}),
     });
   }
 
@@ -520,9 +523,19 @@ function buildLlmUserPrompt(ctx: SuggestContext): string {
   return lines.join('\n');
 }
 
+function sanitizeGlobalIdentityCandidate(
+  raw: string | null | undefined,
+  maxLen: number,
+): string | undefined {
+  const trimmed = raw?.trim().slice(0, maxLen) ?? '';
+  if (!trimmed || containsCjk(trimmed)) return undefined;
+  return trimmed;
+}
+
 function parseAndSanitizeLlmSuggestions(
   rawText: string,
   ctx: SuggestContext,
+  warnings: string[],
 ): DraftSuggestionPayload {
   const stripped = rawText
     .trim()
@@ -550,15 +563,41 @@ function parseAndSanitizeLlmSuggestions(
   const data = parsed.data;
   const want = ctx.requestedFields;
 
-  const localBrandName =
-    ctx.market === 'GLOBAL' && want.has('localIdentity') && data.localBrandName?.trim()
-      ? data.localBrandName.trim().slice(0, BRAND_NAME_MAX)
+  const rawLocalBrandName = data.localBrandName?.trim() ?? '';
+  let localBrandName =
+    ctx.market === 'GLOBAL' && want.has('localIdentity')
+      ? sanitizeGlobalIdentityCandidate(rawLocalBrandName, BRAND_NAME_MAX)
       : undefined;
+  let cjkIdentityFiltered = false;
+  if (
+    ctx.market === 'GLOBAL' &&
+    want.has('localIdentity') &&
+    rawLocalBrandName &&
+    !localBrandName
+  ) {
+    cjkIdentityFiltered = true;
+    localBrandName = sanitizeGlobalIdentityCandidate(
+      deriveFallbackGlobalBrandName(ctx),
+      BRAND_NAME_MAX,
+    );
+  }
 
-  const localCategory =
-    ctx.market === 'GLOBAL' && want.has('localIdentity') && data.localCategory?.trim()
-      ? data.localCategory.trim().slice(0, BRAND_CATEGORY_MAX)
+  const rawLocalCategory = data.localCategory?.trim() ?? '';
+  let localCategory =
+    ctx.market === 'GLOBAL' && want.has('localIdentity')
+      ? sanitizeGlobalIdentityCandidate(rawLocalCategory, BRAND_CATEGORY_MAX)
       : undefined;
+  if (ctx.market === 'GLOBAL' && want.has('localIdentity') && rawLocalCategory && !localCategory) {
+    cjkIdentityFiltered = true;
+    localCategory = sanitizeGlobalIdentityCandidate(
+      resolveGlobalCategoryLabel(ctx.brandCategory, ctx.localCategory),
+      BRAND_CATEGORY_MAX,
+    );
+  }
+
+  if (cjkIdentityFiltered) {
+    warnings.push('AI 建议的海外品牌名或品类包含中文，已自动过滤并替换为英文建议。');
+  }
 
   const aliases = want.has('aliases') ? sanitizeAliases(data.aliases, ctx) : [];
 
@@ -666,7 +705,11 @@ function sanitizeSeedPrompts(
   rawPrompts: ReadonlyArray<string | { prompt: string; intent?: BrandSeedPromptIntent }>,
   ctx: SuggestContext,
 ): BrandSeedPromptSuggestion[] {
-  const seen = new Set(ctx.existingSeedPrompts.map(normalizePromptKey).filter(Boolean));
+  const seen = new Set(
+    [...ctx.existingSeedPrompts, ...ctx.existingControlPrompts]
+      .map(normalizePromptKey)
+      .filter(Boolean),
+  );
   const out: BrandSeedPromptSuggestion[] = [];
 
   for (let i = 0; i < rawPrompts.length; i += 1) {
@@ -737,13 +780,18 @@ function enforceFinalInvariants(
         return !dupSet.has(normalizePromptKey(prompt));
       });
 
+  const safeLocalBrandName =
+    ctx.market === 'GLOBAL' && want.has('localIdentity')
+      ? sanitizeGlobalIdentityCandidate(draft.localBrandName, BRAND_NAME_MAX)
+      : undefined;
+  const safeLocalCategory =
+    ctx.market === 'GLOBAL' && want.has('localIdentity')
+      ? sanitizeGlobalIdentityCandidate(draft.localCategory, BRAND_CATEGORY_MAX)
+      : undefined;
+
   return {
-    ...(ctx.market === 'GLOBAL' && want.has('localIdentity') && draft.localBrandName
-      ? { localBrandName: draft.localBrandName.slice(0, BRAND_NAME_MAX) }
-      : {}),
-    ...(ctx.market === 'GLOBAL' && want.has('localIdentity') && draft.localCategory
-      ? { localCategory: draft.localCategory.slice(0, BRAND_CATEGORY_MAX) }
-      : {}),
+    ...(safeLocalBrandName ? { localBrandName: safeLocalBrandName } : {}),
+    ...(safeLocalCategory ? { localCategory: safeLocalCategory } : {}),
     aliases,
     competitors,
     seedPrompts,

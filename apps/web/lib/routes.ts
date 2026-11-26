@@ -26,10 +26,10 @@ export const STATIC_ROUTES: Record<WorkspacePath, StaticRoute> = {
 };
 
 const QUERY_KEYS: Record<WorkspacePath, readonly string[]> = {
-  '/home': ['brandId', 'market'],
-  '/brands': ['brandId', 'market', 'section'],
-  '/visibility': ['brandId', 'market', 'tab', 'runId'],
-  '/studio': ['brandId', 'market', 'briefId', 'articleId', 'batchJobId'],
+  '/home': ['brandId', 'market', 'productLineId'],
+  '/brands': ['brandId', 'market', 'productLineId', 'section'],
+  '/visibility': ['brandId', 'market', 'productLineId', 'tab', 'runId'],
+  '/studio': ['brandId', 'market', 'productLineId', 'briefId', 'articleId', 'batchJobId'],
   '/account': ['brandId', 'market', 'tab'],
 };
 

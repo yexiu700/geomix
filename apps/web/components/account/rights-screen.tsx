@@ -55,16 +55,8 @@ export function RightsScreen({
 
   return (
     <section aria-label="账号权益">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          marginBottom: 8,
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+      <div className="gm-rights-head">
+        <Typography.Title level={3} className="gm-rights-title">
           {title}
         </Typography.Title>
         <Button size="small" loading={loading} onClick={() => void refresh()}>

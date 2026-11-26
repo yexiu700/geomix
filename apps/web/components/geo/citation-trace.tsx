@@ -19,9 +19,9 @@ type HoverNode = { kind: 'prompt' | 'engine' | 'domain'; id: string } | null;
 const trunc = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const EASE = '120ms var(--gm-ease-out)';
 const LEGEND: Array<[string, string, boolean]> = [
-  [GM.sig.cited, '回答提及我方', false],
-  [GM.sig.competitor, '竞品抢占', false],
-  [GM.sig.absent, '未出现', true],
+  ['cited', '回答提及我方', false],
+  ['competitor', '竞品抢占', false],
+  ['absent', '未出现', true],
 ];
 
 function getActive(hover: HoverNode, g: TraceGraph | null) {
@@ -166,11 +166,11 @@ export function CitationTrace({
 
   return (
     <div className="gm-panel">
-      <div style={{ overflowX: 'auto' }}>
+      <div className="gm-trace-scroll">
         <svg
           viewBox={`0 0 960 ${H}`}
           width="100%"
-          style={{ minWidth: 720, display: 'block' }}
+          className="gm-trace-svg"
           preserveAspectRatio="xMinYMin meet"
         >
           {(
@@ -180,7 +180,7 @@ export function CitationTrace({
               [648, '信源域名'],
             ] as const
           ).map(([x, t]) => (
-            <text key={t} x={x} y={16} fontSize={11} fill={GM.fg.f3} letterSpacing="0.06em">
+            <text key={t} x={x} y={16} fontSize={12} fill={GM.fg.f3} letterSpacing="0.06em">
               {t}
             </text>
           ))}
@@ -226,7 +226,7 @@ export function CitationTrace({
                   fill={GM.bg.elevated}
                   stroke={GM.line.l2}
                 />
-                <text x={480} y={y + 4} textAnchor="middle" fontSize={11} fill={GM.fg.f2}>
+                <text x={480} y={y + 4} textAnchor="middle" fontSize={12} fill={GM.fg.f2}>
                   {eng.label}
                 </text>
               </g>
@@ -243,7 +243,7 @@ export function CitationTrace({
                 <g key={d.id} {...np('domain', d.id, d.label)}>
                   <title>{d.label}</title>
                   <circle cx={648} cy={y} r={4} fill={GM.sourceKind[d.sourceKind]} />
-                  <text x={660} y={y + 4} className="gm-mono" fontSize={11} fill={GM.fg.f2}>
+                  <text x={660} y={y + 4} className="gm-mono" fontSize={12} fill={GM.fg.f2}>
                     {d.isMore ? d.label : truncateMiddle(d.label, 32)}
                   </text>
                   <text
@@ -251,7 +251,7 @@ export function CitationTrace({
                     y={y + 4}
                     textAnchor="end"
                     className="gm-num"
-                    fontSize={11}
+                    fontSize={12}
                     fill={GM.fg.f3}
                   >
                     {d.count}
@@ -262,25 +262,11 @@ export function CitationTrace({
           )}
         </svg>
       </div>
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: 16,
-          fontSize: 11,
-          color: GM.fg.f2,
-          marginTop: 12,
-        }}
-      >
-        {LEGEND.map(([c, label, dashed]) => (
-          <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <div className="gm-trace-legend">
+        {LEGEND.map(([tone, label, dashed]) => (
+          <span key={label} className="gm-trace-legend-item">
             <span
-              style={
-                dashed
-                  ? { width: 18, borderTop: `2px dashed ${c}` }
-                  : { width: 18, height: 2, background: c }
-              }
+              className={`gm-trace-legend-line gm-trace-legend-line--${tone}${dashed ? ' gm-trace-legend-line--dashed' : ''}`}
             />
             {label}
           </span>

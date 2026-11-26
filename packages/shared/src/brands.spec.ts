@@ -13,12 +13,17 @@ import {
   BRAND_SEED_PROMPT_INTENTS,
   BRAND_SEED_PROMPT_INTENT_LABELS,
   GEO_MARKETS,
+  GLOBAL_CJK_BRAND_NAME_ERROR,
+  GLOBAL_CJK_CATEGORY_ERROR,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
   brandMarketAiSuggestResponseSchema,
   brandMarketAiSuggestSchema,
+  brandMarketConfigSchema,
   buildStorageSummary,
   checkImageWidthWarning,
   chunkKnowledgeText,
   classifyBrandCategorySegment,
+  containsCjk,
   createBrandSchema,
   extractBrandFactsSchema,
   formatCompanyBrandLabel,
@@ -35,8 +40,10 @@ import {
   updateBrandMediaSchema,
   updateBrandSchema,
   upsertBrandFactsSchema,
+  upsertBrandMarketSchema,
   validateClientUploadFile,
   validateControlPromptsAgainstSeeds,
+  validateGlobalMarketIdentity,
 } from './brands';
 
 describe('brands v2 contracts and extracted utilities', () => {
@@ -69,7 +76,7 @@ describe('brands v2 contracts and extracted utilities', () => {
           ownedDomains: ['https://www.example.cn/products'],
           competitors: [{ name: '竞品甲', domains: ['https://www.rival.cn/path'] }],
         },
-        'GLOBAL',
+        { market: 'GLOBAL', localBrandName: 'Sample Power' },
       ],
     });
     expect(parsed.markets).toHaveLength(2);
@@ -381,6 +388,211 @@ describe('brands v2 contracts and extracted utilities', () => {
     expect(resolveAiImageRatioDimensions('16:9')).toEqual({ width: 1280, height: 720 });
     expect(isPlaceholderImageModel('fake-image')).toBe(true);
     expect(isPlaceholderImageModel('dall-e-3')).toBe(false);
+  });
+
+  it('enforces GLOBAL CJK identity guard with explicit allowCjkGlobalIdentity override (#385)', () => {
+    expect(GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL).toBe('我的海外品牌名本身包含中文字符');
+
+    // Pure helper checks
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'CN',
+        localBrandName: '星曜智储',
+        localCategory: '便携储能',
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: '星曜海外',
+        localCategory: 'Portable Power Station',
+      }),
+    ).toEqual({ ok: false, field: 'localBrandName', message: GLOBAL_CJK_BRAND_NAME_ERROR });
+
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: undefined,
+        fallbackBrandName: '纯中文母品牌',
+        localCategory: null,
+      }),
+    ).toEqual({ ok: false, field: 'localBrandName', message: GLOBAL_CJK_BRAND_NAME_ERROR });
+
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: 'AstraVolt',
+        localCategory: '便携储能电源',
+      }),
+    ).toEqual({ ok: false, field: 'localCategory', message: GLOBAL_CJK_CATEGORY_ERROR });
+
+    // Omitted/null localCategory is always allowed even if brand category is Chinese (handled via resolveGlobalCategoryLabel)
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: 'AstraVolt',
+        fallbackBrandName: '星曜双轨',
+        localCategory: null,
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: '星曜出海',
+        localCategory: '便携储能电源',
+        allowCjkGlobalIdentity: true,
+      }),
+    ).toEqual({ ok: true });
+
+    // brandMarketConfigSchema
+    expect(
+      brandMarketConfigSchema.safeParse({
+        market: 'GLOBAL',
+        localBrandName: '星曜海外',
+      }).success,
+    ).toBe(false);
+    expect(
+      brandMarketConfigSchema.safeParse({
+        market: 'GLOBAL',
+        localBrandName: '星曜海外',
+        allowCjkGlobalIdentity: true,
+      }).success,
+    ).toBe(true);
+
+    // createBrandSchema: CJK fallback via 'GLOBAL' shorthand or omitted localBrandName blocked
+    expect(
+      createBrandSchema.safeParse({
+        name: '纯中文母品牌',
+        category: '便携储能',
+        markets: ['GLOBAL'],
+      }).success,
+    ).toBe(false);
+    expect(
+      createBrandSchema.safeParse({
+        name: '纯中文母品牌',
+        category: '便携储能',
+        markets: [{ market: 'GLOBAL' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      createBrandSchema.safeParse({
+        name: 'PureEnglish',
+        category: '便携储能',
+        markets: [{ market: 'GLOBAL', localBrandName: '星曜中文' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      createBrandSchema.safeParse({
+        name: 'PureEnglish',
+        category: '便携储能',
+        markets: [{ market: 'GLOBAL', localBrandName: 'PureEnglish', localCategory: '便携储能' }],
+      }).success,
+    ).toBe(false);
+    // Allowed: CJK brand.name + CJK brand.category with English localBrandName and omitted localCategory
+    expect(
+      createBrandSchema.safeParse({
+        name: '星曜双轨',
+        category: '私有云 NAS',
+        markets: [{ market: 'GLOBAL', localBrandName: 'AstraVault' }],
+      }).success,
+    ).toBe(true);
+    // Allowed: explicit allowCjkGlobalIdentity on entry or top-level
+    expect(
+      createBrandSchema.safeParse({
+        name: '星曜出海',
+        category: '便携储能',
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '星曜出海',
+            localCategory: '便携储能',
+            allowCjkGlobalIdentity: true,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      createBrandSchema.safeParse({
+        name: '星曜出海',
+        category: '便携储能',
+        markets: ['GLOBAL'],
+        allowCjkGlobalIdentity: true,
+      }).success,
+    ).toBe(true);
+
+    // Per-market explicit allowCjkGlobalIdentity: false MUST override top-level true (C1-2)
+    expect(
+      createBrandSchema.safeParse({
+        name: '星曜出海',
+        category: '便携储能',
+        allowCjkGlobalIdentity: true,
+        markets: [
+          {
+            market: 'GLOBAL',
+            localBrandName: '星曜出海',
+            allowCjkGlobalIdentity: false,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+
+    // upsertBrandMarketSchema accepts allowCjkGlobalIdentity
+    expect(
+      upsertBrandMarketSchema.parse({
+        localBrandName: '星曜出海',
+        allowCjkGlobalIdentity: true,
+      }).allowCjkGlobalIdentity,
+    ).toBe(true);
+
+    // updateBrandMarketSchema rejects { allowCjkGlobalIdentity: true } alone or with explicit undefined keys (C1-3)
+    expect(updateBrandMarketSchema.safeParse({ allowCjkGlobalIdentity: true }).success).toBe(false);
+    expect(
+      updateBrandMarketSchema.safeParse({
+        allowCjkGlobalIdentity: true,
+        localBrandName: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      updateBrandMarketSchema.safeParse({
+        allowCjkGlobalIdentity: true,
+        localCategory: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      updateBrandMarketSchema.safeParse({
+        localBrandName: '显式放行中文',
+        allowCjkGlobalIdentity: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('detects CJK Extension B-I surrogate-pair ideographs while allowing Japanese Kana (Tier 5 #6)', () => {
+    expect(containsCjk('Brand𠮷')).toBe(true);
+    expect(containsCjk('Brand𠀀')).toBe(true);
+    expect(containsCjk('ひらがなカタカナ')).toBe(false);
+    expect(
+      validateGlobalMarketIdentity({
+        market: 'GLOBAL',
+        localBrandName: '𠮷Brand',
+      }),
+    ).toEqual({ ok: false, field: 'localBrandName', message: GLOBAL_CJK_BRAND_NAME_ERROR });
+    expect(
+      createBrandSchema.safeParse({
+        name: 'Brand𠀀',
+        category: 'Smart Home',
+        markets: ['GLOBAL'],
+      }).success,
+    ).toBe(false);
+    expect(
+      createBrandSchema.safeParse({
+        name: 'Brand𠀀',
+        category: 'Smart Home',
+        markets: ['GLOBAL'],
+        allowCjkGlobalIdentity: true,
+      }).success,
+    ).toBe(true);
   });
 
   it('validates brandMarketAiSuggestSchema and brandMarketAiSuggestResponseSchema (#405)', () => {

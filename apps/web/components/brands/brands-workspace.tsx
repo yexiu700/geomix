@@ -8,10 +8,12 @@ import {
   type BrandMediaAssetRecord,
   type GeoMarket,
   type MediaStorageSummary,
+  type RetestBudgetSummaryDto,
 } from '@geomix/shared';
 import { Alert, Button, Skeleton, Tag } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deleteBrand, getBrandFacts, listBrandMedia } from '../../lib/brands';
+import { fetchActionHome } from '../../lib/home';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
@@ -27,6 +29,7 @@ import { BrandChannelConnections } from './brand-channel-connections';
 import { BrandFactsSection } from './brand-facts-section';
 import { BrandIdentitySection } from './brand-identity-section';
 import { BrandMediaSection } from './brand-media-section';
+import { BrandProductLinesSection } from './brand-product-lines-section';
 import { ExtensionPairingPanel } from './extension-pairing-panel';
 
 type ShopifyOAuthBannerState = {
@@ -43,6 +46,7 @@ type BrandSectionAnchor = {
 
 const BRAND_SECTION_ANCHORS: readonly BrandSectionAnchor[] = [
   { id: 'brand-section-identity', label: '基础身份' },
+  { id: 'brand-section-product-lines', label: '产品线' },
   { id: 'brand-section-facts', label: '事实卡' },
   { id: 'brand-section-media', label: '实拍图库' },
   { id: 'brand-section-connections', label: '发布渠道' },
@@ -84,6 +88,7 @@ export function BrandsWorkspace() {
   const activeBrandMarket = selectActiveBrandMarket(state);
   const activeBrandId = activeBrand?.id ?? null;
   const readOnly = Boolean(consoleCtx?.readOnly);
+  const shellManagesProductLines = Boolean(consoleCtx?.managesProductLines);
 
   const [factsLoading, setFactsLoading] = useState(false);
   const [factsError, setFactsError] = useState<string | null>(null);
@@ -99,6 +104,7 @@ export function BrandsWorkspace() {
   );
   const [activeAnchorId, setActiveAnchorId] = useState<string>('brand-section-identity');
   const [identityDirty, setIdentityDirty] = useState(false);
+  const [retestBudget, setRetestBudget] = useState<RetestBudgetSummaryDto | null>(null);
 
   const loadSeqRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -178,10 +184,34 @@ export function BrandsWorkspace() {
       return undefined;
     }
     fetchBrandAssets(activeBrandId);
+    if (!shellManagesProductLines) {
+      const storeState = useWorkspaceStore.getState();
+      if (!storeState.productLinesLoading && storeState.productLinesBrandId !== activeBrandId) {
+        void storeState.loadProductLines(activeBrandId, { storage: window.sessionStorage });
+      }
+    }
     return () => {
       controllerRef.current?.abort();
     };
-  }, [activeBrandId, fetchBrandAssets]);
+  }, [activeBrandId, fetchBrandAssets, shellManagesProductLines]);
+
+  useEffect(() => {
+    setRetestBudget(null);
+    if (!activeBrandId || !activeBrandMarket) return undefined;
+    const ctrl = new AbortController();
+    void fetchActionHome(activeBrandId, state.activeMarket, {
+      storage: window.sessionStorage,
+      signal: ctrl.signal,
+    })
+      .then((res) => {
+        if (ctrl.signal.aborted) return;
+        setRetestBudget(res.retestBudget ?? null);
+      })
+      .catch(() => undefined);
+    return () => {
+      ctrl.abort();
+    };
+  }, [activeBrandId, activeBrandMarket, state.activeMarket]);
 
   useTabFreshness({
     active: Boolean(activeBrandId),
@@ -505,6 +535,7 @@ export function BrandsWorkspace() {
             brand={activeBrand}
             activeMarket={state.activeMarket}
             activeBrandMarket={activeBrandMarket}
+            retestBudget={retestBudget}
             readOnly={readOnly}
             onDirtyChange={setIdentityDirty}
             onBrandUpdated={(updated, market) => {
@@ -523,10 +554,27 @@ export function BrandsWorkspace() {
             onOpenEnableMarket={(market) => consoleCtx?.openEnableMarketModal(market)}
           />
 
+          <BrandProductLinesSection
+            key={`product-lines-${activeBrand.id}`}
+            brand={activeBrand}
+            activeMarket={state.activeMarket}
+            productLines={state.productLinesBrandId === activeBrand.id ? state.productLines : []}
+            loading={state.productLinesLoading}
+            error={state.productLinesError}
+            readOnly={readOnly}
+            onRetry={() =>
+              void useWorkspaceStore
+                .getState()
+                .loadProductLines(activeBrand.id, { storage: window.sessionStorage })
+            }
+            onProductLinesChanged={() => fetchBrandAssets(activeBrand.id, { silent: true })}
+          />
+
           <BrandFactsSection
             key={`facts-${activeBrand.id}`}
             brand={activeBrand}
             activeBrandMarket={activeBrandMarket}
+            productLines={state.productLinesBrandId === activeBrand.id ? state.productLines : []}
             facts={facts}
             loading={factsLoading}
             error={factsError}

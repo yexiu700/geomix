@@ -13,15 +13,16 @@ import {
   type GeoMarket,
   type PublicGeoRoiReportDto,
 } from '@geomix/shared';
-import { App, Button, ConfigProvider, Skeleton, Tag } from 'antd';
+import { App, Button, ConfigProvider, Skeleton } from 'antd';
 import enUS from 'antd/locale/en_US';
 import zhCN from 'antd/locale/zh_CN';
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
-import { GM, GM_ANTD_THEME } from '../../lib/design-tokens';
+import { GM_ANTD_THEME } from '../../lib/design-tokens';
 import { GatewayApiError } from '../../lib/envelope';
 import { fetchPublicRoiReport, formatUtcCalendarDate, formatUtcDateTime } from '../../lib/reports';
 import { SignalPill, type SignalTone } from '../geo/primitives';
+import { StatusBadge } from '../ui';
 
 export type PublicRoiReportViewProps = {
   token: string;
@@ -393,31 +394,15 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
     >
       <App>
         <main
-          className="gm-public-roi-report"
+          className="gm-public-roi-report gm-roi-public-page"
           data-testid="public-roi-report-page"
-          style={{ padding: '28px 20px 64px' }}
         >
-          <div
-            style={{
-              maxWidth: 1040,
-              margin: '0 auto',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 20,
-              minWidth: 0,
-            }}
-          >
+          <div className="gm-roi-public-inner">
             {loading ? (
               <section
-                className="gm-panel"
+                className="gm-panel gm-roi-public-loading"
                 aria-busy="true"
                 data-testid="public-roi-report-loading"
-                style={{
-                  padding: 24,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 20,
-                }}
               >
                 <Skeleton active title={{ width: '44%' }} paragraph={{ rows: 2 }} />
                 <Skeleton active title={{ width: '30%' }} paragraph={{ rows: 4 }} />
@@ -425,47 +410,23 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
               </section>
             ) : loadError || !report ? (
               <section
-                className="gm-panel"
+                className="gm-panel gm-roi-public-error"
                 data-testid="public-roi-report-error"
-                style={{
-                  padding: '36px 28px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  gap: 14,
-                  maxWidth: 680,
-                  margin: '40px auto 0',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
               >
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: GM.fg.f3,
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  GEO ROI Report
-                </div>
+                <div className="gm-roi-public-eyebrow">GEO ROI Report</div>
 
                 {loadError === 'not_found' ? (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
-                      Report Link Unavailable
-                    </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <h1 className="gm-roi-public-error-title">Report Link Unavailable</h1>
+                    <p className="gm-roi-public-error-copy">
                       This GEO ROI report link is invalid, expired, or has been revoked. Please
                       contact the report owner to request a new share link.
                     </p>
                   </>
                 ) : loadError === 'rate_limited' ? (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
-                      Too Many Requests
-                    </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <h1 className="gm-roi-public-error-title">Too Many Requests</h1>
+                    <p className="gm-roi-public-error-copy">
                       We received too many requests in a short period. Please wait a moment and try
                       reloading this report.
                     </p>
@@ -473,17 +434,15 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                       type="primary"
                       data-testid="public-roi-retry-btn"
                       onClick={() => setReloadNonce((n) => n + 1)}
-                      style={{ marginTop: 4 }}
+                      className="gm-roi-public-retry-btn"
                     >
                       Retry
                     </Button>
                   </>
                 ) : (
                   <>
-                    <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, color: GM.fg.f1 }}>
-                      Unable to Load Report
-                    </h1>
-                    <p style={{ margin: 0, color: GM.fg.f2, lineHeight: 1.65 }}>
+                    <h1 className="gm-roi-public-error-title">Unable to Load Report</h1>
+                    <p className="gm-roi-public-error-copy">
                       We encountered a temporary issue while loading this report. Please check your
                       network connection and try again.
                     </p>
@@ -491,7 +450,7 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                       type="primary"
                       data-testid="public-roi-retry-btn"
                       onClick={() => setReloadNonce((n) => n + 1)}
-                      style={{ marginTop: 4 }}
+                      className="gm-roi-public-retry-btn"
                     >
                       Retry
                     </Button>
@@ -502,63 +461,30 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
               <>
                 {/* 1. Masthead / Header */}
                 <header
-                  className="gm-panel gm-roi-print-section gm-roi-print-keep"
+                  className="gm-panel gm-roi-print-section gm-roi-print-keep gm-roi-public-header"
                   data-testid="public-roi-header"
-                  style={{
-                    padding: '22px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                    minWidth: 0,
-                  }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 8,
-                        minWidth: 0,
-                      }}
-                    >
+                  <div className="gm-roi-public-header-top">
+                    <div className="gm-roi-public-badge-group">
                       {orgLabel ? (
-                        <Tag
-                          color="purple"
+                        <StatusBadge
+                          tone="neutral"
                           data-testid="public-roi-whitelabel-badge"
-                          style={{
-                            margin: 0,
-                            fontWeight: 600,
-                            overflowWrap: 'anywhere',
-                            whiteSpace: 'normal',
-                          }}
+                          className="gm-roi-public-org-badge"
                         >
                           {orgLabel}
-                        </Tag>
+                        </StatusBadge>
                       ) : (
-                        <Tag
-                          color="cyan"
+                        <StatusBadge
+                          tone="success"
                           data-testid="public-roi-powered-by-badge"
-                          style={{ margin: 0, fontWeight: 600 }}
+                          className="gm-roi-public-org-badge"
                         >
                           {report.brandName} - {copy.poweredBy}
-                        </Tag>
+                        </StatusBadge>
                       )}
-                      <Tag
-                        color={report.market === 'GLOBAL' ? 'blue' : 'geekblue'}
-                        style={{ margin: 0 }}
-                      >
-                        {copy.marketLabels[report.market]}
-                      </Tag>
-                      <span style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.reportBadge}</span>
+                      <StatusBadge tone="active">{copy.marketLabels[report.market]}</StatusBadge>
+                      <span className="gm-roi-public-meta-badge">{copy.reportBadge}</span>
                     </div>
 
                     <Button
@@ -572,37 +498,19 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                     </Button>
                   </div>
 
-                  <h1
-                    data-testid="public-roi-title"
-                    style={{
-                      margin: 0,
-                      fontSize: 24,
-                      lineHeight: 1.35,
-                      fontWeight: 700,
-                      color: GM.fg.f1,
-                      overflowWrap: 'anywhere',
-                    }}
-                  >
+                  <h1 data-testid="public-roi-title" className="gm-roi-public-title">
                     {report.title}
                   </h1>
 
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '6px 18px',
-                      fontSize: 12.5,
-                      color: GM.fg.f2,
-                    }}
-                  >
+                  <div className="gm-roi-public-meta-list">
                     <span>
                       {copy.brandLabel}:{' '}
-                      <strong style={{ color: GM.fg.f1 }}>{report.brandName}</strong>
+                      <strong className="gm-roi-public-meta-strong">{report.brandName}</strong>
                     </span>
                     {report.category ? (
                       <span>
                         {copy.categoryLabel}:{' '}
-                        <strong style={{ color: GM.fg.f1 }}>{report.category}</strong>
+                        <strong className="gm-roi-public-meta-strong">{report.category}</strong>
                       </span>
                     ) : null}
                     <span className="gm-num" data-testid="public-roi-period">
@@ -617,67 +525,28 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                     </span>
                   </div>
 
-                  <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.readOnlyNotice}</div>
+                  <div className="gm-roi-public-readonly">{copy.readOnlyNotice}</div>
                 </header>
 
                 {/* 2. Executive Overview & Statistical Confidence */}
                 <section
-                  className="gm-panel gm-roi-print-section gm-roi-print-keep"
+                  className="gm-panel gm-roi-print-section gm-roi-print-keep gm-roi-public-section gm-roi-public-section--spacious"
                   data-testid="public-roi-overview"
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                    minWidth: 0,
-                  }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                    }}
-                  >
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.overviewTitle}
-                    </h2>
+                  <div className="gm-roi-public-section-head">
+                    <h2 className="gm-roi-public-section-title">{copy.overviewTitle}</h2>
                     <SignalPill tone={CONFIDENCE_TONE[report.summary.overview.confidenceLevel]}>
                       {copy.confidenceLabels[report.summary.overview.confidenceLevel]}
                     </SignalPill>
                   </div>
 
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
-                  >
-                    <div
-                      className="gm-roi-print-card"
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.kpiMentionRate}</div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 24, fontWeight: 700, color: GM.fg.f1, marginTop: 4 }}
-                      >
+                  <div className="gm-roi-public-kpi-grid">
+                    <div className="gm-roi-print-card gm-roi-public-kpi-card">
+                      <div className="gm-roi-public-kpi-label">{copy.kpiMentionRate}</div>
+                      <div className="gm-num gm-roi-public-kpi-val">
                         {formatPctRatio(report.summary.overview.mentionRate, copy.na)}
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 4 }}
-                      >
+                      <div className="gm-num gm-roi-public-kpi-sub">
                         {copy.wilsonPrefix}: [
                         {formatPctRatio(report.summary.overview.mentionWilson.lower, copy.na)},{' '}
                         {formatPctRatio(report.summary.overview.mentionWilson.upper, copy.na)}] (
@@ -686,123 +555,64 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                       </div>
                     </div>
 
-                    <div
-                      className="gm-roi-print-card"
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.kpiCitationRate}</div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 24, fontWeight: 700, color: GM.sig.cited, marginTop: 4 }}
-                      >
+                    <div className="gm-roi-print-card gm-roi-public-kpi-card">
+                      <div className="gm-roi-public-kpi-label">{copy.kpiCitationRate}</div>
+                      <div className="gm-num gm-roi-public-kpi-val gm-roi-public-kpi-val--cited">
                         {formatPctRatio(report.summary.overview.citationRate, copy.na)}
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 4 }}
-                      >
+                      <div className="gm-num gm-roi-public-kpi-sub">
                         {formatInt(report.summary.overview.citationHits, isZh, copy.na)} /{' '}
                         {formatInt(report.summary.overview.totalObservations, isZh, copy.na)}
                       </div>
                     </div>
 
-                    <div
-                      className="gm-roi-print-card"
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>
-                        {copy.kpiOwnedCitationRate}
-                      </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 24, fontWeight: 700, color: GM.fg.f1, marginTop: 4 }}
-                      >
+                    <div className="gm-roi-print-card gm-roi-public-kpi-card">
+                      <div className="gm-roi-public-kpi-label">{copy.kpiOwnedCitationRate}</div>
+                      <div className="gm-num gm-roi-public-kpi-val">
                         {formatPctRatio(report.summary.overview.ownedCitationRate, copy.na)}
                       </div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 4 }}
-                      >
+                      <div className="gm-num gm-roi-public-kpi-sub">
                         {formatInt(report.summary.overview.ownedCitationHits, isZh, copy.na)} /{' '}
                         {formatInt(report.summary.overview.totalObservations, isZh, copy.na)}
                       </div>
                     </div>
 
-                    <div
-                      className="gm-roi-print-card"
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.kpiObservations}</div>
-                      <div
-                        className="gm-num"
-                        style={{ fontSize: 24, fontWeight: 700, color: GM.fg.f1, marginTop: 4 }}
-                      >
+                    <div className="gm-roi-print-card gm-roi-public-kpi-card">
+                      <div className="gm-roi-public-kpi-label">{copy.kpiObservations}</div>
+                      <div className="gm-num gm-roi-public-kpi-val">
                         {formatInt(report.summary.overview.totalObservations, isZh, copy.na)}
                       </div>
-                      <div style={{ fontSize: 11.5, color: GM.fg.f3, marginTop: 4 }}>
+                      <div className="gm-roi-public-kpi-sub gm-roi-public-kpi-sub--muted">
                         {copy.confidenceLabels[report.summary.overview.confidenceLevel]}
                       </div>
                     </div>
 
                     <div
-                      className="gm-roi-print-card"
+                      className="gm-roi-print-card gm-roi-public-kpi-card"
                       data-testid="public-roi-did-card"
-                      style={{
-                        padding: 14,
-                        borderRadius: 8,
-                        background: 'var(--gm-bg-elevated, #171B1A)',
-                        border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        minWidth: 0,
-                      }}
                     >
-                      <div style={{ fontSize: 12, color: GM.fg.f3 }}>{copy.kpiDidLift}</div>
+                      <div className="gm-roi-public-kpi-label">{copy.kpiDidLift}</div>
                       {report.summary.overview.did ? (
                         <>
                           <div
-                            className="gm-num"
-                            style={{
-                              fontSize: 24,
-                              fontWeight: 700,
-                              color:
-                                report.summary.overview.did.direction === 'POSITIVE'
-                                  ? GM.sig.cited
-                                  : report.summary.overview.did.direction === 'NEGATIVE'
-                                    ? GM.status.danger
-                                    : GM.fg.f2,
-                              marginTop: 4,
-                            }}
+                            className={`gm-num gm-roi-public-kpi-val ${
+                              report.summary.overview.did.direction === 'POSITIVE'
+                                ? 'gm-roi-public-kpi-val--cited'
+                                : report.summary.overview.did.direction === 'NEGATIVE'
+                                  ? 'gm-roi-public-kpi-val--danger'
+                                  : 'gm-roi-public-kpi-val--muted'
+                            }`}
                           >
                             {formatSignedPpRatio(report.summary.overview.did.netLift, copy.na)}
                           </div>
-                          <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          <div className="gm-roi-public-did-pill-row">
                             <SignalPill
                               tone={DID_DIRECTION_TONE[report.summary.overview.did.direction]}
                             >
                               {copy.didDirectionLabels[report.summary.overview.did.direction]}
                             </SignalPill>
                           </div>
-                          <div
-                            className="gm-num"
-                            style={{ fontSize: 11.5, color: GM.fg.f2, marginTop: 4 }}
-                          >
+                          <div className="gm-num gm-roi-public-kpi-sub">
                             {copy.didTreatmentPrefix}:{' '}
                             {formatSignedPpRatio(
                               report.summary.overview.did.treatmentDelta,
@@ -813,9 +623,7 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                           </div>
                         </>
                       ) : (
-                        <div style={{ fontSize: 12, color: GM.fg.f3, marginTop: 8 }}>
-                          {copy.noControlData}
-                        </div>
+                        <div className="gm-roi-public-did-empty">{copy.noControlData}</div>
                       )}
                     </div>
                   </div>
@@ -825,14 +633,7 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                     report.summary.overview.mentionWilson.trials < 5) ? (
                     <div
                       data-testid="public-roi-low-sample-hint"
-                      style={{
-                        fontSize: 12,
-                        color: GM.status.warning,
-                        padding: '8px 12px',
-                        borderRadius: 6,
-                        background: 'rgba(242, 184, 75, 0.08)',
-                        border: '1px solid rgba(242, 184, 75, 0.25)',
-                      }}
+                      className="gm-roi-public-low-sample"
                     >
                       {copy.lowSampleHint}
                     </div>
@@ -841,99 +642,47 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
 
                 {/* 3. Engine Breakdown */}
                 <section
-                  className="gm-panel gm-roi-print-section gm-roi-print-table-section"
+                  className="gm-panel gm-roi-print-section gm-roi-print-table-section gm-roi-public-section"
                   data-testid="public-roi-engines"
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
                 >
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                    {copy.engineSectionTitle}
-                  </h2>
+                  <h2 className="gm-roi-public-section-title">{copy.engineSectionTitle}</h2>
 
                   {report.summary.byEngine.length === 0 ? (
-                    <div style={{ fontSize: 13, color: GM.fg.f3 }}>{copy.engineEmpty}</div>
+                    <div className="gm-roi-public-empty">{copy.engineEmpty}</div>
                   ) : (
                     <div className="gm-roi-table-wrap">
-                      <table
-                        style={{
-                          width: '100%',
-                          borderCollapse: 'collapse',
-                          fontSize: 13,
-                        }}
-                      >
+                      <table className="gm-roi-public-table">
                         <thead>
-                          <tr
-                            style={{
-                              borderBottom: '1px solid var(--gm-line-2, rgba(255,255,255,0.1))',
-                              textAlign: 'left',
-                              color: GM.fg.f3,
-                              fontSize: 12,
-                            }}
-                          >
-                            <th style={{ padding: '8px 10px' }}>{copy.engineColName}</th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.engineColObs}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.engineColMentionWilson}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.engineColCitation}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.engineColOwnedCitation}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.engineColPosition}
-                            </th>
+                          <tr>
+                            <th>{copy.engineColName}</th>
+                            <th className="gm-roi-public-num-col">{copy.engineColObs}</th>
+                            <th className="gm-roi-public-num-col">{copy.engineColMentionWilson}</th>
+                            <th className="gm-roi-public-num-col">{copy.engineColCitation}</th>
+                            <th className="gm-roi-public-num-col">{copy.engineColOwnedCitation}</th>
+                            <th className="gm-roi-public-num-col">{copy.engineColPosition}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {report.summary.byEngine.map((row) => (
-                            <tr
-                              key={row.engine}
-                              style={{
-                                borderBottom: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                              }}
-                            >
-                              <td style={{ padding: '10px', fontWeight: 600, color: GM.fg.f1 }}>
+                            <tr key={row.engine}>
+                              <td className="gm-roi-public-td-primary">
                                 {resolveEngineLabel(row.engine, isZh)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatInt(row.observations, isZh, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPctRatio(row.mentionRate, copy.na)} [
                                 {formatPctRatio(row.mentionWilson.lower, copy.na)},{' '}
                                 {formatPctRatio(row.mentionWilson.upper, copy.na)}]
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPctRatio(row.citationRate, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPctRatio(row.ownedCitationRate, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPosition(row.avgPosition, copy.na)}
                               </td>
                             </tr>
@@ -945,120 +694,42 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                 </section>
 
                 {/* 4. Near-Miss Conversion & Distribution Funnel */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                    gap: 16,
-                    minWidth: 0,
-                  }}
-                >
+                <div className="gm-roi-public-two-col">
                   <section
-                    className="gm-panel gm-roi-print-section gm-roi-print-keep"
+                    className="gm-panel gm-roi-print-section gm-roi-print-keep gm-roi-public-section"
                     data-testid="public-roi-near-miss"
-                    style={{
-                      padding: '20px 24px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
                   >
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.nearMissSectionTitle}
-                    </h2>
+                    <h2 className="gm-roi-public-section-title">{copy.nearMissSectionTitle}</h2>
 
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                        gap: 8,
-                      }}
-                    >
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>{copy.nearMissTotal}</div>
-                        <div
-                          className="gm-num"
-                          style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                        >
+                    <div className="gm-roi-public-mini-grid-3">
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.nearMissTotal}</div>
+                        <div className="gm-num gm-roi-public-mini-val">
                           {formatInt(report.summary.nearMiss.totalOpportunities, isZh, copy.na)}
                         </div>
                       </div>
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>{copy.nearMissBriefs}</div>
-                        <div
-                          className="gm-num"
-                          style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                        >
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.nearMissBriefs}</div>
+                        <div className="gm-num gm-roi-public-mini-val">
                           {formatInt(report.summary.nearMiss.boostBriefsCreated, isZh, copy.na)}
                         </div>
                       </div>
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>
-                          {copy.nearMissConverted}
-                        </div>
-                        <div
-                          className="gm-num"
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 700,
-                            color: GM.sig.cited,
-                            marginTop: 2,
-                          }}
-                        >
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.nearMissConverted}</div>
+                        <div className="gm-num gm-roi-public-mini-val gm-roi-public-kpi-val--cited">
                           {formatInt(report.summary.nearMiss.convertedToCited, isZh, copy.na)}
                         </div>
                       </div>
                     </div>
 
-                    <div style={{ fontSize: 12, color: GM.fg.f3, marginTop: 2 }}>
-                      {copy.nearMissTierBreakdown}
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="gm-roi-public-tier-heading">{copy.nearMissTierBreakdown}</div>
+                    <div className="gm-roi-public-tier-list">
                       {NEAR_MISS_TIERS.map((tier) => (
-                        <div
-                          key={tier}
-                          className="gm-roi-print-card"
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                            padding: '6px 10px',
-                            borderRadius: 6,
-                            background: 'var(--gm-bg-elevated, #171B1A)',
-                            border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                            fontSize: 12.5,
-                          }}
-                        >
-                          <span style={{ color: GM.fg.f2 }}>
+                        <div key={tier} className="gm-roi-print-card gm-roi-public-tier-row">
+                          <span className="gm-roi-public-tier-name">
                             {isZh ? NEAR_MISS_TIER_LABELS[tier] : NEAR_MISS_TIER_EN_LABELS[tier]}
                           </span>
-                          <span className="gm-num" style={{ fontWeight: 600, color: GM.fg.f1 }}>
+                          <span className="gm-num gm-roi-public-tier-val">
                             {formatInt(
                               report.summary.nearMiss.tierCounts[tier] ?? 0,
                               isZh,
@@ -1071,121 +742,54 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                   </section>
 
                   <section
-                    className="gm-panel gm-roi-print-section gm-roi-print-keep"
+                    className="gm-panel gm-roi-print-section gm-roi-print-keep gm-roi-public-section"
                     data-testid="public-roi-funnel"
-                    style={{
-                      padding: '20px 24px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 12,
-                      minWidth: 0,
-                    }}
                   >
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                      {copy.funnelSectionTitle}
-                    </h2>
+                    <h2 className="gm-roi-public-section-title">{copy.funnelSectionTitle}</h2>
 
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                        gap: 8,
-                      }}
-                    >
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>
-                          {copy.funnelPublished}
-                        </div>
-                        <div
-                          className="gm-num"
-                          style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                        >
+                    <div className="gm-roi-public-mini-grid-2">
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.funnelPublished}</div>
+                        <div className="gm-num gm-roi-public-mini-val">
                           {formatInt(report.summary.funnel.publishedTotal, isZh, copy.na)}
                         </div>
                       </div>
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>{copy.funnelCrawlOk}</div>
-                        <div
-                          className="gm-num"
-                          style={{
-                            fontSize: 18,
-                            fontWeight: 700,
-                            color: GM.sig.cited,
-                            marginTop: 2,
-                          }}
-                        >
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.funnelCrawlOk}</div>
+                        <div className="gm-num gm-roi-public-mini-val gm-roi-public-kpi-val--cited">
                           {formatPctRatio(report.summary.funnel.crawlOkRate, copy.na)}
                         </div>
-                        <div className="gm-num" style={{ fontSize: 11, color: GM.fg.f3 }}>
+                        <div className="gm-num gm-roi-public-mini-sub">
                           {formatInt(report.summary.funnel.crawlOkCount, isZh, copy.na)} /{' '}
                           {formatInt(report.summary.funnel.crawlCheckedCount, isZh, copy.na)}
                         </div>
                       </div>
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                        }}
-                      >
-                        <div style={{ fontSize: 11.5, color: GM.fg.f3 }}>{copy.funnelIndexNow}</div>
-                        <div
-                          className="gm-num"
-                          style={{ fontSize: 18, fontWeight: 700, color: GM.fg.f1, marginTop: 2 }}
-                        >
+                      <div className="gm-roi-print-card gm-roi-public-mini-card">
+                        <div className="gm-roi-public-mini-label">{copy.funnelIndexNow}</div>
+                        <div className="gm-num gm-roi-public-mini-val">
                           {formatPctRatio(report.summary.funnel.indexNowRate, copy.na)}
                         </div>
-                        <div className="gm-num" style={{ fontSize: 11, color: GM.fg.f3 }}>
+                        <div className="gm-num gm-roi-public-mini-sub">
                           {formatInt(report.summary.funnel.indexNowSuccessCount, isZh, copy.na)} /{' '}
                           {formatInt(report.summary.funnel.indexNowAttemptedCount, isZh, copy.na)}
                         </div>
                       </div>
-                      <div
-                        className="gm-roi-print-card"
-                        style={{
-                          padding: 10,
-                          borderRadius: 6,
-                          background: 'var(--gm-bg-elevated, #171B1A)',
-                          border: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 3,
-                          fontSize: 12,
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                          <span style={{ color: GM.fg.f3 }}>{copy.funnelL1}</span>
-                          <span className="gm-num" style={{ color: GM.fg.f1, fontWeight: 600 }}>
+                      <div className="gm-roi-print-card gm-roi-public-mini-card gm-roi-public-funnel-levels">
+                        <div className="gm-roi-public-funnel-level-row">
+                          <span className="gm-roi-public-funnel-level-label">{copy.funnelL1}</span>
+                          <span className="gm-num gm-roi-public-funnel-level-val">
                             {formatInt(report.summary.funnel.l1Count, isZh, copy.na)}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                          <span style={{ color: GM.fg.f3 }}>{copy.funnelL2}</span>
-                          <span className="gm-num" style={{ color: GM.fg.f1, fontWeight: 600 }}>
+                        <div className="gm-roi-public-funnel-level-row">
+                          <span className="gm-roi-public-funnel-level-label">{copy.funnelL2}</span>
+                          <span className="gm-num gm-roi-public-funnel-level-val">
                             {formatInt(report.summary.funnel.l2Count, isZh, copy.na)}
                           </span>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                          <span style={{ color: GM.fg.f3 }}>{copy.funnelL3}</span>
-                          <span className="gm-num" style={{ color: GM.fg.f1, fontWeight: 600 }}>
+                        <div className="gm-roi-public-funnel-level-row">
+                          <span className="gm-roi-public-funnel-level-label">{copy.funnelL3}</span>
+                          <span className="gm-num gm-roi-public-funnel-level-val">
                             {formatInt(report.summary.funnel.l3Count, isZh, copy.na)}
                           </span>
                         </div>
@@ -1196,110 +800,57 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
 
                 {/* 5. Channel Attribution Ranking */}
                 <section
-                  className="gm-panel gm-roi-print-section gm-roi-print-table-section"
+                  className="gm-panel gm-roi-print-section gm-roi-print-table-section gm-roi-public-section"
                   data-testid="public-roi-channels"
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
                 >
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                    {copy.channelSectionTitle}
-                  </h2>
+                  <h2 className="gm-roi-public-section-title">{copy.channelSectionTitle}</h2>
 
                   {report.summary.channelRanking.length === 0 ? (
-                    <div style={{ fontSize: 13, color: GM.fg.f3 }}>{copy.channelEmpty}</div>
+                    <div className="gm-roi-public-empty">{copy.channelEmpty}</div>
                   ) : (
                     <div className="gm-roi-table-wrap">
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <table className="gm-roi-public-table">
                         <thead>
-                          <tr
-                            style={{
-                              borderBottom: '1px solid var(--gm-line-2, rgba(255,255,255,0.1))',
-                              textAlign: 'left',
-                              color: GM.fg.f3,
-                              fontSize: 12,
-                            }}
-                          >
-                            <th style={{ padding: '8px 10px' }}>{copy.channelColName}</th>
-                            <th style={{ padding: '8px 10px' }}>{copy.channelColMode}</th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.channelColPublished}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.channelColRetests}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.channelColHits}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.channelColHitRate}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.channelColMentionDelta}
-                            </th>
+                          <tr>
+                            <th>{copy.channelColName}</th>
+                            <th>{copy.channelColMode}</th>
+                            <th className="gm-roi-public-num-col">{copy.channelColPublished}</th>
+                            <th className="gm-roi-public-num-col">{copy.channelColRetests}</th>
+                            <th className="gm-roi-public-num-col">{copy.channelColHits}</th>
+                            <th className="gm-roi-public-num-col">{copy.channelColHitRate}</th>
+                            <th className="gm-roi-public-num-col">{copy.channelColMentionDelta}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {report.summary.channelRanking.map((row, idx) => (
-                            <tr
-                              key={`${row.channel}-${idx}`}
-                              style={{
-                                borderBottom: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                              }}
-                            >
-                              <td
-                                style={{
-                                  padding: '10px',
-                                  fontWeight: 600,
-                                  color: GM.fg.f1,
-                                  overflowWrap: 'anywhere',
-                                }}
-                              >
+                            <tr key={`${row.channel}-${idx}`}>
+                              <td className="gm-roi-public-td-primary gm-roi-public-td-wrap">
                                 {row.channel}
                               </td>
-                              <td style={{ padding: '10px', color: GM.fg.f2 }}>
+                              <td className="gm-roi-public-td-secondary">
                                 {row.mode
                                   ? Object.hasOwn(copy.modeLabels, row.mode)
                                     ? copy.modeLabels[row.mode]
                                     : row.mode
                                   : copy.na}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatInt(row.publishedCount, isZh, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatInt(row.completedRetestCount, isZh, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatInt(row.citationHitCount, isZh, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {row.citationHitRate !== null
                                   ? row.citationHitWilson
                                     ? `${formatPctRatio(row.citationHitRate, copy.na)} [${formatPctRatio(row.citationHitWilson.lower, copy.na)}, ${formatPctRatio(row.citationHitWilson.upper, copy.na)}]`
                                     : formatPctRatio(row.citationHitRate, copy.na)
                                   : copy.na}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatSignedPpRatio(row.avgMentionRateDelta, copy.na)}
                               </td>
                             </tr>
@@ -1312,85 +863,46 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
 
                 {/* 6. Milestone Trend */}
                 <section
-                  className="gm-panel gm-roi-print-section gm-roi-print-table-section"
+                  className="gm-panel gm-roi-print-section gm-roi-print-table-section gm-roi-public-section"
                   data-testid="public-roi-milestones"
-                  style={{
-                    padding: '20px 24px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    minWidth: 0,
-                  }}
                 >
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: GM.fg.f1 }}>
-                    {copy.milestoneSectionTitle}
-                  </h2>
+                  <h2 className="gm-roi-public-section-title">{copy.milestoneSectionTitle}</h2>
 
                   {report.summary.milestoneTrend.length === 0 ? (
-                    <div style={{ fontSize: 13, color: GM.fg.f3 }}>{copy.milestoneEmpty}</div>
+                    <div className="gm-roi-public-empty">{copy.milestoneEmpty}</div>
                   ) : (
                     <div className="gm-roi-table-wrap">
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <table className="gm-roi-public-table">
                         <thead>
-                          <tr
-                            style={{
-                              borderBottom: '1px solid var(--gm-line-2, rgba(255,255,255,0.1))',
-                              textAlign: 'left',
-                              color: GM.fg.f3,
-                              fontSize: 12,
-                            }}
-                          >
-                            <th style={{ padding: '8px 10px' }}>{copy.milestoneColDay}</th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.milestoneColSample}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
+                          <tr>
+                            <th>{copy.milestoneColDay}</th>
+                            <th className="gm-roi-public-num-col">{copy.milestoneColSample}</th>
+                            <th className="gm-roi-public-num-col">
                               {copy.milestoneColMentionWilson}
                             </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.milestoneColControl}
-                            </th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right' }}>
-                              {copy.milestoneColDid}
-                            </th>
+                            <th className="gm-roi-public-num-col">{copy.milestoneColControl}</th>
+                            <th className="gm-roi-public-num-col">{copy.milestoneColDid}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {report.summary.milestoneTrend.map((point) => (
-                            <tr
-                              key={point.milestoneDay}
-                              style={{
-                                borderBottom: '1px solid var(--gm-line-1, rgba(255,255,255,0.06))',
-                              }}
-                            >
-                              <td className="gm-num" style={{ padding: '10px', fontWeight: 600 }}>
+                            <tr key={point.milestoneDay}>
+                              <td className="gm-num gm-roi-public-td-primary">
                                 D+{point.milestoneDay}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatInt(point.hits, isZh, copy.na)} /{' '}
                                 {formatInt(point.trials, isZh, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPctRatio(point.mentionRate, copy.na)} [
                                 {formatPctRatio(point.wilson.lower, copy.na)},{' '}
                                 {formatPctRatio(point.wilson.upper, copy.na)}]
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {formatPctRatio(point.controlMentionRate, copy.na)}
                               </td>
-                              <td
-                                className="gm-num"
-                                style={{ padding: '10px', textAlign: 'right' }}
-                              >
+                              <td className="gm-num gm-roi-public-num-col">
                                 {point.did
                                   ? formatSignedPpRatio(point.did.netLift, copy.na)
                                   : copy.na}
@@ -1404,20 +916,8 @@ export function PublicRoiReportView({ token }: PublicRoiReportViewProps): JSX.El
                 </section>
 
                 {/* 7. Footer */}
-                <footer
-                  data-testid="public-roi-footer"
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    padding: '4px 6px',
-                    fontSize: 12,
-                    color: GM.fg.f3,
-                  }}
-                >
-                  <span style={{ overflowWrap: 'anywhere' }}>
+                <footer data-testid="public-roi-footer" className="gm-roi-public-footer">
+                  <span className="gm-roi-public-td-wrap">
                     {orgLabel
                       ? `${orgLabel} - ${copy.footerReadOnly}`
                       : `${copy.poweredBy} - ${copy.footerReadOnly}`}

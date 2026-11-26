@@ -11,6 +11,7 @@ export type ConsoleContextValue = {
   wallet: WalletSummary | null;
   walletLoading: boolean;
   urlSearch?: string;
+  managesProductLines?: boolean;
   openCreateBrandModal: () => void;
   openEnableMarketModal: (market: GeoMarket) => void;
   refreshWallet: () => Promise<void>;

@@ -47,6 +47,7 @@ import {
 import { safeConsoleHref } from '../../lib/route-map';
 import {
   HOME_ROUTE,
+  STATIC_ROUTES,
   buildWorkspaceHref,
   isConsoleRouteAccessible,
   matchRoute,
@@ -208,6 +209,44 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
     },
   });
 
+  const brandsLoaded = workspace.brandsLoaded;
+  const activeBrandId = workspace.activeBrandId;
+  const hasOwnedActiveBrand =
+    brandsLoaded &&
+    Boolean(activeBrandId) &&
+    workspace.brands.some((brand) => brand.id === activeBrandId);
+
+  useEffect(() => {
+    if (!accountId || !hasOwnedActiveBrand || !activeBrandId) return undefined;
+    const ctrl = new AbortController();
+    void useWorkspaceStore.getState().loadProductLines(activeBrandId, {
+      storage: window.sessionStorage,
+      signal: ctrl.signal,
+    });
+    return () => {
+      ctrl.abort();
+    };
+  }, [accountId, hasOwnedActiveBrand, activeBrandId]);
+
+  useTabFreshness({
+    active: Boolean(accountId && hasOwnedActiveBrand && activeBrandId),
+    domains: ['product-lines'],
+    refreshOnActivate: false,
+    onRefresh: () => {
+      const state = useWorkspaceStore.getState();
+      if (
+        !state.brandsLoaded ||
+        !state.activeBrandId ||
+        !state.brands.some((brand) => brand.id === state.activeBrandId)
+      ) {
+        return;
+      }
+      void state.loadProductLines(state.activeBrandId, {
+        storage: window.sessionStorage,
+      });
+    },
+  });
+
   useEffect(() => {
     if (!workspace.hydrated) return;
     useWorkspaceStore.getState().syncFromUrl(search, window.localStorage);
@@ -216,7 +255,10 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     const onPopState = () => {
-      useWorkspaceStore.getState().syncFromUrl(window.location.search, window.localStorage);
+      const matched = matchRoute(window.location.pathname);
+      useWorkspaceStore.getState().syncFromUrl(window.location.search, window.localStorage, {
+        clearMissingProductLine: Boolean(matched && STATIC_ROUTES[matched.path].businessWorkspace),
+      });
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -247,8 +289,21 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
         router.push(targetHref);
         return;
       }
-      const { activeBrandId, activeMarket } = useWorkspaceStore.getState();
-      const nextHref = buildWorkspaceHref(targetHref, activeBrandId, activeMarket);
+      const { activeBrandId, activeMarket, activeProductLineId } = useWorkspaceStore.getState();
+      const qIndex = targetHref.indexOf('?');
+      const hasExplicitProductLine =
+        qIndex !== -1 &&
+        new URLSearchParams((targetHref.slice(qIndex + 1).split('#', 1)[0] ?? '').trim()).has(
+          'productLineId',
+        );
+      const nextHref = buildWorkspaceHref(
+        targetHref,
+        activeBrandId,
+        activeMarket,
+        !hasExplicitProductLine && activeProductLineId
+          ? { productLineId: activeProductLineId }
+          : undefined,
+      );
       router.push(nextHref);
     },
     [router],
@@ -305,6 +360,7 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
             wallet,
             walletLoading,
             urlSearch: search,
+            managesProductLines: true,
             openCreateBrandModal: () => setCreateBrandModalOpen(true),
             openEnableMarketModal: (market: GeoMarket) => setEnableMarketModalTarget(market),
             refreshWallet,

@@ -2,7 +2,10 @@
 
 import {
   GEO_MARKET_DEFAULTS,
+  GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
+  containsCjk,
   normalizeBrandDomain,
+  validateGlobalMarketIdentity,
   type BrandCompetitor,
   type BrandFactsResponse,
   type BrandMarketAiSuggestInput,
@@ -18,6 +21,7 @@ import {
 import {
   Alert,
   Button,
+  Checkbox,
   Divider,
   Form,
   Input,
@@ -189,6 +193,7 @@ export function ShellFrame({
   const [internalEnableMarket, setInternalEnableMarket] = useState<GeoMarket | null>(null);
   const [enableSubmitting, setEnableSubmitting] = useState(false);
   const [enableError, setEnableError] = useState<string | null>(null);
+  const [enableAllowCjkGlobal, setEnableAllowCjkGlobal] = useState(false);
   const [isWindows, setIsWindows] = useState(false);
   const [isMobile, setIsMobile] = useState(
     () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
@@ -196,6 +201,8 @@ export function ShellFrame({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [studioRailExpanded, setStudioRailExpanded] = useState(false);
   const [enableForm] = Form.useForm<EnableMarketFormValues>();
+  const watchedEnableLocalName = Form.useWatch('localBrandName', enableForm);
+  const watchedEnableLocalCategory = Form.useWatch('localCategory', enableForm);
 
   const isCreateOpen = createBrandModalOpen ?? internalCreateOpen;
   const enableTarget =
@@ -300,6 +307,8 @@ export function ShellFrame({
 
   useEffect(() => {
     if (!enableTarget || !activeBrand) return;
+    setEnableAllowCjkGlobal(false);
+    setEnableError(null);
     enableForm.setFieldsValue({
       localBrandName: activeBrand.name,
       localCategory: '',
@@ -341,13 +350,28 @@ export function ShellFrame({
 
   const handleEnableSubmit = async (values: EnableMarketFormValues) => {
     if (!activeBrand || !enableTarget) return;
+    const trimmedLocalName = values.localBrandName.trim() || activeBrand.name;
+    const trimmedLocalCategory = values.localCategory?.trim();
+    const globalCheck = validateGlobalMarketIdentity({
+      market: enableTarget,
+      localBrandName: trimmedLocalName,
+      localCategory: trimmedLocalCategory ?? null,
+      allowCjkGlobalIdentity: enableAllowCjkGlobal,
+    });
+    if (!globalCheck.ok) {
+      setEnableError(globalCheck.message);
+      return;
+    }
+
     setEnableSubmitting(true);
     setEnableError(null);
     try {
-      const trimmedLocalCategory = values.localCategory?.trim();
       const payload: UpsertBrandMarketInput = {
-        localBrandName: values.localBrandName.trim() || activeBrand.name,
+        localBrandName: trimmedLocalName,
         ...(trimmedLocalCategory ? { localCategory: trimmedLocalCategory } : {}),
+        ...(enableTarget === 'GLOBAL' && enableAllowCjkGlobal
+          ? { allowCjkGlobalIdentity: true }
+          : {}),
         ownedDomains: parseDomainLines(values.ownedDomainsText),
         competitors: parseCompetitorLines(values.competitorsText),
       };
@@ -368,6 +392,18 @@ export function ShellFrame({
   };
 
   const enableDefaults = enableTarget ? GEO_MARKET_DEFAULTS[enableTarget] : null;
+  const effectiveEnableLocalName =
+    watchedEnableLocalName?.trim() || activeBrand?.name?.trim() || '';
+  const hasEnableGlobalCjk =
+    enableTarget === 'GLOBAL' &&
+    (containsCjk(effectiveEnableLocalName) ||
+      containsCjk(watchedEnableLocalCategory?.trim() || ''));
+
+  useEffect(() => {
+    if (!hasEnableGlobalCjk) {
+      setEnableAllowCjkGlobal(false);
+    }
+  }, [hasEnableGlobalCjk]);
 
   return (
     <Layout className="gm-shell-layout">
@@ -715,6 +751,21 @@ export function ShellFrame({
               placeholder="每行一个竞品，格式：竞品名, 竞品域名（域名选填）"
             />
           </Form.Item>
+          {hasEnableGlobalCjk ? (
+            <div className="gm-brand-global-cjk-guard gm-modal-alert">
+              <Checkbox
+                data-testid="enable-market-allow-cjk-global-checkbox"
+                checked={enableAllowCjkGlobal}
+                disabled={enableSubmitting}
+                onChange={(event) => {
+                  setEnableAllowCjkGlobal(event.target.checked);
+                  if (event.target.checked && enableError) setEnableError(null);
+                }}
+              >
+                {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+              </Checkbox>
+            </div>
+          ) : null}
           {enableError ? (
             <Alert type="error" showIcon message={enableError} className="gm-modal-alert" />
           ) : null}

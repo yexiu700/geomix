@@ -98,30 +98,32 @@ export function VerifyScreen({
 
   return (
     <section aria-label="实名认证">
-      <Typography.Title level={3} style={{ marginTop: 0 }}>
+      <Typography.Title level={3} className="gm-account-section-title">
         {title}
       </Typography.Title>
       <Alert
         type="info"
         showIcon
-        style={{ marginBottom: 16 }}
+        className="gm-verify-info-alert"
         message="实名认证尚未开通核验。提交后只保存在 GeoMix，状态保持为已提交，不会变成已通过。"
       />
       {loading ? (
-        <div data-testid="verify-loading" aria-busy="true" style={{ maxWidth: 480 }}>
+        <div data-testid="verify-loading" aria-busy="true" className="gm-verify-form">
           <Skeleton active paragraph={{ rows: 5 }} />
         </div>
       ) : (
         <>
           {current ? (
-            <p>当前状态：{current.status === 'SUBMITTED' ? '已提交' : current.status}</p>
+            <p className="gm-verify-status">
+              当前状态：{current.status === 'SUBMITTED' ? '已提交' : current.status}
+            </p>
           ) : null}
           <Form
             form={form}
             layout="vertical"
             scrollToFirstError
             initialValues={EMPTY}
-            style={{ maxWidth: 480 }}
+            className="gm-verify-form"
             onFinish={handleFinish}
           >
             <Form.Item
@@ -185,10 +187,10 @@ export function VerifyScreen({
               <Input aria-label="电话" placeholder="选填，联系电话" disabled={readOnly} />
             </Form.Item>
             {error ? (
-              <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />
+              <Alert type="error" showIcon message={error} className="gm-account-alert" />
             ) : null}
             {notice ? (
-              <Alert type="success" showIcon message={notice} style={{ marginBottom: 12 }} />
+              <Alert type="success" showIcon message={notice} className="gm-account-alert" />
             ) : null}
             <Button type="primary" htmlType="submit" disabled={readOnly || saving} loading={saving}>
               提交资料

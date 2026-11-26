@@ -6,6 +6,7 @@ import {
   AUTH_ERROR,
   BRAND_MAX_CONTROL_PROMPTS,
   BRAND_SEED_PROMPT_INTENTS,
+  containsCjk,
   parseEnv,
   validateControlPromptsAgainstSeeds,
 } from '@geomix/shared';
@@ -649,5 +650,145 @@ describe('POST /api/v2/brands/:id/markets/:market/ai-suggest (#405)', () => {
         process.env.MARKET_AI_SUGGEST_RATE_LIMIT_MAX = prevMax;
       }
     }
+  });
+
+  it('sanitizes/rejects CJK localBrandName and localCategory from GLOBAL LLM output including Extension B (Bug #1A)', async () => {
+    hasFakeFallbackSpy.mockReturnValue(false);
+    llmCompleteSpy.mockResolvedValueOnce({
+      provider: 'deepseek',
+      model: 'cheap-model',
+      fake: false,
+      tokensIn: 120,
+      tokensOut: 120,
+      text: JSON.stringify({
+        localBrandName: 'Chayan 茶颜',
+        localCategory: 'Specialty Tea 𠀀茶饮',
+        aliases: ['PV-500'],
+        seedPrompts: [
+          { prompt: 'Best quiet 4-bay home NAS for 4K editing?', intent: 'BUYING_GUIDE' },
+        ],
+      }),
+    });
+
+    const res = await postSuggest('brand_cn_gl', 'GLOBAL', {}, tokenT1);
+    expect(res.status).toBe(200);
+    const data = res.body.data!;
+    if (typeof data.localBrandName === 'string') {
+      expect(containsCjk(data.localBrandName)).toBe(false);
+    }
+    if (typeof data.localCategory === 'string') {
+      expect(containsCjk(data.localCategory)).toBe(false);
+    }
+    expect(data.localBrandName).toBe('Pinevault');
+    expect(data.localCategory).toBe('home NAS');
+    expect((data.warnings as string[])?.some((w) => w.includes('包含中文'))).toBe(true);
+
+    // When brand has no non-CJK domain/alias fallback, CJK localBrandName must be omitted (never leaked)
+    store.brands[0]!.markets[1]!.ownedDomains = ['example.com'];
+    llmCompleteSpy.mockResolvedValueOnce({
+      provider: 'deepseek',
+      model: 'cheap-model',
+      fake: false,
+      tokensIn: 100,
+      tokensOut: 80,
+      text: JSON.stringify({
+        localBrandName: 'Tea 𠀀',
+        localCategory: 'Tea 𠀁',
+      }),
+    });
+    const noFallbackRes = await postSuggest(
+      'brand_cn_gl',
+      'GLOBAL',
+      { fields: ['localIdentity'] },
+      tokenT1,
+    );
+    expect(noFallbackRes.status).toBe(200);
+    expect(noFallbackRes.body.data?.localBrandName).toBeUndefined();
+    expect(typeof noFallbackRes.body.data?.localCategory).toBe('string');
+    expect(containsCjk(noFallbackRes.body.data?.localCategory as string)).toBe(false);
+  });
+
+  it('excludes existing controlPrompts from suggested seedPrompts in both LLM and deterministic fallback modes (Bug #2)', async () => {
+    const collidingPrompt = '2026年家用 NAS哪个品牌好？值得推荐的型号有哪些？';
+    store.brands[0]!.markets[0]!.controlPrompts = [collidingPrompt];
+
+    // 1. Deterministic fake fallback mode
+    llmCompleteSpy.mockResolvedValueOnce({
+      provider: 'fake',
+      model: 'fake',
+      fake: true,
+      tokensIn: 50,
+      tokensOut: 50,
+      text: '【FAKE】',
+    });
+    const fallbackRes = await postSuggest('brand_cn_gl', 'CN', {}, tokenT1);
+    expect(fallbackRes.status).toBe(200);
+    const fallbackSeeds = (
+      fallbackRes.body.data?.seedPrompts as Array<{ prompt: string; intent: string }>
+    ).map((item) => item.prompt);
+    expect(fallbackSeeds).not.toContain(collidingPrompt);
+    expect(
+      validateControlPromptsAgainstSeeds(
+        store.brands[0]!.markets[0]!.controlPrompts,
+        fallbackSeeds,
+      ),
+    ).toEqual({ ok: true });
+
+    // 2. Real LLM mode returning a seed prompt matching existing controlPrompt
+    hasFakeFallbackSpy.mockReturnValue(false);
+    llmCompleteSpy.mockResolvedValueOnce({
+      provider: 'deepseek',
+      model: 'cheap-model',
+      fake: false,
+      tokensIn: 120,
+      tokensOut: 120,
+      text: JSON.stringify({
+        seedPrompts: [
+          { prompt: collidingPrompt, intent: 'BUYING_GUIDE' },
+          { prompt: '四盘位静音家用 NAS 真实噪音对比评测', intent: 'SKU_REVIEW' },
+        ],
+        controlPrompts: [],
+      }),
+    });
+    const llmRes = await postSuggest('brand_cn_gl', 'CN', { fields: ['seedPrompts'] }, tokenT1);
+    expect(llmRes.status).toBe(200);
+    const llmSeeds = (
+      llmRes.body.data?.seedPrompts as Array<{ prompt: string; intent: string }>
+    ).map((item) => item.prompt);
+    expect(llmSeeds).toEqual(['四盘位静音家用 NAS 真实噪音对比评测']);
+    expect(
+      validateControlPromptsAgainstSeeds(store.brands[0]!.markets[0]!.controlPrompts, llmSeeds),
+    ).toEqual({ ok: true });
+  });
+
+  it('clamps long ProviderError messages in warnings to <= 300 chars without throwing ZodError (Bug #3)', async () => {
+    const longErrorMessage = '上游商品页连接失败：' + 'A'.repeat(290);
+    publicFetchSpy.mockRejectedValueOnce(
+      new ProviderError(PROVIDER_KIND.UPSTREAM, longErrorMessage, 'fetch_failed'),
+    );
+    llmCompleteSpy.mockResolvedValueOnce({
+      provider: 'fake',
+      model: 'fake',
+      fake: true,
+      tokensIn: 20,
+      tokensOut: 20,
+      text: '【FAKE】',
+    });
+
+    const res = await postSuggest(
+      'brand_cn_gl',
+      'CN',
+      { sourceUrl: 'https://pinevault.example.com/slow-page' },
+      tokenT1,
+    );
+
+    expect(res.status).toBe(200);
+    const warnings = (res.body.data?.warnings ?? []) as string[];
+    expect(warnings.length).toBeGreaterThan(0);
+    for (const warning of warnings) {
+      expect(warning.length).toBeGreaterThan(0);
+      expect(warning.length).toBeLessThanOrEqual(300);
+    }
+    expect(warnings.some((w) => w.startsWith('商品页抓取失败（'))).toBe(true);
   });
 });

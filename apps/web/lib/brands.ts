@@ -9,8 +9,12 @@ import {
   type BrandMediaDeleteResponse,
   type BrandMediaListResponse,
   type BrandMediaUploadResponse,
+  type BrandProductLineDeleteResponse,
+  type BrandProductLineDto,
+  type BrandProductLineListResponse,
   type BrandRecord,
   type CreateBrandInput,
+  type CreateProductLineInput,
   type ExtractBrandFactsInput,
   type ExtractBrandFactsResponse,
   type GeoMarket,
@@ -18,6 +22,7 @@ import {
   type UpdateBrandInput,
   type UpdateBrandMarketInput,
   type UpdateBrandMediaInput,
+  type UpdateProductLineInput,
   type UpsertBrandFactsInput,
   type UpsertBrandMarketInput,
 } from '@geomix/shared';
@@ -32,6 +37,9 @@ export type {
   BrandMediaDeleteResponse,
   BrandMediaListResponse,
   BrandMediaUploadResponse,
+  BrandProductLineDeleteResponse,
+  BrandProductLineDto,
+  BrandProductLineListResponse,
   ExtractBrandFactsResponse,
 };
 
@@ -172,12 +180,80 @@ export function suggestBrandMarketConfig(
   );
 }
 
-export async function getBrandFacts(
+export function listBrandProductLines(
   brandId: string,
   options?: BrandClientOptions,
+): Promise<BrandProductLineListResponse> {
+  return authorizedV2Request<BrandProductLineListResponse>(
+    `/brands/${encodeURIComponent(brandId)}/product-lines`,
+    {
+      method: 'GET',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function createBrandProductLine(
+  brandId: string,
+  input: CreateProductLineInput,
+  options?: BrandClientOptions,
+): Promise<BrandProductLineDto> {
+  return authorizedV2Request<BrandProductLineDto>(
+    `/brands/${encodeURIComponent(brandId)}/product-lines`,
+    {
+      method: 'POST',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function updateBrandProductLine(
+  brandId: string,
+  lineId: string,
+  input: UpdateProductLineInput,
+  options?: BrandClientOptions,
+): Promise<BrandProductLineDto> {
+  return authorizedV2Request<BrandProductLineDto>(
+    `/brands/${encodeURIComponent(brandId)}/product-lines/${encodeURIComponent(lineId)}`,
+    {
+      method: 'PATCH',
+      body: input,
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export function deleteBrandProductLine(
+  brandId: string,
+  lineId: string,
+  options?: BrandClientOptions,
+): Promise<BrandProductLineDeleteResponse> {
+  return authorizedV2Request<BrandProductLineDeleteResponse>(
+    `/brands/${encodeURIComponent(brandId)}/product-lines/${encodeURIComponent(lineId)}`,
+    {
+      method: 'DELETE',
+      storage: options?.storage,
+      signal: options?.signal,
+    },
+  );
+}
+
+export async function getBrandFacts(
+  brandId: string,
+  options?: BrandClientOptions & { productLineId?: string | null },
 ): Promise<BrandFactsResponse> {
+  const qs = new URLSearchParams();
+  const trimmedLineId = options?.productLineId?.trim();
+  if (trimmedLineId) {
+    qs.set('productLineId', trimmedLineId);
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
   const res = await authorizedV2Request<BrandFactsResponse>(
-    `/brands/${encodeURIComponent(brandId)}/facts`,
+    `/brands/${encodeURIComponent(brandId)}/facts${suffix}`,
     {
       method: 'GET',
       storage: options?.storage,

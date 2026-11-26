@@ -116,7 +116,7 @@ export function ExportAction<F extends string = ExportFormat>({
         onClick={() => void runExport(fallbackFormat)}
       >
         <span>{label}</span>
-        <span aria-hidden="true" style={{ fontSize: 10, marginLeft: 4, opacity: 0.72 }}>
+        <span aria-hidden="true" className="gm-export-caret">
           ▾
         </span>
       </Button>
@@ -148,7 +148,7 @@ export function ExportAction<F extends string = ExportFormat>({
         disabled={disabled}
       >
         <span>{label}</span>
-        <span aria-hidden="true" style={{ fontSize: 10, marginLeft: 4, opacity: 0.72 }}>
+        <span aria-hidden="true" className="gm-export-caret">
           ▾
         </span>
       </Button>

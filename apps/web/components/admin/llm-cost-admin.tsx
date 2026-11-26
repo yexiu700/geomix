@@ -15,7 +15,7 @@ import {
   type LlmSceneBreakdown,
   type LlmTenantBreakdown,
 } from '@geomix/shared';
-import { Alert, Button, Card, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Select, Space, Switch, Table, Tabs, Typography } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { AdminApiError, type AdminClient, type TenantRow } from '../../lib/admin-client';
 import {
@@ -25,6 +25,7 @@ import {
   replaceUxJargon,
   triggerBlobDownload,
 } from '../../lib/ux-foundation';
+import { StatusBadge } from '../ui';
 
 export type LlmCostAdminClient = Pick<AdminClient, 'llmCosts'> &
   Partial<Pick<AdminClient, 'listTenants'>>;
@@ -95,24 +96,15 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
 
   return (
     <section aria-label="LLM成本日报">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        <Typography.Title level={3} style={{ margin: 0 }}>
+      <div className="gm-admin-head gm-admin-head--lg">
+        <Typography.Title level={3} className="gm-admin-title">
           LLM 成本日报
         </Typography.Title>
         <Space wrap>
           <Select
             aria-label="统计周期"
             value={days}
-            style={{ width: 132 }}
+            className="gm-admin-select-sm"
             options={LLM_COST_DAY_OPTIONS.map((d) => ({
               value: d,
               label: `近 ${d} 天`,
@@ -123,7 +115,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
             <Select
               aria-label="筛选租户"
               value={tenantId}
-              style={{ width: 180 }}
+              className="gm-admin-select-lg"
               options={[
                 { value: '', label: '全部租户' },
                 ...tenants.map((t) => ({
@@ -154,13 +146,13 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
         </Space>
       </div>
 
-      {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} /> : null}
+      {error ? <Alert type="error" showIcon message={error} className="gm-admin-alert" /> : null}
 
       {report ? (
         <Alert
           type={report.rateConfigured ? 'info' : 'warning'}
           showIcon
-          style={{ marginBottom: 16 }}
+          className="gm-admin-alert-lg"
           message={
             report.rateConfigured
               ? `统计区间 ${windowStart} 至 ${windowEnd}（北京时间 UTC+8）：已启用自定义模型单价核算，本报表仅用于运维成本统计，不触发租户点数扣减。`
@@ -169,16 +161,9 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
         />
       ) : null}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
+      <div className="gm-admin-cost-grid">
         <Card size="small" title="总调用次数">
-          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+          <Typography.Title level={4} className="gm-num gm-admin-kpi-val">
             {formatCountNumber(report?.totals.calls)}
           </Typography.Title>
           <Typography.Text type="secondary" className="gm-num">
@@ -187,7 +172,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
           </Typography.Text>
         </Card>
         <Card size="small" title="总 Token 消耗">
-          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+          <Typography.Title level={4} className="gm-num gm-admin-kpi-val">
             {formatCountNumber(report?.totals.totalTokens)}
           </Typography.Title>
           <Typography.Text type="secondary" className="gm-num">
@@ -196,7 +181,7 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
           </Typography.Text>
         </Card>
         <Card size="small" title="预估总成本（元）">
-          <Typography.Title level={4} className="gm-num" style={{ margin: 0 }}>
+          <Typography.Title level={4} className="gm-num gm-admin-kpi-val">
             {formatYuanAmount(report?.totals.costYuan)}
           </Typography.Title>
           <Typography.Text type="secondary" className="gm-num">
@@ -362,11 +347,11 @@ export function LlmCostAdmin({ client }: { client: LlmCostAdminClient }) {
                     dataIndex: 'fake',
                     render: (fake: boolean, row) =>
                       row.model.startsWith('deterministic-') ? (
-                        <Tag>规则跳过</Tag>
+                        <StatusBadge tone="neutral">规则跳过</StatusBadge>
                       ) : fake ? (
-                        <Tag>内置模拟</Tag>
+                        <StatusBadge tone="neutral">内置模拟</StatusBadge>
                       ) : (
-                        <Tag color="blue">真实模型</Tag>
+                        <StatusBadge tone="active">真实模型</StatusBadge>
                       ),
                   },
                   {

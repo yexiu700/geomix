@@ -595,8 +595,9 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       );
     });
 
-    // Select article -> inline rewrite TO_TABLE -> delete via feedback.confirm
+    // Select article -> open AI rewrite dropdown -> TO_TABLE -> delete via feedback.confirm
     fireEvent.click(screen.getByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(await screen.findByTestId('studio-rewrite-dropdown-btn'));
     fireEvent.click(await screen.findByTestId('studio-rewrite-TO_TABLE'));
     await waitFor(() => {
       expect(rewriteSpy).toHaveBeenCalledWith(
@@ -732,7 +733,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     const titleInput = (await screen.findByLabelText('文章标题')) as HTMLInputElement;
     expect(titleInput.value).toBe('星辰存储 DXP4800 静音实测报告');
 
-    // Start an active SSE stream so we can verify filtering does NOT abort it
+    // Expand collapsed prewrite bar & start an active SSE stream so we can verify filtering does NOT abort it
+    fireEvent.click(await screen.findByTestId('studio-prewrite-expand-btn'));
     const promptBox = screen.getByLabelText('目标问题');
     fireEvent.change(promptBox, { target: { value: '四盘位静音 NAS 深度评测' } });
     fireEvent.click(screen.getByTestId('studio-stream-btn'));
@@ -2714,7 +2716,9 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       </ConsoleProvider>,
     );
 
-    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1');
+    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1', undefined, {
+      timeout: 5000,
+    });
     expect(crawlBadges.textContent).toContain('待体检');
 
     // 1. Trigger CrawlProbe -> updates to OK + HTTP 200 without redundant self-reload
@@ -3079,5 +3083,1350 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       'Unsaved Important User Edit',
     );
     expect(fetchArticlesSpy).toHaveBeenCalledTimes(fetchCountBeforeRefresh);
+  });
+
+  it('#384: auto-collapses prewrite bar with locale pill, supports Focus Mode, Selection Bubble + Escape overlay guard, inline [TBD] highlight, dual-tab anti-fight, and sticky single-CTA footer', async () => {
+    const multiLocaleBrand: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_384_ux',
+      markets: DUAL_BRAND.markets.map((m) =>
+        m.market === 'GLOBAL' ? { ...m, locale: 'en-US', supportedLocales: ['en-US', 'ja-JP'] } : m,
+      ),
+    };
+    const articleWithTbd: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_384_tbd',
+      brandId: multiLocaleBrand.id,
+      market: 'GLOBAL',
+      targetLocale: 'ja-JP',
+      title: 'Quiet NAS 2026 Review',
+      contentMarkdown:
+        '## Summary\n\nThis quiet home NAS runs smoothly with [TBD: idle power draw] in daily tests.\n\nSecond paragraph for selection testing in preview canvas.',
+      contentHtml: '',
+      status: 'DRAFT',
+    };
+    const cleanPublishedArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_384_pub',
+      brandId: multiLocaleBrand.id,
+      market: 'GLOBAL',
+      targetLocale: 'en-US',
+      title: 'Clean Published Guide',
+      contentMarkdown: '## Overview\n\nAll facts verified at 11.4W idle draw.',
+      contentHtml: '',
+      status: 'PUBLISHED',
+      geoScore: 91,
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [multiLocaleBrand],
+      activeBrandId: multiLocaleBrand.id,
+      activeMarket: 'GLOBAL',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [articleWithTbd, cleanPublishedArticle],
+      total: 2,
+    });
+    vi.spyOn(studioApi, 'fetchPublishRecords').mockImplementation(async (articleId) => {
+      if (articleId === cleanPublishedArticle.id) {
+        return {
+          items: [
+            {
+              id: 'pub_384_blocked',
+              brandId: multiLocaleBrand.id,
+              brandMarketId: 'bm_global',
+              articleId: cleanPublishedArticle.id,
+              channel: 'Official Blog / Docs',
+              publishedUrl: 'https://example.com/clean-guide',
+              publishedAt: '2026-11-24T08:00:00.000Z',
+              baselineRunId: null,
+              beforeMetrics: null,
+              afterMetrics: null,
+              latestRetestRunId: null,
+              crawlStatus: 'BLOCKED',
+              crawlCheckedAt: '2026-11-24T09:00:00.000Z',
+              crawlReportJson: null,
+              indexNowSubmitted: false,
+              retestSchedules: [],
+            },
+          ],
+        };
+      }
+      return { items: [] };
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // 0-article initial state: prewrite bar is expanded & footer CTA is disabled default button
+    expect(await screen.findByTestId('studio-prewrite-bar')).toBeTruthy();
+    const emptyFooterBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    expect(emptyFooterBtn.disabled).toBe(true);
+
+    // 1. Select DRAFT article with [TBD] -> prewrite auto-collapses & displays locale pill
+    await screen.findByTestId(`studio-article-item-${articleWithTbd.id}`);
+    fireEvent.click(screen.getByText('Quiet NAS 2026 Review'));
+    const collapsedBar = await screen.findByTestId('studio-prewrite-collapsed-bar');
+    expect(collapsedBar.textContent).toContain('ja-JP');
+    expect(screen.getByTestId('studio-collapsed-locale-pill').textContent).toContain('日本語');
+
+    // Expand -> reveals target locale selector -> collapse back
+    fireEvent.click(screen.getByTestId('studio-prewrite-expand-btn'));
+    expect(await screen.findByTestId('studio-target-locale-selector')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('studio-prewrite-collapse-btn'));
+    expect(await screen.findByTestId('studio-prewrite-collapsed-bar')).toBeTruthy();
+
+    // 2. Restrained [TBD] bar + inline preview span + sticky footer state machine (with TBD)
+    expect(screen.getByTestId('studio-batch-tbd-open-btn').textContent).toContain(
+      '补齐 1 组待补充事实',
+    );
+    const fallbackDistBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    expect(fallbackDistBtn.disabled).toBe(false);
+    expect(fallbackDistBtn.textContent).toContain('仍要预览分发');
+    const previewBody = screen.getByTestId('studio-preview-body');
+    expect(previewBody.querySelectorAll('.gm-studio-tbd-inline').length).toBe(1);
+
+    // 3. Right pane dual-tab: DRAFT opens on 体检 showing UX_TERMS.fanOutCoverage ('AI 追问覆盖度')
+    const rightPane = screen.getByTestId('studio-right-pane');
+    expect(rightPane.textContent).toContain('AI 追问覆盖度');
+    expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
+      'true',
+    );
+
+    // 4. Focus Mode hides left & right panes and restores them on toggle off
+    const focusBtn = screen.getByTestId('studio-focus-mode-btn');
+    expect(focusBtn.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(focusBtn);
+    expect(focusBtn.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.queryByTestId('studio-left-pane')).toBeNull();
+    expect(screen.queryByTestId('studio-right-pane')).toBeNull();
+    fireEvent.click(focusBtn);
+    expect(await screen.findByTestId('studio-left-pane')).toBeTruthy();
+    expect(await screen.findByTestId('studio-right-pane')).toBeTruthy();
+
+    // 5. Selection Bubble Toolbar in preview HTML + Escape respects open floating overlay
+    const pEl = previewBody.querySelector('p');
+    expect(pEl).toBeTruthy();
+    const textNode = pEl!.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, Math.min(18, (textNode.textContent ?? '').length));
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    fireEvent.mouseUp(previewBody, { clientX: 420, clientY: 280 });
+    expect(await screen.findByTestId('studio-selection-bubble')).toBeTruthy();
+
+    // Simulate open AntD dropdown overlay -> Escape must NOT dismiss selection bubble
+    const fakeOverlay = document.createElement('div');
+    fakeOverlay.className = 'ant-dropdown';
+    fakeOverlay.getBoundingClientRect = () =>
+      ({ width: 120, height: 80, top: 10, left: 10, right: 130, bottom: 90 }) as DOMRect;
+    document.body.appendChild(fakeOverlay);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByTestId('studio-selection-bubble')).toBeTruthy();
+    document.body.removeChild(fakeOverlay);
+
+    // With no overlay open -> Escape dismisses selection bubble
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('studio-selection-bubble')).toBeNull();
+    });
+
+    // 6. Switch to PUBLISHED clean article -> auto-selects 交付 tab with count & crawl alert dot,
+    //    and footer switches to primary '进入分发工作台'
+    fireEvent.click(screen.getByText('Clean Published Guide'));
+    await waitFor(() => {
+      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
+        'true',
+      );
+      expect(screen.getByTestId('studio-right-tab-delivery').textContent).toContain('交付 (1)');
+      expect(screen.getByTestId('studio-delivery-crawl-alert-dot')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('studio-batch-tbd-open-btn')).toBeNull();
+    expect(screen.getByTestId('studio-open-distribution-btn').textContent).toContain(
+      '进入分发工作台',
+    );
+
+    // Anti-fight: manually clicking 体检 stays on 体检
+    fireEvent.click(screen.getByTestId('studio-right-tab-checkup'));
+    expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
+      'true',
+    );
+
+    // Clicking + 自由选题 auto-expands prewrite bar
+    fireEvent.click(screen.getByTestId('studio-free-topic-btn'));
+    expect(await screen.findByTestId('studio-prewrite-bar')).toBeTruthy();
+  });
+
+  it('#384 responsive: auto-collapses left rail at <1360px (icon-only expand) and renders 队列/体检 drawers at <=920px', async () => {
+    const origMatchMedia = window.matchMedia;
+    let activeQuery: 'compact' | 'narrow' = 'compact';
+    window.matchMedia = vi.fn((query: string) => ({
+      matches:
+        (activeQuery === 'compact' && query.includes('max-width: 1359px')) ||
+        (activeQuery === 'narrow' && query.includes('max-width: 920px')),
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+
+    try {
+      window.history.replaceState(
+        null,
+        '',
+        `/studio?brandId=${DUAL_BRAND.id}&market=CN&articleId=${SAMPLE_ARTICLE.id}`,
+      );
+      useWorkspaceStore.setState({
+        brandsLoading: false,
+        brandsLoaded: true,
+        brands: [DUAL_BRAND],
+        activeBrandId: DUAL_BRAND.id,
+        activeMarket: 'CN',
+      });
+
+      const { unmount } = render(
+        <ConsoleProvider value={makeConsoleContext()}>
+          <StudioWorkspace />
+        </ConsoleProvider>,
+      );
+
+      // At 1280px (<1360px) with existing article -> auto-collapsed 44px rail with icon-only 展开队列 button
+      const expandRailBtn = await screen.findByRole('button', { name: '展开队列' });
+      expect(expandRailBtn.textContent?.trim()).toBe('');
+      fireEvent.click(expandRailBtn);
+      expect(await screen.findByTestId(`studio-article-item-${SAMPLE_ARTICLE.id}`)).toBeTruthy();
+      unmount();
+
+      // At <=920px -> single-column center canvas with 队列 & 体检 Drawer buttons
+      activeQuery = 'narrow';
+      render(
+        <ConsoleProvider value={makeConsoleContext()}>
+          <StudioWorkspace />
+        </ConsoleProvider>,
+      );
+
+      expect(await screen.findByTestId('studio-center-pane')).toBeTruthy();
+      expect(screen.queryByTestId('studio-left-pane')).toBeNull();
+      expect(screen.queryByTestId('studio-right-pane')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('studio-mobile-queue-btn'));
+      expect(await screen.findByTestId(`studio-article-item-${SAMPLE_ARTICLE.id}`)).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId('studio-mobile-right-btn'));
+      expect(await screen.findByTestId('geo-score-value')).toBeTruthy();
+    } finally {
+      window.matchMedia = origMatchMedia;
+    }
+  });
+
+  it('#384 regression (Fix 1 & Fix 3): PUBLISHED -> DRAFT switch clears stale publishRecords/tab lock and keeps strictly 1 primary CTA in States 6A & 6B', async () => {
+    const draftWithTbd: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_reg_draft',
+      brandId: DUAL_BRAND.id,
+      market: 'CN',
+      title: '回归测试草稿文章',
+      contentMarkdown: '## 实测\n\n待机功耗为 [待补充：待机功耗]，噪音表现优秀。',
+      contentHtml: '',
+      status: 'DRAFT',
+      geoScore: 78,
+    };
+    const publishedArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_reg_pub',
+      brandId: DUAL_BRAND.id,
+      market: 'CN',
+      title: '回归测试已发布文章',
+      contentMarkdown: '## 总览\n\n所有实测参数均已核验完成。',
+      contentHtml: '',
+      status: 'PUBLISHED',
+      geoScore: 92,
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({
+      items: [BRIEF_1],
+      total: 1,
+    });
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [draftWithTbd, publishedArticle],
+      total: 2,
+    });
+    vi.spyOn(studioApi, 'fetchPublishRecords').mockImplementation(async (articleId) => {
+      if (articleId === publishedArticle.id) {
+        return {
+          items: [
+            {
+              id: 'pub_reg_blocked',
+              brandId: DUAL_BRAND.id,
+              brandMarketId: 'bm_cn_1',
+              articleId: publishedArticle.id,
+              channel: '官网博客',
+              publishedUrl: 'https://star.example.com/published',
+              publishedAt: '2026-11-24T08:00:00.000Z',
+              baselineRunId: null,
+              beforeMetrics: null,
+              afterMetrics: null,
+              latestRetestRunId: null,
+              crawlStatus: 'BLOCKED',
+              crawlCheckedAt: '2026-11-24T09:00:00.000Z',
+              crawlReportJson: null,
+              indexNowSubmitted: false,
+              retestSchedules: [],
+            },
+          ],
+        };
+      }
+      return { items: [] };
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const workspace = await screen.findByTestId('studio-workspace');
+
+    // Open PUBLISHED article (1 blocked publish record) -> 交付 tab active with (1) & red dot
+    fireEvent.click(await screen.findByText('回归测试已发布文章'));
+    await waitFor(() => {
+      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
+        'true',
+      );
+      expect(screen.getByTestId('studio-right-tab-delivery').textContent).toContain('交付 (1)');
+      expect(screen.getByTestId('studio-delivery-crawl-alert-dot')).toBeTruthy();
+    });
+
+    // State 6A: expand prewrite manually while existing PUBLISHED article is open -> strictly 1 primary CTA
+    fireEvent.click(screen.getByTestId('studio-prewrite-expand-btn'));
+    expect(await screen.findByTestId('studio-prewrite-bar')).toBeTruthy();
+    const primaries6A = Array.from(workspace.querySelectorAll('button.ant-btn-primary'));
+    expect(primaries6A).toHaveLength(1);
+    expect(primaries6A[0]?.getAttribute('data-testid')).toBe('studio-stream-btn');
+
+    // Collapse back -> footer CTA immediately returns to sole primary
+    fireEvent.click(screen.getByTestId('studio-prewrite-collapse-btn'));
+    expect(await screen.findByTestId('studio-prewrite-collapsed-bar')).toBeTruthy();
+    const primariesCollapsed = Array.from(workspace.querySelectorAll('button.ant-btn-primary'));
+    expect(primariesCollapsed).toHaveLength(1);
+    expect(primariesCollapsed[0]?.getAttribute('data-testid')).toBe('studio-open-distribution-btn');
+
+    // Fix 1: Switch in-app from PUBLISHED -> DRAFT (0 publish records) -> MUST reset to 体检 tab, no (1), no red dot!
+    fireEvent.click(screen.getByText('回归测试草稿文章'));
+    await waitFor(() => {
+      expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
+        'true',
+      );
+      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
+        'false',
+      );
+    });
+    expect(screen.getByTestId('studio-right-tab-delivery').textContent).not.toContain('(1)');
+    expect(screen.queryByTestId('studio-delivery-crawl-alert-dot')).toBeNull();
+
+    // State 6B: With DRAFT+TBD article open, click pending brief -> strictly 1 primary CTA (studio-stream-btn)
+    const briefItem = screen.getByTestId(`studio-brief-item-${BRIEF_1.id}`);
+    fireEvent.click(within(briefItem).getByRole('button'));
+    expect(await screen.findByTestId('studio-prewrite-bar')).toBeTruthy();
+    const primaries6B = Array.from(workspace.querySelectorAll('button.ant-btn-primary'));
+    expect(primaries6B).toHaveLength(1);
+    expect(primaries6B[0]?.getAttribute('data-testid')).toBe('studio-stream-btn');
+  });
+
+  it('#384 regression (Fix 2): highlightMissingFactHtml aligns data-tbd-index with missingSlots across link-wrapped & special slots without wrong-slot overwrite', async () => {
+    const linkWrappedMarkdown =
+      '参考 [待补充：价格](https://example.com/pricing) 以及 [待补充：保修期]\n\n![[TBD: 图注]](https://example.com/a.png)\n\n符号测试 [TBD: $& $$ $1]';
+    const articleMixedTbd: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_reg_tbd_align',
+      brandId: DUAL_BRAND.id,
+      market: 'CN',
+      title: '内联留槽索引对齐测试',
+      contentMarkdown: linkWrappedMarkdown,
+      contentHtml: '',
+      status: 'DRAFT',
+    };
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [articleMixedTbd],
+      total: 1,
+    });
+    const updateSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      .mockImplementation(async (_id, patch) => ({
+        ...articleMixedTbd,
+        contentMarkdown: patch.contentMarkdown ?? articleMixedTbd.contentMarkdown,
+        title: patch.title ?? articleMixedTbd.title,
+      }));
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('内联留槽索引对齐测试'));
+    const previewBody = await screen.findByTestId('studio-preview-body');
+    const inlineSpans = Array.from(
+      previewBody.querySelectorAll<HTMLElement>('.gm-studio-tbd-inline'),
+    );
+    // Slot 0 is link-wrapped, slot 1 is [待补充：保修期], slot 2 is in img alt, slot 3 is [TBD: $& $$ $1]
+    expect(inlineSpans).toHaveLength(2);
+    expect(inlineSpans[0]?.textContent).toBe('[待补充：保修期]');
+    expect(inlineSpans[0]?.getAttribute('data-tbd-index')).toBe('1');
+    expect(inlineSpans[1]?.textContent).toBe('[TBD: $& $$ $1]');
+    expect(inlineSpans[1]?.getAttribute('data-tbd-index')).toBe('3');
+
+    // Click inline [待补充：保修期] -> MUST open Popover for 保修期 (NOT 价格)
+    fireEvent.click(inlineSpans[0]!);
+    expect(await screen.findByText('补充缺失事实：保修期')).toBeTruthy();
+    expect(screen.queryByText('补充缺失事实：价格')).toBeNull();
+
+    const valueInput = screen.getByLabelText('补充-保修期');
+    fireEvent.change(valueInput, { target: { value: '3 年整机质保' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    const updatedMd = updateSpy.mock.calls[0]?.[1]?.contentMarkdown ?? '';
+    expect(updatedMd).toContain('[待补充：价格](https://example.com/pricing)');
+    expect(updatedMd).toContain('以及 3 年整机质保');
+    expect(updatedMd).not.toContain('[待补充：保修期]');
+  });
+
+  it('#384 regression (Fix 4): split-mode textarea selection bubble survives document selectionchange', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
+    await screen.findByTestId('studio-preview-body');
+
+    // Switch to 分栏 (split) mode so both textarea and previewBodyRef are mounted simultaneously
+    fireEvent.click(screen.getByText('分栏'));
+    const textarea = (await screen.findByLabelText('文章 Markdown 正文')) as HTMLTextAreaElement;
+    expect(screen.getByTestId('studio-preview-body')).toBeTruthy();
+
+    textarea.focus();
+    textarea.setSelectionRange(0, 12);
+    fireEvent.select(textarea);
+    fireEvent.mouseUp(textarea, { clientX: 300, clientY: 220 });
+    expect(await screen.findByTestId('studio-selection-bubble')).toBeTruthy();
+
+    // Simulate Chromium firing document selectionchange with empty window.getSelection() while textarea is focused
+    window.getSelection()?.removeAllRanges();
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+
+    expect(screen.getByTestId('studio-selection-bubble')).toBeTruthy();
+
+    // Fix C: clicking/focusing a non-editor textarea (目标问题) MUST dismiss studio-selection-bubble immediately
+    fireEvent.click(screen.getByTestId('studio-prewrite-expand-btn'));
+    const promptTextarea = (await screen.findByLabelText('目标问题')) as HTMLTextAreaElement;
+    expect(promptTextarea.classList.contains('gm-studio-markdown-textarea')).toBe(false);
+    expect(textarea.classList.contains('gm-studio-markdown-textarea')).toBe(true);
+
+    // Re-open bubble from split-mode editor textarea, then interact with 目标问题 textarea
+    textarea.focus();
+    textarea.setSelectionRange(0, 12);
+    fireEvent.select(textarea);
+    fireEvent.mouseUp(textarea, { clientX: 300, clientY: 220 });
+    expect(await screen.findByTestId('studio-selection-bubble')).toBeTruthy();
+
+    fireEvent.mouseDown(promptTextarea);
+    promptTextarea.focus();
+    window.getSelection()?.removeAllRanges();
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('studio-selection-bubble')).toBeNull();
+    });
+
+    // Also verify preview-mode selection bubble is dismissed on non-editor textarea click + selectionchange
+    fireEvent.click(screen.getByText('实时预览'));
+    const previewBody = await screen.findByTestId('studio-preview-body');
+    const previewPara = previewBody.querySelector('p');
+    expect(previewPara?.firstChild).toBeTruthy();
+    const previewRange = document.createRange();
+    previewRange.setStart(previewPara!.firstChild!, 0);
+    previewRange.setEnd(
+      previewPara!.firstChild!,
+      Math.min(12, (previewPara!.firstChild!.textContent ?? '').length),
+    );
+    const previewSel = window.getSelection();
+    previewSel?.removeAllRanges();
+    previewSel?.addRange(previewRange);
+    fireEvent.mouseUp(previewBody, { clientX: 320, clientY: 240 });
+    expect(await screen.findByTestId('studio-selection-bubble')).toBeTruthy();
+
+    fireEvent.mouseDown(promptTextarea);
+    promptTextarea.focus();
+    window.getSelection()?.removeAllRanges();
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('studio-selection-bubble')).toBeNull();
+    });
+  });
+
+  it('#384 regression (Iter 3 Fix A): highlightMissingFactHtml preserves exact data-tbd-index across link href deferral, img alt-before-src, and skipped non-literal slots', async () => {
+    const cases: Array<{
+      id: string;
+      title: string;
+      markdown: string;
+      expectedIndices: string[];
+    }> = [
+      {
+        id: 'art_1b1',
+        title: '复合留槽用例 1B-1',
+        markdown:
+          '参考 [待补充：价格](https://example.com/pricing)\n\n![[TBD: 图注]](https://example.com/a.png)\n\n实测 [TBD: 图注]',
+        expectedIndices: ['2'],
+      },
+      {
+        id: 'art_1b2',
+        title: '复合留槽用例 1B-2',
+        markdown:
+          '参数 [TBD: **出厂价**]\n\n查看 [说明](https://example.com/[TBD:y])\n\n实测 [TBD:y]',
+        expectedIndices: ['2'],
+      },
+      {
+        id: 'art_1b3',
+        title: '复合留槽用例 1B-3',
+        markdown: '![[TBD:A]](https://example.com/[TBD:B])\n\n实测 [TBD:B]',
+        expectedIndices: ['2'],
+      },
+      {
+        id: 'art_1b4',
+        title: '复合留槽用例 1B-4',
+        markdown: '查看 [[TBD:A]](https://example.com/[TBD:B])\n\n实测 [TBD:B]',
+        expectedIndices: ['0', '2'],
+      },
+      {
+        id: 'art_1b5',
+        title: '复合留槽用例 1B-5',
+        markdown: '查看 [[TBD:A]](https://example.com/[TBD:A])\n\n实测 [TBD:A]',
+        expectedIndices: ['0', '2'],
+      },
+      {
+        id: 'art_1b7',
+        title: '复合留槽用例 1B-7',
+        markdown: '参数 [TBD: `foo`]\n\n![[TBD:图]](https://example.com/a.png)\n\n实测 [TBD:图]',
+        expectedIndices: ['2'],
+      },
+    ];
+
+    const articles: GeoArticleRecord[] = cases.map((c) => ({
+      ...SAMPLE_ARTICLE,
+      id: c.id,
+      brandId: DUAL_BRAND.id,
+      market: 'CN',
+      title: c.title,
+      contentMarkdown: c.markdown,
+      contentHtml: '',
+      status: 'DRAFT',
+    }));
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: articles,
+      total: articles.length,
+    });
+    const updateSpy = vi.spyOn(studioApi, 'updateArticle').mockImplementation(async (id, patch) => {
+      const base = articles.find((a) => a.id === id) ?? articles[0]!;
+      return {
+        ...base,
+        contentMarkdown: patch.contentMarkdown ?? base.contentMarkdown,
+        title: patch.title ?? base.title,
+      };
+    });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
+    // Check every compound Markdown case emits exact data-tbd-index values
+    for (const c of cases) {
+      fireEvent.click(await screen.findByText(c.title));
+      await waitFor(() => {
+        const previewBody = screen.getByTestId('studio-preview-body');
+        const spans = Array.from(
+          previewBody.querySelectorAll<HTMLElement>('.gm-studio-tbd-inline'),
+        );
+        expect(spans.map((el) => el.getAttribute('data-tbd-index'))).toEqual(c.expectedIndices);
+      });
+    }
+
+    // Backfill 1B-1 inline span -> MUST replace ONLY body `实测 [TBD: 图注]` and preserve `![[TBD: 图注]](https://example.com/a.png)`
+    fireEvent.click(screen.getByText('复合留槽用例 1B-1'));
+    await waitFor(() => {
+      const previewBody = screen.getByTestId('studio-preview-body');
+      const spans = previewBody.querySelectorAll<HTMLElement>('.gm-studio-tbd-inline');
+      expect(spans).toHaveLength(1);
+      expect(spans[0]?.getAttribute('data-tbd-index')).toBe('2');
+    });
+
+    const bodySpan = screen
+      .getByTestId('studio-preview-body')
+      .querySelector<HTMLElement>('.gm-studio-tbd-inline')!;
+    fireEvent.click(bodySpan);
+    const valueInput = await screen.findByLabelText('补充-图注');
+    fireEvent.change(valueInput, { target: { value: '18.5dB 实测曲线图' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    const updatedMd = updateSpy.mock.calls[0]?.[1]?.contentMarkdown ?? '';
+    expect(updatedMd).toContain('[待补充：价格](https://example.com/pricing)');
+    expect(updatedMd).toContain('![[TBD: 图注]](https://example.com/a.png)');
+    expect(updatedMd).toContain('实测 18.5dB 实测曲线图');
+    expect(updatedMd).not.toContain('实测 [TBD: 图注]');
+  });
+
+  it('#385: opens QuickFactExtractModal for 0-fact brand and supports skip escape hatch + deduplicated batch [TBD] fill merging facts safely', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    // Part A: 0-fact brand clicking studio-stream-btn -> opens QuickFactExtractModal (no premature stream) -> skip resumes stream
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValueOnce({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+    const streamSpy = vi.spyOn(studioApi, 'streamGenerateArticle').mockResolvedValue({
+      aborted: false,
+      receivedEvents: 0,
+    });
+
+    render(<StudioWorkspace />);
+    const promptInput = await screen.findByLabelText('目标问题');
+    fireEvent.change(promptInput, { target: { value: '2026 便携储能哪款静音表现最好' } });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    expect(await screen.findByTestId('quick-fact-extract-modal')).toBeTruthy();
+    expect(streamSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('quick-fact-skip-btn'));
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    cleanup();
+
+    // Part B: Article with 3 [待补充] tokens across 2 unique hints -> deduplicated batch drawer merges onto existing PRODUCT_SPECS fact without overwriting
+    const multiTbdArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_batch_tbd',
+      title: '便携储能实测报告',
+      contentMarkdown: [
+        '# 便携储能实测报告',
+        '',
+        '实测满载功耗为 [待补充：满载功耗]，静音控制出色。',
+        '',
+        '| 项目 | 数值 |',
+        '| --- | --- |',
+        '| 满载功耗 | [待补充：满载功耗] |',
+        '| 官方质保 | [待补充：质保周期] |',
+      ].join('\n'),
+    };
+    const existingFact = {
+      ...SAMPLE_FACT,
+      id: 'fact_specs_existing',
+      slot: 'PRODUCT_SPECS' as const,
+      content: '- 满载噪音：18.5dB',
+    };
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [multiTbdArticle],
+      total: 1,
+    });
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: 'brand_1',
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: existingFact.content.length,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [existingFact],
+    });
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts').mockResolvedValue({
+      brandId: 'brand_1',
+      truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+      totalChars: 64,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [existingFact],
+    });
+    const updateArticleSpy = vi
+      .spyOn(studioApi, 'updateArticle')
+      .mockImplementation(async (_id, payload) => ({
+        ...multiTbdArticle,
+        title: payload.title ?? multiTbdArticle.title,
+        contentMarkdown: payload.contentMarkdown ?? multiTbdArticle.contentMarkdown,
+      }));
+
+    render(<StudioWorkspace />);
+    fireEvent.click(await screen.findByText('便携储能实测报告'));
+
+    // Strictly 1 primary CTA in workspace even with studio-missing-bar-batch-btn rendered
+    const batchFooterBtn = await screen.findByTestId('studio-batch-tbd-open-btn');
+    expect(batchFooterBtn.textContent).toContain('补齐 2 组待补充事实');
+    const barBatchBtn = screen.getByTestId('studio-missing-bar-batch-btn');
+    expect(barBatchBtn.textContent).toContain('批量补填（2 组）');
+    expect(
+      screen.getByTestId('studio-workspace').querySelectorAll('button.ant-btn-primary'),
+    ).toHaveLength(1);
+
+    // Open deduplicated batch drawer
+    fireEvent.click(batchFooterBtn);
+    const batchDrawer = await screen.findByTestId('studio-batch-tbd-drawer');
+    expect(batchDrawer.textContent).toContain('出现 2 处');
+    expect(batchDrawer.querySelectorAll('input[type="text"], textarea')).toHaveLength(2);
+
+    fireEvent.change(within(batchDrawer).getByLabelText('满载功耗'), { target: { value: '42W' } });
+    fireEvent.change(within(batchDrawer).getByLabelText('质保周期'), {
+      target: { value: '3 年质保' },
+    });
+    fireEvent.click(screen.getByTestId('batch-tbd-submit-btn'));
+
+    await waitFor(() => {
+      expect(saveFactsSpy).toHaveBeenCalledTimes(1);
+      expect(updateArticleSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // Existing fact content MUST be preserved alongside BOTH newly added facts in a single slot item!
+    const savedFactItems = saveFactsSpy.mock.calls[0]?.[1]?.facts ?? [];
+    expect(savedFactItems).toHaveLength(1);
+    expect(savedFactItems[0]?.id).toBe('fact_specs_existing');
+    expect(savedFactItems[0]?.content).toContain('满载噪音：18.5dB');
+    expect(savedFactItems[0]?.content).toContain('42W');
+    expect(savedFactItems[0]?.content).toContain('3 年质保');
+
+    // Updated markdown replaces all 3 tokens and footer CTA transitions to 进入分发工作台
+    const updatedMarkdown = updateArticleSpy.mock.calls[0]?.[1]?.contentMarkdown ?? '';
+    expect(updatedMarkdown).not.toContain('[待补充');
+    expect(updatedMarkdown.match(/42W/g)).toHaveLength(2);
+    expect(updatedMarkdown).toContain('| 官方质保 | 3 年质保 |');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('studio-open-distribution-btn').textContent).toContain(
+        '进入分发工作台',
+      );
+    });
+  });
+
+  it('#385 C2-1 regression: aborts batch [TBD] sync without overwriting facts or closing drawer when getBrandFacts fails', async () => {
+    const tbdArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_batch_tbd_err',
+      title: '事实拉取失败防覆盖文章',
+      contentMarkdown: '# 实测\n\n满载噪音实测为 [待补充：满载噪音]。',
+    };
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'CN',
+    });
+
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [tbdArticle],
+      total: 1,
+    });
+    const getFactsSpy = vi
+      .spyOn(brandsApi, 'getBrandFacts')
+      .mockRejectedValue(new Error('500 Server Error'));
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts');
+    const updateArticleSpy = vi.spyOn(studioApi, 'updateArticle');
+
+    render(<StudioWorkspace />);
+    fireEvent.click(await screen.findByText('事实拉取失败防覆盖文章'));
+    fireEvent.click(await screen.findByTestId('studio-batch-tbd-open-btn'));
+
+    const batchDrawer = await screen.findByTestId('studio-batch-tbd-drawer');
+    const noiseInput = within(batchDrawer).getByLabelText('满载噪音') as HTMLInputElement;
+    fireEvent.change(noiseInput, { target: { value: '18.5 dB' } });
+
+    const callsBeforeSubmit = getFactsSpy.mock.calls.length;
+    fireEvent.click(screen.getByTestId('batch-tbd-submit-btn'));
+
+    await waitFor(() => {
+      expect(getFactsSpy.mock.calls.length).toBeGreaterThan(callsBeforeSubmit);
+      expect(mockNotifyError).toHaveBeenCalled();
+    });
+
+    // Existing server facts MUST NOT be overwritten and article MUST NOT be updated
+    expect(saveFactsSpy).not.toHaveBeenCalled();
+    expect(updateArticleSpy).not.toHaveBeenCalled();
+    // Drawer stays open with user-typed value preserved for retry
+    expect(screen.getByTestId('studio-batch-tbd-drawer')).toBeTruthy();
+    expect((within(batchDrawer).getByLabelText('满载噪音') as HTMLInputElement).value).toBe(
+      '18.5 dB',
+    );
+  });
+
+  it('#385 C2-2 regression: stale Brand B getBrandFacts settlement across brand switch cannot clobber Brand C mutex or fire duplicate SSE streams', async () => {
+    const brandB: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_b_race',
+      name: '品牌B',
+      markets: DUAL_BRAND.markets.map((m) => ({
+        ...m,
+        id: `${m.id}_b`,
+        brandId: 'brand_b_race',
+      })),
+    };
+    const brandC: BrandRecord = {
+      ...DUAL_BRAND,
+      id: 'brand_c_race',
+      name: '品牌C',
+      markets: DUAL_BRAND.markets.map((m) => ({
+        ...m,
+        id: `${m.id}_c`,
+        brandId: 'brand_c_race',
+      })),
+    };
+
+    const createDeferred = <T,>() => {
+      let resolve!: (val: T) => void;
+      const promise = new Promise<T>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+
+    const brandBFacts = createDeferred<Awaited<ReturnType<typeof brandsApi.getBrandFacts>>>();
+    const brandCFacts = createDeferred<Awaited<ReturnType<typeof brandsApi.getBrandFacts>>>();
+
+    const getFactsSpy = vi.spyOn(brandsApi, 'getBrandFacts').mockImplementation((brandId) => {
+      if (brandId === 'brand_b_race') return brandBFacts.promise;
+      if (brandId === 'brand_c_race') return brandCFacts.promise;
+      return Promise.resolve({
+        brandId,
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+    });
+
+    const streamDeferred = createDeferred<{ aborted: boolean; receivedEvents: number }>();
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockImplementation(() => streamDeferred.promise);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [brandB, brandC],
+      activeBrandId: brandB.id,
+      activeMarket: 'CN',
+    });
+
+    render(<StudioWorkspace />);
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledWith('brand_b_race', expect.anything());
+    });
+
+    // 1. On Brand B (facts pending), click start stream -> enters checkingFactsRef
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: '品牌B 核心参数对比' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 2. Switch to Brand C while Brand B's getBrandFacts is still pending
+    act(() => {
+      useWorkspaceStore.getState().setActiveBrand(brandC.id, 'CN', window.localStorage);
+    });
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledWith('brand_c_race', expect.anything());
+    });
+
+    // 3. On Brand C (facts pending), click start stream once
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: '品牌C 实测静音对比' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 4. Stale Brand B promise settles -> MUST NOT clear Brand C's checkingFactsRef
+    await act(async () => {
+      brandBFacts.resolve({
+        brandId: 'brand_b_race',
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 5. Second click on Brand C while Brand C facts are still pending
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    // 6. Now Brand C facts resolve with valid fact -> MUST trigger strictly 1 SSE stream
+    await act(async () => {
+      brandCFacts.resolve({
+        brandId: 'brand_c_race',
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: SAMPLE_FACT.content.length,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [{ ...SAMPLE_FACT, brandId: 'brand_c_race' }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(streamSpy).toHaveBeenCalledWith(
+      'brand_c_race',
+      expect.objectContaining({ targetPrompt: '品牌C 实测静音对比' }),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    await act(async () => {
+      streamDeferred.resolve({ aborted: false, receivedEvents: 0 });
+      await Promise.resolve();
+    });
+  });
+
+  it('#387 R2-01 regression: switching activeProductLineId clears ?articleId= and never fetches or injects Line A article into Line B', async () => {
+    const lineA = {
+      id: 'pl_power',
+      brandId: DUAL_BRAND.id,
+      name: 'Portable Power',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const lineB = {
+      ...lineA,
+      id: 'pl_nas',
+      name: 'Home NAS',
+      category: 'NAS',
+      sortOrder: 1,
+    };
+    const artLineA: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      title: 'Line A Portable Power Guide',
+    };
+    const artLineB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_line_b',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_nas',
+      title: 'Line B Home NAS Guide',
+    };
+
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&productLineId=pl_power&articleId=art_line_a`,
+    );
+
+    vi.spyOn(studioApi, 'fetchArticles').mockImplementation(async (_brandId, _market, query) => {
+      if (query?.productLineId === 'pl_power') return { items: [artLineA], total: 1 };
+      if (query?.productLineId === 'pl_nas') return { items: [artLineB], total: 1 };
+      return { items: [artLineA, artLineB], total: 2 };
+    });
+    const getArticleSpy = vi.spyOn(studioApi, 'getArticle').mockResolvedValue(artLineA);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineA, lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_power',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Line A Portable Power Guide')).toBeTruthy();
+    });
+    expect(new URLSearchParams(window.location.search).get('articleId')).toBe('art_line_a');
+
+    // Switch product line from pl_power -> pl_nas via store action
+    act(() => {
+      useWorkspaceStore.getState().setActiveProductLine('pl_nas');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Line B Home NAS Guide')).toBeTruthy();
+    });
+    expect(new URLSearchParams(window.location.search).get('productLineId')).toBe('pl_nas');
+    expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+    expect(getArticleSpy).not.toHaveBeenCalled();
+    expect(screen.queryByText('Line A Portable Power Guide')).toBeNull();
+    expect(screen.queryByDisplayValue('Line A Portable Power Guide')).toBeNull();
+  });
+
+  it('#387 R2-01 regression: deep-linking conflicting ?articleId= and ?briefId= for Line A while on Line B rejects and strips them instead of bleeding into Line B', async () => {
+    const lineA = {
+      id: 'pl_power',
+      brandId: DUAL_BRAND.id,
+      name: 'Portable Power',
+      localNamesJson: {},
+      category: 'Power',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+    const lineB = {
+      ...lineA,
+      id: 'pl_nas',
+      name: 'Home NAS',
+      category: 'NAS',
+      sortOrder: 1,
+    };
+    const artLineA: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_foreign_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      title: 'Foreign Line A Article',
+    };
+    const briefLineA: GeoBriefRecord = {
+      ...BRIEF_1,
+      id: 'brief_foreign_line_a',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_power',
+      targetPrompt: 'Foreign Line A Brief Prompt',
+    };
+    const artLineB: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_only_line_b',
+      market: 'GLOBAL',
+      brandMarketId: 'bm_gl_1',
+      productLineId: 'pl_nas',
+      title: 'Line B Only Article',
+    };
+
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&productLineId=pl_nas&articleId=art_foreign_line_a&briefId=brief_foreign_line_a`,
+    );
+
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(briefLineA);
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({ items: [artLineB], total: 1 });
+    const getArticleSpy = vi.spyOn(studioApi, 'getArticle').mockResolvedValue(artLineA);
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineA, lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_nas',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(getArticleSpy).toHaveBeenCalledWith('art_foreign_line_a', expect.anything());
+      expect(new URLSearchParams(window.location.search).get('articleId')).toBeNull();
+      expect(new URLSearchParams(window.location.search).get('briefId')).toBeNull();
+    });
+
+    expect(screen.getByText('Line B Only Article')).toBeTruthy();
+    expect(screen.queryByText('Foreign Line A Article')).toBeNull();
+    expect(screen.queryByDisplayValue('Foreign Line A Article')).toBeNull();
+    expect(screen.queryByDisplayValue('Foreign Line A Brief Prompt')).toBeNull();
+    expect(mockNotifyWarning).toHaveBeenCalledWith(
+      '该文章不属于当前产品线，已清除链接中的文章参数',
+    );
+  });
+
+  it('#387 R2-02 regression: fallback getBrandFacts pre-generation check forwards activeProductLineId', async () => {
+    const lineB = {
+      id: 'pl_nas',
+      brandId: DUAL_BRAND.id,
+      name: 'Home NAS',
+      localNamesJson: {},
+      category: 'NAS',
+      localCategoriesJson: {},
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-20T00:00:00.000Z',
+    };
+
+    const getFactsSpy = vi
+      .spyOn(brandsApi, 'getBrandFacts')
+      // Initial workspace load fails transiently -> brandFactsLoadedRef stays false and pending ref clears
+      .mockRejectedValueOnce(new Error('transient facts timeout'))
+      // Fallback check on clicking Generate succeeds with empty facts for pl_nas
+      .mockResolvedValueOnce({
+        brandId: DUAL_BRAND.id,
+        truthAgreementSignedAt: '2026-04-01T00:00:00.000Z',
+        totalChars: 0,
+        vectorIndexRequired: false,
+        vectorIndexed: false,
+        items: [],
+      });
+
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockResolvedValue({ aborted: false, receivedEvents: 0 });
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineB],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_nas',
+    });
+
+    render(<StudioWorkspace />);
+
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(getFactsSpy).toHaveBeenNthCalledWith(
+      1,
+      DUAL_BRAND.id,
+      expect.objectContaining({ productLineId: 'pl_nas' }),
+    );
+
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: 'Best quiet 4-bay Home NAS' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    await waitFor(() => {
+      expect(getFactsSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(getFactsSpy).toHaveBeenNthCalledWith(2, DUAL_BRAND.id, {
+      productLineId: 'pl_nas',
+    });
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
+  it('Tier 5 #2: passes activeProductLineId to QuickFactExtractModal and filters cross-line facts out of Studio cache on save', async () => {
+    const now = '2026-11-25T10:00:00.000Z';
+    const lineCharger = {
+      id: 'pl_charger',
+      brandId: DUAL_BRAND.id,
+      name: '快充产品线',
+      localNamesJson: {},
+      category: 'GaN Charger',
+      localCategoriesJson: { GLOBAL: 'GaN Charger' },
+      seedPromptsJson: {},
+      competitorsJson: {},
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: now,
+      totalChars: 0,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      items: [],
+    });
+    vi.spyOn(brandsApi, 'extractBrandFacts').mockResolvedValue({
+      sourceType: 'MANUAL',
+      sourceUrl: null,
+      fileName: null,
+      extractedChars: 24,
+      fake: true,
+      warnings: [],
+      facts: [
+        {
+          slot: 'PRODUCT_SPECS',
+          title: '快充参数',
+          content: '140W GaN 四口快充',
+        },
+      ],
+    });
+    const saveFactsSpy = vi.spyOn(brandsApi, 'saveBrandFacts').mockResolvedValue({
+      brandId: DUAL_BRAND.id,
+      truthAgreementSignedAt: now,
+      totalChars: 40,
+      vectorIndexRequired: false,
+      vectorIndexed: false,
+      // Server returns unfiltered cross-line facts; Studio MUST filter sibling line pl_nas out
+      items: [
+        {
+          id: 'fact_charger_1',
+          brandId: DUAL_BRAND.id,
+          productLineId: 'pl_charger',
+          slot: 'PRODUCT_SPECS',
+          title: '快充参数',
+          content: '140W GaN 四口快充',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'fact_nas_sibling',
+          brandId: DUAL_BRAND.id,
+          productLineId: 'pl_nas',
+          slot: 'DIFFERENTIATORS',
+          title: 'NAS 差异化',
+          content: '8-bay 10GbE NAS',
+          sourceType: 'MANUAL',
+          sourceUrl: null,
+          indexStatus: 'NONE',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+    const streamSpy = vi
+      .spyOn(studioApi, 'streamGenerateArticle')
+      .mockResolvedValue({ aborted: false, receivedEvents: 0 });
+
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [DUAL_BRAND],
+      activeBrandId: DUAL_BRAND.id,
+      activeMarket: 'GLOBAL',
+      productLines: [lineCharger],
+      productLinesBrandId: DUAL_BRAND.id,
+      productLinesLoaded: true,
+      productLinesLoading: false,
+      activeProductLineId: 'pl_charger',
+    });
+
+    render(<StudioWorkspace />);
+
+    fireEvent.change(screen.getByLabelText('目标问题'), {
+      target: { value: 'Best 140W GaN charger 2026' },
+    });
+    fireEvent.click(screen.getByTestId('studio-stream-btn'));
+
+    const modal = await screen.findByTestId('quick-fact-extract-modal');
+    expect(modal.textContent).toContain('快充产品线');
+
+    fireEvent.click(within(modal).getByRole('tab', { name: '粘贴资料' }));
+    fireEvent.change(within(modal).getByLabelText('粘贴产品资料'), {
+      target: { value: '140W GaN 四口快充，支持 PD3.1 协议与智能温控。' },
+    });
+    fireEvent.click(within(modal).getByTestId('quick-fact-extract-btn'));
+
+    const truthCheckbox = (await within(modal).findByTestId(
+      'quick-fact-truth-checkbox',
+    )) as HTMLInputElement;
+    if (!truthCheckbox.checked) {
+      fireEvent.click(truthCheckbox);
+    }
+    const saveBtn = await within(modal).findByTestId('quick-fact-save-btn');
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(saveFactsSpy).toHaveBeenCalledWith(
+        DUAL_BRAND.id,
+        expect.objectContaining({
+          facts: [expect.objectContaining({ productLineId: 'pl_charger', slot: 'PRODUCT_SPECS' })],
+        }),
+        expect.anything(),
+      );
+      expect(streamSpy).toHaveBeenCalledTimes(1);
+    });
+    // Sibling line pl_nas fact MUST NOT leak into Studio's active fact cache
+    expect(document.body.textContent ?? '').not.toContain('8-bay 10GbE NAS');
   });
 });

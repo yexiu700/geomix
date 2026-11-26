@@ -220,21 +220,13 @@ export function StudioMediaPopover({
             key: 'library',
             label: '从品牌实拍图插入（免费）',
             children: (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    fontSize: 11,
-                    color: 'var(--gm-fg-3)',
-                  }}
-                >
+              <div className="gm-studio-stack gm-studio-stack--md">
+                <div className="gm-studio-media-head">
                   <span>双市场共享 · 点击即插入正文（0 点）</span>
                   <Button
                     size="small"
                     type="link"
-                    style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                    className="gm-studio-link-compact"
                     loading={mediaLoading}
                     onClick={() => void onRefreshMedia()}
                   >
@@ -244,14 +236,7 @@ export function StudioMediaPopover({
                 {mediaLoading && mediaItems.length === 0 ? (
                   <SignalSkeleton variant="row" rows={2} />
                 ) : mediaItems.length === 0 ? (
-                  <div
-                    style={{
-                      padding: '14px 8px',
-                      textAlign: 'center',
-                      fontSize: 12,
-                      color: 'var(--gm-fg-3)',
-                    }}
-                  >
+                  <div className="gm-studio-media-empty">
                     暂无品牌图片，可在「品牌资产」上传产品实拍图，或切至右侧 AI 生成配图。
                   </div>
                 ) : (
@@ -294,7 +279,7 @@ export function StudioMediaPopover({
             label: `AI 一键生成配图（${AI_IMAGE_DEFAULT_UNIT_POINTS} 点/张）`,
             children: (
               <div className="gm-studio-media-ai-form">
-                <div style={{ fontSize: 11, color: 'var(--gm-fg-3)' }}>
+                <div className="gm-studio-text-muted">
                   按需可选 · {AI_IMAGE_DEFAULT_UNIT_POINTS} 点/张，生成失败自动全额退点
                 </div>
                 {aiError ? (

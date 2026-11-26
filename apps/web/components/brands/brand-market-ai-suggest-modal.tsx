@@ -291,392 +291,408 @@ export function BrandMarketAiSuggestModal({
             </p>
             <Skeleton active paragraph={{ rows: 6 }} />
           </div>
-        ) : error ? (
-          <Alert
-            type="error"
-            showIcon
-            data-testid="brand-ai-suggest-error"
-            className="gm-brand-inline-alert"
-            message={error}
-            action={
-              onRegenerate ? (
-                <Button size="small" onClick={() => onRegenerate(sourceUrl)}>
-                  重试
-                </Button>
-              ) : undefined
-            }
-          />
-        ) : suggestion ? (
-          <div className="gm-brand-ai-groups">
-            {suggestion.fallbackUsed || (suggestion.warnings && suggestion.warnings.length > 0) ? (
+        ) : (
+          <>
+            {error ? (
               <Alert
-                type="warning"
+                type="error"
                 showIcon
-                data-testid="brand-ai-suggest-fallback-notice"
+                data-testid="brand-ai-suggest-error"
                 className="gm-brand-inline-alert"
-                message={
-                  suggestion.fallbackUsed
-                    ? '已使用品类规则模板生成建议（不影响勾选与采纳）'
-                    : '生成提示'
+                message={error}
+                action={
+                  !suggestion && onRegenerate ? (
+                    <Button size="small" onClick={() => onRegenerate(sourceUrl)}>
+                      重试
+                    </Button>
+                  ) : undefined
                 }
-                description={suggestion.warnings?.join('；')}
               />
             ) : null}
+            {suggestion ? (
+              <div className="gm-brand-ai-groups">
+                {suggestion.fallbackUsed ||
+                (suggestion.warnings && suggestion.warnings.length > 0) ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    data-testid="brand-ai-suggest-fallback-notice"
+                    className="gm-brand-inline-alert"
+                    message={
+                      suggestion.fallbackUsed
+                        ? '已使用品类规则模板生成建议（不影响勾选与采纳）'
+                        : '生成提示'
+                    }
+                    description={suggestion.warnings?.join('；')}
+                  />
+                ) : null}
 
-            {!hasAnySuggestions ? (
-              <EmptyState
-                size="compact"
-                title="当前市场配置已较完善，暂无新增建议"
-                description="您可粘贴具体产品详情页链接重新生成，或直接手动微调配置。"
-              />
-            ) : null}
+                {!hasAnySuggestions ? (
+                  <EmptyState
+                    size="compact"
+                    title="当前市场配置已较完善，暂无新增建议"
+                    description="您可粘贴具体产品详情页链接重新生成，或直接手动微调配置。"
+                  />
+                ) : null}
 
-            {/* Group 0: GLOBAL English Identity */}
-            {hasLocalIdentityGroup ? (
-              <section
-                className="gm-brand-ai-group"
-                data-testid="ai-suggest-group-localIdentity"
-                aria-label="海外英文身份建议"
-              >
-                <div className="gm-brand-ai-group-head">
-                  <div className="gm-brand-ai-group-title">
-                    <h4>海外英文身份与品类</h4>
-                    <StatusBadge tone="neutral" size="sm" label={`已选 ${selectedLocalCount}`} />
-                  </div>
-                </div>
-                <div className="gm-brand-ai-rows">
-                  {localNameDraft.trim() ? (
-                    <div className="gm-brand-ai-row">
-                      <Checkbox
-                        aria-label="勾选建议海外英文品牌名"
-                        checked={localNameChecked}
-                        disabled={saving}
-                        onChange={(event) => setLocalNameChecked(event.target.checked)}
-                      />
-                      <span className="gm-brand-ai-field-label">当地品牌名</span>
-                      <Input
-                        aria-label="编辑建议海外英文品牌名"
-                        value={localNameDraft}
-                        maxLength={BRAND_NAME_MAX}
-                        disabled={saving}
-                        onChange={(event) => setLocalNameDraft(event.target.value)}
-                      />
-                      {currentLocalBrandName.trim() && !containsCjk(currentLocalBrandName) ? (
-                        <StatusBadge tone="neutral" size="sm" label="已有英文名" />
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {localCategoryDraft.trim() ? (
-                    <div className="gm-brand-ai-row">
-                      <Checkbox
-                        aria-label="勾选建议海外英文品类"
-                        checked={localCategoryChecked}
-                        disabled={saving}
-                        onChange={(event) => setLocalCategoryChecked(event.target.checked)}
-                      />
-                      <span className="gm-brand-ai-field-label">当地品类</span>
-                      <Input
-                        aria-label="编辑建议海外英文品类"
-                        value={localCategoryDraft}
-                        maxLength={BRAND_CATEGORY_MAX}
-                        disabled={saving}
-                        onChange={(event) => setLocalCategoryDraft(event.target.value)}
-                      />
-                      {currentLocalCategory.trim() && !containsCjk(currentLocalCategory) ? (
-                        <StatusBadge tone="neutral" size="sm" label="已有英文品类" />
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
-
-            {/* Group 1: Aliases & SKUs */}
-            {aliasItems.length > 0 ? (
-              <section
-                className="gm-brand-ai-group"
-                data-testid="ai-suggest-group-aliases"
-                aria-label="SKU 与品牌别名建议"
-              >
-                <div className="gm-brand-ai-group-head">
-                  <div className="gm-brand-ai-group-title">
-                    <h4>SKU 型号与品牌别名</h4>
-                    <StatusBadge
-                      tone="neutral"
-                      size="sm"
-                      label={`已选 ${selectedAliasCount} / ${aliasItems.length}`}
-                    />
-                  </div>
-                  <Button
-                    type="link"
-                    size="small"
-                    disabled={saving}
-                    onClick={() => {
-                      const nextChecked = selectedAliasCount < aliasItems.length;
-                      setAliasItems((prev) =>
-                        prev.map((item) => ({ ...item, checked: nextChecked })),
-                      );
-                    }}
+                {/* Group 0: GLOBAL English Identity */}
+                {hasLocalIdentityGroup ? (
+                  <section
+                    className="gm-brand-ai-group"
+                    data-testid="ai-suggest-group-localIdentity"
+                    aria-label="海外英文身份建议"
                   >
-                    {selectedAliasCount < aliasItems.length ? '全选本组' : '取消全选'}
-                  </Button>
-                </div>
-                <div className="gm-brand-ai-alias-grid">
-                  {aliasItems.map((item, idx) => (
-                    <div key={item.id} className="gm-brand-ai-row">
-                      <Checkbox
-                        aria-label={`勾选别名建议 ${idx + 1}`}
-                        checked={item.checked}
-                        disabled={saving}
-                        onChange={(event) =>
-                          setAliasItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, checked: event.target.checked } : row,
-                            ),
-                          )
-                        }
-                      />
-                      <Input
-                        aria-label={`编辑别名建议 ${idx + 1}`}
-                        value={item.value}
-                        maxLength={BRAND_NAME_MAX}
-                        disabled={saving}
-                        onChange={(event) =>
-                          setAliasItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, value: event.target.value } : row,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {/* Group 2: Competitors */}
-            {competitorItems.length > 0 ? (
-              <section
-                className="gm-brand-ai-group"
-                data-testid="ai-suggest-group-competitors"
-                aria-label="主要竞品与域名建议"
-              >
-                <div className="gm-brand-ai-group-head">
-                  <div className="gm-brand-ai-group-title">
-                    <h4>主要竞品与官网域名</h4>
-                    <StatusBadge
-                      tone="neutral"
-                      size="sm"
-                      label={`已选 ${selectedCompetitorCount} / ${competitorItems.length}`}
-                    />
-                  </div>
-                  <Button
-                    type="link"
-                    size="small"
-                    disabled={saving}
-                    onClick={() => {
-                      const nextChecked = selectedCompetitorCount < competitorItems.length;
-                      setCompetitorItems((prev) =>
-                        prev.map((item) => ({ ...item, checked: nextChecked })),
-                      );
-                    }}
-                  >
-                    {selectedCompetitorCount < competitorItems.length ? '全选本组' : '取消全选'}
-                  </Button>
-                </div>
-                <div className="gm-brand-ai-rows">
-                  {competitorItems.map((item, idx) => (
-                    <div key={item.id} className="gm-brand-ai-comp-row">
-                      <Checkbox
-                        aria-label={`勾选竞品建议 ${idx + 1}`}
-                        checked={item.checked}
-                        disabled={saving}
-                        onChange={(event) =>
-                          setCompetitorItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, checked: event.target.checked } : row,
-                            ),
-                          )
-                        }
-                      />
-                      <Input
-                        aria-label={`编辑竞品名称建议 ${idx + 1}`}
-                        value={item.name}
-                        maxLength={BRAND_NAME_MAX}
-                        disabled={saving}
-                        placeholder="竞品名"
-                        onChange={(event) =>
-                          setCompetitorItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, name: event.target.value } : row,
-                            ),
-                          )
-                        }
-                      />
-                      <Input
-                        aria-label={`编辑竞品域名建议 ${idx + 1}`}
-                        value={item.domainsText}
-                        disabled={saving}
-                        placeholder="竞品官网域名（逗号分隔）"
-                        onChange={(event) =>
-                          setCompetitorItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id
-                                ? { ...row, domainsText: event.target.value }
-                                : row,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {/* Group 3: Seed Prompts (grouped by intent) */}
-            {seedItems.length > 0 ? (
-              <section
-                className="gm-brand-ai-group"
-                data-testid="ai-suggest-group-seedPrompts"
-                aria-label="分意图高频监控问句建议"
-              >
-                <div className="gm-brand-ai-group-head">
-                  <div className="gm-brand-ai-group-title">
-                    <h4>高频监控问句（分意图）</h4>
-                    <StatusBadge
-                      tone="neutral"
-                      size="sm"
-                      label={`已选 ${selectedSeedCount} / ${seedItems.length}`}
-                    />
-                  </div>
-                  <Button
-                    type="link"
-                    size="small"
-                    disabled={saving}
-                    onClick={() => {
-                      const nextChecked = selectedSeedCount < seedItems.length;
-                      setSeedItems((prev) =>
-                        prev.map((item) => ({ ...item, checked: nextChecked })),
-                      );
-                    }}
-                  >
-                    {selectedSeedCount < seedItems.length ? '全选本组' : '取消全选'}
-                  </Button>
-                </div>
-                <div className="gm-brand-ai-intent-list">
-                  {seedGroups.map((group) => (
-                    <div key={group.intent} className="gm-brand-ai-intent-block">
-                      <div className="gm-brand-ai-intent-head">
-                        <StatusBadge tone="active" size="sm" label={group.label} />
+                    <div className="gm-brand-ai-group-head">
+                      <div className="gm-brand-ai-group-title">
+                        <h4>海外英文身份与品类</h4>
+                        <StatusBadge
+                          tone="neutral"
+                          size="sm"
+                          label={`已选 ${selectedLocalCount}`}
+                        />
                       </div>
-                      <div className="gm-brand-ai-rows">
-                        {group.items.map((item) => (
-                          <div key={item.id} className="gm-brand-ai-row">
-                            <Checkbox
-                              aria-label={`勾选种子问句 ${item.prompt}`}
-                              checked={item.checked}
-                              disabled={saving}
-                              onChange={(event) =>
-                                setSeedItems((prev) =>
-                                  prev.map((row) =>
-                                    row.id === item.id
-                                      ? { ...row, checked: event.target.checked }
-                                      : row,
-                                  ),
-                                )
-                              }
-                            />
-                            <Input
-                              aria-label={`编辑种子问句 ${item.id}`}
-                              value={item.prompt}
-                              maxLength={300}
-                              disabled={saving}
-                              onChange={(event) =>
-                                setSeedItems((prev) =>
-                                  prev.map((row) =>
-                                    row.id === item.id
-                                      ? { ...row, prompt: event.target.value }
-                                      : row,
-                                  ),
-                                )
-                              }
-                            />
+                    </div>
+                    <div className="gm-brand-ai-rows">
+                      {localNameDraft.trim() ? (
+                        <div className="gm-brand-ai-row">
+                          <Checkbox
+                            aria-label="勾选建议海外英文品牌名"
+                            checked={localNameChecked}
+                            disabled={saving}
+                            onChange={(event) => setLocalNameChecked(event.target.checked)}
+                          />
+                          <span className="gm-brand-ai-field-label">当地品牌名</span>
+                          <Input
+                            aria-label="编辑建议海外英文品牌名"
+                            value={localNameDraft}
+                            maxLength={BRAND_NAME_MAX}
+                            disabled={saving}
+                            onChange={(event) => setLocalNameDraft(event.target.value)}
+                          />
+                          {currentLocalBrandName.trim() && !containsCjk(currentLocalBrandName) ? (
+                            <StatusBadge tone="neutral" size="sm" label="已有英文名" />
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {localCategoryDraft.trim() ? (
+                        <div className="gm-brand-ai-row">
+                          <Checkbox
+                            aria-label="勾选建议海外英文品类"
+                            checked={localCategoryChecked}
+                            disabled={saving}
+                            onChange={(event) => setLocalCategoryChecked(event.target.checked)}
+                          />
+                          <span className="gm-brand-ai-field-label">当地品类</span>
+                          <Input
+                            aria-label="编辑建议海外英文品类"
+                            value={localCategoryDraft}
+                            maxLength={BRAND_CATEGORY_MAX}
+                            disabled={saving}
+                            onChange={(event) => setLocalCategoryDraft(event.target.value)}
+                          />
+                          {currentLocalCategory.trim() && !containsCjk(currentLocalCategory) ? (
+                            <StatusBadge tone="neutral" size="sm" label="已有英文品类" />
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
+                {/* Group 1: Aliases & SKUs */}
+                {aliasItems.length > 0 ? (
+                  <section
+                    className="gm-brand-ai-group"
+                    data-testid="ai-suggest-group-aliases"
+                    aria-label="SKU 与品牌别名建议"
+                  >
+                    <div className="gm-brand-ai-group-head">
+                      <div className="gm-brand-ai-group-title">
+                        <h4>SKU 型号与品牌别名</h4>
+                        <StatusBadge
+                          tone="neutral"
+                          size="sm"
+                          label={`已选 ${selectedAliasCount} / ${aliasItems.length}`}
+                        />
+                      </div>
+                      <Button
+                        type="link"
+                        size="small"
+                        disabled={saving}
+                        onClick={() => {
+                          const nextChecked = selectedAliasCount < aliasItems.length;
+                          setAliasItems((prev) =>
+                            prev.map((item) => ({ ...item, checked: nextChecked })),
+                          );
+                        }}
+                      >
+                        {selectedAliasCount < aliasItems.length ? '全选本组' : '取消全选'}
+                      </Button>
+                    </div>
+                    <div className="gm-brand-ai-alias-grid">
+                      {aliasItems.map((item, idx) => (
+                        <div key={item.id} className="gm-brand-ai-row">
+                          <Checkbox
+                            aria-label={`勾选别名建议 ${idx + 1}`}
+                            checked={item.checked}
+                            disabled={saving}
+                            onChange={(event) =>
+                              setAliasItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id
+                                    ? { ...row, checked: event.target.checked }
+                                    : row,
+                                ),
+                              )
+                            }
+                          />
+                          <Input
+                            aria-label={`编辑别名建议 ${idx + 1}`}
+                            value={item.value}
+                            maxLength={BRAND_NAME_MAX}
+                            disabled={saving}
+                            onChange={(event) =>
+                              setAliasItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id ? { ...row, value: event.target.value } : row,
+                                ),
+                              )
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {/* Group 2: Competitors */}
+                {competitorItems.length > 0 ? (
+                  <section
+                    className="gm-brand-ai-group"
+                    data-testid="ai-suggest-group-competitors"
+                    aria-label="主要竞品与域名建议"
+                  >
+                    <div className="gm-brand-ai-group-head">
+                      <div className="gm-brand-ai-group-title">
+                        <h4>主要竞品与官网域名</h4>
+                        <StatusBadge
+                          tone="neutral"
+                          size="sm"
+                          label={`已选 ${selectedCompetitorCount} / ${competitorItems.length}`}
+                        />
+                      </div>
+                      <Button
+                        type="link"
+                        size="small"
+                        disabled={saving}
+                        onClick={() => {
+                          const nextChecked = selectedCompetitorCount < competitorItems.length;
+                          setCompetitorItems((prev) =>
+                            prev.map((item) => ({ ...item, checked: nextChecked })),
+                          );
+                        }}
+                      >
+                        {selectedCompetitorCount < competitorItems.length ? '全选本组' : '取消全选'}
+                      </Button>
+                    </div>
+                    <div className="gm-brand-ai-rows">
+                      {competitorItems.map((item, idx) => (
+                        <div key={item.id} className="gm-brand-ai-comp-row">
+                          <Checkbox
+                            aria-label={`勾选竞品建议 ${idx + 1}`}
+                            checked={item.checked}
+                            disabled={saving}
+                            onChange={(event) =>
+                              setCompetitorItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id
+                                    ? { ...row, checked: event.target.checked }
+                                    : row,
+                                ),
+                              )
+                            }
+                          />
+                          <Input
+                            aria-label={`编辑竞品名称建议 ${idx + 1}`}
+                            value={item.name}
+                            maxLength={BRAND_NAME_MAX}
+                            disabled={saving}
+                            placeholder="竞品名"
+                            onChange={(event) =>
+                              setCompetitorItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id ? { ...row, name: event.target.value } : row,
+                                ),
+                              )
+                            }
+                          />
+                          <Input
+                            aria-label={`编辑竞品域名建议 ${idx + 1}`}
+                            value={item.domainsText}
+                            disabled={saving}
+                            placeholder="竞品官网域名（逗号分隔）"
+                            onChange={(event) =>
+                              setCompetitorItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id
+                                    ? { ...row, domainsText: event.target.value }
+                                    : row,
+                                ),
+                              )
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {/* Group 3: Seed Prompts (grouped by intent) */}
+                {seedItems.length > 0 ? (
+                  <section
+                    className="gm-brand-ai-group"
+                    data-testid="ai-suggest-group-seedPrompts"
+                    aria-label="分意图高频监控问句建议"
+                  >
+                    <div className="gm-brand-ai-group-head">
+                      <div className="gm-brand-ai-group-title">
+                        <h4>高频监控问句（分意图）</h4>
+                        <StatusBadge
+                          tone="neutral"
+                          size="sm"
+                          label={`已选 ${selectedSeedCount} / ${seedItems.length}`}
+                        />
+                      </div>
+                      <Button
+                        type="link"
+                        size="small"
+                        disabled={saving}
+                        onClick={() => {
+                          const nextChecked = selectedSeedCount < seedItems.length;
+                          setSeedItems((prev) =>
+                            prev.map((item) => ({ ...item, checked: nextChecked })),
+                          );
+                        }}
+                      >
+                        {selectedSeedCount < seedItems.length ? '全选本组' : '取消全选'}
+                      </Button>
+                    </div>
+                    <div className="gm-brand-ai-intent-list">
+                      {seedGroups.map((group) => (
+                        <div key={group.intent} className="gm-brand-ai-intent-block">
+                          <div className="gm-brand-ai-intent-head">
+                            <StatusBadge tone="active" size="sm" label={group.label} />
                           </div>
-                        ))}
-                      </div>
+                          <div className="gm-brand-ai-rows">
+                            {group.items.map((item) => (
+                              <div key={item.id} className="gm-brand-ai-row">
+                                <Checkbox
+                                  aria-label={`勾选种子问句 ${item.prompt}`}
+                                  checked={item.checked}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    setSeedItems((prev) =>
+                                      prev.map((row) =>
+                                        row.id === item.id
+                                          ? { ...row, checked: event.target.checked }
+                                          : row,
+                                      ),
+                                    )
+                                  }
+                                />
+                                <Input
+                                  aria-label={`编辑种子问句 ${item.id}`}
+                                  value={item.prompt}
+                                  maxLength={300}
+                                  disabled={saving}
+                                  onChange={(event) =>
+                                    setSeedItems((prev) =>
+                                      prev.map((row) =>
+                                        row.id === item.id
+                                          ? { ...row, prompt: event.target.value }
+                                          : row,
+                                      ),
+                                    )
+                                  }
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
+                  </section>
+                ) : null}
 
-            {/* Group 4: Control Prompts */}
-            {controlItems.length > 0 ? (
-              <section
-                className="gm-brand-ai-group"
-                data-testid="ai-suggest-group-controlPrompts"
-                aria-label="对照组问句建议"
-              >
-                <div className="gm-brand-ai-group-head">
-                  <div className="gm-brand-ai-group-title">
-                    <h4>对照组问句（DiD 归因基线）</h4>
-                    <StatusBadge
-                      tone="neutral"
-                      size="sm"
-                      label={`已选 ${selectedControlCount} / ${controlItems.length}`}
-                    />
-                  </div>
-                  <Button
-                    type="link"
-                    size="small"
-                    disabled={saving}
-                    onClick={() => {
-                      const nextChecked = selectedControlCount < controlItems.length;
-                      setControlItems((prev) =>
-                        prev.map((item) => ({ ...item, checked: nextChecked })),
-                      );
-                    }}
+                {/* Group 4: Control Prompts */}
+                {controlItems.length > 0 ? (
+                  <section
+                    className="gm-brand-ai-group"
+                    data-testid="ai-suggest-group-controlPrompts"
+                    aria-label="对照组问句建议"
                   >
-                    {selectedControlCount < controlItems.length ? '全选本组' : '取消全选'}
-                  </Button>
-                </div>
-                <div className="gm-brand-ai-rows">
-                  {controlItems.map((item, idx) => (
-                    <div key={item.id} className="gm-brand-ai-row">
-                      <Checkbox
-                        aria-label={`勾选对照组问句 ${idx + 1}`}
-                        checked={item.checked}
+                    <div className="gm-brand-ai-group-head">
+                      <div className="gm-brand-ai-group-title">
+                        <h4>对照组问句（DiD 归因基线）</h4>
+                        <StatusBadge
+                          tone="neutral"
+                          size="sm"
+                          label={`已选 ${selectedControlCount} / ${controlItems.length}`}
+                        />
+                      </div>
+                      <Button
+                        type="link"
+                        size="small"
                         disabled={saving}
-                        onChange={(event) =>
+                        onClick={() => {
+                          const nextChecked = selectedControlCount < controlItems.length;
                           setControlItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, checked: event.target.checked } : row,
-                            ),
-                          )
-                        }
-                      />
-                      <Input
-                        aria-label={`编辑对照组问句 ${idx + 1}`}
-                        value={item.prompt}
-                        maxLength={300}
-                        disabled={saving}
-                        onChange={(event) =>
-                          setControlItems((prev) =>
-                            prev.map((row) =>
-                              row.id === item.id ? { ...row, prompt: event.target.value } : row,
-                            ),
-                          )
-                        }
-                      />
+                            prev.map((item) => ({ ...item, checked: nextChecked })),
+                          );
+                        }}
+                      >
+                        {selectedControlCount < controlItems.length ? '全选本组' : '取消全选'}
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              </section>
+                    <div className="gm-brand-ai-rows">
+                      {controlItems.map((item, idx) => (
+                        <div key={item.id} className="gm-brand-ai-row">
+                          <Checkbox
+                            aria-label={`勾选对照组问句 ${idx + 1}`}
+                            checked={item.checked}
+                            disabled={saving}
+                            onChange={(event) =>
+                              setControlItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id
+                                    ? { ...row, checked: event.target.checked }
+                                    : row,
+                                ),
+                              )
+                            }
+                          />
+                          <Input
+                            aria-label={`编辑对照组问句 ${idx + 1}`}
+                            value={item.prompt}
+                            maxLength={300}
+                            disabled={saving}
+                            onChange={(event) =>
+                              setControlItems((prev) =>
+                                prev.map((row) =>
+                                  row.id === item.id ? { ...row, prompt: event.target.value } : row,
+                                ),
+                              )
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
             ) : null}
-          </div>
-        ) : null}
+          </>
+        )}
 
         <div className="gm-brand-ai-footer">
           <span className="gm-brand-ai-footer-hint">
@@ -690,7 +706,7 @@ export function BrandMarketAiSuggestModal({
               type="primary"
               data-testid="brand-ai-suggest-confirm-btn"
               loading={saving}
-              disabled={loading || totalSelected === 0}
+              disabled={loading || !suggestion || totalSelected === 0}
               onClick={handleConfirmClick}
             >
               {confirmLabel}

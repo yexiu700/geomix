@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import * as rootBarrel from './index';
 import {
+  UX_GLOSSARY_TOOLTIPS,
   UX_TERMS,
   VISIBILITY_TASK_STATUS_LABELS,
   containsRawCuid,
@@ -12,6 +14,7 @@ import {
   isOpaqueEntityId,
   replaceUxJargon,
   sanitizeEntityTitleSegment,
+  type UxGlossaryKey,
 } from './ux-foundation';
 
 describe('ux-foundation', () => {
@@ -84,5 +87,48 @@ describe('ux-foundation', () => {
     );
     expect(replaceUxJargon('影子计费期间消耗仅记录原价核算流水')).toContain(UX_TERMS.billingShadow);
     expect(replaceUxJargon('支持零拷贝转存至图库')).toBe('支持一键转存至图库');
+  });
+
+  it('exposes plain-language terminology glossary & tooltips re-exported from root barrel without jargon', () => {
+    const expectedTerms: Record<UxGlossaryKey, string> = {
+      fanOutCoverage: 'AI 追问覆盖度',
+      channelModeL1: '一键直发自有站',
+      channelModeL3Community: '社区合规辅发',
+      channelModeL3Pr: '外部媒体 / KOL 供稿',
+      crawlSchemaProbe: 'AI 抓取与结构化体检',
+      highConfidenceSampling: '3 次采样（结果更稳）',
+    };
+
+    const bannedTerms = [
+      '影子计费',
+      '零拷贝',
+      '检索适配器',
+      '复刻落库状态',
+      '已落库查看',
+      '切分向量索引',
+      '整段注入',
+      '切片向量化',
+      '含手工槽位·不入随机池',
+      '模型收录计数留到后续模块',
+    ];
+
+    expect(Object.keys(UX_GLOSSARY_TOOLTIPS).sort()).toEqual(Object.keys(expectedTerms).sort());
+    expect(rootBarrel.UX_TERMS).toBe(UX_TERMS);
+    expect(rootBarrel.UX_GLOSSARY_TOOLTIPS).toBe(UX_GLOSSARY_TOOLTIPS);
+
+    for (const [key, label] of Object.entries(expectedTerms) as Array<[UxGlossaryKey, string]>) {
+      expect(UX_TERMS[key]).toBe(label);
+      expect(replaceUxJargon(label)).toBe(label);
+
+      const tooltip = UX_GLOSSARY_TOOLTIPS[key];
+      expect(tooltip.trim().length).toBeGreaterThanOrEqual(16);
+      expect(/[\u4e00-\u9fff]/.test(tooltip)).toBe(true);
+      expect(replaceUxJargon(tooltip)).toBe(tooltip);
+
+      for (const banned of bannedTerms) {
+        expect(label).not.toContain(banned);
+        expect(tooltip).not.toContain(banned);
+      }
+    }
   });
 });

@@ -127,6 +127,7 @@ export const GM_ANTD_THEME = {
     fontFamily: 'var(--gm-font-sans)',
     fontFamilyCode: 'var(--gm-font-mono)',
     fontSize: 13,
+    fontSizeSM: 12,
     borderRadius: 6,
     borderRadiusSM: 4,
     borderRadiusLG: 8,
@@ -141,6 +142,9 @@ export const GM_ANTD_THEME = {
   },
   components: {
     Button: {
+      colorPrimary: '#C5F04A',
+      colorPrimaryHover: '#D4F772',
+      colorPrimaryActive: '#A9D62F',
       primaryColor: '#0A0C0B',
       primaryShadow: 'none',
       defaultShadow: 'none',

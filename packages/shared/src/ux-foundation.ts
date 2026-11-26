@@ -163,7 +163,43 @@ export const UX_TERMS = {
   postGenerateArticleStatus: '生成后文章状态',
   viewSavedArticle: '查看文章',
   exportEmptyNotice: '当前列表暂无可导出数据',
+  fanOutCoverage: 'AI 追问覆盖度',
+  channelModeL1: '一键直发自有站',
+  channelModeL3Community: '社区合规辅发',
+  channelModeL3Pr: '外部媒体 / KOL 供稿',
+  crawlSchemaProbe: 'AI 抓取与结构化体检',
+  highConfidenceSampling: '3 次采样（结果更稳）',
 } as const;
+
+/**
+ * 面向终端用户的通俗术语提示文案（悬停 Tooltip 说明）
+ */
+export const UX_GLOSSARY_TOOLTIPS = {
+  fanOutCoverage:
+    '衡量文章是否提前回答了用户在 AI 对话中高频延伸的追问子问题，覆盖越完整越容易被 AI 选为综合推荐来源。',
+  channelModeL1:
+    '通过已授权的官方接口直接发布到品牌独立站或官方博客（如 WordPress、Shopify 等），支持自动推送草稿或上线。',
+  channelModeL3Community:
+    '按知乎、小红书、Reddit 等社区平台规范生成合规改写版本，需由运营手动复制或通过官方合规流程发布。',
+  channelModeL3Pr:
+    '生成免登录可访问的媒体 / KOL 供稿包，内含结构化品牌事实卡与配图，方便外部编辑或达人快速引用。',
+  crawlSchemaProbe:
+    '检测已发布页面能否被主流 AI 爬虫正常访问（HTTP 状态与 robots.txt 放行）及是否包含规范的结构化标记。',
+  highConfidenceSampling:
+    '对同一监测问句连续采样 3 次并合并结果，降低大模型单次回答随机波动带来的误差。',
+} as const satisfies Readonly<
+  Record<
+    | 'fanOutCoverage'
+    | 'channelModeL1'
+    | 'channelModeL3Community'
+    | 'channelModeL3Pr'
+    | 'crawlSchemaProbe'
+    | 'highConfidenceSampling',
+    string
+  >
+>;
+
+export type UxGlossaryKey = keyof typeof UX_GLOSSARY_TOOLTIPS;
 
 /**
  * AI 可见度诊断模块专属任务状态文案（避免误用 AI 写作模块的「创作中/创作完成」）

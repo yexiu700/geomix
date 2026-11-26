@@ -191,10 +191,37 @@ const CN_TO_EN_CATEGORY_MAP: ReadonlyArray<readonly [RegExp, string]> = [
   [/工业设备/i, 'industrial equipment'],
 ];
 
-const CJK_CHAR_RE = /[\u3400-\u9fff\uf900-\ufaff]/;
+const CJK_CHAR_RE = /\p{Script=Han}/u;
 
 export function containsCjk(value: string): boolean {
   return CJK_CHAR_RE.test(value);
+}
+
+export const GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL = '我的海外品牌名本身包含中文字符';
+export const GLOBAL_CJK_BRAND_NAME_ERROR =
+  '海外市场（GLOBAL）的当地品牌名称不能包含中文字符，请填写英文或目标市场品牌名；如品牌名本身含中文，请勾选「我的海外品牌名本身包含中文字符」';
+export const GLOBAL_CJK_CATEGORY_ERROR =
+  '海外市场（GLOBAL）的当地品类名称不能包含中文字符，请填写英文或目标市场品类（或留空自动映射）；如确需保留中文，请勾选「我的海外品牌名本身包含中文字符」';
+
+export function validateGlobalMarketIdentity(input: {
+  market: GeoMarket;
+  localBrandName?: string | null;
+  fallbackBrandName?: string | null;
+  localCategory?: string | null;
+  allowCjkGlobalIdentity?: boolean;
+}): { ok: true } | { ok: false; field: 'localBrandName' | 'localCategory'; message: string } {
+  if (input.market !== 'GLOBAL' || input.allowCjkGlobalIdentity === true) {
+    return { ok: true };
+  }
+  const effectiveName = input.localBrandName?.trim() || input.fallbackBrandName?.trim() || '';
+  if (effectiveName && containsCjk(effectiveName)) {
+    return { ok: false, field: 'localBrandName', message: GLOBAL_CJK_BRAND_NAME_ERROR };
+  }
+  const cleanCategory = input.localCategory?.trim() || '';
+  if (cleanCategory && containsCjk(cleanCategory)) {
+    return { ok: false, field: 'localCategory', message: GLOBAL_CJK_CATEGORY_ERROR };
+  }
+  return { ok: true };
 }
 
 /**
@@ -724,7 +751,7 @@ const optionalMonthlyRetestPointCapSchema = z
   .nullable()
   .optional();
 
-export const brandMarketConfigSchema = z.object({
+const brandMarketConfigBaseSchema = z.object({
   market: z.enum(GEO_MARKETS),
   locale: z.string().trim().min(2).max(16).optional(),
   region: z.string().trim().min(2).max(16).optional(),
@@ -740,6 +767,23 @@ export const brandMarketConfigSchema = z.object({
   supportedLocales: brandSupportedLocalesSchema().optional(),
   controlPrompts: brandControlPromptArraySchema().optional(),
   monthlyRetestPointCap: optionalMonthlyRetestPointCapSchema,
+  allowCjkGlobalIdentity: z.boolean().optional(),
+});
+
+export const brandMarketConfigSchema = brandMarketConfigBaseSchema.superRefine((val, ctx) => {
+  const check = validateGlobalMarketIdentity({
+    market: val.market,
+    localBrandName: val.localBrandName,
+    localCategory: val.localCategory,
+    allowCjkGlobalIdentity: val.allowCjkGlobalIdentity,
+  });
+  if (!check.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [check.field],
+      message: check.message,
+    });
+  }
 });
 
 const brandMarketEntrySchema = z.union([
@@ -749,26 +793,48 @@ const brandMarketEntrySchema = z.union([
     ownedDomains: [] as string[],
     competitors: [] as BrandCompetitor[],
     seedPrompts: [] as string[],
+    allowCjkGlobalIdentity: undefined as boolean | undefined,
   })),
-  brandMarketConfigSchema,
+  brandMarketConfigBaseSchema,
 ]);
 
-export const createBrandSchema = z.object({
-  name: z.string().trim().min(1, '请填写品牌名称').max(BRAND_NAME_MAX),
-  category: z.string().trim().min(1, '请填写所属品类').max(BRAND_CATEGORY_MAX),
-  markets: z
-    .array(brandMarketEntrySchema)
-    .min(1, '请至少选择一个目标市场')
-    .max(2)
-    .refine((ms) => new Set(ms.map((m) => m.market)).size === ms.length, '目标市场不能重复'),
-  aliases: brandAliasArraySchema().optional(),
-  ownedDomains: brandDomainArraySchema(20).optional(),
-  competitors: z
-    .array(brandCompetitorSchema)
-    .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
-    .optional(),
-  truthAgreed: z.boolean().optional(),
-});
+export const createBrandSchema = z
+  .object({
+    name: z.string().trim().min(1, '请填写品牌名称').max(BRAND_NAME_MAX),
+    category: z.string().trim().min(1, '请填写所属品类').max(BRAND_CATEGORY_MAX),
+    markets: z
+      .array(brandMarketEntrySchema)
+      .min(1, '请至少选择一个目标市场')
+      .max(2)
+      .refine((ms) => new Set(ms.map((m) => m.market)).size === ms.length, '目标市场不能重复'),
+    aliases: brandAliasArraySchema().optional(),
+    ownedDomains: brandDomainArraySchema(20).optional(),
+    competitors: z
+      .array(brandCompetitorSchema)
+      .max(BRAND_MAX_COMPETITORS, `最多配置 ${BRAND_MAX_COMPETITORS} 个竞品`)
+      .optional(),
+    truthAgreed: z.boolean().optional(),
+    allowCjkGlobalIdentity: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    data.markets.forEach((entry, idx) => {
+      const check = validateGlobalMarketIdentity({
+        market: entry.market,
+        localBrandName: 'localBrandName' in entry ? entry.localBrandName : undefined,
+        fallbackBrandName: data.name,
+        localCategory: 'localCategory' in entry ? entry.localCategory : undefined,
+        allowCjkGlobalIdentity:
+          (entry.allowCjkGlobalIdentity ?? data.allowCjkGlobalIdentity) === true,
+      });
+      if (!check.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['markets', idx, check.field],
+          message: check.message,
+        });
+      }
+    });
+  });
 
 export type CreateBrandInput = z.input<typeof createBrandSchema>;
 export type ParsedCreateBrandInput = z.output<typeof createBrandSchema>;
@@ -783,7 +849,7 @@ export const updateBrandSchema = z
 
 export type UpdateBrandInput = z.infer<typeof updateBrandSchema>;
 
-export const upsertBrandMarketSchema = brandMarketConfigSchema.omit({ market: true });
+export const upsertBrandMarketSchema = brandMarketConfigBaseSchema.omit({ market: true });
 
 export type UpsertBrandMarketInput = z.input<typeof upsertBrandMarketSchema>;
 export type ParsedUpsertBrandMarketInput = z.output<typeof upsertBrandMarketSchema>;
@@ -804,8 +870,13 @@ export const updateBrandMarketSchema = z
     supportedLocales: brandSupportedLocalesSchema().optional(),
     controlPrompts: brandControlPromptArraySchema().optional(),
     monthlyRetestPointCap: optionalMonthlyRetestPointCapSchema,
+    allowCjkGlobalIdentity: z.boolean().optional(),
   })
-  .refine((val) => Object.keys(val).length > 0, '至少修改一项市场配置');
+  .refine(
+    (val) =>
+      Object.entries(val).some(([k, v]) => k !== 'allowCjkGlobalIdentity' && v !== undefined),
+    '至少修改一项市场配置',
+  );
 
 export type UpdateBrandMarketInput = z.input<typeof updateBrandMarketSchema>;
 export type ParsedUpdateBrandMarketInput = z.output<typeof updateBrandMarketSchema>;

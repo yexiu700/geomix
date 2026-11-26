@@ -152,35 +152,15 @@ describe('UX Foundation static guardrails', () => {
 // === Sonar Ink 2.0 Visual-Debt Ratchet (#390) ===
 
 const VISUAL_DEBT_BASELINE = {
-  inlineStyleBlocks: 776,
-  inlineFontSize: 227,
+  inlineStyleBlocks: 44,
+  inlineFontSize: 1,
+  globalsCssSolidBorders: 54,
+  globalsCssInsetBorderRings: 45,
 } as const;
 
-const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {
-  'components/admin/leads-admin.tsx': 1,
-  'components/crud/export-action.tsx': 2,
-  'components/geo/citation-trace.tsx': 1,
-  'components/geo/geo-signal-strip.tsx': 1,
-  'components/reports/public-roi-report-view.tsx': 13,
-  'components/studio/studio-delivery-pack.tsx': 1,
-  'components/studio/studio-distribution-drawer.tsx': 3,
-  'components/studio/studio-editor-canvas.tsx': 2,
-  'components/studio/studio-media-popover.tsx': 3,
-  'components/studio/studio-publish-retest.tsx': 38,
-};
+const SUB_12PX_FONT_SIZE_ALLOWLIST: Readonly<Record<string, number>> = {};
 
-const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {
-  'components/account/points-screen.tsx': 1,
-  'components/admin/llm-cost-admin.tsx': 1,
-  'components/distribution/pr-share-packet-view.tsx': 3,
-  'components/reports/public-roi-report-view.tsx': 3,
-  'components/studio/studio-delivery-pack.tsx': 5,
-  'components/studio/studio-distribution-drawer.tsx': 15,
-  'components/studio/studio-geo-evaluator.tsx': 1,
-  'components/studio/studio-prewrite-bar.tsx': 2,
-  'components/studio/studio-publish-retest.tsx': 11,
-  'components/studio/studio-right-pane.tsx': 3,
-};
+const PRESET_TAG_COLOR_ALLOWLIST: Readonly<Record<string, number>> = {};
 
 const ANTD_PRESET_TAG_COLORS = [
   'geekblue',
@@ -203,6 +183,8 @@ const FORBIDDEN_VIOLET_INDIGO_HEX_RE = /#(5E6AD2|8B5CF6|6366F1)\b/gi;
 const FONT_SIZE_PX_OR_NUM_RE =
   /\bfontSize\s*:\s*(?:(['"])(\d+(?:\.\d+)?)px\1|(\d+(?:\.\d+)?)(?![\d.a-zA-Z%]))/g;
 const FONT_SIZE_REM_RE = /\bfontSize\s*:\s*(['"])(\d+(?:\.\d+)?)rem\1/g;
+const FONT_SIZE_JSX_ATTR_RE =
+  /\bfontSize\s*=\s*(?:(['"])(\d+(?:\.\d+)?)(px|rem)?\1|\{\s*(\d+(?:\.\d+)?)\s*\}|\{\s*(['"])(\d+(?:\.\d+)?)(px|rem)?\5\s*\})/g;
 
 function toPosixRel(file: string): string {
   return relative(WEB_ROOT, file).replace(/\\/g, '/');
@@ -227,6 +209,16 @@ function countSub12FontSizes(content: string): number {
   for (const match of content.matchAll(FONT_SIZE_REM_RE)) {
     const rem = Number(match[2]);
     if (Number.isFinite(rem) && rem < 0.75) {
+      count += 1;
+    }
+  }
+  for (const match of content.matchAll(FONT_SIZE_JSX_ATTR_RE)) {
+    const num = Number(match[2] ?? match[4] ?? match[6]);
+    const unit = match[3] ?? match[7];
+    if (!Number.isFinite(num)) {
+      continue;
+    }
+    if (unit === 'rem' ? num < 0.75 : num < 12) {
       count += 1;
     }
   }
@@ -498,5 +490,22 @@ describe('Sonar Ink 2.0 visual-debt ratchet (#390)', () => {
 
     // WCAG AA check: --gm-fg-3 (#838D89) on --gm-surface-1 (#111513) >= 5.2:1
     expect(contrastRatio('#838D89', '#111513')).toBeGreaterThanOrEqual(5.2);
+  });
+
+  it('locks console globals.css 1px solid borders and inset 1px rings <= 60 (Sonar Ink 2.0 closure #394)', () => {
+    const globalsCss = readFileSync(join(WEB_ROOT, 'app/globals.css'), 'utf8');
+    const stripped = globalsCss.replace(/\/\*[\s\S]*?\*\//g, '');
+    const solidBorderCount = (stripped.match(/1px\s+solid/g) ?? []).length;
+    const insetBorderRingCount = (stripped.match(/inset\s+0\s+0\s+0\s+1px/g) ?? []).length;
+
+    expect(VISUAL_DEBT_BASELINE.globalsCssSolidBorders).toBeLessThanOrEqual(60);
+    expect(solidBorderCount).toBeLessThanOrEqual(VISUAL_DEBT_BASELINE.globalsCssSolidBorders);
+    expect(solidBorderCount).toBeLessThanOrEqual(60);
+
+    expect(VISUAL_DEBT_BASELINE.globalsCssInsetBorderRings).toBeLessThanOrEqual(60);
+    expect(insetBorderRingCount).toBeLessThanOrEqual(
+      VISUAL_DEBT_BASELINE.globalsCssInsetBorderRings,
+    );
+    expect(insetBorderRingCount).toBeLessThanOrEqual(60);
   });
 });

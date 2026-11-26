@@ -553,9 +553,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
     const blockedPill = within(diagBox).getByText(
       /GPTBot: 拦截 \(Disallow: \/en\/articles\/2026\/\)/,
     );
-    expect(blockedPill.style.whiteSpace).toBe('normal');
-    expect(blockedPill.style.maxWidth).toBe('100%');
-    expect(blockedPill.style.overflowWrap).toBe('anywhere');
+    expect(blockedPill.className).toContain('gm-studio-bot-chip');
+    expect(blockedPill.className).toContain('gm-studio-bot-chip--blocked');
 
     const t14Before = screen.getByTestId('publish-retest-node-pub_1-T14');
     fireEvent.click(within(t14Before).getByRole('button', { name: '取消' }));

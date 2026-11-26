@@ -3,20 +3,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrand,
+  createBrandProductLine,
   deleteBrand,
   deleteBrandMedia,
+  deleteBrandProductLine,
   enableBrandMarket,
   extractBrandFacts,
   generateBrandAiImage,
   getBrand,
   getBrandFacts,
   listBrandMedia,
+  listBrandProductLines,
   listBrands,
   resolveMediaUrl,
   saveBrandFacts,
   updateBrand,
   updateBrandMarket,
   updateBrandMediaAlt,
+  updateBrandProductLine,
   uploadBrandMedia,
 } from './brands';
 
@@ -199,5 +203,52 @@ describe('apps/web/lib/brands v2 API client', () => {
     expect(resolveMediaUrl('/api/v2/brands/b1/media/m1/thumb?tid=t1&sig=abc')).toBe(
       'http://127.0.0.1:3001/api/v2/brands/b1/media/m1/thumb?tid=t1&sig=abc',
     );
+  });
+
+  it('routes BrandProductLine CRUD and getBrandFacts productLineId query param cleanly', async () => {
+    const ctrl = new AbortController();
+    requestMock.mockResolvedValue({ items: [] });
+
+    await listBrandProductLines('b/1', { signal: ctrl.signal });
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b%2F1/product-lines', {
+      method: 'GET',
+      storage: undefined,
+      signal: ctrl.signal,
+    });
+
+    await createBrandProductLine(
+      'b1',
+      { name: 'Power Station', category: 'Portable Power Station' },
+      { signal: ctrl.signal },
+    );
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b1/product-lines', {
+      method: 'POST',
+      body: { name: 'Power Station', category: 'Portable Power Station' },
+      storage: undefined,
+      signal: ctrl.signal,
+    });
+
+    await updateBrandProductLine('b1', 'pl/1', { category: 'Power Bank' });
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b1/product-lines/pl%2F1', {
+      method: 'PATCH',
+      body: { category: 'Power Bank' },
+      storage: undefined,
+      signal: undefined,
+    });
+
+    await deleteBrandProductLine('b1', 'pl_1');
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b1/product-lines/pl_1', {
+      method: 'DELETE',
+      storage: undefined,
+      signal: undefined,
+    });
+
+    requestMock.mockResolvedValueOnce({ brandId: 'b1', truthAgreementSignedAt: null, items: [] });
+    await getBrandFacts('b1', { productLineId: ' pl_1 ', signal: ctrl.signal });
+    expect(requestMock).toHaveBeenLastCalledWith('/brands/b1/facts?productLineId=pl_1', {
+      method: 'GET',
+      storage: undefined,
+      signal: ctrl.signal,
+    });
   });
 });
