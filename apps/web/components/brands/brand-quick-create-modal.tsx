@@ -67,6 +67,7 @@ export type BrandQuickCreateModalProps = {
     brandId: string,
     market: GeoMarket,
     input?: BrandMarketAiSuggestInput,
+    options?: { signal?: AbortSignal },
   ) => Promise<BrandMarketAiSuggestResponse>;
   onSaveMarketConfig?: (
     brandId: string,
@@ -151,6 +152,7 @@ export function BrandQuickCreateModal({
   const [savingFacts, setSavingFacts] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const savingFactsRef = useRef(false);
 
   // Step 3 state: automatic AI market config prefill after saving facts
   const [prefillMarket, setPrefillMarket] = useState<GeoMarket>('CN');
@@ -162,13 +164,23 @@ export function BrandQuickCreateModal({
   );
   const [prefillSourceUrl, setPrefillSourceUrl] = useState('');
   const prefillSeqRef = useRef(0);
+  const prefillCtrlRef = useRef<AbortController | null>(null);
+  const prefillInFlightKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       prefillSeqRef.current += 1;
+      prefillCtrlRef.current?.abort();
+      prefillCtrlRef.current = null;
+      prefillInFlightKeyRef.current = null;
+      savingFactsRef.current = false;
       return;
     }
     prefillSeqRef.current += 1;
+    prefillCtrlRef.current?.abort();
+    prefillCtrlRef.current = null;
+    prefillInFlightKeyRef.current = null;
+    savingFactsRef.current = false;
     setStep('create');
     setSubmitting(false);
     setError(null);
@@ -193,6 +205,7 @@ export function BrandQuickCreateModal({
     setPrefillError(null);
     setPrefillSuggestion(null);
     setPrefillSourceUrl('');
+    form.resetFields();
     form.setFieldsValue({
       name: '',
       category: '',
@@ -205,6 +218,15 @@ export function BrandQuickCreateModal({
   }, [form, open]);
 
   useEffect(() => {
+    return () => {
+      prefillSeqRef.current += 1;
+      prefillCtrlRef.current?.abort();
+      prefillCtrlRef.current = null;
+      prefillInFlightKeyRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!hasGlobalCjkIdentity) {
       setAllowCjkGlobalIdentity(false);
     }
@@ -214,6 +236,10 @@ export function BrandQuickCreateModal({
 
   const handleClose = () => {
     if (busy) return;
+    prefillSeqRef.current += 1;
+    prefillCtrlRef.current?.abort();
+    prefillCtrlRef.current = null;
+    prefillInFlightKeyRef.current = null;
     onClose();
   };
 
@@ -274,12 +300,28 @@ export function BrandQuickCreateModal({
         return;
       }
     }
+    const isDualMarket = values.markets.includes('CN') && values.markets.includes('GLOBAL');
+    const filterCjkForGlobal = values.markets.includes('GLOBAL') && !allowCjkGlobalIdentity;
+    const globalAliases = filterCjkForGlobal
+      ? aliases.filter((item) => !containsCjk(item))
+      : aliases;
+    const globalCompetitors = filterCjkForGlobal
+      ? competitors
+          .filter((item) => !containsCjk(item.name))
+          .map((item) => ({
+            ...item,
+            aliases: item.aliases.filter((alias) => !containsCjk(alias)),
+          }))
+      : competitors;
     const hasGlobalOverrides = Boolean(
       values.markets.includes('GLOBAL') &&
-      (globalLocalBrandName ||
+      (isDualMarket ||
+        globalLocalBrandName ||
         globalLocalCategory ||
         globalDomains.length > 0 ||
-        allowCjkGlobalIdentity),
+        allowCjkGlobalIdentity ||
+        globalAliases.length !== aliases.length ||
+        globalCompetitors.length !== competitors.length),
     );
 
     setSubmitting(true);
@@ -296,9 +338,9 @@ export function BrandQuickCreateModal({
                       ...(globalLocalBrandName ? { localBrandName: globalLocalBrandName } : {}),
                       ...(globalLocalCategory ? { localCategory: globalLocalCategory } : {}),
                       ...(allowCjkGlobalIdentity ? { allowCjkGlobalIdentity: true } : {}),
-                      aliases,
+                      aliases: globalAliases,
                       ownedDomains: globalDomains.length > 0 ? globalDomains : ownedDomains,
-                      competitors,
+                      competitors: globalCompetitors,
                     }
                   : {
                       market,
@@ -307,9 +349,11 @@ export function BrandQuickCreateModal({
                       competitors,
                     },
               ),
-              aliases,
+              ...(isDualMarket ? {} : { aliases: filterCjkForGlobal ? globalAliases : aliases }),
               ownedDomains,
-              competitors,
+              ...(isDualMarket
+                ? {}
+                : { competitors: filterCjkForGlobal ? globalCompetitors : competitors }),
             }
           : {
               name: values.name.trim(),
@@ -394,44 +438,67 @@ export function BrandQuickCreateModal({
     }
   };
 
-  const runMarketPrefill = async (brandId: string, targetMarket: GeoMarket, sourceUrl?: string) => {
+  const runMarketPrefill = async (
+    brandId: string,
+    targetMarket: GeoMarket,
+    sourceUrl?: string,
+    options?: { force?: boolean },
+  ) => {
     if (!onSuggestMarketConfig) return;
+    const trimmedUrl = sourceUrl?.trim() || '';
+    const requestKey = `${brandId}::${targetMarket}::${trimmedUrl}`;
+    if (!options?.force && prefillInFlightKeyRef.current === requestKey) {
+      return;
+    }
+
+    prefillCtrlRef.current?.abort();
+    const ctrl = new AbortController();
+    prefillCtrlRef.current = ctrl;
+    prefillInFlightKeyRef.current = requestKey;
     const seq = ++prefillSeqRef.current;
+
     setPrefillLoading(true);
     setPrefillError(null);
     setPrefillSuggestion(null);
-    const trimmedUrl = sourceUrl?.trim() || '';
     try {
       const response = await onSuggestMarketConfig(
         brandId,
         targetMarket,
         trimmedUrl ? { sourceUrl: trimmedUrl } : {},
+        { signal: ctrl.signal },
       );
-      if (seq !== prefillSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== prefillSeqRef.current) return;
       setPrefillSuggestion(response);
       setPrefillError(null);
     } catch (reason: unknown) {
-      if (seq !== prefillSeqRef.current) return;
+      if (ctrl.signal.aborted || seq !== prefillSeqRef.current) return;
       setPrefillError(
         reason instanceof Error && reason.message
           ? reason.message
           : 'AI 市场配置建议生成失败，您可以跳过直接进入工作区',
       );
     } finally {
-      if (seq === prefillSeqRef.current) {
+      if (prefillCtrlRef.current === ctrl) {
+        prefillCtrlRef.current = null;
+      }
+      if (prefillInFlightKeyRef.current === requestKey) {
+        prefillInFlightKeyRef.current = null;
+      }
+      if (!ctrl.signal.aborted && seq === prefillSeqRef.current) {
         setPrefillLoading(false);
       }
     }
   };
 
   const handleSaveExtractedFacts = async () => {
-    if (!createdBrand || !onSaveFacts || !drafts) return;
+    if (!createdBrand || !onSaveFacts || !drafts || savingFactsRef.current) return;
     setExtractError(null);
     if (!truthAgreed) {
       setExtractError('请先勾选品牌事实真实性与合规承诺后再保存');
       return;
     }
 
+    savingFactsRef.current = true;
     setSavingFacts(true);
     try {
       const saved = await onSaveFacts(createdBrand.id, {
@@ -460,6 +527,7 @@ export function BrandQuickCreateModal({
         reason instanceof Error && reason.message ? reason.message : '保存品牌事实卡失败',
       );
     } finally {
+      savingFactsRef.current = false;
       setSavingFacts(false);
     }
   };
@@ -594,6 +662,7 @@ export function BrandQuickCreateModal({
                 label="品牌名称"
                 name="name"
                 validateFirst
+                validateTrigger={['onBlur', 'onSubmit']}
                 rules={[
                   { required: true, whitespace: true, message: '请填写品牌名称' },
                   { max: BRAND_NAME_MAX, message: `品牌名称不超过 ${BRAND_NAME_MAX} 字` },
@@ -652,6 +721,7 @@ export function BrandQuickCreateModal({
                 label="所属品类"
                 name="category"
                 validateFirst
+                validateTrigger={['onBlur', 'onSubmit']}
                 rules={[
                   { required: true, whitespace: true, message: '请填写所属品类' },
                   { max: BRAND_CATEGORY_MAX, message: `所属品类不超过 ${BRAND_CATEGORY_MAX} 字` },
@@ -690,6 +760,7 @@ export function BrandQuickCreateModal({
                 label="自有官网域名"
                 name="ownedDomainsText"
                 validateFirst
+                validateTrigger={['onBlur', 'onSubmit']}
                 rules={[
                   {
                     required: true,
@@ -946,17 +1017,6 @@ export function BrandQuickCreateModal({
                 </div>
               )}
 
-              <div className="gm-brand-qc-extract-action">
-                <Button
-                  type={drafts ? 'default' : 'primary'}
-                  loading={extracting}
-                  disabled={savingFacts}
-                  onClick={() => void handleRunExtract()}
-                >
-                  AI 提炼 4 块事实卡（免费）
-                </Button>
-              </div>
-
               {drafts ? (
                 <div className="gm-brand-draft-list">
                   {drafts.map((item) => (
@@ -1012,6 +1072,14 @@ export function BrandQuickCreateModal({
                 <Button disabled={busy} onClick={handleClose}>
                   跳过，直接进入
                 </Button>
+                <Button
+                  type={drafts ? 'default' : 'primary'}
+                  loading={extracting}
+                  disabled={savingFacts}
+                  onClick={() => void handleRunExtract()}
+                >
+                  AI 提炼 4 块事实卡（免费）
+                </Button>
                 {drafts ? (
                   <Button
                     type="primary"
@@ -1048,7 +1116,7 @@ export function BrandQuickCreateModal({
         onSourceUrlChange={setPrefillSourceUrl}
         onRegenerate={(url) => {
           if (createdBrand) {
-            void runMarketPrefill(createdBrand.id, prefillMarket, url);
+            void runMarketPrefill(createdBrand.id, prefillMarket, url, { force: true });
           }
         }}
         onConfirm={handleConfirmMarketPrefill}

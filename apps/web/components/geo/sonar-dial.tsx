@@ -1,7 +1,12 @@
 'use client';
 
 import type { GeoMarket, VisibilityEngineBreakdownItem, VisibilityEngineKey } from '@geomix/shared';
-import { VISIBILITY_ENGINES, enginesForMarket } from '@geomix/shared';
+import {
+  ACTIVE_VISIBILITY_ENGINES,
+  DOMESTIC_VISIBILITY_ENGINE_KEYS,
+  VISIBILITY_ENGINES,
+  enginesForMarket,
+} from '@geomix/shared';
 import type { JSX, KeyboardEvent } from 'react';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
@@ -12,7 +17,7 @@ export type SonarDialProps = {
   overallPct: number;
   selectedEngine?: VisibilityEngineKey;
   onSelectEngine: (engine: VisibilityEngineKey | undefined) => void;
-  /** Optional market filter: CN → 8 spokes, GLOBAL → 5 spokes. Omit for all 13 (backward-compat). */
+  /** Optional market filter: CN → 4 spokes, GLOBAL → 5 spokes. Omit for all 9 active engines. */
   market?: GeoMarket;
   /** Optional explicit engine key list (takes precedence over `market`). */
   engines?: readonly VisibilityEngineKey[];
@@ -55,10 +60,10 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
 
   const dialEngines = useMemo(() => {
     const allowedKeys = p.engines ?? (p.market ? enginesForMarket(p.market) : null);
-    if (!allowedKeys) return VISIBILITY_ENGINES;
+    if (!allowedKeys) return ACTIVE_VISIBILITY_ENGINES;
     const keySet = new Set<string>(allowedKeys);
     const filtered = VISIBILITY_ENGINES.filter((eng) => keySet.has(eng.key));
-    return filtered.length > 0 ? filtered : VISIBILITY_ENGINES;
+    return filtered.length > 0 ? filtered : ACTIVE_VISIBILITY_ENGINES;
   }, [p.engines, p.market]);
 
   useEffect(() => {
@@ -106,7 +111,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
   }
 
   const isEmpty = nodes.every((n) => n.completed === 0);
-  const showCombinedDivider = dialEngines.length === VISIBILITY_ENGINES.length;
+  const showCombinedDivider = dialEngines.length === ACTIVE_VISIBILITY_ENGINES.length;
   const polyPoints = nodes.map((n) => `${n.point.x.toFixed(2)},${n.point.y.toFixed(2)}`).join(' ');
   const sweepStart = polar(R, -90);
   const sweepLead = polar(R, -60);
@@ -125,7 +130,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
 
   return (
     <div
-      className="gm-sonar"
+      className={isEmpty ? 'gm-sonar gm-sonar--empty' : 'gm-sonar'}
       data-market={p.market ?? 'ALL'}
       data-engine-count={nodes.length}
       onKeyDown={(e) => e.key === 'Escape' && p.onSelectEngine(undefined)}
@@ -136,6 +141,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
         height="100%"
         role="img"
         aria-label="AI 引擎覆盖率声呐盘"
+        className={isEmpty ? 'gm-sonar-svg gm-sonar-svg--empty' : 'gm-sonar-svg'}
       >
         <defs>
           <linearGradient
@@ -161,20 +167,22 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
             strokeWidth={1}
           />
         ))}
-        {RING_RADII.slice(0, 3).map((r, i) => {
-          const pos = polar(r + 3, RING_LABEL_DEG);
-          return (
-            <text
-              key={r}
-              x={pos.x}
-              y={pos.y}
-              textAnchor="start"
-              className="gm-sonar-ring-label gm-num"
-            >
-              {`${(i + 1) * 25}%`}
-            </text>
-          );
-        })}
+        {!isEmpty
+          ? RING_RADII.slice(0, 3).map((r, i) => {
+              const pos = polar(r + 3, RING_LABEL_DEG);
+              return (
+                <text
+                  key={r}
+                  x={pos.x}
+                  y={pos.y}
+                  textAnchor="start"
+                  className="gm-sonar-ring-label gm-num"
+                >
+                  {`${(i + 1) * 25}%`}
+                </text>
+              );
+            })
+          : null}
         {nodes.map(({ idx, eng, spokeEnd, deg, labelPos, anchor, dialLabel }) => {
           const sel = p.selectedEngine === eng.key;
           return (
@@ -184,10 +192,12 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                 y1={CY}
                 x2={spokeEnd.x}
                 y2={spokeEnd.y}
-                stroke={sel ? GM.phosphor : GM.line.l1}
-                strokeWidth={sel ? 1.5 : 1}
+                stroke={sel && !isEmpty ? GM.phosphor : GM.line.l1}
+                strokeWidth={sel && !isEmpty ? 1.5 : 1}
               />
-              {showCombinedDivider && (idx === 0 || idx === 8) ? (
+              {!isEmpty &&
+              showCombinedDivider &&
+              (idx === 0 || idx === DOMESTIC_VISIBILITY_ENGINE_KEYS.length) ? (
                 <line
                   x1={polar(R + 2, deg).x}
                   y1={polar(R + 2, deg).y}
@@ -197,17 +207,19 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                   strokeWidth={1}
                 />
               ) : null}
-              <text
-                x={labelPos.x}
-                y={labelPos.y}
-                textAnchor={anchor}
-                dominantBaseline="middle"
-                fontSize={12}
-                fontWeight={sel ? 600 : 400}
-                fill={sel ? GM.fg.f1 : eng.domestic ? GM.fg.f2 : GM.fg.f3}
-              >
-                {dialLabel}
-              </text>
+              {!isEmpty ? (
+                <text
+                  x={labelPos.x}
+                  y={labelPos.y}
+                  textAnchor={anchor}
+                  dominantBaseline="middle"
+                  fontSize={12}
+                  fontWeight={sel ? 600 : 400}
+                  fill={sel ? GM.fg.f1 : eng.domestic ? GM.fg.f2 : GM.fg.f3}
+                >
+                  {dialLabel}
+                </text>
+              ) : null}
             </g>
           );
         })}
@@ -248,34 +260,34 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                 strokeDasharray={hasData && mentioned > 0 ? undefined : '2 2'}
               />
             ))}
+            <text x={CX} y={161} textAnchor="middle" className="gm-sonar-center-val gm-num">
+              {formatPct(p.overallPct)}
+            </text>
+            <text x={CX} y={178} textAnchor="middle" className="gm-sonar-center-sub">
+              整体提及率
+            </text>
+            {nodes.map(({ idx, eng, hitD }) => {
+              const sel = p.selectedEngine === eng.key;
+              return (
+                <path
+                  key={eng.key}
+                  d={hitD}
+                  className="gm-sonar-hit"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`筛选引擎-${eng.label}`}
+                  aria-pressed={sel}
+                  onClick={() => toggle(eng.key)}
+                  onKeyDown={(e) => onKey(e, eng.key)}
+                  onMouseEnter={() => setHoveredIdx(idx)}
+                  onMouseLeave={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
+                  onFocus={() => setHoveredIdx(idx)}
+                  onBlur={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
+                />
+              );
+            })}
           </>
         ) : null}
-        <text x={CX} y={161} textAnchor="middle" className="gm-sonar-center-val gm-num">
-          {isEmpty ? '—' : formatPct(p.overallPct)}
-        </text>
-        <text x={CX} y={178} textAnchor="middle" className="gm-sonar-center-sub">
-          整体提及率
-        </text>
-        {nodes.map(({ idx, eng, hitD }) => {
-          const sel = p.selectedEngine === eng.key;
-          return (
-            <path
-              key={eng.key}
-              d={hitD}
-              className="gm-sonar-hit"
-              role="button"
-              tabIndex={0}
-              aria-label={`筛选引擎-${eng.label}`}
-              aria-pressed={sel}
-              onClick={() => toggle(eng.key)}
-              onKeyDown={(e) => onKey(e, eng.key)}
-              onMouseEnter={() => setHoveredIdx(idx)}
-              onMouseLeave={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
-              onFocus={() => setHoveredIdx(idx)}
-              onBlur={() => setHoveredIdx((prev) => (prev === idx ? null : prev))}
-            />
-          );
-        })}
       </svg>
       {hovered ? (
         <div

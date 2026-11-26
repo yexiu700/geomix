@@ -19,7 +19,7 @@ describe('HeroEngineStrip', () => {
     fireEvent.click(screen.getByRole('button', { name: 'CN' }));
     expect(screen.getByText('豆包')).toBeTruthy();
     expect(screen.getByText('DeepSeek')).toBeTruthy();
-    expect(screen.getByText('Kimi')).toBeTruthy();
+    expect(screen.queryByText('Kimi')).toBeNull();
     expect(screen.getByText('元宝')).toBeTruthy();
     expect(screen.getByText('通义')).toBeTruthy();
   });

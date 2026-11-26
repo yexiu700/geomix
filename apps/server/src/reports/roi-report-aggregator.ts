@@ -9,6 +9,7 @@ import {
   computeWilsonInterval,
   defaultDistributionModeForProvider,
   differenceInDifferencesSchema,
+  isRetiredVisibilityEngine,
   localizePublicChannelLabel,
   normalizeVisibilityDomain,
   parseEnv,
@@ -574,7 +575,9 @@ export function buildGeoRoiReportSummary(
   const competitorDomains = competitors.flatMap((c) => c.domains);
 
   const observations = input.observations.filter(
-    (obs) => obs.status === undefined || obs.status === 'SUCCESS',
+    (obs) =>
+      (obs.status === undefined || obs.status === 'SUCCESS') &&
+      !isRetiredVisibilityEngine(obs.engine.trim()),
   );
 
   // ==================== 1. Overview & 2. By Engine ====================

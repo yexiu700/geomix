@@ -130,6 +130,7 @@ export type ShellFrameProps = {
     brandId: string,
     market: GeoMarket,
     input?: BrandMarketAiSuggestInput,
+    options?: { signal?: AbortSignal },
   ) => Promise<BrandMarketAiSuggestResponse>;
   onSaveBrandMarketConfig?: (
     brandId: string,

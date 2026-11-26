@@ -39,7 +39,7 @@ export function buildLlmsTxt(siteUrl = getMarketingSiteUrl()): string {
     '',
     '## Dual-Market AI Engine Coverage',
     '- GLOBAL Market: ChatGPT, Perplexity, Claude, Gemini, Google AI Overviews',
-    '- CN Market: 豆包 (Doubao), DeepSeek, Kimi, 元宝 (Yuanbao), 通义 (Qwen)',
+    '- CN Market: DeepSeek, 豆包 (Doubao), 腾讯元宝 (Yuanbao), 通义千问 (Qwen)',
     '',
     '## Distribution & Connectors (GA v2.1 vs Upcoming v2.2)',
     '- L1 Official Owned-Site Connectors (GA v2.1): Shopify Blog, WordPress, Webflow CMS, Signed HMAC Webhook + IndexNow',

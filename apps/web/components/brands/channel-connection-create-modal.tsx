@@ -242,6 +242,10 @@ function parseWebflowFieldsFromTargets(
   return parsed;
 }
 
+function defaultProviderForMarket(market: GeoMarket): L1ChannelProvider {
+  return market === 'CN' ? 'WECHAT_OFFICIAL' : 'SHOPIFY';
+}
+
 export function ChannelConnectionCreateModal({
   open,
   brandId,
@@ -259,7 +263,9 @@ export function ChannelConnectionCreateModal({
 
   // Internal editing target (supports seamless create -> testAfterCreate transition into edit mode)
   const [editingConn, setEditingConn] = useState<ChannelConnectionDto | null>(editingConnProp);
-  const [provider, setProvider] = useState<L1ChannelProvider>('SHOPIFY');
+  const [provider, setProvider] = useState<L1ChannelProvider>(() =>
+    defaultProviderForMarket(activeMarket),
+  );
   const [displayName, setDisplayName] = useState('');
   const [siteBaseUrl, setSiteBaseUrl] = useState('');
   const [targetLocale, setTargetLocale] = useState<SupportedLocale | null>(null);
@@ -306,7 +312,9 @@ export function ChannelConnectionCreateModal({
   const [wechatCoverMediaId, setWechatCoverMediaId] = useState('');
   const [wechatNeedOpenComment, setWechatNeedOpenComment] = useState(false);
   const [defaultPublishAsDraft, setDefaultPublishAsDraft] = useState(true);
-  const [inlineJsonLd, setInlineJsonLd] = useState(true);
+  const [inlineJsonLd, setInlineJsonLd] = useState(
+    () => defaultProviderForMarket(activeMarket) !== 'WECHAT_OFFICIAL',
+  );
   const [indexNowKey, setIndexNowKey] = useState('');
 
   // Modal async & target discovery state
@@ -337,11 +345,12 @@ export function ChannelConnectionCreateModal({
   }, []);
 
   const resetInternalFields = useCallback(() => {
+    const defaultProvider = defaultProviderForMarket(activeMarket);
     modalActionCtrlRef.current?.abort();
     modalActionCtrlRef.current = null;
     submittingRef.current = false;
     setEditingConn(null);
-    setProvider('SHOPIFY');
+    setProvider(defaultProvider);
     setDisplayName('');
     setSiteBaseUrl('');
     setTargetLocale(null);
@@ -370,14 +379,14 @@ export function ChannelConnectionCreateModal({
     setWechatCoverMediaId('');
     setWechatNeedOpenComment(false);
     setDefaultPublishAsDraft(true);
-    setInlineJsonLd(true);
+    setInlineJsonLd(defaultProvider !== 'WECHAT_OFFICIAL');
     setIndexNowKey('');
     setSubmitting(false);
     setModalTesting(false);
     setModalError(null);
     setModalTestResult(null);
     setRemoteTargets([]);
-  }, [clearModalSecrets]);
+  }, [activeMarket, clearModalSecrets]);
 
   const handleClose = useCallback(() => {
     contextSeqRef.current += 1;
@@ -396,7 +405,7 @@ export function ChannelConnectionCreateModal({
           editingConnProp.provider as L1ChannelProvider,
         )
           ? (editingConnProp.provider as L1ChannelProvider)
-          : 'SHOPIFY';
+          : defaultProviderForMarket(activeMarket);
         setEditingConn(editingConnProp);
         setProvider(l1Provider);
         setDisplayName(editingConnProp.displayName);
@@ -435,10 +444,11 @@ export function ChannelConnectionCreateModal({
         setInlineJsonLd(l1Provider === 'WECHAT_OFFICIAL' ? false : cfg.inlineJsonLd !== false);
         setIndexNowKey(readStringConfig(cfg, 'indexNowKey'));
       } else {
-        setProvider('SHOPIFY');
+        const defaultProvider = defaultProviderForMarket(activeMarket);
+        setProvider(defaultProvider);
         setShopifyAuthMode(initialShopifyAuthMode ?? 'oauth');
         setDefaultPublishAsDraft(true);
-        setInlineJsonLd(true);
+        setInlineJsonLd(defaultProvider !== 'WECHAT_OFFICIAL');
       }
     }
 

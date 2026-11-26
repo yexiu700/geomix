@@ -28,7 +28,7 @@ import {
 } from '../../lib/reports';
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness } from '../../lib/tab-freshness';
-import { triggerBlobDownload } from '../../lib/ux-foundation';
+import { hasOpenFloatingOverlay, triggerBlobDownload } from '../../lib/ux-foundation';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
@@ -402,6 +402,21 @@ export function HomeRoiReportModal({
     });
   };
 
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      const ownWrap = bodyRef.current?.closest('.ant-modal-wrap') ?? undefined;
+      if (hasOpenFloatingOverlay(ownWrap)) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
   const selectedShare = selectedReport ? (cachedShares[selectedReport.id] ?? null) : null;
   const selectedShareUrl = selectedShare ? resolveShareAbsoluteUrl(selectedShare) : null;
 
@@ -409,6 +424,7 @@ export function HomeRoiReportModal({
     <Modal
       open={open}
       onCancel={onClose}
+      keyboard
       footer={null}
       destroyOnHidden
       width="min(860px, calc(100vw - 32px))"
@@ -422,7 +438,7 @@ export function HomeRoiReportModal({
         </div>
       }
     >
-      <div className="gm-roi-modal-body" data-testid="home-roi-report-modal">
+      <div ref={bodyRef} className="gm-roi-modal-body" data-testid="home-roi-report-modal">
         {/* 1. Create New Report Form */}
         <section className="gm-roi-card" data-testid="roi-report-create-form">
           <div className="gm-roi-card-head">

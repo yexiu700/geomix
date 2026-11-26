@@ -139,10 +139,11 @@ describe('VisibilityEngineHealthService', () => {
         status: 'ok',
         engines: [
           { key: 'deepseek', configured: true, status: 'ready' },
+          { key: 'tongyi', configured: true, status: 'ready' },
           { key: 'kimi', configured: true, status: 'ready' },
           { key: 'doubao', configured: false, status: 'ready' },
         ],
-        plannedEngines: ['yuanbao', 'tongyi'],
+        plannedEngines: ['yuanbao'],
       });
     };
 
@@ -165,10 +166,11 @@ describe('VisibilityEngineHealthService', () => {
       defaultChecked: true,
       unavailableReason: null,
     });
-    expect(res.engines.find((e) => e.key === 'kimi')).toMatchObject({
+    expect(res.engines.find((e) => e.key === 'tongyi')).toMatchObject({
       available: true,
       defaultChecked: true,
     });
+    expect(res.engines.find((e) => e.key === 'kimi')).toBeUndefined();
     expect(res.engines.find((e) => e.key === 'doubao')).toMatchObject({
       available: false,
       defaultChecked: false,
@@ -287,7 +289,7 @@ describe('VisibilityEngineHealthService', () => {
     expect(await svc.getUnavailableEngines(['yuanbao'])).toEqual(['yuanbao']);
   });
 
-  it('filters availability strictly by market (CN=8 canonical tongyi, GLOBAL=5) with defaultChecked and 暂未上线 reason', async () => {
+  it('filters availability strictly by market (CN=4 active canonical tongyi, GLOBAL=5) with defaultChecked and 暂未上线 reason (#411)', async () => {
     const svc = VisibilityEngineHealthService.fromEnv({
       VISIBILITY_COLLECTOR: 'fake',
       VISIBILITY_DISABLED_ENGINES: 'yuanbao,kimi,claude',
@@ -295,17 +297,8 @@ describe('VisibilityEngineHealthService', () => {
 
     const cn = await svc.getAvailability('CN');
     expect(cn.market).toBe('CN');
-    expect(cn.engines).toHaveLength(8);
-    expect(cn.engines.map((e) => e.key)).toEqual([
-      'deepseek',
-      'doubao',
-      'yuanbao',
-      'tongyi',
-      'wenxin',
-      'nami',
-      'kimi',
-      'zhipu',
-    ]);
+    expect(cn.engines).toHaveLength(4);
+    expect(cn.engines.map((e) => e.key)).toEqual(['deepseek', 'doubao', 'yuanbao', 'tongyi']);
     expect(cn.engines.every((e) => e.domestic && e.market === 'CN')).toBe(true);
     expect(cn.engines.find((e) => e.key === 'deepseek')).toMatchObject({
       available: true,

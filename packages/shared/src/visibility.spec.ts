@@ -64,14 +64,15 @@ import {
 } from './visibility';
 
 describe('visibility engines and constants', () => {
-  it('aligns the 8 domestic engines with MODEL_INCLUSION_CARDS plus 5 global engines', () => {
-    const domestic = VISIBILITY_ENGINES.filter((item) => item.domestic);
+  it('aligns the 4 active domestic engines with MODEL_INCLUSION_CARDS plus 5 global engines while keeping retired labels for history (#411)', () => {
+    const activeDomestic = VISIBILITY_ENGINES_BY_MARKET.CN;
     const global = VISIBILITY_ENGINES.filter((item) => !item.domestic);
 
-    expect(domestic.map((item) => ({ key: item.key, label: item.label }))).toEqual(
+    expect(activeDomestic.map((item) => ({ key: item.key, label: item.label }))).toEqual(
       MODEL_INCLUSION_CARDS.map((item) => ({ key: item.key, label: item.label })),
     );
-    expect(DOMESTIC_VISIBILITY_ENGINE_KEYS).toHaveLength(8);
+    expect(DOMESTIC_VISIBILITY_ENGINE_KEYS).toEqual(['deepseek', 'doubao', 'yuanbao', 'tongyi']);
+    expect(DOMESTIC_VISIBILITY_ENGINE_KEYS).toHaveLength(4);
     expect(global.map((item) => item.key)).toEqual([
       'chatgpt',
       'perplexity',
@@ -81,6 +82,11 @@ describe('visibility engines and constants', () => {
     ]);
     expect(isVisibilityEngine('deepseek')).toBe(true);
     expect(isVisibilityEngine('google_aio')).toBe(true);
+    // Retired CN engines stay recognized by isVisibilityEngine for historical records
+    expect(isVisibilityEngine('kimi')).toBe(true);
+    expect(isVisibilityEngine('wenxin')).toBe(true);
+    expect(isVisibilityEngine('zhipu')).toBe(true);
+    expect(isVisibilityEngine('nami')).toBe(true);
     expect(isVisibilityEngine('unknown_engine')).toBe(false);
     expect(VISIBILITY_SENTIMENTS).toEqual(['positive', 'neutral', 'mixed', 'negative']);
     expect(CITATION_SOURCE_KINDS).toEqual([
@@ -98,9 +104,11 @@ describe('visibility engines and constants', () => {
       'gemini',
       'google_aio',
     ]);
-    expect(enginesForMarket('CN')).toHaveLength(8);
+    expect(enginesForMarket('CN')).toHaveLength(4);
     expect(enginesForMarket('GLOBAL')).toHaveLength(5);
     expect(isEngineAllowedForMarket('deepseek', 'CN')).toBe(true);
+    expect(isEngineAllowedForMarket('kimi', 'CN')).toBe(false);
+    expect(isEngineAllowedForMarket('wenxin', 'CN')).toBe(false);
     expect(isEngineAllowedForMarket('deepseek', 'GLOBAL')).toBe(false);
     expect(isEngineAllowedForMarket('perplexity', 'GLOBAL')).toBe(true);
     expect(isEngineAllowedForMarket('perplexity', 'CN')).toBe(false);
@@ -956,11 +964,18 @@ describe('topic relevance guardrail and off-topic metric downgrading (#217)', ()
 });
 
 describe('M2-B v2 dual-market engine registry & schemas', () => {
-  it('partitions engines strictly into CN (8, canonical tongyi) and GLOBAL (5) with display labels', () => {
-    expect(VISIBILITY_ENGINES_BY_MARKET.CN).toHaveLength(8);
+  it('partitions engines strictly into CN (4 active, canonical tongyi) and GLOBAL (5) with display labels (#411)', () => {
+    expect(VISIBILITY_ENGINES_BY_MARKET.CN).toHaveLength(4);
     expect(VISIBILITY_ENGINES_BY_MARKET.GLOBAL).toHaveLength(5);
-    expect(enginesMetaForMarket('CN').map((e) => e.key)).toContain('tongyi');
+    expect(enginesMetaForMarket('CN').map((e) => e.key)).toEqual([
+      'deepseek',
+      'doubao',
+      'yuanbao',
+      'tongyi',
+    ]);
     expect(enginesMetaForMarket('CN').map((e) => e.key)).not.toContain('qwen');
+    expect(enginesMetaForMarket('CN').map((e) => e.key)).not.toContain('kimi');
+    expect(enginesMetaForMarket('CN').map((e) => e.key)).not.toContain('wenxin');
     expect(enginesMetaForMarket('GLOBAL').map((e) => e.key)).toEqual([
       'chatgpt',
       'perplexity',
@@ -969,9 +984,24 @@ describe('M2-B v2 dual-market engine registry & schemas', () => {
       'google_aio',
     ]);
     expect(findDisallowedMarketEngines(['deepseek', 'chatgpt'], 'CN')).toEqual(['chatgpt']);
+    expect(findDisallowedMarketEngines(['deepseek', 'kimi', 'wenxin'], 'CN')).toEqual([
+      'kimi',
+      'wenxin',
+    ]);
     expect(findDisallowedMarketEngines(['perplexity', 'doubao'], 'GLOBAL')).toEqual(['doubao']);
     expect(formatVisibilityEngineDisplayLabel('DeepSeek', true)).toBe('DeepSeek');
     expect(formatVisibilityEngineDisplayLabel('腾讯元宝', false)).toBe('腾讯元宝（暂未上线）');
+
+    // Retired CN engines must be rejected when creating new runs
+    const retiredRes = visibilityRunV2CreateSchema.safeParse({
+      market: 'CN',
+      engines: ['deepseek', 'kimi', 'wenxin'],
+      prompts: ['家用 NAS 推荐'],
+    });
+    expect(retiredRes.success).toBe(false);
+    if (!retiredRes.success) {
+      expect(retiredRes.error.issues[0]?.message).toContain('已下线');
+    }
   });
 
   it('validates visibilityRunV2CreateSchema with optional market and market-engine subset checks', () => {

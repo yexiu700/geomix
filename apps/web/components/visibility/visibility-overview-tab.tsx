@@ -137,7 +137,7 @@ export function VisibilityOverviewTab({
           variant="card"
           className="gm-vis-chart-card gm-vis-chart-span-5"
           title="AI 引擎覆盖声呐盘"
-          description={`当前市场引擎组：${activeMarket === 'CN' ? '国内 8 引擎' : '海外 5 引擎'}`}
+          description={`当前市场引擎组：${activeMarket === 'CN' ? '国内 4 引擎' : '海外 5 引擎'}`}
           actions={
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：%</span>

@@ -247,7 +247,7 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
     },
   });
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!workspace.hydrated) return;
     useWorkspaceStore.getState().syncFromUrl(search, window.localStorage);
   }, [search, workspace.hydrated]);
@@ -458,8 +458,12 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
           brandId: string,
           market: GeoMarket,
           input?: BrandMarketAiSuggestInput,
+          options?: { signal?: AbortSignal },
         ) =>
-          suggestBrandMarketConfig(brandId, market, input ?? {}, { storage: window.sessionStorage })
+          suggestBrandMarketConfig(brandId, market, input ?? {}, {
+            storage: window.sessionStorage,
+            signal: options?.signal,
+          })
         }
         onSaveBrandMarketConfig={async (
           brandId: string,
@@ -474,7 +478,6 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
             market,
             persistStorage: window.localStorage,
           });
-          invalidateFreshness('brands');
           return updated;
         }}
         onEnableMarket={handleEnableMarket}

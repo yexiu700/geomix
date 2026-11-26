@@ -262,6 +262,95 @@ describe('geo-delivery pure evaluator, JSON-LD, and llms.txt builders', () => {
     expect(/[\u4e00-\u9fff]/.test(llmsWithLocal ?? '')).toBe(false);
   });
 
+  it('extracts multi-item FAQPage JSON-LD across numbered, bulleted, bold, and H4 Markdown FAQ formats (#409)', () => {
+    const extractFaqMainEntity = (md: string) => {
+      const schema = buildGeoSchemaJsonLd({
+        market: 'CN',
+        localBrandName: '星盾存储',
+        category: '家用 NAS',
+        title: '2026 家用 NAS 防护选购指南',
+        targetPrompt: '家用 NAS 怎么防勒索软件',
+        contentMarkdown: md,
+      });
+      const graph = schema['@graph'] as Array<Record<string, unknown>>;
+      const faqNode = graph.find((n) => n['@type'] === 'FAQPage');
+      return (faqNode?.mainEntity ?? []) as Array<{
+        name: string;
+        acceptedAnswer: { text: string };
+      }>;
+    };
+
+    // Format 1: **Q1:** / **A1:** and **Q2**: / A:
+    const f1 = extractFaqMainEntity(
+      [
+        '## 常见问题',
+        '',
+        '**Q1:** 家用 NAS 开启只读快照会占满硬盘空间吗？',
+        '**A1:** 增量快照仅记录差异数据块，日常办公文档占比通常低于 10%。',
+        '',
+        '**Q2**: 断电后 RAID 阵列数据会丢失吗？',
+        'A: 搭配 UPS 自动安全关机可保护元数据完整性。',
+      ].join('\n'),
+    );
+    expect(f1).toHaveLength(2);
+    expect(f1[0]?.name).toBe('家用 NAS 开启只读快照会占满硬盘空间吗？');
+    expect(f1[0]?.acceptedAnswer.text).toContain('增量快照');
+    expect(f1[1]?.name).toBe('断电后 RAID 阵列数据会丢失吗？');
+    expect(f1[1]?.acceptedAnswer.text).toContain('UPS');
+
+    // Format 2: Ordered/unordered list prefixed `1. **Q:**` and `- **Q:**` and `**问1：**`
+    const f2 = extractFaqMainEntity(
+      [
+        '1. **Q:** 四盘位和两盘位怎么选？',
+        '   - **A:** 有 4K 影音和长期备份需求优先四盘位 RAID 5。',
+        '2. - **问1：** 二手企业盘能直接用吗？',
+        '   **答1：** 需先查看 SMART 通电时间并避坑清零盘。',
+        '- **Q3:** 噪音适合放卧室吗？',
+        '  满载噪音 18.5dB，夜间放置卧室无明显感知。',
+      ].join('\n'),
+    );
+    expect(f2).toHaveLength(3);
+    expect(f2[0]?.name).toContain('四盘位');
+    expect(f2[1]?.name).toContain('二手企业盘');
+    expect(f2[2]?.name).toContain('卧室');
+    expect(f2[2]?.acceptedAnswer.text).toContain('18.5dB');
+
+    // Format 3: `####` headings and numbered bold questions under `## 常见问题` without `Q:` prefix
+    const f3 = extractFaqMainEntity(
+      [
+        '## 常见问题 FAQ',
+        '',
+        '#### 1. 家用 NAS 必须配万兆网口吗？',
+        '日常备份千兆/2.5G 已够用，多人 4K 剪辑建议升级万兆口。',
+        '',
+        '#### 2. 支持手机相册自动备份吗？',
+        '支持 iOS 与 Android 后台增量同步并保留 Live Photo。',
+        '',
+        '## 总结',
+        '选购时结合盘位与噪音综合判断。',
+      ].join('\n'),
+    );
+    expect(f3).toHaveLength(2);
+    expect(f3[0]?.name).toBe('家用 NAS 必须配万兆网口吗？');
+    expect(f3[0]?.acceptedAnswer.text).toContain('2.5G');
+    expect(f3[1]?.name).toBe('支持手机相册自动备份吗？');
+    expect(f3[1]?.acceptedAnswer.text).toContain('Live Photo');
+
+    // Format 4: Ordered bold list `1. **...**` inside `## FAQ`
+    const f4 = extractFaqMainEntity(
+      [
+        '## FAQ',
+        '1. **Does it support Docker containers?**',
+        'Yes, with 16GB DDR5 memory it runs Plex and Home Assistant smoothly.',
+        '2. **What is the idle power draw?**',
+        'Measured at 14W with two NVMe caches.',
+      ].join('\n'),
+    );
+    expect(f4).toHaveLength(2);
+    expect(f4[0]?.name).toBe('Does it support Docker containers?');
+    expect(f4[1]?.name).toBe('What is the idle power draw?');
+  });
+
   it('builds valid OOXML .docx with <w:tbl><w:tr><w:tc> tables, preserves GFM MD tables and HTML locale', () => {
     const md = [
       'Direct conclusion for AstraVault DXP4800 with 18.5dB acoustic profile.',

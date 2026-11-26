@@ -906,4 +906,63 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.queryByTestId('brand-market-error')).toBeNull();
     expect(onBrandUpdated).toHaveBeenCalledWith(updatedBrand, 'CN');
   });
+
+  it('shows global-localization-guide when GLOBAL aliases, competitors, or seedPrompts contain CJK even if name/category are English, and cleans CJK on localize (#408)', async () => {
+    const brand = makeDualMarketBrand();
+    const globalMarket = brand.markets.find((m) => m.market === 'GLOBAL')!;
+    globalMarket.localBrandName = 'PineVault';
+    globalMarket.localCategory = 'Home NAS';
+    globalMarket.ownedDomains = ['pinevault.example'];
+    globalMarket.aliases = ['示例私有云', 'PV-4800'];
+    globalMarket.competitors = [
+      { name: '竞品甲', aliases: [], domains: [] },
+      { name: 'Synology', aliases: ['群晖'], domains: ['synology.com'] },
+    ];
+    globalMarket.seedPrompts = ['PineVault vs 竞品甲', 'Best 4-bay NAS 2026'];
+
+    suggestBrandMarketConfigMock.mockResolvedValueOnce({
+      market: 'GLOBAL',
+      aliases: ['PineVault Pro'],
+      competitors: [{ name: 'QNAP', aliases: [], domains: ['qnap.com'] }],
+      seedPrompts: [{ prompt: 'PineVault vs Synology 4-bay NAS', intent: 'COMPETITOR_VS' }],
+      controlPrompts: [],
+      fallbackUsed: false,
+    });
+
+    render(
+      <BrandIdentitySection
+        brand={brand}
+        activeMarket="GLOBAL"
+        activeBrandMarket={globalMarket}
+        readOnly={false}
+        onBrandUpdated={vi.fn()}
+        onOpenEnableMarket={vi.fn()}
+      />,
+    );
+
+    const guide = screen.getByTestId('global-localization-guide');
+    expect(guide.textContent).toContain('品牌别名');
+    expect(guide.textContent).toContain('竞品名称/别名');
+    expect(guide.textContent).toContain('种子监控问句');
+
+    fireEvent.click(screen.getByTestId('global-ai-localize-btn'));
+    await waitFor(() => {
+      expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
+        brand.id,
+        'GLOBAL',
+        { fields: ['aliases', 'competitors', 'seedPrompts'] },
+        expect.anything(),
+      );
+    });
+
+    await screen.findByTestId('ai-suggest-group-aliases');
+    fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
+
+    // CJK entries cleaned while English items + new AI suggestions preserved
+    expect(screen.queryByText('示例私有云')).toBeNull();
+    expect(screen.getByText('PV-4800')).toBeTruthy();
+    expect(screen.getByText('PineVault Pro')).toBeTruthy();
+    expect(screen.queryByText('PineVault vs 竞品甲')).toBeNull();
+    expect(screen.getByText('PineVault vs Synology 4-bay NAS')).toBeTruthy();
+  });
 });

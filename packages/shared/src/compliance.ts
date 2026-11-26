@@ -90,6 +90,105 @@ export const CN_PROHIBITED_INDUSTRY_TERMS = [
 
 export const CN_SENSITIVE_TERMS = ['窃听', '偷拍', '勒索软件', '木马程序'] as const;
 
+const CN_SENSITIVE_TERM_SET = new Set<string>(CN_SENSITIVE_TERMS);
+const CN_PROHIBITED_TERM_SET = new Set<string>(CN_PROHIBITED_INDUSTRY_TERMS);
+
+/**
+ * 在消费硬件/网络安全/存储科普评测场景中，部分安全风险词常出现在正当的「防御、隔离、识别、避坑」语境下。
+ * 仅当文本中该词的**每一次**出现均位于明确防护/避坑上下文且不含违法教唆/交易/攻击信号时才免于硬拦截；
+ * 只要任意一处落入无防护上下文或高危教唆语境，依然严格硬拦截。
+ */
+const CN_DEFENSE_CONTEXT_TERMS = new Set<string>(['勒索软件', '木马程序', '窃听', '偷拍']);
+const CN_DEFENSE_POSITIVE_PATTERN =
+  /(?:防|防护|防御|抵御|抵抗|防范|防止|预防|隔离|拦截|查杀|杀毒|安全|保护|快照|备份|容灾|恢复|还原|扫描|检测|识别|排查|清理|清除|反窃听|反偷拍|加密攻击|病毒|风险|威胁|漏洞|告警|不可变|WORM|抗勒索|防勒索)/i;
+const CN_DEFENSE_MALICIOUS_PATTERN =
+  /(?:制作|开发|编写|出售|售卖|购买|下载源码|源码|教程|植入|投放|传播|免杀|后门植入|攻击他人|入侵他人|勒索赎金|偷拍设备|窃听器|窃听设备|针孔摄像头购买)/;
+
+const CN_HARDWARE_AVOIDANCE_TERMS = new Set<string>(['虚拟币']);
+const CN_HARDWARE_POSITIVE_PATTERN =
+  /(?:二手|矿盘|矿机|清零盘|翻新|避坑|鉴别|识别|检测|排查|通电时间|SMART|寿命|损耗|硬盘|存储|NAS|显卡|拆机|报废|防范|警示|科普|风险)/i;
+const CN_HARDWARE_MALICIOUS_PATTERN =
+  /(?:交易|交易所|炒作|投资|理财|收益|挖矿教程|买币|卖币|发币|空投|合约|杠杆|开户|入金|提现|高回报|暴富|推广|代投)/;
+
+const GLOBAL_DEFENSE_CONTEXT_LABELS = new Set<string>(['ransomware', 'malware', 'spyware']);
+const GLOBAL_DEFENSE_POSITIVE_PATTERN =
+  /\b(?:anti-?|protect(?:ion|ing|s|ed)?|defen[ds]|defensive|prevent(?:ion|ing|s|ed)?|mitigat(?:e|ion|ing)|guard(?:ing|s)?|shield(?:ing|s)?|detect(?:ion|ing|s)?|scan(?:ning|ner|s)?|remov(?:e|al|ing)|clean(?:ing)?|recover(?:y|ing)?|backups?|snapshots?|immutable|worm|security|cybersecurity|safeguard|resilien(?:ce|t)|block(?:ing|s)?|quarantine|threats?|risks?|against)\b/i;
+const GLOBAL_DEFENSE_MALICIOUS_PATTERN =
+  /\b(?:buy|sell|create|build|write|deploy|spread|distribute|infect|launder|download\s+(?:free\s+)?(?:ransomware|malware|spyware)|exploit\s+kit|payload|how\s+to\s+hack)\b/i;
+
+const CONTEXT_WINDOW_CHARS = 48;
+
+function extractLocalContextWindow(input: string, start: number, end: number): string {
+  const from = Math.max(0, start - CONTEXT_WINDOW_CHARS);
+  const to = Math.min(input.length, end + CONTEXT_WINDOW_CHARS);
+  const raw = input.slice(from, to);
+  // Prefer the sentence/clause containing the match so neighboring unrelated sentences cannot spoof context
+  const relStart = start - from;
+  const relEnd = end - from;
+  let clauseStart = 0;
+  for (let i = relStart - 1; i >= 0; i -= 1) {
+    const ch = raw[i];
+    if (ch === '\n' || ch === '。' || ch === '！' || ch === '？' || ch === '!' || ch === '?') {
+      clauseStart = i + 1;
+      break;
+    }
+  }
+  let clauseEnd = raw.length;
+  for (let i = relEnd; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === '\n' || ch === '。' || ch === '！' || ch === '？' || ch === '!' || ch === '?') {
+      clauseEnd = i;
+      break;
+    }
+  }
+  return raw.slice(clauseStart, clauseEnd);
+}
+
+function isSubstringOnlyInSafeContext(
+  input: string,
+  term: string,
+  positivePattern: RegExp,
+  maliciousPattern: RegExp,
+): boolean {
+  let foundAny = false;
+  let pos = 0;
+  while (pos < input.length) {
+    const idx = input.indexOf(term, pos);
+    if (idx === -1) break;
+    foundAny = true;
+    const windowText = extractLocalContextWindow(input, idx, idx + term.length);
+    if (maliciousPattern.test(windowText) || !positivePattern.test(windowText)) {
+      return false;
+    }
+    pos = idx + term.length;
+  }
+  return foundAny;
+}
+
+function isRegexOnlyInSafeContext(
+  input: string,
+  pattern: RegExp,
+  positivePattern: RegExp,
+  maliciousPattern: RegExp,
+): boolean {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const re = new RegExp(pattern.source, flags);
+  let foundAny = false;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(input)) !== null) {
+    if (match[0].length === 0) {
+      re.lastIndex += 1;
+      continue;
+    }
+    foundAny = true;
+    const windowText = extractLocalContextWindow(input, match.index, match.index + match[0].length);
+    if (maliciousPattern.test(windowText) || !positivePattern.test(windowText)) {
+      return false;
+    }
+  }
+  return foundAny;
+}
+
 export const GLOBAL_PROHIBITED_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   { pattern: /\b(?:illegal\s+)?firearms?\b/i, label: 'firearms' },
   { pattern: /\billegal\s+weapons?\b/i, label: 'illegal weapons' },
@@ -152,6 +251,71 @@ const GLOBAL_FTC_NOTICE_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string
   { pattern: /\brisk-free\s+guaranteed\s+return\b/i, label: 'risk-free guaranteed return' },
 ];
 
+export type ComplianceBlockMessageContext = 'generate' | 'rewrite' | 'input';
+
+/**
+ * 根据命中的规则词表标签构造可读、可操作的合规拦截提示。
+ * 仅回传受控词表中的分类与命中标签（最多前 5 项），绝不回显用户隐私原文。
+ */
+export function formatComplianceBlockMessage(
+  blockedTerms: readonly string[],
+  options?: { market?: GeoMarket; context?: ComplianceBlockMessageContext },
+): string {
+  const uniqueTerms = Array.from(
+    new Set(
+      blockedTerms
+        .map((term) => term.trim())
+        .filter((term) => term.length > 0 && term !== 'invalid'),
+    ),
+  );
+  const context = options?.context ?? 'input';
+  const sensitiveTerms = uniqueTerms.filter(
+    (term) => CN_SENSITIVE_TERM_SET.has(term) || GLOBAL_DEFENSE_CONTEXT_LABELS.has(term),
+  );
+  const industryTerms = uniqueTerms.filter(
+    (term) => CN_PROHIBITED_TERM_SET.has(term) && !sensitiveTerms.includes(term),
+  );
+  const highRiskGlobalTerms = uniqueTerms.filter(
+    (term) => !sensitiveTerms.includes(term) && !industryTerms.includes(term),
+  );
+
+  const detailParts: string[] = [];
+  if (industryTerms.length > 0) {
+    const shown = industryTerms.slice(0, 5).join('、');
+    const suffix = industryTerms.length > 5 ? ` 等 ${industryTerms.length} 项` : '';
+    detailParts.push(`禁做行业词：${shown}${suffix}`);
+  }
+  if (sensitiveTerms.length > 0) {
+    const shown = sensitiveTerms.slice(0, 5).join('、');
+    const suffix = sensitiveTerms.length > 5 ? ` 等 ${sensitiveTerms.length} 项` : '';
+    detailParts.push(`高危敏感词：${shown}${suffix}`);
+  }
+  if (highRiskGlobalTerms.length > 0) {
+    const shown = highRiskGlobalTerms.slice(0, 5).join('、');
+    const suffix = highRiskGlobalTerms.length > 5 ? ` 等 ${highRiskGlobalTerms.length} 项` : '';
+    detailParts.push(`高危违规词：${shown}${suffix}`);
+  }
+
+  const detailText = detailParts.length > 0 ? `（命中${detailParts.join('；')}）` : '';
+  const hasDefenseAdjustable = uniqueTerms.some(
+    (term) =>
+      CN_DEFENSE_CONTEXT_TERMS.has(term) ||
+      CN_HARDWARE_AVOIDANCE_TERMS.has(term) ||
+      GLOBAL_DEFENSE_CONTEXT_LABELS.has(term),
+  );
+  const suggestion = hasDefenseAdjustable
+    ? '建议改用「快照防勒索/安全隔离/识别二手翻新盘」等明确防护或避坑科普表述后重试'
+    : '建议移除上述涉敏词或调整选题方向后重试';
+
+  if (context === 'generate') {
+    return `生成结果命中合规拦截规则${detailText}，已拦截并退还本次点数。${suggestion}`;
+  }
+  if (context === 'rewrite') {
+    return `改写结果命中合规拦截规则${detailText}，已拦截。${suggestion}`;
+  }
+  return `包含禁做行业或敏感内容${detailText}。${suggestion}`;
+}
+
 function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -208,19 +372,49 @@ export function scanDualTrackCompliance(
   };
 
   for (const term of CN_PROHIBITED_INDUSTRY_TERMS) {
-    if (input.includes(term)) {
-      pushBlocked(term, `命中禁做行业词「${term}」`);
+    if (!input.includes(term)) continue;
+    if (
+      CN_HARDWARE_AVOIDANCE_TERMS.has(term) &&
+      isSubstringOnlyInSafeContext(
+        input,
+        term,
+        CN_HARDWARE_POSITIVE_PATTERN,
+        CN_HARDWARE_MALICIOUS_PATTERN,
+      )
+    ) {
+      continue;
     }
+    pushBlocked(term, `命中禁做行业词「${term}」`);
   }
   for (const term of CN_SENSITIVE_TERMS) {
-    if (input.includes(term)) {
-      pushBlocked(term, `命中高危敏感词「${term}」`);
+    if (!input.includes(term)) continue;
+    if (
+      CN_DEFENSE_CONTEXT_TERMS.has(term) &&
+      isSubstringOnlyInSafeContext(
+        input,
+        term,
+        CN_DEFENSE_POSITIVE_PATTERN,
+        CN_DEFENSE_MALICIOUS_PATTERN,
+      )
+    ) {
+      continue;
     }
+    pushBlocked(term, `命中高危敏感词「${term}」`);
   }
   for (const rule of GLOBAL_PROHIBITED_PATTERNS) {
-    if (rule.pattern.test(input)) {
-      pushBlocked(rule.label, `Matched prohibited high-risk term "${rule.label}"`);
+    if (!rule.pattern.test(input)) continue;
+    if (
+      GLOBAL_DEFENSE_CONTEXT_LABELS.has(rule.label) &&
+      isRegexOnlyInSafeContext(
+        input,
+        rule.pattern,
+        GLOBAL_DEFENSE_POSITIVE_PATTERN,
+        GLOBAL_DEFENSE_MALICIOUS_PATTERN,
+      )
+    ) {
+      continue;
     }
+    pushBlocked(rule.label, `Matched prohibited high-risk term "${rule.label}"`);
   }
 
   if (blockedTerms.length > 0) {

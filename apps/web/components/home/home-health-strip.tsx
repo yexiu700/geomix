@@ -34,7 +34,7 @@ function formatAvgPositionCaption(avgPosition: number | null): string {
 
 export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps): JSX.Element {
   const engineScopeLabel =
-    activeMarket === 'GLOBAL' ? '海外 5 引擎隔离统计' : '国内 8 引擎隔离统计';
+    activeMarket === 'GLOBAL' ? '海外 5 引擎隔离统计' : '国内 4 引擎隔离统计';
 
   const mentionPct = Number.isFinite(health.mentionRatePct) ? health.mentionRatePct : 0;
   const sovPct = Number.isFinite(health.shareOfVoicePct) ? health.shareOfVoicePct : 0;

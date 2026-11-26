@@ -27,14 +27,14 @@ const SAMPLE_BY_ENGINE: VisibilityEngineBreakdownItem[] = [
 ];
 
 describe('SonarDial', () => {
-  it('renders 13 engine filter buttons and handles click selection / toggle-off', () => {
+  it('renders 9 active engine filter buttons and handles click selection / toggle-off (#411)', () => {
     const onSelectEngine = vi.fn();
     const { rerender } = render(
       <SonarDial byEngine={SAMPLE_BY_ENGINE} overallPct={38.9} onSelectEngine={onSelectEngine} />,
     );
 
     const buttons = document.querySelectorAll('[aria-label^="筛选引擎-"]');
-    expect(buttons).toHaveLength(13);
+    expect(buttons).toHaveLength(9);
     expect(screen.getByText('38.9%')).toBeTruthy();
 
     const deepseekBtn = screen.getByRole('button', { name: '筛选引擎-DeepSeek' });
@@ -75,13 +75,13 @@ describe('SonarDial', () => {
     expect(onSelectEngine).toHaveBeenLastCalledWith(undefined);
   });
 
-  it('renders accessible 13-row gm-sr-only table with "—" for unobserved avgPosition', () => {
+  it('renders accessible 9-row gm-sr-only table with "—" for unobserved avgPosition (#411)', () => {
     render(<SonarDial byEngine={SAMPLE_BY_ENGINE} overallPct={38.9} onSelectEngine={vi.fn()} />);
 
     const table = document.querySelector('table.gm-sr-only');
     expect(table).toBeTruthy();
     const rows = table!.querySelectorAll('tbody tr');
-    expect(rows).toHaveLength(13);
+    expect(rows).toHaveLength(9);
 
     expect(rows[0]!.textContent).toContain('DeepSeek');
     expect(rows[0]!.textContent).toContain('50.0%');
@@ -120,6 +120,9 @@ describe('SonarDial', () => {
     expect(document.querySelector('polygon')).toBeNull();
     expect(document.querySelector('.gm-sonar-sweep')).toBeNull();
     expect(screen.getByText('暂无引擎覆盖数据')).toBeTruthy();
+    // #410: empty state hides SVG engine axis labels so empty copy never overlaps 6-o'clock labels
+    const emptySvg = screen.getByRole('img', { name: 'AI 引擎覆盖率声呐盘' });
+    expect(emptySvg.querySelectorAll('text')).toHaveLength(0);
 
     rerender(
       <SonarDial
@@ -135,7 +138,7 @@ describe('SonarDial', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('gives left/right engine labels ample SVG viewBox padding and keeps ring scale labels clear of center KPI text (#187)', () => {
+  it('gives left/right engine labels ample SVG viewBox padding and keeps ring scale labels clear of center KPI text (#187, #411)', () => {
     render(
       <SonarDial
         byEngine={[
@@ -169,19 +172,19 @@ describe('SonarDial', () => {
     const svgScope = within(svg as unknown as HTMLElement);
 
     // Left-edge and right-edge labels must have >= 65 SVG units of clearance inside viewBox
-    for (const label of ['Claude', 'Perplexity']) {
+    for (const label of ['Gemini', 'Claude']) {
       const textEl = svgScope.getByText(label);
       const x = Number(textEl.getAttribute('x'));
       expect(x - vbX).toBeGreaterThanOrEqual(65);
     }
-    for (const label of ['通义千问', '文心一言']) {
+    for (const label of ['腾讯元宝', '通义千问']) {
       const textEl = svgScope.getByText(label);
       const x = Number(textEl.getAttribute('x'));
       expect(vbRight - x).toBeGreaterThanOrEqual(65);
     }
     const topLabel = svgScope.getByText('DeepSeek');
     expect(Number(topLabel.getAttribute('y')) - vbY).toBeGreaterThanOrEqual(50);
-    const bottomLabel = svgScope.getByText('Kimi');
+    const bottomLabel = svgScope.getByText('Perplexity');
     expect(vbBottom - Number(bottomLabel.getAttribute('y'))).toBeGreaterThanOrEqual(50);
 
     // Ring scale labels (25%, 50%, 75%) must sit clearly above the center value (100.0%)
@@ -216,7 +219,7 @@ describe('SonarDial', () => {
     expect(screen.getAllByText('0.0%').length).toBeGreaterThan(0);
   });
 
-  it('renders exactly 8 CN spokes with valid viewBox clearance and zero GLOBAL engines when market="CN"', () => {
+  it('renders exactly 4 active CN spokes with valid viewBox clearance and zero GLOBAL/retired engines when market="CN" (#411)', () => {
     render(
       <SonarDial
         market="CN"
@@ -242,11 +245,13 @@ describe('SonarDial', () => {
     );
 
     const buttons = document.querySelectorAll('[aria-label^="筛选引擎-"]');
-    expect(buttons).toHaveLength(8);
+    expect(buttons).toHaveLength(4);
     const srRows = document.querySelectorAll('table.gm-sr-only tbody tr');
-    expect(srRows).toHaveLength(8);
+    expect(srRows).toHaveLength(4);
     expect(screen.queryByLabelText('筛选引擎-ChatGPT')).toBeNull();
     expect(screen.queryByLabelText('筛选引擎-Perplexity')).toBeNull();
+    expect(screen.queryByLabelText('筛选引擎-Kimi')).toBeNull();
+    expect(screen.queryByLabelText('筛选引擎-文心一言')).toBeNull();
     expect(screen.getByLabelText('筛选引擎-通义千问')).toBeTruthy();
 
     const svg = screen.getByRole('img', { name: 'AI 引擎覆盖率声呐盘' });
@@ -259,18 +264,20 @@ describe('SonarDial', () => {
       50,
     );
     expect(
-      vbY + vbH - Number(svgScope.getByText('文心一言').getAttribute('y')),
+      vbY + vbH - Number(svgScope.getByText('腾讯元宝').getAttribute('y')),
     ).toBeGreaterThanOrEqual(50);
-    expect(
-      vbX + vbW - Number(svgScope.getByText('腾讯元宝').getAttribute('x')),
-    ).toBeGreaterThanOrEqual(65);
-    expect(Number(svgScope.getByText('Kimi').getAttribute('x')) - vbX).toBeGreaterThanOrEqual(65);
+    expect(vbX + vbW - Number(svgScope.getByText('豆包').getAttribute('x'))).toBeGreaterThanOrEqual(
+      65,
+    );
+    expect(Number(svgScope.getByText('通义千问').getAttribute('x')) - vbX).toBeGreaterThanOrEqual(
+      65,
+    );
   });
 
   it('renders exactly 5 GLOBAL spokes with Google AIO short label and resets hover safely on CN -> GLOBAL switch', () => {
     const byEngine = [
       {
-        engine: 'zhipu' as const,
+        engine: 'tongyi' as const,
         completedChecks: 4,
         mentionedChecks: 2,
         visibilityPct: 50,
@@ -296,11 +303,11 @@ describe('SonarDial', () => {
       <SonarDial market="CN" byEngine={byEngine} overallPct={50} onSelectEngine={vi.fn()} />,
     );
 
-    const zhipuHit = screen.getByLabelText('筛选引擎-智谱');
-    fireEvent.mouseEnter(zhipuHit);
-    expect(screen.getByRole('tooltip').textContent).toContain('智谱');
+    const tongyiHit = screen.getByLabelText('筛选引擎-通义千问');
+    fireEvent.mouseEnter(tongyiHit);
+    expect(screen.getByRole('tooltip').textContent).toContain('通义千问');
 
-    // Switch to GLOBAL (5 spokes) while index 7 was hovered: must not throw and must clear tooltip
+    // Switch to GLOBAL (5 spokes) while CN spoke was hovered: must not throw and must clear tooltip
     rerender(
       <SonarDial market="GLOBAL" byEngine={byEngine} overallPct={58.3} onSelectEngine={vi.fn()} />,
     );

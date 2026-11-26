@@ -22,7 +22,7 @@ import {
 import { Alert, Button, Checkbox, Input, Space, Table, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { JSX, ReactNode } from 'react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatPct } from '../../lib/design-tokens';
 import { filterEnginesForMarket, parsePromptLines } from '../../lib/visibility';
 import { EngineChipList, SignalError, SignalSkeleton, TruncText } from '../geo/primitives';
@@ -163,6 +163,18 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
   );
   const seedPrompts =
     lineSeedPrompts.length > 0 ? lineSeedPrompts : (activeBrandMarket?.seedPrompts ?? []);
+  const SEED_PROMPT_COLLAPSE_LIMIT = 6;
+  const [seedsExpanded, setSeedsExpanded] = useState(false);
+
+  useEffect(() => {
+    setSeedsExpanded(false);
+  }, [activeBrandMarket?.id, activeProductLine?.id, activeMarket]);
+
+  const visibleSeedPrompts =
+    seedsExpanded || seedPrompts.length <= SEED_PROMPT_COLLAPSE_LIMIT
+      ? seedPrompts
+      : seedPrompts.slice(0, SEED_PROMPT_COLLAPSE_LIMIT);
+  const hasCollapsedSeeds = seedPrompts.length > SEED_PROMPT_COLLAPSE_LIMIT;
 
   const handleToggleSeedPrompt = (seed: string) => {
     const existing = parsePromptLines(promptsText);
@@ -281,7 +293,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
       {
         title: '操作',
         key: 'actions',
-        width: 144,
+        width: 164,
         render: (_v, row) => {
           const busy = actionLoadingRunId === row.id;
           const isActive =
@@ -354,7 +366,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         variant="card"
         className="gm-vis-create-panel"
         title="发起新一轮 AI 可见度监测"
-        description={`当前市场：${activeMarket === 'CN' ? '中国国内（8 引擎）' : '海外市场（5 引擎）'} · 默认仅勾选已上线健康引擎`}
+        description={`当前市场：${activeMarket === 'CN' ? '中国国内（4 引擎）' : '海外市场（5 引擎）'} · 默认仅勾选已上线健康引擎`}
         actions={
           seedPrompts.length > 0 ? (
             <Button size="small" disabled={readOnly || submitting} onClick={handleFillAllSeeds}>
@@ -379,9 +391,21 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
 
         {seedPrompts.length > 0 ? (
           <div className="gm-vis-seed-bar">
-            <span className="gm-vis-seed-label">品牌高频种子问句：</span>
+            <div className="gm-vis-seed-head">
+              <span className="gm-vis-seed-label">品牌高频种子问句：</span>
+              {hasCollapsedSeeds ? (
+                <button
+                  type="button"
+                  data-testid="vis-seed-toggle-btn"
+                  className="gm-vis-seed-toggle"
+                  onClick={() => setSeedsExpanded((prev) => !prev)}
+                >
+                  {seedsExpanded ? '收起' : `展开全部（${seedPrompts.length}）`}
+                </button>
+              ) : null}
+            </div>
             <div className="gm-vis-seed-chips">
-              {seedPrompts.map((seed) => {
+              {visibleSeedPrompts.map((seed) => {
                 const selected = parsedPrompts.some(
                   (line) => line.toLowerCase() === seed.toLowerCase(),
                 );

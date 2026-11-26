@@ -3316,7 +3316,9 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         </ConsoleProvider>,
       );
 
-      expect(await screen.findByTestId('studio-center-pane')).toBeTruthy();
+      const centerPane = await screen.findByTestId('studio-center-pane');
+      expect(centerPane.tagName).toBe('SECTION');
+      expect(screen.getByTestId('studio-workspace').querySelector('main')).toBeNull();
       expect(screen.queryByTestId('studio-left-pane')).toBeNull();
       expect(screen.queryByTestId('studio-right-pane')).toBeNull();
 

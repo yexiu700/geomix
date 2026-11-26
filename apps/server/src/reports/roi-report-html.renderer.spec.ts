@@ -547,4 +547,83 @@ describe('RoiReportHtmlRenderer (#369)', () => {
 
     expect(zhHtml).toContain('<td><strong>Shopify 博客</strong></td>');
   });
+
+  it('renders localized Chinese and English fallback labels for retired CN engines (wenxin/kimi/zhipu/nami) in historical reports (#411)', () => {
+    const legacySummary = buildRichSummary();
+    legacySummary.byEngine = [
+      {
+        engine: 'deepseek',
+        observations: 10,
+        mentionRate: 0.7,
+        citationRate: 0.5,
+        ownedCitationRate: 0.3,
+        avgPosition: 1.5,
+        mentionWilson: computeWilsonInterval(7, 10),
+      },
+      {
+        engine: 'wenxin',
+        observations: 8,
+        mentionRate: 0.5,
+        citationRate: 0.25,
+        ownedCitationRate: 0.125,
+        avgPosition: 2.2,
+        mentionWilson: computeWilsonInterval(4, 8),
+      },
+      {
+        engine: 'kimi',
+        observations: 6,
+        mentionRate: 0.5,
+        citationRate: 0.33,
+        ownedCitationRate: 0.16,
+        avgPosition: 2.0,
+        mentionWilson: computeWilsonInterval(3, 6),
+      },
+      {
+        engine: 'zhipu',
+        observations: 4,
+        mentionRate: 0.25,
+        citationRate: 0.25,
+        ownedCitationRate: 0,
+        avgPosition: 3.0,
+        mentionWilson: computeWilsonInterval(1, 4),
+      },
+      {
+        engine: 'nami',
+        observations: 4,
+        mentionRate: 0.25,
+        citationRate: 0,
+        ownedCitationRate: 0,
+        avgPosition: 3.5,
+        mentionWilson: computeWilsonInterval(1, 4),
+      },
+    ];
+
+    const zhHtml = renderRoiReportHtml(
+      makeInput({
+        locale: 'zh-CN',
+        market: 'CN',
+        title: '历史引擎兼容报告',
+        brandName: '星辰存储',
+        category: '家用 NAS',
+        summary: legacySummary,
+      }),
+    );
+    expect(zhHtml).toContain('DeepSeek');
+    expect(zhHtml).toContain('文心一言');
+    expect(zhHtml).toContain('Kimi');
+    expect(zhHtml).toContain('智谱');
+    expect(zhHtml).toContain('纳米');
+
+    const enHtml = renderRoiReportHtml(
+      makeInput({
+        locale: 'en-US',
+        market: 'GLOBAL',
+        summary: legacySummary,
+      }),
+    );
+    expect(enHtml).toContain('ERNIE Bot');
+    expect(enHtml).toContain('Zhipu GLM');
+    expect(enHtml).toContain('Nami AI');
+    expect(enHtml).not.toMatch(/[\u4E00-\u9FFF]/);
+  });
 });
