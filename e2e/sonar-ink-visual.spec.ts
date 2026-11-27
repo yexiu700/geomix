@@ -974,8 +974,8 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
         ).toBeGreaterThanOrEqual(12);
       }
 
-      // 3. Full accessible names preserved while collapsed at 72px
-      for (const fullName of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']) {
+      // 3. Full accessible names preserved while collapsed at 72px (unified 2-char nav labels)
+      for (const fullName of ['首页', '品牌', '诊断', '写作', '发布']) {
         const item = sider
           .getByRole('menuitem', { name: fullName, exact: true })
           .or(sider.getByRole('link', { name: fullName, exact: true }))
@@ -1037,7 +1037,7 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
       expect((await readToggleState()).expanded).toBe('false');
 
       // 5. openWorkspaceNav works directly from collapsed 72px rail
-      await openWorkspaceNav(page, { itemTitle: '行动首页', expectedUrl: /\/home/ });
+      await openWorkspaceNav(page, { itemTitle: '首页', expectedUrl: /\/home/ });
       await expect(page.getByTestId('home-workspace')).toBeVisible({ timeout: 15_000 });
       const homeSiderBox = await sider.boundingBox();
       expect(homeSiderBox!.width).toBeGreaterThanOrEqual(180);

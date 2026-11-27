@@ -135,13 +135,13 @@ v2Describe(
 
           // Navigate across remaining 3 workspaces and verify every brand-scoped request targets Brand B
           brandRequestsAfterSwitch.length = 0;
-          await navigateWorkspace(page, '品牌资产', /\/brands/);
+          await navigateWorkspace(page, '品牌', /\/brands/);
           await expectUrlContext(page, { brandId: brandB.id, pathname: '/brands' });
 
-          await navigateWorkspace(page, '可见度诊断', /\/visibility/);
+          await navigateWorkspace(page, '诊断', /\/visibility/);
           await expectUrlContext(page, { brandId: brandB.id, pathname: '/visibility' });
 
-          await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
+          await navigateWorkspace(page, '写作', /\/studio/);
           await expectUrlContext(page, { brandId: brandB.id, pathname: '/studio' });
 
           expect(brandRequestsAfterSwitch.length).toBeGreaterThan(0);
@@ -197,7 +197,7 @@ v2Describe(
             brandA.markets.find((m) => m.market === 'GLOBAL')?.localBrandName ?? brandA.name;
           await expect(page.getByTestId('global-brand-switcher')).toContainText(brandAGlobalLabel);
 
-          await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
+          await navigateWorkspace(page, '写作', /\/studio/);
           await selectGlobalBrand(page, brandB.name);
           await expectUrlContext(page, { brandId: brandB.id, market: 'CN', pathname: '/studio' });
 

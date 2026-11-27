@@ -418,7 +418,7 @@ async function assertFourItemSidebar(page: Page): Promise<void> {
   const menuItems = nav.getByRole('menuitem');
   await expect(menuItems).toHaveCount(5);
   const labels = (await menuItems.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
-  expect(labels).toEqual(['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']);
+  expect(labels).toEqual(['首页', '品牌', '诊断', '写作', '发布']);
   await expect(nav.locator('a[href*="/distribution"]')).toHaveCount(0);
 }
 

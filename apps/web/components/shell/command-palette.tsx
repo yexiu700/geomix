@@ -112,7 +112,7 @@ export function CommandPalette({
         brandItems.push({
           id: 'market:CN',
           group: '品牌与市场',
-          title: activeMarket === 'CN' ? '当前市场 · 🇨🇳 国内 (CN)' : '切换市场 · 🇨🇳 国内 (CN)',
+          title: activeMarket === 'CN' ? '当前市场 · 国内' : '切换市场 · 国内',
           execute: () => onSelectMarket('CN'),
         });
       }
@@ -120,10 +120,7 @@ export function CommandPalette({
         brandItems.push({
           id: 'market:GLOBAL',
           group: '品牌与市场',
-          title:
-            activeMarket === 'GLOBAL'
-              ? '当前市场 · 🌐 海外 (GLOBAL)'
-              : '切换市场 · 🌐 海外 (GLOBAL)',
+          title: activeMarket === 'GLOBAL' ? '当前市场 · 海外' : '切换市场 · 海外',
           execute: () => onSelectMarket('GLOBAL'),
         });
       }
@@ -132,10 +129,7 @@ export function CommandPalette({
         brandItems.push({
           id: `market:enable:${missingMarket}`,
           group: '品牌与市场',
-          title:
-            missingMarket === 'GLOBAL'
-              ? '+ 开启另一市场 · 🌐 海外 (GLOBAL)'
-              : '+ 开启另一市场 · 🇨🇳 国内 (CN)',
+          title: missingMarket === 'GLOBAL' ? '+ 开启海外' : '+ 开启国内',
           execute: () => onOpenEnableMarket(missingMarket),
         });
       }
@@ -145,7 +139,7 @@ export function CommandPalette({
       brandItems.push({
         id: 'brand:create',
         group: '品牌与市场',
-        title: '+ 60 秒新建品牌',
+        title: '+ 建品牌',
         execute: onOpenCreateBrand,
       });
     }

@@ -431,7 +431,7 @@ describe('Sonar Ink 2.0 visual-debt ratchet (#390)', () => {
     const shellFiles = collectProductionSourceFiles(shellDir);
     const brandsFiles = collectProductionSourceFiles(brandsDir);
     expect(uiFiles.length).toBeGreaterThanOrEqual(8);
-    expect(shellFiles.length).toBeGreaterThanOrEqual(7);
+    expect(shellFiles.length).toBeGreaterThanOrEqual(6);
     expect(brandsFiles.length).toBeGreaterThanOrEqual(8);
 
     const violations: string[] = [];

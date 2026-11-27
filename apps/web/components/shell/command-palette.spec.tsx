@@ -68,14 +68,14 @@ describe('CommandPalette (GeoMix 2.0)', () => {
     expect(screen.queryByText('/dashboard')).toBeNull();
     expect(screen.queryByText('/me/money')).toBeNull();
 
-    expect(screen.getByRole('option', { name: /行动首页.*\/home/ })).toBeTruthy();
-    expect(screen.getByRole('option', { name: /品牌资产.*\/brands/ })).toBeTruthy();
-    expect(screen.getByRole('option', { name: /可见度诊断.*\/visibility/ })).toBeTruthy();
-    expect(screen.getByRole('option', { name: /GEO 写作台.*\/studio/ })).toBeTruthy();
-    expect(screen.getByRole('option', { name: /发布中心.*\/publish/ })).toBeTruthy();
-    expect(screen.getByRole('option', { name: /点数与权益.*\/account/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /首页.*\/home/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /品牌.*\/brands/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /诊断.*\/visibility/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /写作.*\/studio/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /发布.*\/publish/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /账户.*\/account/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('option', { name: /\+ 开启另一市场/ }));
+    fireEvent.click(screen.getByRole('option', { name: /\+ 开启海外/ }));
     expect(onOpenEnableMarket).toHaveBeenCalledWith('GLOBAL');
     expect(onClose).toHaveBeenCalledTimes(1);
   });

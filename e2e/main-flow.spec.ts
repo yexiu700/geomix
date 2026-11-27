@@ -126,7 +126,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
 
   // Step 5: Enable GLOBAL market via + 开启另一市场
   await page.getByTestId('enable-other-market-btn').click();
-  const enableDialog = page.getByRole('dialog', { name: '开启海外市场' });
+  const enableDialog = page.getByRole('dialog', { name: /开启海外|开启海外市场/ });
   await expect(enableDialog).toBeVisible();
   await enableDialog.getByLabel('当地品牌名称').fill(`Zhizao Laser ${suffix}`);
 
@@ -135,7 +135,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
       res.url().includes(`/api/v2/brands/${createdBrandId}/markets/GLOBAL`) &&
       res.request().method() === 'POST',
   );
-  await enableDialog.getByRole('button', { name: '确认开启' }).click();
+  await enableDialog.getByRole('button', { name: /^(?:开启|确认开启)$/ }).click();
   const enableResponse = await enableResponsePromise;
   expect(enableResponse.status()).toBe(200);
   const enableJson = (await enableResponse.json()) as BrandEnvelope;
@@ -152,14 +152,14 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
 
   // Step 6: CN <-> GLOBAL synchronization across workspaces + reload persistence
   const navTargets: Array<{
-    title: '品牌资产' | '可见度诊断' | 'GEO 写作台' | '发布中心' | '行动首页';
+    title: '品牌' | '诊断' | '写作' | '发布' | '首页';
     path: string;
   }> = [
-    { title: '品牌资产', path: '/brands' },
-    { title: '可见度诊断', path: '/visibility' },
-    { title: 'GEO 写作台', path: '/studio' },
-    { title: '发布中心', path: '/publish' },
-    { title: '行动首页', path: '/home' },
+    { title: '品牌', path: '/brands' },
+    { title: '诊断', path: '/visibility' },
+    { title: '写作', path: '/studio' },
+    { title: '发布', path: '/publish' },
+    { title: '首页', path: '/home' },
   ];
   for (const target of navTargets) {
     await openWorkspaceNav(page, {

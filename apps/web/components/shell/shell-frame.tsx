@@ -41,6 +41,7 @@ import { matchRoute } from '../../lib/routes';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { BrandQuickCreateModal } from '../brands/brand-quick-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { Explain } from '../ui';
 import { SideMenu } from './side-menu';
 
 const PasswordForm = dynamic(() => import('../password-form').then((m) => m.PasswordForm));
@@ -212,7 +213,6 @@ export function ShellFrame({
   const matchedRoute = matchRoute(activePath);
   const isSplitWorkspaceRoute =
     matchedRoute?.path === '/studio' || matchedRoute?.path === '/publish';
-  const isAccountPath = matchedRoute?.path === '/account';
   const containerVariant = resolveContainerVariant(matchedRoute?.path);
 
   useEffect(() => {
@@ -479,7 +479,7 @@ export function ShellFrame({
                   }
                 }}
               >
-                重新加载品牌
+                重试
               </Button>
             ) : brands.length === 0 ? (
               <Button
@@ -490,7 +490,7 @@ export function ShellFrame({
                 disabled={account.tenant.readOnly}
                 onClick={openCreateModal}
               >
-                + 创建首个品牌
+                建品牌
               </Button>
             ) : (
               <Select<string>
@@ -550,7 +550,7 @@ export function ShellFrame({
                       aria-pressed={activeMarket === 'CN'}
                       onClick={() => onSelectMarket('CN')}
                     >
-                      CN 国内
+                      国内
                     </button>
                     <button
                       type="button"
@@ -560,7 +560,7 @@ export function ShellFrame({
                       aria-pressed={activeMarket === 'GLOBAL'}
                       onClick={() => onSelectMarket('GLOBAL')}
                     >
-                      海外 GLOBAL
+                      海外
                     </button>
                   </>
                 ) : (
@@ -571,7 +571,7 @@ export function ShellFrame({
                       aria-pressed="true"
                       onClick={() => onSelectMarket(activeMarket)}
                     >
-                      {activeMarket === 'CN' ? 'CN 国内' : '海外 GLOBAL'}
+                      {activeMarket === 'CN' ? '国内' : '海外'}
                     </button>
                     {missingMarket ? (
                       <button
@@ -581,7 +581,7 @@ export function ShellFrame({
                         disabled={account.tenant.readOnly}
                         onClick={() => openEnableModal(missingMarket)}
                       >
-                        + 开启另一市场
+                        加市场
                       </button>
                     ) : null}
                   </>
@@ -591,33 +591,31 @@ export function ShellFrame({
           </div>
 
           <div className="gm-header-right">
-            <button
-              type="button"
-              className="gm-cmd-trigger"
-              aria-label="打开指令面板"
-              onClick={() => setPaletteOpen(true)}
-            >
-              <span className="gm-cmd-trigger-lead">
-                <SearchIcon />
-                <span className="gm-cmd-trigger-text">搜索</span>
-              </span>
-              <kbd className="gm-cmd-trigger-kbd">{isWindows ? 'Ctrl K' : '⌘K'}</kbd>
-            </button>
-
-            <Tooltip title={trimmedAnnouncement || '系统公告'}>
+            <Tooltip title={isWindows ? '搜索 (Ctrl+K)' : '搜索 (⌘K)'}>
               <button
                 type="button"
-                className="gm-announce-bell"
-                data-testid="header-announcement-bell"
-                aria-label="查看系统公告"
-                onClick={() => setAnnouncementOpen(true)}
+                className="gm-cmd-trigger gm-cmd-trigger--icon"
+                aria-label="打开指令面板"
+                onClick={() => setPaletteOpen(true)}
               >
-                <BellIcon />
-                {trimmedAnnouncement ? (
-                  <span className="gm-announce-bell-dot" aria-hidden="true" />
-                ) : null}
+                <SearchIcon />
               </button>
             </Tooltip>
+
+            {trimmedAnnouncement ? (
+              <Tooltip title={trimmedAnnouncement}>
+                <button
+                  type="button"
+                  className="gm-announce-bell"
+                  data-testid="header-announcement-bell"
+                  aria-label="查看系统公告"
+                  onClick={() => setAnnouncementOpen(true)}
+                >
+                  <BellIcon />
+                  <span className="gm-announce-bell-dot" aria-hidden="true" />
+                </button>
+              </Tooltip>
+            ) : null}
 
             {walletLoading || wallet === null ? (
               <span
@@ -647,7 +645,7 @@ export function ShellFrame({
               <Alert
                 type="warning"
                 showIcon
-                message="账号已到期，当前只读"
+                message="账号已到期"
                 className="gm-shell-readonly-alert"
               />
             ) : null}
@@ -655,17 +653,14 @@ export function ShellFrame({
             brandsLoaded &&
             brands.length === 0 &&
             !brandsError &&
-            !isAccountPath ? (
+            isSplitWorkspaceRoute ? (
               <section className="gm-onboarding-banner" aria-label="首次建档引导">
-                <div className="gm-onboarding-banner-copy">
-                  <strong>60 秒创建首个品牌，开启双市场 AI 可见度与 GEO 写作闭环</strong>
-                  <span>
-                    填写品牌名、品类与目标市场（CN 国内 / 海外
-                    GLOBAL）后，全站看板、监测与写作台立即自动锁定该品牌上下文。
-                  </span>
+                <div className="gm-onboarding-banner-copy gm-ui-section-title-row">
+                  <strong>先建品牌</strong>
+                  <Explain text="填写品牌名、品类与目标市场后，全站看板、监测与写作台自动锁定该品牌上下文。" />
                 </div>
                 <Button type="primary" disabled={account.tenant.readOnly} onClick={openCreateModal}>
-                  60 秒创建首个品牌
+                  建品牌
                 </Button>
               </section>
             ) : null}
@@ -688,21 +683,23 @@ export function ShellFrame({
 
       <Modal
         open={enableTarget !== null}
-        title={enableTarget === 'GLOBAL' ? '开启海外市场' : '开启国内市场'}
+        title={enableTarget === 'GLOBAL' ? '开启海外' : '开启国内'}
         onCancel={closeEnableModal}
         keyboard
         maskClosable
         destroyOnHidden
-        okText="确认开启"
+        okText="开启"
         cancelText="取消"
         confirmLoading={enableSubmitting}
         onOk={() => enableForm.submit()}
       >
         {enableDefaults ? (
-          <p className="gm-modal-hint">
-            默认语种与区域：{enableDefaults.locale} / {enableDefaults.region}
-            。开启后将与现有市场共享核心品牌事实卡，但引擎组、可见度看板与成稿严格隔离。
-          </p>
+          <div className="gm-modal-hint gm-ui-section-title-row">
+            <span>
+              默认 {enableDefaults.locale} / {enableDefaults.region}
+            </span>
+            <Explain text="开启后将与现有市场共享核心品牌事实卡，但引擎组、可见度看板与成稿严格隔离。" />
+          </div>
         ) : null}
         <Form<EnableMarketFormValues>
           form={enableForm}
@@ -710,7 +707,7 @@ export function ShellFrame({
           onFinish={(values) => void handleEnableSubmit(values)}
         >
           <Form.Item
-            label="当地品牌名称"
+            label="品牌名"
             name="localBrandName"
             rules={[
               { required: true, whitespace: true, message: '请填写当地品牌名称' },
@@ -727,7 +724,7 @@ export function ShellFrame({
             />
           </Form.Item>
           <Form.Item
-            label="当地品类名称（选填）"
+            label="品类"
             name="localCategory"
             rules={[{ max: 80, message: '品类名称不超过 80 字' }]}
           >
@@ -740,13 +737,13 @@ export function ShellFrame({
               }
             />
           </Form.Item>
-          <Form.Item label="当地官网域名（选填）" name="ownedDomainsText">
+          <Form.Item label="官网域名" name="ownedDomainsText">
             <Input
               aria-label="当地官网域名"
               placeholder="例如：global.example.com（多个域名可用逗号分隔）"
             />
           </Form.Item>
-          <Form.Item label="当地主要竞品（选填）" name="competitorsText">
+          <Form.Item label="竞品列表" name="competitorsText">
             <Input.TextArea
               aria-label="当地主要竞品"
               rows={3}

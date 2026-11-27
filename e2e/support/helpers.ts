@@ -11,7 +11,7 @@ export type MintedSession = {
   refreshToken: string;
 };
 
-export type WorkspaceNavItem = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台' | '发布中心';
+export type WorkspaceNavItem = '首页' | '品牌' | '诊断' | '写作' | '发布';
 
 export const REQUIRED_VIEWPORTS = [
   { width: 1440, height: 900 },

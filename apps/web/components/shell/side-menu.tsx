@@ -29,11 +29,11 @@ type RailLabelParts = {
 };
 
 const RAIL_LABEL_PARTS: Readonly<Record<string, RailLabelParts>> = {
-  '/home': { prefix: '行动', short: '首页', suffix: '' },
-  '/brands': { prefix: '', short: '品牌', suffix: '资产' },
-  '/visibility': { prefix: '可见度', short: '诊断', suffix: '' },
-  '/studio': { prefix: 'GEO ', short: '写作', suffix: '台' },
-  '/publish': { prefix: '', short: '发布', suffix: '中心' },
+  '/home': { prefix: '', short: '首页', suffix: '' },
+  '/brands': { prefix: '', short: '品牌', suffix: '' },
+  '/visibility': { prefix: '', short: '诊断', suffix: '' },
+  '/studio': { prefix: '', short: '写作', suffix: '' },
+  '/publish': { prefix: '', short: '发布', suffix: '' },
 };
 
 function renderRailSplitLabel(parts: RailLabelParts): ReactNode {
@@ -92,7 +92,7 @@ export function SideMenu({
         <button
           type="button"
           className="gm-sider-brand-btn"
-          aria-label={`返回${SITE_NAME}行动首页`}
+          aria-label={`返回${SITE_NAME}首页`}
           title={SITE_NAME}
           onClick={() => onNavigate(HOME_ROUTE)}
         >
@@ -138,8 +138,8 @@ export function SideMenu({
           <button
             type="button"
             data-testid="sider-account-entry"
-            aria-label="点数与权益"
-            title={`${name} · 点数与权益`}
+            aria-label="账户"
+            title={`${name} · 账户`}
             aria-current={isAccountActive ? 'page' : undefined}
             className={isAccountActive ? 'gm-sider-account-btn active' : 'gm-sider-account-btn'}
             onClick={() => onNavigate('/account')}
@@ -150,7 +150,7 @@ export function SideMenu({
             <span className="gm-sider-account-meta">
               <span className="gm-sider-account-name gm-clamp-1">{name}</span>
               <span className="gm-sider-account-sub gm-clamp-1">
-                {account.tenant.readOnly ? '已到期 · 只读' : '点数与权益'}
+                {account.tenant.readOnly ? '只读' : '账户'}
               </span>
             </span>
           </button>
@@ -159,13 +159,11 @@ export function SideMenu({
             placement="topRight"
             menu={{
               items: [
-                { key: 'account', label: '点数与权益' },
                 { key: 'password', label: '修改密码' },
                 { type: 'divider' },
                 { key: 'logout', label: '退出登录', danger: true },
               ],
               onClick: ({ key }) => {
-                if (key === 'account') onNavigate('/account');
                 if (key === 'password') onChangePassword();
                 if (key === 'logout') onLogout();
               },
@@ -195,7 +193,7 @@ export function SideMenu({
               onClick={onToggleCollapse}
             >
               <CollapseArrowIcon collapsed={collapsed} />
-              {!collapsed ? <span className="gm-sider-collapse-label">收起菜单</span> : null}
+              {!collapsed ? <span className="gm-sider-collapse-label">收起</span> : null}
             </button>
           </div>
         ) : null}

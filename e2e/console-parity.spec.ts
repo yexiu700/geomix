@@ -57,23 +57,23 @@ test.describe('GeoMix 2.0 Minimalist Shell Parity & Admin Baseline', () => {
     await expect(page.getByText('余额明细')).toHaveCount(0);
 
     await openWorkspaceNav(page, {
-      itemTitle: '品牌资产',
+      itemTitle: '品牌',
       expectedUrl: /\/brands(?:[?#]|$)/,
     });
     await openWorkspaceNav(page, {
-      itemTitle: '可见度诊断',
+      itemTitle: '诊断',
       expectedUrl: /\/visibility(?:[?#]|$)/,
     });
     await openWorkspaceNav(page, {
-      itemTitle: 'GEO 写作台',
+      itemTitle: '写作',
       expectedUrl: /\/studio(?:[?#]|$)/,
     });
     await openWorkspaceNav(page, {
-      itemTitle: '发布中心',
+      itemTitle: '发布',
       expectedUrl: /\/publish(?:[?#]|$)/,
     });
     await openWorkspaceNav(page, {
-      itemTitle: '行动首页',
+      itemTitle: '首页',
       expectedUrl: /\/home(?:[?#]|$)/,
     });
 

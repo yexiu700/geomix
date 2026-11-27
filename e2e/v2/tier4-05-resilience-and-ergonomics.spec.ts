@@ -227,10 +227,10 @@ v2Describe(
         try {
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
 
-          await navigateWorkspace(page, '品牌资产', /\/brands/);
+          await navigateWorkspace(page, '品牌', /\/brands/);
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
 
-          await navigateWorkspace(page, '可见度诊断', /\/visibility/);
+          await navigateWorkspace(page, '诊断', /\/visibility/);
           await openVisibilityTab(page, 'overview');
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
           await openVisibilityTab(page, 'runs');
@@ -238,7 +238,7 @@ v2Describe(
           await openVisibilityTab(page, 'citations');
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
 
-          await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
+          await navigateWorkspace(page, '写作', /\/studio/);
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
 
           await openAccountWorkspace(page);

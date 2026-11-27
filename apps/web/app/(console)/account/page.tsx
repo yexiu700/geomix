@@ -5,7 +5,7 @@ import { AccountScreen } from '../../../components/account/account-screen';
 import { SignalSkeleton } from '../../../components/geo/primitives';
 
 export const metadata: Metadata = {
-  title: `点数与权益 · ${SITE_NAME}`,
+  title: `账户 · ${SITE_NAME}`,
 };
 
 export default function AccountWorkspacePage() {

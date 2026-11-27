@@ -19,12 +19,12 @@ type StaticRoute = {
 };
 
 export const STATIC_ROUTES: Record<WorkspacePath, StaticRoute> = {
-  '/home': { title: '行动首页', businessWorkspace: true },
-  '/brands': { title: '品牌资产', businessWorkspace: true },
-  '/visibility': { title: '可见度诊断', businessWorkspace: true },
-  '/studio': { title: 'GEO 写作台', businessWorkspace: true },
-  '/publish': { title: '发布中心', businessWorkspace: true },
-  '/account': { title: '点数与权益', businessWorkspace: false },
+  '/home': { title: '首页', businessWorkspace: true },
+  '/brands': { title: '品牌', businessWorkspace: true },
+  '/visibility': { title: '诊断', businessWorkspace: true },
+  '/studio': { title: '写作', businessWorkspace: true },
+  '/publish': { title: '发布', businessWorkspace: true },
+  '/account': { title: '账户', businessWorkspace: false },
 };
 
 const QUERY_KEYS: Record<WorkspacePath, readonly string[]> = {

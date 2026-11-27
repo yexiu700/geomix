@@ -46,7 +46,7 @@ describe('GeoMix minimalist 6-workspace routes', () => {
     expect(matched).toEqual({
       href: `/studio?brandId=${cuid}&market=GLOBAL&briefId=${cuid}`,
       path: '/studio',
-      title: 'GEO 写作台',
+      title: '写作',
     });
     expect(matched?.title).not.toContain(cuid);
 
@@ -56,7 +56,7 @@ describe('GeoMix minimalist 6-workspace routes', () => {
     expect(publishMatched).toEqual({
       href: `/publish?brandId=${cuid}&market=CN&articleId=${cuid}&tab=tracking`,
       path: '/publish',
-      title: '发布中心',
+      title: '发布',
     });
   });
 
@@ -94,7 +94,7 @@ describe('GeoMix minimalist 6-workspace routes', () => {
     ).toEqual({
       href: '/studio?brandId=brand-1&market=CN&batchJobId=gb_123456',
       path: '/studio',
-      title: 'GEO 写作台',
+      title: '写作',
     });
     expect(buildWorkspaceHref('/account', 'brand-1', 'CN', { tab: 'rights' })).toBe(
       '/account?tab=rights',
