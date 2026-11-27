@@ -118,24 +118,17 @@ test.describe('GeoMix 2.0 Minimalist Shell Parity & Admin Baseline', () => {
 
     await expect(page.getByRole('tab', { name: '点数明细' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '账号权益' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '实名认证' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '扩展配对' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '实名认证' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: '余额明细' })).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText('¥0.00');
 
     await page.getByRole('tab', { name: '账号权益' }).click();
     await expect(page.locator('.gm-right-card[aria-label="品牌数量"]')).toBeVisible();
     await expect(page.locator('.gm-right-card[aria-label="点数"]')).toContainText('1000');
-    await expect(page.locator('.gm-right-card[aria-label="DeepSeek"]')).toBeVisible();
-    await expect(page.locator('.gm-right-card[aria-label="豆包"]')).toBeVisible();
 
-    await page.getByRole('tab', { name: '实名认证' }).click();
-    await expect(page.getByRole('textbox', { name: '主体名称' })).toBeVisible();
-    await page.getByRole('textbox', { name: '主体名称' }).fill('苏州智造激光装备有限公司');
-    await page.getByRole('textbox', { name: '统一社会信用代码' }).fill('91320500MA1234567X');
-    await page.getByRole('textbox', { name: '联系人' }).fill('张工');
-    await page.getByRole('textbox', { name: '电话' }).fill('13800138000');
-    await page.getByRole('button', { name: '提交资料' }).click();
-    await expect(page.getByText('当前状态：已提交')).toBeVisible();
+    await page.getByRole('tab', { name: '扩展配对' }).click();
+    await expect(page.getByTestId('extension-pairing-panel')).toBeVisible();
 
     await assertZeroHorizontalOverflow(page);
   });

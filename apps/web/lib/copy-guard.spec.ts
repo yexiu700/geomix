@@ -31,9 +31,9 @@ const CONTROLLED_DIRS = [
  * 只允许在 PR2–PR8 中单调递减，最终在 PR8 全部清零。
  */
 export const COPY_DEBT_BASELINE = {
-  over4Controls: 2,
-  over8Alerts: 1,
-  multiPrimaryFiles: 3,
+  over4Controls: 0,
+  over8Alerts: 0,
+  multiPrimaryFiles: 0,
 } as const;
 
 const CJK_RE = /[\u4e00-\u9fff]/;

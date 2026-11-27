@@ -80,6 +80,8 @@ export function PointsScreen({
   const [summaryLoading, setSummaryLoading] = useState<boolean>(() => Boolean(readSummary));
   const [refreshNonce, setRefreshNonce] = useState(0);
   const wasActiveRef = useRef(active);
+  const didMountFilterRef = useRef(false);
+  const skipNextAutoFilterRef = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -138,7 +140,7 @@ export function PointsScreen({
     }
   }, [active]);
 
-  function applyFilter(): void {
+  const applyFilter = useCallback((): void => {
     const delta = draft.delta.trim();
     if (delta !== '' && !/^[+-]?\d+$/.test(delta)) {
       setError('点数变动需为整数（支持 + / - 前缀，如 +100 或 -5）');
@@ -163,7 +165,22 @@ export function PointsScreen({
       from: parsedFrom.iso,
       to: parsedTo.iso,
     });
-  }
+  }, [draft.delta, draft.from, draft.title, draft.to]);
+
+  useEffect(() => {
+    if (!didMountFilterRef.current) {
+      didMountFilterRef.current = true;
+      return;
+    }
+    if (skipNextAutoFilterRef.current) {
+      skipNextAutoFilterRef.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      applyFilter();
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [applyFilter]);
 
   async function handleExport(format: 'csv' | 'xlsx'): Promise<void> {
     setError(null);
@@ -282,12 +299,11 @@ export function PointsScreen({
           onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))}
         />
         <div className="gm-ledger-filter-actions">
-          <Button type="primary" aria-label="查询" onClick={applyFilter}>
-            查询
-          </Button>
           <Button
             aria-label="重置"
+            autoInsertSpace={false}
             onClick={() => {
+              skipNextAutoFilterRef.current = true;
               setError(null);
               setEmptyNotice(null);
               setDraft({ title: '', delta: '', from: '', to: '' });
@@ -305,16 +321,6 @@ export function PointsScreen({
               feedback.notifyWarning(msg);
             }}
             onExport={() => handleExport('csv')}
-          />
-          <ExportAction
-            label="导出 XLSX"
-            singleFormat="xlsx"
-            empty={isEmpty}
-            onEmpty={(msg) => {
-              setEmptyNotice(msg);
-              feedback.notifyWarning(msg);
-            }}
-            onExport={() => handleExport('xlsx')}
           />
         </div>
       </div>

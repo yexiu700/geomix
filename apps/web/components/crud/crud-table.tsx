@@ -185,8 +185,8 @@ export function CrudTable<T extends { id: string }>({
               </Button>
             ) : null}
             {onBack ? (
-              <Button aria-label="返回上一级" onClick={onBack}>
-                返回上一级
+              <Button aria-label="返回上一级" autoInsertSpace={false} onClick={onBack}>
+                返回
               </Button>
             ) : null}
           </>
