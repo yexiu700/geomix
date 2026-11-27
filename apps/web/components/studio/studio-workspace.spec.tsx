@@ -19,6 +19,7 @@ import { invalidateFreshness } from '../../lib/tab-freshness';
 import * as uxFoundation from '../../lib/ux-foundation';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
+import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { StudioDeliveryPack } from './studio-delivery-pack';
 import { StudioWorkspace } from './studio-workspace';
 
@@ -320,8 +321,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         <StudioWorkspace />
       </ConsoleProvider>,
     );
-    expect(screen.getByText('尚未创建品牌资产')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '立即创建首个品牌' }));
+    expect(screen.getByText('暂无品牌')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /新建品牌/ }));
     expect(openCreateBrandModal).toHaveBeenCalledTimes(1);
   });
 
@@ -513,8 +514,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       </ConsoleProvider>,
     );
 
-    // Pending brief checkboxes are the first checkboxes in default DOM
+    // Pending brief checkboxes are hidden until clicking 批量 (Y21)
     await screen.findByTestId('studio-brief-item-brief_st_1');
+    expect(document.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    fireEvent.click(screen.getByTestId('studio-batch-mode-btn'));
     const checkboxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
     expect(checkboxes.length).toBeGreaterThanOrEqual(2);
     fireEvent.click(checkboxes[0]!);
@@ -574,8 +577,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     const streamBtn = (await screen.findByTestId('studio-stream-btn')) as HTMLButtonElement;
     expect(streamBtn.disabled).toBe(true);
-    const batchBtn = (await screen.findByTestId('studio-batch-btn')) as HTMLButtonElement;
-    expect(batchBtn.disabled).toBe(true);
+    expect(screen.queryByTestId('studio-batch-mode-btn')).toBeNull();
+    expect(screen.queryByTestId('studio-batch-btn')).toBeNull();
   });
 
   it('skips BrandFact writeback when checkbox is unchecked and displays SSE error refund alert', async () => {
@@ -623,7 +626,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     fireEvent.click(await screen.findByTestId('missing-fact-pill'));
     const input = await screen.findByPlaceholderText('输入真实实测数值或参数');
     fireEvent.change(input, { target: { value: '11W' } });
-    const syncCheckbox = screen.getByRole('checkbox', { name: '同步存入品牌事实卡' });
+    const syncCheckbox = screen.getByRole('checkbox', { name: '同步事实' });
     fireEvent.click(syncCheckbox);
     fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
 
@@ -857,13 +860,24 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         return counterBrief;
       });
 
+    const onCreated = vi.fn();
     render(
       <ConsoleProvider value={makeConsoleContext()}>
         <StudioWorkspace />
+        <CitationCounterModal
+          open={true}
+          brandId="brand_studio_1"
+          market="CN"
+          readOnly={false}
+          mode="url"
+          onClose={vi.fn()}
+          onCreated={onCreated}
+        />
       </ConsoleProvider>,
     );
 
-    fireEvent.click(await screen.findByTestId('studio-counter-url-btn'));
+    await screen.findByTestId('studio-workspace');
+    expect(screen.queryByTestId('studio-counter-url-btn')).toBeNull();
     const urlInput = await screen.findByTestId('counter-url-input');
     fireEvent.change(urlInput, { target: { value: 'http://public.e2e.example/anti-scrape/403' } });
     fireEvent.click(screen.getByTestId('counter-submit-btn'));
@@ -892,11 +906,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         }),
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
-      expect((screen.getByLabelText('目标问题') as HTMLTextAreaElement).value).toBe(
-        '四盘位静音 NAS 噪音功耗实测反制',
-      );
+      expect(onCreated).toHaveBeenCalledWith(counterBrief);
     });
-    expect(screen.getByTestId('studio-brief-item-brief_counter_1')).toBeTruthy();
   });
 
   it('supports Inline Media Popover Tab 1 free product photo insert and Tab 2 5-pt AI image gen & error handling (M4-B #332)', async () => {
@@ -953,7 +964,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     // Tab 1: Free real product photo insert
     fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
     const popover = await screen.findByTestId('studio-media-popover');
-    expect(popover.textContent).toContain('从品牌实拍图插入');
+    expect(popover.textContent).toContain('实拍图');
     fireEvent.click(await screen.findByTestId('studio-media-item-media_photo_1'));
 
     await waitFor(() => {
@@ -976,7 +987,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     // Tab 2: 5-pt AI image gen error (402) keeps popover open & refreshes wallet, then retry succeeds
     fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
     await screen.findByTestId('studio-media-popover');
-    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /AI 配图/ }));
 
     const promptInput = await screen.findByTestId('studio-ai-image-prompt');
     fireEvent.change(promptInput, {
@@ -1098,7 +1109,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
     fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
     await screen.findByTestId('studio-media-popover');
-    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /AI 配图/ }));
 
     fireEvent.change(await screen.findByTestId('studio-ai-image-prompt'), {
       target: { value: '四盘位 NAS 散热风道结构示意图' },
@@ -1156,6 +1167,15 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     render(
       <ConsoleProvider value={makeConsoleContext()}>
         <StudioWorkspace />
+        <CitationCounterModal
+          open={true}
+          brandId="brand_studio_1"
+          market="CN"
+          readOnly={false}
+          mode="url"
+          onClose={vi.fn()}
+          onCreated={vi.fn()}
+        />
       </ConsoleProvider>,
     );
 
@@ -1181,7 +1201,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     // 2. Same-tick rapid double-click on Tab 2 AI Generate -> strictly 1 generateBrandAiImage call
     fireEvent.click(screen.getByTestId('studio-insert-media-btn'));
     await screen.findByTestId('studio-media-popover');
-    fireEvent.click(screen.getByRole('tab', { name: /AI 一键生成配图/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /AI 配图/ }));
     fireEvent.change(await screen.findByTestId('studio-ai-image-prompt'), {
       target: { value: '极简四盘位家用NAS内部风道示意' },
     });
@@ -1217,7 +1237,6 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
 
     // 3. Same-tick rapid double-click on CitationCounterModal submit -> strictly 1 createBriefFromCitationUrl call
-    fireEvent.click(screen.getByTestId('studio-counter-url-btn'));
     fireEvent.change(await screen.findByTestId('counter-url-input'), {
       target: { value: 'https://competitor.example/nas-review' },
     });
@@ -1749,9 +1768,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       </ConsoleProvider>,
     );
 
-    // Open Article A and trigger rewrite preview
+    // Open Article A and trigger rewrite preview via rewrite dropdown -> 去广告
     fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
-    fireEvent.click(await screen.findByRole('button', { name: '更客观去广告味' }));
+    fireEvent.click(await screen.findByTestId('studio-rewrite-dropdown-btn'));
+    fireEvent.click(await screen.findByTestId('studio-rewrite-menu-DE_AD'));
     expect(await screen.findByTestId('studio-rewrite-preview')).toBeTruthy();
 
     // First apply fails -> preview MUST stay open for retry
@@ -1771,7 +1791,8 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(screen.queryByTestId('studio-rewrite-preview')).toBeNull();
 
     // Re-open rewrite preview on Article A, then switch to Article B -> preview clears immediately
-    fireEvent.click(screen.getByRole('button', { name: '更客观去广告味' }));
+    fireEvent.click(screen.getByTestId('studio-rewrite-dropdown-btn'));
+    fireEvent.click(await screen.findByTestId('studio-rewrite-menu-DE_AD'));
     expect(await screen.findByTestId('studio-rewrite-preview')).toBeTruthy();
     fireEvent.click(screen.getByText('第二篇独立对比文章'));
     await waitFor(() => {
@@ -1936,24 +1957,16 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       },
     });
 
-    let resolveStatusPatch!: (art: GeoArticleRecord) => void;
     let resolveBatchCreate!: (job: GeoBatchJobRecord) => void;
     const updateSpy = vi
       .spyOn(studioApi, 'updateArticle')
-      // 1st call: deferred handleChangeStatus on Article A
-      .mockImplementationOnce(
-        () =>
-          new Promise<GeoArticleRecord>((resolve) => {
-            resolveStatusPatch = resolve;
-          }),
-      )
-      // 2nd call: handleBackfillMissingFact preserving edited draftTitle
+      // 1st call: handleBackfillMissingFact preserving edited draftTitle
       .mockImplementationOnce(async (_id, patch) => ({
         ...SAMPLE_ARTICLE,
         title: patch.title ?? SAMPLE_ARTICLE.title,
         contentMarkdown: patch.contentMarkdown ?? SAMPLE_ARTICLE.contentMarkdown,
       }))
-      // 3rd call: handleInsertMedia fails -> popover must stay open
+      // 2nd call: handleInsertMedia fails -> popover must stay open
       .mockRejectedValueOnce(new GatewayApiError(500, -1, '插图保存失败'));
 
     vi.spyOn(studioApi, 'createBatchJob').mockImplementationOnce(
@@ -1969,34 +1982,19 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       </ConsoleProvider>,
     );
 
-    // 1) handleChangeStatus race across article switch (Article A -> Article B before PATCH resolves)
-    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
-    const statusSelect = (await screen.findByLabelText('成稿状态')) as HTMLSelectElement;
-    fireEvent.change(statusSelect, { target: { value: 'READY' } });
-    fireEvent.click(screen.getByText('第二篇独立文章'));
-    await waitFor(() => {
-      expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('第二篇独立文章');
-    });
-    await act(async () => {
-      resolveStatusPatch({ ...SAMPLE_ARTICLE, status: 'READY' });
-      await Promise.resolve();
-    });
-    expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('第二篇独立文章');
-    expect((screen.getByLabelText('成稿状态') as HTMLSelectElement).value).toBe('DRAFT');
-
     // 2) handleBackfillMissingFact preserves edited draftTitle
-    fireEvent.click(screen.getByText('星辰存储 DXP4800 静音实测报告'));
+    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
     const titleInput = (await screen.findByLabelText('文章标题')) as HTMLInputElement;
     fireEvent.change(titleInput, { target: { value: '手动编辑的新标题' } });
     fireEvent.click(await screen.findByTestId('missing-fact-pill'));
     const slotInput = await screen.findByPlaceholderText('输入真实实测数值或参数');
     fireEvent.change(slotInput, { target: { value: '14W' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步事实' }));
     fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
     await waitFor(() => {
-      expect(updateSpy).toHaveBeenCalledTimes(2);
+      expect(updateSpy).toHaveBeenCalledTimes(1);
     });
-    expect(updateSpy.mock.calls[1]?.[1]?.title).toBe('手动编辑的新标题');
+    expect(updateSpy.mock.calls[0]?.[1]?.title).toBe('手动编辑的新标题');
     expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe('手动编辑的新标题');
 
     // 3) handleInsertMedia rejection keeps media popover open for retry
@@ -2004,12 +2002,13 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(await screen.findByTestId('studio-media-popover')).toBeTruthy();
     fireEvent.click(await screen.findByText('产品实拍正面图'));
     await waitFor(() => {
-      expect(updateSpy).toHaveBeenCalledTimes(3);
+      expect(updateSpy).toHaveBeenCalledTimes(2);
       expect(mockNotifyError).toHaveBeenCalled();
     });
     expect(screen.getByTestId('studio-media-popover')).toBeTruthy();
 
     // 4) handleLaunchBatch across brand switch does not pollute Brand B
+    fireEvent.click(screen.getByTestId('studio-batch-mode-btn'));
     const checkboxes = document.querySelectorAll<HTMLInputElement>(
       '[data-testid^="studio-brief-item-"] input[type="checkbox"]',
     );
@@ -2604,19 +2603,17 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(await screen.findByTestId('studio-prewrite-collapsed-bar')).toBeTruthy();
 
     // 2. Restrained [TBD] bar + inline preview span + sticky footer state machine (with TBD)
-    expect(screen.getByTestId('studio-batch-tbd-open-btn').textContent).toContain(
-      '补齐 1 组待补充事实',
-    );
+    expect(screen.getByTestId('studio-batch-tbd-open-btn').textContent).toContain('补齐事实');
     const fallbackDistBtn = screen.getByTestId('studio-go-publish-btn') as HTMLButtonElement;
     expect(fallbackDistBtn.disabled).toBe(false);
-    expect(fallbackDistBtn.textContent).toContain('仍要前往发布中心');
+    expect(fallbackDistBtn.textContent).toContain('仍去发布');
     const previewBody = screen.getByTestId('studio-preview-body');
     expect(previewBody.querySelectorAll('.gm-studio-tbd-inline').length).toBe(1);
 
     // 3. Right pane clean single-column Checkup: shows UX_TERMS.fanOutCoverage ('AI 追问覆盖度') with no delivery tab
     const rightPane = screen.getByTestId('studio-right-pane');
     expect(rightPane.textContent).toContain('AI 追问覆盖度');
-    expect(rightPane.textContent).toContain('GEO 体检与合规');
+    expect(rightPane.textContent).toContain('体检');
     expect(screen.queryByTestId('studio-right-tab-delivery')).toBeNull();
 
     // 4. Focus Mode hides left & right panes and restores them on toggle off
@@ -2659,11 +2656,11 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       expect(screen.queryByTestId('studio-selection-bubble')).toBeNull();
     });
 
-    // 6. Switch to PUBLISHED clean article -> footer switches to primary '前往发布中心 →'
+    // 6. Switch to PUBLISHED clean article -> footer switches to primary '去发布'
     fireEvent.click(screen.getByText('Clean Published Guide'));
     await waitFor(() => {
       expect(screen.queryByTestId('studio-batch-tbd-open-btn')).toBeNull();
-      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('去发布');
     });
 
     // Clicking + 自由选题 auto-expands prewrite bar
@@ -2790,7 +2787,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     // Open PUBLISHED article -> primary footer CTA is studio-go-publish-btn
     fireEvent.click(await screen.findByText('回归测试已发布文章'));
     await waitFor(() => {
-      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('去发布');
     });
 
     // State 6A: expand prewrite manually while existing PUBLISHED article is open -> strictly 1 primary CTA
@@ -2881,7 +2878,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     const valueInput = screen.getByLabelText('补充-保修期');
     fireEvent.change(valueInput, { target: { value: '3 年整机质保' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步事实' }));
     fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
 
     await waitFor(() => {
@@ -2893,7 +2890,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(updatedMd).not.toContain('[待补充：保修期]');
   });
 
-  it('#384 regression (Fix 4): split-mode textarea selection bubble survives document selectionchange', async () => {
+  it('#384 regression (Fix 4): edit-mode textarea selection bubble survives document selectionchange (Y15)', async () => {
     useWorkspaceStore.setState({
       brandsLoading: false,
       brandsLoaded: true,
@@ -2911,10 +2908,9 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
     await screen.findByTestId('studio-preview-body');
 
-    // Switch to 分栏 (split) mode so both textarea and previewBodyRef are mounted simultaneously
-    fireEvent.click(screen.getByText('分栏'));
+    // Switch to 源码 (edit) mode (Y15 removed split mode)
+    fireEvent.click(screen.getByText('源码'));
     const textarea = (await screen.findByLabelText('文章 Markdown 正文')) as HTMLTextAreaElement;
-    expect(screen.getByTestId('studio-preview-body')).toBeTruthy();
 
     textarea.focus();
     textarea.setSelectionRange(0, 12);
@@ -2936,7 +2932,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(promptTextarea.classList.contains('gm-studio-markdown-textarea')).toBe(false);
     expect(textarea.classList.contains('gm-studio-markdown-textarea')).toBe(true);
 
-    // Re-open bubble from split-mode editor textarea, then interact with 目标问题 textarea
+    // Re-open bubble from edit-mode editor textarea, then interact with 目标问题 textarea
     textarea.focus();
     textarea.setSelectionRange(0, 12);
     fireEvent.select(textarea);
@@ -2954,7 +2950,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
 
     // Also verify preview-mode selection bubble is dismissed on non-editor textarea click + selectionchange
-    fireEvent.click(screen.getByText('实时预览'));
+    fireEvent.click(screen.getByText('预览'));
     const previewBody = await screen.findByTestId('studio-preview-body');
     const previewPara = previewBody.querySelector('p');
     expect(previewPara?.firstChild).toBeTruthy();
@@ -3093,7 +3089,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     fireEvent.click(bodySpan);
     const valueInput = await screen.findByLabelText('补充-图注');
     fireEvent.change(valueInput, { target: { value: '18.5dB 实测曲线图' } });
-    fireEvent.click(screen.getByRole('checkbox', { name: '同步存入品牌事实卡' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '同步事实' }));
     fireEvent.click(screen.getByRole('button', { name: '确认填入' }));
 
     await waitFor(() => {
@@ -3198,9 +3194,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     // Strictly 1 primary CTA in workspace even with studio-missing-bar-batch-btn rendered
     const batchFooterBtn = await screen.findByTestId('studio-batch-tbd-open-btn');
-    expect(batchFooterBtn.textContent).toContain('补齐 2 组待补充事实');
+    expect(batchFooterBtn.textContent).toContain('补齐事实');
     const barBatchBtn = screen.getByTestId('studio-missing-bar-batch-btn');
-    expect(barBatchBtn.textContent).toContain('批量补填（2 组）');
+    expect(barBatchBtn.textContent).toContain('批量补填');
+    expect(screen.getByTestId('studio-missing-fact-bar').textContent).toContain('2');
     expect(
       screen.getByTestId('studio-workspace').querySelectorAll('button.ant-btn-primary'),
     ).toHaveLength(1);
@@ -3237,7 +3234,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(updatedMarkdown).toContain('| 官方质保 | 3 年质保 |');
 
     await waitFor(() => {
-      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('去发布');
     });
   });
 

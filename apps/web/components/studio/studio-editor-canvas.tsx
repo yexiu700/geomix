@@ -2,9 +2,7 @@
 
 import {
   BRAND_FACT_CORE_SLOTS,
-  BRAND_FACT_SLOT_LABELS,
   GEO_REWRITE_ACTIONS,
-  GEO_REWRITE_ACTION_LABELS,
   extractMissingFactSlots,
   markdownToSanitizedHtml,
   type BrandFactSlot,
@@ -22,9 +20,10 @@ import type {
 } from 'react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { resolveMediaUrl } from '../../lib/brands';
+import { BRAND_FACT_SLOT_SHORT, GEO_REWRITE_ACTION_SHORT } from '../../lib/short-labels';
 import { rewritePreviewRelativeMediaUrls } from '../../lib/studio';
 import { hasOpenFloatingOverlay } from '../../lib/ux-foundation';
-import { SignalEmpty } from '../geo/primitives';
+import { EmptyState, Explain } from '../ui';
 import { groupMissingFactSlots } from './studio-batch-tbd-helpers';
 
 const PreviewHtmlContent = memo(function PreviewHtmlContent({ html }: { html: string }) {
@@ -74,19 +73,12 @@ export type StudioEditorCanvasProps = {
   onOpenBatchMissingFact?: () => void;
 };
 
-type ViewMode = 'preview' | 'edit' | 'split';
+type ViewMode = 'preview' | 'edit';
 
 type SelectionBubbleState = {
   text: string;
   top: number;
   left: number;
-};
-
-const BUBBLE_ACTION_LABELS: Readonly<Record<GeoRewriteAction, string>> = {
-  DE_AD: '更客观',
-  TO_TABLE: '转表格',
-  ADD_EVIDENCE: '补数据',
-  CONCISE_ANSWER: '精简直答',
 };
 
 const HTML_MISSING_FACT_RE =
@@ -573,7 +565,7 @@ export function StudioEditorCanvas({
             action === 'DE_AD' ? 'studio-rewrite-menu-DE_AD' : `studio-rewrite-${action}`
           }
         >
-          {GEO_REWRITE_ACTION_LABELS[action]}
+          {GEO_REWRITE_ACTION_SHORT[action]}
         </span>
       ),
       onClick: () => {
@@ -593,6 +585,7 @@ export function StudioEditorCanvas({
             {onOpenLeftDrawer ? (
               <Button
                 size="small"
+                autoInsertSpace={false}
                 aria-label="打开选题与成稿队列"
                 data-testid="studio-mobile-queue-btn"
                 onClick={onOpenLeftDrawer}
@@ -603,6 +596,7 @@ export function StudioEditorCanvas({
             {onOpenRightDrawer ? (
               <Button
                 size="small"
+                autoInsertSpace={false}
                 aria-label="打开体检与交付面板"
                 data-testid="studio-mobile-right-btn"
                 onClick={onOpenRightDrawer}
@@ -630,64 +624,77 @@ export function StudioEditorCanvas({
             value={viewMode}
             onChange={(val) => setViewMode(val as ViewMode)}
             options={[
-              { label: '实时预览', value: 'preview' },
-              { label: '编辑 Markdown', value: 'edit' },
-              { label: '分栏', value: 'split' },
+              { label: '预览', value: 'preview' },
+              { label: '源码', value: 'edit' },
             ]}
           />
           {mediaToolbarSlot}
           {article && !streaming ? (
-            <>
+            <Dropdown
+              menu={rewriteMenu}
+              trigger={['click']}
+              disabled={rewriteDisabled}
+              destroyOnHidden
+              transitionName=""
+            >
               <Button
                 size="small"
-                type="text"
-                data-testid="studio-rewrite-DE_AD"
-                loading={rewritingAction === 'DE_AD'}
+                autoInsertSpace={false}
+                aria-label="改写"
+                data-testid="studio-rewrite-dropdown-btn"
+                loading={Boolean(rewritingAction)}
                 disabled={rewriteDisabled}
-                onClick={() => void handleTriggerRewrite('DE_AD')}
               >
-                更客观去广告味
+                改写
               </Button>
-              <Dropdown
-                menu={rewriteMenu}
-                trigger={['click']}
-                disabled={rewriteDisabled}
-                destroyOnHidden
-                transitionName=""
-              >
-                <Button
-                  size="small"
-                  data-testid="studio-rewrite-dropdown-btn"
-                  loading={Boolean(rewritingAction)}
-                  disabled={rewriteDisabled}
-                >
-                  ✨ AI 改写 ▾
-                </Button>
-              </Dropdown>
-            </>
+            </Dropdown>
           ) : null}
           {!isNarrowDrawerViewport && onToggleFocusMode ? (
             <Button
               size="small"
               type="text"
               data-testid="studio-focus-mode-btn"
+              aria-label={focusMode ? '退出专注' : '专注编辑'}
+              title={focusMode ? '退出专注' : '专注编辑'}
               aria-pressed={focusMode}
               onClick={onToggleFocusMode}
-            >
-              {focusMode ? '退出专注' : '专注编辑'}
-            </Button>
+              icon={
+                focusMode ? (
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 2.5V6H2.5M10 2.5V6H13.5M6 13.5V10H2.5M10 13.5V10H13.5"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10V13.5H6M13.5 10V13.5H10"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )
+              }
+            />
           ) : null}
           {article && !readOnly ? (
             <Button
               size="small"
               type="default"
+              autoInsertSpace={false}
               className={dirty ? 'gm-studio-save-dirty' : undefined}
               loading={saving}
               disabled={streaming || !dirty}
               onClick={() => void onSaveArticle()}
               data-testid="studio-save-article-btn"
             >
-              保存修改
+              保存
             </Button>
           ) : null}
         </div>
@@ -708,9 +715,16 @@ export function StudioEditorCanvas({
               showIcon
               data-testid="studio-partial-draft-banner"
               message={
-                partialDraft.refunded
-                  ? '未完成草稿 · 已退还 10 点（已保留已流式输出的正文片段）'
-                  : '未完成草稿 · 流式生成已中断（已保留已输出的正文片段）'
+                <span className="gm-studio-alert-title-row">
+                  <span>未完成草稿</span>
+                  <Explain
+                    text={
+                      partialDraft.refunded
+                        ? '已退还 10 点，已保留流式输出的正文片段'
+                        : '流式生成已中断，已保留已输出的正文片段'
+                    }
+                  />
+                </span>
               }
               description={
                 <div className="gm-studio-stack gm-studio-stack--md">
@@ -727,7 +741,7 @@ export function StudioEditorCanvas({
                         data-testid="studio-copy-partial-draft-btn"
                         onClick={onCopyPartialDraft}
                       >
-                        复制已生成片段
+                        复制片段
                       </Button>
                     ) : null}
                     {onRetryPartialDraft && !readOnly ? (
@@ -741,8 +755,8 @@ export function StudioEditorCanvas({
                       </Button>
                     ) : null}
                     {onDismissPartialDraft ? (
-                      <Button size="small" onClick={onDismissPartialDraft}>
-                        清除草稿提示
+                      <Button size="small" autoInsertSpace={false} onClick={onDismissPartialDraft}>
+                        忽略
                       </Button>
                     ) : null}
                   </div>
@@ -760,7 +774,7 @@ export function StudioEditorCanvas({
             >
               <span className="gm-studio-missing-bar-label">
                 <span className="gm-studio-missing-dot" aria-hidden="true" />
-                <span>待补充 {missingSlots.length} 处真实事实</span>
+                <span>待补 {missingSlots.length} 处</span>
               </span>
               <div className="gm-studio-missing-slots-strip">
                 {missingSlots.map((slot) => {
@@ -799,7 +813,7 @@ export function StudioEditorCanvas({
                             onChange={(e) => setSyncToFact(e.target.checked)}
                             disabled={readOnly || slotSubmitting}
                           >
-                            同步存入品牌事实卡
+                            同步事实
                           </Checkbox>
                           {syncToFact ? (
                             <select
@@ -811,13 +825,17 @@ export function StudioEditorCanvas({
                             >
                               {BRAND_FACT_CORE_SLOTS.map((factSlot) => (
                                 <option key={factSlot} value={factSlot}>
-                                  {BRAND_FACT_SLOT_LABELS[factSlot]}
+                                  {BRAND_FACT_SLOT_SHORT[factSlot]}
                                 </option>
                               ))}
                             </select>
                           ) : null}
                           <div className="gm-studio-row gm-studio-row--end">
-                            <Button size="small" onClick={() => setOpenSlotKey(null)}>
+                            <Button
+                              size="small"
+                              autoInsertSpace={false}
+                              onClick={() => setOpenSlotKey(null)}
+                            >
                               取消
                             </Button>
                             <Button
@@ -845,15 +863,18 @@ export function StudioEditorCanvas({
                 })}
               </div>
               {onOpenBatchMissingFact ? (
-                <Button
-                  size="small"
-                  type="default"
-                  data-testid="studio-missing-bar-batch-btn"
-                  disabled={readOnly}
-                  onClick={onOpenBatchMissingFact}
-                >
-                  批量补填（{missingSlotGroupCount} 组）
-                </Button>
+                <div className="gm-studio-explain-row">
+                  <Button
+                    size="small"
+                    type="default"
+                    data-testid="studio-missing-bar-batch-btn"
+                    disabled={readOnly}
+                    onClick={onOpenBatchMissingFact}
+                  >
+                    批量补填
+                  </Button>
+                  <span className="gm-studio-count-pill gm-num">{missingSlotGroupCount}</span>
+                </div>
               ) : null}
             </div>
           ) : null}
@@ -864,7 +885,7 @@ export function StudioEditorCanvas({
               type="info"
               showIcon
               data-testid="studio-rewrite-preview"
-              message={`局部改写预览 · ${GEO_REWRITE_ACTION_LABELS[rewritePreview.action]}`}
+              message={`改写预览 · ${GEO_REWRITE_ACTION_SHORT[rewritePreview.action]}`}
               description={
                 <div className="gm-studio-stack gm-studio-stack--md">
                   <pre className="gm-studio-rewrite-pre">{rewritePreview.rewritten}</pre>
@@ -886,7 +907,11 @@ export function StudioEditorCanvas({
                     >
                       应用替换
                     </Button>
-                    <Button size="small" onClick={() => setRewritePreview(null)}>
+                    <Button
+                      size="small"
+                      autoInsertSpace={false}
+                      onClick={() => setRewritePreview(null)}
+                    >
                       放弃
                     </Button>
                   </div>
@@ -897,9 +922,9 @@ export function StudioEditorCanvas({
 
           {/* Editor / Live Preview Area */}
           {!hasContent ? (
-            <SignalEmpty
-              title="选择意见卡或输入问题开始流式精写"
-              description="系统自动注入当前品牌事实卡与市场合规规则，点击「立即生成」实时吐字成稿。"
+            <EmptyState
+              title="开始写作"
+              description="选择意见卡或输入目标问题，系统自动注入品牌事实卡与市场合规规则，点击「生成」实时吐字成稿。"
             />
           ) : viewMode === 'edit' && !streaming ? (
             <div className="gm-studio-markdown-measure">
@@ -918,34 +943,6 @@ export function StudioEditorCanvas({
                 onKeyUp={(e) => reportCursorOffset(e.currentTarget)}
                 disabled={readOnly}
               />
-            </div>
-          ) : viewMode === 'split' && !streaming ? (
-            <div className="gm-studio-split-view">
-              <Input.TextArea
-                aria-label="文章 Markdown 正文"
-                className="gm-studio-markdown-textarea"
-                rows={18}
-                value={draftMarkdown}
-                onChange={(e) => {
-                  onDraftMarkdownChange(e.target.value);
-                  reportCursorOffset(e.currentTarget);
-                }}
-                onSelect={handleTextareaSelect}
-                onMouseUp={handleTextareaMouseUp}
-                onClick={(e) => reportCursorOffset(e.currentTarget)}
-                onKeyUp={(e) => reportCursorOffset(e.currentTarget)}
-                disabled={readOnly}
-              />
-              <div
-                ref={previewBodyRef}
-                className="gm-studio-preview-body"
-                data-testid="studio-preview-body"
-                onMouseUp={handlePreviewMouseUp}
-                onClick={handlePreviewClick}
-                onKeyDown={handlePreviewKeyDown}
-              >
-                <PreviewHtmlContent html={renderedHtml} />
-              </div>
             </div>
           ) : (
             <div
@@ -983,7 +980,7 @@ export function StudioEditorCanvas({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => void handleTriggerRewrite(action, bubbleState.text)}
             >
-              {BUBBLE_ACTION_LABELS[action]}
+              {GEO_REWRITE_ACTION_SHORT[action]}
             </button>
           ))}
         </div>

@@ -21,6 +21,7 @@ import { generateBrandAiImage, resolveMediaUrl } from '../../lib/brands';
 import { GatewayApiError } from '../../lib/envelope';
 import { createStudioIdempotencyKey } from '../../lib/studio';
 import { SignalSkeleton } from '../geo/primitives';
+import { CostChip, Explain } from '../ui';
 
 export type StudioMediaPopoverProps = {
   brandId: string;
@@ -218,14 +219,19 @@ export function StudioMediaPopover({
         items={[
           {
             key: 'library',
-            label: '从品牌实拍图插入（免费）',
+            label: '实拍图',
             children: (
               <div className="gm-studio-stack gm-studio-stack--md">
                 <div className="gm-studio-media-head">
-                  <span>双市场共享 · 点击即插入正文（0 点）</span>
+                  <span className="gm-studio-explain-row">
+                    <span>点击插入</span>
+                    <CostChip points={0} />
+                    <Explain text="双市场共享品牌实拍图，点击即插入正文（0 点）" />
+                  </span>
                   <Button
                     size="small"
                     type="link"
+                    autoInsertSpace={false}
                     className="gm-studio-link-compact"
                     loading={mediaLoading}
                     onClick={() => void onRefreshMedia()}
@@ -236,8 +242,9 @@ export function StudioMediaPopover({
                 {mediaLoading && mediaItems.length === 0 ? (
                   <SignalSkeleton variant="row" rows={2} />
                 ) : mediaItems.length === 0 ? (
-                  <div className="gm-studio-media-empty">
-                    暂无品牌图片，可在「品牌资产」上传产品实拍图，或切至右侧 AI 生成配图。
+                  <div className="gm-studio-media-empty gm-studio-explain-row">
+                    <span>暂无图片</span>
+                    <Explain text="可在「品牌」上传产品实拍图，或切至右侧「AI 配图」按需生成。" />
                   </div>
                 ) : (
                   <div className="gm-studio-media-grid">
@@ -276,11 +283,14 @@ export function StudioMediaPopover({
           },
           {
             key: 'ai-gen',
-            label: `AI 一键生成配图（${AI_IMAGE_DEFAULT_UNIT_POINTS} 点/张）`,
+            label: 'AI 配图',
             children: (
               <div className="gm-studio-media-ai-form">
-                <div className="gm-studio-text-muted">
-                  按需可选 · {AI_IMAGE_DEFAULT_UNIT_POINTS} 点/张，生成失败自动全额退点
+                <div className="gm-studio-explain-row gm-studio-text-muted">
+                  <CostChip points={AI_IMAGE_DEFAULT_UNIT_POINTS} />
+                  <Explain
+                    text={`按需可选 · ${AI_IMAGE_DEFAULT_UNIT_POINTS} 点/张，生成失败自动全额退点`}
+                  />
                 </div>
                 {aiError ? (
                   <Alert
@@ -339,16 +349,19 @@ export function StudioMediaPopover({
                     ))}
                   </select>
                 </div>
-                <Button
-                  type="primary"
-                  block
-                  loading={generating}
-                  disabled={readOnly || generating || prompt.trim().length < AI_IMAGE_PROMPT_MIN}
-                  data-testid="studio-ai-image-gen-btn"
-                  onClick={() => void handleGenerateAiImage()}
-                >
-                  AI 生成并插入（{AI_IMAGE_DEFAULT_UNIT_POINTS} 点）
-                </Button>
+                <div className="gm-studio-batch-footer-row">
+                  <CostChip points={AI_IMAGE_DEFAULT_UNIT_POINTS} />
+                  <Button
+                    type="primary"
+                    block
+                    loading={generating}
+                    disabled={readOnly || generating || prompt.trim().length < AI_IMAGE_PROMPT_MIN}
+                    data-testid="studio-ai-image-gen-btn"
+                    onClick={() => void handleGenerateAiImage()}
+                  >
+                    生成插入
+                  </Button>
+                </div>
               </div>
             ),
           },

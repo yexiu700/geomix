@@ -5,8 +5,6 @@ import {
   GEO_ARTICLE_STATUS_LABELS,
   GEO_BATCH_MAX,
   GEO_BATCH_MIN,
-  GEO_BRIEF_SOURCE_LABELS,
-  GEO_RECIPE_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
   TASK_STATUS_LABELS,
   formatShanghaiDateTime,
@@ -17,9 +15,12 @@ import {
   type GeoBriefRecord,
 } from '@geomix/shared';
 import { Button, Checkbox, Input, Progress, Tag } from 'antd';
-import type { JSX, ReactNode } from 'react';
+import type { JSX } from 'react';
+import { useEffect, useState } from 'react';
+import { GEO_BRIEF_SOURCE_SHORT, GEO_RECIPE_SHORT } from '../../lib/short-labels';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { SignalPill, SignalSkeleton } from '../geo/primitives';
+import { CostChip, EmptyState, Explain } from '../ui';
 
 export type StudioLeftPaneProps = {
   collapsed: boolean;
@@ -46,7 +47,6 @@ export type StudioLeftPaneProps = {
   onSelectArticle: (article: GeoArticleRecord) => void;
   onDeleteArticle: (article: GeoArticleRecord) => Promise<void>;
   readOnly: boolean;
-  counterEntrySlot?: ReactNode;
 };
 
 export function StudioLeftPane({
@@ -74,11 +74,18 @@ export function StudioLeftPane({
   onSelectArticle,
   onDeleteArticle,
   readOnly,
-  counterEntrySlot,
 }: StudioLeftPaneProps): JSX.Element {
   const feedback = useUxFeedback();
+  const [batchMode, setBatchMode] = useState(false);
   const selectedSet = new Set(selectedBriefIds);
   const openBriefs = briefs.filter((b) => b.status === 'OPEN');
+  const showBatchSelect = batchMode || selectedBriefIds.length > 0;
+
+  useEffect(() => {
+    if (openBriefs.length === 0) {
+      setBatchMode(false);
+    }
+  }, [openBriefs.length]);
 
   const toggleBrief = (briefId: string) => {
     if (selectedSet.has(briefId)) {
@@ -150,10 +157,17 @@ export function StudioLeftPane({
       data-testid="studio-left-pane"
     >
       <div className="gm-studio-pane-head">
-        <span className="gm-studio-pane-title">选题与成稿队列</span>
+        <span className="gm-studio-pane-title">队列</span>
         {!hideCollapseToggle ? (
-          <Button size="small" type="text" aria-expanded={true} onClick={onToggleCollapse}>
-            收起队列
+          <Button
+            size="small"
+            type="text"
+            autoInsertSpace={false}
+            aria-label="收起队列"
+            aria-expanded={true}
+            onClick={onToggleCollapse}
+          >
+            收起
           </Button>
         ) : null}
       </div>
@@ -162,16 +176,15 @@ export function StudioLeftPane({
         {/* Quick Entry Strip */}
         <div className="gm-studio-chip-group">
           <Button size="small" onClick={onStartFreeTopic} data-testid="studio-free-topic-btn">
-            + 自由选题
+            自由选题
           </Button>
-          {counterEntrySlot}
         </div>
 
         {/* Active / Highlighted Batch Job Progress */}
         {visibleBatchJob ? (
           <div className="gm-studio-batch-card" data-testid="studio-batch-progress">
             <div className="gm-studio-section-label">
-              <span>批量队列进度</span>
+              <span>批量进度</span>
               <SignalPill
                 tone={
                   visibleBatchJob.status === 'COMPLETED'
@@ -219,29 +232,61 @@ export function StudioLeftPane({
           </div>
         ) : null}
 
-        {/* Section 1: Pending GeoBriefs (Checkboxes MUST be the first checkboxes in default DOM!) */}
+        {/* Section 1: Pending GeoBriefs (Checkboxes shown on demand in batchMode per Y21) */}
         <div className="gm-studio-section-label">
-          <span>待写意见卡 ({openBriefs.length})</span>
+          <span>待写 ({openBriefs.length})</span>
           {openBriefs.length > 0 && !readOnly ? (
             <div className="gm-studio-row">
-              <Button
-                size="small"
-                type="link"
-                className="gm-studio-link-compact"
-                onClick={handleSelectAllOpen}
-              >
-                全选
-              </Button>
-              {selectedBriefIds.length > 0 ? (
+              {!showBatchSelect ? (
                 <Button
                   size="small"
                   type="link"
+                  autoInsertSpace={false}
                   className="gm-studio-link-compact"
-                  onClick={() => onSelectedBriefIdsChange([])}
+                  data-testid="studio-batch-mode-btn"
+                  onClick={() => setBatchMode(true)}
                 >
-                  清空
+                  批量
                 </Button>
-              ) : null}
+              ) : (
+                <>
+                  <Button
+                    size="small"
+                    type="link"
+                    autoInsertSpace={false}
+                    className="gm-studio-link-compact"
+                    onClick={handleSelectAllOpen}
+                  >
+                    全选
+                  </Button>
+                  {selectedBriefIds.length > 0 ? (
+                    <Button
+                      size="small"
+                      type="link"
+                      autoInsertSpace={false}
+                      className="gm-studio-link-compact"
+                      onClick={() => onSelectedBriefIdsChange([])}
+                    >
+                      清空
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="small"
+                    type="link"
+                    autoInsertSpace={false}
+                    className="gm-studio-link-compact"
+                    data-testid="studio-batch-mode-cancel-btn"
+                    onClick={() => {
+                      setBatchMode(false);
+                      if (selectedBriefIds.length > 0) {
+                        onSelectedBriefIdsChange([]);
+                      }
+                    }}
+                  >
+                    取消
+                  </Button>
+                </>
+              )}
             </div>
           ) : null}
         </div>
@@ -263,12 +308,14 @@ export function StudioLeftPane({
                   className={`gm-studio-queue-item${isActive ? ' gm-studio-queue-item-active' : ''}`}
                   data-testid={`studio-brief-item-${brief.id}`}
                 >
-                  <Checkbox
-                    aria-label={`选择意见卡-${safeTitle}`}
-                    checked={checked}
-                    disabled={readOnly || (!checked && selectedBriefIds.length >= GEO_BATCH_MAX)}
-                    onChange={() => toggleBrief(brief.id)}
-                  />
+                  {showBatchSelect ? (
+                    <Checkbox
+                      aria-label={`选择意见卡-${safeTitle}`}
+                      checked={checked}
+                      disabled={readOnly || (!checked && selectedBriefIds.length >= GEO_BATCH_MAX)}
+                      onChange={() => toggleBrief(brief.id)}
+                    />
+                  ) : null}
                   <button
                     type="button"
                     className="gm-studio-queue-btn"
@@ -277,29 +324,42 @@ export function StudioLeftPane({
                     <span className="gm-studio-item-title">{safeTitle}</span>
                     <span className="gm-studio-item-meta">
                       <span>P{brief.priorityScore}</span>
-                      <span>{GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}</span>
+                      <span>{GEO_BRIEF_SOURCE_SHORT[brief.sourceType]}</span>
                     </span>
                   </button>
                 </div>
               );
             })}
 
-            <Button
-              type="default"
-              size="small"
-              block
-              data-testid="studio-batch-btn"
-              loading={batchSubmitting}
-              disabled={!canBatch}
-              onClick={onLaunchBatch}
-            >
-              {selectedBriefIds.length > 0
-                ? `批量生成（${selectedBriefIds.length} 篇 · ${selectedBriefIds.length * GEO_WRITE_DEFAULT_UNIT_POINTS} 点）`
-                : '批量生成（请选 2–20 篇）'}
-            </Button>
+            {showBatchSelect ? (
+              <div className="gm-studio-batch-footer-row">
+                <Button
+                  type="default"
+                  size="small"
+                  block
+                  data-testid="studio-batch-btn"
+                  loading={batchSubmitting}
+                  disabled={!canBatch}
+                  onClick={onLaunchBatch}
+                >
+                  批量生成
+                </Button>
+                {selectedBriefIds.length > 0 ? (
+                  <CostChip
+                    points={selectedBriefIds.length * GEO_WRITE_DEFAULT_UNIT_POINTS}
+                    data-testid="studio-batch-cost-chip"
+                  />
+                ) : (
+                  <Explain text={`选择 ${GEO_BATCH_MIN}–${GEO_BATCH_MAX} 篇意见卡可批量队列生成`} />
+                )}
+              </div>
+            ) : null}
           </div>
         ) : (
-          <div className="gm-studio-item-meta">暂无待写意见卡，可直接自由选题生成。</div>
+          <div className="gm-studio-explain-row gm-studio-item-meta">
+            <span>暂无待写</span>
+            <Explain text="暂无待写意见卡，可直接自由选题生成。" />
+          </div>
         )}
 
         {/* Section 2: Historical GeoArticles (always visible, zero legacy columns!) */}
@@ -361,6 +421,7 @@ export function StudioLeftPane({
                         size="small"
                         type="text"
                         danger
+                        autoInsertSpace={false}
                         aria-label={`删除文章-${safeTitle}`}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -375,7 +436,7 @@ export function StudioLeftPane({
                     <Tag className="gm-studio-tag-reset">
                       {GEO_ARTICLE_STATUS_LABELS[article.status]}
                     </Tag>
-                    <span>{GEO_RECIPE_LABELS[article.recipe]}</span>
+                    <span>{GEO_RECIPE_SHORT[article.recipe]}</span>
                     {article.geoScore > 0 ? <span>GEO {article.geoScore}</span> : null}
                     <span>{formatShanghaiDateTime(article.updatedAt)}</span>
                   </div>
@@ -384,9 +445,10 @@ export function StudioLeftPane({
             })}
           </div>
         ) : (
-          <SignalEmpty
-            title="暂无历史成稿"
-            description="点击上方「立即生成」产出首篇高引用 GEO 成稿。"
+          <EmptyState
+            size="compact"
+            title="暂无成稿"
+            description="点击上方「生成」产出首篇高引用 GEO 成稿。"
           />
         )}
       </div>

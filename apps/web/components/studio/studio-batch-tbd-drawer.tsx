@@ -1,9 +1,10 @@
 'use client';
 
-import { BRAND_FACT_CORE_SLOTS, BRAND_FACT_SLOT_LABELS, type BrandFactSlot } from '@geomix/shared';
+import { BRAND_FACT_CORE_SLOTS, type BrandFactSlot } from '@geomix/shared';
 import { Button, Checkbox, Drawer, Input } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { StatusBadge } from '../ui';
+import { BRAND_FACT_SLOT_SHORT } from '../../lib/short-labels';
+import { Explain, StatusBadge } from '../ui';
 import type { MissingFactSlotGroup } from './studio-batch-tbd-helpers';
 
 export type BatchTbdSubmitEntry = {
@@ -88,10 +89,10 @@ export function StudioBatchTbdDrawer({
       destroyOnHidden
       keyboard={!submitting}
       maskClosable={!submitting}
-      title="批量补全待补充事实"
+      title="批量补填"
       footer={
         <div className="gm-studio-batch-tbd-footer">
-          <Button disabled={submitting} onClick={onClose}>
+          <Button autoInsertSpace={false} disabled={submitting} onClick={onClose}>
             取消
           </Button>
           <Button
@@ -101,16 +102,20 @@ export function StudioBatchTbdDrawer({
             disabled={readOnly || filledEntries.length === 0}
             onClick={() => void handleConfirm()}
           >
-            一键填入全部并保存
+            全部保存
           </Button>
         </div>
       }
     >
       <div className="gm-studio-batch-tbd-body" data-testid="studio-batch-tbd-drawer">
-        <p className="gm-studio-text-secondary">
-          已自动合并正文中的同名占位符：共 {groups.length} 组待补事实（覆盖 {totalOccurrences}{' '}
-          处正文位置）。可按需部分或全部填写，留空项会保持原占位不变。
-        </p>
+        <div className="gm-studio-explain-row gm-studio-text-secondary">
+          <span>
+            共 {groups.length} 组 · {totalOccurrences} 处
+          </span>
+          <Explain
+            text={`已自动合并正文中的同名占位符：共 ${groups.length} 组待补事实（覆盖 ${totalOccurrences} 处正文位置）。可按需部分或全部填写，留空项会保持原占位不变。`}
+          />
+        </div>
 
         <div className="gm-studio-batch-tbd-list">
           {groups.map((group) => (
@@ -155,11 +160,11 @@ export function StudioBatchTbdDrawer({
             disabled={readOnly || submitting}
             onChange={(event) => setSyncToFact(event.target.checked)}
           >
-            同步反哺品牌事实卡
+            同步事实
           </Checkbox>
           {syncToFact ? (
             <label className="gm-studio-batch-tbd-slot-row">
-              <span className="gm-studio-text-secondary">写入事实卡分类</span>
+              <span className="gm-studio-text-secondary">写入分类</span>
               <select
                 aria-label="反哺事实卡分类"
                 className="gm-select"
@@ -169,7 +174,7 @@ export function StudioBatchTbdDrawer({
               >
                 {BRAND_FACT_CORE_SLOTS.map((slot) => (
                   <option key={slot} value={slot}>
-                    {BRAND_FACT_SLOT_LABELS[slot]}
+                    {BRAND_FACT_SLOT_SHORT[slot]}
                   </option>
                 ))}
               </select>

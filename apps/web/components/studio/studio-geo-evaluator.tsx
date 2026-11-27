@@ -10,7 +10,7 @@ import {
 } from '@geomix/shared';
 import { Button, Tooltip } from 'antd';
 import type { JSX } from 'react';
-import { StatusBadge } from '../ui';
+import { CostChip, StatusBadge } from '../ui';
 
 export type StudioGeoEvaluatorProps = {
   article: GeoArticleRecord | null;
@@ -73,9 +73,9 @@ export function StudioGeoEvaluator({
           disabled={!article || streaming || readOnly}
           onClick={() => void onRefreshEvaluate()}
         >
-          实时刷新体检
+          重新体检
         </Button>
-        <span className="gm-studio-eval-free-note">免费诊断</span>
+        <CostChip points={0} />
       </div>
 
       {hints.length > 0 ? (
@@ -118,9 +118,10 @@ export function StudioGeoEvaluator({
                   <Button
                     size="small"
                     type="link"
+                    autoInsertSpace={false}
                     className="gm-studio-link-compact"
                     data-testid="fanout-supplement-btn"
-                    aria-label={`一键补写小节-${term}`}
+                    aria-label={`补写-${term}`}
                     loading={supplementingTerm === term}
                     disabled={
                       !article ||
@@ -130,7 +131,7 @@ export function StudioGeoEvaluator({
                     }
                     onClick={() => void onSupplementFanOut(term)}
                   >
-                    一键补写小节
+                    补写
                   </Button>
                 </div>
               ))}

@@ -63,10 +63,10 @@ import {
 } from '../../lib/workspace-store';
 import { ProductLineSelectorPill } from '../brands/product-line-selector-pill';
 import { QuickFactExtractModal } from '../brands/quick-fact-extract-modal';
-import { CitationCounterModal } from '../briefs/citation-counter-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
+import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
+import { EmptyState } from '../ui';
 import { StudioBatchTbdDrawer, type BatchTbdSubmitEntry } from './studio-batch-tbd-drawer';
 import { batchReplaceMissingFactSlots, groupMissingFactSlots } from './studio-batch-tbd-helpers';
 import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
@@ -77,7 +77,6 @@ import { StudioPrewriteBar } from './studio-prewrite-bar';
 import { StudioRightPane } from './studio-right-pane';
 
 export type StudioWorkspaceExtensionSlots = {
-  counterEntrySlot?: ReactNode;
   mediaToolbarSlot?: ReactNode;
   evaluatorSlot?: ReactNode;
 };
@@ -200,7 +199,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [brandFacts, setBrandFacts] = useState<BrandFactRecord[]>([]);
   const [brandMedia, setBrandMedia] = useState<BrandMediaAssetRecord[]>([]);
   const [brandMediaLoading, setBrandMediaLoading] = useState(false);
-  const [counterModalOpen, setCounterModalOpen] = useState(false);
   const [quickExtractModalOpen, setQuickExtractModalOpen] = useState(false);
   const [batchTbdDrawerOpen, setBatchTbdDrawerOpen] = useState(false);
   const [promptPreference, setPromptPreference] = useState<PromptPreferenceRecord>(EMPTY_PREF);
@@ -250,7 +248,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     defaultTargetFormatForMarket(activeMarket),
   );
   const [targetLocale, setTargetLocale] = useState<SupportedLocale>(() => defaultTargetLocale);
-  const [wordCountTarget, setWordCountTarget] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     setTargetLocale((prev) => (availableLocales.includes(prev) ? prev : defaultTargetLocale));
@@ -753,7 +750,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setEvaluation(null);
     setEvaluating(false);
     setSupplementingTerm(null);
-    setCounterModalOpen(false);
     setQuickExtractModalOpen(false);
     setBatchTbdDrawerOpen(false);
     checkingFactsRef.current = false;
@@ -1169,7 +1165,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           targetPrompt: promptTrimmed,
           ...(outlineH2.length > 0 ? { outlineH2 } : {}),
           ...(targetFanOuts.length > 0 ? { targetFanOuts } : {}),
-          ...(wordCountTarget ? { wordCountTarget } : {}),
           ...(showLocaleSelector && targetLocale ? { targetLocale } : {}),
         },
         {
@@ -1405,14 +1400,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   }, [activeBrandId]);
 
-  const handleCounterBriefCreated = (created: GeoBriefRecord) => {
-    setCounterModalOpen(false);
-    setBriefs((prev) => [created, ...prev.filter((b) => b.id !== created.id)]);
-    applyBriefToPrewrite(created);
-    feedback.notifySuccess('已生成竞品高引用反制意见，已载入写前确认条（0 点免费）');
-    invalidateFreshness('briefs');
-  };
-
   const handleInsertMedia = async (asset: BrandMediaAssetRecord) => {
     if (!activeArticle || readOnly || insertingMediaRef.current) return;
     insertingMediaRef.current = true;
@@ -1490,41 +1477,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     } catch (err) {
       if (seq !== contextSeqRef.current) return;
       feedback.notifyError(formatStudioError(err, '删除成稿失败'));
-    }
-  };
-
-  const handleChangeStatus = async (status: GeoArticleStatus) => {
-    if (!activeArticle || readOnly) return;
-    const targetArticle = activeArticle;
-    const seq = contextSeqRef.current;
-    const artSeq = articleSeqRef.current;
-    try {
-      const updated = await updateArticle(targetArticle.id, { status });
-      invalidateFreshness('articles');
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
-      setActiveArticle(updated);
-      setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-      feedback.notifySuccess('已更新文章状态');
-    } catch (err) {
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
-      feedback.notifyError(formatStudioError(err, '更新文章状态失败'));
-    }
-  };
-
-  const handleChangeTags = async (tags: string[]) => {
-    if (!activeArticle || readOnly) return;
-    const targetArticle = activeArticle;
-    const seq = contextSeqRef.current;
-    const artSeq = articleSeqRef.current;
-    try {
-      const updated = await updateArticle(targetArticle.id, { tags });
-      invalidateFreshness('articles');
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
-      setActiveArticle(updated);
-      setArticles((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
-    } catch (err) {
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
-      feedback.notifyError(formatStudioError(err, '更新标签失败'));
     }
   };
 
@@ -2023,7 +1975,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         } else {
           const editLabel = Array.from(
             pane.querySelectorAll<HTMLElement>('.ant-segmented-item'),
-          ).find((el) => el.textContent?.includes('编辑 Markdown'));
+          ).find((el) => el.textContent?.includes('源码'));
           if (editLabel) {
             editLabel.click();
             if (editorFocusTimerRef.current) {
@@ -2120,11 +2072,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     return (
       <section className="gm-studio-page gm-studio-page--empty" aria-label="GEO 写作台">
         <div className="gm-panel">
-          <SignalEmpty
-            title="尚未创建品牌资产"
+          <EmptyState
+            title="暂无品牌"
             description="先用 60 秒完成品牌与事实卡建档，即可在 GEO 写作台开启实时流式精写与双轨合规交付。"
-            actionText={readOnly ? undefined : '立即创建首个品牌'}
-            onAction={readOnly ? undefined : () => consoleCtx?.openCreateBrandModal()}
+            action={
+              readOnly ? undefined : (
+                <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
+                  新建品牌
+                </Button>
+              )
+            }
           />
         </div>
       </section>
@@ -2150,20 +2107,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setMobileRightDrawerOpen(false);
     consoleCtx?.navigateWorkspace(`/publish?articleId=${encodeURIComponent(targetArticleId)}`);
   };
-
-  const counterEntryNode = slots?.counterEntrySlot ?? (
-    <Button
-      size="small"
-      data-testid="studio-counter-url-btn"
-      disabled={readOnly || streaming}
-      onClick={() => {
-        setMobileLeftDrawerOpen(false);
-        setCounterModalOpen(true);
-      }}
-    >
-      竞品 URL 反制
-    </Button>
-  );
 
   const renderLeftPane = (inDrawer: boolean) => (
     <StudioLeftPane
@@ -2194,7 +2137,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       onSelectArticle={applyArticleToCanvas}
       onDeleteArticle={handleDeleteArticle}
       readOnly={readOnly}
-      counterEntrySlot={counterEntryNode}
     />
   );
 
@@ -2208,8 +2150,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       matchedFactIds={matchedFactIds}
       missingSlotCount={missingSlotCount}
       navigatingPublish={navigatingPublish}
-      onChangeStatus={handleChangeStatus}
-      onChangeTags={handleChangeTags}
       onFocusMissingFacts={() => {
         setMobileRightDrawerOpen(false);
         setBatchTbdDrawerOpen(true);
@@ -2274,8 +2214,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             onRecipeChange={setRecipe}
             targetFormat={targetFormat}
             onTargetFormatChange={setTargetFormat}
-            wordCountTarget={wordCountTarget}
-            onWordCountTargetChange={setWordCountTarget}
             promptPreference={promptPreference}
             prefsSaving={prefsSaving}
             onSavePromptPreference={handleSavePromptPreference}
@@ -2366,7 +2304,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             keyboard
             destroyOnHidden
             width={320}
-            title="选题与成稿队列"
+            title="队列"
             classNames={{ body: 'gm-studio-drawer-body' }}
           >
             {renderLeftPane(true)}
@@ -2378,24 +2316,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             keyboard
             destroyOnHidden
             width={340}
-            title="GEO 体检与合规"
+            title="体检"
             classNames={{ body: 'gm-studio-drawer-body' }}
           >
             {renderRightPane()}
           </Drawer>
         </>
       ) : null}
-
-      <CitationCounterModal
-        open={counterModalOpen}
-        brandId={activeBrand.id}
-        market={activeMarket}
-        productLineId={activeProductLineId}
-        readOnly={readOnly}
-        mode="url"
-        onClose={() => setCounterModalOpen(false)}
-        onCreated={handleCounterBriefCreated}
-      />
 
       <QuickFactExtractModal
         open={quickExtractModalOpen}

@@ -1,23 +1,17 @@
 'use client';
 
 import {
-  GEO_ARTICLE_STATUSES,
-  GEO_ARTICLE_STATUS_LABELS,
   GEO_SCORE_DIMENSION_KEYS,
   UX_GLOSSARY_TOOLTIPS,
   UX_TERMS,
-  countArticleWords,
-  formatShanghaiDateTime,
   type BrandFactRecord,
   type GeoArticleRecord,
-  type GeoArticleStatus,
   type GeoMarket,
   type GeoScoreDetail,
 } from '@geomix/shared';
-import { Button, Input, Progress, Tag, Tooltip } from 'antd';
+import { Button, Progress, Tag, Tooltip } from 'antd';
 import type { JSX, ReactNode } from 'react';
-import { useState } from 'react';
-import { StatusBadge } from '../ui';
+import { Explain, StatusBadge } from '../ui';
 
 export type StudioRightPaneProps = {
   activeMarket: GeoMarket;
@@ -28,8 +22,6 @@ export type StudioRightPaneProps = {
   matchedFactIds: readonly string[];
   missingSlotCount?: number;
   navigatingPublish?: boolean;
-  onChangeStatus: (status: GeoArticleStatus) => Promise<void>;
-  onChangeTags: (tags: string[]) => Promise<void>;
   onFocusMissingFacts?: () => void;
   onNavigatePublish?: () => void;
   readOnly: boolean;
@@ -52,36 +44,16 @@ export function StudioRightPane({
   matchedFactIds,
   missingSlotCount = 0,
   navigatingPublish = false,
-  onChangeStatus,
-  onChangeTags,
   onFocusMissingFacts,
   onNavigatePublish,
-  readOnly,
+  readOnly: _readOnly,
   evaluatorSlot,
 }: StudioRightPaneProps): JSX.Element {
-  const [newTag, setNewTag] = useState('');
-
   const scoreDetail = article ? readScoreDetail(article.geoScoreDetail) : null;
   const factTitleMap = new Map(brandFacts.map((f) => [f.id, f.title]));
   const matchedFacts = matchedFactIds
     .map((id) => factTitleMap.get(id))
     .filter((title): title is string => Boolean(title));
-  const wordCount = article ? countArticleWords(article.contentHtml || article.contentMarkdown) : 0;
-
-  const handleAddTag = async () => {
-    if (!article || readOnly) return;
-    const trimmed = newTag.trim();
-    if (!trimmed) return;
-    if (!article.tags.includes(trimmed)) {
-      await onChangeTags([...article.tags, trimmed]);
-    }
-    setNewTag('');
-  };
-
-  const handleRemoveTag = async (tag: string) => {
-    if (!article || readOnly) return;
-    await onChangeTags(article.tags.filter((t) => t !== tag));
-  };
 
   const scoreTone = article
     ? article.geoScore >= 85
@@ -98,7 +70,7 @@ export function StudioRightPane({
       data-testid="studio-right-pane"
     >
       <div className="gm-studio-pane-head">
-        <span className="gm-studio-pane-title">GEO 体检与合规</span>
+        <span className="gm-studio-pane-title">体检</span>
       </div>
 
       {/* Independent Scrollable Right Body */}
@@ -106,7 +78,7 @@ export function StudioRightPane({
         <div className="gm-studio-right-section">
           {/* Card 1: GEO 0-100 Score Overview */}
           <div className="gm-studio-right-card">
-            <span className="gm-studio-section-label">GEO 引用就绪度评分</span>
+            <span className="gm-studio-section-label">GEO 分</span>
             {article ? (
               <>
                 <div className="gm-studio-score-hero">
@@ -117,11 +89,7 @@ export function StudioRightPane({
                     <span className="gm-studio-score-denom">/ 100</span>
                   </div>
                   <StatusBadge tone={scoreTone}>
-                    {article.geoScore >= 85
-                      ? '高引用就绪'
-                      : article.geoScore >= 60
-                        ? '建议优化'
-                        : '待补强'}
+                    {article.geoScore >= 85 ? '就绪' : article.geoScore >= 60 ? '待优化' : '待补强'}
                   </StatusBadge>
                 </div>
                 {scoreDetail ? (
@@ -161,18 +129,28 @@ export function StudioRightPane({
                 ) : null}
               </>
             ) : (
-              <div className="gm-studio-item-meta">生成或选择成稿后实时展示 5 维 GEO 体检分。</div>
+              <div className="gm-studio-explain-row gm-studio-item-meta">
+                <span>暂无体检</span>
+                <Explain text="生成或选择成稿后实时展示 5 维 GEO 体检分。" />
+              </div>
             )}
             {evaluatorSlot}
           </div>
 
           {/* Card 2: Dual-Track Compliance & Matched Facts */}
           <div className="gm-studio-right-card">
-            <span className="gm-studio-section-label">双轨合规状态</span>
+            <span className="gm-studio-section-label gm-studio-explain-row">
+              <span>合规</span>
+              <Explain
+                text={
+                  activeMarket === 'GLOBAL'
+                    ? 'GLOBAL FTC 客观评测轨（保留 Best / Top / 100% 实测规格）'
+                    : '中国广告法合规轨（自动拦截违禁行业并软化绝对化用语）'
+                }
+              />
+            </span>
             <div className="gm-studio-flag-item" data-testid="studio-compliance-track">
-              {activeMarket === 'GLOBAL'
-                ? '🌐 GLOBAL FTC 客观评测轨（保留 Best / Top / 100% 实测规格）'
-                : '🇨🇳 中国广告法合规轨（自动拦截违禁行业并软化绝对化用语）'}
+              {activeMarket === 'GLOBAL' ? 'FTC 客观轨' : '广告法合规'}
             </div>
 
             {article ? (
@@ -198,13 +176,13 @@ export function StudioRightPane({
                   ))}
                 </div>
               ) : (
-                <div className="gm-studio-text-success">合规检查通过，无风险词残留</div>
+                <div className="gm-studio-text-success">合规通过</div>
               )
             ) : null}
 
             {matchedFacts.length > 0 ? (
               <div className="gm-studio-stack gm-studio-stack--sm">
-                <span className="gm-studio-section-label">已注入品牌事实卡</span>
+                <span className="gm-studio-section-label">已用事实</span>
                 <div className="gm-studio-chip-group">
                   {matchedFacts.map((title) => (
                     <Tag key={title} className="gm-studio-tag-reset">
@@ -215,54 +193,6 @@ export function StudioRightPane({
               </div>
             ) : null}
           </div>
-
-          {/* Card 3: Article Status, Tags & Metadata */}
-          {article ? (
-            <div className="gm-studio-right-card">
-              <span className="gm-studio-section-label">成稿状态与标签</span>
-              <select
-                aria-label="成稿状态"
-                className="gm-select"
-                value={article.status}
-                disabled={readOnly}
-                onChange={(e) => void onChangeStatus(e.target.value as GeoArticleStatus)}
-              >
-                {GEO_ARTICLE_STATUSES.map((st) => (
-                  <option key={st} value={st}>
-                    {GEO_ARTICLE_STATUS_LABELS[st]}
-                  </option>
-                ))}
-              </select>
-
-              <div className="gm-studio-chip-group">
-                {article.tags.map((tag) => (
-                  <Tag key={tag} closable={!readOnly} onClose={() => void handleRemoveTag(tag)}>
-                    {tag}
-                  </Tag>
-                ))}
-              </div>
-              {!readOnly ? (
-                <div className="gm-studio-row">
-                  <Input
-                    size="small"
-                    placeholder="新增标签"
-                    aria-label="新增文章标签"
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onPressEnter={() => void handleAddTag()}
-                  />
-                  <Button size="small" onClick={() => void handleAddTag()}>
-                    添加
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="gm-studio-item-meta">
-                <span>正文约 {wordCount} 字</span>
-                <span>更新于 {formatShanghaiDateTime(article.updatedAt)}</span>
-              </div>
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -276,10 +206,13 @@ export function StudioRightPane({
               data-testid="studio-batch-tbd-open-btn"
               onClick={() => onFocusMissingFacts?.()}
             >
-              补齐 {missingSlotCount} 组待补充事实
+              补齐事实
             </Button>
             <div className="gm-studio-footer-caption-row">
-              <span>建议先补齐真实参数再发布</span>
+              <span className="gm-studio-explain-row">
+                <span>待补 {missingSlotCount} 组</span>
+                <Explain text="建议先补齐真实参数再发布" />
+              </span>
               <button
                 type="button"
                 className="gm-studio-footer-fallback-link"
@@ -287,7 +220,7 @@ export function StudioRightPane({
                 disabled={navigatingPublish}
                 onClick={() => onNavigatePublish?.()}
               >
-                {navigatingPublish ? '正在保存并前往…' : '仍要前往发布中心 →'}
+                {navigatingPublish ? '保存中…' : '仍去发布'}
               </button>
             </div>
           </>
@@ -300,28 +233,38 @@ export function StudioRightPane({
               data-testid="studio-go-publish-btn"
               onClick={() => onNavigatePublish?.()}
             >
-              前往发布中心 →
+              去发布
             </Button>
             <div className="gm-studio-footer-caption-row">
-              <span>
-                {article.status === 'PUBLISHED'
-                  ? '该篇已发布，可前往发布中心查看抓取与复测'
-                  : article.geoScore >= 85
-                    ? '已通过引用就绪检查，可前往发布中心分发'
-                    : '事实已补齐，可前往发布中心预览与分发'}
+              <span className="gm-studio-explain-row">
+                <span>{article.status === 'PUBLISHED' ? '已发布' : '可发布'}</span>
+                <Explain
+                  text={
+                    article.status === 'PUBLISHED'
+                      ? '该篇已发布，可前往发布中心查看抓取与复测'
+                      : article.geoScore >= 85
+                        ? '已通过引用就绪检查，可前往发布中心分发'
+                        : '事实已补齐，可前往发布中心预览与分发'
+                  }
+                />
               </span>
             </div>
           </>
         ) : (
           <>
             <Button type="default" block disabled data-testid="studio-go-publish-btn">
-              前往发布中心
+              去发布
             </Button>
             <div className="gm-studio-footer-caption-row">
-              <span>
-                {streaming
-                  ? '正在生成正文，完成后可前往发布中心'
-                  : '生成或选择成稿后即可前往发布中心'}
+              <span className="gm-studio-explain-row">
+                <span>{streaming ? '生成中' : '待成稿'}</span>
+                <Explain
+                  text={
+                    streaming
+                      ? '正在生成正文，完成后可前往发布中心'
+                      : '生成或选择成稿后即可前往发布中心'
+                  }
+                />
               </span>
             </div>
           </>

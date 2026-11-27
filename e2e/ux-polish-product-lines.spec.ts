@@ -2190,7 +2190,11 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       // Open deduplicated batch-fill slide-over drawer
       const batchFillTrigger = page
         .getByTestId('studio-batch-tbd-open-btn')
-        .or(page.getByRole('button', { name: /补齐\s*2\s*组待补充事实|批量补填|补齐.*待补充/ }))
+        .or(
+          page.getByRole('button', {
+            name: /补齐事实|补齐\s*2\s*组待补充事实|批量补填|补齐.*待补充/,
+          }),
+        )
         .first();
       await expect(batchFillTrigger).toBeVisible({ timeout: 10_000 });
       await batchFillTrigger.click();
@@ -2229,14 +2233,18 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       }
 
       await clickFirstVisible(
-        batchDrawer.getByRole('button', { name: /一键填入全部并保存|全部填入并保存|确认填入/ }),
+        batchDrawer.getByTestId('batch-tbd-submit-btn').or(
+          batchDrawer.getByRole('button', {
+            name: /全部保存|一键填入全部并保存|全部填入并保存|确认填入/,
+          }),
+        ),
       );
       await expect(batchDrawer).toBeHidden({ timeout: 15_000 });
 
-      // Post-assertions: missing bar gone, footer CTA shows 前往发布中心
+      // Post-assertions: missing bar gone, footer CTA shows 去发布
       await expect(page.getByTestId('studio-missing-fact-bar')).toBeHidden({ timeout: 10_000 });
       await expect(page.getByTestId('missing-fact-pill')).toHaveCount(0);
-      await expect(page.getByTestId('studio-go-publish-btn')).toContainText(/前往发布中心/);
+      await expect(page.getByTestId('studio-go-publish-btn')).toContainText(/去发布|前往发布中心/);
 
       // API verification: all 3 occurrences replaced cleanly & synced to brand fact cards
       const patchedArticle = unwrapOk(

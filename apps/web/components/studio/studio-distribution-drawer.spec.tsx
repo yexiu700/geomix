@@ -1269,7 +1269,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
-    const drawer = await screen.findByTestId('studio-distribution-drawer');
+    const drawer = await screen.findByTestId('publish-distribution-workbench');
     await waitFor(() => {
       expect(drawer.textContent).toContain('Legacy Disabled Shop（已停用）');
     });
@@ -2284,7 +2284,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(sentPayload).not.toHaveProperty('connectionId');
   });
 
-  it('renders DistributionWorkbench inline without Drawer wrapper when variant="inline"', async () => {
+  it('always renders DistributionWorkbench inline without Drawer wrapper (Y12)', async () => {
     const { DistributionWorkbench } = await import('./studio-distribution-drawer');
     listChannelConnectionsMock.mockResolvedValueOnce({ items: [SHOPIFY_CONN] });
     listArticleDistributionsMock.mockResolvedValueOnce({ items: [] });
