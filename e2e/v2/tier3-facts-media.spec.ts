@@ -146,7 +146,7 @@ v2Describe(
           await popoverOrModal.locator('input, textarea').first().fill(backfillText);
 
           const syncCheckbox = popoverOrModal.getByRole('checkbox', {
-            name: /同步存入品牌事实卡/,
+            name: /同步事实|同步存入品牌事实卡/,
           });
           await expect(syncCheckbox).toBeVisible();
           if (!(await syncCheckbox.isChecked())) {

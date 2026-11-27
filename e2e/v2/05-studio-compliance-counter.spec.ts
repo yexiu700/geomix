@@ -176,13 +176,13 @@ v2Describe(
           await page.goto(`/studio?brandId=${brandId}&market=CN`, {
             waitUntil: 'domcontentloaded',
           });
-          await expect(page.locator('body')).toContainText('深度评测长文');
-          await expect(page.locator('body')).toContainText('社区问答实测版');
-          await expect(page.locator('body')).not.toContainText('独立站权威长文');
+          await expect(page.locator('body')).toContainText(/深度长文|深度评测长文/);
+          await expect(page.locator('body')).toContainText(/社区问答|社区问答实测版/);
+          await expect(page.locator('body')).not.toContainText(/独立长文|独立站权威长文/);
 
           await switchGlobalMarket(page, 'GLOBAL');
-          await expect(page.locator('body')).toContainText('独立站权威长文');
-          await expect(page.locator('body')).toContainText('社区客观讨论版');
+          await expect(page.locator('body')).toContainText(/独立长文|独立站权威长文/);
+          await expect(page.locator('body')).toContainText(/社区讨论|社区客观讨论版/);
         } finally {
           await context.close();
         }
@@ -1012,11 +1012,17 @@ v2Describe(
           await page.goto(`/studio?brandId=${brandId}&market=CN`, {
             waitUntil: 'domcontentloaded',
           });
+          const batchModeBtn = page.getByTestId('studio-batch-mode-btn');
+          await expect(batchModeBtn).toBeVisible({ timeout: 15_000 });
+          await batchModeBtn.click();
           const checkboxes = page.locator('input[type="checkbox"]');
           await expect(checkboxes.nth(1)).toBeVisible();
           await checkboxes.nth(0).check();
           await checkboxes.nth(1).check();
-          const batchBtn = page.getByRole('button', { name: /批量生成|20\s*点/ }).first();
+          const batchBtn = page
+            .getByTestId('studio-batch-btn')
+            .or(page.getByRole('button', { name: /批量生成|20\s*点/ }))
+            .first();
           await expect(batchBtn).toBeEnabled();
           await batchBtn.click();
           const confirmBtn = page.getByRole('button', { name: '确认生成' });
@@ -1480,7 +1486,7 @@ v2Describe(
               .first();
             await expect(insertBtn).toBeVisible();
             await insertBtn.click();
-            await expect(page.locator('body')).toContainText(/从品牌实拍图插入|品牌实拍图/);
+            await expect(page.locator('body')).toContainText(/实拍图|品牌实拍图|从品牌实拍图插入/);
             expect((await getWallet(tenant.accessToken)).body!.data.points).toBe(90);
           } finally {
             await context.close();

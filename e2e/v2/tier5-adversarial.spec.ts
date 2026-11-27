@@ -793,12 +793,15 @@ v2Describe(
         );
         try {
           await expect(page.getByTestId('studio-workspace')).toBeVisible({ timeout: 15_000 });
-          await expect(page.getByRole('button', { name: '更客观去广告味' })).toBeVisible({
-            timeout: 15_000,
-          });
+          const rewriteDropdownBtn = page.getByTestId('studio-rewrite-dropdown-btn');
+          await expect(rewriteDropdownBtn).toBeVisible({ timeout: 15_000 });
 
-          // Trigger inline rewrite preview on Article A
-          await page.getByRole('button', { name: '更客观去广告味' }).click();
+          // Trigger inline rewrite preview on Article A via rewrite dropdown -> 去广告
+          await rewriteDropdownBtn.click();
+          await expect(page.getByTestId('studio-rewrite-menu-DE_AD')).toBeVisible({
+            timeout: 10_000,
+          });
+          await page.getByTestId('studio-rewrite-menu-DE_AD').click();
           await expect(page.getByTestId('studio-rewrite-preview')).toBeVisible({
             timeout: 15_000,
           });
@@ -977,9 +980,10 @@ v2Describe(
           await expect(page.getByText('尚未创建品牌资产')).toHaveCount(0);
           await expect(page.getByTestId('global-brand-switcher-retry')).toBeVisible();
 
-          // /studio shows error + retry, NEVER "尚未创建品牌资产"
+          // /studio shows error + retry, NEVER "暂无品牌" / "尚未创建品牌资产"
           await page.goto('/studio', { waitUntil: 'domcontentloaded' });
           await expect(page.getByText('模拟品牌服务异常')).toBeVisible({ timeout: 15_000 });
+          await expect(page.getByText('暂无品牌')).toHaveCount(0);
           await expect(page.getByText('尚未创建品牌资产')).toHaveCount(0);
 
           // Unroute and click Retry -> Studio loads cleanly with the owned brand

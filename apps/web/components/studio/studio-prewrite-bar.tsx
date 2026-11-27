@@ -2,8 +2,6 @@
 
 import {
   GEO_RECIPES,
-  GEO_RECIPE_LABELS,
-  GEO_TARGET_FORMAT_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
   SUPPORTED_LOCALES,
   targetFormatsForMarket,
@@ -15,10 +13,11 @@ import {
   type PromptPreferenceRecord,
   type SupportedLocale,
 } from '@geomix/shared';
-import { Alert, Button, Input, InputNumber, Tag } from 'antd';
+import { Alert, Button, Input, Tag } from 'antd';
 import type { JSX } from 'react';
 import { useState } from 'react';
-import { StatusBadge } from '../ui';
+import { GEO_RECIPE_SHORT, GEO_TARGET_FORMAT_SHORT } from '../../lib/short-labels';
+import { CostChip, Explain, StatusBadge } from '../ui';
 
 export type StudioPrewriteArticleSummary = {
   targetPrompt: string;
@@ -38,8 +37,6 @@ export type StudioPrewriteBarProps = {
   onRecipeChange: (next: GeoRecipe) => void;
   targetFormat: GeoTargetFormat;
   onTargetFormatChange: (next: GeoTargetFormat) => void;
-  wordCountTarget: number | undefined;
-  onWordCountTargetChange: (value: number | undefined) => void;
   promptPreference: PromptPreferenceRecord;
   prefsSaving: boolean;
   onSavePromptPreference: (input: {
@@ -73,8 +70,6 @@ export function StudioPrewriteBar({
   onRecipeChange,
   targetFormat,
   onTargetFormatChange,
-  wordCountTarget,
-  onWordCountTargetChange,
   promptPreference,
   prefsSaving,
   onSavePromptPreference,
@@ -161,8 +156,8 @@ export function StudioPrewriteBar({
                 {activeProductLineName}
               </span>
             ) : null}
-            <span className="gm-studio-meta-pill">{GEO_RECIPE_LABELS[summaryRecipe]}</span>
-            <span className="gm-studio-meta-pill">{GEO_TARGET_FORMAT_LABELS[summaryFormat]}</span>
+            <span className="gm-studio-meta-pill">{GEO_RECIPE_SHORT[summaryRecipe]}</span>
+            <span className="gm-studio-meta-pill">{GEO_TARGET_FORMAT_SHORT[summaryFormat]}</span>
             {showCollapsedLocale && summaryLocale ? (
               <span className="gm-studio-meta-pill" data-testid="studio-collapsed-locale-pill">
                 {summaryLocaleMeta
@@ -176,11 +171,13 @@ export function StudioPrewriteBar({
           <Button
             size="small"
             type="text"
+            autoInsertSpace={false}
+            aria-label="配置与重写"
             className="gm-studio-nowrap"
             data-testid="studio-prewrite-expand-btn"
             onClick={onToggleCollapsed}
           >
-            配置 / 重写 ▾
+            配置
           </Button>
         ) : null}
       </div>
@@ -192,7 +189,7 @@ export function StudioPrewriteBar({
       {/* Item 1: Target Prompt + Linked Brief Badge */}
       <div className="gm-studio-stack">
         <div className="gm-studio-section-label gm-studio-section-label--wrap">
-          <span className="gm-studio-nowrap">1. 目标问题与大纲上下文</span>
+          <span className="gm-studio-nowrap">目标问题</span>
           <span className="gm-studio-row gm-studio-row--wrap">
             {activeProductLineName ? (
               <StatusBadge
@@ -204,21 +201,18 @@ export function StudioPrewriteBar({
             ) : null}
             {linkedBrief ? (
               <>
-                <StatusBadge tone="active" className="gm-studio-tag-wrap">
-                  来自意见卡 · {linkedBrief.suggestedTitle.slice(0, 28)}
-                </StatusBadge>
+                <span className="gm-studio-explain-row">
+                  <StatusBadge tone="active" className="gm-studio-tag-wrap" label="意见卡" />
+                  <Explain text={linkedBrief.suggestedTitle} />
+                </span>
                 {linkedBrief.sourceCitationUrl &&
                 /^https?:\/\//i.test(linkedBrief.sourceCitationUrl) ? (
                   <StatusBadge
                     tone="warning"
                     title={linkedBrief.sourceCitationUrl}
                     className="gm-studio-tag-wrap"
-                  >
-                    {linkedBrief.sourceType === 'NEAR_MISS_BOOST' ? '补强页面 · ' : '反制信源 · '}
-                    {linkedBrief.sourceCitationUrl.length > 36
-                      ? `${linkedBrief.sourceCitationUrl.slice(0, 36)}…`
-                      : linkedBrief.sourceCitationUrl}
-                  </StatusBadge>
+                    label={linkedBrief.sourceType === 'NEAR_MISS_BOOST' ? '补强页面' : '反制信源'}
+                  />
                 ) : null}
                 <Button
                   size="small"
@@ -234,11 +228,13 @@ export function StudioPrewriteBar({
               <Button
                 size="small"
                 type="text"
+                autoInsertSpace={false}
+                aria-label="收起配置"
                 className="gm-studio-nowrap"
                 data-testid="studio-prewrite-collapse-btn"
                 onClick={onToggleCollapsed}
               >
-                收起配置 ▴
+                收起
               </Button>
             ) : null}
           </span>
@@ -268,7 +264,7 @@ export function StudioPrewriteBar({
 
       {/* Item 2: 4 GEO Recipes + Market-Linked 2-Way Target Format */}
       <div className="gm-studio-stack">
-        <span className="gm-studio-section-label">2. GEO 文体配方与目标阵地形态</span>
+        <span className="gm-studio-section-label">文体</span>
         <div className="gm-studio-chip-group" role="group" aria-label="GEO 文体配方">
           {GEO_RECIPES.map((item) => (
             <button
@@ -280,10 +276,20 @@ export function StudioPrewriteBar({
               disabled={streaming}
               onClick={() => onRecipeChange(item)}
             >
-              {GEO_RECIPE_LABELS[item]}
+              {GEO_RECIPE_SHORT[item]}
             </button>
           ))}
         </div>
+        <span className="gm-studio-section-label gm-studio-explain-row">
+          <span>阵地</span>
+          <Explain
+            text={
+              activeMarket === 'CN'
+                ? '深度长文适配头条/公众号/值得买，社区问答适配知乎/小红书'
+                : '独立长文含 Schema 适配官网/Shopify/WordPress，社区讨论适配 Reddit/Quora'
+            }
+          />
+        </span>
         <div className="gm-studio-chip-group" role="group" aria-label="目标阵地形态">
           {marketFormats.map((fmt) => (
             <button
@@ -295,7 +301,7 @@ export function StudioPrewriteBar({
               disabled={streaming}
               onClick={() => onTargetFormatChange(fmt)}
             >
-              {GEO_TARGET_FORMAT_LABELS[fmt]}
+              {GEO_TARGET_FORMAT_SHORT[fmt]}
             </button>
           ))}
         </div>
@@ -307,7 +313,7 @@ export function StudioPrewriteBar({
             data-testid="studio-target-locale-selector"
             className="gm-studio-stack gm-studio-stack--sm"
           >
-            <span className="gm-studio-section-label">目标写作语种</span>
+            <span className="gm-studio-section-label">语种</span>
             <div className="gm-studio-chip-group" role="group" aria-label="目标写作语种">
               {availableLocales.map((code) => {
                 const meta = SUPPORTED_LOCALES[code];
@@ -340,23 +346,36 @@ export function StudioPrewriteBar({
             aria-expanded={prefsOpen}
             onClick={handleTogglePrefs}
           >
-            {prefsOpen ? '▾ 高级偏好（已展开）' : '▸ 高级偏好'}
+            高级偏好
           </button>
 
           <div className="gm-studio-row gm-studio-row--wrap">
             {streaming ? (
-              <Button danger data-testid="studio-abort-btn" onClick={onAbortStream}>
-                停止生成（退还点数）
-              </Button>
+              <span className="gm-studio-explain-row">
+                <Button
+                  danger
+                  autoInsertSpace={false}
+                  data-testid="studio-abort-btn"
+                  onClick={onAbortStream}
+                >
+                  停止
+                </Button>
+                <Explain text="停止流式生成并自动退还本次冻结点数" />
+              </span>
             ) : null}
+            <CostChip
+              points={GEO_WRITE_DEFAULT_UNIT_POINTS}
+              data-testid="studio-stream-cost-chip"
+            />
             <Button
               type="primary"
+              autoInsertSpace={false}
               data-testid="studio-stream-btn"
               loading={streaming}
               disabled={readOnly || streaming || targetPrompt.trim().length < 2}
               onClick={onStartStream}
             >
-              立即生成（{GEO_WRITE_DEFAULT_UNIT_POINTS} 点）
+              生成
             </Button>
           </div>
         </div>
@@ -364,7 +383,7 @@ export function StudioPrewriteBar({
         {prefsOpen ? (
           <div className="gm-studio-prefs-box" data-testid="studio-advanced-prefs-panel">
             <div className="gm-studio-stack gm-studio-stack--sm">
-              <span className="gm-studio-section-label">自定义风格指令</span>
+              <span className="gm-studio-section-label">风格指令</span>
               {promptPreference.customToneNote ? (
                 <div className="gm-studio-text-secondary" data-testid="studio-saved-tone-summary">
                   当前生效口径：{promptPreference.customToneNote}
@@ -381,8 +400,9 @@ export function StudioPrewriteBar({
             </div>
 
             <div className="gm-studio-stack">
-              <span className="gm-studio-section-label">
-                租户自定义禁词（CN / GLOBAL 双轨生效）
+              <span className="gm-studio-section-label gm-studio-explain-row">
+                <span>禁词</span>
+                <Explain text="CN / GLOBAL 双轨生效，保存后作为租户默认偏好自动注入。" />
               </span>
               <div className="gm-studio-chip-group">
                 {effectiveForbiddenWords.map((word) => (
@@ -405,28 +425,15 @@ export function StudioPrewriteBar({
                     onChange={(e) => setNewWordInput(e.target.value)}
                     onPressEnter={handleAddForbiddenWord}
                   />
-                  <Button size="small" onClick={handleAddForbiddenWord}>
-                    添加禁词
+                  <Button size="small" autoInsertSpace={false} onClick={handleAddForbiddenWord}>
+                    添加
                   </Button>
                 </div>
               ) : null}
             </div>
 
-            <div className="gm-studio-cta-row">
-              <div className="gm-studio-row">
-                <span className="gm-studio-text-secondary">目标字数偏好：</span>
-                <InputNumber
-                  size="small"
-                  min={600}
-                  max={4000}
-                  step={200}
-                  placeholder="默认"
-                  value={wordCountTarget ?? null}
-                  onChange={(v) => onWordCountTargetChange(typeof v === 'number' ? v : undefined)}
-                  disabled={readOnly}
-                />
-              </div>
-              {!readOnly ? (
+            {!readOnly ? (
+              <div className="gm-studio-cta-row">
                 <Button
                   size="small"
                   type="default"
@@ -434,10 +441,10 @@ export function StudioPrewriteBar({
                   onClick={() => void handleSavePrefs()}
                   data-testid="studio-save-prefs-btn"
                 >
-                  保存默认偏好
+                  存为默认
                 </Button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

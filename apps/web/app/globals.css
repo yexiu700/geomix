@@ -11860,3 +11860,34 @@ input:not([class*='ant-']):hover {
   gap: 8px;
   margin-bottom: 10px;
 }
+
+.gm-studio-explain-row,
+.gm-studio-alert-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-studio-batch-footer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gm-studio-batch-footer-row > button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gm-studio-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--gm-radius-full);
+  background: var(--gm-bg-hover);
+  color: var(--gm-fg-2);
+  font-size: var(--gm-fs-xs);
+}

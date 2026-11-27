@@ -3,7 +3,6 @@
 import {
   CHANNEL_PROVIDER_LABELS,
   DISTRIBUTION_TASK_STATUS_LABELS,
-  GEO_MARKET_LABELS,
   GLOBAL_SUPPORTED_LOCALES,
   L2_EXTENSION_PROVIDERS,
   PRICING_DEFAULTS,
@@ -33,7 +32,6 @@ import {
   Alert,
   Button,
   Checkbox,
-  Drawer,
   Input,
   Modal,
   Progress,
@@ -74,7 +72,6 @@ import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
 
 export type StudioDistributionDrawerProps = {
   open: boolean;
-  variant?: 'drawer' | 'inline';
   brandId: string | null;
   brandMarketId: string | null;
   market: GeoMarket;
@@ -397,7 +394,6 @@ async function fetchLiveGeoVariantUnitPrice(): Promise<number> {
 
 export function StudioDistributionDrawer({
   open,
-  variant = 'drawer',
   brandId,
   brandMarketId,
   market,
@@ -2375,7 +2371,7 @@ export function StudioDistributionDrawer({
     );
   };
 
-  if (variant === 'inline' && !open) {
+  if (!open) {
     return null;
   }
 
@@ -3015,60 +3011,9 @@ export function StudioDistributionDrawer({
 
   return (
     <>
-      {variant === 'inline' ? (
-        <div data-testid="publish-distribution-workbench" className="gm-dist-inline-root">
-          <div className="gm-dist-inline-body">{workbenchBody}</div>
-        </div>
-      ) : (
-        <Drawer
-          open={open}
-          onClose={onClose}
-          destroyOnHidden
-          title={null}
-          closable={false}
-          footer={null}
-          width="min(880px, calc(100vw - 32px))"
-          styles={{
-            wrapper: { maxWidth: '100vw' },
-            body: {
-              padding: 0,
-              overflowX: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-            },
-          }}
-        >
-          <div data-testid="studio-distribution-drawer" className="gm-dist-drawer-root">
-            {/* Pinned Header */}
-            <div className="gm-dist-drawer-head">
-              <div className="gm-dist-drawer-head-col">
-                <div className="gm-dist-row">
-                  <span className="gm-dist-drawer-title">多渠道分发与变体工作台</span>
-                  <StatusBadge tone="active" className="gm-studio-nowrap">
-                    {market === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[market]}
-                  </StatusBadge>
-                </div>
-                {article ? (
-                  <div className="gm-clamp-1 gm-dist-drawer-subtitle">
-                    当前成稿：{draftTitle || article.title}
-                  </div>
-                ) : null}
-              </div>
-              <Button
-                size="small"
-                aria-label="关闭分发工作台"
-                className="gm-dist-nowrap"
-                onClick={onClose}
-              >
-                关闭
-              </Button>
-            </div>
-
-            {/* Scrollable Body */}
-            <div className="gm-dist-drawer-body">{workbenchBody}</div>
-          </div>
-        </Drawer>
-      )}
+      <div data-testid="publish-distribution-workbench" className="gm-dist-inline-root">
+        <div className="gm-dist-inline-body">{workbenchBody}</div>
+      </div>
 
       {brandId && brandMarketId ? (
         <ChannelConnectionCreateModal
@@ -3191,15 +3136,9 @@ export function StudioDistributionDrawer({
 }
 
 export function DistributionWorkbench(
-  props: Omit<StudioDistributionDrawerProps, 'variant' | 'onClose'> & {
+  props: Omit<StudioDistributionDrawerProps, 'onClose'> & {
     onClose?: () => void;
   },
 ): JSX.Element | null {
-  return (
-    <StudioDistributionDrawer
-      {...props}
-      variant="inline"
-      onClose={props.onClose ?? (() => undefined)}
-    />
-  );
+  return <StudioDistributionDrawer {...props} onClose={props.onClose ?? (() => undefined)} />;
 }
