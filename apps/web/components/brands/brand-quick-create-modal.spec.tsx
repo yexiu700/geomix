@@ -81,7 +81,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     expect(within(dialog).getByTestId('brand-quick-create')).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
@@ -93,7 +93,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     });
 
     // Add a competitor row with domain
-    fireEvent.click(within(dialog).getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加竞品' }));
     fireEvent.change(within(dialog).getByLabelText('竞品名称 1'), { target: { value: '群晖' } });
     fireEvent.change(within(dialog).getByLabelText('竞品官网域名 1'), {
       target: { value: 'https://www.synology.com' },
@@ -103,7 +103,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     ).toBeTruthy();
     expect(dialog.querySelectorAll('button.ant-btn-dangerous')).toHaveLength(0);
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
     await waitFor(() => {
       expect(onCreateBrand).toHaveBeenCalledWith(
@@ -121,7 +121,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     const urlInput = await within(dialog).findByLabelText('官网链接');
     expect((urlInput as HTMLInputElement).value).toBe('https://qingsong.cn');
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-extract-btn'));
     await waitFor(() => {
       expect(onExtractFacts).toHaveBeenCalledWith('brand_new_1', {
         sourceType: 'URL_EXTRACT',
@@ -130,7 +130,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     });
 
     // Try saving before checking compliance checkbox -> shows warning, does not call onSaveFacts
-    const saveBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    const saveBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(saveBtn);
     expect(await within(dialog).findByText(/请先勾选品牌事实真实性与合规承诺/)).toBeTruthy();
     expect(onSaveFacts).not.toHaveBeenCalled();
@@ -160,15 +160,15 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'qingsong.cn' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
-    const skipBtn = await within(dialog).findByRole('button', { name: '跳过，直接进入' });
+    const skipBtn = await within(dialog).findByTestId('brand-quick-create-skip-btn');
     fireEvent.click(skipBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -184,9 +184,9 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '绿联' } });
-    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
+    fireEvent.click(within(dialog).getByLabelText(/海外/));
 
     const cjkCheckbox = (await within(dialog).findByTestId(
       'quick-create-allow-cjk-global-checkbox',
@@ -265,19 +265,17 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'qingsong.cn' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
     // Step 2: extract and save facts
-    fireEvent.click(
-      await within(dialog).findByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
-    );
-    const saveFactsBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    fireEvent.click(await within(dialog).findByTestId('brand-quick-create-extract-btn'));
+    const saveFactsBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(within(dialog).getByRole('checkbox'));
     fireEvent.click(saveFactsBtn);
 
@@ -297,7 +295,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
 
     // Uncheck PV-800 before saving
     fireEvent.click(within(prefillModal).getByLabelText('勾选别名建议 2'));
-    fireEvent.click(within(prefillModal).getByRole('button', { name: '保存市场配置并完成' }));
+    fireEvent.click(within(prefillModal).getByTestId('brand-ai-suggest-confirm-btn'));
 
     await waitFor(() => {
       expect(onSaveMarketConfig).toHaveBeenCalledWith(
@@ -367,23 +365,21 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'qingsong.cn' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
-    fireEvent.click(
-      await within(dialog).findByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
-    );
-    const saveFactsBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    fireEvent.click(await within(dialog).findByTestId('brand-quick-create-extract-btn'));
+    const saveFactsBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(within(dialog).getByRole('checkbox'));
     fireEvent.click(saveFactsBtn);
 
     const prefillModal = await screen.findByTestId('brand-ai-suggest-modal');
-    fireEvent.click(within(prefillModal).getByRole('button', { name: '跳过，直接进入' }));
+    fireEvent.click(within(prefillModal).getByRole('button', { name: '跳过' }));
 
     expect(onSaveMarketConfig).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -465,15 +461,15 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '茶颜悦色' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '新茶饮' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'chayanyuese.example.com' },
     });
     // Switch from default CN to GLOBAL only
-    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
-    fireEvent.click(within(dialog).getByLabelText(/国内市场/));
+    fireEvent.click(within(dialog).getByLabelText(/海外/));
+    fireEvent.click(within(dialog).getByLabelText(/国内/));
     fireEvent.change(within(dialog).getByLabelText('海外英文品类'), {
       target: { value: 'Specialty Tea' },
     });
@@ -487,13 +483,11 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     fireEvent.click(cjkCheckbox);
     expect(cjkCheckbox.checked).toBe(true);
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
     // Step 2: extract and save facts -> auto-enters Step 3 for GLOBAL
-    fireEvent.click(
-      await within(dialog).findByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
-    );
-    const saveFactsBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    fireEvent.click(await within(dialog).findByTestId('brand-quick-create-extract-btn'));
+    const saveFactsBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(within(dialog).getByRole('checkbox'));
     fireEvent.click(saveFactsBtn);
 
@@ -509,7 +503,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     const prefillModal = await screen.findByTestId('brand-ai-suggest-modal');
     // Uncheck suggested English localBrandName so CJK localBrandName remains unchanged
     fireEvent.click(within(prefillModal).getByLabelText('勾选建议海外英文品牌名'));
-    fireEvent.click(within(prefillModal).getByRole('button', { name: '保存市场配置并完成' }));
+    fireEvent.click(within(prefillModal).getByTestId('brand-ai-suggest-confirm-btn'));
 
     await waitFor(() => {
       expect(onSaveMarketConfig).toHaveBeenCalledTimes(1);
@@ -604,25 +598,23 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '茶颜悦色' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '新茶饮' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'chayan.example.com' },
     });
-    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
-    fireEvent.click(within(dialog).getByLabelText(/国内市场/));
+    fireEvent.click(within(dialog).getByLabelText(/海外/));
+    fireEvent.click(within(dialog).getByLabelText(/国内/));
     fireEvent.change(within(dialog).getByLabelText('海外英文品类'), {
       target: { value: 'Specialty Tea' },
     });
     const cjkCheckbox = await within(dialog).findByTestId('quick-create-allow-cjk-global-checkbox');
     fireEvent.click(cjkCheckbox);
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
-    fireEvent.click(
-      await within(dialog).findByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
-    );
-    const saveFactsBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    fireEvent.click(await within(dialog).findByTestId('brand-quick-create-extract-btn'));
+    const saveFactsBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(within(dialog).getByRole('checkbox'));
     fireEvent.click(saveFactsBtn);
 
@@ -699,18 +691,16 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'qingsong.cn' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
-    fireEvent.click(
-      await within(dialog).findByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
-    );
-    const saveFactsBtn = await within(dialog).findByRole('button', { name: '保存事实卡并完成' });
+    fireEvent.click(await within(dialog).findByTestId('brand-quick-create-extract-btn'));
+    const saveFactsBtn = await within(dialog).findByTestId('brand-quick-create-save-facts-btn');
     fireEvent.click(within(dialog).getByRole('checkbox'));
     fireEvent.click(saveFactsBtn);
 
@@ -755,7 +745,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
       />,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), { target: { value: '青松存储' } });
     // Add both CJK alias and English SKU alias
     const aliasInput = within(dialog).getByLabelText('品牌别名');
@@ -766,7 +756,7 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
 
     fireEvent.change(within(dialog).getByLabelText('所属品类'), { target: { value: '家用 NAS' } });
     // Enable GLOBAL alongside CN
-    fireEvent.click(within(dialog).getByLabelText(/海外市场/));
+    fireEvent.click(within(dialog).getByLabelText(/海外/));
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'pinevault.example' },
     });
@@ -778,14 +768,14 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     });
 
     // Add both Chinese competitor and English competitor
-    fireEvent.click(within(dialog).getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加竞品' }));
     fireEvent.change(within(dialog).getByLabelText('竞品名称 1'), { target: { value: '竞品甲' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加竞品' }));
     fireEvent.change(within(dialog).getByLabelText('竞品名称 2'), {
       target: { value: 'Synology' },
     });
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
     await waitFor(() => {
       expect(onCreateBrand).toHaveBeenCalledTimes(1);
@@ -813,11 +803,9 @@ describe('BrandQuickCreateModal (60s 2-step brand wizard)', () => {
     // Step 2 buttons live together in a single horizontal .gm-brand-modal-footer
     const footer = dialog.querySelector('.gm-brand-modal-footer');
     expect(footer).toBeTruthy();
+    expect(within(footer as HTMLElement).getByTestId('brand-quick-create-skip-btn')).toBeTruthy();
     expect(
-      within(footer as HTMLElement).getByRole('button', { name: '跳过，直接进入' }),
-    ).toBeTruthy();
-    expect(
-      within(footer as HTMLElement).getByRole('button', { name: 'AI 提炼 4 块事实卡（免费）' }),
+      within(footer as HTMLElement).getByTestId('brand-quick-create-extract-btn'),
     ).toBeTruthy();
   });
 });

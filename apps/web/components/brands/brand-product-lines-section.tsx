@@ -27,12 +27,21 @@ import {
   updateBrandProductLine,
 } from '../../lib/brands';
 import { GatewayApiError } from '../../lib/envelope';
+import { GEO_MARKET_SHORT } from '../../lib/short-labels';
 import { invalidateFreshness } from '../../lib/tab-freshness';
 import { parsePromptLines } from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, FormField, RowActions, Section, StatusBadge, type RowActionItem } from '../ui';
+import {
+  EmptyState,
+  Explain,
+  FormField,
+  RowActions,
+  Section,
+  StatusBadge,
+  type RowActionItem,
+} from '../ui';
 import {
   hydrateCompetitorRows,
   serializeCompetitorRows,
@@ -95,6 +104,7 @@ export function BrandProductLinesSection({
   const [localCategoryCn, setLocalCategoryCn] = useState('');
   const [localCategoryGlobal, setLocalCategoryGlobal] = useState('');
   const [sortOrder, setSortOrder] = useState<number>(0);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [overrideMarket, setOverrideMarket] = useState<GeoMarket>(activeMarket);
   const [seedPromptsTextByMarket, setSeedPromptsTextByMarket] = useState<Record<GeoMarket, string>>(
     { CN: '', GLOBAL: '' },
@@ -114,6 +124,7 @@ export function BrandProductLinesSection({
     setLocalCategoryCn('');
     setLocalCategoryGlobal('');
     setSortOrder(productLines.length);
+    setAdvancedOpen(false);
     setOverrideMarket(activeMarket);
     setSeedPromptsTextByMarket({ CN: '', GLOBAL: '' });
     setCompetitorsByMarket({ CN: [], GLOBAL: [] });
@@ -135,6 +146,7 @@ export function BrandProductLinesSection({
     setLocalCategoryCn(line.localCategoriesJson?.CN ?? '');
     setLocalCategoryGlobal(line.localCategoriesJson?.GLOBAL ?? '');
     setSortOrder(line.sortOrder ?? 0);
+    setAdvancedOpen(false);
     setOverrideMarket(activeMarket);
     setSeedPromptsTextByMarket({
       CN: cnSeeds.join('\n'),
@@ -286,7 +298,7 @@ export function BrandProductLinesSection({
           className="gm-brand-btn-nowrap"
           onClick={openCreateModal}
         >
-          新增产品线
+          新增产线
         </Button>
       }
     >
@@ -295,7 +307,14 @@ export function BrandProductLinesSection({
           type="info"
           showIcon
           className="gm-brand-inline-alert gm-brand-mb-sm"
-          message={`单品牌最多配置 ${BRAND_MAX_PRODUCT_LINES} 条产品线，如需新增请先删除或合并已有产品线。`}
+          message={
+            <span className="gm-brand-alert-title-row">
+              <span>已达上限</span>
+              <Explain
+                text={`单品牌最多配置 ${BRAND_MAX_PRODUCT_LINES} 条产品线，如需新增请先删除或合并已有产品线。`}
+              />
+            </span>
+          }
         />
       ) : null}
 
@@ -306,8 +325,8 @@ export function BrandProductLinesSection({
       ) : productLines.length === 0 ? (
         <EmptyState
           size="compact"
-          title="单品类品牌无需配置产品线"
-          description="未配置产品线时，首页、可见度诊断与写作台保持单品类极简视图；当品牌横跨多个品类时，可点击「新增产品线」开启渐进式多产品线隔离。"
+          title="暂无产线"
+          description="未配置产品线时，首页、可见度诊断与写作台保持单品类极简视图；当品牌横跨多个品类时，可点击「新增产线」开启渐进式多产品线隔离。"
         />
       ) : (
         <div className="gm-brand-pl-list" data-testid="brand-product-lines-list">
@@ -386,9 +405,11 @@ export function BrandProductLinesSection({
                           .join(' · ')}
                       </span>
                     ) : null}
-                    <span>问句覆盖：{totalSeeds > 0 ? `${totalSeeds} 条` : '继承品牌市场'}</span>
-                    <span>竞品覆盖：{totalComps > 0 ? `${totalComps} 个` : '继承品牌市场'}</span>
-                    <span className="gm-num">排序：{line.sortOrder}</span>
+                    <span>问句：{totalSeeds > 0 ? `${totalSeeds} 条` : '继承'}</span>
+                    <span>竞品：{totalComps > 0 ? `${totalComps} 个` : '继承'}</span>
+                    {line.sortOrder !== 0 ? (
+                      <span className="gm-num">排序：{line.sortOrder}</span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -405,32 +426,33 @@ export function BrandProductLinesSection({
 
       <Modal
         open={modalOpen}
-        title={editingLine ? `编辑产品线 · ${editingLine.name}` : '新增产品线'}
+        title={editingLine ? '编辑产线' : '新增产线'}
         width={660}
         onCancel={closeModal}
         keyboard={!submitting}
         maskClosable={!submitting}
         destroyOnHidden
         footer={[
-          <Button key="cancel" disabled={submitting} onClick={closeModal}>
+          <Button key="cancel" autoInsertSpace={false} disabled={submitting} onClick={closeModal}>
             取消
           </Button>,
           <Button
             key="submit"
             type="primary"
+            autoInsertSpace={false}
             loading={submitting}
             disabled={readOnly}
             data-testid="brand-pl-submit-btn"
             onClick={() => void handleSubmit()}
           >
-            {editingLine ? '保存' : '确认创建'}
+            {editingLine ? '保存' : '创建'}
           </Button>,
         ]}
       >
         <div className="gm-brand-pl-modal-body" data-testid="brand-pl-modal">
           {/* Primary required fields FIRST so label/placeholder queries always resolve unambiguously */}
           <div className="gm-brand-form-grid-2">
-            <FormField label="产品线名称" htmlFor="brand-pl-name" required>
+            <FormField label="名称" htmlFor="brand-pl-name" required>
               <Input
                 id="brand-pl-name"
                 aria-label="产品线名称"
@@ -464,7 +486,7 @@ export function BrandProductLinesSection({
           </div>
 
           <div className="gm-brand-form-grid-2">
-            <FormField label="国内本地名（选填）" htmlFor="brand-pl-local-name-cn">
+            <FormField label="国内名" htmlFor="brand-pl-local-name-cn">
               <Input
                 id="brand-pl-local-name-cn"
                 aria-label="国内本地名"
@@ -476,7 +498,7 @@ export function BrandProductLinesSection({
               />
             </FormField>
 
-            <FormField label="海外本地名（选填）" htmlFor="brand-pl-local-name-global">
+            <FormField label="海外名" htmlFor="brand-pl-local-name-global">
               <Input
                 id="brand-pl-local-name-global"
                 aria-label="海外本地名"
@@ -490,7 +512,7 @@ export function BrandProductLinesSection({
           </div>
 
           <div className="gm-brand-form-grid-2">
-            <FormField label="国内细分品类（选填）" htmlFor="brand-pl-local-cat-cn">
+            <FormField label="国内品类" htmlFor="brand-pl-local-cat-cn">
               <Input
                 id="brand-pl-local-cat-cn"
                 aria-label="国内细分品类"
@@ -502,7 +524,7 @@ export function BrandProductLinesSection({
               />
             </FormField>
 
-            <FormField label="海外细分品类（选填）" htmlFor="brand-pl-local-cat-global">
+            <FormField label="海外品类" htmlFor="brand-pl-local-cat-global">
               <Input
                 id="brand-pl-local-cat-global"
                 aria-label="海外细分品类"
@@ -515,29 +537,50 @@ export function BrandProductLinesSection({
             </FormField>
           </div>
 
-          <FormField
-            label="排序权重（0–1000，越小越靠前）"
-            htmlFor="brand-pl-sort-order"
-            className="gm-brand-pl-sort-field"
-          >
-            <InputNumber
-              id="brand-pl-sort-order"
-              aria-label="排序权重"
-              min={0}
-              max={1000}
-              precision={0}
-              value={sortOrder}
-              disabled={readOnly || submitting}
-              className="gm-brand-w-full"
-              onChange={(val) =>
-                setSortOrder(typeof val === 'number' && Number.isFinite(val) ? Math.trunc(val) : 0)
-              }
-            />
-          </FormField>
+          <div className="gm-brand-extra-doc">
+            <div className="gm-brand-advanced-toggle-row">
+              <button
+                type="button"
+                className="gm-brand-extra-doc-toggle"
+                data-testid="brand-pl-advanced-toggle"
+                aria-expanded={advancedOpen}
+                onClick={() => setAdvancedOpen((prev) => !prev)}
+              >
+                <span>{advancedOpen ? '▾' : '▸'} 高级</span>
+              </button>
+              <Explain text="可调整产品线列表展示排序权重（0–1000，越小越靠前）。" />
+            </div>
+            {advancedOpen ? (
+              <div className="gm-brand-extra-doc-body">
+                <FormField
+                  label="排序"
+                  help="0–1000，越小越靠前"
+                  htmlFor="brand-pl-sort-order"
+                  className="gm-brand-pl-sort-field"
+                >
+                  <InputNumber
+                    id="brand-pl-sort-order"
+                    aria-label="排序权重"
+                    min={0}
+                    max={1000}
+                    precision={0}
+                    value={sortOrder}
+                    disabled={readOnly || submitting}
+                    className="gm-brand-w-full"
+                    onChange={(val) =>
+                      setSortOrder(
+                        typeof val === 'number' && Number.isFinite(val) ? Math.trunc(val) : 0,
+                      )
+                    }
+                  />
+                </FormField>
+              </div>
+            ) : null}
+          </div>
 
           <div className="gm-brand-pl-market-overrides">
             <div className="gm-brand-pl-overrides-head">
-              <span className="gm-brand-pl-overrides-title">分市场问句与竞品覆盖（选填）</span>
+              <span className="gm-brand-pl-overrides-title">市场覆盖</span>
               <div className="gm-brand-mode-tabs" role="tablist" aria-label="覆盖配置市场切换">
                 {(['CN', 'GLOBAL'] as const).map((mkt) => (
                   <button
@@ -550,14 +593,15 @@ export function BrandProductLinesSection({
                     }
                     onClick={() => setOverrideMarket(mkt)}
                   >
-                    {GEO_MARKET_LABELS[mkt]} ({mkt})
+                    {GEO_MARKET_SHORT[mkt]}
                   </button>
                 ))}
               </div>
             </div>
 
             <FormField
-              label={`${GEO_MARKET_LABELS[overrideMarket]}监控问句（每行一条，最多 ${PRODUCT_LINE_MAX_SEED_PROMPTS} 条，留空继承品牌配置）`}
+              label="监控问句"
+              help={`每行一条，最多 ${PRODUCT_LINE_MAX_SEED_PROMPTS} 条，留空继承品牌配置`}
               htmlFor="brand-pl-seed-prompts"
             >
               <Input.TextArea
@@ -582,7 +626,8 @@ export function BrandProductLinesSection({
             </FormField>
 
             <FormField
-              label={`${GEO_MARKET_LABELS[overrideMarket]}竞品覆盖（${activeMarketCompetitors.length} / ${BRAND_MAX_COMPETITORS}，留空继承品牌配置）`}
+              label={`竞品 ${activeMarketCompetitors.length}/${BRAND_MAX_COMPETITORS}`}
+              help="留空继承品牌市场竞品配置"
             >
               <div className="gm-brand-competitor-list">
                 {activeMarketCompetitors.map((row, idx) => (
@@ -669,7 +714,7 @@ export function BrandProductLinesSection({
                     }))
                   }
                 >
-                  + 添加竞品
+                  添加竞品
                 </Button>
               </div>
             </FormField>

@@ -124,7 +124,7 @@ describe('ExtensionPairingPanel (CN Chrome Extension Pairing)', () => {
     expect(within(secretModal).getByTestId('extension-token-plain-secret').textContent).toBe(
       plainSecret,
     );
-    expect(within(secretModal).getByText(/此配对令牌明文仅展示这一次/)).toBeTruthy();
+    expect(within(secretModal).getByText(/明文仅示一次/)).toBeTruthy();
     expect(freshnessListener).toHaveBeenCalledWith(new Set(['extension-tokens']));
 
     // Copy plaintext token

@@ -1,8 +1,6 @@
 'use client';
 
 import {
-  CHANNEL_PROVIDER_LABELS,
-  GEO_MARKET_LABELS,
   SUPPORTED_LOCALES,
   formatShanghaiDateTime,
   type ChannelConnectionDto,
@@ -19,12 +17,14 @@ import {
   testChannelConnection,
   updateChannelConnection,
 } from '../../lib/distribution';
+import { CHANNEL_PROVIDER_SHORT, GEO_MARKET_SHORT } from '../../lib/short-labels';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, Section, StatusBadge, type StatusTone } from '../ui';
+import { EmptyState, Explain, Section, StatusBadge, type StatusTone } from '../ui';
 import {
   ChannelConnectionCreateModal,
+  WECHAT_DRAFT_ONLY_NOTICE,
   WECHAT_IP_WHITELIST_NOTICE,
   formatConnError,
   hasWechatIpWhitelistError,
@@ -35,7 +35,7 @@ export type BrandChannelConnectionsProps = {
   activeMarket: GeoMarket;
   marketEnabled: boolean;
   readOnly: boolean;
-  onEnableMarket: () => void;
+  onEnableMarket?: () => void;
   supportedLocales?: readonly SupportedLocale[];
   /** Optional redirect callback for Shopify OAuth (defaults to window.location.assign) */
   onOAuthRedirect?: (authorizeUrl: string) => void;
@@ -60,7 +60,6 @@ export function BrandChannelConnections({
   activeMarket,
   marketEnabled,
   readOnly,
-  onEnableMarket,
   supportedLocales,
   onOAuthRedirect,
 }: BrandChannelConnectionsProps): JSX.Element {
@@ -391,17 +390,14 @@ export function BrandChannelConnections({
       data-testid="brand-channel-connections"
       title={
         <span className="gm-brand-section-title-row">
-          <span>自有站点与发布渠道连接</span>
-          <StatusBadge
-            tone="neutral"
-            label={`${activeMarket === 'CN' ? '🇨🇳' : '🌐'} ${GEO_MARKET_LABELS[activeMarket]}`}
-          />
+          <span>发布渠道</span>
+          <StatusBadge tone="neutral" label={GEO_MARKET_SHORT[activeMarket]} />
         </span>
       }
       description={
         activeMarket === 'CN'
-          ? '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持微信公众号草稿箱（不自动群发）、WordPress、Webhook 等官方 L1 渠道连接。'
-          : '当前市场专属连接，凭据采用 AES-256-GCM 加密存储且永不回传明文；支持 Shopify（OAuth / Custom Token）、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 与通用签名 Webhook。'
+          ? '当前市场专属连接，凭据加密存储且永不回传明文；支持微信公众号草稿箱（不自动群发）、WordPress、Webhook 等官方 L1 渠道连接。'
+          : '当前市场专属连接，凭据加密存储且永不回传明文；支持 Shopify（OAuth / Custom Token）、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX 与通用签名 Webhook。'
       }
       actions={
         marketEnabled ? (
@@ -412,28 +408,16 @@ export function BrandChannelConnections({
             className="gm-brand-btn-nowrap"
             onClick={openCreateModal}
           >
-            + 添加渠道连接
+            添加渠道
           </Button>
         ) : undefined
       }
     >
       {!marketEnabled ? (
-        <Alert
-          type="info"
-          showIcon
-          message="当前市场尚未开启"
+        <EmptyState
+          size="compact"
+          title="市场未开"
           description="请先开启当前市场配置，再添加该市场专属的自有站点渠道连接。"
-          action={
-            <Button
-              size="small"
-              type="default"
-              disabled={readOnly}
-              className="gm-brand-btn-nowrap"
-              onClick={onEnableMarket}
-            >
-              立即开启
-            </Button>
-          }
         />
       ) : loading ? (
         <SignalSkeleton variant="block" height={140} />
@@ -442,7 +426,7 @@ export function BrandChannelConnections({
       ) : connections.length === 0 ? (
         <EmptyState
           size="compact"
-          title="当前市场尚未配置自有站点连接"
+          title="暂无渠道"
           description={
             activeMarket === 'CN'
               ? '绑定微信公众号草稿箱、WordPress 或自定义 Webhook 后，可在写作台一键推送草稿并跟踪 AI 收录效果。'
@@ -451,7 +435,7 @@ export function BrandChannelConnections({
           action={
             readOnly ? undefined : (
               <Button size="small" onClick={openCreateModal}>
-                添加渠道连接
+                添加渠道
               </Button>
             )
           }
@@ -507,11 +491,12 @@ export function BrandChannelConnections({
                     <div className="gm-brand-conn-title">{conn.displayName}</div>
                     <div className="gm-brand-conn-chips">
                       <span className="gm-brand-meta-chip">
-                        {CHANNEL_PROVIDER_LABELS[conn.provider] ?? conn.provider}
+                        {(CHANNEL_PROVIDER_SHORT as Record<string, string>)[conn.provider] ??
+                          conn.provider}
                       </span>
                       {conn.provider === 'SHOPIFY' ? (
                         <span className="gm-brand-meta-chip">
-                          {conn.authType === 'OAUTH' ? 'Shopify OAuth' : 'Custom App Token'}
+                          {conn.authType === 'OAUTH' ? 'Shopify OAuth' : 'Token'}
                         </span>
                       ) : null}
                       {conn.targetLocale && localeMeta ? (
@@ -552,22 +537,22 @@ export function BrandChannelConnections({
                 <div className="gm-brand-conn-chips">
                   <span className="gm-brand-meta-chip">
                     {isWechatConn
-                      ? '仅推草稿箱（不自动群发）'
+                      ? '仅草稿'
                       : isDraftDefault
                         ? conn.provider === 'GITHUB_MDX'
-                          ? '默认 Draft PR'
+                          ? '草稿 PR'
                           : '默认草稿'
                         : conn.provider === 'GITHUB_MDX'
-                          ? '直接提交分支'
+                          ? '直推'
                           : '直接上线'}
                   </span>
                   {!isWechatConn ? (
                     <span className="gm-brand-meta-chip">
-                      {hasInlineJsonLd ? '内联 JSON-LD' : '关闭内联 JSON-LD'}
+                      {hasInlineJsonLd ? 'JSON-LD' : '无 JSON-LD'}
                     </span>
                   ) : null}
                   {hasIndexNow && !isWechatConn ? (
-                    <span className="gm-brand-meta-chip">IndexNow 已启用</span>
+                    <span className="gm-brand-meta-chip">IndexNow</span>
                   ) : null}
                   {conn.provider === 'SHOPIFY' && shopifyTarget ? (
                     <span className="gm-brand-meta-chip gm-brand-meta-chip--wrap">
@@ -596,22 +581,25 @@ export function BrandChannelConnections({
                 </div>
 
                 {isWechatConn ? (
-                  <Alert
-                    type="info"
-                    showIcon
+                  <div
+                    className="gm-brand-conn-notice-row"
                     data-testid={`wechat-card-draft-notice-${conn.id}`}
-                    message="仅推送至公众号草稿箱，绝不自动群发"
-                    description={WECHAT_IP_WHITELIST_NOTICE}
-                    className="gm-brand-alert-wrap"
-                  />
+                  >
+                    <StatusBadge tone="neutral" size="sm" label="仅草稿" />
+                    <Explain text={`${WECHAT_DRAFT_ONLY_NOTICE} ${WECHAT_IP_WHITELIST_NOTICE}`} />
+                  </div>
                 ) : null}
 
                 {isShopifyOAuthRevoked ? (
                   <Alert
                     type="warning"
                     showIcon
-                    message="Shopify OAuth 授权已停用或卸载"
-                    description="请点击下方「重新授权」恢复 OAuth 连接，或在编辑中改用 Custom App Token。"
+                    message={
+                      <span className="gm-brand-alert-title-row">
+                        <span>授权失效</span>
+                        <Explain text="Shopify OAuth 授权已停用或卸载；请点击「重新授权」恢复 OAuth 连接，或在编辑中改用 Custom App Token。" />
+                      </span>
+                    }
                     action={
                       <Button
                         size="small"
@@ -649,7 +637,7 @@ export function BrandChannelConnections({
                     className="gm-brand-btn-nowrap"
                     onClick={() => void handleTestCard(conn)}
                   >
-                    测试连接
+                    测试
                   </Button>
                   {!isShopifyOAuthRevoked && conn.status !== 'INVALID' ? (
                     <Button

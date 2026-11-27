@@ -121,9 +121,9 @@ describe('BrandProductLinesSection (#387)', () => {
 
     const section = screen.getByTestId('brand-product-lines-section');
     expect(section.id).toBe('brand-section-product-lines');
-    expect(section.textContent).toContain('单品类品牌无需配置产品线');
+    expect(section.textContent).toContain('暂无产线');
 
-    fireEvent.click(within(section).getByRole('button', { name: '新增产品线' }));
+    fireEvent.click(within(section).getByTestId('brand-add-product-line-btn'));
     const modal = await screen.findByTestId('brand-pl-modal');
 
     fireEvent.change(within(modal).getByLabelText('产品线名称'), {

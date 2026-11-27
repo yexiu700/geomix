@@ -434,7 +434,7 @@ v2Describe(
           await page.goto(`/brands?brandId=${brandId}&market=CN`, {
             waitUntil: 'domcontentloaded',
           });
-          await expect(page.getByText('核心产品与参数').first()).toBeVisible();
+          await expect(page.getByTestId('fact-slot-PRODUCT_SPECS')).toBeVisible();
           await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
         } finally {
           await context.close();

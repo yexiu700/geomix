@@ -55,7 +55,7 @@ export function ProductLineSelectorPill({
         }
         onClick={() => setActiveProductLine(null)}
       >
-        <span>全部产品线</span>
+        <span>全部</span>
       </button>
       {productLines.map((line) => {
         const selected = activeProductLineId === line.id;

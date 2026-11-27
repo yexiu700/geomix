@@ -93,7 +93,7 @@ afterEach(async () => {
 });
 
 describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
-  it('shows enable-market prompt when marketEnabled is false and invokes onEnableMarket', () => {
+  it('shows compact 市场未开 empty state when marketEnabled is false without duplicate enable button (Y7)', () => {
     const onEnableMarket = vi.fn();
     render(
       <BrandChannelConnections
@@ -105,10 +105,9 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
       />,
     );
 
-    expect(screen.getByText('当前市场尚未开启')).toBeTruthy();
+    expect(screen.getByText('市场未开')).toBeTruthy();
+    expect(screen.queryByTestId('add-channel-connection-btn')).toBeNull();
     expect(listChannelConnectionsMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '立即开启' }));
-    expect(onEnableMarket).toHaveBeenCalledTimes(1);
   });
 
   it('creates Shopify connection with save-and-test target discovery, clears plaintext secrets on close, and preserves blank credentials on PATCH', async () => {
@@ -161,7 +160,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
 
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
-    fireEvent.click(within(modal).getByRole('tab', { name: /Custom App Token/ }));
+    fireEvent.click(within(modal).getByRole('tab', { name: '手动配置' }));
 
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'AstraVault Shopify' },
@@ -463,10 +462,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
 
-    await selectAntdOption(
-      within(modal).getByTestId('channel-provider-select'),
-      '通用签名 Webhook',
-    );
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Webhook');
 
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Internal SSRF Hook' },
@@ -1049,7 +1045,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 2. Same-tick double-click on submit + save-and-test -> strictly 1 createChannelConnection call
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
-    fireEvent.click(within(modal).getByRole('tab', { name: /Custom App Token/ }));
+    fireEvent.click(within(modal).getByRole('tab', { name: '手动配置' }));
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Single Flight Store' },
     });
@@ -1135,7 +1131,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     expect(within(modal).getByLabelText('Shopify Access Token')).toBeTruthy();
 
     // Switch back to OAuth tab
-    fireEvent.click(within(modal).getByRole('tab', { name: /Shopify OAuth 2\.0/ }));
+    fireEvent.click(within(modal).getByRole('tab', { name: 'OAuth' }));
     fireEvent.change(within(modal).getByTestId('shopify-oauth-shop-input'), {
       target: { value: 'demo.myshopify.com' },
     });
@@ -1212,7 +1208,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 1. GHOST with bad key -> validation error, then valid even-length hex key + targetLocale
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     let modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Ghost 博客');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Ghost');
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Ghost DE Blog' },
     });
@@ -1249,7 +1245,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 2. DEVTO
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to 技术社区');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to');
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Dev.to Official' },
     });
@@ -1274,7 +1270,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 3. HASHNODE (exact apiToken credential key)
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode 博客');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode');
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Hashnode Eng' },
     });
@@ -1303,7 +1299,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // 4. GITHUB_MDX (repoOwner / repoName / branch / fileExtension)
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'GitHub MDX 仓库');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'GitHub');
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Docs MDX Repo' },
     });
@@ -1387,10 +1383,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // Open modal & create WECHAT_OFFICIAL
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     const modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(
-      within(modal).getByTestId('channel-provider-select'),
-      '微信公众号草稿箱',
-    );
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), '公众号');
     expect(within(modal).getByTestId('wechat-modal-draft-notice').textContent).toContain(
       '仅推送至公众号草稿箱，绝不自动群发',
     );
@@ -1505,12 +1498,12 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // Part A: Type tags under DEVTO -> switch to HASHNODE -> saved configJson MUST NOT leak tags
     fireEvent.click(screen.getByTestId('add-channel-connection-btn'));
     let modal = await screen.findByTestId('channel-connection-modal');
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to 技术社区');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Dev.to');
     fireEvent.change(within(modal).getByLabelText('Dev.to 默认标签'), {
       target: { value: 't1, t2, t3, t4, t5' },
     });
 
-    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode 博客');
+    await selectAntdOption(within(modal).getByTestId('channel-provider-select'), 'Hashnode');
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Clean Hashnode' },
     });
@@ -1530,11 +1523,11 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
     // Part B: Edit OAuth Shopify connection -> switch to Custom tab, type token -> switch back to OAuth tab -> Save MUST NOT send credentials.accessToken
     fireEvent.click(screen.getByTestId('channel-connection-edit-btn-conn_shopify_oauth_1'));
     modal = await screen.findByTestId('channel-connection-modal');
-    fireEvent.click(within(modal).getByRole('tab', { name: 'Custom App Token' }));
+    fireEvent.click(within(modal).getByRole('tab', { name: '手动配置' }));
     fireEvent.change(within(modal).getByLabelText('Shopify Access Token'), {
       target: { value: 'shpat_TYPED_THEN_SWITCHED' },
     });
-    fireEvent.click(within(modal).getByRole('tab', { name: /Shopify OAuth 2\.0/ }));
+    fireEvent.click(within(modal).getByRole('tab', { name: 'OAuth' }));
     fireEvent.click(screen.getByTestId('channel-connection-submit-btn'));
     await waitFor(() => expect(updateChannelConnectionMock).toHaveBeenCalledTimes(1));
     const patchPayload = updateChannelConnectionMock.mock.calls[0]?.[2] as {
@@ -1754,7 +1747,7 @@ describe('BrandChannelConnections (/brands market-scoped L1 channels)', () => {
       />,
     );
 
-    const addBtn = await screen.findByRole('button', { name: /新增渠道连接|添加渠道连接/ });
+    const addBtn = await screen.findByTestId('add-channel-connection-btn');
     fireEvent.click(addBtn);
 
     const modal = await screen.findByTestId('channel-connection-modal');

@@ -2007,25 +2007,28 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
       await page.goto(`/brands?brandId=${brand.id}&market=CN`, { waitUntil: 'domcontentloaded' });
       await expect(page.locator('#brand-section-identity')).toBeVisible({ timeout: 20_000 });
 
-      // 1. Desktop (1440x900) left sticky anchors: 5 on CN incl. #brand-section-extension, right col <= 1048px
+      // 1. Desktop (1440x900) left sticky anchors: 5 core sections on CN (extension moved to /account via Y5), right col <= 1048px
       const anchorNav = page
         .locator('nav[aria-label="页面区块跳转"], nav:has(a[href="#brand-section-identity"])')
         .first();
       await expect(anchorNav).toBeVisible({ timeout: 10_000 });
 
-      for (const id of [
+      const coreSectionIds = [
         'brand-section-identity',
+        'brand-section-product-lines',
         'brand-section-facts',
         'brand-section-media',
         'brand-section-connections',
-        'brand-section-extension',
-      ]) {
+      ];
+      for (const id of coreSectionIds) {
         await expect(page.locator(`#${id}`), `Section #${id} must exist on CN`).toBeAttached();
         await expect(
           anchorNav.locator(`a[href="#${id}"]`),
           `Anchor link #${id} must be visible on CN`,
         ).toBeVisible();
       }
+      await expect(anchorNav.locator('a[href="#brand-section-extension"]')).toHaveCount(0);
+      await expect(page.locator('#brand-section-extension')).toHaveCount(0);
 
       const desktopAnchorGeom = await page.evaluate(() => {
         const nav = document.querySelector<HTMLElement>(
@@ -2050,13 +2053,7 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
       expect(desktopAnchorGeom!.identityWidth).toBeLessThanOrEqual(1048);
 
       // 2. Zero 1./2./3./4./5. numbered section prefixes across all 5 CN sections (including h4 headings)
-      for (const id of [
-        'brand-section-identity',
-        'brand-section-facts',
-        'brand-section-media',
-        'brand-section-connections',
-        'brand-section-extension',
-      ]) {
+      for (const id of coreSectionIds) {
         const headingText = await page
           .locator(`#${id} h2, #${id} h3, #${id} h4`)
           .first()
@@ -2067,7 +2064,7 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
         ).not.toMatch(/^\s*[1-5][.、\s]/);
       }
 
-      // 3. Switch to GLOBAL -> 4 anchors (#brand-section-extension absent), then switch back to CN
+      // 3. Switch to GLOBAL -> core anchors stay visible (#brand-section-extension absent on both), then switch back to CN
       await switchGlobalMarket(page, 'GLOBAL');
       await expect(anchorNav.locator('a[href="#brand-section-extension"]')).toHaveCount(0);
       await expect(anchorNav.locator('a[href="#brand-section-identity"]')).toBeVisible();
@@ -2166,16 +2163,12 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
       await expect(identitySec.locator('input[value="群晖"]')).toHaveCount(0);
 
       // Discard the competitor deletion via scoped sticky dirty bar to test clean state -> edit -> 放弃 -> edit -> 保存修改
-      const dirtyBarText = page.getByText(/有未保存更改/).first();
-      await expect(dirtyBarText).toBeVisible({ timeout: 10_000 });
-      const dirtyBar = page
-        .locator('div, footer, section')
-        .filter({ hasText: /有未保存更改/ })
-        .filter({ has: page.getByRole('button', { name: '保存修改', exact: true }) })
-        .last();
+      const dirtyBar = page.getByTestId('brand-dirty-save-bar');
+      const dirtyBarText = dirtyBar.getByText(/未保存|有未保存更改/).first();
       await expect(dirtyBar).toBeVisible({ timeout: 10_000 });
+      await expect(dirtyBarText).toBeVisible({ timeout: 10_000 });
       await dirtyBar.getByRole('button', { name: '放弃', exact: true }).click();
-      await expect(dirtyBarText).toBeHidden({ timeout: 10_000 });
+      await expect(dirtyBar).toBeHidden({ timeout: 10_000 });
 
       // 6. Sticky dirty-state bar: edit -> 放弃 reverts; edit -> 保存修改 persists
       const brandNameInput = page.locator('input[aria-label="编辑品牌名称"]').first();

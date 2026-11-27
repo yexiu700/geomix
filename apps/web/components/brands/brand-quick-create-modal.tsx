@@ -5,9 +5,6 @@ import {
   BRAND_FACT_SLOT_LABELS,
   BRAND_MAX_COMPETITORS,
   BRAND_NAME_MAX,
-  BRAND_TRUTH_AGREEMENT_PARAGRAPHS,
-  BRAND_TRUTH_AGREEMENT_TITLE,
-  BRAND_TRUTH_CHECKBOX_LABEL,
   GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL,
   containsCjk,
   validateGlobalMarketIdentity,
@@ -24,13 +21,13 @@ import {
   type UpdateBrandMarketInput,
   type UpsertBrandFactsInput,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Form, Input, Modal, Space, Tag } from 'antd';
+import { Alert, Button, Checkbox, Form, Input, Modal, Tag } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import type { ExtractBrandFactsRequest } from '../../lib/brands';
 import { useUxFeedback } from '../crud/ux-feedback';
+import { Explain } from '../ui';
 import {
   CORE_FACT_SLOTS,
-  FACT_EXTRACT_ACCEPT,
   mergeAiMarketSuggestions,
   serializeCompetitorRows,
   validateDomainListInput,
@@ -39,6 +36,8 @@ import {
   type CompetitorDraftRow,
 } from './brand-form-helpers';
 import { BrandMarketAiSuggestModal } from './brand-market-ai-suggest-modal';
+import { BrandQuickCreateExtractStep } from './brand-quick-create-extract-step';
+import { BrandTruthTermsModal } from './brand-truth-terms-modal';
 
 type Step1FormValues = {
   name: string;
@@ -151,7 +150,6 @@ export function BrandQuickCreateModal({
   const [truthAgreed, setTruthAgreed] = useState(false);
   const [savingFacts, setSavingFacts] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const savingFactsRef = useRef(false);
 
   // Step 3 state: automatic AI market config prefill after saving facts
@@ -611,7 +609,7 @@ export function BrandQuickCreateModal({
     <>
       <Modal
         open={open && step !== 'prefill'}
-        title="60 秒创建品牌"
+        title="新建品牌"
         width={660}
         onCancel={handleClose}
         keyboard={!busy}
@@ -624,7 +622,7 @@ export function BrandQuickCreateModal({
             <span
               className={step === 'create' ? 'gm-brand-step is-active' : 'gm-brand-step is-done'}
             >
-              1. 基础信息（60 秒）
+              1. 基础信息
             </span>
             <span className="gm-brand-step-sep" aria-hidden="true">
               →
@@ -638,14 +636,14 @@ export function BrandQuickCreateModal({
                     : 'gm-brand-step'
               }
             >
-              2. AI 提炼 4 块事实卡（可选 · 免费）
+              2. 提炼事实
             </span>
             {hasPrefillStep ? (
               <>
                 <span className="gm-brand-step-sep" aria-hidden="true">
                   →
                 </span>
-                <span className="gm-brand-step">3. AI 补全市场配置（可选 · 免费）</span>
+                <span className="gm-brand-step">3. 补全市场</span>
               </>
             ) : null}
           </div>
@@ -676,7 +674,7 @@ export function BrandQuickCreateModal({
                 />
               </Form.Item>
 
-              <Form.Item label="品牌别名（选填）">
+              <Form.Item label="品牌别名">
                 <div className="gm-brand-chip-input-row">
                   <Input
                     aria-label="品牌别名"
@@ -750,14 +748,14 @@ export function BrandQuickCreateModal({
                 <Checkbox.Group
                   disabled={readOnly || submitting}
                   options={[
-                    { label: '🇨🇳 国内市场 (CN · zh-CN)', value: 'CN' },
-                    { label: '🌐 海外市场 (GLOBAL · en-US)', value: 'GLOBAL' },
+                    { label: '国内', value: 'CN' },
+                    { label: '海外', value: 'GLOBAL' },
                   ]}
                 />
               </Form.Item>
 
               <Form.Item
-                label="自有官网域名"
+                label="官网域名"
                 name="ownedDomainsText"
                 validateFirst
                 validateTrigger={['onBlur', 'onSubmit']}
@@ -798,11 +796,12 @@ export function BrandQuickCreateModal({
                   data-testid="brand-quick-create-global-fields"
                   className="gm-brand-qc-global-box"
                 >
-                  <div className="gm-brand-qc-global-title">
-                    🌐 海外市场本地化身份（选填 · 建议填写纯英文避免英文种子问句与 Schema 混入中文）
+                  <div className="gm-brand-qc-global-title gm-brand-alert-title-row">
+                    <span>海外身份</span>
+                    <Explain text="选填，建议填写纯英文避免英文种子问句与 Schema 混入中文。" />
                   </div>
                   <Form.Item
-                    label="海外英文品牌名（选填）"
+                    label="英文名"
                     name="globalLocalBrandName"
                     rules={[
                       { max: BRAND_NAME_MAX, message: `品牌名称不超过 ${BRAND_NAME_MAX} 字` },
@@ -817,7 +816,7 @@ export function BrandQuickCreateModal({
                     />
                   </Form.Item>
                   <Form.Item
-                    label="海外英文品类（选填）"
+                    label="英文品类"
                     name="globalLocalCategory"
                     rules={[
                       {
@@ -835,7 +834,7 @@ export function BrandQuickCreateModal({
                     />
                   </Form.Item>
                   <Form.Item
-                    label="海外官网域名（选填）"
+                    label="海外域名"
                     name="globalOwnedDomainsText"
                     className="gm-brand-qc-item-none"
                   >
@@ -846,7 +845,7 @@ export function BrandQuickCreateModal({
                     />
                   </Form.Item>
                   {hasGlobalCjkIdentity ? (
-                    <div className="gm-brand-global-cjk-guard gm-brand-mt-sm">
+                    <div className="gm-brand-global-cjk-guard gm-brand-mt-sm gm-brand-alert-title-row">
                       <Checkbox
                         data-testid="quick-create-allow-cjk-global-checkbox"
                         checked={allowCjkGlobalIdentity}
@@ -856,16 +855,17 @@ export function BrandQuickCreateModal({
                           if (event.target.checked && error) setError(null);
                         }}
                       >
-                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                        保留中文
                       </Checkbox>
+                      <Explain
+                        text={`${GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）`}
+                      />
                     </div>
                   ) : null}
                 </div>
               ) : null}
 
-              <Form.Item
-                label={`主要竞品（选填，最多 ${BRAND_MAX_COMPETITORS} 家 · ${competitorRows.length} / ${BRAND_MAX_COMPETITORS}）`}
-              >
+              <Form.Item label={`竞品 ${competitorRows.length}/${BRAND_MAX_COMPETITORS}`}>
                 <div className="gm-brand-competitor-list">
                   {competitorRows.map((row, idx) => (
                     <div key={row.key} className="gm-brand-competitor-row">
@@ -926,7 +926,7 @@ export function BrandQuickCreateModal({
                       )
                     }
                   >
-                    + 添加竞品
+                    添加竞品
                   </Button>
                 </div>
               </Form.Item>
@@ -939,159 +939,52 @@ export function BrandQuickCreateModal({
                 <Button autoInsertSpace={false} disabled={submitting} onClick={handleClose}>
                   取消
                 </Button>
-                <Button type="primary" htmlType="submit" loading={submitting} disabled={readOnly}>
-                  创建并进入工作区
+                <Button
+                  type="primary"
+                  autoInsertSpace={false}
+                  data-testid="brand-quick-create-submit-btn"
+                  htmlType="submit"
+                  loading={submitting}
+                  disabled={readOnly}
+                >
+                  创建
                 </Button>
               </div>
             </Form>
           ) : (
-            <div className="gm-brand-extract-step">
-              <Alert
-                type="success"
-                showIcon
-                message={`品牌「${createdBrand?.name ?? ''}」已创建！`}
-                description="贴入官网链接或上传产品资料（TXT / MD / PDF），AI 自动帮您提炼 4 块结构化品牌事实卡（免费，0 点）。"
-                className="gm-brand-inline-alert"
-              />
-
-              <div className="gm-brand-mode-tabs" role="tablist" aria-label="资料来源方式">
-                {(
-                  [
-                    ['URL_EXTRACT', '官网链接'],
-                    ['MANUAL', '粘贴资料'],
-                    ['DOC_UPLOAD', '上传文档'],
-                  ] as const
-                ).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    aria-selected={extractMode === mode}
-                    className={
-                      extractMode === mode ? 'gm-brand-mode-btn is-active' : 'gm-brand-mode-btn'
-                    }
-                    onClick={() => {
-                      setExtractMode(mode);
-                      setExtractError(null);
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {extractMode === 'URL_EXTRACT' ? (
-                <Input
-                  aria-label="官网链接"
-                  value={extractUrl}
-                  disabled={extracting || savingFacts}
-                  placeholder="https://example.com/product"
-                  onChange={(event) => setExtractUrl(event.target.value)}
-                />
-              ) : extractMode === 'MANUAL' ? (
-                <Input.TextArea
-                  aria-label="粘贴产品资料"
-                  rows={4}
-                  value={extractText}
-                  disabled={extracting || savingFacts}
-                  placeholder="粘贴产品参数表、核心卖点、资质证书或客户案例文本（至少 10 字）"
-                  onChange={(event) => setExtractText(event.target.value)}
-                />
-              ) : (
-                <div className="gm-brand-file-picker">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept={FACT_EXTRACT_ACCEPT}
-                    aria-label="上传品牌资料文档"
-                    disabled={extracting || savingFacts}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] ?? null;
-                      setExtractFile(file);
-                      setExtractError(null);
-                    }}
-                  />
-                  {extractFile ? (
-                    <span className="gm-brand-file-name">已选文件：{extractFile.name}</span>
-                  ) : null}
-                </div>
-              )}
-
-              {drafts ? (
-                <div className="gm-brand-draft-list">
-                  {drafts.map((item) => (
-                    <div key={item.slot} className="gm-brand-draft-item">
-                      <div className="gm-brand-draft-head">
-                        <strong>{BRAND_FACT_SLOT_LABELS[item.slot]}</strong>
-                      </div>
-                      <Input.TextArea
-                        aria-label={`提炼草稿 ${BRAND_FACT_SLOT_LABELS[item.slot]}`}
-                        rows={3}
-                        value={item.content}
-                        disabled={savingFacts}
-                        onChange={(event) =>
-                          setDrafts((prev) =>
-                            prev
-                              ? prev.map((row) =>
-                                  row.slot === item.slot
-                                    ? { ...row, content: event.target.value }
-                                    : row,
-                                )
-                              : prev,
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-
-                  <div className="gm-brand-truth-bar">
-                    <Checkbox
-                      checked={truthAgreed}
-                      disabled={savingFacts}
-                      onChange={(event) => setTruthAgreed(event.target.checked)}
-                    >
-                      {BRAND_TRUTH_CHECKBOX_LABEL}
-                    </Checkbox>
-                    <Button type="link" size="small" onClick={() => setTermsOpen(true)}>
-                      查看承诺协议全文
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              {extractError ? (
-                <Alert
-                  type="error"
-                  showIcon
-                  message={extractError}
-                  className="gm-brand-mt-sm gm-brand-mb-xs"
-                />
-              ) : null}
-
-              <div className="gm-brand-modal-footer">
-                <Button disabled={busy} onClick={handleClose}>
-                  跳过，直接进入
-                </Button>
-                <Button
-                  type={drafts ? 'default' : 'primary'}
-                  loading={extracting}
-                  disabled={savingFacts}
-                  onClick={() => void handleRunExtract()}
-                >
-                  AI 提炼 4 块事实卡（免费）
-                </Button>
-                {drafts ? (
-                  <Button
-                    type="primary"
-                    loading={savingFacts}
-                    disabled={extracting}
-                    onClick={() => void handleSaveExtractedFacts()}
-                  >
-                    保存事实卡并完成
-                  </Button>
-                ) : null}
-              </div>
-            </div>
+            <BrandQuickCreateExtractStep
+              brandName={createdBrand?.name ?? ''}
+              extractMode={extractMode}
+              extractUrl={extractUrl}
+              extractText={extractText}
+              extractFile={extractFile}
+              extracting={extracting}
+              savingFacts={savingFacts}
+              busy={busy}
+              drafts={drafts}
+              truthAgreed={truthAgreed}
+              extractError={extractError}
+              onModeChange={(mode) => {
+                setExtractMode(mode);
+                setExtractError(null);
+              }}
+              onUrlChange={setExtractUrl}
+              onTextChange={setExtractText}
+              onFileChange={(file) => {
+                setExtractFile(file);
+                setExtractError(null);
+              }}
+              onDraftChange={(slot, content) =>
+                setDrafts((prev) =>
+                  prev ? prev.map((row) => (row.slot === slot ? { ...row, content } : row)) : prev,
+                )
+              }
+              onTruthAgreedChange={setTruthAgreed}
+              onOpenTerms={() => setTermsOpen(true)}
+              onClose={handleClose}
+              onRunExtract={() => void handleRunExtract()}
+              onSaveExtractedFacts={() => void handleSaveExtractedFacts()}
+            />
           )}
         </div>
       </Modal>
@@ -1110,8 +1003,8 @@ export function BrandQuickCreateModal({
         currentLocalCategory={activePrefillMarketRecord?.localCategory ?? ''}
         sourceUrl={prefillSourceUrl}
         allowSourceUrl={true}
-        confirmLabel="保存市场配置并完成"
-        cancelLabel="跳过，直接进入"
+        confirmLabel="完成"
+        cancelLabel="跳过"
         footerHint="勾选确认后直接保存市场配置，随后可在可见度诊断页一键填入种子问句发起首轮监测。"
         onSourceUrlChange={setPrefillSourceUrl}
         onRegenerate={(url) => {
@@ -1123,24 +1016,7 @@ export function BrandQuickCreateModal({
         onCancel={handleClose}
       />
 
-      <Modal
-        open={termsOpen}
-        title={BRAND_TRUTH_AGREEMENT_TITLE}
-        onCancel={() => setTermsOpen(false)}
-        footer={[
-          <Button key="ok" type="primary" onClick={() => setTermsOpen(false)}>
-            知道了
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" size={10} className="gm-brand-terms-list">
-          {BRAND_TRUTH_AGREEMENT_PARAGRAPHS.map((para, idx) => (
-            <p key={idx} className="gm-brand-terms-para">
-              {para}
-            </p>
-          ))}
-        </Space>
-      </Modal>
+      <BrandTruthTermsModal open={termsOpen} onClose={() => setTermsOpen(false)} />
     </>
   );
 }

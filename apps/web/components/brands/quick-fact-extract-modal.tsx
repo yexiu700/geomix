@@ -12,7 +12,9 @@ import { Alert, Button, Checkbox, Input, Modal } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { extractBrandFacts, saveBrandFacts, type ExtractBrandFactsRequest } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
+import { BRAND_FACT_SLOT_SHORT } from '../../lib/short-labels';
 import { useWorkspaceStore } from '../../lib/workspace-store';
+import { CostChip, Explain } from '../ui';
 import {
   CORE_FACT_SLOTS,
   FACT_EXTRACT_ACCEPT,
@@ -282,7 +284,7 @@ export function QuickFactExtractModal({
   return (
     <Modal
       open={open}
-      title="先补充品牌事实，避免正文满屏待补充"
+      title="补充事实"
       width={680}
       onCancel={() => {
         if (!busy) onClose();
@@ -293,36 +295,36 @@ export function QuickFactExtractModal({
       footer={null}
     >
       <div className="gm-brand-extract-step" data-testid="quick-fact-extract-modal">
-        <p className="gm-brand-section-desc">
-          当前品牌{brandName ? `「${brandName}」` : ''}
-          {productLineName ? `（产品线：${productLineName}）` : ''}
-          尚未维护任何品牌事实卡。输入官网/商品页链接或粘贴产品参数，系统可 0
-          点自动提炼核心事实并直接续跑写作。
-        </p>
-
-        <div className="gm-brand-mode-tabs" role="tablist" aria-label="选择事实资料来源">
-          {(
-            [
-              ['URL_EXTRACT', '官网链接'],
-              ['MANUAL', '粘贴资料'],
-              ['DOC_UPLOAD', '上传文档'],
-            ] as const
-          ).map(([mode, label]) => (
-            <button
-              key={mode}
-              type="button"
-              role="tab"
-              aria-selected={extractMode === mode}
-              className={extractMode === mode ? 'gm-brand-mode-btn is-active' : 'gm-brand-mode-btn'}
-              disabled={busy || readOnly}
-              onClick={() => {
-                setExtractMode(mode);
-                setError(null);
-              }}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="gm-brand-extra-doc-head">
+          <div className="gm-brand-mode-tabs" role="tablist" aria-label="选择事实资料来源">
+            {(
+              [
+                ['URL_EXTRACT', '官网链接'],
+                ['MANUAL', '粘贴资料'],
+                ['DOC_UPLOAD', '上传文档'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={extractMode === mode}
+                className={
+                  extractMode === mode ? 'gm-brand-mode-btn is-active' : 'gm-brand-mode-btn'
+                }
+                disabled={busy || readOnly}
+                onClick={() => {
+                  setExtractMode(mode);
+                  setError(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Explain
+            text={`当前品牌${brandName ? `「${brandName}」` : ''}${productLineName ? `（产品线：${productLineName}）` : ''}尚未维护品牌事实卡。输入官网/商品页链接或粘贴参数，系统可 0 点提炼事实并直接续跑写作。`}
+          />
         </div>
 
         {extractMode === 'URL_EXTRACT' ? (
@@ -373,7 +375,7 @@ export function QuickFactExtractModal({
               return (
                 <div key={slot} className="gm-brand-draft-item">
                   <div className="gm-brand-draft-head">
-                    <strong>{BRAND_FACT_SLOT_LABELS[slot]}</strong>
+                    <strong>{BRAND_FACT_SLOT_SHORT[slot]}</strong>
                     <span className="gm-brand-fact-meta">{draft.content.length} 字</span>
                   </div>
                   <Input.TextArea
@@ -405,8 +407,9 @@ export function QuickFactExtractModal({
                   if (event.target.checked) setError(null);
                 }}
               >
-                {BRAND_TRUTH_CHECKBOX_LABEL}
+                确认属实
               </Checkbox>
+              <Explain text={BRAND_TRUTH_CHECKBOX_LABEL} />
             </div>
           </div>
         ) : null}
@@ -414,12 +417,14 @@ export function QuickFactExtractModal({
         <div className="gm-brand-modal-footer">
           <Button
             type="default"
+            autoInsertSpace={false}
             data-testid="quick-fact-skip-btn"
             disabled={busy || readOnly}
             onClick={onSkipAndGenerate}
           >
-            跳过并直接生成
+            跳过
           </Button>
+          <CostChip points={0} />
           <Button
             type={hasExtracted ? 'default' : 'primary'}
             data-testid="quick-fact-extract-btn"
@@ -427,7 +432,7 @@ export function QuickFactExtractModal({
             disabled={saving || readOnly}
             onClick={() => void handleRunExtract()}
           >
-            开始 AI 提炼（免费）
+            AI 提炼
           </Button>
           {hasExtracted ? (
             <Button
@@ -437,7 +442,7 @@ export function QuickFactExtractModal({
               disabled={extracting || readOnly}
               onClick={() => void handleSaveAndResume()}
             >
-              保存并继续生成
+              保存继续
             </Button>
           ) : null}
         </div>

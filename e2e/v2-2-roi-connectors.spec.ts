@@ -3596,7 +3596,7 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
       await expect(connModal).toBeVisible();
 
       await selectAntDropdownOption(page, page.getByTestId('channel-provider-select'), /Ghost/i);
-      await expect(connModal.getByText(/Admin API Key|id:hex/i).first()).toBeVisible();
+      await expect(connModal.getByText(/Admin API Key|API Key|id:hex/i).first()).toBeVisible();
 
       await selectAntDropdownOption(page, page.getByTestId('channel-provider-select'), /Shopify/i);
       await expect(connModal.getByText(/OAuth/i).first()).toBeVisible();
@@ -3610,18 +3610,21 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
       await expect(connModal).toBeHidden();
       await assertLayoutErgonomics(page);
 
-      // 2. CN /brands: inspect WeChat draft-only & IP whitelist notice + Chrome Extension pairing
+      // 2. CN /brands: inspect WeChat draft-only & IP whitelist notice + confirm Chrome Extension moved to /account (Y5)
       await page.goto(`/brands?brandId=${brand.id}&market=CN`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('brand-channel-connections')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('extension-pairing-panel')).toHaveCount(0);
 
       await page.getByTestId('add-channel-connection-btn').click();
       await expect(connModal).toBeVisible();
       await selectAntDropdownOption(
         page,
         page.getByTestId('channel-provider-select'),
-        /微信公众号|草稿箱/,
+        /公众号|微信公众号|草稿箱/,
       );
-      await expect(connModal.getByText(/仅推送至公众号草稿箱|不自动群发/).first()).toBeVisible();
+      await expect(
+        connModal.getByText(/仅草稿|仅推送至公众号草稿箱|不自动群发/).first(),
+      ).toBeVisible();
       await expect(connModal.getByText(/IP.*白名单|40164/).first()).toBeVisible();
       await page
         .locator('.ant-modal-content:visible')
@@ -3630,10 +3633,14 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
         .click();
       await expect(connModal).toBeHidden();
 
-      // Chrome Extension pairing panel: create token -> plaintext gmext_ shown ONCE -> hidden after close -> visible in /account -> revoke
+      // 3. Chrome Extension pairing panel on /account?tab=extension: create token -> plaintext gmext_ shown ONCE -> hidden after close -> revoke
+      await page.goto(`/account?tab=extension&brandId=${brand.id}&market=CN`, {
+        waitUntil: 'domcontentloaded',
+      });
+      await assertFourItemSidebar(page);
       const pairingPanel = page.getByTestId('extension-pairing-panel');
       await expect(pairingPanel).toBeVisible({ timeout: 15_000 });
-      await expect(pairingPanel.getByText(/Chrome 扩展配对/).first()).toBeVisible({
+      await expect(pairingPanel.getByText(/Chrome 扩展配对|扩展配对/).first()).toBeVisible({
         timeout: 15_000,
       });
       const labelInput = pairingPanel.getByLabel(/设备或浏览器名称|备注/).first();
@@ -3681,17 +3688,7 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
       expect(await readTextIncludingInputs(page.locator('body'))).not.toContain(plainToken);
       await assertLayoutErgonomics(page);
 
-      // 3. Verify pairing panel also accessible in /account & revoke the token cleanly
-      await page.goto(`/account?brandId=${brand.id}&market=CN`, { waitUntil: 'domcontentloaded' });
-      await assertFourItemSidebar(page);
-      await expect(page.getByText(/Chrome 扩展配对|扩展配对/).first()).toBeVisible({
-        timeout: 15_000,
-      });
-      const pairingTab = page.getByRole('tab', { name: /Chrome 扩展配对|扩展配对/ }).first();
-      if ((await pairingTab.count()) > 0) {
-        await expect(pairingTab).toBeVisible({ timeout: 5_000 });
-        await pairingTab.click();
-      }
+      // Verify pairing token row visible on /account & revoke cleanly
       await expect(page.getByText('E2E Chrome Pairing Device').first()).toBeVisible({
         timeout: 15_000,
       });
