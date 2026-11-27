@@ -252,9 +252,9 @@ export async function openVisibilityTab(
     citations: 'visibility-tab-citations',
   } as const;
   const labelMap = {
-    overview: /诊断总览/,
-    runs: /监测任务/,
-    citations: /信源阵地/,
+    overview: /总览|诊断总览/,
+    runs: /监测|监测任务/,
+    citations: /信源|信源阵地/,
   } as const;
 
   const target = page
@@ -296,7 +296,7 @@ export async function openBriefDrawerAndEdit(
   if (opts.clickWrite) {
     const writeBtn = drawer
       .getByTestId('brief-drawer-write-btn')
-      .or(drawer.getByRole('button', { name: /按此意见立即写作|确认并写作/ }))
+      .or(drawer.getByRole('button', { name: /去写作|按此意见立即写作|确认并写作/ }))
       .first();
     await expect(writeBtn).toBeVisible();
     await writeBtn.click();

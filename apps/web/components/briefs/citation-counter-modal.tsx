@@ -6,7 +6,7 @@ import type { JSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createBriefFromCitationUrl, isCitationCounterFallbackError } from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
-import { FormField } from '../ui';
+import { CostChip, Explain, FormField } from '../ui';
 
 export type CitationCounterModalProps = {
   open: boolean;
@@ -196,13 +196,14 @@ export function CitationCounterModal({
     <Modal
       open={open}
       onCancel={handleClose}
-      title={showFallback ? '竞品高引用反制 · 粘贴参考正文' : '竞品高引用 URL 反制'}
+      title={showFallback ? '粘贴反制' : '链接反制'}
       width={620}
       destroyOnHidden
       footer={[
-        <Button key="cancel" onClick={handleClose} disabled={submitting}>
+        <Button key="cancel" autoInsertSpace={false} onClick={handleClose} disabled={submitting}>
           取消
         </Button>,
+        <CostChip key="cost" points={0} />,
         <Button
           key="submit"
           type="primary"
@@ -211,22 +212,20 @@ export function CitationCounterModal({
           data-testid="counter-submit-btn"
           onClick={() => void handleSubmit()}
         >
-          {showFallback ? '提交参考正文并生成（0 点）' : '生成反制意见（0 点）'}
+          {showFallback ? '提交生成' : '生成意见'}
         </Button>,
       ]}
     >
       <div className="gm-counter-modal-body" data-testid="citation-counter-modal">
         <div className="gm-counter-desc">
-          输入被 AI
-          高频引用的竞品或第三方评测链接，系统自动解析议题骨架并强制注入当前品牌事实卡，生成「高引用信源超越稿」意见卡（0
-          点免费）。
+          输入被 AI 高频引用的竞品或第三方评测链接，系统自动解析议题骨架并强制注入品牌事实卡。
         </div>
 
         {errorMsg ? (
           <Alert type="warning" showIcon message={errorMsg} data-testid="counter-error-alert" />
         ) : null}
 
-        <FormField label="竞品高引用链接" htmlFor="gm-counter-url-input">
+        <FormField label="竞品链接" htmlFor="gm-counter-url-input">
           <Input
             id="gm-counter-url-input"
             aria-label="竞品高引用链接"
@@ -238,7 +237,7 @@ export function CitationCounterModal({
           />
         </FormField>
 
-        <FormField label="目标攻克问题（选填）" htmlFor="gm-counter-prompt-input">
+        <FormField label="目标问题" htmlFor="gm-counter-prompt-input">
           <Input
             id="gm-counter-prompt-input"
             aria-label="目标攻克问题"
@@ -263,8 +262,9 @@ export function CitationCounterModal({
               data-testid="counter-toggle-fallback-btn"
               onClick={() => setShowFallback(true)}
             >
-              页面无法抓取？改用粘贴参考正文
+              改为粘贴
             </Button>
+            <Explain text="页面无法抓取时可改为粘贴竞品评测参考正文，直接提取议题骨架生成反制意见。" />
           </div>
         ) : (
           <div className="gm-counter-fallback-box" data-testid="counter-pasted-fallback">
@@ -280,7 +280,7 @@ export function CitationCounterModal({
                     setErrorMsg(null);
                   }}
                 >
-                  切回自动抓取链接
+                  改用链接
                 </Button>
               ) : null}
             </div>

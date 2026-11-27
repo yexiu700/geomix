@@ -27,7 +27,15 @@ import { formatPct } from '../../lib/design-tokens';
 import { filterEnginesForMarket, parsePromptLines } from '../../lib/visibility';
 import { EngineChipList, SignalError, SignalSkeleton, TruncText } from '../geo/primitives';
 import { RunWorkspace } from '../geo/run-workspace';
-import { EmptyState, RowActions, Section, StatusBadge, type RowActionItem } from '../ui';
+import {
+  CostChip,
+  EmptyState,
+  Explain,
+  RowActions,
+  Section,
+  StatusBadge,
+  type RowActionItem,
+} from '../ui';
 
 export type VisibilityRunsTabProps = {
   activeMarket: GeoMarket;
@@ -365,14 +373,18 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
       <Section
         variant="card"
         className="gm-vis-create-panel"
-        title="发起新一轮 AI 可见度监测"
-        description={`当前市场：${activeMarket === 'CN' ? '中国国内（4 引擎）' : '海外市场（5 引擎）'} · 默认仅勾选已上线健康引擎`}
+        title="发起监测"
         actions={
-          seedPrompts.length > 0 ? (
-            <Button size="small" disabled={readOnly || submitting} onClick={handleFillAllSeeds}>
-              一键填入全部种子问题（{seedPrompts.length}）
-            </Button>
-          ) : undefined
+          <div className="gm-vis-fanout-bar">
+            <Explain
+              text={`当前市场：${activeMarket === 'CN' ? '中国国内（4 引擎）' : '海外市场（5 引擎）'} · 默认仅勾选已上线健康引擎`}
+            />
+            {seedPrompts.length > 0 ? (
+              <Button size="small" disabled={readOnly || submitting} onClick={handleFillAllSeeds}>
+                填入问句
+              </Button>
+            ) : null}
+          </div>
         }
       >
         <div className="gm-vis-form-row">
@@ -463,15 +475,16 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
                 disabled={readOnly || submitting || onlineEngineKeys.length === 0}
                 onClick={() => onCheckedEnginesChange([...onlineEngineKeys])}
               >
-                全选已上线引擎
+                全选在线
               </Button>
               <Button
                 size="small"
                 type="link"
+                autoInsertSpace={false}
                 disabled={readOnly || submitting || checkedCount === 0}
                 onClick={() => onCheckedEnginesChange([])}
               >
-                清空选择
+                清空
               </Button>
             </Space>
           </div>
@@ -526,18 +539,19 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
 
         <div className="gm-vis-submit-bar">
           <div className="gm-vis-cost-hint">
-            预计预冻 <strong className="gm-num">{estimatedPoints}</strong> 点（
-            <span className="gm-num">{promptCount}</span> 问 ×{' '}
-            <span className="gm-num">{checkedCount}</span> 引擎 ×{' '}
-            <span className="gm-num">{unitPrice}</span> 点/次；超时或未上线项自动全额退还）
+            <CostChip points={estimatedPoints} data-testid="visibility-run-cost-chip" />
+            <Explain
+              text={`预计预冻 ${estimatedPoints} 点（${promptCount} 问 × ${checkedCount} 引擎 × ${unitPrice} 点/次；超时或未上线项自动全额退还）`}
+            />
           </div>
           <Button
             type="primary"
+            data-testid="visibility-run-submit-btn"
             loading={submitting}
             disabled={readOnly || promptCount === 0 || checkedCount === 0}
             onClick={onSubmitRun}
           >
-            发起监测（{estimatedPoints} 点）
+            发起监测
           </Button>
         </div>
       </Section>
@@ -545,7 +559,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
       {/* 2. Runs List Table (Zero Overflow at 1440x900 & 1280x800) */}
       <Section
         variant="card"
-        title="监测任务记录"
+        title="监测记录"
         actions={
           <div className="gm-vis-runs-filters">
             <select
@@ -570,7 +584,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
               onChange={(e) => onKeywordFilterChange(e.target.value)}
               onSearch={onKeywordFilterChange}
             />
-            <Button size="small" onClick={onRefreshRuns}>
+            <Button size="small" autoInsertSpace={false} onClick={onRefreshRuns}>
               刷新
             </Button>
           </div>
@@ -583,7 +597,7 @@ export function VisibilityRunsTab(props: VisibilityRunsTabProps): JSX.Element {
         ) : runs.length === 0 ? (
           <EmptyState
             size="compact"
-            title="当前市场暂无监测任务"
+            title="暂无任务"
             description="在上方输入监测问题并勾选已上线引擎，即可发起首次 AI 可见度监测"
           />
         ) : (

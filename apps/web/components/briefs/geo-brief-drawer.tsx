@@ -9,13 +9,8 @@ import type {
   GeoTargetFormat,
 } from '@geomix/shared';
 import {
-  BRAND_FACT_SLOT_LABELS,
-  GEO_BRIEF_SOURCE_LABELS,
   GEO_BRIEF_STATUS_LABELS,
-  GEO_MARKET_LABELS,
   GEO_RECIPES,
-  GEO_RECIPE_LABELS,
-  GEO_TARGET_FORMAT_LABELS,
   formatShanghaiDateTime,
   targetFormatsForMarket,
 } from '@geomix/shared';
@@ -23,9 +18,16 @@ import { Alert, Button, Drawer, Input, Skeleton, Tag, Typography } from 'antd';
 import type { JSX } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { truncateMiddle } from '../../lib/design-tokens';
+import {
+  BRAND_FACT_SLOT_SHORT,
+  GEO_BRIEF_SOURCE_SHORT,
+  GEO_MARKET_SHORT,
+  GEO_RECIPE_SHORT,
+  GEO_TARGET_FORMAT_SHORT,
+} from '../../lib/short-labels';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { StatusBadge, type StatusTone } from '../ui';
+import { CostChip, StatusBadge, type StatusTone } from '../ui';
 
 export type GeoBriefDrawerProps = {
   open: boolean;
@@ -284,6 +286,7 @@ export function GeoBriefDrawer({
             </div>
             <Button
               size="small"
+              autoInsertSpace={false}
               aria-label="关闭写作意见抽屉"
               onClick={onClose}
               disabled={saving || dismissing}
@@ -309,8 +312,8 @@ export function GeoBriefDrawer({
                   label={`优先级 ${brief.priorityScore}`}
                 />
                 <StatusBadge status={brief.status} label={GEO_BRIEF_STATUS_LABELS[brief.status]} />
-                <Tag>{GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}</Tag>
-                <Tag>{GEO_MARKET_LABELS[brief.market]}</Tag>
+                <Tag>{GEO_BRIEF_SOURCE_SHORT[brief.sourceType]}</Tag>
+                <Tag>{GEO_MARKET_SHORT[brief.market]}</Tag>
               </div>
 
               <div className="gm-brief-prompt-box">
@@ -378,7 +381,7 @@ export function GeoBriefDrawer({
                       className={`gm-brief-recipe-card${active ? ' gm-brief-recipe-card-active' : ''}`}
                       onClick={() => setDraftRecipe(recipe)}
                     >
-                      <span className="gm-brief-recipe-name">{GEO_RECIPE_LABELS[recipe]}</span>
+                      <span className="gm-brief-recipe-name">{GEO_RECIPE_SHORT[recipe]}</span>
                       <span className="gm-brief-recipe-hint">{RECIPE_HINTS[recipe]}</span>
                     </button>
                   );
@@ -400,7 +403,7 @@ export function GeoBriefDrawer({
                         className={`gm-day-pill${active ? ' gm-day-pill-active' : ''}`}
                         onClick={() => setDraftTargetFormat(fmt)}
                       >
-                        {GEO_TARGET_FORMAT_LABELS[fmt]}
+                        {GEO_TARGET_FORMAT_SHORT[fmt]}
                       </button>
                     );
                   })}
@@ -435,7 +438,7 @@ export function GeoBriefDrawer({
                   disabled={readOnly || draftOutline.length >= 15}
                   onClick={addOutlineRow}
                 >
-                  + 添加 H2 小节
+                  添加小节
                 </Button>
               </div>
 
@@ -522,7 +525,7 @@ export function GeoBriefDrawer({
                   {matchedFacts.map((fact) => (
                     <div key={fact.id} className="gm-brief-fact-card">
                       <div className="gm-brief-fact-card-head">
-                        <Tag>{BRAND_FACT_SLOT_LABELS[fact.slot]}</Tag>
+                        <Tag>{BRAND_FACT_SLOT_SHORT[fact.slot]}</Tag>
                         <span className="gm-brief-fact-title">{fact.title}</span>
                       </div>
                       <div className="gm-brief-fact-excerpt">
@@ -581,25 +584,28 @@ export function GeoBriefDrawer({
                   <Button
                     danger
                     size="small"
+                    autoInsertSpace={false}
                     data-testid="brief-drawer-dismiss-btn"
                     loading={dismissing}
                     disabled={saving}
                     onClick={handleDismissClick}
                   >
-                    忽略意见
+                    忽略
                   </Button>
                 ) : null}
               </div>
 
               <div className="gm-brief-drawer-footer-right">
                 <Button
+                  autoInsertSpace={false}
                   data-testid="brief-drawer-save-btn"
                   disabled={readOnly || !isDirty || dismissing}
                   loading={saving}
                   onClick={() => void handleSave()}
                 >
-                  保存修改
+                  保存
                 </Button>
+                <CostChip points={10} />
                 <Button
                   type="primary"
                   data-testid="brief-drawer-write-btn"
@@ -607,7 +613,7 @@ export function GeoBriefDrawer({
                   loading={saving}
                   onClick={() => void handleWriteClick()}
                 >
-                  按此意见立即写作（10 点）
+                  去写作
                 </Button>
               </div>
             </div>

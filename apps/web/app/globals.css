@@ -9139,6 +9139,11 @@ input:not([class*='ant-']):hover {
   min-width: 0;
 }
 
+.gm-vis-chart-span-12 {
+  grid-column: span 12;
+  min-width: 0;
+}
+
 .gm-vis-chart-card {
   height: 100%;
 }
@@ -9310,7 +9315,8 @@ input:not([class*='ant-']):hover {
 @media (max-width: 1024px) {
   .gm-vis-chart-span-5,
   .gm-vis-chart-span-7,
-  .gm-vis-chart-span-6 {
+  .gm-vis-chart-span-6,
+  .gm-vis-chart-span-12 {
     grid-column: span 12;
   }
 }
@@ -11890,4 +11896,15 @@ input:not([class*='ant-']):hover {
   background: var(--gm-bg-hover);
   color: var(--gm-fg-2);
   font-size: var(--gm-fs-xs);
+}
+
+.gm-vis-alert-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-vis-count-muted {
+  color: var(--gm-fg-3);
+  font-size: 12px;
 }

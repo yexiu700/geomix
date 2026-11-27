@@ -297,7 +297,9 @@ v2Describe(
           await page.goto(`/visibility?brandId=${brandId}&market=CN`, {
             waitUntil: 'domcontentloaded',
           });
-          const openBtn = page.getByRole('button', { name: /查看详细意见|提写作意见/ }).first();
+          const openBtn = page
+            .getByRole('button', { name: /查看意见|生成意见|查看详细意见|提写作意见/ })
+            .first();
           await expect(openBtn).toBeVisible();
           await openBtn.click();
           await waitForBriefDrawer(page);
@@ -342,7 +344,7 @@ v2Describe(
             waitUntil: 'domcontentloaded',
           });
           await page
-            .getByRole('button', { name: /查看详细意见|提写作意见/ })
+            .getByRole('button', { name: /查看意见|生成意见|查看详细意见|提写作意见/ })
             .first()
             .click();
           await openBriefDrawerAndEdit(page, { clickWrite: true });

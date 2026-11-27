@@ -17,13 +17,12 @@ import {
   type VisibilityProfileRecord,
   type VisibilityRunDetailRecord,
 } from '@geomix/shared';
-import { Button, Segmented, Tooltip } from 'antd';
+import { Button, Tooltip } from 'antd';
 import type { JSX, KeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatPct, GM } from '../../lib/design-tokens';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { AnswerLens, buildLensSegments, type AnswerLensHandle } from './answer-lens';
-import { CitationTrace } from './citation-trace';
 import {
   EngineChip,
   SentimentDot,
@@ -80,7 +79,6 @@ export function RunWorkspace({
   filteredObservations,
   onResetFilters,
 }: RunWorkspaceProps): JSX.Element {
-  const [viewMode, setViewMode] = useState<'detail' | 'topology'>('detail');
   const [selectedId, setSelectedId] = useState<string | null>(
     () => filteredObservations[0]?.id ?? null,
   );
@@ -157,7 +155,7 @@ export function RunWorkspace({
         return;
       }
 
-      if (filteredObservations.length === 0 || viewMode !== 'detail') return;
+      if (filteredObservations.length === 0) return;
       const currentIdx = selectedObs
         ? filteredObservations.findIndex((o) => o.id === selectedObs.id)
         : 0;
@@ -172,7 +170,7 @@ export function RunWorkspace({
         setSelectedId(filteredObservations[prevIdx]!.id);
       }
     },
-    [filteredObservations, selectedObs, viewMode],
+    [filteredObservations, selectedObs],
   );
 
   const brandSubject = useMemo(
@@ -412,330 +410,303 @@ export function RunWorkspace({
             当前展示 <span className="gm-num">{filteredObservations.length}</span> /{' '}
             <span className="gm-num">{run.observations.length}</span> 条观测
           </span>
-
-          <div className="gm-run-ws-seg">
-            <Segmented
-              size="small"
-              aria-label="切换观测视图"
-              value={viewMode}
-              onChange={(v) => setViewMode(v as 'detail' | 'topology')}
-              options={[
-                { label: '观测明细', value: 'detail' },
-                { label: '引用拓扑', value: 'topology' },
-              ]}
-            />
-          </div>
         </div>
       </div>
 
       {/* Main Content */}
-      {viewMode === 'topology' ? (
-        <div style={{ padding: 16 }}>
-          <CitationTrace
-            observations={filteredObservations}
-            loading={loading}
-            onSelectObservation={(id) => {
-              setSelectedId(id);
-              setViewMode('detail');
-            }}
-          />
+      <div className="gm-run-ws-main">
+        {/* Left Observation List */}
+        <div
+          className="gm-run-ws-list"
+          role="listbox"
+          aria-label="观测明细列表"
+          aria-activedescendant={selectedObs ? `obs-option-${selectedObs.id}` : undefined}
+        >
+          {filteredObservations.length === 0 ? (
+            <div className="gm-run-ws-list-empty">
+              <div style={{ color: 'var(--gm-fg-3)', fontSize: 13 }}>没有符合条件的观测</div>
+              <Button size="small" onClick={onResetFilters}>
+                重置筛选
+              </Button>
+            </div>
+          ) : (
+            filteredObservations.map((obs) => {
+              const isSelected = selectedObs?.id === obs.id;
+              const hasCompHit = obs.competitorHits.some((c) => c.mentioned);
+              const dotCls = obs.brandMentioned
+                ? 'gm-run-ws-dot gm-run-ws-dot-cited'
+                : hasCompHit
+                  ? 'gm-run-ws-dot gm-run-ws-dot-comp'
+                  : 'gm-run-ws-dot gm-run-ws-dot-absent';
+
+              return (
+                <div
+                  key={obs.id}
+                  id={`obs-option-${obs.id}`}
+                  ref={(el) => {
+                    if (el) itemRefs.current.set(obs.id, el);
+                    else itemRefs.current.delete(obs.id);
+                  }}
+                  role="option"
+                  aria-selected={isSelected}
+                  tabIndex={0}
+                  className={`gm-run-ws-item${isSelected ? ' gm-run-ws-item-selected' : ''}`}
+                  onClick={() => setSelectedId(obs.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedId(obs.id);
+                    }
+                  }}
+                >
+                  <div className="gm-run-ws-item-row1">
+                    <EngineChip engine={obs.engine} />
+                    <span className={dotCls} aria-hidden="true" />
+                    {obs.brandPosition !== null ? (
+                      <span className="gm-num gm-run-ws-item-pos">#{obs.brandPosition}</span>
+                    ) : null}
+                    {obs.status !== 'SUCCESS' ? (
+                      <span style={{ marginLeft: 'auto' }}>
+                        <StatusPill kind="item" status={obs.status} />
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="gm-clamp-2 gm-run-ws-item-prompt" title={obs.promptText}>
+                    {obs.promptText}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
-      ) : (
-        <div className="gm-run-ws-main">
-          {/* Left Observation List */}
-          <div
-            className="gm-run-ws-list"
-            role="listbox"
-            aria-label="观测明细列表"
-            aria-activedescendant={selectedObs ? `obs-option-${selectedObs.id}` : undefined}
-          >
-            {filteredObservations.length === 0 ? (
-              <div className="gm-run-ws-list-empty">
-                <div style={{ color: 'var(--gm-fg-3)', fontSize: 13 }}>没有符合条件的观测</div>
-                <Button size="small" onClick={onResetFilters}>
-                  重置筛选
-                </Button>
+
+        {/* Right Detail Panel */}
+        <div className="gm-run-ws-detail">
+          {!selectedObs ? (
+            <SignalEmpty title="选择左侧任一监测问题查看 AI 原文" />
+          ) : (
+            <div
+              data-testid={`observation-card-${selectedObs.id}`}
+              className="gm-run-ws-detail-card"
+            >
+              {/* 1. Full Prompt & Optional Action Slot */}
+              <div className="gm-vis-obs-header">
+                <div className="gm-run-ws-prompt">{selectedObs.promptText}</div>
+                {renderObservationAction ? (
+                  <div className="gm-vis-obs-action">{renderObservationAction(selectedObs)}</div>
+                ) : null}
               </div>
-            ) : (
-              filteredObservations.map((obs) => {
-                const isSelected = selectedObs?.id === obs.id;
-                const hasCompHit = obs.competitorHits.some((c) => c.mentioned);
-                const dotCls = obs.brandMentioned
-                  ? 'gm-run-ws-dot gm-run-ws-dot-cited'
-                  : hasCompHit
-                    ? 'gm-run-ws-dot gm-run-ws-dot-comp'
-                    : 'gm-run-ws-dot gm-run-ws-dot-absent';
+
+              {/* 2. Meta Row */}
+              <div className="gm-run-ws-meta-row">
+                <EngineChip engine={selectedObs.engine} />
+                <StatusPill kind="item" status={selectedObs.status} />
+                {selectedObsIsSimulated ? (
+                  <SignalPill tone="warning">模拟演示数据</SignalPill>
+                ) : null}
+                {!selectedObsRelevance.relevant ? (
+                  <SignalPill tone="warning">可能跑题</SignalPill>
+                ) : null}
+                <span className="gm-num">{formatCheckedAt(selectedObs.checkedAt)}</span>
+                {formatCollectorDisplayLabel(selectedObs.collectorKind) ? (
+                  <span className="gm-mono">
+                    {formatCollectorDisplayLabel(selectedObs.collectorKind)}
+                  </span>
+                ) : null}
+                {formatMerchantJudgeLabel(selectedObs.judgeModel) ? (
+                  <span className="gm-mono">
+                    {formatMerchantJudgeLabel(selectedObs.judgeModel)}
+                  </span>
+                ) : null}
+                {selectedObs.brandSentiment && isVisibilitySentiment(selectedObs.brandSentiment) ? (
+                  <SentimentDot sentiment={selectedObs.brandSentiment} />
+                ) : null}
+              </div>
+
+              {!selectedObsRelevance.relevant ? (
+                <div className="gm-run-ws-notice gm-run-ws-notice-warn" role="alert">
+                  <strong>主题相关性预警：</strong>
+                  <span>
+                    {selectedObsRelevance.reason || '回答正文疑似偏离监测问题核心主题'}
+                    （已自动降权，不计入推荐证据）
+                  </span>
+                </div>
+              ) : null}
+
+              {selectedObs.error ? <SignalError message={selectedObs.error} /> : null}
+
+              {/* 3. Brand Evidence Passage */}
+              <div className="gm-run-ws-section">
+                <div className="gm-run-ws-section-label">品牌证据段落</div>
+                <div className="gm-run-ws-evidence">
+                  {selectedObsRelevance.relevant && selectedObs.brandPassage ? (
+                    selectedObs.brandPassage
+                  ) : (
+                    <span style={{ color: 'var(--gm-fg-3)' }}>
+                      {!selectedObsRelevance.relevant
+                        ? '该回答疑似跑题，已降权处理且不计为品牌推荐证据'
+                        : '本次回答未出现品牌证据段落'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 4. Competitor Hits (mentioned only, with explicit empty & domain-only clarity) */}
+              {(() => {
+                const mentionedComps = selectedObs.competitorHits.filter((c) => c.mentioned);
+                const showSection =
+                  mentionedComps.length > 0 ||
+                  selectedObs.competitorHits.length > 0 ||
+                  configuredCompetitors.length > 0;
+                if (!showSection) return null;
+
+                const domainOnlyAll = mentionedComps.length > 0 && lensCompetitorHitCount === 0;
 
                 return (
-                  <div
-                    key={obs.id}
-                    id={`obs-option-${obs.id}`}
-                    ref={(el) => {
-                      if (el) itemRefs.current.set(obs.id, el);
-                      else itemRefs.current.delete(obs.id);
-                    }}
-                    role="option"
-                    aria-selected={isSelected}
-                    tabIndex={0}
-                    className={`gm-run-ws-item${isSelected ? ' gm-run-ws-item-selected' : ''}`}
-                    onClick={() => setSelectedId(obs.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setSelectedId(obs.id);
-                      }
-                    }}
-                  >
-                    <div className="gm-run-ws-item-row1">
-                      <EngineChip engine={obs.engine} />
-                      <span className={dotCls} aria-hidden="true" />
-                      {obs.brandPosition !== null ? (
-                        <span className="gm-num gm-run-ws-item-pos">#{obs.brandPosition}</span>
-                      ) : null}
-                      {obs.status !== 'SUCCESS' ? (
-                        <span style={{ marginLeft: 'auto' }}>
-                          <StatusPill kind="item" status={obs.status} />
+                  <div className="gm-run-ws-section">
+                    <div className="gm-run-ws-section-label">
+                      同题命中竞品
+                      {domainOnlyAll ? (
+                        <span className="gm-run-ws-comp-note">
+                          （含信源域名归因，正文中未直接出现词面）
                         </span>
                       ) : null}
                     </div>
-                    <div className="gm-clamp-2 gm-run-ws-item-prompt" title={obs.promptText}>
-                      {obs.promptText}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Right Detail Panel */}
-          <div className="gm-run-ws-detail">
-            {!selectedObs ? (
-              <SignalEmpty title="选择左侧任一监测问题查看 AI 原文" />
-            ) : (
-              <div
-                data-testid={`observation-card-${selectedObs.id}`}
-                className="gm-run-ws-detail-card"
-              >
-                {/* 1. Full Prompt & Optional Action Slot */}
-                <div className="gm-vis-obs-header">
-                  <div className="gm-run-ws-prompt">{selectedObs.promptText}</div>
-                  {renderObservationAction ? (
-                    <div className="gm-vis-obs-action">{renderObservationAction(selectedObs)}</div>
-                  ) : null}
-                </div>
-
-                {/* 2. Meta Row */}
-                <div className="gm-run-ws-meta-row">
-                  <EngineChip engine={selectedObs.engine} />
-                  <StatusPill kind="item" status={selectedObs.status} />
-                  {selectedObsIsSimulated ? (
-                    <SignalPill tone="warning">模拟演示数据</SignalPill>
-                  ) : null}
-                  {!selectedObsRelevance.relevant ? (
-                    <SignalPill tone="warning">可能跑题</SignalPill>
-                  ) : null}
-                  <span className="gm-num">{formatCheckedAt(selectedObs.checkedAt)}</span>
-                  {formatCollectorDisplayLabel(selectedObs.collectorKind) ? (
-                    <span className="gm-mono">
-                      {formatCollectorDisplayLabel(selectedObs.collectorKind)}
-                    </span>
-                  ) : null}
-                  {formatMerchantJudgeLabel(selectedObs.judgeModel) ? (
-                    <span className="gm-mono">
-                      {formatMerchantJudgeLabel(selectedObs.judgeModel)}
-                    </span>
-                  ) : null}
-                  {selectedObs.brandSentiment &&
-                  isVisibilitySentiment(selectedObs.brandSentiment) ? (
-                    <SentimentDot sentiment={selectedObs.brandSentiment} />
-                  ) : null}
-                </div>
-
-                {!selectedObsRelevance.relevant ? (
-                  <div className="gm-run-ws-notice gm-run-ws-notice-warn" role="alert">
-                    <strong>主题相关性预警：</strong>
-                    <span>
-                      {selectedObsRelevance.reason || '回答正文疑似偏离监测问题核心主题'}
-                      （已自动降权，不计入推荐证据）
-                    </span>
-                  </div>
-                ) : null}
-
-                {selectedObs.error ? <SignalError message={selectedObs.error} /> : null}
-
-                {/* 3. Brand Evidence Passage */}
-                <div className="gm-run-ws-section">
-                  <div className="gm-run-ws-section-label">品牌证据段落</div>
-                  <div className="gm-run-ws-evidence">
-                    {selectedObsRelevance.relevant && selectedObs.brandPassage ? (
-                      selectedObs.brandPassage
+                    {mentionedComps.length === 0 ? (
+                      <div className="gm-run-ws-comp-empty">本次回答未命中已配置竞品</div>
                     ) : (
-                      <span style={{ color: 'var(--gm-fg-3)' }}>
-                        {!selectedObsRelevance.relevant
-                          ? '该回答疑似跑题，已降权处理且不计为品牌推荐证据'
-                          : '本次回答未出现品牌证据段落'}
-                      </span>
+                      <div className="gm-run-ws-comp-list">
+                        {mentionedComps.map((comp) => {
+                          const subj = competitorSubjects.find((s) => s.name === comp.name);
+                          const terms = [comp.name, ...(subj?.aliases ?? [])].filter(Boolean);
+                          const hasTextMatch =
+                            Boolean(selectedObs.answerText) &&
+                            terms.some((t) => wholeWordPattern(t).test(selectedObs.answerText!));
+
+                          return (
+                            <span key={comp.name} className="gm-run-ws-comp-hit">
+                              <SignalPill tone="competitor">
+                                {comp.name}
+                                {comp.position !== null ? ` · #${comp.position}` : ''}
+                              </SignalPill>
+                              <SentimentDot sentiment={comp.sentiment} />
+                              {!hasTextMatch ? (
+                                <span className="gm-run-ws-meta-tag">信源域名归因</span>
+                              ) : null}
+                            </span>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
-                </div>
+                );
+              })()}
 
-                {/* 4. Competitor Hits (mentioned only, with explicit empty & domain-only clarity) */}
-                {(() => {
-                  const mentionedComps = selectedObs.competitorHits.filter((c) => c.mentioned);
-                  const showSection =
-                    mentionedComps.length > 0 ||
-                    selectedObs.competitorHits.length > 0 ||
-                    configuredCompetitors.length > 0;
-                  if (!showSection) return null;
-
-                  const domainOnlyAll = mentionedComps.length > 0 && lensCompetitorHitCount === 0;
-
-                  return (
-                    <div className="gm-run-ws-section">
-                      <div className="gm-run-ws-section-label">
-                        同题命中竞品
-                        {domainOnlyAll ? (
-                          <span className="gm-run-ws-comp-note">
-                            （含信源域名归因，正文中未直接出现词面）
-                          </span>
-                        ) : null}
-                      </div>
-                      {mentionedComps.length === 0 ? (
-                        <div className="gm-run-ws-comp-empty">本次回答未命中已配置竞品</div>
-                      ) : (
-                        <div className="gm-run-ws-comp-list">
-                          {mentionedComps.map((comp) => {
-                            const subj = competitorSubjects.find((s) => s.name === comp.name);
-                            const terms = [comp.name, ...(subj?.aliases ?? [])].filter(Boolean);
-                            const hasTextMatch =
-                              Boolean(selectedObs.answerText) &&
-                              terms.some((t) => wholeWordPattern(t).test(selectedObs.answerText!));
-
-                            return (
-                              <span key={comp.name} className="gm-run-ws-comp-hit">
-                                <SignalPill tone="competitor">
-                                  {comp.name}
-                                  {comp.position !== null ? ` · #${comp.position}` : ''}
-                                </SignalPill>
-                                <SentimentDot sentiment={comp.sentiment} />
-                                {!hasTextMatch ? (
-                                  <span className="gm-run-ws-meta-tag">信源域名归因</span>
-                                ) : null}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {/* 5. Query Fan-Out */}
-                {selectedObs.fanOutQueries.length > 0 ? (
-                  <div className="gm-run-ws-section">
-                    <div className="gm-run-ws-section-label">搜索拆解词（Query Fan-Out）</div>
-                    <div className="gm-run-ws-fanout-list">
-                      {selectedObs.fanOutQueries.map((fq) => (
-                        <Tooltip key={fq} title={fq}>
-                          <span className="gm-run-ws-fanout-chip">
-                            <span className="gm-run-ws-fanout-chip-text">{fq}</span>
-                          </span>
-                        </Tooltip>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* 6. Collapsible Raw AI Answer + AnswerLens */}
+              {/* 5. Query Fan-Out */}
+              {selectedObs.fanOutQueries.length > 0 ? (
                 <div className="gm-run-ws-section">
-                  <Button
-                    size="small"
-                    aria-label={`展开原始回答-${selectedObs.id}`}
-                    aria-expanded={answerExpanded}
-                    onClick={() =>
-                      setCollapsedAnswerIds((curr) => ({
-                        ...curr,
-                        [selectedObs.id]: answerExpanded,
-                      }))
-                    }
-                  >
-                    {answerExpanded ? '收起原始 AI 回答全文' : '展开原始 AI 回答全文'}
-                  </Button>
-
-                  <div
-                    data-testid={`raw-answer-${selectedObs.id}`}
-                    style={{ display: answerExpanded ? 'block' : 'none', marginTop: 8 }}
-                  >
-                    <AnswerLens
-                      ref={lensRef}
-                      answerText={selectedObs.answerText}
-                      brandPassage={selectedObs.brandPassage}
-                      brand={brandSubject}
-                      competitors={competitorSubjects}
-                      citations={selectedObs.citations}
-                      status={selectedObs.status}
-                      error={selectedObs.error}
-                      onCitationClick={handleCitationClick}
-                    />
+                  <div className="gm-run-ws-section-label">搜索拆解词（Query Fan-Out）</div>
+                  <div className="gm-run-ws-fanout-list">
+                    {selectedObs.fanOutQueries.map((fq) => (
+                      <Tooltip key={fq} title={fq}>
+                        <span className="gm-run-ws-fanout-chip">
+                          <span className="gm-run-ws-fanout-chip-text">{fq}</span>
+                        </span>
+                      </Tooltip>
+                    ))}
                   </div>
                 </div>
+              ) : null}
 
-                {/* 7. Citations List */}
-                {selectedObs.citations.length > 0 ? (
-                  <div className="gm-run-ws-section">
-                    <div className="gm-run-ws-section-label">
-                      引用信源（<span className="gm-num">{selectedObs.citations.length}</span>）
-                    </div>
-                    <div className="gm-run-ws-cite-list">
-                      {selectedObs.citations.map((cite) => {
-                        const safeHref = isSafeHttpUrl(cite.url);
-                        const itemClass = `gm-run-ws-cite-item${
-                          highlightedCitationId === cite.id ? ' gm-run-ws-cite-blink' : ''
-                        }`;
-                        const inner = (
-                          <>
-                            <span className="gm-lens-cite-chip gm-num">{cite.position}</span>
-                            <div className="gm-run-ws-cite-body">
-                              <div className="gm-clamp-1 gm-run-ws-cite-title">
-                                {cite.title ?? cite.domain}
-                              </div>
-                              <div className="gm-run-ws-cite-meta">
-                                <span className="gm-mono">{cite.domain}</span>
-                                <SourceKindChip kind={cite.sourceKind} />
-                              </div>
-                              {cite.snippet ? (
-                                <div className="gm-clamp-2 gm-run-ws-cite-snippet">
-                                  {cite.snippet}
-                                </div>
-                              ) : null}
-                            </div>
-                          </>
-                        );
-                        return safeHref ? (
-                          <a
-                            key={cite.id}
-                            id={`citation-item-${cite.id}`}
-                            href={cite.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={itemClass}
-                          >
-                            {inner}
-                          </a>
-                        ) : (
-                          <div key={cite.id} id={`citation-item-${cite.id}`} className={itemClass}>
-                            {inner}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
+              {/* 6. Collapsible Raw AI Answer + AnswerLens */}
+              <div className="gm-run-ws-section">
+                <Button
+                  size="small"
+                  aria-label={`展开原始回答-${selectedObs.id}`}
+                  aria-expanded={answerExpanded}
+                  onClick={() =>
+                    setCollapsedAnswerIds((curr) => ({
+                      ...curr,
+                      [selectedObs.id]: answerExpanded,
+                    }))
+                  }
+                >
+                  {answerExpanded ? '收起原始 AI 回答全文' : '展开原始 AI 回答全文'}
+                </Button>
+
+                <div
+                  data-testid={`raw-answer-${selectedObs.id}`}
+                  style={{ display: answerExpanded ? 'block' : 'none', marginTop: 8 }}
+                >
+                  <AnswerLens
+                    ref={lensRef}
+                    answerText={selectedObs.answerText}
+                    brandPassage={selectedObs.brandPassage}
+                    brand={brandSubject}
+                    competitors={competitorSubjects}
+                    citations={selectedObs.citations}
+                    status={selectedObs.status}
+                    error={selectedObs.error}
+                    onCitationClick={handleCitationClick}
+                  />
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* 7. Citations List */}
+              {selectedObs.citations.length > 0 ? (
+                <div className="gm-run-ws-section">
+                  <div className="gm-run-ws-section-label">
+                    引用信源（<span className="gm-num">{selectedObs.citations.length}</span>）
+                  </div>
+                  <div className="gm-run-ws-cite-list">
+                    {selectedObs.citations.map((cite) => {
+                      const safeHref = isSafeHttpUrl(cite.url);
+                      const itemClass = `gm-run-ws-cite-item${
+                        highlightedCitationId === cite.id ? ' gm-run-ws-cite-blink' : ''
+                      }`;
+                      const inner = (
+                        <>
+                          <span className="gm-lens-cite-chip gm-num">{cite.position}</span>
+                          <div className="gm-run-ws-cite-body">
+                            <div className="gm-clamp-1 gm-run-ws-cite-title">
+                              {cite.title ?? cite.domain}
+                            </div>
+                            <div className="gm-run-ws-cite-meta">
+                              <span className="gm-mono">{cite.domain}</span>
+                              <SourceKindChip kind={cite.sourceKind} />
+                            </div>
+                            {cite.snippet ? (
+                              <div className="gm-clamp-2 gm-run-ws-cite-snippet">
+                                {cite.snippet}
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
+                      );
+                      return safeHref ? (
+                        <a
+                          key={cite.id}
+                          id={`citation-item-${cite.id}`}
+                          href={cite.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={itemClass}
+                        >
+                          {inner}
+                        </a>
+                      ) : (
+                        <div key={cite.id} id={`citation-item-${cite.id}`} className={itemClass}>
+                          {inner}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
