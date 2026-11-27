@@ -154,6 +154,24 @@ export function VisibilityOverviewTab({
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：%</span>
               <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+              {selectedEngine ? (
+                <Tag
+                  closable
+                  onClose={(e) => {
+                    e.preventDefault();
+                    onSelectEngine(undefined);
+                  }}
+                >
+                  当前筛选：{VISIBILITY_ENGINE_LABELS[selectedEngine]}
+                </Tag>
+              ) : null}
+            </div>
+          }
+        >
+          {showEngineCoverageBadge ||
+          hasSimulatedObservations ||
+          (completedChecks > 0 && onInspectRuns) ? (
+            <div className="gm-vis-dial-meta-bar">
               {showEngineCoverageBadge ? (
                 <StatusBadge
                   tone="warning"
@@ -177,20 +195,8 @@ export function VisibilityOverviewTab({
                   核对原始观测
                 </Button>
               ) : null}
-              {selectedEngine ? (
-                <Tag
-                  closable
-                  onClose={(e) => {
-                    e.preventDefault();
-                    onSelectEngine(undefined);
-                  }}
-                >
-                  当前筛选：{VISIBILITY_ENGINE_LABELS[selectedEngine]}
-                </Tag>
-              ) : null}
             </div>
-          }
-        >
+          ) : null}
           <SonarDial
             market={activeMarket}
             byEngine={overview?.byEngine}
