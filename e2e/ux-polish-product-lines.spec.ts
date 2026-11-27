@@ -2122,7 +2122,9 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
         await truthCheckbox.check();
       }
       await clickFirstVisible(
-        modalB.getByRole('button', { name: /保存并.*生成|保存事实卡|确认保存/ }),
+        modalB
+          .getByTestId('quick-fact-save-btn')
+          .or(modalB.getByRole('button', { name: /保存继续|保存并.*生成|保存事实卡|确认保存/ })),
       );
       await expect(modalB).toBeHidden({ timeout: 20_000 });
 
@@ -2705,10 +2707,8 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
 
       await page.reload({ waitUntil: 'domcontentloaded' });
       const controlToggleAfterReload = page.getByTestId('brand-advanced-control-toggle');
-      if (
-        (await controlToggleAfterReload.count()) > 0 &&
-        (await controlToggleAfterReload.getAttribute('aria-expanded')) === 'false'
-      ) {
+      await expect(controlToggleAfterReload).toBeVisible({ timeout: 15_000 });
+      if ((await controlToggleAfterReload.getAttribute('aria-expanded')) === 'false') {
         await controlToggleAfterReload.click();
       }
       await expect(
