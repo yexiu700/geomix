@@ -59,7 +59,7 @@ type EnableMarketFormValues = {
 type WorkspaceContainerVariant = 'wide' | 'form' | 'studio';
 
 function resolveContainerVariant(routePath: string | undefined): WorkspaceContainerVariant {
-  if (routePath === '/studio') return 'studio';
+  if (routePath === '/studio' || routePath === '/publish') return 'studio';
   if (routePath === '/brands' || routePath === '/account') return 'form';
   return 'wide';
 }
@@ -210,13 +210,14 @@ export function ShellFrame({
     enableMarketModalTarget !== undefined ? enableMarketModalTarget : internalEnableMarket;
 
   const matchedRoute = matchRoute(activePath);
-  const isStudioRoute = matchedRoute?.path === '/studio';
+  const isSplitWorkspaceRoute =
+    matchedRoute?.path === '/studio' || matchedRoute?.path === '/publish';
   const isAccountPath = matchedRoute?.path === '/account';
   const containerVariant = resolveContainerVariant(matchedRoute?.path);
 
   useEffect(() => {
     setStudioRailExpanded(false);
-  }, [isStudioRoute]);
+  }, [matchedRoute?.path, isSplitWorkspaceRoute]);
 
   const openCreateModal = () => {
     if (onOpenCreateBrandModal) {
@@ -319,7 +320,7 @@ export function ShellFrame({
   }, [activeBrand, enableForm, enableTarget]);
 
   const visibilityEnabled = account.features?.visibility !== false;
-  const desktopRailCollapsed = isStudioRoute ? !studioRailExpanded : menuCollapsed;
+  const desktopRailCollapsed = isSplitWorkspaceRoute ? !studioRailExpanded : menuCollapsed;
   const siderCollapsed = isMobile ? !mobileMenuOpen : desktopRailCollapsed;
   const railMode = !isMobile && desktopRailCollapsed;
   const mobileClosed = isMobile && !mobileMenuOpen;
@@ -335,7 +336,7 @@ export function ShellFrame({
       setMobileMenuOpen((open) => !open);
       return;
     }
-    if (isStudioRoute) {
+    if (isSplitWorkspaceRoute) {
       setStudioRailExpanded((expanded) => !expanded);
       return;
     }
@@ -640,7 +641,7 @@ export function ShellFrame({
           </div>
         </Header>
 
-        <Content className={isStudioRoute ? 'gm-content gm-content--studio' : 'gm-content'}>
+        <Content className={isSplitWorkspaceRoute ? 'gm-content gm-content--studio' : 'gm-content'}>
           <div className={`gm-workspace-main gm-workspace-main--${containerVariant}`}>
             {account.tenant.readOnly ? (
               <Alert

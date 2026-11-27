@@ -603,7 +603,9 @@ export function HomeWorkspace(): JSX.Element {
       <HomeCrawlAlertBanner
         alerts={resolvedData.distributionSummary?.crawlAlerts ?? []}
         onOpenArticle={(articleId) =>
-          consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
+          consoleCtx?.navigateWorkspace(
+            `/publish?articleId=${encodeURIComponent(articleId)}&tab=tracking`,
+          )
         }
       />
 
@@ -628,6 +630,13 @@ export function HomeWorkspace(): JSX.Element {
         onOpenArticle={(articleId) =>
           consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
         }
+        onPublishArticle={(articleId, tab) =>
+          consoleCtx?.navigateWorkspace(
+            tab === 'tracking'
+              ? `/publish?articleId=${encodeURIComponent(articleId)}&tab=tracking`
+              : `/publish?articleId=${encodeURIComponent(articleId)}`,
+          )
+        }
         onTriggerRetest={(rec) => void handleTriggerArticleRetest(rec)}
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
       />
@@ -639,11 +648,13 @@ export function HomeWorkspace(): JSX.Element {
         recentArticles={resolvedData.recentArticles}
         hideCrawlAlerts
         onOpenArticle={(articleId) =>
-          consoleCtx?.navigateWorkspace(`/studio?articleId=${encodeURIComponent(articleId)}`)
+          consoleCtx?.navigateWorkspace(
+            `/publish?articleId=${encodeURIComponent(articleId)}&tab=tracking`,
+          )
         }
         onOpenPoints={() => consoleCtx?.navigateWorkspace('/account?tab=points')}
         onOpenBudgetSettings={() => consoleCtx?.navigateWorkspace('/brands?section=identity')}
-        onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
+        onOpenStudio={() => consoleCtx?.navigateWorkspace('/publish')}
         onOpenRoiReportModal={() => setRoiModalOpen(true)}
       />
 

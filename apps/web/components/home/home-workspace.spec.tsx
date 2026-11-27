@@ -786,7 +786,9 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
 
     fireEvent.click(within(crawlAlerts).getByRole('button', { name: '立即排查' }));
-    expect(navigateWorkspace).toHaveBeenCalledWith('/studio?articleId=art_brand_home_a_1');
+    expect(navigateWorkspace).toHaveBeenCalledWith(
+      '/publish?articleId=art_brand_home_a_1&tab=tracking',
+    );
 
     fireEvent.click(within(summary).getByRole('button', { name: '查看点数' }));
     expect(navigateWorkspace).toHaveBeenCalledWith('/account?tab=points');

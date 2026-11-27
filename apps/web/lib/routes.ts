@@ -1,10 +1,11 @@
-/** GeoMix 2.0 极简 5 工作区路由与平面 4 项左侧业务导航。 */
+/** GeoMix 极简 6 工作区路由与平面 5 项左侧业务导航。 */
 
 import type { GeoMarket } from '@geomix/shared';
 
 export const HOME_ROUTE = '/home' as const;
 
-export type WorkspacePath = '/home' | '/brands' | '/visibility' | '/studio' | '/account';
+export type WorkspacePath =
+  '/home' | '/brands' | '/visibility' | '/studio' | '/publish' | '/account';
 
 export type RouteMatch = {
   href: string;
@@ -22,6 +23,7 @@ export const STATIC_ROUTES: Record<WorkspacePath, StaticRoute> = {
   '/brands': { title: '品牌资产', businessWorkspace: true },
   '/visibility': { title: '可见度诊断', businessWorkspace: true },
   '/studio': { title: 'GEO 写作台', businessWorkspace: true },
+  '/publish': { title: '发布中心', businessWorkspace: true },
   '/account': { title: '点数与权益', businessWorkspace: false },
 };
 
@@ -29,7 +31,17 @@ const QUERY_KEYS: Record<WorkspacePath, readonly string[]> = {
   '/home': ['brandId', 'market', 'productLineId'],
   '/brands': ['brandId', 'market', 'productLineId', 'section'],
   '/visibility': ['brandId', 'market', 'productLineId', 'tab', 'runId'],
-  '/studio': ['brandId', 'market', 'productLineId', 'briefId', 'articleId', 'batchJobId'],
+  '/studio': [
+    'brandId',
+    'market',
+    'productLineId',
+    'briefId',
+    'articleId',
+    'batchJobId',
+    'fixCode',
+    'locateTerm',
+  ],
+  '/publish': ['brandId', 'market', 'productLineId', 'articleId', 'tab'],
   '/account': ['brandId', 'market', 'tab'],
 };
 
@@ -48,6 +60,7 @@ export const MENU: MenuItem[] = [
   link('/brands'),
   link('/visibility'),
   link('/studio'),
+  link('/publish'),
 ];
 
 export const PRIMARY_NAV_ITEMS: readonly MenuItem[] = MENU;

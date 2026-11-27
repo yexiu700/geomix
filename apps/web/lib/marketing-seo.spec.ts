@@ -45,6 +45,7 @@ describe('Self-GEO endpoints (robots.ts, sitemap.ts, llms.txt/route.ts)', () => 
         '/brands',
         '/visibility',
         '/studio',
+        '/publish',
         '/account',
         '/share/',
         '/api/',

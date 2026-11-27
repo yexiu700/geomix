@@ -74,6 +74,7 @@ import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
 
 export type StudioDistributionDrawerProps = {
   open: boolean;
+  variant?: 'drawer' | 'inline';
   brandId: string | null;
   brandMarketId: string | null;
   market: GeoMarket;
@@ -89,7 +90,7 @@ export type StudioDistributionDrawerProps = {
   defaultTargetLocale?: SupportedLocale | null;
   readOnly: boolean;
   walletAvailable?: number | null;
-  onClose: () => void;
+  onClose?: () => void;
   onReturnToEditor: (code?: PreflightItemCode, locateTerm?: string) => void;
   onNavigateBrands?: () => void;
   onNavigateExtensionPairing?: () => void;
@@ -396,6 +397,7 @@ async function fetchLiveGeoVariantUnitPrice(): Promise<number> {
 
 export function StudioDistributionDrawer({
   open,
+  variant = 'drawer',
   brandId,
   brandMarketId,
   market,
@@ -411,7 +413,7 @@ export function StudioDistributionDrawer({
   defaultTargetLocale,
   readOnly,
   walletAvailable,
-  onClose,
+  onClose = () => undefined,
   onReturnToEditor,
   onNavigateBrands,
   onNavigateExtensionPairing,
@@ -419,7 +421,7 @@ export function StudioDistributionDrawer({
   onRefreshWallet,
   onPublishRecordsSynced,
   onCreatePublishRecord,
-}: StudioDistributionDrawerProps): JSX.Element {
+}: StudioDistributionDrawerProps): JSX.Element | null {
   const feedback = useUxFeedback();
   const articleMatchesContext = Boolean(
     article && article.market === market && (!brandId || article.brandId === brandId),
@@ -2373,716 +2375,700 @@ export function StudioDistributionDrawer({
     );
   };
 
-  return (
+  if (variant === 'inline' && !open) {
+    return null;
+  }
+
+  const workbenchBody = (
     <>
-      <Drawer
-        open={open}
-        onClose={onClose}
-        destroyOnHidden
-        title={null}
-        closable={false}
-        footer={null}
-        width="min(880px, calc(100vw - 32px))"
-        styles={{
-          wrapper: { maxWidth: '100vw' },
-          body: {
-            padding: 0,
-            overflowX: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-          },
-        }}
-      >
-        <div data-testid="studio-distribution-drawer" className="gm-dist-drawer-root">
-          {/* Pinned Header */}
-          <div className="gm-dist-drawer-head">
-            <div className="gm-dist-drawer-head-col">
+      {drawerError ? (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setDrawerError(null)}
+          message={drawerError}
+          className="gm-dist-wrap"
+        />
+      ) : null}
+
+      {hydrating && !preflight ? (
+        <SignalSkeleton variant="block" height={180} />
+      ) : (
+        <>
+          {/* Step 1: Preflight Health Card */}
+          <div data-testid="distribution-preflight-card" className="gm-dist-section-card">
+            <div className="gm-dist-row gm-dist-row--between">
               <div className="gm-dist-row">
-                <span className="gm-dist-drawer-title">多渠道分发与变体工作台</span>
-                <StatusBadge tone="active" className="gm-studio-nowrap">
-                  {market === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[market]}
-                </StatusBadge>
+                <span className="gm-dist-card-title">Step 1 · 发布前硬校验（Preflight）</span>
+                {preflight ? (
+                  preflight.ok ? (
+                    preflight.warnings.length > 0 ? (
+                      <SignalPill tone="warning">有待优化提示</SignalPill>
+                    ) : (
+                      <SignalPill tone="cited">门禁校验通过</SignalPill>
+                    )
+                  ) : (
+                    <SignalPill tone="danger">存在硬拦截项</SignalPill>
+                  )
+                ) : null}
               </div>
-              {article ? (
-                <div className="gm-clamp-1 gm-dist-drawer-subtitle">
-                  当前成稿：{draftTitle || article.title}
-                </div>
-              ) : null}
+              <Button
+                size="small"
+                loading={preflightLoading}
+                className="gm-dist-nowrap"
+                onClick={() => void handleRerunPreflight()}
+              >
+                重新体检
+              </Button>
             </div>
-            <Button
-              size="small"
-              aria-label="关闭分发工作台"
-              className="gm-dist-nowrap"
-              onClick={onClose}
-            >
-              关闭
-            </Button>
-          </div>
 
-          {/* Scrollable Body */}
-          <div className="gm-dist-drawer-body">
-            {drawerError ? (
-              <Alert
-                type="error"
-                showIcon
-                closable
-                onClose={() => setDrawerError(null)}
-                message={drawerError}
-                className="gm-dist-wrap"
-              />
-            ) : null}
-
-            {hydrating && !preflight ? (
-              <SignalSkeleton variant="block" height={180} />
-            ) : (
-              <>
-                {/* Step 1: Preflight Health Card */}
-                <div data-testid="distribution-preflight-card" className="gm-dist-section-card">
-                  <div className="gm-dist-row gm-dist-row--between">
-                    <div className="gm-dist-row">
-                      <span className="gm-dist-card-title">Step 1 · 发布前硬校验（Preflight）</span>
-                      {preflight ? (
-                        preflight.ok ? (
-                          preflight.warnings.length > 0 ? (
-                            <SignalPill tone="warning">有待优化提示</SignalPill>
-                          ) : (
-                            <SignalPill tone="cited">门禁校验通过</SignalPill>
-                          )
-                        ) : (
-                          <SignalPill tone="danger">存在硬拦截项</SignalPill>
-                        )
-                      ) : null}
-                    </div>
-                    <Button
-                      size="small"
-                      loading={preflightLoading}
-                      className="gm-dist-nowrap"
-                      onClick={() => void handleRerunPreflight()}
-                    >
-                      重新体检
-                    </Button>
-                  </div>
-
-                  {preflight && preflight.blockers.length > 0 ? (
-                    <div
-                      data-testid="distribution-preflight-blockers"
-                      className="gm-dist-preflight-blockers"
-                    >
-                      {preflight.blockers.map((blocker) => (
-                        <div key={blocker.code} className="gm-dist-min0">
-                          <div className="gm-dist-preflight-blocker-msg">{blocker.message}</div>
-                          {blocker.details && blocker.details.length > 0 ? (
-                            <div className="gm-dist-details-row">
-                              {blocker.details.map((detail) => (
-                                <StatusBadge
-                                  key={detail}
-                                  tone="danger"
-                                  className="gm-studio-tag-wrap"
-                                >
-                                  {detail}
-                                </StatusBadge>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-
-                      <div className="gm-dist-preflight-actions">
-                        <Button
-                          size="small"
-                          type="primary"
-                          danger
-                          data-testid="distribution-back-to-editor-btn"
-                          className="gm-dist-nowrap"
-                          onClick={() => {
-                            const first = preflight.blockers[0];
-                            const term = first?.matches?.[0]?.matchedText;
-                            if (term) onReturnToEditor(first?.code, term);
-                            else onReturnToEditor(first?.code);
-                          }}
-                        >
-                          返回编辑器定位补填
-                        </Button>
-                        <Checkbox
-                          data-testid="distribution-ack-warnings-checkbox"
-                          checked={ackWarnings}
-                          onChange={(e) => setAckWarnings(e.target.checked)}
-                        >
-                          <span className="gm-dist-check-label">
-                            我已确认风险，仍要强制继续推送
-                          </span>
-                        </Checkbox>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {preflight && preflight.warnings.length > 0 ? (
-                    <div
-                      data-testid="distribution-preflight-warnings"
-                      className="gm-dist-preflight-warnings"
-                    >
-                      {preflight.warnings.map((w) => (
-                        <div key={w.code} className="gm-dist-min0">
-                          <div className="gm-dist-row gm-dist-row--between">
-                            <div className="gm-dist-preflight-warning-msg">• {w.message}</div>
-                            {w.code === 'GLOBAL_CLAIM_WARNING' ? (
-                              <Button
-                                size="small"
-                                data-testid="distribution-warning-locate-btn"
-                                className="gm-dist-nowrap"
-                                onClick={() =>
-                                  onReturnToEditor(
-                                    'GLOBAL_CLAIM_WARNING',
-                                    w.matches?.[0]?.matchedText,
-                                  )
-                                }
-                              >
-                                返回编辑器定位修改
-                              </Button>
-                            ) : null}
-                          </div>
-                          {w.details && w.details.length > 0 ? (
-                            <div className="gm-dist-details-row">
-                              {w.details.map((detail) => (
-                                <StatusBadge
-                                  key={detail}
-                                  tone="warning"
-                                  className="gm-studio-tag-wrap"
-                                >
-                                  {detail}
-                                </StatusBadge>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {preflight && preflight.ok && preflight.warnings.length === 0 ? (
-                    <div className="gm-dist-check-label">
-                      未发现缺失事实占位符、跨市场语言泄露或严重合规风险，可直接生成变体并推送。
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Step 2: Citation-Driven Channel Selector */}
-                <div className="gm-dist-section-card gm-dist-section-card--spacious">
-                  <div className="gm-dist-row gm-dist-row--between">
-                    <span className="gm-dist-card-title">
-                      Step 2 · 引用驱动目标渠道选择（1 → N 变体改写）
-                    </span>
-                    <Button
-                      type="primary"
-                      data-testid="distribution-generate-variants-btn"
-                      loading={generating || isVariantJobRunning}
-                      disabled={
-                        selectedTargets.length === 0 ||
-                        readOnly ||
-                        generating ||
-                        isVariantJobRunning
-                      }
-                      className="gm-dist-nowrap"
-                      onClick={() => {
-                        pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
-                        setPointsConfirmOpen(true);
-                      }}
-                    >
-                      {isVariantJobRunning
-                        ? `并行生成中（${(activeVariantJob?.doneCount ?? 0) + (activeVariantJob?.failCount ?? 0)}/${activeVariantJob?.total ?? 0}）`
-                        : `生成渠道变体${selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}`}
-                    </Button>
-                  </div>
-
-                  {showVariantLocaleSelector ? (
-                    <div className="gm-dist-locale-bar">
-                      <span className="gm-dist-locale-label">变体目标语种：</span>
-                      <Select<SupportedLocale>
-                        size="small"
-                        aria-label="变体目标语种"
-                        data-testid="distribution-target-locale-select"
-                        className="gm-dist-locale-select"
-                        disabled={readOnly || generating || isVariantJobRunning}
-                        value={variantTargetLocale}
-                        options={effectiveSupportedLocales.map((code) => {
-                          const meta = SUPPORTED_LOCALES[code];
-                          return {
-                            value: code,
-                            label: `${meta.labelZh} (${code}) · ${meta.nativeLabel}`,
-                          };
-                        })}
-                        onChange={(val) => setVariantTargetLocale(val)}
-                      />
-                    </div>
-                  ) : null}
-
-                  {/* Async Variant Generation Progress Card (#363) */}
-                  {activeVariantJob ? (
-                    <div
-                      data-testid="distribution-variant-job-progress"
-                      className={`gm-dist-job-card${
-                        activeVariantJob.status === 'FAILED'
-                          ? ' gm-dist-job-card--failed'
-                          : activeVariantJob.status === 'PARTIAL'
-                            ? ' gm-dist-job-card--partial'
-                            : ''
-                      }`}
-                    >
-                      <div className="gm-dist-row gm-dist-row--between">
-                        <div className="gm-dist-row">
-                          <SignalPill
-                            tone={
-                              activeVariantJob.status === 'COMPLETED'
-                                ? 'cited'
-                                : activeVariantJob.status === 'FAILED'
-                                  ? 'danger'
-                                  : activeVariantJob.status === 'PARTIAL'
-                                    ? 'warning'
-                                    : 'info'
-                            }
-                          >
-                            {activeVariantJob.status === 'QUEUED'
-                              ? '任务排队中'
-                              : activeVariantJob.status === 'RUNNING'
-                                ? '后台并行生成中'
-                                : activeVariantJob.status === 'COMPLETED'
-                                  ? '渠道变体已全部生成'
-                                  : activeVariantJob.status === 'PARTIAL'
-                                    ? '部分渠道生成完成'
-                                    : '渠道变体生成失败'}
-                          </SignalPill>
-                          <span className="gm-dist-check-label">
-                            成功{' '}
-                            <strong className="gm-num gm-dist-text-primary">
-                              {activeVariantJob.doneCount}
-                            </strong>{' '}
-                            / <span className="gm-num">{activeVariantJob.total}</span> 个渠道
-                            {activeVariantJob.failCount > 0 ? (
-                              <>
-                                {' '}
-                                · 失败{' '}
-                                <strong className="gm-num gm-dist-text-danger">
-                                  {activeVariantJob.failCount}
-                                </strong>{' '}
-                                个
-                              </>
-                            ) : null}
-                            {activeVariantJob.refundedPoints > 0 ? (
-                              <>
-                                {' '}
-                                · 已自动退还{' '}
-                                <strong className="gm-num gm-dist-text-success">
-                                  {activeVariantJob.refundedPoints}
-                                </strong>{' '}
-                                点
-                              </>
-                            ) : null}
-                          </span>
-                        </div>
-                        {!isVariantJobRunning ? (
-                          <Button
-                            size="small"
-                            type="text"
-                            className="gm-dist-nowrap"
-                            onClick={() => setActiveVariantJob(null)}
-                          >
-                            收起进度
-                          </Button>
-                        ) : null}
-                      </div>
-
-                      <Progress
-                        size="small"
-                        percent={
-                          activeVariantJob.total > 0
-                            ? Math.min(
-                                100,
-                                Math.round(
-                                  ((activeVariantJob.doneCount + activeVariantJob.failCount) /
-                                    activeVariantJob.total) *
-                                    100,
-                                ),
-                              )
-                            : 0
-                        }
-                        status={
-                          activeVariantJob.status === 'FAILED'
-                            ? 'exception'
-                            : activeVariantJob.status === 'COMPLETED'
-                              ? 'success'
-                              : isVariantJobRunning
-                                ? 'active'
-                                : 'normal'
-                        }
-                      />
-
-                      {isVariantJobRunning ? (
-                        <div className="gm-dist-muted">
-                          刷新页面或关闭抽屉后任务仍会在后台继续，重新打开即可恢复进度；单渠道失败将自动退还对应点数。
-                        </div>
-                      ) : null}
-
-                      {activeVariantJob.failures.length > 0 ? (
-                        <div className="gm-dist-col gm-dist-col--xs">
-                          {activeVariantJob.failures.map((item) => (
-                            <div
-                              key={`${item.index}-${item.provider}`}
-                              className="gm-dist-job-failure-item"
-                            >
-                              • 「{item.channelLabel}」生成失败：{item.error}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {/* Citation-Driven Highlights */}
-                  {effectiveRecommendedChannels.length > 0 ? (
-                    <div className="gm-dist-rec-box">
-                      <div className="gm-dist-rec-title">AI 高频被引阵地推荐</div>
-                      <div className="gm-dist-grid-rec">
-                        {effectiveRecommendedChannels.map((rec) => {
-                          const safeUrls = (rec.citedExampleUrls ?? [])
-                            .filter((u) => isSafePublicExternalHttpUrl(u))
-                            .slice(0, 3);
-                          return (
-                            <div key={rec.channel} className="gm-dist-rec-item">
-                              <div className="gm-dist-rec-item-head">
-                                <span className="gm-dist-rec-name">{rec.channel}</span>
-                                {rec.priority ? (
-                                  <StatusBadge
-                                    tone={rec.priority === 'HIGH' ? 'warning' : 'active'}
-                                    className="gm-studio-nowrap"
-                                  >
-                                    {rec.priority === 'HIGH' ? '高优先被引' : '推荐阵地'}
-                                  </StatusBadge>
-                                ) : null}
-                              </div>
-                              <div className="gm-studio-text-secondary">{rec.reason}</div>
-                              {safeUrls.length > 0 ? (
-                                <div className="gm-studio-row gm-studio-row--wrap">
-                                  {safeUrls.map((url, idx) => (
-                                    <a
-                                      key={url}
-                                      href={url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="gm-mono gm-studio-cited-link"
-                                    >
-                                      高频被引原帖 #{idx + 1} ↗
-                                    </a>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Group 1: Connected L1 Official Sites */}
-                  <div className="gm-dist-l1-section">
-                    <div className="gm-dist-l1-head-row">
-                      <div className="gm-studio-publish-subcard-title">
-                        <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
-                          <span className="gm-studio-glossary-trigger">
-                            1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
-                          </span>
-                        </Tooltip>
-                      </div>
-                      {brandId && brandMarketId ? (
-                        <Button
-                          size="small"
-                          type="default"
-                          data-testid="studio-inline-bind-connection-btn"
-                          disabled={readOnly}
-                          className="gm-brand-btn-nowrap"
-                          onClick={() => setInlineBindModalOpen(true)}
-                        >
-                          快捷绑站
-                        </Button>
-                      ) : null}
-                    </div>
-                    {disabledConnectionsCount > 0 ? (
-                      <div
-                        className="gm-dist-l1-disabled-hint"
-                        data-testid="studio-distribution-disabled-conns-hint"
-                      >
-                        已停用 {disabledConnectionsCount} 个连接（已自动隐藏，可在「品牌资产 →
-                        发布渠道」重新启用）
+            {preflight && preflight.blockers.length > 0 ? (
+              <div
+                data-testid="distribution-preflight-blockers"
+                className="gm-dist-preflight-blockers"
+              >
+                {preflight.blockers.map((blocker) => (
+                  <div key={blocker.code} className="gm-dist-min0">
+                    <div className="gm-dist-preflight-blocker-msg">{blocker.message}</div>
+                    {blocker.details && blocker.details.length > 0 ? (
+                      <div className="gm-dist-details-row">
+                        {blocker.details.map((detail) => (
+                          <StatusBadge key={detail} tone="danger" className="gm-studio-tag-wrap">
+                            {detail}
+                          </StatusBadge>
+                        ))}
                       </div>
                     ) : null}
-                    {l1Options.length === 0 ? (
-                      <div className="gm-dist-l1-empty-box">
-                        <span className="gm-dist-l1-empty-text">
-                          {market === 'CN'
-                            ? '当前市场尚未绑定微信公众号草稿箱 / WordPress / Webhook 渠道连接。'
-                            : '当前市场尚未绑定 Shopify / WordPress / Webflow / Ghost / Dev.to / Hashnode / GitHub MDX / Webhook 渠道连接。'}
-                        </span>
-                        {onNavigateBrands ? (
-                          <Button
-                            size="small"
-                            className="gm-brand-btn-nowrap"
-                            onClick={() => {
-                              onClose();
-                              onNavigateBrands();
-                            }}
-                          >
-                            前往品牌资产配置渠道连接
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <div className="gm-dist-grid-cards">
-                        {l1Options.map((opt) => {
-                          const selected = selectedTargetKeys.includes(opt.key);
-                          return (
-                            <div
-                              key={opt.key}
-                              role="presentation"
-                              data-testid={`distribution-target-${opt.key}`}
-                              onClick={() => {
-                                if (!readOnly) toggleTargetKey(opt.key);
-                              }}
-                              className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
-                            >
-                              <span
-                                className="gm-dist-target-check"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Checkbox
-                                  checked={selected}
-                                  disabled={readOnly}
-                                  aria-label={opt.channelLabel}
-                                  onChange={() => toggleTargetKey(opt.key)}
-                                />
-                              </span>
-                              <div className="gm-dist-target-content">
-                                <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
-                                  <span className="gm-dist-target-name">{opt.channelLabel}</span>
-                                  <Tag className="gm-studio-tag-nowrap">{opt.description}</Tag>
-                                  {opt.targetLocale ? (
-                                    <StatusBadge tone="active" className="gm-studio-nowrap">
-                                      {opt.targetLocale}
-                                    </StatusBadge>
-                                  ) : null}
-                                  {opt.connectionStatus === 'INVALID' ? (
-                                    <StatusBadge tone="danger" className="gm-studio-nowrap">
-                                      连接异常
-                                    </StatusBadge>
-                                  ) : null}
-                                </div>
-                                {opt.siteBaseUrl ? (
-                                  <div className="gm-mono gm-studio-text-muted">
-                                    {opt.siteBaseUrl}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
+                ))}
 
-                  {/* Group 1.5 (CN Only): L2 Chrome Extension Queue */}
-                  {l2ExtensionOptions.length > 0 ? (
-                    <div
-                      data-testid="distribution-l2-extension-group"
-                      className="gm-dist-col gm-dist-col--md"
-                    >
-                      <div className="gm-dist-row gm-dist-row--between">
-                        <span className="gm-dist-group-title">
-                          国内平台浏览器扩展队列（L2 Chrome 扩展 · 写入草稿箱人工确认，不自动发布）
-                        </span>
-                        {onNavigateExtensionPairing || onNavigateBrands ? (
-                          <Button
-                            size="small"
-                            type="link"
-                            className="gm-dist-link-btn"
-                            onClick={() => {
-                              onClose();
-                              (onNavigateExtensionPairing ?? onNavigateBrands)?.();
-                            }}
-                          >
-                            管理扩展配对令牌 →
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="gm-dist-grid-cards">
-                        {l2ExtensionOptions.map((opt) => {
-                          const selected = selectedTargetKeys.includes(opt.key);
-                          return (
-                            <div
-                              key={opt.key}
-                              role="presentation"
-                              data-testid={`distribution-target-${opt.provider}`}
-                              onClick={() => {
-                                if (!readOnly) toggleTargetKey(opt.key);
-                              }}
-                              className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
-                            >
-                              <span
-                                className="gm-dist-target-check"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Checkbox
-                                  checked={selected}
-                                  disabled={readOnly}
-                                  aria-label={opt.channelLabel}
-                                  onChange={() => toggleTargetKey(opt.key)}
-                                />
-                              </span>
-                              <div className="gm-dist-target-content">
-                                <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
-                                  <span className="gm-dist-target-name">{opt.channelLabel}</span>
-                                  <StatusBadge tone="active" className="gm-studio-nowrap">
-                                    Chrome 扩展
-                                  </StatusBadge>
-                                  {opt.recommendedPriority === 'HIGH' ? (
-                                    <StatusBadge tone="warning" className="gm-studio-nowrap">
-                                      高频被引
-                                    </StatusBadge>
-                                  ) : null}
-                                </div>
-                                <div className="gm-studio-text-muted">{opt.description}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
+                <div className="gm-dist-preflight-actions">
+                  <Button
+                    size="small"
+                    type="primary"
+                    danger
+                    data-testid="distribution-back-to-editor-btn"
+                    className="gm-dist-nowrap"
+                    onClick={() => {
+                      const first = preflight.blockers[0];
+                      const term = first?.matches?.[0]?.matchedText;
+                      if (term) onReturnToEditor(first?.code, term);
+                      else onReturnToEditor(first?.code);
+                    }}
+                  >
+                    返回编辑器定位补填
+                  </Button>
+                  <Checkbox
+                    data-testid="distribution-ack-warnings-checkbox"
+                    checked={ackWarnings}
+                    onChange={(e) => setAckWarnings(e.target.checked)}
+                  >
+                    <span className="gm-dist-check-label">我已确认风险，仍要强制继续推送</span>
+                  </Checkbox>
+                </div>
+              </div>
+            ) : null}
 
-                  {/* Group 2: L3 Community Assist */}
-                  <div className="gm-dist-col gm-dist-col--md">
-                    <div className="gm-studio-publish-subcard-title">
-                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Community}>
-                        <span className="gm-studio-glossary-trigger">
-                          2. {UX_TERMS.channelModeL3Community}（人工辅发 · 不自动发帖）
-                        </span>
-                      </Tooltip>
-                    </div>
-                    <div className="gm-dist-grid-cards">
-                      {communityOptions.map((opt) => {
-                        const selected = selectedTargetKeys.includes(opt.key);
-                        return (
-                          <div
-                            key={opt.key}
-                            role="presentation"
-                            data-testid={`distribution-target-${opt.provider}`}
-                            onClick={() => {
-                              if (!readOnly) toggleTargetKey(opt.key);
-                            }}
-                            className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
-                          >
-                            <span
-                              className="gm-dist-target-check"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Checkbox
-                                checked={selected}
-                                disabled={readOnly}
-                                aria-label={opt.channelLabel}
-                                onChange={() => toggleTargetKey(opt.key)}
-                              />
-                            </span>
-                            <div className="gm-dist-target-content">
-                              <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
-                                <span className="gm-dist-target-name">{opt.channelLabel}</span>
-                                {opt.recommendedPriority === 'HIGH' ? (
-                                  <StatusBadge tone="warning" className="gm-studio-nowrap">
-                                    高频被引
-                                  </StatusBadge>
-                                ) : null}
-                              </div>
-                              <div className="gm-studio-text-muted">{opt.description}</div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Group 3: L3 PR Packet */}
-                  <div className="gm-dist-col gm-dist-col--md">
-                    <div className="gm-studio-publish-subcard-title">
-                      <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Pr}>
-                        <span className="gm-studio-glossary-trigger">
-                          3. {UX_TERMS.channelModeL3Pr}（外部媒体协作包 · 免登录链接）
-                        </span>
-                      </Tooltip>
-                    </div>
-                    {prOptions.map((opt) => {
-                      const selected = selectedTargetKeys.includes(opt.key);
-                      return (
-                        <div
-                          key={opt.key}
-                          role="presentation"
-                          data-testid="distribution-target-PR_PACKET"
-                          onClick={() => {
-                            if (!readOnly) toggleTargetKey(opt.key);
-                          }}
-                          className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+            {preflight && preflight.warnings.length > 0 ? (
+              <div
+                data-testid="distribution-preflight-warnings"
+                className="gm-dist-preflight-warnings"
+              >
+                {preflight.warnings.map((w) => (
+                  <div key={w.code} className="gm-dist-min0">
+                    <div className="gm-dist-row gm-dist-row--between">
+                      <div className="gm-dist-preflight-warning-msg">• {w.message}</div>
+                      {w.code === 'GLOBAL_CLAIM_WARNING' ? (
+                        <Button
+                          size="small"
+                          data-testid="distribution-warning-locate-btn"
+                          className="gm-dist-nowrap"
+                          onClick={() =>
+                            onReturnToEditor('GLOBAL_CLAIM_WARNING', w.matches?.[0]?.matchedText)
+                          }
                         >
-                          <span
-                            className="gm-dist-target-check"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Checkbox
-                              checked={selected}
-                              disabled={readOnly}
-                              aria-label={opt.channelLabel}
-                              onChange={() => toggleTargetKey(opt.key)}
-                            />
-                          </span>
-                          <div className="gm-dist-target-content">
-                            <div className="gm-dist-target-name">{opt.channelLabel}</div>
-                            <div className="gm-dist-target-desc">{opt.description}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          返回编辑器定位修改
+                        </Button>
+                      ) : null}
+                    </div>
+                    {w.details && w.details.length > 0 ? (
+                      <div className="gm-dist-details-row">
+                        {w.details.map((detail) => (
+                          <StatusBadge key={detail} tone="warning" className="gm-studio-tag-wrap">
+                            {detail}
+                          </StatusBadge>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
+                ))}
+              </div>
+            ) : null}
+
+            {preflight && preflight.ok && preflight.warnings.length === 0 ? (
+              <div className="gm-dist-check-label">
+                未发现缺失事实占位符、跨市场语言泄露或严重合规风险，可直接生成变体并推送。
+              </div>
+            ) : null}
+          </div>
+
+          {/* Step 2: Citation-Driven Channel Selector */}
+          <div className="gm-dist-section-card gm-dist-section-card--spacious">
+            <div className="gm-dist-row gm-dist-row--between">
+              <span className="gm-dist-card-title">
+                Step 2 · 引用驱动目标渠道选择（1 → N 变体改写）
+              </span>
+              <Button
+                type="primary"
+                data-testid="distribution-generate-variants-btn"
+                loading={generating || isVariantJobRunning}
+                disabled={
+                  selectedTargets.length === 0 || readOnly || generating || isVariantJobRunning
+                }
+                className="gm-dist-nowrap"
+                onClick={() => {
+                  pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
+                  setPointsConfirmOpen(true);
+                }}
+              >
+                {isVariantJobRunning
+                  ? `并行生成中（${(activeVariantJob?.doneCount ?? 0) + (activeVariantJob?.failCount ?? 0)}/${activeVariantJob?.total ?? 0}）`
+                  : `生成渠道变体${selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}`}
+              </Button>
+            </div>
+
+            {showVariantLocaleSelector ? (
+              <div className="gm-dist-locale-bar">
+                <span className="gm-dist-locale-label">变体目标语种：</span>
+                <Select<SupportedLocale>
+                  size="small"
+                  aria-label="变体目标语种"
+                  data-testid="distribution-target-locale-select"
+                  className="gm-dist-locale-select"
+                  disabled={readOnly || generating || isVariantJobRunning}
+                  value={variantTargetLocale}
+                  options={effectiveSupportedLocales.map((code) => {
+                    const meta = SUPPORTED_LOCALES[code];
+                    return {
+                      value: code,
+                      label: `${meta.labelZh} (${code}) · ${meta.nativeLabel}`,
+                    };
+                  })}
+                  onChange={(val) => setVariantTargetLocale(val)}
+                />
+              </div>
+            ) : null}
+
+            {/* Async Variant Generation Progress Card (#363) */}
+            {activeVariantJob ? (
+              <div
+                data-testid="distribution-variant-job-progress"
+                className={`gm-dist-job-card${
+                  activeVariantJob.status === 'FAILED'
+                    ? ' gm-dist-job-card--failed'
+                    : activeVariantJob.status === 'PARTIAL'
+                      ? ' gm-dist-job-card--partial'
+                      : ''
+                }`}
+              >
+                <div className="gm-dist-row gm-dist-row--between">
+                  <div className="gm-dist-row">
+                    <SignalPill
+                      tone={
+                        activeVariantJob.status === 'COMPLETED'
+                          ? 'cited'
+                          : activeVariantJob.status === 'FAILED'
+                            ? 'danger'
+                            : activeVariantJob.status === 'PARTIAL'
+                              ? 'warning'
+                              : 'info'
+                      }
+                    >
+                      {activeVariantJob.status === 'QUEUED'
+                        ? '任务排队中'
+                        : activeVariantJob.status === 'RUNNING'
+                          ? '后台并行生成中'
+                          : activeVariantJob.status === 'COMPLETED'
+                            ? '渠道变体已全部生成'
+                            : activeVariantJob.status === 'PARTIAL'
+                              ? '部分渠道生成完成'
+                              : '渠道变体生成失败'}
+                    </SignalPill>
+                    <span className="gm-dist-check-label">
+                      成功{' '}
+                      <strong className="gm-num gm-dist-text-primary">
+                        {activeVariantJob.doneCount}
+                      </strong>{' '}
+                      / <span className="gm-num">{activeVariantJob.total}</span> 个渠道
+                      {activeVariantJob.failCount > 0 ? (
+                        <>
+                          {' '}
+                          · 失败{' '}
+                          <strong className="gm-num gm-dist-text-danger">
+                            {activeVariantJob.failCount}
+                          </strong>{' '}
+                          个
+                        </>
+                      ) : null}
+                      {activeVariantJob.refundedPoints > 0 ? (
+                        <>
+                          {' '}
+                          · 已自动退还{' '}
+                          <strong className="gm-num gm-dist-text-success">
+                            {activeVariantJob.refundedPoints}
+                          </strong>{' '}
+                          点
+                        </>
+                      ) : null}
+                    </span>
+                  </div>
+                  {!isVariantJobRunning ? (
+                    <Button
+                      size="small"
+                      type="text"
+                      className="gm-dist-nowrap"
+                      onClick={() => setActiveVariantJob(null)}
+                    >
+                      收起进度
+                    </Button>
+                  ) : null}
                 </div>
 
-                {/* Step 3: Multi-Channel Variant Tab Editor */}
-                <div data-testid="distribution-variant-tabs" className="gm-dist-section-card">
-                  <div className="gm-dist-card-title">Step 3 · 多渠道变体编辑与一键分发</div>
+                <Progress
+                  size="small"
+                  percent={
+                    activeVariantJob.total > 0
+                      ? Math.min(
+                          100,
+                          Math.round(
+                            ((activeVariantJob.doneCount + activeVariantJob.failCount) /
+                              activeVariantJob.total) *
+                              100,
+                          ),
+                        )
+                      : 0
+                  }
+                  status={
+                    activeVariantJob.status === 'FAILED'
+                      ? 'exception'
+                      : activeVariantJob.status === 'COMPLETED'
+                        ? 'success'
+                        : isVariantJobRunning
+                          ? 'active'
+                          : 'normal'
+                  }
+                />
 
-                  {tasks.length === 0 ? (
-                    <SignalEmpty
-                      title="尚未生成渠道变体"
-                      description="在上方勾选目标自有站点、社区辅发或 PR 协作包，点击「生成渠道变体」即可并行改写多渠道版本。"
-                    />
-                  ) : (
-                    <Tabs
-                      className="gm-vis-tabs"
-                      destroyOnHidden
-                      activeKey={activeTaskId ?? tasks[0]?.id}
-                      onChange={setActiveTaskId}
-                      items={tasks.map((task) => ({
-                        key: task.id,
-                        label: (
-                          <span className="gm-dist-tab-label">
-                            <span className="gm-dist-tab-name">{task.channelLabel}</span>
-                            <Tag className="gm-studio-tag-nowrap">
-                              {DISTRIBUTION_TASK_STATUS_LABELS[task.status]}
-                            </Tag>
-                          </span>
-                        ),
-                        children: renderTaskEditorBody(task),
-                      }))}
-                    />
-                  )}
+                {isVariantJobRunning ? (
+                  <div className="gm-dist-muted">
+                    刷新页面或关闭抽屉后任务仍会在后台继续，重新打开即可恢复进度；单渠道失败将自动退还对应点数。
+                  </div>
+                ) : null}
+
+                {activeVariantJob.failures.length > 0 ? (
+                  <div className="gm-dist-col gm-dist-col--xs">
+                    {activeVariantJob.failures.map((item) => (
+                      <div
+                        key={`${item.index}-${item.provider}`}
+                        className="gm-dist-job-failure-item"
+                      >
+                        • 「{item.channelLabel}」生成失败：{item.error}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Citation-Driven Highlights */}
+            {effectiveRecommendedChannels.length > 0 ? (
+              <div className="gm-dist-rec-box">
+                <div className="gm-dist-rec-title">AI 高频被引阵地推荐</div>
+                <div className="gm-dist-grid-rec">
+                  {effectiveRecommendedChannels.map((rec) => {
+                    const safeUrls = (rec.citedExampleUrls ?? [])
+                      .filter((u) => isSafePublicExternalHttpUrl(u))
+                      .slice(0, 3);
+                    return (
+                      <div key={rec.channel} className="gm-dist-rec-item">
+                        <div className="gm-dist-rec-item-head">
+                          <span className="gm-dist-rec-name">{rec.channel}</span>
+                          {rec.priority ? (
+                            <StatusBadge
+                              tone={rec.priority === 'HIGH' ? 'warning' : 'active'}
+                              className="gm-studio-nowrap"
+                            >
+                              {rec.priority === 'HIGH' ? '高优先被引' : '推荐阵地'}
+                            </StatusBadge>
+                          ) : null}
+                        </div>
+                        <div className="gm-studio-text-secondary">{rec.reason}</div>
+                        {safeUrls.length > 0 ? (
+                          <div className="gm-studio-row gm-studio-row--wrap">
+                            {safeUrls.map((url, idx) => (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="gm-mono gm-studio-cited-link"
+                              >
+                                高频被引原帖 #{idx + 1} ↗
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
-              </>
+              </div>
+            ) : null}
+
+            {/* Group 1: Connected L1 Official Sites */}
+            <div className="gm-dist-l1-section">
+              <div className="gm-dist-l1-head-row">
+                <div className="gm-studio-publish-subcard-title">
+                  <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
+                    <span className="gm-studio-glossary-trigger">
+                      1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
+                    </span>
+                  </Tooltip>
+                </div>
+                {brandId && brandMarketId ? (
+                  <Button
+                    size="small"
+                    type="default"
+                    data-testid="studio-inline-bind-connection-btn"
+                    disabled={readOnly}
+                    className="gm-brand-btn-nowrap"
+                    onClick={() => setInlineBindModalOpen(true)}
+                  >
+                    快捷绑站
+                  </Button>
+                ) : null}
+              </div>
+              {disabledConnectionsCount > 0 ? (
+                <div
+                  className="gm-dist-l1-disabled-hint"
+                  data-testid="studio-distribution-disabled-conns-hint"
+                >
+                  已停用 {disabledConnectionsCount} 个连接（已自动隐藏，可在「品牌资产 →
+                  发布渠道」重新启用）
+                </div>
+              ) : null}
+              {l1Options.length === 0 ? (
+                <div className="gm-dist-l1-empty-box">
+                  <span className="gm-dist-l1-empty-text">
+                    {market === 'CN'
+                      ? '当前市场尚未绑定微信公众号草稿箱 / WordPress / Webhook 渠道连接。'
+                      : '当前市场尚未绑定 Shopify / WordPress / Webflow / Ghost / Dev.to / Hashnode / GitHub MDX / Webhook 渠道连接。'}
+                  </span>
+                  {onNavigateBrands ? (
+                    <Button
+                      size="small"
+                      className="gm-brand-btn-nowrap"
+                      onClick={() => {
+                        onClose();
+                        onNavigateBrands();
+                      }}
+                    >
+                      前往品牌资产配置渠道连接
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="gm-dist-grid-cards">
+                  {l1Options.map((opt) => {
+                    const selected = selectedTargetKeys.includes(opt.key);
+                    return (
+                      <div
+                        key={opt.key}
+                        role="presentation"
+                        data-testid={`distribution-target-${opt.key}`}
+                        onClick={() => {
+                          if (!readOnly) toggleTargetKey(opt.key);
+                        }}
+                        className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+                      >
+                        <span className="gm-dist-target-check" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selected}
+                            disabled={readOnly}
+                            aria-label={opt.channelLabel}
+                            onChange={() => toggleTargetKey(opt.key)}
+                          />
+                        </span>
+                        <div className="gm-dist-target-content">
+                          <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                            <span className="gm-dist-target-name">{opt.channelLabel}</span>
+                            <Tag className="gm-studio-tag-nowrap">{opt.description}</Tag>
+                            {opt.targetLocale ? (
+                              <StatusBadge tone="active" className="gm-studio-nowrap">
+                                {opt.targetLocale}
+                              </StatusBadge>
+                            ) : null}
+                            {opt.connectionStatus === 'INVALID' ? (
+                              <StatusBadge tone="danger" className="gm-studio-nowrap">
+                                连接异常
+                              </StatusBadge>
+                            ) : null}
+                          </div>
+                          {opt.siteBaseUrl ? (
+                            <div className="gm-mono gm-studio-text-muted">{opt.siteBaseUrl}</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Group 1.5 (CN Only): L2 Chrome Extension Queue */}
+            {l2ExtensionOptions.length > 0 ? (
+              <div
+                data-testid="distribution-l2-extension-group"
+                className="gm-dist-col gm-dist-col--md"
+              >
+                <div className="gm-dist-row gm-dist-row--between">
+                  <span className="gm-dist-group-title">
+                    国内平台浏览器扩展队列（L2 Chrome 扩展 · 写入草稿箱人工确认，不自动发布）
+                  </span>
+                  {onNavigateExtensionPairing || onNavigateBrands ? (
+                    <Button
+                      size="small"
+                      type="link"
+                      className="gm-dist-link-btn"
+                      onClick={() => {
+                        onClose();
+                        (onNavigateExtensionPairing ?? onNavigateBrands)?.();
+                      }}
+                    >
+                      管理扩展配对令牌 →
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="gm-dist-grid-cards">
+                  {l2ExtensionOptions.map((opt) => {
+                    const selected = selectedTargetKeys.includes(opt.key);
+                    return (
+                      <div
+                        key={opt.key}
+                        role="presentation"
+                        data-testid={`distribution-target-${opt.provider}`}
+                        onClick={() => {
+                          if (!readOnly) toggleTargetKey(opt.key);
+                        }}
+                        className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+                      >
+                        <span className="gm-dist-target-check" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selected}
+                            disabled={readOnly}
+                            aria-label={opt.channelLabel}
+                            onChange={() => toggleTargetKey(opt.key)}
+                          />
+                        </span>
+                        <div className="gm-dist-target-content">
+                          <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                            <span className="gm-dist-target-name">{opt.channelLabel}</span>
+                            <StatusBadge tone="active" className="gm-studio-nowrap">
+                              Chrome 扩展
+                            </StatusBadge>
+                            {opt.recommendedPriority === 'HIGH' ? (
+                              <StatusBadge tone="warning" className="gm-studio-nowrap">
+                                高频被引
+                              </StatusBadge>
+                            ) : null}
+                          </div>
+                          <div className="gm-studio-text-muted">{opt.description}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Group 2: L3 Community Assist */}
+            <div className="gm-dist-col gm-dist-col--md">
+              <div className="gm-studio-publish-subcard-title">
+                <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Community}>
+                  <span className="gm-studio-glossary-trigger">
+                    2. {UX_TERMS.channelModeL3Community}（人工辅发 · 不自动发帖）
+                  </span>
+                </Tooltip>
+              </div>
+              <div className="gm-dist-grid-cards">
+                {communityOptions.map((opt) => {
+                  const selected = selectedTargetKeys.includes(opt.key);
+                  return (
+                    <div
+                      key={opt.key}
+                      role="presentation"
+                      data-testid={`distribution-target-${opt.provider}`}
+                      onClick={() => {
+                        if (!readOnly) toggleTargetKey(opt.key);
+                      }}
+                      className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+                    >
+                      <span className="gm-dist-target-check" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selected}
+                          disabled={readOnly}
+                          aria-label={opt.channelLabel}
+                          onChange={() => toggleTargetKey(opt.key)}
+                        />
+                      </span>
+                      <div className="gm-dist-target-content">
+                        <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                          <span className="gm-dist-target-name">{opt.channelLabel}</span>
+                          {opt.recommendedPriority === 'HIGH' ? (
+                            <StatusBadge tone="warning" className="gm-studio-nowrap">
+                              高频被引
+                            </StatusBadge>
+                          ) : null}
+                        </div>
+                        <div className="gm-studio-text-muted">{opt.description}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Group 3: L3 PR Packet */}
+            <div className="gm-dist-col gm-dist-col--md">
+              <div className="gm-studio-publish-subcard-title">
+                <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Pr}>
+                  <span className="gm-studio-glossary-trigger">
+                    3. {UX_TERMS.channelModeL3Pr}（外部媒体协作包 · 免登录链接）
+                  </span>
+                </Tooltip>
+              </div>
+              {prOptions.map((opt) => {
+                const selected = selectedTargetKeys.includes(opt.key);
+                return (
+                  <div
+                    key={opt.key}
+                    role="presentation"
+                    data-testid="distribution-target-PR_PACKET"
+                    onClick={() => {
+                      if (!readOnly) toggleTargetKey(opt.key);
+                    }}
+                    className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+                  >
+                    <span className="gm-dist-target-check" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selected}
+                        disabled={readOnly}
+                        aria-label={opt.channelLabel}
+                        onChange={() => toggleTargetKey(opt.key)}
+                      />
+                    </span>
+                    <div className="gm-dist-target-content">
+                      <div className="gm-dist-target-name">{opt.channelLabel}</div>
+                      <div className="gm-dist-target-desc">{opt.description}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Step 3: Multi-Channel Variant Tab Editor */}
+          <div data-testid="distribution-variant-tabs" className="gm-dist-section-card">
+            <div className="gm-dist-card-title">Step 3 · 多渠道变体编辑与一键分发</div>
+
+            {tasks.length === 0 ? (
+              <SignalEmpty
+                title="尚未生成渠道变体"
+                description="在上方勾选目标自有站点、社区辅发或 PR 协作包，点击「生成渠道变体」即可并行改写多渠道版本。"
+              />
+            ) : (
+              <Tabs
+                className="gm-vis-tabs"
+                destroyOnHidden
+                activeKey={activeTaskId ?? tasks[0]?.id}
+                onChange={setActiveTaskId}
+                items={tasks.map((task) => ({
+                  key: task.id,
+                  label: (
+                    <span className="gm-dist-tab-label">
+                      <span className="gm-dist-tab-name">{task.channelLabel}</span>
+                      <Tag className="gm-studio-tag-nowrap">
+                        {DISTRIBUTION_TASK_STATUS_LABELS[task.status]}
+                      </Tag>
+                    </span>
+                  ),
+                  children: renderTaskEditorBody(task),
+                }))}
+              />
             )}
           </div>
+        </>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {variant === 'inline' ? (
+        <div data-testid="publish-distribution-workbench" className="gm-dist-inline-root">
+          <div className="gm-dist-inline-body">{workbenchBody}</div>
         </div>
-      </Drawer>
+      ) : (
+        <Drawer
+          open={open}
+          onClose={onClose}
+          destroyOnHidden
+          title={null}
+          closable={false}
+          footer={null}
+          width="min(880px, calc(100vw - 32px))"
+          styles={{
+            wrapper: { maxWidth: '100vw' },
+            body: {
+              padding: 0,
+              overflowX: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          }}
+        >
+          <div data-testid="studio-distribution-drawer" className="gm-dist-drawer-root">
+            {/* Pinned Header */}
+            <div className="gm-dist-drawer-head">
+              <div className="gm-dist-drawer-head-col">
+                <div className="gm-dist-row">
+                  <span className="gm-dist-drawer-title">多渠道分发与变体工作台</span>
+                  <StatusBadge tone="active" className="gm-studio-nowrap">
+                    {market === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[market]}
+                  </StatusBadge>
+                </div>
+                {article ? (
+                  <div className="gm-clamp-1 gm-dist-drawer-subtitle">
+                    当前成稿：{draftTitle || article.title}
+                  </div>
+                ) : null}
+              </div>
+              <Button
+                size="small"
+                aria-label="关闭分发工作台"
+                className="gm-dist-nowrap"
+                onClick={onClose}
+              >
+                关闭
+              </Button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="gm-dist-drawer-body">{workbenchBody}</div>
+          </div>
+        </Drawer>
+      )}
 
       {brandId && brandMarketId ? (
         <ChannelConnectionCreateModal
@@ -3201,5 +3187,19 @@ export function StudioDistributionDrawer({
         </div>
       </Modal>
     </>
+  );
+}
+
+export function DistributionWorkbench(
+  props: Omit<StudioDistributionDrawerProps, 'variant' | 'onClose'> & {
+    onClose?: () => void;
+  },
+): JSX.Element | null {
+  return (
+    <StudioDistributionDrawer
+      {...props}
+      variant="inline"
+      onClose={props.onClose ?? (() => undefined)}
+    />
   );
 }

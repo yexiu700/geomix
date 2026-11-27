@@ -1868,17 +1868,19 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       await page.getByTestId(`studio-article-item-${draftArticle.id}`).click();
       await expect(collapsedBar).toBeVisible({ timeout: 10_000 });
 
-      // 2. Right dual-tab: draft opens on 体检 with UX_TERMS (AI 追问覆盖度); switching to 交付 shows studio-publish-retest
+      // 2. Right pane on /studio shows GEO 体检 with UX_TERMS (AI 追问覆盖度) & sticky 发布中心 CTA;
+      //    Published article with publish records on /publish auto-activates 发布追踪与复测
       const rightPane = page.getByTestId('studio-right-pane');
       await expect(rightPane).toBeVisible();
       await expect(page.getByTestId('geo-score-value')).toBeVisible({ timeout: 15_000 });
       await expect(rightPane).toContainText('AI 追问覆盖度');
 
-      await clickFirstVisible(rightPane.getByRole('tab', { name: /交付/ }));
-      await expect(page.getByTestId('studio-publish-retest')).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId('studio-go-publish-btn').click();
+      await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+      await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 15_000 });
 
-      // Published article with publish records auto-activates 交付 tab (studio-publish-retest immediately visible)
-      await page.goto(`/studio?brandId=${brand.id}&market=CN&articleId=${publishedArticle.id}`, {
+      // Published article with publish records auto-activates 发布追踪与复测 (studio-publish-retest immediately visible)
+      await page.goto(`/publish?brandId=${brand.id}&market=CN&articleId=${publishedArticle.id}`, {
         waitUntil: 'domcontentloaded',
       });
       await expect(page.getByTestId('studio-publish-retest')).toBeVisible({ timeout: 15_000 });
@@ -2180,8 +2182,8 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       });
       await expect(page.getByTestId('studio-missing-fact-bar')).toBeVisible({ timeout: 15_000 });
 
-      // Verify quiet distribution fallback link keeps data-testid="studio-open-distribution-btn" before fill
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeVisible();
+      // Verify publish handoff CTA keeps data-testid="studio-go-publish-btn" before fill
+      await expect(page.getByTestId('studio-go-publish-btn')).toBeVisible();
 
       // Open deduplicated batch-fill slide-over drawer
       const batchFillTrigger = page
@@ -2229,12 +2231,10 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       );
       await expect(batchDrawer).toBeHidden({ timeout: 15_000 });
 
-      // Post-assertions: missing bar gone, footer CTA switches to 进入分发工作台
+      // Post-assertions: missing bar gone, footer CTA shows 前往发布中心
       await expect(page.getByTestId('studio-missing-fact-bar')).toBeHidden({ timeout: 10_000 });
       await expect(page.getByTestId('missing-fact-pill')).toHaveCount(0);
-      await expect(page.getByTestId('studio-open-distribution-btn')).toContainText(
-        /进入分发工作台/,
-      );
+      await expect(page.getByTestId('studio-go-publish-btn')).toContainText(/前往发布中心/);
 
       // API verification: all 3 occurrences replaced cleanly & synced to brand fact cards
       const patchedArticle = unwrapOk(
@@ -2344,23 +2344,24 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
         })
         .toBe('DISABLED');
 
-      // 3. /studio distribution drawer hides disabled target, shows disabled hint & supports inline bind
+      // 3. /publish distribution workbench hides disabled target, shows disabled hint & supports inline bind
       await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${article.id}`, {
         waitUntil: 'domcontentloaded',
       });
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeVisible({
+      await expect(page.getByTestId('studio-go-publish-btn')).toBeVisible({
         timeout: 20_000,
       });
-      await page.getByTestId('studio-open-distribution-btn').click();
+      await page.getByTestId('studio-go-publish-btn').click();
+      await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
 
-      const distDrawer = page.getByTestId('studio-distribution-drawer');
+      const distDrawer = page.getByTestId('publish-distribution-workbench');
       await expect(distDrawer).toBeVisible({ timeout: 15_000 });
       await expect(distDrawer.getByTestId(`distribution-target-l1:${webhookConn!.id}`)).toHaveCount(
         0,
       );
       await expect(distDrawer).toContainText(/已停用\s*1\s*个|1\s*个.*停用/);
 
-      // Inline <ChannelConnectionCreateModal> without navigating away from /studio
+      // Inline <ChannelConnectionCreateModal> without navigating away from /publish
       await clickFirstVisible(
         distDrawer.getByRole('button', { name: /快捷绑站|绑定自有站|添加.*连接|立即绑定/ }),
       );
@@ -2370,7 +2371,7 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
         .filter({ has: page.getByTestId('channel-connection-modal') })
         .last();
       await expect(inlineModal).toBeVisible({ timeout: 10_000 });
-      expect(page.url()).toContain('/studio');
+      expect(page.url()).toContain('/publish');
 
       await inlineModal.getByTestId('channel-provider-select').click();
       await page
@@ -2384,7 +2385,7 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       await inlineModal.getByLabel('WordPress Application Password').fill('wp_e2e_app_pass_123456');
       await inlineModal.getByTestId('channel-connection-submit-btn').click();
       await expect(inlineModal).toBeHidden({ timeout: 15_000 });
-      expect(page.url()).toContain('/studio');
+      expect(page.url()).toContain('/publish');
       await expect(distDrawer).toContainText('Studio Inline WP', { timeout: 15_000 });
 
       // 4. Return to /brands and re-enable original Webhook connection

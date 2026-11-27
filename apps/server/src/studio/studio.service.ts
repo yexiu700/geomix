@@ -152,11 +152,21 @@ export class StudioService {
 
   async listArticles(brandId: string, query: GeoArticleListQuery): Promise<GeoArticleListResponse> {
     const resolved = await this.brands.resolveBrandMarket(brandId, query.market);
+    const statusFilter: Prisma.GeoArticleWhereInput = query.status
+      ? { status: query.status }
+      : query.publishFilter === 'UNPUBLISHED'
+        ? { status: { not: 'PUBLISHED' } }
+        : query.publishFilter === 'PUBLISHED'
+          ? { status: 'PUBLISHED' }
+          : {};
     const where: Prisma.GeoArticleWhereInput = {
       brandId: resolved.brand.id,
       brandMarketId: resolved.market.id,
       ...(query.productLineId ? { productLineId: query.productLineId } : {}),
-      ...(query.status ? { status: query.status } : {}),
+      ...statusFilter,
+      ...(query.publishFilter === 'CRAWL_ALERT'
+        ? { publishRecords: { some: { crawlStatus: { in: ['BLOCKED', 'FAILED'] } } } }
+        : {}),
       ...(query.tag ? { tags: { has: query.tag } } : {}),
       ...(query.briefId ? { briefId: query.briefId } : {}),
       ...(query.batchJobId ? { batchJobId: query.batchJobId } : {}),
@@ -174,6 +184,11 @@ export class StudioService {
     const [rows, total] = await Promise.all([
       this.prisma.scoped.geoArticle.findMany({
         where,
+        include: {
+          publishRecords: {
+            select: { crawlStatus: true },
+          },
+        },
         orderBy: [{ createdAt: 'desc' }],
         skip,
         take: query.pageSize,

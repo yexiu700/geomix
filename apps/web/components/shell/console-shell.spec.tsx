@@ -324,6 +324,15 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     expect(await screen.findByText('行动首页内容')).toBeTruthy();
     expect(document.querySelector('aside.gm-sider-rail')).toBeNull();
     expect(useWorkspaceStore.getState().menuCollapsed).toBe(false);
+
+    mockPathname = '/publish';
+    rerender(
+      <ConsoleShell>
+        <div>发布中心内容</div>
+      </ConsoleShell>,
+    );
+    expect(await screen.findByText('发布中心内容')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
   });
 
   it('does not fetch product lines for a stale/foreign brandId before brandsLoaded reconciles to an owned brand', async () => {

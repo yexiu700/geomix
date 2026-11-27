@@ -300,12 +300,19 @@ v2Describe(
           expect(article.contentMarkdown).toMatch(/FAQ|常见问题|问答/i);
           assertGeoScoreValid(article.geoScore, article.geoScoreDetail, { minScore: 85 });
 
-          // 6. Step E (Same workspace /studio right pane — 0 extra hops): JSON-LD + Publish URL + One-Click Retest Before/After
-          await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible();
+          // 6. Step E (Hand off /studio -> /publish workspace): JSON-LD + Publish URL + One-Click Retest Before/After
+          await expect(page.getByTestId('studio-go-publish-btn')).toBeEnabled({ timeout: 15_000 });
+          await page.getByTestId('studio-go-publish-btn').click();
+          await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+          await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
+
+          await page.getByTestId('publish-tab-delivery').click();
+          await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible({ timeout: 15_000 });
           assertValidJsonLd(article.schemaJsonLd, ['Article', 'FAQPage']);
 
+          await page.getByTestId('publish-tab-tracking').click();
           const publishForm = page.getByTestId('publish-record-form');
-          await expect(publishForm).toBeVisible();
+          await expect(publishForm).toBeVisible({ timeout: 15_000 });
           await publishForm
             .locator('input[placeholder*="http"], input[placeholder*="URL"], input')
             .first()

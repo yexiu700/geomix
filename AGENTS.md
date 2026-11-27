@@ -1,6 +1,6 @@
 # AGENTS.md
 
-GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engine Optimization）** 内容创作、多渠道分发与 **AI 可见度增长**平台（Next.js 15 + React 19 + Ant Design 5 + NestJS 10 + Prisma 5 + PostgreSQL 16/pgvector + Redis 7/BullMQ + MinIO）。**GeoMix 2.0 / v2.1**（双市场 `CN` / `GLOBAL`、极简 5 工作区壳、品牌事实卡与 `pgvector` 检索、AI 可见度诊断、GEO 写作意见引擎、SSE 靶向写作与 2–20 篇批量队列、双轨合规与 5 维 GEO 体检、1→N 异步渠道变体、海外 L1 官方 API 直发与免登录 PR 供稿页 `/share/pr/[token]`、T+1 抓取体检与 T+7/14/30 自动复测闭环、Sonar Ink 暗色设计系统、Playwright `e2e` + `e2e/v2` + `distribution-v2-1` 与 GHCR/Self-Hosted CD）均已落地。
+GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engine Optimization）** 内容创作、多渠道分发与 **AI 可见度增长**平台（Next.js 15 + React 19 + Ant Design 5 + NestJS 10 + Prisma 5 + PostgreSQL 16/pgvector + Redis 7/BullMQ + MinIO）。**GeoMix 2.0 / v2.1**（双市场 `CN` / `GLOBAL`、极简 6 工作区壳、品牌事实卡与 `pgvector` 检索、AI 可见度诊断、GEO 写作意见引擎、SSE 靶向写作与 2–20 篇批量队列、双轨合规与 5 维 GEO 体检、独立发布中心 `/publish`、1→N 异步渠道变体、海外 L1 官方 API 直发与免登录 PR 供稿页 `/share/pr/[token]`、T+1 抓取体检与 T+7/14/30 自动复测闭环、Sonar Ink 暗色设计系统、Playwright `e2e` + `e2e/v2` + `distribution-v2-1` 与 GHCR/Self-Hosted CD）均已落地。
 
 在本仓库工作的编码代理，请**按需查阅**以下文档，避免一次性加载过长历史文档浪费上下文：
 
@@ -44,7 +44,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engin
   - 列表页工具栏必须复用 `<CrudTable>` / `<CrudToolbar>` 创建前置顺序，禁止手写 `gm-crud-toolbar` 或 `toolbarOrder="default"`。
   - 禁止在 `apps/web/lib/*` 重复定义 `function unwrap` → 复用 `apps/web/lib/envelope.ts`。
   - 轮询用 `useTaskPolling`（防重叠、按 `active` 启停），跨区刷新同步用 `useTabFreshness` / `invalidateFreshness`。
-- **`@geomix/web` 路由与样式**：控制台为极简 5 工作区路由（`/home`、`/brands`、`/visibility`、`/studio`、`/account`），`app/(console)/**/page.tsx` 导出 `metadata` 并直接渲染各自工作区组件作为 `ConsoleLayout` → `ConsoleShell` → `ShellFrame` 的 `children`；全局品牌与双市场（`CN` / `GLOBAL`）上下文由 `lib/workspace-store.ts` 管理并与 `?brandId=&market=` 同步；不引入 Tailwind / ProComponents / React Query / ECharts；使用 `var(--gm-*)` / `GM.*` 令牌并保持既有 `aria-label` / `data-testid` / 表头文案不变。
+- **`@geomix/web` 路由与样式**：控制台为极简 6 工作区路由（`/home`、`/brands`、`/visibility`、`/studio`、`/publish`、`/account`），`app/(console)/**/page.tsx` 导出 `metadata` 并直接渲染各自工作区组件作为 `ConsoleLayout` → `ConsoleShell` → `ShellFrame` 的 `children`；全局品牌与双市场（`CN` / `GLOBAL`）上下文由 `lib/workspace-store.ts` 管理并与 `?brandId=&market=` 同步；不引入 Tailwind / ProComponents / React Query / ECharts；使用 `var(--gm-*)` / `GM.*` 令牌并保持既有 `aria-label` / `data-testid` / 表头文案不变。
 - **`@geomix/server` 隔离与权限**：全局前缀 `/api` + URI 版本控制（默认 `/api/v1`，v2 核心业务域用 `@Controller({ path: '...', version: '2' })` 暴露 `/api/v2`）；业务查询默认走 `prisma.scoped`，`prisma.base` 受 `prisma-base-allowlist.ts` 与 `prisma-base-usage.spec.ts` AST 棘轮白名单精确约束；管理接口挂 `AdminGuard`（对非管理员返 `404`）；写接口挂 `TenantActiveGuard`（到期返 `403` / `40301`）。
 - **文档测试耦合**：勿重命名或破坏 `docs/页面对照验收清单.md`（`qa.spec.ts`）与 `docs/运维与部署手册.md`（`llm-cost-report.spec.ts`）。
 

@@ -385,17 +385,20 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       // Check /brands ergonomics at 1440×900 & 1015×909
       await assertLayoutErgonomics(page);
 
-      // ── Step 3: /studio Distribution Drawer — Preflight Block -> Fix -> Variants + Confirm -> Context-Switch -> Live Publish ──
+      // ── Step 3: /studio -> /publish Inline Distribution Workbench — Preflight Block -> Fix -> Variants + Confirm -> Context-Switch -> Live Publish ──
       await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
         waitUntil: 'domcontentloaded',
       });
       await expect(page.getByTestId('studio-workspace')).toBeVisible({ timeout: 20_000 });
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
+      await expect(page.getByTestId('studio-go-publish-btn')).toBeEnabled({
         timeout: 20_000,
       });
 
-      await page.getByTestId('studio-open-distribution-btn').click();
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeVisible();
+      await page.getByTestId('studio-go-publish-btn').click();
+      await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+      await expect(page.getByTestId('publish-distribution-workbench')).toBeVisible({
+        timeout: 20_000,
+      });
       await expect(page.getByTestId('distribution-preflight-blockers')).toBeVisible({
         timeout: 15_000,
       });
@@ -403,12 +406,12 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         'launch price',
       );
 
-      // Verify Drawer ergonomics at BOTH 1440×900 and 1015×909
-      await assertLayoutErgonomics(page, { checkDrawer: true });
+      // Verify /publish inline Distribution ergonomics at BOTH 1440×900 and 1015×909
+      await assertLayoutErgonomics(page);
 
-      // Click "返回编辑器定位补填" -> Drawer closes -> fill inline missing-fact pill!
+      // Click "返回编辑器定位补填" -> navigates to /studio -> fill inline missing-fact pill!
       await page.getByTestId('distribution-back-to-editor-btn').click();
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeHidden();
+      await expect(page).toHaveURL(/\/studio/, { timeout: 15_000 });
 
       const missingPill = page.getByTestId('missing-fact-pill').first();
       await expect(missingPill).toBeVisible({ timeout: 10_000 });
@@ -417,9 +420,12 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await page.getByRole('button', { name: '确认填入' }).click();
       await expect(page.getByTestId('missing-fact-pill')).toHaveCount(0, { timeout: 15_000 });
 
-      // Re-open Drawer -> Preflight blockers gone!
-      await page.getByTestId('studio-open-distribution-btn').click();
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeVisible();
+      // Navigate to /publish -> Preflight blockers gone!
+      await page.getByTestId('studio-go-publish-btn').click();
+      await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+      await expect(page.getByTestId('publish-distribution-workbench')).toBeVisible({
+        timeout: 20_000,
+      });
       await expect(page.getByTestId('distribution-preflight-card')).toBeVisible();
       await expect(page.getByTestId('distribution-preflight-blockers')).toBeHidden({
         timeout: 15_000,
@@ -456,31 +462,30 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         timeout: 15_000,
       });
 
-      // Context-switch isolation while Drawer is open (dispatchEvent avoids .ant-drawer-mask interception)
+      // Context-switch isolation on /publish clears stale articleId (#364)
       await page
         .getByTestId('global-market-switcher')
         .getByRole('button', { name: /国内/ })
-        .dispatchEvent('click');
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeHidden({
-        timeout: 10_000,
-      });
+        .click();
       await expect(page).toHaveURL(/market=CN/);
       // Issue #364: switching market clears stale articleId from URL
       expect(new URL(page.url()).searchParams.get('articleId')).toBeNull();
 
-      // Return to GLOBAL article, reload browser (#364), and verify selection & distribution CTA remain ready
-      await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
-        waitUntil: 'domcontentloaded',
-      });
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
+      // Return to GLOBAL article on /publish, reload browser (#364), and verify selection & variants remain ready
+      await page.goto(
+        `/publish?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}&tab=distribute`,
+        {
+          waitUntil: 'domcontentloaded',
+        },
+      );
+      await expect(page.getByTestId('publish-distribution-workbench')).toBeVisible({
         timeout: 20_000,
       });
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
+      await expect(page.getByTestId('publish-distribution-workbench')).toBeVisible({
         timeout: 20_000,
       });
       expect(new URL(page.url()).searchParams.get('articleId')).toBe(articleId);
-      await page.getByTestId('studio-open-distribution-btn').click();
       await expect(page.getByTestId('distribution-variant-tabs')).toBeVisible({
         timeout: 15_000,
       });
@@ -525,10 +530,6 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(shareUrlEl).toBeVisible({ timeout: 15_000 });
       const shareUrl = (await shareUrlEl.innerText()).trim();
       expect(shareUrl).toMatch(new RegExp(`^${escapeRegExp(WEB_BASE)}/share/pr/[A-Za-z0-9_-]+$`));
-
-      // Close drawer on authenticated page before incognito check
-      await page.getByRole('button', { name: '关闭分发工作台' }).click();
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeHidden();
 
       // Separate incognito context (ZERO tokens, ZERO cookies)
       const incognitoCtx = await browser.newContext({ viewport: V2_1_VIEWPORTS[0] });
@@ -733,10 +734,13 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
         await cnIncognitoCtx.close();
       }
 
-      // ── Step 5: /studio Retest Timeline, PRD D3 Budget Ceiling, Crawl Badges & /home Attribution (PRD D5) ──
-      await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
-        waitUntil: 'domcontentloaded',
-      });
+      // ── Step 5: /publish Retest Timeline, PRD D3 Budget Ceiling, Crawl Badges & /home Attribution (PRD D5) ──
+      await page.goto(
+        `/publish?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}&tab=tracking`,
+        {
+          waitUntil: 'domcontentloaded',
+        },
+      );
       await expect(page.getByTestId('studio-publish-retest')).toBeVisible({ timeout: 20_000 });
 
       // Verify PRD D3 form budget ceiling & auto-retest checkbox

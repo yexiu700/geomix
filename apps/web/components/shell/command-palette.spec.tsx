@@ -72,6 +72,7 @@ describe('CommandPalette (GeoMix 2.0)', () => {
     expect(screen.getByRole('option', { name: /品牌资产.*\/brands/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /可见度诊断.*\/visibility/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /GEO 写作台.*\/studio/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /发布中心.*\/publish/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /点数与权益.*\/account/ })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('option', { name: /\+ 开启另一市场/ }));

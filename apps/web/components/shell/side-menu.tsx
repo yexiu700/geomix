@@ -33,6 +33,7 @@ const RAIL_LABEL_PARTS: Readonly<Record<string, RailLabelParts>> = {
   '/brands': { prefix: '', short: '品牌', suffix: '资产' },
   '/visibility': { prefix: '可见度', short: '诊断', suffix: '' },
   '/studio': { prefix: 'GEO ', short: '写作', suffix: '台' },
+  '/publish': { prefix: '', short: '发布', suffix: '中心' },
 };
 
 function renderRailSplitLabel(parts: RailLabelParts): ReactNode {
@@ -274,6 +275,26 @@ function WorkspaceNavIcon({ href, className }: { href: string; className?: strin
           stroke="currentColor"
           strokeWidth="1.4"
           strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  if (href === '/publish') {
+    return (
+      <svg
+        className={svgClassName}
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M13.6 2.6L6.6 9.6M13.6 2.6L9.6 13.6L6.6 9.6L2.4 6.4L13.6 2.6Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
         />
       </svg>
     );

@@ -10,7 +10,10 @@ import type { BrandFactIndexRunner } from '../brands/brand-fact-index.runner';
 import { StudioGenerationService } from './studio-generation.service';
 import { GeoBatchRunner } from './geo-batch.runner';
 import { presentGeoArticle } from './studio.mapper';
+import { StudioService } from './studio.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import type { BrandsService } from '../brands/brands.service';
+import type { FreeActionRateLimiter } from '../common/free-action-rate-limiter';
 import type { BillingService } from '../billing/billing.service';
 import type { QuotaService } from '../billing/quota.service';
 
@@ -1024,6 +1027,114 @@ describe('StudioGenerationService & GeoBatchRunner unit tests', () => {
         brandMarket: { market: 'GLOBAL' },
       });
       expect(presented.targetLocale).toBe('ja-JP');
+    });
+
+    it('computes publishRecordCount & hasCrawlAlert in presentGeoArticle and supports publishFilter in StudioService.listArticles', async () => {
+      const now = new Date();
+      const baseRow = {
+        id: 'ga_pub_sum_1',
+        brandId: 'b_1',
+        brandMarketId: 'mkt_cn',
+        briefId: null,
+        batchJobId: null,
+        recipe: 'AUTHORITY_GUIDE',
+        targetFormat: 'CN_DEEP_REVIEW',
+        targetLocale: 'zh-CN',
+        title: 'NAS 测试文章',
+        targetPrompt: '测试 NAS',
+        outlineJson: [],
+        contentMarkdown: '## 正文',
+        contentHtml: '<h2>正文</h2>',
+        schemaJsonLd: {},
+        llmsTxtSnippet: null,
+        geoScore: 86,
+        geoScoreDetail: {},
+        tags: [],
+        status: 'PUBLISHED',
+        model: 'fake',
+        tokensIn: 10,
+        tokensOut: 20,
+        complianceFlags: [],
+        createdAt: now,
+        updatedAt: now,
+        brandMarket: { market: 'CN' },
+      };
+
+      const withoutRecords = presentGeoArticle(baseRow);
+      expect(withoutRecords.publishRecordCount).toBeUndefined();
+      expect(withoutRecords.hasCrawlAlert).toBeUndefined();
+
+      const withAlert = presentGeoArticle({
+        ...baseRow,
+        publishRecords: [{ crawlStatus: 'OK' }, { crawlStatus: 'BLOCKED' }],
+      });
+      expect(withAlert.publishRecordCount).toBe(2);
+      expect(withAlert.hasCrawlAlert).toBe(true);
+
+      const findMany = vi.fn(async () => [
+        { ...baseRow, publishRecords: [{ crawlStatus: 'FAILED' }] },
+      ]);
+      const count = vi.fn(async () => 1);
+      const prismaMock = {
+        scoped: { geoArticle: { findMany, count } },
+      } as unknown as PrismaService;
+      const brandsMock = {
+        resolveBrandMarket: vi.fn(async () => ({
+          brand: { id: 'b_1', tenantId: 't_1' },
+          market: { id: 'mkt_cn', market: 'CN' },
+        })),
+      } as unknown as BrandsService;
+
+      const service = new StudioService(
+        prismaMock,
+        brandsMock,
+        {} as unknown as BillingService,
+        {} as unknown as QuotaService,
+        {} as unknown as ComplianceService,
+        {} as unknown as FreeActionRateLimiter,
+        {} as unknown as StudioGenerationService,
+      );
+
+      const resUnpub = await service.listArticles('b_1', {
+        market: 'CN',
+        publishFilter: 'UNPUBLISHED',
+        page: 1,
+        pageSize: 20,
+      });
+      expect(resUnpub.items[0]?.publishRecordCount).toBe(1);
+      expect(resUnpub.items[0]?.hasCrawlAlert).toBe(true);
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: { not: 'PUBLISHED' } }),
+          include: { publishRecords: { select: { crawlStatus: true } } },
+        }),
+      );
+
+      await service.listArticles('b_1', {
+        market: 'CN',
+        publishFilter: 'PUBLISHED',
+        page: 1,
+        pageSize: 20,
+      });
+      expect(findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'PUBLISHED' }),
+        }),
+      );
+
+      await service.listArticles('b_1', {
+        market: 'CN',
+        publishFilter: 'CRAWL_ALERT',
+        page: 1,
+        pageSize: 20,
+      });
+      expect(findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            publishRecords: { some: { crawlStatus: { in: ['BLOCKED', 'FAILED'] } } },
+          }),
+        }),
+      );
     });
   });
 });

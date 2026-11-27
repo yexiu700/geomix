@@ -12,15 +12,16 @@ import {
   menuSelection,
 } from './routes';
 
-describe('GeoMix 2.0 minimalist 5-workspace routes', () => {
-  it('defines flat 4 left business workspaces and 5 total console routes', () => {
+describe('GeoMix minimalist 6-workspace routes', () => {
+  it('defines flat 5 left business workspaces and 6 total console routes', () => {
     expect(HOME_ROUTE).toBe('/home');
-    expect(collectHrefs(MENU)).toEqual(['/home', '/brands', '/visibility', '/studio']);
+    expect(collectHrefs(MENU)).toEqual(['/home', '/brands', '/visibility', '/studio', '/publish']);
     expect(Object.keys(STATIC_ROUTES)).toEqual([
       '/home',
       '/brands',
       '/visibility',
       '/studio',
+      '/publish',
       '/account',
     ]);
   });
@@ -30,11 +31,13 @@ describe('GeoMix 2.0 minimalist 5-workspace routes', () => {
       '/home',
       '/brands',
       '/studio',
+      '/publish',
     ]);
     expect(isCommandPaletteRoute('/visibility', 'MERCHANT', { visibilityEnabled: false })).toBe(
       false,
     );
     expect(isCommandPaletteRoute('/home', 'MERCHANT', { visibilityEnabled: false })).toBe(true);
+    expect(isCommandPaletteRoute('/publish', 'MERCHANT', { visibilityEnabled: false })).toBe(true);
   });
 
   it('canonicalizes allowed workspace query parameters without leaking raw CUIDs into title', () => {
@@ -46,6 +49,15 @@ describe('GeoMix 2.0 minimalist 5-workspace routes', () => {
       title: 'GEO 写作台',
     });
     expect(matched?.title).not.toContain(cuid);
+
+    const publishMatched = matchRoute(
+      `/publish/?brandId=${cuid}&market=CN&articleId=${cuid}&tab=tracking&junk=1`,
+    );
+    expect(publishMatched).toEqual({
+      href: `/publish?brandId=${cuid}&market=CN&articleId=${cuid}&tab=tracking`,
+      path: '/publish',
+      title: '发布中心',
+    });
   });
 
   it('rejects removed v1 routes, external origins, and path traversal', () => {

@@ -416,9 +416,9 @@ async function assertFourItemSidebar(page: Page): Promise<void> {
   const nav = page.locator('nav[aria-label="主导航"], [data-testid="side-menu-root"]').first();
   await expect(nav).toBeVisible({ timeout: 15_000 });
   const menuItems = nav.getByRole('menuitem');
-  await expect(menuItems).toHaveCount(4);
+  await expect(menuItems).toHaveCount(5);
   const labels = (await menuItems.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
-  expect(labels).toEqual(['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台']);
+  expect(labels).toEqual(['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']);
   await expect(nav.locator('a[href*="/distribution"]')).toHaveCount(0);
 }
 
@@ -3812,7 +3812,14 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
         timeout: 15_000,
       });
 
-      // Retest timeline with DiD toggle + live budget recalculation
+      // Verify /studio ergonomics at 1440x900 & 1015x909
+      await assertLayoutErgonomics(page);
+
+      // Navigate /studio -> /publish -> Retest timeline with DiD toggle + live budget recalculation
+      await page.getByTestId('studio-go-publish-btn').click();
+      await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+      await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
+
       const timeline = page.getByTestId(`publish-retest-timeline-${pubRecord.id}`);
       await expect(timeline).toBeVisible({ timeout: 20_000 });
       const budgetEl = page.getByTestId(`publish-retest-budget-${pubRecord.id}`);
@@ -3833,24 +3840,25 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
         })
         .not.toBe(budgetBefore);
 
-      // Verify /studio ergonomics at 1440x900 & 1015x909
+      // Verify /publish Retest timeline ergonomics at 1440x900 & 1015x909
       await assertLayoutErgonomics(page);
 
-      // Open Distribution Drawer on GLOBAL & verify Drawer ergonomics
-      await page.getByTestId('studio-open-distribution-btn').click();
-      await expect(page.getByTestId('studio-distribution-drawer')).toBeVisible({ timeout: 15_000 });
-      await assertLayoutErgonomics(page, { checkDrawer: true });
+      // Switch to inline Distribution tab on GLOBAL /publish & verify ergonomics
+      await page.getByTestId('publish-tab-distribute').click();
+      await expect(page.getByTestId('publish-distribution-workbench')).toBeVisible({
+        timeout: 15_000,
+      });
+      await assertLayoutErgonomics(page);
 
-      // 2. Switch to CN /studio & verify CN L2 Extension queue (ZHIHU_EXT) + async variant job progress
-      await page.goto(`/studio?brandId=${brand.id}&market=CN&articleId=${cnArticle.id}`, {
-        waitUntil: 'domcontentloaded',
-      });
-      await expect(page.getByTestId('studio-open-distribution-btn')).toBeEnabled({
-        timeout: 20_000,
-      });
-      await page.getByTestId('studio-open-distribution-btn').click();
-      const drawer = page.getByTestId('studio-distribution-drawer');
-      await expect(drawer).toBeVisible({ timeout: 15_000 });
+      // 2. Switch to CN /publish & verify CN L2 Extension queue (ZHIHU_EXT) + async variant job progress
+      await page.goto(
+        `/publish?brandId=${brand.id}&market=CN&articleId=${cnArticle.id}&tab=distribute`,
+        {
+          waitUntil: 'domcontentloaded',
+        },
+      );
+      const workbench = page.getByTestId('publish-distribution-workbench');
+      await expect(workbench).toBeVisible({ timeout: 20_000 });
 
       // Select ZHIHU_EXT L2 target & generate variant via async GeoVariantJob
       const zhihuTarget = page.getByTestId('distribution-target-ZHIHU_EXT');
@@ -3868,7 +3876,7 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
         page.getByTestId('distribution-variant-tabs').getByRole('tab', { name: /知乎/ }),
       ).toBeVisible({ timeout: 25_000 });
 
-      await assertLayoutErgonomics(page, { checkDrawer: true });
+      await assertLayoutErgonomics(page);
       assertNoConsoleOrPageErrors(errorCollector);
     } finally {
       await context.close();
