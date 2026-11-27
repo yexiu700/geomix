@@ -1789,7 +1789,7 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
         const main = document.querySelector<HTMLElement>('.gm-workspace-main');
         if (!main) return null;
         const mainRect = main.getBoundingClientRect();
-        const titleNeedles = ['品牌 vs 竞品声量对比', '品牌情感分布', '可见度趋势', '提及率趋势'];
+        const titleNeedles = ['声呐盘', '提及趋势', '竞品声量', '情感分布'];
         const panelSelector =
           '.ant-card, section, .gm-panel, [class*="chart-panel"], [class*="vis-panel"], .ant-col > div, [class*="grid"] > div';
         const panels: Array<{

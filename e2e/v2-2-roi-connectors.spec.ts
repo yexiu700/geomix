@@ -3174,24 +3174,27 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
     const errorCollector = attachErrorCollector(page);
 
     try {
-      await page.goto(`/visibility?brandId=${brand.id}&market=GLOBAL&tab=citations`, {
+      await page.goto(`/visibility?brandId=${brand.id}&market=GLOBAL`, {
         waitUntil: 'domcontentloaded',
       });
       await assertFourItemSidebar(page);
 
-      // Locate Near-Miss panel under Citations tab
-      const nearMissHeading = page.getByText(/差一步被引用|Near-Miss/i).first();
+      // Y28: Locate Near-Miss panel under Overview tab (collapsed by default) and expand it
+      const nearMissHeading = page.getByText(/候补机会|差一步被引用|Near-Miss/i).first();
       await expect(nearMissHeading).toBeVisible({ timeout: 20_000 });
+      await page.getByTestId('near-miss-collapse-toggle').click();
 
       // Assert at least one Tier badge renders
       await expect(
         page
-          .getByText(/Tier 1|Tier 2|Tier 3A|Tier 3B|点开未引|召回未引|可抓取未进引文|提及未引官网/)
+          .getByText(
+            /Tier 1|Tier 2|Tier 3A|Tier 3B|点开未引|召回未引|可抓未引|可抓取未进引文|提及未引/,
+          )
           .first(),
       ).toBeVisible({ timeout: 15_000 });
 
       const boostBtn = page
-        .getByRole('button', { name: /一键生成补强意见卡|生成补强意见卡/ })
+        .getByRole('button', { name: /补强|一键生成补强意见卡|生成补强意见卡/ })
         .first();
       await expect(boostBtn).toBeVisible({ timeout: 15_000 });
 

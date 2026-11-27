@@ -240,7 +240,9 @@ v2Describe(
         );
         try {
           await openVisibilityTab(page, 'overview');
-          const detailBtn = page.getByRole('button', { name: /查看详细意见|提写作意见/ }).first();
+          const detailBtn = page
+            .getByRole('button', { name: /查看意见|生成意见|查看详细意见|提写作意见/ })
+            .first();
           await expect(detailBtn).toBeVisible({ timeout: 15_000 });
           await detailBtn.click();
 

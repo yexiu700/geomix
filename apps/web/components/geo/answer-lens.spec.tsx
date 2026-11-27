@@ -101,9 +101,13 @@ describe('AnswerLens component', () => {
       />,
     );
 
-    expect(screen.getByText('0 / 2')).toBeTruthy();
     expect(document.querySelectorAll('mark[data-hit="brand"]')).toHaveLength(1);
     expect(document.querySelectorAll('mark[data-hit="competitor"]')).toHaveLength(1);
+
+    // Hit nav collapsed behind 定位 toggle by default (Y31)
+    expect(screen.queryByLabelText('下一个命中')).toBeNull();
+    fireEvent.click(screen.getByTestId('answer-lens-more-toggle'));
+    expect(screen.getByText('0 / 2')).toBeTruthy();
 
     // Navigate next hit (chevron icon buttons instead of raw [ ] brackets)
     const nextBtn = screen.getByLabelText('下一个命中');
@@ -149,6 +153,7 @@ describe('AnswerLens component', () => {
       />,
     );
     expect(screen.getByText('AI 回答采集中…')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('answer-lens-more-toggle'));
     expect(screen.getByText('0 / 0')).toBeTruthy();
     expect((screen.getByLabelText('上一个命中') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByLabelText('下一个命中') as HTMLButtonElement).disabled).toBe(true);
@@ -196,6 +201,7 @@ describe('AnswerLens component', () => {
         onCitationClick={vi.fn()}
       />,
     );
+    fireEvent.click(screen.getByTestId('answer-lens-more-toggle'));
     expect(screen.getByText('0 / 99+')).toBeTruthy();
   });
 });

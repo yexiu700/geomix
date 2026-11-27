@@ -637,7 +637,8 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     });
 
     fireEvent.click(screen.getByText('+ 家用静音四盘位NAS推荐'));
-    const submitBtn = screen.getByRole('button', { name: /发起监测（4 点）/ });
+    expect(screen.getByTestId('visibility-run-cost-chip').textContent).toContain('4点');
+    const submitBtn = screen.getByTestId('visibility-run-submit-btn');
     expect((submitBtn as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(submitBtn);
 
@@ -678,10 +679,11 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     expect(safeLink.getAttribute('rel')).toBe('noopener noreferrer');
     expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
 
-    // Fan-Out checkbox multi-select
+    // Fan-Out drawer collapsed by default (Y32); expand then test checkbox multi-select
+    fireEvent.click(screen.getByTestId('citations-fanout-toggle'));
     const fanOutCb = screen.getByLabelText('选择拆解词-安静NAS');
     fireEvent.click(fanOutCb);
-    expect(screen.getByText(/个拆解词/).textContent).toContain('1');
+    expect(document.querySelector('.gm-vis-fanout-count')?.textContent).toContain('1');
 
     // Read-only expired tenant mode disables mutating CTA while allowing browsing
     rerender(
@@ -689,7 +691,7 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
         <VisibilityWorkspace />
       </ConsoleProvider>,
     );
-    const topCta = screen.getByRole('button', { name: '发起新监测' });
+    const topCta = screen.getByRole('button', { name: '发起监测' });
     expect((topCta as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -749,7 +751,7 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       expect(screen.getByText('+ 家用静音四盘位NAS推荐')).toBeTruthy();
     });
     fireEvent.click(screen.getByText('+ 家用静音四盘位NAS推荐'));
-    fireEvent.click(screen.getByRole('button', { name: /发起监测（4 点）/ }));
+    fireEvent.click(screen.getByTestId('visibility-run-submit-btn'));
 
     const promptsTextarea = screen.getByLabelText('监测问题列表') as HTMLTextAreaElement;
     expect(promptsTextarea.disabled).toBe(true);
@@ -821,6 +823,7 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     });
 
     fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    fireEvent.click(await screen.findByTestId('citations-fanout-toggle'));
     await waitFor(() => {
       const allVisTables = Array.from(
         document.querySelectorAll('.gm-vis-table-wrap table'),
@@ -940,7 +943,7 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
 
     // Open drawer from card 1, edit title, click write -> auto-saves PATCH & navigates to /studio?brandId=&market=&briefId=
     const card1 = screen.getByTestId('brief-card-brief_m3_1');
-    fireEvent.click(within(card1).getByRole('button', { name: '查看详细意见' }));
+    fireEvent.click(within(card1).getByRole('button', { name: '查看意见' }));
     const drawer = await screen.findByTestId('geo-brief-drawer');
     fireEvent.change(within(drawer).getByTestId('brief-drawer-title'), {
       target: { value: '2026 家用四盘位 NAS 终极选购指南' },
@@ -1005,8 +1008,9 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       );
     });
 
-    // Close drawer, check 2 fan-outs, click fanout-cluster-btn
+    // Close drawer, expand Fan-Out, check 2 fan-outs, click fanout-cluster-btn
     fireEvent.click(screen.getByLabelText('关闭写作意见抽屉'));
+    fireEvent.click(screen.getByTestId('citations-fanout-toggle'));
     fireEvent.click(screen.getByLabelText('选择拆解词-安静NAS'));
     fireEvent.click(screen.getByLabelText('选择拆解词-家用NAS功耗'));
     fireEvent.click(screen.getByTestId('fanout-cluster-btn'));
@@ -1365,9 +1369,17 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       </ConsoleProvider>,
     );
 
-    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    // Y28: Near-Miss panel lives in Overview tab (NOT Citations tab) and defaults collapsed
     const nmPanel = await screen.findByTestId('visibility-near-miss-panel');
-    expect(nmPanel.textContent).toContain('差一步被引用（Near-Miss）');
+    expect(nmPanel.textContent).toContain('候补机会');
+    expect(screen.queryByTestId('near-miss-boost-btn-nm_owned_1')).toBeNull();
+    fireEvent.click(screen.getByTestId('near-miss-collapse-toggle'));
+    expect(await screen.findByTestId('near-miss-boost-btn-nm_owned_1')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    expect(screen.queryByTestId('visibility-near-miss-panel')).toBeNull();
+    fireEvent.click(screen.getByTestId('visibility-tab-overview'));
+    fireEvent.click(await screen.findByTestId('near-miss-collapse-toggle'));
     expect(await screen.findByTestId('near-miss-boost-btn-nm_owned_1')).toBeTruthy();
 
     // Switch to THIRD_PARTY -> MUST NOT pass sourceKind='THIRD_PARTY' to backend!
@@ -1480,12 +1492,12 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
       </ConsoleProvider>,
     );
 
-    fireEvent.click(screen.getByTestId('visibility-tab-citations'));
+    fireEvent.click(await screen.findByTestId('near-miss-collapse-toggle'));
     expect(await screen.findByTestId('near-miss-boost-btn-nm_reset_1')).toBeTruthy();
 
     // Select an empty tier -> renders empty state with reset CTA
     fireEvent.click(screen.getByTestId('near-miss-tier-CRAWLED_NOT_CITED'));
-    const resetBtn = await screen.findByRole('button', { name: '重置 Near-Miss 筛选' });
+    const resetBtn = await screen.findByRole('button', { name: '重置筛选' });
     expect(screen.queryByTestId('near-miss-boost-btn-nm_reset_1')).toBeNull();
 
     const callsBeforeReset = recordedCalls.length;

@@ -15,10 +15,12 @@ import {
 } from '@geomix/shared';
 import { Button, Tag } from 'antd';
 import type { JSX, ReactNode } from 'react';
+import { useState } from 'react';
 import { formatPct } from '../../lib/design-tokens';
+import { GEO_BRIEF_SOURCE_SHORT } from '../../lib/short-labels';
 import { EngineChipList, SignalError, SignalSkeleton, TruncText } from '../geo/primitives';
 import { SonarDial } from '../geo/sonar-dial';
-import { EmptyState, KpiStrip, Section, StatusBadge, type KpiStripItem } from '../ui';
+import { EmptyState, Explain, KpiStrip, Section, StatusBadge, type KpiStripItem } from '../ui';
 import { VisibilityTrendChart } from './visibility-trend-chart';
 
 export type VisibilityOverviewTabProps = {
@@ -58,6 +60,8 @@ export function VisibilityOverviewTab({
   briefsSlot,
   nearMissSlot,
 }: VisibilityOverviewTabProps): JSX.Element {
+  const [showSentiment, setShowSentiment] = useState(false);
+
   if (error && !overview) {
     return (
       <Section variant="card">
@@ -86,7 +90,7 @@ export function VisibilityOverviewTab({
     {
       key: 'mention',
       testId: 'visibility-kpi-mention',
-      label: '品牌提及率',
+      label: '提及率',
       value: completedChecks > 0 ? formatPct(metrics?.visibilityPct) : '—',
       progressPct: completedChecks > 0 ? (metrics?.visibilityPct ?? 0) : undefined,
       tone: 'success',
@@ -98,7 +102,7 @@ export function VisibilityOverviewTab({
     {
       key: 'sov',
       testId: 'visibility-kpi-sov',
-      label: '声量占比（SoV）',
+      label: '声量',
       value: totalMentions > 0 ? formatPct(metrics?.shareOfVoice.brandSharePct) : '—',
       progressPct: totalMentions > 0 ? (metrics?.shareOfVoice.brandSharePct ?? 0) : undefined,
       tone: 'active',
@@ -110,7 +114,7 @@ export function VisibilityOverviewTab({
     {
       key: 'position',
       testId: 'visibility-kpi-position',
-      label: '平均推荐顺位',
+      label: '平均顺位',
       value:
         metrics?.avgPosition !== null && metrics?.avgPosition !== undefined
           ? `#${metrics.avgPosition.toFixed(1)}`
@@ -121,7 +125,7 @@ export function VisibilityOverviewTab({
     {
       key: 'owned',
       testId: 'visibility-kpi-owned',
-      label: '自有阵地引用率',
+      label: '自有引用',
       value: totalCitations > 0 ? formatPct(metrics?.ownedCitationRatePct) : '—',
       progressPct: totalCitations > 0 ? (metrics?.ownedCitationRatePct ?? 0) : undefined,
       tone: 'success',
@@ -148,12 +152,14 @@ export function VisibilityOverviewTab({
         <Section
           variant="card"
           className="gm-vis-chart-card gm-vis-chart-span-5"
-          title="AI 引擎覆盖声呐盘"
-          description={`当前市场引擎组：${activeMarket === 'CN' ? '国内 4 引擎' : '海外 5 引擎'}`}
+          title="声呐盘"
           actions={
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：%</span>
               <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+              <Explain
+                text={`当前市场引擎组：${activeMarket === 'CN' ? '国内 4 引擎' : '海外 5 引擎'}`}
+              />
               {selectedEngine ? (
                 <Tag
                   closable
@@ -192,7 +198,7 @@ export function VisibilityOverviewTab({
                   data-testid="visibility-reconcile-btn"
                   onClick={() => onInspectRuns(selectedEngine)}
                 >
-                  核对原始观测
+                  核对观测
                 </Button>
               ) : null}
             </div>
@@ -212,12 +218,14 @@ export function VisibilityOverviewTab({
         <Section
           variant="card"
           className="gm-vis-chart-card gm-vis-chart-span-7"
-          title="品牌提及率趋势"
-          description={`按上海自然日聚合有效观测提及率${selectedEngine ? ` · ${VISIBILITY_ENGINE_LABELS[selectedEngine]}` : ''}`}
+          title="提及趋势"
           actions={
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：%</span>
               <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+              <Explain
+                text={`按上海自然日聚合有效观测提及率${selectedEngine ? ` · ${VISIBILITY_ENGINE_LABELS[selectedEngine]}` : ''}`}
+              />
             </div>
           }
         >
@@ -230,13 +238,23 @@ export function VisibilityOverviewTab({
 
         <Section
           variant="card"
-          className="gm-vis-chart-card gm-vis-chart-span-6"
-          title="品牌 vs 竞品声量对比"
-          description="本品牌高亮显示，竞品以中性灰阶对照"
+          className={`gm-vis-chart-card ${showSentiment ? 'gm-vis-chart-span-6' : 'gm-vis-chart-span-12'}`}
+          title="竞品声量"
           actions={
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：占比 %</span>
               <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+              <Explain text="本品牌高亮显示，竞品以中性灰阶对照。" />
+              <Button
+                size="small"
+                type="text"
+                autoInsertSpace={false}
+                data-testid="visibility-sentiment-toggle"
+                aria-expanded={showSentiment}
+                onClick={() => setShowSentiment((v) => !v)}
+              >
+                {showSentiment ? '收起情感' : '情感分布'}
+              </Button>
             </div>
           }
         >
@@ -245,7 +263,7 @@ export function VisibilityOverviewTab({
           ) : sovEntries.length === 0 || totalMentions === 0 ? (
             <EmptyState
               size="compact"
-              title="暂无声量对比数据"
+              title="暂无声量"
               description="完成监测后展示本品牌与竞品提及占比"
             />
           ) : (
@@ -281,75 +299,79 @@ export function VisibilityOverviewTab({
           )}
         </Section>
 
-        <Section
-          variant="card"
-          className="gm-vis-chart-card gm-vis-chart-span-6"
-          title="品牌情感分布"
-          description="已提及回答的正负面情感构成"
-          actions={
-            <div className="gm-vis-chart-meta">
-              <span className="gm-vis-chart-unit">单位：次数 / %</span>
-              <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
-            </div>
-          }
-        >
-          {loading && !overview ? (
-            <SignalSkeleton variant="row" rows={4} />
-          ) : sentimentTotal === 0 || !sentiment ? (
-            <EmptyState
-              size="compact"
-              title="暂无情感样本"
-              description="品牌被 AI 提及后将展示正负面情感分布"
-            />
-          ) : (
-            <div className="gm-vis-sentiment-box">
-              <div className="gm-sentiment-bar" role="img" aria-label="品牌情感占比条">
-                {VISIBILITY_SENTIMENTS.map((sKey: VisibilitySentiment) => {
-                  const count = sentiment[sKey];
-                  const pct = sentimentTotal > 0 ? (count / sentimentTotal) * 100 : 0;
-                  if (pct <= 0) return null;
-                  return (
-                    <div
-                      key={sKey}
-                      className={`gm-vis-sentiment-seg--${sKey}`}
-                      style={{ width: `${pct}%` }}
-                      title={`${VISIBILITY_SENTIMENT_LABELS[sKey]} ${count} 次 (${pct.toFixed(1)}%)`}
-                    />
-                  );
-                })}
+        {showSentiment ? (
+          <Section
+            variant="card"
+            className="gm-vis-chart-card gm-vis-chart-span-6"
+            title="情感分布"
+            actions={
+              <div className="gm-vis-chart-meta">
+                <span className="gm-vis-chart-unit">单位：次数 / %</span>
+                <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+                <Explain text="已提及回答的正负面情感构成。" />
               </div>
-              <div className="gm-sentiment-legend">
-                {VISIBILITY_SENTIMENTS.map((sKey: VisibilitySentiment) => {
-                  const count = sentiment[sKey];
-                  const pct = sentimentTotal > 0 ? (count / sentimentTotal) * 100 : 0;
-                  return (
-                    <div key={sKey} className="gm-vis-sentiment-item">
-                      <span className={`gm-vis-sentiment-dot gm-vis-sentiment-dot--${sKey}`} />
-                      <span>{VISIBILITY_SENTIMENT_LABELS[sKey]}</span>
-                      <span className="gm-num gm-vis-sentiment-num">
-                        {count}（{pct.toFixed(0)}%）
-                      </span>
-                    </div>
-                  );
-                })}
+            }
+          >
+            {loading && !overview ? (
+              <SignalSkeleton variant="row" rows={4} />
+            ) : sentimentTotal === 0 || !sentiment ? (
+              <EmptyState
+                size="compact"
+                title="暂无样本"
+                description="品牌被 AI 提及后将展示正负面情感分布"
+              />
+            ) : (
+              <div className="gm-vis-sentiment-box">
+                <div className="gm-sentiment-bar" role="img" aria-label="品牌情感占比条">
+                  {VISIBILITY_SENTIMENTS.map((sKey: VisibilitySentiment) => {
+                    const count = sentiment[sKey];
+                    const pct = sentimentTotal > 0 ? (count / sentimentTotal) * 100 : 0;
+                    if (pct <= 0) return null;
+                    return (
+                      <div
+                        key={sKey}
+                        className={`gm-vis-sentiment-seg--${sKey}`}
+                        style={{ width: `${pct}%` }}
+                        title={`${VISIBILITY_SENTIMENT_LABELS[sKey]} ${count} 次 (${pct.toFixed(1)}%)`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="gm-sentiment-legend">
+                  {VISIBILITY_SENTIMENTS.map((sKey: VisibilitySentiment) => {
+                    const count = sentiment[sKey];
+                    const pct = sentimentTotal > 0 ? (count / sentimentTotal) * 100 : 0;
+                    return (
+                      <div key={sKey} className="gm-vis-sentiment-item">
+                        <span className={`gm-vis-sentiment-dot gm-vis-sentiment-dot--${sKey}`} />
+                        <span>{VISIBILITY_SENTIMENT_LABELS[sKey]}</span>
+                        <span className="gm-num gm-vis-sentiment-num">
+                          {count}（{pct.toFixed(0)}%）
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-        </Section>
+            )}
+          </Section>
+        ) : null}
       </div>
 
       {/* GEO Writing Briefs Slot (M3 Ready) */}
       <Section
         variant="card"
         data-testid="visibility-briefs-slot"
-        title="GEO 优先写作建议"
-        description="基于当前市场可见度诊断自动识别竞品霸榜缺口、顺位落后与口碑风险"
+        title="写作建议"
         actions={
-          !readOnly ? (
-            <Button size="small" onClick={onSwitchToRuns}>
-              发起新一轮监测
-            </Button>
-          ) : undefined
+          <div className="gm-vis-chart-meta">
+            <Explain text="基于当前市场可见度诊断自动识别竞品霸榜缺口、顺位落后与口碑风险。" />
+            {!readOnly ? (
+              <Button size="small" onClick={onSwitchToRuns}>
+                发起监测
+              </Button>
+            ) : null}
+          </div>
         }
       >
         {briefsSlot ? (
@@ -357,12 +379,12 @@ export function VisibilityOverviewTab({
         ) : completedChecks === 0 ? (
           <EmptyState
             size="compact"
-            title="完成首次监测后将自动生成优化建议"
+            title="暂无建议"
             description="发起当前市场的 AI 引擎监测，系统将自动识别竞品霸榜缺口、顺位落后与负面情感问题。"
             action={
               readOnly ? undefined : (
                 <Button size="small" onClick={onSwitchToRuns}>
-                  去发起监测任务
+                  发起监测
                 </Button>
               )
             }
@@ -370,11 +392,11 @@ export function VisibilityOverviewTab({
         ) : gaps.length === 0 ? (
           <EmptyState
             size="compact"
-            title="当前窗口暂未发现竞品霸榜缺口"
-            description="可前往「监测任务与问答透视」查看各引擎完整回答，或补充更多高意图选购问句。"
+            title="暂无缺口"
+            description="可前往「监测」查看各引擎完整回答，或补充更多高意图选购问句。"
             action={
               <Button size="small" onClick={onSwitchToRuns}>
-                查看监测任务
+                查看监测
               </Button>
             }
           />
@@ -384,7 +406,7 @@ export function VisibilityOverviewTab({
               <div key={gap.promptText} className="gm-vis-gap-row">
                 <div className="gm-vis-gap-main">
                   <div className="gm-vis-gap-prompt">
-                    <StatusBadge tone="danger" label="竞品霸榜缺口" />
+                    <StatusBadge tone="danger" label={GEO_BRIEF_SOURCE_SHORT.AUTO_GAP} />
                     <TruncText text={gap.promptText} lines={1} />
                   </div>
                   <div className="gm-vis-gap-meta">
@@ -392,8 +414,8 @@ export function VisibilityOverviewTab({
                     <EngineChipList engines={gap.engines} max={3} />
                   </div>
                 </div>
-                <Button size="small" onClick={onSwitchToRuns}>
-                  透视问答
+                <Button size="small" autoInsertSpace={false} onClick={onSwitchToRuns}>
+                  透视
                 </Button>
               </div>
             ))}

@@ -6,18 +6,13 @@ import type {
   GeoBriefStatus,
   VisibilityOpportunitiesResponse,
 } from '@geomix/shared';
-import {
-  GEO_BRIEF_SOURCES,
-  GEO_BRIEF_SOURCE_LABELS,
-  GEO_BRIEF_STATUS_LABELS,
-  GEO_RECIPE_LABELS,
-  formatShanghaiDateTime,
-} from '@geomix/shared';
+import { GEO_BRIEF_SOURCES, GEO_BRIEF_STATUS_LABELS, formatShanghaiDateTime } from '@geomix/shared';
 import { Button, Checkbox } from 'antd';
 import type { JSX } from 'react';
 import { useMemo } from 'react';
+import { GEO_BRIEF_SOURCE_SHORT, GEO_RECIPE_SHORT } from '../../lib/short-labels';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, RowActions, StatusBadge, type StatusTone } from '../ui';
+import { CostChip, EmptyState, RowActions, StatusBadge, type StatusTone } from '../ui';
 
 type VisibilityGapRow = VisibilityOpportunitiesResponse['gaps'][number];
 
@@ -121,7 +116,7 @@ export function BriefListPanel({
             <option value="">全部信号来源</option>
             {GEO_BRIEF_SOURCES.map((source) => (
               <option key={source} value={source}>
-                {GEO_BRIEF_SOURCE_LABELS[source]}
+                {GEO_BRIEF_SOURCE_SHORT[source]}
               </option>
             ))}
           </select>
@@ -139,8 +134,8 @@ export function BriefListPanel({
             <option value="DISMISSED">已忽略</option>
           </select>
 
-          <Button size="small" onClick={onRefresh} disabled={loading}>
-            刷新建议
+          <Button size="small" autoInsertSpace={false} onClick={onRefresh} disabled={loading}>
+            刷新
           </Button>
           <span className="gm-vis-brief-count">共 {total} 条</span>
         </div>
@@ -148,29 +143,33 @@ export function BriefListPanel({
         <div className="gm-vis-brief-batch-bar">
           {selectableBriefs.length > 0 && !readOnly ? (
             <>
-              <Button size="small" onClick={handleSelectAllVisible}>
-                全选待写（最多 {MAX_BATCH_SELECT}）
+              <Button size="small" autoInsertSpace={false} onClick={handleSelectAllVisible}>
+                全选
               </Button>
               {selectedBriefIds.length > 0 ? (
-                <Button size="small" onClick={() => onSelectedBriefIdsChange([])}>
-                  清空已选
+                <Button
+                  size="small"
+                  autoInsertSpace={false}
+                  onClick={() => onSelectedBriefIdsChange([])}
+                >
+                  清空
                 </Button>
               ) : null}
             </>
           ) : null}
 
+          {selectedBriefIds.length > 0 ? (
+            <CostChip points={selectedBriefIds.length * 10} data-testid="briefs-batch-cost-chip" />
+          ) : null}
           <Button
             size="small"
+            type={canBatchWrite ? 'primary' : 'default'}
             data-testid="briefs-batch-btn"
             loading={batchSubmitting}
             disabled={!canBatchWrite || batchSubmitting}
             onClick={() => onBatchWrite(selectedBriefIds)}
           >
-            批量写作（{selectedBriefIds.length} 篇
-            {selectedBriefIds.length >= MIN_BATCH_SELECT
-              ? ` · ${selectedBriefIds.length * 10} 点`
-              : ''}
-            ）
+            批量写作
           </Button>
         </div>
       </div>
@@ -221,10 +220,10 @@ export function BriefListPanel({
                       label={GEO_BRIEF_STATUS_LABELS[brief.status]}
                     />
                     <span className="gm-vis-context-chip">
-                      {GEO_BRIEF_SOURCE_LABELS[brief.sourceType]}
+                      {GEO_BRIEF_SOURCE_SHORT[brief.sourceType]}
                     </span>
                     <span className="gm-vis-context-chip gm-vis-context-chip--muted">
-                      {GEO_RECIPE_LABELS[brief.recommendedRecipe]}
+                      {GEO_RECIPE_SHORT[brief.recommendedRecipe]}
                     </span>
                     <span className="gm-vis-brief-time">
                       {formatShanghaiDateTime(brief.createdAt)}
@@ -251,12 +250,13 @@ export function BriefListPanel({
 
                 <div className="gm-vis-brief-actions">
                   <Button size="small" onClick={() => onOpenBrief(brief)}>
-                    查看详细意见
+                    查看意见
                   </Button>
+                  <CostChip points={10} />
                   <RowActions
                     primary={{
                       key: 'write',
-                      label: '一键去写（10 点）',
+                      label: '一键去写',
                       disabled: readOnly,
                       onClick: () => onWriteBrief(brief),
                     }}
@@ -299,32 +299,33 @@ export function BriefListPanel({
                   </span>
                 </div>
               </div>
-              <Button
-                size="small"
-                disabled={readOnly || generatingGapPrompt !== null}
-                loading={generatingGapPrompt === gap.promptText}
-                onClick={() => onGenerateFromGap(gap)}
-              >
-                提写作意见（0 点）
-              </Button>
+              <div className="gm-vis-brief-actions">
+                <CostChip points={0} />
+                <Button
+                  size="small"
+                  disabled={readOnly || generatingGapPrompt !== null}
+                  loading={generatingGapPrompt === gap.promptText}
+                  onClick={() => onGenerateFromGap(gap)}
+                >
+                  生成意见
+                </Button>
+              </div>
             </div>
           ))}
         </div>
       ) : (
         <EmptyState
           size="compact"
-          title={
-            completedChecks === 0 ? '完成首次监测后自动生成优先写作建议' : '当前筛选下暂无写作建议'
-          }
+          title="暂无建议"
           description={
             completedChecks === 0
               ? '发起新一轮监测后，系统会自动识别竞品霸榜缺口、负面风险与低顺位问题，免费输出 Top 优先写作意见。'
-              : '可切换筛选条件，或在「监测任务与问答透视」「信源阵地与竞品洞察」中对任意观测点免费提取写作意见。'
+              : '可切换筛选条件，或在「监测」「信源」中对任意观测点免费提取写作意见。'
           }
           action={
             completedChecks === 0 && !readOnly ? (
               <Button size="small" onClick={onSwitchToRuns}>
-                立即发起监测
+                发起监测
               </Button>
             ) : undefined
           }

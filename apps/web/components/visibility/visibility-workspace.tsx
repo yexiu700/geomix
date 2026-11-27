@@ -21,10 +21,11 @@ import type {
   VisibilityRunDetailRecord,
   VisibilityRunRecord,
 } from '@geomix/shared';
-import { GEO_MARKET_LABELS, sanitizeEntityTitleSegment } from '@geomix/shared';
+import { sanitizeEntityTitleSegment } from '@geomix/shared';
 import { Button, Skeleton, Tabs, Tooltip } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GEO_MARKET_SHORT } from '../../lib/short-labels';
 import { getBrandFacts } from '../../lib/brands';
 import {
   createBriefFromCitationUrl,
@@ -1647,12 +1648,12 @@ export function VisibilityWorkspace(): JSX.Element {
       <section className="gm-vis-page" aria-label="可见度诊断">
         <EmptyState
           size="full"
-          title="尚未创建品牌资产"
+          title="暂无品牌"
           description="先用 60 秒完成品牌与竞品配置，即可开启国内 4 引擎与海外 5 引擎 AI 可见度诊断。"
           action={
             readOnly ? undefined : (
               <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
-                立即创建首个品牌
+                新建品牌
               </Button>
             )
           }
@@ -1699,7 +1700,7 @@ export function VisibilityWorkspace(): JSX.Element {
   const tabItems = [
     {
       key: 'overview',
-      label: <span data-testid="visibility-tab-overview">诊断总览与写作建议</span>,
+      label: <span data-testid="visibility-tab-overview">总览</span>,
       children: (
         <VisibilityOverviewTab
           activeMarket={activeMarket}
@@ -1795,7 +1796,7 @@ export function VisibilityWorkspace(): JSX.Element {
     },
     {
       key: 'runs',
-      label: <span data-testid="visibility-tab-runs">监测任务与问答透视</span>,
+      label: <span data-testid="visibility-tab-runs">监测</span>,
       children: (
         <VisibilityRunsTab
           activeMarket={activeMarket}
@@ -1878,7 +1879,7 @@ export function VisibilityWorkspace(): JSX.Element {
                 loading={generatingBriefKey === `obs:${obs.id}`}
                 onClick={() => handleGenerateFromObservation(obs)}
               >
-                针对此条提写作意见
+                生成意见
               </Button>
             );
             return unavailableReason ? (
@@ -1894,7 +1895,7 @@ export function VisibilityWorkspace(): JSX.Element {
     },
     {
       key: 'citations',
-      label: <span data-testid="visibility-tab-citations">信源阵地与竞品洞察</span>,
+      label: <span data-testid="visibility-tab-citations">信源</span>,
       children: (
         <VisibilityCitationsTab
           citations={citations}
@@ -1946,7 +1947,7 @@ export function VisibilityWorkspace(): JSX.Element {
                 loading={generatingBriefKey === `cite:${row.key}`}
                 onClick={() => void handleGenerateFromCitation(row)}
               >
-                反制重写此页
+                反制重写
               </Button>
             ) : null
           }
@@ -1958,10 +1959,9 @@ export function VisibilityWorkspace(): JSX.Element {
               loading={generatingBriefKey === 'fanout:cluster'}
               onClick={() => handleGenerateFromFanOuts(selectedQueries)}
             >
-              合并生成专题意见（{selectedQueries.length}）
+              合并意见
             </Button>
           )}
-          nearMissSlot={activeTab === 'citations' ? nearMissPanelNode : null}
         />
       ),
     },
@@ -1976,15 +1976,14 @@ export function VisibilityWorkspace(): JSX.Element {
       data-market={activeMarket}
     >
       <PageHeader
-        title="可见度诊断"
-        description="监测品牌在各 AI 引擎中的提及率、推荐顺位、引用阵地与竞品声量对比"
+        title="诊断"
         tags={
           <>
             <span className="gm-vis-context-chip">
               {activeBrandMarket.localBrandName || activeBrand.name}
             </span>
             <span className="gm-vis-context-chip gm-vis-context-chip--muted">
-              {GEO_MARKET_LABELS[activeMarket]} · {activeBrandMarket.locale}
+              {GEO_MARKET_SHORT[activeMarket]} · {activeBrandMarket.locale}
             </span>
           </>
         }
@@ -2004,19 +2003,23 @@ export function VisibilityWorkspace(): JSX.Element {
             </div>
             {missingMarket && !readOnly ? (
               <Button size="small" onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}>
-                {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
+                {missingMarket === 'GLOBAL' ? '开启海外' : '开启国内'}
               </Button>
             ) : null}
           </>
         }
         action={
-          <Button
-            type={activeTab === 'runs' ? 'default' : 'primary'}
-            disabled={readOnly}
-            onClick={handleJumpToRunsCreate}
-          >
-            发起新监测
-          </Button>
+          activeTab === 'runs' ? undefined : (
+            <Button
+              type={
+                activeTab === 'overview' && selectedBriefIds.length >= 2 ? 'default' : 'primary'
+              }
+              disabled={readOnly}
+              onClick={handleJumpToRunsCreate}
+            >
+              发起监测
+            </Button>
+          )
         }
       />
 

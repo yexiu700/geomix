@@ -12,7 +12,7 @@ import { CITATION_SOURCE_KINDS, sanitizeEntityTitleSegment } from '@geomix/share
 import { Button, Checkbox, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { JSX, ReactNode } from 'react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { formatPct, truncateMiddle } from '../../lib/design-tokens';
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { CitationTrace } from '../geo/citation-trace';
@@ -23,7 +23,7 @@ import {
   SourceKindChip,
   TruncText,
 } from '../geo/primitives';
-import { EmptyState, Section } from '../ui';
+import { EmptyState, Explain, Section } from '../ui';
 
 export type RankedCitationRow = {
   key: string;
@@ -60,8 +60,6 @@ export type VisibilityCitationsTabProps = {
   renderCitationAction?: (row: RankedCitationRow) => ReactNode;
   /** Optional M3 slot for multi-selected Fan-Out cluster button (data-testid="fanout-cluster-btn"). */
   renderFanOutBatchAction?: (selectedQueries: readonly string[]) => ReactNode;
-  /** Optional v2.2 slot for 4-tier Near-Miss panel rendered inside Tab 3. */
-  nearMissSlot?: ReactNode;
 };
 
 export function VisibilityCitationsTab({
@@ -85,8 +83,9 @@ export function VisibilityCitationsTab({
   onSelectedFanOutsChange,
   renderCitationAction,
   renderFanOutBatchAction,
-  nearMissSlot,
 }: VisibilityCitationsTabProps): JSX.Element {
+  const [fanOutExpanded, setFanOutExpanded] = useState(false);
+  const isFanOutOpen = fanOutExpanded || selectedFanOuts.length > 0;
   const breakdown = citations?.sourceBreakdown;
   const totalAllSources = useMemo(() => {
     if (!breakdown) return citations?.totalCitations ?? 0;
@@ -143,7 +142,7 @@ export function VisibilityCitationsTab({
   const urlColumns: ColumnsType<RankedCitationRow> = useMemo(
     () => [
       {
-        title: '高引用信源页面 / 域名',
+        title: '信源页面',
         key: 'url',
         ellipsis: true,
         render: (_v, row) => {
@@ -169,14 +168,14 @@ export function VisibilityCitationsTab({
         },
       },
       {
-        title: '信源类型',
+        title: '类型',
         dataIndex: 'sourceKind',
         key: 'sourceKind',
         width: 112,
         render: (kind: CitationSourceKind) => <SourceKindChip kind={kind} />,
       },
       {
-        title: '被引用次数',
+        title: '引用数',
         dataIndex: 'count',
         key: 'count',
         width: 100,
@@ -193,7 +192,7 @@ export function VisibilityCitationsTab({
         ),
       },
       {
-        title: '关联问题数',
+        title: '问题数',
         dataIndex: 'questionCount',
         key: 'questionCount',
         width: 96,
@@ -251,7 +250,7 @@ export function VisibilityCitationsTab({
         ),
       },
       {
-        title: '搜索拆解词（Query Fan-Out）',
+        title: '拆解词',
         dataIndex: 'query',
         key: 'query',
         render: (query: string) => <TruncText text={query} lines={2} />,
@@ -264,7 +263,7 @@ export function VisibilityCitationsTab({
         render: (freq: number) => <span className="gm-num">{freq}</span>,
       },
       {
-        title: '品牌提及覆盖率',
+        title: '提及率',
         dataIndex: 'brandMentionedPct',
         key: 'brandMentionedPct',
         width: 112,
@@ -284,14 +283,14 @@ export function VisibilityCitationsTab({
         },
       },
       {
-        title: '涉及引擎',
+        title: '引擎',
         dataIndex: 'engines',
         key: 'engines',
         width: 126,
         render: (engines) => <EngineChipList engines={engines} max={2} />,
       },
       {
-        title: '来源监测问题',
+        title: '来源问题',
         dataIndex: 'sourcePrompts',
         key: 'sourcePrompts',
         width: 162,
@@ -306,23 +305,25 @@ export function VisibilityCitationsTab({
       {/* 1. Citation Source Kind Filter Pills + CitationTrace Topology */}
       <Section
         variant="card"
-        title="引用信源阵地拓扑"
-        description="识别自有官网、竞品官网、电商平台、社媒社区与权威评测媒体分布"
+        title="信源拓扑"
         actions={
-          runs.length > 1 ? (
-            <select
-              aria-label="选择用于拓扑展示的监测任务"
-              className="gm-vis-native-select"
-              value={traceRunId ?? ''}
-              onChange={(e) => onTraceRunChange(e.target.value)}
-            >
-              {runs.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {sanitizeEntityTitleSegment(r.name, '监测任务')}
-                </option>
-              ))}
-            </select>
-          ) : undefined
+          <div className="gm-vis-fanout-bar">
+            <Explain text="识别自有官网、竞品官网、电商平台、社媒社区与权威评测媒体分布。" />
+            {runs.length > 1 ? (
+              <select
+                aria-label="选择用于拓扑展示的监测任务"
+                className="gm-vis-native-select"
+                value={traceRunId ?? ''}
+                onChange={(e) => onTraceRunChange(e.target.value)}
+              >
+                {runs.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {sanitizeEntityTitleSegment(r.name, '监测任务')}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
         }
       >
         <div className="gm-vis-source-pills" role="group" aria-label="按信源类型筛选">
@@ -331,7 +332,7 @@ export function VisibilityCitationsTab({
             className={`gm-source-pill-btn${!sourceFilter ? ' gm-source-pill-btn-active' : ''}`}
             onClick={() => onSourceFilterChange(undefined)}
           >
-            <span>全部信源</span>
+            <span>全部</span>
             <span className="gm-num">{totalAllSources}</span>
           </button>
           {CITATION_SOURCE_KINDS.map((kind) => (
@@ -359,20 +360,19 @@ export function VisibilityCitationsTab({
         </div>
       </Section>
 
-      {/* 1.5. v2.2 Near-Miss 4-Tier Opportunities Panel */}
-      {nearMissSlot ?? null}
-
       {/* 2. Ranked High-Citation URLs Table */}
       <Section
         variant="card"
-        title="高频被引用页面排行"
-        description="按被引用频次排序；修改品牌竞品域名后即时生效重分类"
+        title="高频页面"
         actions={
-          sourceFilter ? (
-            <Button size="small" onClick={() => onSourceFilterChange(undefined)}>
-              清除类型筛选
-            </Button>
-          ) : undefined
+          <div className="gm-vis-fanout-bar">
+            <Explain text="按被引用频次排序；修改品牌竞品域名后即时生效重分类。" />
+            {sourceFilter ? (
+              <Button size="small" onClick={() => onSourceFilterChange(undefined)}>
+                清除筛选
+              </Button>
+            ) : null}
+          </div>
         }
       >
         {citationsError ? (
@@ -382,7 +382,7 @@ export function VisibilityCitationsTab({
         ) : rankedUrlRows.length === 0 ? (
           <EmptyState
             size="compact"
-            title="暂无引用信源页面"
+            title="暂无页面"
             description="当 AI 引擎返回可核验的参考链接时，将在此展示高频引用页面与阵地归类"
           />
         ) : (
@@ -400,50 +400,69 @@ export function VisibilityCitationsTab({
         )}
       </Section>
 
-      {/* 3. Deduplicated Query Fan-Out Leaderboard */}
+      {/* 3. Deduplicated Query Fan-Out Leaderboard (Y32 collapsed by default) */}
       <Section
         variant="card"
-        title="Query Fan-Out 高频拆解词榜"
-        description="已按分号/换行自动拆行去重，可多选拆解词用于后续专题内容规划"
+        title="拆解词"
         actions={
           <div className="gm-vis-fanout-bar">
-            {selectedFanOuts.length > 0 ? (
+            {!isFanOutOpen ? (
+              <span className="gm-num gm-vis-count-muted">{fanOutItems.length} 词</span>
+            ) : null}
+            {isFanOutOpen && selectedFanOuts.length > 0 ? (
               <>
                 <span className="gm-vis-fanout-count">
-                  已选 <strong className="gm-num">{selectedFanOuts.length}</strong> 个拆解词
+                  已选 <strong className="gm-num">{selectedFanOuts.length}</strong> 词
                 </span>
                 {renderFanOutBatchAction ? renderFanOutBatchAction(selectedFanOuts) : null}
-                <Button size="small" onClick={() => onSelectedFanOutsChange([])}>
-                  清空已选
+                <Button
+                  size="small"
+                  autoInsertSpace={false}
+                  onClick={() => onSelectedFanOutsChange([])}
+                >
+                  清空
                 </Button>
               </>
             ) : null}
+            <Explain text="已按分号/换行自动拆行去重，可多选拆解词用于后续专题内容规划。" />
+            <Button
+              size="small"
+              type="text"
+              autoInsertSpace={false}
+              data-testid="citations-fanout-toggle"
+              aria-expanded={isFanOutOpen}
+              onClick={() => setFanOutExpanded((v) => !v)}
+            >
+              {isFanOutOpen ? '收起' : '展开'}
+            </Button>
           </div>
         }
       >
-        {opportunitiesError ? (
-          <SignalError message={opportunitiesError} onRetry={onRetryOpportunities} />
-        ) : opportunitiesLoading && !opportunities ? (
-          <SignalSkeleton variant="row" rows={5} />
-        ) : fanOutItems.length === 0 ? (
-          <EmptyState
-            size="compact"
-            title="暂无搜索拆解词数据"
-            description="完成支持联网搜索的监测任务后，这里将聚合展示 AI 搜索引擎拆解出的高频子词"
-          />
-        ) : (
-          <div className="gm-vis-table-wrap">
-            <Table<VisibilityFanOutItem>
-              rowKey="query"
-              size="small"
-              tableLayout="fixed"
-              loading={opportunitiesLoading}
-              columns={fanOutColumns}
-              dataSource={fanOutItems}
-              pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        {isFanOutOpen ? (
+          opportunitiesError ? (
+            <SignalError message={opportunitiesError} onRetry={onRetryOpportunities} />
+          ) : opportunitiesLoading && !opportunities ? (
+            <SignalSkeleton variant="row" rows={5} />
+          ) : fanOutItems.length === 0 ? (
+            <EmptyState
+              size="compact"
+              title="暂无拆解"
+              description="完成支持联网搜索的监测任务后，这里将聚合展示 AI 搜索引擎拆解出的高频子词"
             />
-          </div>
-        )}
+          ) : (
+            <div className="gm-vis-table-wrap">
+              <Table<VisibilityFanOutItem>
+                rowKey="query"
+                size="small"
+                tableLayout="fixed"
+                loading={opportunitiesLoading}
+                columns={fanOutColumns}
+                dataSource={fanOutItems}
+                pagination={{ pageSize: 10, hideOnSinglePage: true }}
+              />
+            </div>
+          )
+        ) : null}
       </Section>
     </div>
   );

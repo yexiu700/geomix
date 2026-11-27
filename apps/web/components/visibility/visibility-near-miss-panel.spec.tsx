@@ -115,6 +115,7 @@ function renderPanel(overrides?: Partial<VisibilityNearMissPanelProps>) {
     readOnly: false,
     boostingItemId: null,
     onBoostItem: vi.fn(),
+    defaultExpanded: true,
     ...overrides,
   };
   return { ...render(<VisibilityNearMissPanel {...props} />), props };
@@ -124,6 +125,15 @@ describe('VisibilityNearMissPanel (#372)', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+  });
+
+  it('defaults to collapsed with total count and expands on toggle click (Y28)', () => {
+    renderPanel({ defaultExpanded: false });
+    expect(screen.queryByTestId('near-miss-tier-ALL')).toBeNull();
+    expect(screen.getByTestId('visibility-near-miss-panel').textContent).toContain('4 条');
+
+    fireEvent.click(screen.getByTestId('near-miss-collapse-toggle'));
+    expect(screen.getByTestId('near-miss-tier-ALL')).toBeTruthy();
   });
 
   it('buildNearMissBoostInput derives safe targetPrompt fallback (>=2 chars) and strips unsafe URLs', () => {
@@ -168,17 +178,15 @@ describe('VisibilityNearMissPanel (#372)', () => {
 
     // All 4 tier pills rendered with counts
     expect(screen.getByTestId('near-miss-tier-ALL').textContent).toContain('4');
-    expect(screen.getByTestId('near-miss-tier-OPENED_NOT_CITED').textContent).toContain(
-      'AI 点开未引用（Tier 1）',
-    );
+    expect(screen.getByTestId('near-miss-tier-OPENED_NOT_CITED').textContent).toContain('点开未引');
     expect(screen.getByTestId('near-miss-tier-RETRIEVED_NOT_CITED').textContent).toContain(
-      'AI 召回未引用（Tier 2）',
+      '召回未引',
     );
     expect(screen.getByTestId('near-miss-tier-CRAWLED_NOT_CITED').textContent).toContain(
-      '可抓取未进引文（Tier 3A）',
+      '可抓未引',
     );
     expect(screen.getByTestId('near-miss-tier-MENTIONED_NOT_OWNED').textContent).toContain(
-      '提及未引官网（Tier 3B）',
+      '提及未引',
     );
 
     // Safe https URL rendered as anchor; unsafe javascript: URL must NOT render as anchor href
@@ -234,8 +242,7 @@ describe('VisibilityNearMissPanel (#372)', () => {
     });
 
     const hint = screen.getByTestId('near-miss-fallback-hint');
-    expect(hint.textContent).toContain('Tier 1 / Tier 2');
-    expect(hint.textContent).toContain('Tier 3A');
+    expect(hint.textContent).toContain('暂缺原生信号');
 
     const boostBtn = screen.getByTestId('near-miss-boost-btn-nm_4') as HTMLButtonElement;
     expect(boostBtn.disabled).toBe(true);
@@ -267,8 +274,8 @@ describe('VisibilityNearMissPanel (#372)', () => {
       />,
     );
 
-    expect(panel.textContent).toContain('暂无差一步被引用机会');
-    fireEvent.click(within(panel).getByRole('button', { name: '重置 Near-Miss 筛选' }));
+    expect(panel.textContent).toContain('暂无机会');
+    fireEvent.click(within(panel).getByRole('button', { name: '重置筛选' }));
     expect(onTierFilterChange).toHaveBeenCalledWith(undefined);
     expect(onOwnershipFilterChange).toHaveBeenCalledWith('ALL');
   });

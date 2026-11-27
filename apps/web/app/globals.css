@@ -11891,3 +11891,14 @@ input:not([class*='ant-']):hover {
   color: var(--gm-fg-2);
   font-size: var(--gm-fs-xs);
 }
+
+.gm-vis-alert-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-vis-count-muted {
+  color: var(--gm-fg-3);
+  font-size: 12px;
+}
