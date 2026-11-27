@@ -2884,14 +2884,24 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
       });
       const distSummary = page.getByTestId('home-distribution-summary');
       await expect(distSummary).toBeVisible({ timeout: 20_000 });
-      await expect(distSummary).toContainText(/月度自动复测预算|本月自动复测|复测预算/);
-      await expect(distSummary).toContainText(/预算上限|已跳过/);
-      const budgetProgressBar = distSummary
-        .locator('.ant-progress, [role="progressbar"], [data-testid*="retest-budget"]')
+      await expect(distSummary).toContainText(/预算|已用/);
+      await expect(distSummary).toContainText(/达上限/);
+
+      // Full budget progress bar now lives in /publish?tab=tracking (Y33)
+      await page.goto(
+        `/publish?brandId=${brand1.id}&market=GLOBAL&articleId=${lineAArticle.id}&tab=tracking`,
+        { waitUntil: 'domcontentloaded' },
+      );
+      const attrSummary = page.getByTestId('publish-brand-attribution-summary');
+      await expect(attrSummary).toBeVisible({ timeout: 20_000 });
+      await expect(attrSummary).toContainText(/月度预算|本月已消耗/);
+      await expect(attrSummary).toContainText(/预算达上限|已跳过/);
+      const budgetProgressBar = attrSummary
+        .locator('[role="progressbar"], [data-testid*="retest-budget-bar"]')
         .first();
       await expect(
         budgetProgressBar,
-        '/home distribution summary must display a visible monthly retest budget progress bar',
+        '/publish attribution summary must display a visible monthly retest budget progress bar',
       ).toBeVisible({ timeout: 10_000 });
 
       await assertNoHorizontalOverflow(page, { viewports: MULTI_LINE_VIEWPORTS });

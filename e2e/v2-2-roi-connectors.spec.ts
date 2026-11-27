@@ -3369,20 +3369,26 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
     const errorCollector = attachErrorCollector(page);
 
     try {
+      await page.goto(
+        `/publish?brandId=${brand.id}&market=GLOBAL&articleId=${enArticle.id}&tab=tracking`,
+        { waitUntil: 'domcontentloaded' },
+      );
+      await expect(page.getByTestId('publish-brand-attribution-summary')).toBeVisible({
+        timeout: 20_000,
+      });
+      await expect(page.getByText(/Wilson|置信|DiD|正增益|±/i).first()).toBeVisible({
+        timeout: 15_000,
+      });
+
       await page.goto(`/home?brandId=${brand.id}&market=GLOBAL`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('home-workspace')).toBeVisible({ timeout: 20_000 });
       await assertFourItemSidebar(page);
-
-      // Verify Wilson 95% CI / DiD attribution summary text renders on /home before opening ROI modal
-      await expect(page.getByText(/Wilson|置信|DiD|双重差分|样本较少|净增|±/i).first()).toBeVisible(
-        { timeout: 15_000 },
-      );
+      await expect(page.getByTestId('home-distribution-summary')).toBeVisible({ timeout: 15_000 });
       await assertLayoutErgonomics(page);
 
-      // Open Monthly GEO ROI Report modal from /home
-      const openRoiBtn = page
-        .getByRole('button', { name: /生成月度 GEO ROI 报告|月度.*ROI.*报告/ })
-        .first();
+      // Open Monthly GEO ROI Report modal from /home MoreMenu (Y34/Y35)
+      await page.getByTestId('home-more-menu').click();
+      const openRoiBtn = page.getByTestId('home-open-roi-report-btn');
       await expect(openRoiBtn).toBeVisible({ timeout: 15_000 });
       await openRoiBtn.click();
 

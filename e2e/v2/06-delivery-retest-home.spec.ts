@@ -741,8 +741,10 @@ v2Describe(
               .or(page.getByText(/近期成稿/))
               .first(),
           ).toBeVisible();
-          await expect(page.getByRole('button', { name: /发起新一轮监测/ })).toBeVisible();
-          await expect(page.getByRole('button', { name: /直接写 GEO 文章/ })).toBeVisible();
+          await expect(page.getByRole('button', { name: /发起监测|发起新一轮监测/ })).toBeVisible();
+          await page.getByTestId('home-more-menu').click();
+          await expect(page.getByTestId('home-cta-write')).toBeVisible();
+          await page.keyboard.press('Escape');
         } finally {
           await context.close();
         }
@@ -768,14 +770,14 @@ v2Describe(
         try {
           await page.goto(`/home?brandId=${brandId}&market=CN`, { waitUntil: 'domcontentloaded' });
           await page
-            .getByRole('button', { name: /查看详细意见/ })
+            .getByRole('button', { name: /查看意见|查看详细意见/ })
             .first()
             .click();
           await waitForBriefDrawer(page);
           await page.keyboard.press('Escape');
 
           await page
-            .getByRole('button', { name: /一键去写/ })
+            .getByRole('button', { name: /去写|一键去写/ })
             .first()
             .click();
           await expect(page).toHaveURL(/\/studio/);

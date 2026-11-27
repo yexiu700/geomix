@@ -1336,7 +1336,7 @@ v2Describe(
         try {
           await page.goto('/home', { waitUntil: 'domcontentloaded' });
           await expect(
-            page.getByRole('button', { name: '60 秒创建首个品牌' }).first(),
+            page.getByRole('button', { name: /新建品牌|60 秒创建首个品牌/ }).first(),
           ).toBeVisible();
           const bodyText = await page.evaluate(() => document.body.innerText);
           expect(bodyText).not.toContain('NaN');
