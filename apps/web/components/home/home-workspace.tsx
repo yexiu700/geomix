@@ -29,10 +29,11 @@ import { GeoBriefDrawer } from '../briefs/geo-brief-drawer';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
-import { EmptyState, KpiStrip, PageHeader } from '../ui';
+import { Explain, KpiStrip, MoreMenu, PageHeader } from '../ui';
 import { HomeCrawlAlertBanner } from './home-crawl-alert-banner';
 import { HomeDistributionSummary } from './home-distribution-summary';
 import { HomeHealthStrip } from './home-health-strip';
+import { HomeOnboarding } from './home-onboarding';
 import { HomeRecentArticles } from './home-recent-articles';
 import { HomeRoiReportModal } from './home-roi-report-modal';
 import { HomeTopBriefs } from './home-top-briefs';
@@ -476,23 +477,13 @@ export function HomeWorkspace(): JSX.Element {
     );
   }
 
-  // 3. Zero-brand onboarding state (exact CTA "60 秒创建首个品牌", zero /home API calls!)
+  // 3. Zero-brand onboarding state (zero /home API calls)
   if (state.brandsLoaded && state.brands.length === 0) {
     return (
-      <section className="gm-home-page" aria-label="行动首页" data-testid="home-onboarding">
-        <EmptyState
-          size="full"
-          title="欢迎使用 GeoMix 行动首页"
-          description="先用 60 秒创建首个品牌并提炼 4 块真实产品事实卡，即可开启国内 / 海外隔离的 AI 可见度监测、优先写作建议与发布复测闭环。"
-          action={
-            readOnly ? undefined : (
-              <Button type="primary" onClick={() => consoleCtx?.openCreateBrandModal()}>
-                60 秒创建首个品牌
-              </Button>
-            )
-          }
-        />
-      </section>
+      <HomeOnboarding
+        readOnly={readOnly}
+        onCreateBrand={() => consoleCtx?.openCreateBrandModal()}
+      />
     );
   }
 
@@ -546,49 +537,57 @@ export function HomeWorkspace(): JSX.Element {
   return (
     <section className="gm-home-page" aria-label="行动首页" data-testid="home-workspace">
       <PageHeader
-        title="行动首页"
-        description={`${activeBrandMarket.localBrandName} · ${activeBrand.category} · 近 ${resolvedData.health.days} 天（已完成 ${resolvedData.health.completedChecks} 次有效检测）`}
+        title="首页"
         tags={
-          <span className="gm-home-chip">
-            {activeMarket === 'GLOBAL' ? '海外市场（GLOBAL）' : '国内市场（CN）'}
-          </span>
+          <>
+            <span className="gm-home-chip">{activeBrandMarket.localBrandName}</span>
+            <span className="gm-home-chip">{activeMarket === 'GLOBAL' ? '海外' : '国内'}</span>
+            <Explain
+              text={`${activeBrand.category} · 近 ${resolvedData.health.days} 天（已完成 ${resolvedData.health.completedChecks} 次有效检测）`}
+              label="统计周期"
+            />
+          </>
         }
         extra={
-          <>
-            <Button
-              size="small"
-              data-testid="home-cta-write"
-              disabled={readOnly}
-              onClick={() => consoleCtx?.navigateWorkspace('/studio')}
-            >
-              直接写 GEO 文章
-            </Button>
-            <Button
-              size="small"
-              data-testid="home-open-roi-report-btn"
-              onClick={() => setRoiModalOpen(true)}
-            >
-              生成月度 GEO ROI 报告
-            </Button>
-            {missingMarket ? (
-              <Button
-                size="small"
-                disabled={readOnly}
-                onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
-              >
-                + 开启{missingMarket === 'GLOBAL' ? '海外' : '国内'}市场
-              </Button>
-            ) : null}
-          </>
+          <MoreMenu
+            data-testid="home-more-menu"
+            ariaLabel="更多操作"
+            items={[
+              {
+                key: 'write',
+                label: '去写作',
+                testId: 'home-cta-write',
+                disabled: readOnly,
+                onClick: () => consoleCtx?.navigateWorkspace('/studio'),
+              },
+              {
+                key: 'roi',
+                label: '月度报告',
+                testId: 'home-open-roi-report-btn',
+                onClick: () => setRoiModalOpen(true),
+              },
+              ...(missingMarket
+                ? [
+                    {
+                      key: 'market',
+                      label: missingMarket === 'GLOBAL' ? '开启海外' : '开启国内',
+                      disabled: readOnly,
+                      onClick: () => consoleCtx?.openEnableMarketModal(missingMarket),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         }
         action={
           <Button
             type="primary"
+            autoInsertSpace={false}
             data-testid="home-cta-monitor"
             disabled={readOnly}
             onClick={() => consoleCtx?.navigateWorkspace('/visibility?tab=runs')}
           >
-            发起新一轮监测
+            发起监测
           </Button>
         }
       />
@@ -641,21 +640,12 @@ export function HomeWorkspace(): JSX.Element {
         onOpenStudio={() => consoleCtx?.navigateWorkspace('/studio')}
       />
 
-      {/* Block 4: Distribution Tracking & Channel Attribution (v2.1 #355 + v2.2 #372 CI/DiD + #387 Budget Board) */}
+      {/* Block 4: Compact single-row distribution tracking strip (Y33 moved details to /publish?tab=tracking) */}
       <HomeDistributionSummary
         summary={resolvedData.distributionSummary}
         retestBudget={resolvedData.retestBudget}
         recentArticles={resolvedData.recentArticles}
-        hideCrawlAlerts
-        onOpenArticle={(articleId) =>
-          consoleCtx?.navigateWorkspace(
-            `/publish?articleId=${encodeURIComponent(articleId)}&tab=tracking`,
-          )
-        }
-        onOpenPoints={() => consoleCtx?.navigateWorkspace('/account?tab=points')}
-        onOpenBudgetSettings={() => consoleCtx?.navigateWorkspace('/brands?section=identity')}
-        onOpenStudio={() => consoleCtx?.navigateWorkspace('/publish')}
-        onOpenRoiReportModal={() => setRoiModalOpen(true)}
+        onOpenStudio={() => consoleCtx?.navigateWorkspace('/publish?tab=tracking')}
       />
 
       <HomeRoiReportModal

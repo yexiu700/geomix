@@ -1034,7 +1034,10 @@ v2Describe(
         );
         try {
           await expect(page.getByTestId('home-health-strip')).toBeVisible({ timeout: 15_000 });
-          await page.getByRole('button', { name: '查看详细意见' }).first().click();
+          await page
+            .getByRole('button', { name: /查看意见|查看详细意见/ })
+            .first()
+            .click();
           const drawer = page.getByTestId('geo-brief-drawer');
           await expect(drawer).toBeVisible({ timeout: 15_000 });
 

@@ -8,7 +8,7 @@ import {
 } from '@geomix/shared';
 import { Button } from 'antd';
 import type { JSX } from 'react';
-import { StatusBadge, type StatusTone } from '../ui';
+import { Explain, StatusBadge, type StatusTone } from '../ui';
 
 export type HomeCrawlAlertBannerProps = {
   alerts: readonly DistributionCrawlAlertItem[];
@@ -36,11 +36,12 @@ export function HomeCrawlAlertBanner({
     >
       <div className="gm-home-p0-alert-head">
         <span className="gm-home-p0-alert-title">
-          抓取与 Schema 异常告警（<span className="gm-num">{alerts.length}</span> 条）
+          抓取告警（<span className="gm-num">{alerts.length}</span>）
         </span>
-        <span className="gm-home-p0-alert-sub">
-          robots.txt 拦截、HTTP 异常、noindex 或结构化数据缺失将影响 AI 爬虫抓取
-        </span>
+        <Explain
+          text="robots.txt 拦截、HTTP 异常、noindex 或结构化数据缺失将影响 AI 爬虫抓取"
+          label="抓取告警说明"
+        />
       </div>
 
       <div className="gm-home-p0-alert-list">
@@ -78,6 +79,7 @@ export function HomeCrawlAlertBanner({
               <Button
                 size="small"
                 danger
+                autoInsertSpace={false}
                 className="gm-home-nowrap-btn"
                 onClick={() => onOpenArticle(alert.articleId)}
               >

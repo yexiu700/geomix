@@ -1519,8 +1519,8 @@ test.describe('Tier 3 — Core Workspaces Visual Contracts', () => {
       // Compact empty briefs CTA navigates to /studio
       const studioEmptyCta = emptyPage
         .getByTestId('home-top-briefs')
-        .getByRole('button', { name: /去写作台/ })
-        .or(emptyPage.getByTestId('home-top-briefs').getByRole('link', { name: /去写作台/ }))
+        .getByRole('button', { name: /去写作|去写作台/ })
+        .or(emptyPage.getByTestId('home-top-briefs').getByRole('link', { name: /去写作|去写作台/ }))
         .first();
       await expect(studioEmptyCta).toBeVisible({ timeout: 10_000 });
       const emptyCtaHref = await studioEmptyCta.getAttribute('href');

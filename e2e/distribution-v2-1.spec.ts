@@ -819,7 +819,20 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       });
       unwrapOk(blockedProbeRes, 'POST crawl-probe on blocked URL');
 
-      // Navigate to /home -> verify distributionSummary, crawlAlerts, upcomingRetests, channelAttribution (PRD D5, zero NaN)
+      // Verify migrated attribution, upcoming retests & channel attribution on /publish?tab=tracking (Y33)
+      await page.goto(
+        `/publish?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}&tab=tracking`,
+        {
+          waitUntil: 'domcontentloaded',
+        },
+      );
+      await expect(page.getByTestId('publish-brand-attribution-summary')).toBeVisible({
+        timeout: 20_000,
+      });
+      await expect(page.getByTestId('publish-upcoming-retests')).toBeVisible();
+      await expect(page.getByTestId('publish-channel-attribution')).toBeVisible();
+
+      // Navigate to /home -> verify compact distributionSummary & hoisted crawlAlerts (Y33, zero NaN)
       await page.goto(`/home?brandId=${brand.id}&market=GLOBAL`, {
         waitUntil: 'domcontentloaded',
       });
@@ -827,8 +840,6 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(homeSummary).toBeVisible({ timeout: 20_000 });
       await expect(page.getByTestId('home-crawl-alerts')).toBeVisible();
       await expect(page.getByTestId(`home-crawl-alert-${blockedRec.id}`)).toContainText('抓取受阻');
-      await expect(page.getByTestId('home-upcoming-retests')).toBeVisible();
-      await expect(page.getByTestId('home-channel-attribution')).toBeVisible();
       expect(await homeSummary.innerText()).not.toContain('NaN');
 
       // Verify /home layout ergonomics at BOTH 1440×900 and 1015×909

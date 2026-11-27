@@ -3,7 +3,7 @@
 import type { ActionHomeResponse } from '@geomix/shared';
 import { Button } from 'antd';
 import type { JSX } from 'react';
-import { EmptyState, Section, StatusBadge, type StatusTone } from '../ui';
+import { CostChip, EmptyState, Section, StatusBadge, type StatusTone } from '../ui';
 
 export type HomeTopBriefItem = ActionHomeResponse['topBriefs'][number];
 
@@ -21,19 +21,19 @@ export type HomeTopBriefsProps = {
 function getSourceBadge(sourceType: string): { label: string; tone: StatusTone } {
   switch (sourceType) {
     case 'AUTO_GAP':
-      return { label: '竞品霸榜缺口 · P1', tone: 'danger' };
+      return { label: '竞品缺口', tone: 'danger' };
     case 'SENTIMENT_RISK':
-      return { label: '情感风险需辟谣 · P2', tone: 'warning' };
+      return { label: '情感风险', tone: 'warning' };
     case 'LOW_RANK':
-      return { label: '顺位落后待提权 · P3', tone: 'active' };
+      return { label: '顺位落后', tone: 'active' };
     case 'FANOUT_CLUSTER':
-      return { label: '高频拆解词缺口', tone: 'active' };
+      return { label: '拆解缺口', tone: 'active' };
     case 'CITATION_COUNTER':
-      return { label: '竞品高引用反制', tone: 'warning' };
+      return { label: '引用反制', tone: 'warning' };
     case 'NEAR_MISS_BOOST':
-      return { label: '差一步被引用补强', tone: 'warning' };
+      return { label: '补强机会', tone: 'warning' };
     default:
-      return { label: '定向写作建议', tone: 'neutral' };
+      return { label: '写作建议', tone: 'neutral' };
   }
 }
 
@@ -73,18 +73,13 @@ export function HomeTopBriefs({
   return (
     <Section
       variant="plain"
-      aria-label="今日 Top 3 优先写作建议"
+      aria-label="今日建议"
       data-testid="home-top-briefs"
-      title={
-        <span className="gm-home-section-title-inline">
-          <span>今日 Top 3 优先写作建议</span>
-          <StatusBadge tone="active" label="免费诊断" />
-        </span>
-      }
+      title="今日建议"
       description="基于当前品牌与市场最新观测结果，按高意图缺口、情感风险与顺位差距自动排序。"
       actions={
-        <Button size="small" type="link" onClick={onViewAllBriefs}>
-          查看全部意见
+        <Button size="small" type="link" autoInsertSpace={false} onClick={onViewAllBriefs}>
+          全部意见
         </Button>
       }
     >
@@ -92,12 +87,12 @@ export function HomeTopBriefs({
         <EmptyState
           size="compact"
           icon={<SparkleIcon />}
-          title="暂无待处理的优先写作建议"
-          description="完成新一轮监测后将自动生成高优写作建议；也可以直接进入写作台自由选题开写。"
+          title="暂无建议"
+          description="监测后自动生成"
           action={
             readOnly || !handleEmptyAction ? undefined : (
-              <Button size="small" type="link" onClick={handleEmptyAction}>
-                去写作台自由选题 →
+              <Button size="small" type="link" autoInsertSpace={false} onClick={handleEmptyAction}>
+                去写作
               </Button>
             )
           }
@@ -144,15 +139,22 @@ export function HomeTopBriefs({
                 <div className="gm-home-brief-actions">
                   <Button
                     size="small"
+                    autoInsertSpace={false}
                     loading={loadingBriefId === brief.id}
                     disabled={Boolean(loadingBriefId) && loadingBriefId !== brief.id}
                     onClick={() => onOpenBriefDrawer(brief.id)}
                   >
-                    查看详细意见
+                    查看意见
                   </Button>
-                  <Button size="small" disabled={readOnly} onClick={() => onWriteBrief(brief.id)}>
-                    一键去写（10 点）
+                  <Button
+                    size="small"
+                    autoInsertSpace={false}
+                    disabled={readOnly}
+                    onClick={() => onWriteBrief(brief.id)}
+                  >
+                    去写
                   </Button>
+                  <CostChip points={10} />
                 </div>
               </article>
             );

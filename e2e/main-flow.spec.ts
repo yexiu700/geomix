@@ -87,12 +87,17 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
   await expect(page.locator('aside.ant-layout-sider')).toContainText('GeoMix');
   await expect(page.locator('.gm-tabs')).toHaveCount(0);
   await expect(page.locator('.gm-mode')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '60 秒创建首个品牌' }).first()).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /新建品牌|60 秒创建首个品牌/ }).first(),
+  ).toBeVisible();
   await assertZeroHorizontalOverflow(page);
   await saveGeoMixScreenshot(page, '02-home-onboarding.png');
 
   // Step 4: Create first brand (CN) via 60s quick-create modal
-  await page.getByRole('button', { name: '60 秒创建首个品牌' }).first().click();
+  await page
+    .getByRole('button', { name: /新建品牌|60 秒创建首个品牌/ })
+    .first()
+    .click();
   const createDialog = page.getByRole('dialog', { name: /新建品牌|60 秒创建品牌/ });
   await expect(createDialog).toBeVisible();
   await createDialog.getByLabel('品牌名称').fill(brandName);

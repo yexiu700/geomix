@@ -2,7 +2,6 @@
 
 import {
   GEO_ARTICLE_STATUS_LABELS,
-  GEO_RECIPE_LABELS,
   formatShanghaiDateTime,
   type ActionHomeResponse,
   type GeoPublishRecordDto,
@@ -10,6 +9,7 @@ import {
 import { Button } from 'antd';
 import type { JSX } from 'react';
 import { formatRetestDeltaSummary } from '../../lib/home';
+import { GEO_RECIPE_SHORT } from '../../lib/short-labels';
 import { EmptyState, RowActions, Section, StatusBadge, type StatusTone } from '../ui';
 
 export type HomeRecentArticleItem = ActionHomeResponse['recentArticles'][number];
@@ -54,25 +54,25 @@ export function HomeRecentArticles({
   return (
     <Section
       variant="plain"
-      aria-label="近期成稿与复测追踪"
+      aria-label="近期成稿"
       data-testid="home-recent-articles"
-      title="近期成稿与复测追踪"
-      description="展示最近 5 篇 GEO 成稿的引用就绪度评分、发布状态与 Before → After 复测变化。"
+      title="近期成稿"
+      description="展示最近 5 篇 GEO 成稿的引用就绪度评分、发布状态与复测变化。"
       actions={
-        <Button size="small" type="link" onClick={onOpenStudio}>
-          进入 GEO 写作台
+        <Button size="small" type="link" autoInsertSpace={false} onClick={onOpenStudio}>
+          去写作
         </Button>
       }
     >
       {capped.length === 0 ? (
         <EmptyState
           size="compact"
-          title="尚未生成 GEO 成稿"
-          description="从上方优先写作建议一键开写，或进入 GEO 写作台开启实时流式精写。"
+          title="暂无成稿"
+          description="可从建议开写"
           action={
             readOnly ? undefined : (
-              <Button size="small" type="link" onClick={onOpenStudio}>
-                去写作台自由选题 →
+              <Button size="small" type="link" autoInsertSpace={false} onClick={onOpenStudio}>
+                去写作
               </Button>
             )
           }
@@ -105,7 +105,7 @@ export function HomeRecentArticles({
                   </button>
                   <div className="gm-home-article-sub">
                     <span className="gm-home-article-recipe">
-                      {GEO_RECIPE_LABELS[article.recipe] ?? article.recipe}
+                      {GEO_RECIPE_SHORT[article.recipe] ?? article.recipe}
                     </span>
                     <span className="gm-home-meta-sep" aria-hidden="true">
                       ·
@@ -151,7 +151,7 @@ export function HomeRecentArticles({
                       menuItems={[
                         {
                           key: 'publish',
-                          label: '在发布中心查看',
+                          label: '发布追踪',
                           onClick: () =>
                             onPublishArticle
                               ? onPublishArticle(article.id, 'tracking')
@@ -159,7 +159,7 @@ export function HomeRecentArticles({
                         },
                         {
                           key: 'open',
-                          label: '在写作台打开',
+                          label: '去编辑',
                           onClick: () => onOpenArticle(article.id),
                         },
                       ]}
@@ -176,7 +176,7 @@ export function HomeRecentArticles({
                       menuItems={[
                         {
                           key: 'publish',
-                          label: '去登记发布',
+                          label: '去发布',
                           onClick: () =>
                             onPublishArticle
                               ? onPublishArticle(article.id, 'distribute')

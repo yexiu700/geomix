@@ -91,7 +91,7 @@ v2Describe(
         try {
           // 1. Fresh 0-brand onboarding -> 60s brand creation (4 minimal fields, zero blocking prerequisite modals)
           const createFirstBtn = page
-            .getByRole('button', { name: /60\s*秒创建首个品牌|创建首个品牌/ })
+            .getByRole('button', { name: /新建品牌|60\s*秒创建首个品牌|创建首个品牌/ })
             .first();
           await expect(createFirstBtn).toBeVisible({ timeout: 15_000 });
           await createFirstBtn.click();

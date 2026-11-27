@@ -2,7 +2,7 @@
 
 import type { ActionHomeResponse, GeoMarket } from '@geomix/shared';
 import type { JSX } from 'react';
-import { KpiStrip, StatusBadge, type KpiStripItem } from '../ui';
+import { Explain, KpiStrip, StatusBadge, type KpiStripItem } from '../ui';
 
 export type HomeHealthStripProps = {
   activeMarket: GeoMarket;
@@ -45,7 +45,7 @@ export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps):
     {
       key: 'mention',
       testId: 'home-kpi-mention',
-      label: 'AI 提及率',
+      label: '提及率',
       value: formatPct(mentionPct),
       progressPct: mentionPct,
       tone: 'accent',
@@ -54,7 +54,7 @@ export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps):
     {
       key: 'sov',
       testId: 'home-kpi-sov',
-      label: '声量占比 SoV',
+      label: '声量',
       value: formatPct(sovPct),
       progressPct: sovPct,
       tone: 'active',
@@ -71,7 +71,7 @@ export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps):
     {
       key: 'owned',
       testId: 'home-kpi-owned',
-      label: '自有阵地引用率',
+      label: '自有引用',
       value: formatPct(ownedPct),
       progressPct: ownedPct,
       tone: 'success',
@@ -83,10 +83,11 @@ export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps):
     <>
       {health.hasSimulatedObservations ? (
         <div className="gm-home-simulated-notice" data-testid="home-simulated-badge">
-          <StatusBadge tone="warning" label="含模拟采集数据" />
-          <span className="gm-home-simulated-copy">
-            当前监测统计包含模拟采集观测，仅用于演示参考，不代表真实 AI 引擎线上表现
-          </span>
+          <StatusBadge tone="warning" label="模拟数据" />
+          <Explain
+            text="当前监测统计包含模拟采集观测，仅用于演示参考，不代表真实 AI 引擎线上表现"
+            label="模拟数据说明"
+          />
         </div>
       ) : null}
       <KpiStrip items={items} aria-label="品牌健康信号条" data-testid="home-health-strip" />

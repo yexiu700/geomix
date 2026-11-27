@@ -235,7 +235,7 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('renders 0-brand onboarding with exact "60 秒创建首个品牌" CTA and fires zero /home API requests', () => {
+  it('renders 0-brand onboarding with primary CTA and fires zero /home API requests', () => {
     useWorkspaceStore.setState({
       brandsLoading: false,
       brandsLoaded: true,
@@ -251,7 +251,8 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       </ConsoleProvider>,
     );
 
-    const btn = screen.getByRole('button', { name: '60 秒创建首个品牌' });
+    const btn = screen.getByTestId('home-onboarding-create-brand-btn');
+    expect(btn.textContent).toContain('新建品牌');
     fireEvent.click(btn);
     expect(openCreateBrandModal).toHaveBeenCalledTimes(1);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -331,14 +332,15 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       '发布前 0% → 发布后 100%',
     );
 
-    // Health strip CTAs navigate cleanly
-    fireEvent.click(screen.getByRole('button', { name: /发起新一轮监测/ }));
+    // Header primary CTA + MoreMenu overflow CTA navigate cleanly
+    fireEvent.click(screen.getByTestId('home-cta-monitor'));
     expect(navigateWorkspace).toHaveBeenCalledWith('/visibility?tab=runs');
-    fireEvent.click(screen.getByRole('button', { name: /直接写 GEO 文章/ }));
+    fireEvent.click(screen.getByTestId('home-more-menu'));
+    fireEvent.click(await screen.findByTestId('home-cta-write'));
     expect(navigateWorkspace).toHaveBeenCalledWith('/studio');
 
     // Open GeoBriefDrawer
-    fireEvent.click(screen.getAllByRole('button', { name: /查看详细意见/ })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: '查看意见' })[0]!);
     await waitFor(() => {
       expect(getBriefSpy).toHaveBeenCalledWith(
         'brief_brand_home_a_1',
@@ -348,8 +350,8 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       expect(screen.getByTestId('geo-brief-drawer')).toBeTruthy();
     });
 
-    // Click 一键去写 -> navigates to /studio?briefId=...
-    fireEvent.click(screen.getAllByRole('button', { name: /一键去写/ })[0]!);
+    // Click 去写 -> navigates to /studio?briefId=...
+    fireEvent.click(screen.getAllByRole('button', { name: '去写' })[0]!);
     expect(navigateWorkspace).toHaveBeenCalledWith('/studio?briefId=brief_brand_home_a_1');
 
     // Click 一键复测 on published recent article
@@ -664,7 +666,7 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     );
 
     await screen.findByTestId('home-health-strip');
-    fireEvent.click(screen.getAllByRole('button', { name: '查看详细意见' })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: '查看意见' })[0]!);
     const drawer = await screen.findByTestId('geo-brief-drawer');
     fireEvent.change(within(drawer).getByTestId('brief-drawer-title'), {
       target: { value: '已修改标题' },
@@ -778,11 +780,13 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     const workspace = screen.getByTestId('home-workspace');
     expect(workspace.querySelectorAll('.ant-btn-primary')).toHaveLength(1);
 
-    expect(within(summary).getByTestId('home-upcoming-retests').textContent).toContain('T+7');
-    const attrText = within(summary).getByTestId('home-channel-attribution').textContent ?? '';
-    expect(attrText).toContain('待引文就绪');
-    expect(attrText).toContain('+30.0%');
-    expect(attrText).not.toContain('NaN');
+    expect(within(summary).queryByTestId('home-upcoming-retests')).toBeNull();
+    expect(within(summary).queryByTestId('home-channel-attribution')).toBeNull();
+    const summaryText = summary.textContent ?? '';
+    expect(summaryText).toContain('已发 2 篇');
+    expect(summaryText).toContain('待复测 1 项');
+    expect(summaryText).toContain('异常 1');
+    expect(summaryText).not.toContain('NaN');
     expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
 
     fireEvent.click(within(crawlAlerts).getByRole('button', { name: '立即排查' }));
@@ -790,8 +794,8 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       '/publish?articleId=art_brand_home_a_1&tab=tracking',
     );
 
-    fireEvent.click(within(summary).getByRole('button', { name: '查看点数' }));
-    expect(navigateWorkspace).toHaveBeenCalledWith('/account?tab=points');
+    fireEvent.click(within(summary).getByRole('button', { name: '去发布' }));
+    expect(navigateWorkspace).toHaveBeenCalledWith('/publish?tab=tracking');
   });
 
   it('opens Monthly GEO ROI Report modal from /home and renders NEAR_MISS_BOOST badge cleanly (#372)', async () => {
@@ -830,7 +834,8 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     expect(workspace.textContent).toContain('差一步被引用补强');
     expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
 
-    fireEvent.click(screen.getByTestId('home-open-roi-report-btn'));
+    fireEvent.click(screen.getByTestId('home-more-menu'));
+    fireEvent.click(await screen.findByTestId('home-open-roi-report-btn'));
 
     expect(await screen.findByTestId('home-roi-report-modal')).toBeTruthy();
     await waitFor(() => {
@@ -869,6 +874,6 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
     );
 
     const badge = await screen.findByTestId('home-simulated-badge');
-    expect(badge.textContent).toContain('含模拟采集数据');
+    expect(badge.textContent).toContain('模拟数据');
   });
 });

@@ -32,7 +32,7 @@ import { hasOpenFloatingOverlay, triggerBlobDownload } from '../../lib/ux-founda
 import { isSafeHttpUrl } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, StatusBadge, type StatusTone } from '../ui';
+import { EmptyState, Explain, StatusBadge, type StatusTone } from '../ui';
 
 export type HomeRoiReportModalProps = {
   open: boolean;
@@ -431,9 +431,9 @@ export function HomeRoiReportModal({
       styles={{ body: { overflowX: 'hidden', maxHeight: '72vh', overflowY: 'auto' } }}
       title={
         <div className="gm-roi-modal-title">
-          <span>月度 GEO ROI 报告中心</span>
+          <span>月度报告</span>
           <span className="gm-home-chip">
-            {brandName} · {market === 'GLOBAL' ? '海外市场（GLOBAL）' : '国内市场（CN）'}
+            {brandName} · {market === 'GLOBAL' ? '海外' : '国内'}
           </span>
         </div>
       }
@@ -442,10 +442,11 @@ export function HomeRoiReportModal({
         {/* 1. Create New Report Form */}
         <section className="gm-roi-card" data-testid="roi-report-create-form">
           <div className="gm-roi-card-head">
-            <strong className="gm-roi-section-title">新建月度 GEO ROI 快照报告</strong>
-            <span className="gm-roi-muted">
-              包含 Wilson 95% 置信区间、对照组 DiD 净增益、Near-Miss 转化与渠道归因（免费导出）
-            </span>
+            <strong className="gm-roi-section-title">新建报告</strong>
+            <Explain
+              text="包含 Wilson 95% 置信区间、对照组 DiD 净增益、Near-Miss 转化与渠道归因（免费导出）。"
+              label="新建报告说明"
+            />
           </div>
 
           <div className="gm-roi-grid-3">
@@ -527,28 +528,37 @@ export function HomeRoiReportModal({
           ) : null}
 
           <div className="gm-roi-card-foot">
-            <span className="gm-roi-muted">
-              {readOnly
-                ? '当前为只读状态，仅可浏览或下载已有报告。'
-                : '生成后将冻结当前周期汇总快照，支持随时导出与白标分享。'}
-            </span>
+            <Explain
+              text={
+                readOnly
+                  ? '当前为只读状态，仅可浏览或下载已有报告。'
+                  : '生成后将冻结当前周期汇总快照，支持随时导出与白标分享。'
+              }
+              label="报告说明"
+            />
             <Button
               type="primary"
+              autoInsertSpace={false}
               data-testid="roi-report-generate-btn"
               loading={generating}
               disabled={readOnly || generating}
               onClick={() => void handleGenerate()}
             >
-              生成月度 GEO ROI 报告
+              生成报告
             </Button>
           </div>
         </section>
 
         {/* 2. Saved Reports History & Selected Preview */}
-        <section className="gm-roi-section" aria-label="历史 ROI 报告列表">
+        <section className="gm-roi-section" aria-label="历史报告">
           <div className="gm-roi-card-head">
-            <strong className="gm-roi-section-title">已保存的 ROI 报告（{reports.length}）</strong>
-            <Button size="small" onClick={() => void loadReports()} loading={loading}>
+            <strong className="gm-roi-section-title">历史报告（{reports.length}）</strong>
+            <Button
+              size="small"
+              autoInsertSpace={false}
+              onClick={() => void loadReports()}
+              loading={loading}
+            >
               刷新列表
             </Button>
           </div>
@@ -643,35 +653,39 @@ export function HomeRoiReportModal({
                     <div className="gm-roi-detail-actions">
                       <Button
                         size="small"
+                        autoInsertSpace={false}
                         data-testid="roi-report-download-html-btn"
                         loading={exportingKey === `dl:${selectedReport.id}`}
                         disabled={Boolean(exportingKey)}
                         onClick={() => void handleDownloadHtml(selectedReport)}
                       >
-                        下载独立 HTML
+                        下载 HTML
                       </Button>
                       <Button
                         size="small"
+                        autoInsertSpace={false}
                         data-testid="roi-report-print-pdf-btn"
                         loading={exportingKey === `print:${selectedReport.id}`}
                         disabled={Boolean(exportingKey)}
                         onClick={() => void handlePrintPdf(selectedReport)}
                       >
-                        打印 / 保存 PDF
+                        保存 PDF
                       </Button>
                       <Button
                         size="small"
+                        autoInsertSpace={false}
                         data-testid="roi-report-share-btn"
                         loading={sharingReportId === selectedReport.id}
                         disabled={readOnly || Boolean(sharingReportId) || Boolean(revokingReportId)}
                         onClick={() => void handleCreateShare(selectedReport)}
                       >
-                        {selectedReport.shareActive ? '重新生成分享链接' : '生成并复制分享链接'}
+                        {selectedReport.shareActive ? '重签链接' : '分享链接'}
                       </Button>
                       {selectedReport.shareActive ? (
                         <Button
                           size="small"
                           danger
+                          autoInsertSpace={false}
                           data-testid="roi-report-revoke-share-btn"
                           loading={revokingReportId === selectedReport.id}
                           disabled={
@@ -679,7 +693,7 @@ export function HomeRoiReportModal({
                           }
                           onClick={() => handleRevokeShare(selectedReport)}
                         >
-                          撤销分享链接
+                          撤销分享
                         </Button>
                       ) : null}
                     </div>
@@ -784,17 +798,17 @@ export function HomeRoiReportModal({
                       </div>
                     </div>
                   ) : selectedReport.shareActive ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      data-testid="roi-report-share-active-notice"
-                      message={
-                        selectedReport.shareExpiresAt
-                          ? `该报告已开启对外只读分享（有效期至 ${formatShanghaiDateTime(selectedReport.shareExpiresAt)}）`
-                          : '该报告已开启对外只读分享'
-                      }
-                      description="出于安全策略，分享令牌仅在首次创建时展示明文；如需重新获取可点击「重新生成分享链接」，或随时撤销失效。"
-                    />
+                    <div className="gm-roi-share-box" data-testid="roi-report-share-active-notice">
+                      <Alert type="info" showIcon message="已开启分享" />
+                      <Explain
+                        text={
+                          selectedReport.shareExpiresAt
+                            ? `有效期至 ${formatShanghaiDateTime(selectedReport.shareExpiresAt)}。出于安全策略，分享令牌仅在首次创建时展示明文；如需重新获取可点击「重签链接」，或随时撤销失效。`
+                            : '出于安全策略，分享令牌仅在首次创建时展示明文；如需重新获取可点击「重签链接」，或随时撤销失效。'
+                        }
+                        label="分享说明"
+                      />
+                    </div>
                   ) : null}
                 </div>
               ) : null}
