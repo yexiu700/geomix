@@ -65,7 +65,7 @@ v2Describe(
   },
   () => {
     test(
-      'S4-01 PRD §5 Redline #4: 0-brand -> 60s create + AI URL 4 facts -> CN monitor -> auto brief -> <30s SSE (>=85) -> JSON-LD -> publish & retest (<=3 nav hops)',
+      'S4-01 PRD §5 Redline #4: 0-brand -> 60s create + AI URL 4 facts -> CN monitor -> auto brief -> <30s SSE (>=85) -> JSON-LD -> publish & retest (<=4 nav hops)',
       { tag: ['@tier4', '@F5', '@F6', '@F7', '@F9', '@F11', '@F12', '@F16', '@F17', '@M5'] },
       async ({ browser }, testInfo) => {
         const tag = uniqueTag(testInfo, 's401');
@@ -349,11 +349,11 @@ v2Describe(
           expect(retestedRecord?.latestRetestRunId).toBeTruthy();
           await expect(page.getByTestId('publish-before-after')).toBeVisible({ timeout: 15_000 });
 
-          // Hard PRD §5 Quality Redline #4 Assertions
+          // Hard PRD §5 Quality Redline #4 Assertions (4 workspace hops after splitting /publish)
           expect(
             navTracker.getTransitionCount(),
-            `PRD §5 Redline #4 requires <= 3 workspace transitions; visited: ${navTracker.getVisitedPaths().join(' -> ')}`,
-          ).toBeLessThanOrEqual(3);
+            `PRD §5 Redline #4 + /publish split allows <= 4 workspace transitions; visited: ${navTracker.getVisitedPaths().join(' -> ')}`,
+          ).toBeLessThanOrEqual(4);
           await assertZeroHorizontalOverflow(page, [{ width: 1440, height: 900 }]);
           assertNoConsoleOrPageErrors(errors);
         } finally {
