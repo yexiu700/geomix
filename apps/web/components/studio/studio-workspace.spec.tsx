@@ -7,23 +7,19 @@ import {
   type GeoArticleRecord,
   type GeoBatchJobRecord,
   type GeoBriefRecord,
-  type GeoPublishRecordDto,
   type PromptPreferenceRecord,
 } from '@geomix/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as brandsApi from '../../lib/brands';
 import * as briefsApi from '../../lib/briefs';
-import * as distributionApi from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
 import * as studioApi from '../../lib/studio';
 import { invalidateFreshness } from '../../lib/tab-freshness';
 import * as uxFoundation from '../../lib/ux-foundation';
-import * as visibilityApi from '../../lib/visibility';
 import { useWorkspaceStore } from '../../lib/workspace-store';
 import { ConsoleProvider, type ConsoleContextValue } from '../shell/console-context';
 import { StudioDeliveryPack } from './studio-delivery-pack';
-import { StudioPublishRetest } from './studio-publish-retest';
 import { StudioWorkspace } from './studio-workspace';
 
 const mockConfirm = vi.fn();
@@ -254,61 +250,6 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       total: 1,
     });
     vi.spyOn(studioApi, 'fetchBatchJobs').mockResolvedValue({ items: [], total: 0 });
-    vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [] });
-    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockImplementation(
-      async (_brandId, market) => ({
-        collector: 'remote_scraper',
-        market: market ?? 'CN',
-        checkedAt: '2026-11-22T00:00:00.000Z',
-        refreshIntervalMs: 300_000,
-        engines:
-          market === 'GLOBAL'
-            ? [
-                {
-                  key: 'chatgpt',
-                  label: 'ChatGPT',
-                  market: 'GLOBAL',
-                  domestic: false,
-                  available: true,
-                  status: 'online',
-                  defaultChecked: true,
-                  unavailableReason: null,
-                },
-                {
-                  key: 'perplexity',
-                  label: 'Perplexity',
-                  market: 'GLOBAL',
-                  domestic: false,
-                  available: false,
-                  status: 'offline',
-                  defaultChecked: false,
-                  unavailableReason: '暂未上线',
-                },
-              ]
-            : [
-                {
-                  key: 'deepseek',
-                  label: 'DeepSeek',
-                  market: 'CN',
-                  domestic: true,
-                  available: true,
-                  status: 'online',
-                  defaultChecked: true,
-                  unavailableReason: null,
-                },
-                {
-                  key: 'doubao',
-                  label: '豆包',
-                  market: 'CN',
-                  domestic: true,
-                  available: false,
-                  status: 'offline',
-                  defaultChecked: false,
-                  unavailableReason: '暂未上线',
-                },
-              ],
-      }),
-    );
     vi.spyOn(brandsApi, 'getBrandFacts').mockResolvedValue({
       brandId: 'brand_studio_1',
       truthAgreementSignedAt: null,
@@ -1442,13 +1383,6 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
 
-    // CN track: delivery-copy-jsonld is ALWAYS visible, code preview collapsed by default, no llms.txt, no literal "0 点"
-    expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
-    expect(screen.queryByTestId('delivery-jsonld-preview')).toBeNull();
-    expect(screen.queryByTestId('delivery-copy-llmstxt')).toBeNull();
-    expect(screen.getByTestId('delivery-channel-guidance').textContent).toContain('知乎');
-    expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
-
     // Click 一键补写小节 -> rewrite -> update -> evaluate -> lifts score 76 -> 91
     fireEvent.click(await screen.findByTestId('fanout-supplement-btn'));
     await waitFor(() => {
@@ -1458,7 +1392,24 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       expect(screen.getByTestId('geo-score-value').textContent).toBe('91');
     });
 
-    // Download .docx strictly via triggerBlobDownload with AbortSignal
+    // Standalone StudioDeliveryPack CN track + .docx export via triggerBlobDownload
+    cleanup();
+    render(
+      <StudioDeliveryPack
+        activeMarket="CN"
+        localBrandName="星辰存储"
+        article={articleWithMissingFanOut}
+        evaluation={null}
+        linkedBriefChannels={[{ channel: '知乎', reason: '国内权重高' }]}
+        streaming={false}
+      />,
+    );
+    expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
+    expect(screen.queryByTestId('delivery-jsonld-preview')).toBeNull();
+    expect(screen.queryByTestId('delivery-copy-llmstxt')).toBeNull();
+    expect(screen.getByTestId('delivery-channel-guidance').textContent).toContain('知乎');
+    expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
+
     fireEvent.click(screen.getByTestId('delivery-download-docx'));
     await waitFor(() => {
       expect(exportSpy).toHaveBeenCalledWith(
@@ -1472,127 +1423,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
   });
 
-  it('supports GLOBAL Delivery Pack (expanded JSON-LD, llms.txt, GPTBot/PerplexityBot) and Publish URL + Retest Before/After loop (M5 #333)', async () => {
-    const globalArticle: GeoArticleRecord = {
-      ...SAMPLE_ARTICLE,
-      id: 'art_gl_1',
-      brandMarketId: 'bm_gl_1',
-      market: 'GLOBAL',
-      targetFormat: 'GLOBAL_AUTHORITY_GUIDE',
-      title: 'Best 4-Bay Quiet NAS 2026 Guide',
-      targetPrompt: 'Best quiet 4-bay NAS 2026',
-      contentMarkdown: 'AstraVault DXP4800 is a Top pick with 100% aluminum chassis.',
-      schemaJsonLd: {
-        '@context': 'https://schema.org',
-        '@graph': [{ '@type': 'Article', headline: 'Best 4-Bay Quiet NAS 2026 Guide' }],
-      },
-      llmsTxtSnippet:
-        '# AstraVault\n\n## Featured GEO Guides\n- [Guide](https://astravault.example.com/guides/nas): 18.5dB',
-      geoScore: 90,
-    };
-
-    useWorkspaceStore.setState({
-      brandsLoading: false,
-      brandsLoaded: true,
-      brands: [DUAL_BRAND],
-      activeBrandId: DUAL_BRAND.id,
-      activeMarket: 'GLOBAL',
-    });
-
-    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
-      items: [globalArticle],
-      total: 1,
-    });
-    const createdPubRecord = {
-      id: 'pub_gl_1',
-      brandId: 'brand_studio_1',
-      brandMarketId: 'bm_gl_1',
-      articleId: 'art_gl_1',
-      publishedUrl: 'https://astravault.example.com/guides/nas-2026',
-      channel: 'Official Blog / Docs',
-      publishedAt: '2026-11-21T00:00:00.000Z',
-      baselineRunId: 'run_base_1',
-      latestRetestRunId: null,
-      beforeMetrics: { mentionRate: 0, avgPosition: null, sentiment: null, citationHit: false },
-      afterMetrics: null,
-    };
-    const createPubSpy = vi
-      .spyOn(studioApi, 'createPublishRecord')
-      .mockResolvedValueOnce(createdPubRecord);
-    const retestSpy = vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValueOnce({
-      id: 'run_retest_gl_1',
-      brandId: 'brand_studio_1',
-      brandMarketId: 'bm_gl_1',
-      market: 'GLOBAL',
-      triggerType: 'RETEST',
-      retestArticleId: 'art_gl_1',
-      status: 'QUEUED',
-    } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
-
-    const refreshWallet = vi.fn().mockResolvedValue(undefined);
-    render(
-      <ConsoleProvider value={makeConsoleContext({ refreshWallet })}>
-        <StudioWorkspace />
-      </ConsoleProvider>,
-    );
-
-    fireEvent.click(await screen.findByText('Best 4-Bay Quiet NAS 2026 Guide'));
-
-    // GLOBAL track: expanded JSON-LD preview, llms.txt button, GPTBot & PerplexityBot checklist
-    expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
-    expect(screen.getByTestId('delivery-jsonld-preview')).toBeTruthy();
-    expect(screen.getByTestId('delivery-copy-llmstxt')).toBeTruthy();
-    const checklistText = screen.getByTestId('delivery-crawler-checklist').textContent ?? '';
-    expect(checklistText).toContain('GPTBot');
-    expect(checklistText).toContain('PerplexityBot');
-
-    // Register publish URL: rejects javascript: inline, then accepts valid https://
-    const form = screen.getByTestId('publish-record-form');
-    const urlInput = screen.getByLabelText('已发布文章 URL');
-    fireEvent.change(urlInput, { target: { value: 'javascript:alert(1)' } });
-    fireEvent.submit(form);
-    expect(await screen.findByRole('alert')).toBeTruthy();
-    expect(createPubSpy).not.toHaveBeenCalled();
-
-    fireEvent.change(urlInput, {
-      target: { value: 'https://astravault.example.com/guides/nas-2026' },
-    });
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(createPubSpy).toHaveBeenCalledWith(
-        'art_gl_1',
-        {
-          publishedUrl: 'https://astravault.example.com/guides/nas-2026',
-          channel: 'Official Blog / Docs',
-        },
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-    });
-
-    // Before/After panel visible + open retest engine confirmation modal (#337)
-    expect(await screen.findByTestId('publish-before-after')).toBeTruthy();
-    fireEvent.click(await screen.findByTestId('publish-retest-btn'));
-    expect(await screen.findByTestId('publish-retest-modal')).toBeTruthy();
-    const confirmRetestBtn = (await screen.findByTestId(
-      'publish-retest-confirm-btn',
-    )) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(confirmRetestBtn.disabled).toBe(false);
-    });
-    fireEvent.click(confirmRetestBtn);
-    await waitFor(() => {
-      expect(retestSpy).toHaveBeenCalledWith(
-        'pub_gl_1',
-        { engines: ['chatgpt'] },
-        undefined,
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-      expect(refreshWallet).toHaveBeenCalled();
-    });
-  });
-
-  it('guards same-tick double-click on evaluate, docx export, publish submit, and billable retest (D-1) and preserves URL on error (D-5)', async () => {
+  it('guards same-tick double-click on evaluateArticleGeo inside StudioWorkspace (D-1)', async () => {
     useWorkspaceStore.setState({
       brandsLoading: false,
       brandsLoaded: true,
@@ -1601,51 +1432,11 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       activeMarket: 'CN',
     });
 
-    const existingRecord = {
-      id: 'pub_d1_1',
-      brandId: 'brand_studio_1',
-      brandMarketId: 'bm_cn_1',
-      articleId: 'art_st_1',
-      publishedUrl: 'https://star.example.com/guides/nas',
-      channel: '官网博客',
-      publishedAt: '2026-11-21T00:00:00.000Z',
-      baselineRunId: null,
-      latestRetestRunId: null,
-      beforeMetrics: null,
-      afterMetrics: null,
-    };
-    vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [existingRecord] });
-
     let resolveEval!: (v: Awaited<ReturnType<typeof studioApi.evaluateArticleGeo>>) => void;
     const evalSpy = vi.spyOn(studioApi, 'evaluateArticleGeo').mockImplementation(
       () =>
         new Promise((resolve) => {
           resolveEval = resolve;
-        }),
-    );
-
-    let resolveExport!: (v: Awaited<ReturnType<typeof studioApi.exportArticleFile>>) => void;
-    const exportSpy = vi.spyOn(studioApi, 'exportArticleFile').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveExport = resolve;
-        }),
-    );
-    vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
-
-    let resolveRetest!: (v: Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>) => void;
-    const retestSpy = vi.spyOn(studioApi, 'triggerPublishRetest').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveRetest = resolve;
-        }),
-    );
-
-    let rejectCreatePub!: (err: Error) => void;
-    const createPubSpy = vi.spyOn(studioApi, 'createPublishRecord').mockImplementation(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectCreatePub = reject;
         }),
     );
 
@@ -1657,43 +1448,14 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
     const evalBtn = await screen.findByTestId('geo-evaluate-refresh-btn');
-    const docxBtn = screen.getByTestId('delivery-download-docx');
-    const retestBtn = await screen.findByTestId('publish-retest-btn');
 
-    // Open retest confirmation modal first and wait for online engines to load
-    fireEvent.click(retestBtn);
-    const confirmRetestBtn = (await screen.findByTestId(
-      'publish-retest-confirm-btn',
-    )) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(confirmRetestBtn.disabled).toBe(false);
-    });
-
-    // Same-tick double-clicks must each fire strictly 1 request
     act(() => {
       evalBtn.click();
       evalBtn.click();
-      docxBtn.click();
-      docxBtn.click();
-      confirmRetestBtn.click();
-      confirmRetestBtn.click();
     });
     expect(evalSpy).toHaveBeenCalledTimes(1);
-    expect(exportSpy).toHaveBeenCalledTimes(1);
-    expect(retestSpy).toHaveBeenCalledTimes(1);
-
-    // Same-tick double-submit on publish form fires strictly 1 request & preserves URL on API error (D-5)
-    const urlInput = screen.getByLabelText('已发布文章 URL') as HTMLInputElement;
-    const form = screen.getByTestId('publish-record-form');
-    fireEvent.change(urlInput, { target: { value: 'https://star.example.com/keep-on-error' } });
-    act(() => {
-      fireEvent.submit(form);
-      fireEvent.submit(form);
-    });
-    expect(createPubSpy).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      rejectCreatePub(new GatewayApiError(500, API_ERROR.UPSTREAM_UNAVAILABLE, '登记服务繁忙'));
       resolveEval({
         geoScore: 86,
         geoScoreDetail: SAMPLE_ARTICLE.geoScoreDetail as unknown as Awaited<
@@ -1705,47 +1467,11 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
         crawlerChecklist: [],
         recommendedChannels: [],
       });
-      resolveExport({
-        blob: new Blob(['ok']),
-        filename: 'ok.docx',
-        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      });
-      resolveRetest({
-        id: 'run_d1_1',
-        triggerType: 'RETEST',
-        status: 'QUEUED',
-      } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
     });
-
-    expect(urlInput.value).toBe('https://star.example.com/keep-on-error');
-    expect(mockNotifyError).toHaveBeenCalledWith('登记服务繁忙');
-
-    // Direct StudioPublishRetest test: rejecting onCreatePublishRecord preserves URL with zero unhandled rejection
-    cleanup();
-    const rejectingProp = vi.fn().mockRejectedValueOnce(new Error('网络超时'));
-    render(
-      <StudioPublishRetest
-        activeMarket="CN"
-        article={SAMPLE_ARTICLE}
-        publishRecords={[]}
-        recordsLoading={false}
-        retestingRecordId={null}
-        pollingRetestRecordId={null}
-        readOnly={false}
-        onCreatePublishRecord={rejectingProp}
-        onTriggerRetest={vi.fn()}
-      />,
-    );
-    const directInput = screen.getByLabelText('已发布文章 URL') as HTMLInputElement;
-    fireEvent.change(directInput, { target: { value: 'https://star.example.com/direct-keep' } });
-    fireEvent.submit(screen.getByTestId('publish-record-form'));
-    await waitFor(() => {
-      expect(rejectingProp).toHaveBeenCalledTimes(1);
-    });
-    expect(directInput.value).toBe('https://star.example.com/direct-keep');
+    expect(screen.getByTestId('geo-score-value').textContent).toBe('86');
   });
 
-  it('aborts evaluate/export on CN->GLOBAL switch and prevents Article A -> Article B stale score clobber (D-2) + avoids duplicate H1 copy', async () => {
+  it('aborts evaluate on CN->GLOBAL switch and prevents Article A -> Article B stale score clobber (D-2)', async () => {
     const articleA: GeoArticleRecord = {
       ...SAMPLE_ARTICLE,
       id: 'art_race_a',
@@ -1772,8 +1498,6 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       items: [articleA, articleB],
       total: 2,
     });
-    const copySpy = vi.spyOn(studioApi, 'copyTextToClipboard').mockResolvedValue(true);
-    const downloadSpy = vi.spyOn(uxFoundation, 'triggerBlobDownload').mockReturnValue(true);
 
     let evalSignalA: AbortSignal | undefined;
     let resolveEvalA!: (v: Awaited<ReturnType<typeof studioApi.evaluateArticleGeo>>) => void;
@@ -1784,30 +1508,14 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       });
     });
 
-    let exportSignal: AbortSignal | undefined;
-    let resolveExport!: (v: Awaited<ReturnType<typeof studioApi.exportArticleFile>>) => void;
-    vi.spyOn(studioApi, 'exportArticleFile').mockImplementation((_id, _fmt, opts) => {
-      exportSignal = opts?.signal;
-      return new Promise((resolve) => {
-        resolveExport = resolve;
-      });
-    });
-
     render(
       <ConsoleProvider value={makeConsoleContext()}>
         <StudioWorkspace />
       </ConsoleProvider>,
     );
 
-    // Select Article A -> verify copy Markdown does NOT prepend duplicate # H1
     fireEvent.click(await screen.findByText('文章 A 静音实测'));
-    fireEvent.click(await screen.findByTestId('delivery-copy-md'));
-    await waitFor(() => {
-      expect(copySpy).toHaveBeenCalledWith('# 文章 A 静音实测\n\n正文内容\n');
-    });
-
-    // Trigger evaluate on Article A, then switch to Article B before it resolves
-    fireEvent.click(screen.getByTestId('geo-evaluate-refresh-btn'));
+    fireEvent.click(await screen.findByTestId('geo-evaluate-refresh-btn'));
     expect(evalSignalA).toBeDefined();
     expect(evalSignalA?.aborted).toBe(false);
 
@@ -1831,107 +1539,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
     expect(screen.getByTestId('geo-score-value').textContent).toBe('76');
 
-    // Trigger .docx export on Article B, then switch CN -> GLOBAL -> must abort & NOT download!
-    fireEvent.click(screen.getByTestId('delivery-download-docx'));
-    expect(exportSignal).toBeDefined();
-    expect(exportSignal?.aborted).toBe(false);
-
     act(() => {
       useWorkspaceStore.getState().setActiveMarket('GLOBAL');
     });
-    expect(exportSignal?.aborted).toBe(true);
-
-    await act(async () => {
-      resolveExport({
-        blob: new Blob(['stale']),
-        filename: 'stale.docx',
-        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      });
-    });
-    expect(downloadSpy).not.toHaveBeenCalled();
-  });
-
-  it('terminates retest polling cleanly with warning when run reaches COMPLETED with afterMetrics === null (D-3)', async () => {
-    vi.useFakeTimers();
-    try {
-      useWorkspaceStore.setState({
-        brandsLoading: false,
-        brandsLoaded: true,
-        brands: [DUAL_BRAND],
-        activeBrandId: DUAL_BRAND.id,
-        activeMarket: 'CN',
-      });
-
-      const pubRecord = {
-        id: 'pub_poll_1',
-        brandId: 'brand_studio_1',
-        brandMarketId: 'bm_cn_1',
-        articleId: 'art_st_1',
-        publishedUrl: 'https://star.example.com/guides/poll',
-        channel: '官网博客',
-        publishedAt: '2026-11-21T00:00:00.000Z',
-        baselineRunId: null,
-        latestRetestRunId: 'run_term_1',
-        beforeMetrics: null,
-        afterMetrics: null,
-      };
-      vi.spyOn(studioApi, 'fetchPublishRecords').mockResolvedValue({ items: [pubRecord] });
-      vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValueOnce({
-        id: 'run_term_1',
-        triggerType: 'RETEST',
-        status: 'QUEUED',
-      } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
-      const runDetailSpy = vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue({
-        id: 'run_term_1',
-        status: 'COMPLETED',
-        doneCount: 0,
-      } as unknown as Awaited<ReturnType<typeof visibilityApi.fetchVisibilityRunDetail>>);
-
-      render(
-        <ConsoleProvider value={makeConsoleContext()}>
-          <StudioWorkspace />
-        </ConsoleProvider>,
-      );
-
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      fireEvent.click(screen.getByText('星辰存储 DXP4800 静音实测报告'));
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      fireEvent.click(screen.getByTestId('publish-retest-btn'));
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      fireEvent.click(screen.getByTestId('publish-retest-confirm-btn'));
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      // Advance across 4 poll intervals (10s) -> must stop after the first terminal check!
-      for (let i = 0; i < 4; i += 1) {
-        await act(async () => {
-          vi.advanceTimersByTime(2_600);
-          await Promise.resolve();
-          await Promise.resolve();
-          await Promise.resolve();
-        });
-      }
-
-      expect(runDetailSpy).toHaveBeenCalledTimes(1);
-      expect(mockNotifyWarning).toHaveBeenCalledWith('复测已结束，本次无引擎返回有效观测结果');
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(screen.queryByTestId('geo-score-value')).toBeNull();
   });
 
   it('sanitizes clipboard Markdown and HTML copies via @geomix/shared even when article.contentHtml is empty', async () => {
@@ -2479,7 +2090,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(previewBody.textContent).toContain('星辰存储 DXP4800');
   });
 
-  it('opens Distribution Drawer from Delivery Pack CTA, returns to editor on missing-fact jump, and auto-closes on market context switch (M6A #354)', async () => {
+  it('saves dirty edits before navigating to /publish and honors ?fixCode=&locateTerm= focus recovery (Publish Split)', async () => {
     useWorkspaceStore.setState({
       brandsLoading: false,
       brandsLoaded: true,
@@ -2488,53 +2099,58 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       activeMarket: 'CN',
     });
 
-    vi.spyOn(distributionApi, 'runArticlePreflight').mockResolvedValue({
-      ok: false,
-      blockers: [
-        {
-          code: 'MISSING_FACT_SLOTS',
-          severity: 'blocker',
-          message: '检测到 1 处未补全的待补充事实占位符',
-          details: ['[待补充：如待机功耗 W]'],
-        },
-      ],
-      warnings: [],
+    const cleanArticle: GeoArticleRecord = {
+      ...SAMPLE_ARTICLE,
+      id: 'art_handoff_1',
+      title: '待发布干净实测成稿',
+      contentMarkdown: '# 实测标题\n\n全量实测参数已补齐。',
+      contentHtml: '<p>全量实测参数已补齐。</p>',
+    };
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
+      items: [cleanArticle, SAMPLE_ARTICLE],
+      total: 2,
     });
-    vi.spyOn(distributionApi, 'listArticleDistributions').mockResolvedValue({ items: [] });
-    vi.spyOn(distributionApi, 'listChannelConnections').mockResolvedValue({ items: [] });
-    vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_1);
+    const updateSpy = vi.spyOn(studioApi, 'updateArticle').mockResolvedValueOnce({
+      ...cleanArticle,
+      title: '已修改并准备发布的新标题',
+    });
+    const navigateWorkspace = vi.fn();
 
-    render(
-      <ConsoleProvider value={makeConsoleContext()}>
+    const { unmount } = render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
         <StudioWorkspace />
       </ConsoleProvider>,
     );
 
-    // Select article so CTA becomes enabled
-    fireEvent.click(await screen.findByText('星辰存储 DXP4800 静音实测报告'));
-    const openBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
-    expect(openBtn.disabled).toBe(false);
+    fireEvent.click(await screen.findByText('待发布干净实测成稿'));
+    const titleInput = (await screen.findByLabelText('文章标题')) as HTMLInputElement;
+    fireEvent.change(titleInput, { target: { value: '已修改并准备发布的新标题' } });
 
-    // Open drawer
-    fireEvent.click(openBtn);
-    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
-    expect(await screen.findByTestId('distribution-preflight-blockers')).toBeTruthy();
+    const goBtn = screen.getByTestId('studio-go-publish-btn') as HTMLButtonElement;
+    expect(goBtn.disabled).toBe(false);
+    fireEvent.click(goBtn);
 
-    // Return to editor closes drawer and notifies user
-    fireEvent.click(screen.getByTestId('distribution-back-to-editor-btn'));
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(navigateWorkspace).toHaveBeenCalledWith('/publish?articleId=art_handoff_1');
+    });
+    unmount();
+
+    // Arriving back from /publish with ?articleId=...&fixCode=MISSING_FACT_SLOTS focuses missing-fact-pill
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=CN&articleId=${SAMPLE_ARTICLE.id}&fixCode=MISSING_FACT_SLOTS`,
+    );
+    render(
+      <ConsoleProvider value={makeConsoleContext({ navigateWorkspace })}>
+        <StudioWorkspace />
+      </ConsoleProvider>,
+    );
+
     await waitFor(() => {
       expect(mockNotifyWarning).toHaveBeenCalledWith('已定位到待补充事实胶囊，点击即可行内补填');
-    });
-
-    // Re-open drawer, then switch market CN -> GLOBAL -> drawer auto-closes immediately
-    fireEvent.click(screen.getByTestId('studio-open-distribution-btn'));
-    expect(await screen.findByTestId('studio-distribution-drawer')).toBeTruthy();
-    act(() => {
-      useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
-    });
-    await waitFor(() => {
-      const openDrawer = document.querySelector('.ant-drawer-open');
-      expect(openDrawer).toBeNull();
+      expect(window.location.search).not.toContain('fixCode');
     });
   });
 
@@ -2578,214 +2194,15 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     });
   });
 
-  it('W-02: preserves CrawlProbe and 3x sampling edits across instant retest start and reloads publishRecords on external publish-records freshness invalidation', async () => {
-    window.history.replaceState(
-      null,
-      '',
-      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=${SAMPLE_ARTICLE.id}`,
-    );
+  it('Issue #364: auto-switches workspace context cleanly for valid articleId, cleans 404/mismatch articleId, and preserves editing flow', async () => {
     const globalArticle: GeoArticleRecord = {
       ...SAMPLE_ARTICLE,
-      brandMarketId: 'bm_gl_1',
-      market: 'GLOBAL',
-    };
-    const initialRecord: GeoPublishRecordDto = {
-      id: 'pub_w02_1',
-      brandId: DUAL_BRAND.id,
-      brandMarketId: 'bm_gl_1',
-      articleId: globalArticle.id,
-      publishedUrl: 'https://blog.example.com/nas-2026-review',
-      channel: 'Shopify 博客',
-      publishedAt: '2026-11-20T08:00:00.000Z',
-      baselineRunId: null,
-      latestRetestRunId: null,
-      beforeMetrics: null,
-      afterMetrics: null,
-      distributionTaskId: null,
-      crawlStatus: 'PENDING',
-      crawlCheckedAt: null,
-      crawlReportJson: null,
-      indexNowSubmitted: false,
-      retestSchedules: [
-        {
-          id: 'sched_w02_7',
-          publishRecordId: 'pub_w02_1',
-          milestoneDay: 7,
-          sampleCount: 1,
-          dueAt: '2026-11-27T08:00:00.000Z',
-          status: 'PENDING',
-          visibilityRunId: null,
-          metricsSnapshot: null,
-          skipReason: null,
-          executedAt: null,
-          createdAt: '2026-11-20T08:00:00.000Z',
-          updatedAt: '2026-11-20T08:00:00.000Z',
-        },
-        {
-          id: 'sched_w02_14',
-          publishRecordId: 'pub_w02_1',
-          milestoneDay: 14,
-          sampleCount: 1,
-          dueAt: '2026-12-04T08:00:00.000Z',
-          status: 'PENDING',
-          visibilityRunId: null,
-          metricsSnapshot: null,
-          skipReason: null,
-          executedAt: null,
-          createdAt: '2026-11-20T08:00:00.000Z',
-          updatedAt: '2026-11-20T08:00:00.000Z',
-        },
-      ],
-    };
-
-    useWorkspaceStore.setState({
-      brandsLoading: false,
-      brandsLoaded: true,
-      brands: [DUAL_BRAND],
-      activeBrandId: DUAL_BRAND.id,
-      activeMarket: 'GLOBAL',
-    });
-
-    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({
-      items: [globalArticle],
-      total: 1,
-    });
-    const fetchPubSpy = vi
-      .spyOn(studioApi, 'fetchPublishRecords')
-      .mockResolvedValue({ items: [initialRecord] });
-
-    const probedRecord: GeoPublishRecordDto = {
-      ...initialRecord,
-      crawlStatus: 'OK',
-      crawlCheckedAt: '2026-11-23T10:00:00.000Z',
-      crawlReportJson: {
-        checkedUrl: initialRecord.publishedUrl,
-        httpStatus: 200,
-        robotsTxtFound: true,
-        robotsMatrix: [
-          { bot: '*', allowed: true },
-          { bot: 'GPTBot', allowed: true },
-          { bot: 'OAI-SearchBot', allowed: true },
-          { bot: 'PerplexityBot', allowed: true },
-          { bot: 'Googlebot', allowed: true },
-        ],
-        metaNoindex: false,
-        jsonLdTypes: ['Article'],
-        jsonLdParseErrors: [],
-        canonicalUrl: initialRecord.publishedUrl,
-        canonicalMatches: true,
-        issues: [],
-      },
-    };
-    const probeSpy = vi.spyOn(distributionApi, 'triggerCrawlProbe').mockResolvedValue(probedRecord);
-
-    const updatedSchedules = initialRecord.retestSchedules!.map((s) => ({
-      ...s,
-      sampleCount: 3 as const,
-    }));
-    const schedSpy = vi.spyOn(distributionApi, 'updateRetestSchedules').mockResolvedValue({
-      publishRecordId: initialRecord.id,
-      items: updatedSchedules,
-    });
-
-    vi.spyOn(studioApi, 'triggerPublishRetest').mockResolvedValue({
-      id: 'run_instant_w02',
-      brandId: DUAL_BRAND.id,
-      brandMarketId: 'bm_gl_1',
-      market: 'GLOBAL',
-      name: '即时复测',
-      engines: ['perplexity'],
-      prompts: ['test'],
-      triggerType: 'RETEST',
-      retestArticleId: globalArticle.id,
-      status: 'QUEUED',
-      totalChecks: 1,
-      doneCount: 0,
-      failCount: 0,
-      unitPrice: 2,
-      settledPoints: 0,
-      releasedPoints: 0,
-      lastError: null,
-      createdAt: '2026-11-23T10:01:00.000Z',
-      finishedAt: null,
-    } as unknown as Awaited<ReturnType<typeof studioApi.triggerPublishRetest>>);
-
-    render(
-      <ConsoleProvider value={makeConsoleContext()}>
-        <StudioWorkspace />
-      </ConsoleProvider>,
-    );
-
-    const crawlBadges = await screen.findByTestId('publish-crawl-badges-pub_w02_1', undefined, {
-      timeout: 5000,
-    });
-    expect(crawlBadges.textContent).toContain('待体检');
-
-    // 1. Trigger CrawlProbe -> updates to OK + HTTP 200 without redundant self-reload
-    const fetchCountAfterMount = fetchPubSpy.mock.calls.length;
-    fireEvent.click(screen.getByTestId('publish-crawl-recheck-btn-pub_w02_1'));
-    await waitFor(() => {
-      expect(probeSpy).toHaveBeenCalledTimes(1);
-      expect(crawlBadges.textContent).toContain('HTTP 200');
-      expect(crawlBadges.textContent).toContain('可抓取');
-    });
-    expect(fetchPubSpy).toHaveBeenCalledTimes(fetchCountAfterMount);
-
-    // 2. Switch sampling to 3x -> budget reflects 3 次采样 without redundant self-reload
-    const sampleToggle = screen.getByTestId('publish-retest-sample-toggle-pub_w02_1');
-    fireEvent.click(within(sampleToggle).getByRole('button', { name: '3 次高置信' }));
-    await waitFor(() => {
-      expect(schedSpy).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('publish-retest-budget-pub_w02_1').textContent).toContain(
-        '3 次采样',
-      );
-    });
-    expect(fetchPubSpy).toHaveBeenCalledTimes(fetchCountAfterMount);
-
-    // 3. Trigger instant retest ("一键立刻复测") -> confirm modal -> CrawlProbe & 3x sampling MUST NOT revert!
-    fireEvent.click(screen.getByTestId('publish-retest-btn'));
-    const confirmRetestBtn = (await screen.findByTestId(
-      'publish-retest-confirm-btn',
-    )) as HTMLButtonElement;
-    await waitFor(() => {
-      expect(confirmRetestBtn.disabled).toBe(false);
-    });
-    fireEvent.click(confirmRetestBtn);
-
-    await waitFor(() => {
-      expect(studioApi.triggerPublishRetest).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.getByTestId('publish-crawl-badges-pub_w02_1').textContent).toContain('HTTP 200');
-    expect(screen.getByTestId('publish-crawl-badges-pub_w02_1').textContent).toContain('可抓取');
-    expect(screen.getByTestId('publish-retest-budget-pub_w02_1').textContent).toContain('3 次采样');
-
-    // 4. External invalidateFreshness('publish-records') reloads fetchPublishRecords for the active article
-    const countBeforeExternal = fetchPubSpy.mock.calls.length;
-    act(() => {
-      invalidateFreshness('publish-records');
-    });
-    await waitFor(() => {
-      expect(fetchPubSpy.mock.calls.length).toBeGreaterThan(countBeforeExternal);
-    });
-  });
-
-  it('Issue #364: preserves ?articleId= across refresh (including outside top-50 list), warns & cleans invalid/mismatched articleId, and auto-switches bare ?articleId= links', async () => {
-    const globalArticle: GeoArticleRecord = {
-      ...SAMPLE_ARTICLE,
-      id: 'art_gl_deep_364',
-      brandId: DUAL_BRAND.id,
-      brandMarketId: 'bm_gl_1',
+      id: 'art_global_364',
       market: 'GLOBAL',
       title: 'Deep Link GLOBAL Article 364',
-      contentMarkdown: '# Deep Link GLOBAL Article 364\n\nVerified lab benchmarks.',
+      contentMarkdown: '# Global Storage Benchmark\n\nAll measured metrics ready.',
+      contentHtml: '<p>All measured metrics ready.</p>',
     };
-
-    // 1. Refresh on /studio?brandId=...&market=GLOBAL&articleId=art_gl_deep_364 when article is NOT in initial top-50 list
-    window.history.replaceState(
-      null,
-      '',
-      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=${globalArticle.id}`,
-    );
     useWorkspaceStore.setState({
       brands: [DUAL_BRAND],
       brandsLoading: false,
@@ -2796,23 +2213,27 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       hydrated: true,
       contextEpoch: 1,
     });
-    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValue({ items: [], total: 0 });
-    vi.spyOn(studioApi, 'getArticle').mockResolvedValueOnce(globalArticle);
+    vi.spyOn(studioApi, 'fetchArticles').mockResolvedValueOnce({
+      items: [SAMPLE_ARTICLE],
+      total: 1,
+    });
+    vi.spyOn(studioApi, 'getArticle').mockResolvedValueOnce(SAMPLE_ARTICLE);
 
+    window.history.replaceState(
+      null,
+      '',
+      `/studio?brandId=${DUAL_BRAND.id}&market=GLOBAL&articleId=${SAMPLE_ARTICLE.id}`,
+    );
     const { unmount } = render(
       <ConsoleProvider value={makeConsoleContext()}>
         <StudioWorkspace />
       </ConsoleProvider>,
     );
-
     await waitFor(() => {
-      expect((screen.getByLabelText('文章标题') as HTMLInputElement).value).toBe(
-        'Deep Link GLOBAL Article 364',
+      expect((screen.getByTestId('studio-go-publish-btn') as HTMLButtonElement).disabled).toBe(
+        false,
       );
     });
-    expect((screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement).disabled).toBe(
-      false,
-    );
     unmount();
 
     // 2. Missing / 404 articleId shows friendly warning and cleans URL parameter
@@ -3166,7 +2587,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     // 0-article initial state: prewrite bar is expanded & footer CTA is disabled default button
     expect(await screen.findByTestId('studio-prewrite-bar')).toBeTruthy();
-    const emptyFooterBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    const emptyFooterBtn = screen.getByTestId('studio-go-publish-btn') as HTMLButtonElement;
     expect(emptyFooterBtn.disabled).toBe(true);
 
     // 1. Select DRAFT article with [TBD] -> prewrite auto-collapses & displays locale pill
@@ -3186,18 +2607,17 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(screen.getByTestId('studio-batch-tbd-open-btn').textContent).toContain(
       '补齐 1 组待补充事实',
     );
-    const fallbackDistBtn = screen.getByTestId('studio-open-distribution-btn') as HTMLButtonElement;
+    const fallbackDistBtn = screen.getByTestId('studio-go-publish-btn') as HTMLButtonElement;
     expect(fallbackDistBtn.disabled).toBe(false);
-    expect(fallbackDistBtn.textContent).toContain('仍要预览分发');
+    expect(fallbackDistBtn.textContent).toContain('仍要前往发布中心');
     const previewBody = screen.getByTestId('studio-preview-body');
     expect(previewBody.querySelectorAll('.gm-studio-tbd-inline').length).toBe(1);
 
-    // 3. Right pane dual-tab: DRAFT opens on 体检 showing UX_TERMS.fanOutCoverage ('AI 追问覆盖度')
+    // 3. Right pane clean single-column Checkup: shows UX_TERMS.fanOutCoverage ('AI 追问覆盖度') with no delivery tab
     const rightPane = screen.getByTestId('studio-right-pane');
     expect(rightPane.textContent).toContain('AI 追问覆盖度');
-    expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
-      'true',
-    );
+    expect(rightPane.textContent).toContain('GEO 体检与合规');
+    expect(screen.queryByTestId('studio-right-tab-delivery')).toBeNull();
 
     // 4. Focus Mode hides left & right panes and restores them on toggle off
     const focusBtn = screen.getByTestId('studio-focus-mode-btn');
@@ -3239,26 +2659,12 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       expect(screen.queryByTestId('studio-selection-bubble')).toBeNull();
     });
 
-    // 6. Switch to PUBLISHED clean article -> auto-selects 交付 tab with count & crawl alert dot,
-    //    and footer switches to primary '进入分发工作台'
+    // 6. Switch to PUBLISHED clean article -> footer switches to primary '前往发布中心 →'
     fireEvent.click(screen.getByText('Clean Published Guide'));
     await waitFor(() => {
-      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
-        'true',
-      );
-      expect(screen.getByTestId('studio-right-tab-delivery').textContent).toContain('交付 (1)');
-      expect(screen.getByTestId('studio-delivery-crawl-alert-dot')).toBeTruthy();
+      expect(screen.queryByTestId('studio-batch-tbd-open-btn')).toBeNull();
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
     });
-    expect(screen.queryByTestId('studio-batch-tbd-open-btn')).toBeNull();
-    expect(screen.getByTestId('studio-open-distribution-btn').textContent).toContain(
-      '进入分发工作台',
-    );
-
-    // Anti-fight: manually clicking 体检 stays on 体检
-    fireEvent.click(screen.getByTestId('studio-right-tab-checkup'));
-    expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
-      'true',
-    );
 
     // Clicking + 自由选题 auto-expands prewrite bar
     fireEvent.click(screen.getByTestId('studio-free-topic-btn'));
@@ -3332,7 +2738,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     }
   });
 
-  it('#384 regression (Fix 1 & Fix 3): PUBLISHED -> DRAFT switch clears stale publishRecords/tab lock and keeps strictly 1 primary CTA in States 6A & 6B', async () => {
+  it('#384 regression (Fix 1 & Fix 3): keeps strictly 1 primary CTA across prewrite expand/collapse and PUBLISHED -> DRAFT switches', async () => {
     const draftWithTbd: GeoArticleRecord = {
       ...SAMPLE_ARTICLE,
       id: 'art_reg_draft',
@@ -3372,33 +2778,6 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       items: [draftWithTbd, publishedArticle],
       total: 2,
     });
-    vi.spyOn(studioApi, 'fetchPublishRecords').mockImplementation(async (articleId) => {
-      if (articleId === publishedArticle.id) {
-        return {
-          items: [
-            {
-              id: 'pub_reg_blocked',
-              brandId: DUAL_BRAND.id,
-              brandMarketId: 'bm_cn_1',
-              articleId: publishedArticle.id,
-              channel: '官网博客',
-              publishedUrl: 'https://star.example.com/published',
-              publishedAt: '2026-11-24T08:00:00.000Z',
-              baselineRunId: null,
-              beforeMetrics: null,
-              afterMetrics: null,
-              latestRetestRunId: null,
-              crawlStatus: 'BLOCKED',
-              crawlCheckedAt: '2026-11-24T09:00:00.000Z',
-              crawlReportJson: null,
-              indexNowSubmitted: false,
-              retestSchedules: [],
-            },
-          ],
-        };
-      }
-      return { items: [] };
-    });
 
     render(
       <ConsoleProvider value={makeConsoleContext()}>
@@ -3408,14 +2787,10 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
 
     const workspace = await screen.findByTestId('studio-workspace');
 
-    // Open PUBLISHED article (1 blocked publish record) -> 交付 tab active with (1) & red dot
+    // Open PUBLISHED article -> primary footer CTA is studio-go-publish-btn
     fireEvent.click(await screen.findByText('回归测试已发布文章'));
     await waitFor(() => {
-      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
-        'true',
-      );
-      expect(screen.getByTestId('studio-right-tab-delivery').textContent).toContain('交付 (1)');
-      expect(screen.getByTestId('studio-delivery-crawl-alert-dot')).toBeTruthy();
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
     });
 
     // State 6A: expand prewrite manually while existing PUBLISHED article is open -> strictly 1 primary CTA
@@ -3430,20 +2805,13 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(await screen.findByTestId('studio-prewrite-collapsed-bar')).toBeTruthy();
     const primariesCollapsed = Array.from(workspace.querySelectorAll('button.ant-btn-primary'));
     expect(primariesCollapsed).toHaveLength(1);
-    expect(primariesCollapsed[0]?.getAttribute('data-testid')).toBe('studio-open-distribution-btn');
+    expect(primariesCollapsed[0]?.getAttribute('data-testid')).toBe('studio-go-publish-btn');
 
-    // Fix 1: Switch in-app from PUBLISHED -> DRAFT (0 publish records) -> MUST reset to 体检 tab, no (1), no red dot!
+    // Switch to DRAFT with [TBD] -> sole primary CTA becomes studio-batch-tbd-open-btn
     fireEvent.click(screen.getByText('回归测试草稿文章'));
     await waitFor(() => {
-      expect(screen.getByTestId('studio-right-tab-checkup').getAttribute('aria-selected')).toBe(
-        'true',
-      );
-      expect(screen.getByTestId('studio-right-tab-delivery').getAttribute('aria-selected')).toBe(
-        'false',
-      );
+      expect(screen.getByTestId('studio-batch-tbd-open-btn')).toBeTruthy();
     });
-    expect(screen.getByTestId('studio-right-tab-delivery').textContent).not.toContain('(1)');
-    expect(screen.queryByTestId('studio-delivery-crawl-alert-dot')).toBeNull();
 
     // State 6B: With DRAFT+TBD article open, click pending brief -> strictly 1 primary CTA (studio-stream-btn)
     const briefItem = screen.getByTestId(`studio-brief-item-${BRIEF_1.id}`);
@@ -3869,9 +3237,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(updatedMarkdown).toContain('| 官方质保 | 3 年质保 |');
 
     await waitFor(() => {
-      expect(screen.getByTestId('studio-open-distribution-btn').textContent).toContain(
-        '进入分发工作台',
-      );
+      expect(screen.getByTestId('studio-go-publish-btn').textContent).toContain('前往发布中心');
     });
   });
 

@@ -11,7 +11,7 @@ export type MintedSession = {
   refreshToken: string;
 };
 
-export type WorkspaceNavItem = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台';
+export type WorkspaceNavItem = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台' | '发布中心';
 
 export const REQUIRED_VIEWPORTS = [
   { width: 1440, height: 900 },
@@ -69,7 +69,7 @@ export async function injectSessionBeforeLoad(
 }
 
 /**
- * Clicks one of the flat 4-item left sidebar workspace links (no nested submenus).
+ * Clicks one of the flat 5-item left sidebar workspace links (no nested submenus).
  */
 export async function openWorkspaceNav(
   page: Page,

@@ -10,7 +10,7 @@ import { VIEWPORT_DESKTOP } from './assertions';
 
 export { injectSessionBeforeLoad, openAccountFromSider, openWorkspaceNav };
 
-export type WorkspaceTitle = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台';
+export type WorkspaceTitle = '行动首页' | '品牌资产' | '可见度诊断' | 'GEO 写作台' | '发布中心';
 
 export function attachErrorCollector(page: Page): { errors: string[] } {
   const errors: string[] = [];

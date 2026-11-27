@@ -65,7 +65,7 @@ v2Describe(
   },
   () => {
     test(
-      'S4-01 PRD §5 Redline #4: 0-brand -> 60s create + AI URL 4 facts -> CN monitor -> auto brief -> <30s SSE (>=85) -> JSON-LD -> publish & retest (<=3 nav hops)',
+      'S4-01 PRD §5 Redline #4: 0-brand -> 60s create + AI URL 4 facts -> CN monitor -> auto brief -> <30s SSE (>=85) -> JSON-LD -> publish & retest (<=4 nav hops)',
       { tag: ['@tier4', '@F5', '@F6', '@F7', '@F9', '@F11', '@F12', '@F16', '@F17', '@M5'] },
       async ({ browser }, testInfo) => {
         const tag = uniqueTag(testInfo, 's401');
@@ -300,12 +300,19 @@ v2Describe(
           expect(article.contentMarkdown).toMatch(/FAQ|常见问题|问答/i);
           assertGeoScoreValid(article.geoScore, article.geoScoreDetail, { minScore: 85 });
 
-          // 6. Step E (Same workspace /studio right pane — 0 extra hops): JSON-LD + Publish URL + One-Click Retest Before/After
-          await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible();
+          // 6. Step E (Hand off /studio -> /publish workspace): JSON-LD + Publish URL + One-Click Retest Before/After
+          await expect(page.getByTestId('studio-go-publish-btn')).toBeEnabled({ timeout: 15_000 });
+          await page.getByTestId('studio-go-publish-btn').click();
+          await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
+          await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
+
+          await page.getByTestId('publish-tab-delivery').click();
+          await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible({ timeout: 15_000 });
           assertValidJsonLd(article.schemaJsonLd, ['Article', 'FAQPage']);
 
+          await page.getByTestId('publish-tab-tracking').click();
           const publishForm = page.getByTestId('publish-record-form');
-          await expect(publishForm).toBeVisible();
+          await expect(publishForm).toBeVisible({ timeout: 15_000 });
           await publishForm
             .locator('input[placeholder*="http"], input[placeholder*="URL"], input')
             .first()
@@ -342,11 +349,11 @@ v2Describe(
           expect(retestedRecord?.latestRetestRunId).toBeTruthy();
           await expect(page.getByTestId('publish-before-after')).toBeVisible({ timeout: 15_000 });
 
-          // Hard PRD §5 Quality Redline #4 Assertions
+          // Hard PRD §5 Quality Redline #4 Assertions (4 workspace hops after splitting /publish)
           expect(
             navTracker.getTransitionCount(),
-            `PRD §5 Redline #4 requires <= 3 workspace transitions; visited: ${navTracker.getVisitedPaths().join(' -> ')}`,
-          ).toBeLessThanOrEqual(3);
+            `PRD §5 Redline #4 + /publish split allows <= 4 workspace transitions; visited: ${navTracker.getVisitedPaths().join(' -> ')}`,
+          ).toBeLessThanOrEqual(4);
           await assertZeroHorizontalOverflow(page, [{ width: 1440, height: 900 }]);
           assertNoConsoleOrPageErrors(errors);
         } finally {

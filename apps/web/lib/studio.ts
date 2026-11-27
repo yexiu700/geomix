@@ -4,6 +4,7 @@ import {
   replaceMissingFactSlot,
   type ArticleArchiveFormat,
   type GeoArticleListResponse,
+  type GeoArticlePublishFilter,
   type GeoArticleRecord,
   type GeoArticleStatus,
   type GeoArticleStreamInput,
@@ -55,6 +56,7 @@ export function fetchArticles(
   market: GeoMarket,
   params?: {
     status?: GeoArticleStatus;
+    publishFilter?: GeoArticlePublishFilter;
     tag?: string;
     briefId?: string;
     batchJobId?: string;
@@ -68,6 +70,9 @@ export function fetchArticles(
   const qs = new URLSearchParams();
   qs.set('market', market);
   if (params?.status) qs.set('status', params.status);
+  if (params?.publishFilter && params.publishFilter !== 'ALL') {
+    qs.set('publishFilter', params.publishFilter);
+  }
   if (params?.tag?.trim()) qs.set('tag', params.tag.trim());
   if (params?.briefId) qs.set('briefId', params.briefId);
   if (params?.batchJobId) qs.set('batchJobId', params.batchJobId);

@@ -26,8 +26,8 @@ afterEach(async () => {
   });
 });
 
-describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
-  it('renders flat 4 business workspaces and bottom-left sider-account-entry with zero submenus or legacy hints', () => {
+describe('SideMenu (GeoMix flat 5+1 sidebar)', () => {
+  it('renders flat 5 business workspaces and bottom-left sider-account-entry with zero submenus or legacy hints', () => {
     const onNavigate = vi.fn();
     render(
       <SideMenu
@@ -46,9 +46,10 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
       '品牌资产',
       '可见度诊断',
       'GEO 写作台',
+      '发布中心',
     ]);
     const navIcons = Array.from(document.querySelectorAll('.ant-menu-item svg'));
-    expect(navIcons).toHaveLength(4);
+    expect(navIcons).toHaveLength(5);
     for (const icon of navIcons) {
       expect(icon.classList.contains('gm-sider-nav-icon')).toBe(true);
       expect(icon.classList.contains('ant-menu-item-icon')).toBe(true);
@@ -80,7 +81,7 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
     );
 
     expect(screen.queryByRole('menuitem', { name: '可见度诊断' })).toBeNull();
-    expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+    expect(screen.getAllByRole('menuitem')).toHaveLength(4);
 
     rerender(
       <SideMenu
@@ -116,22 +117,24 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
     expect(root.textContent).toContain('GeoMix');
 
     const items = screen.getAllByRole('menuitem');
-    expect(items).toHaveLength(4);
+    expect(items).toHaveLength(5);
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       '行动首页',
       '品牌资产',
       '可见度诊断',
       'GEO 写作台',
+      '发布中心',
     ]);
     expect(screen.getByRole('menuitem', { name: '行动首页' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '品牌资产' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: '可见度诊断' })).toBeTruthy();
     expect(screen.getByRole('menuitem', { name: 'GEO 写作台' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '发布中心' })).toBeTruthy();
 
     const shortLabels = Array.from(document.querySelectorAll('.gm-sider-rail-short')).map((el) =>
       el.textContent?.trim(),
     );
-    expect(shortLabels).toEqual(['首页', '品牌', '诊断', '写作']);
+    expect(shortLabels).toEqual(['首页', '品牌', '诊断', '写作', '发布']);
 
     expect(screen.getByTestId('sider-account-entry')).toBeTruthy();
     const toggleBtn = screen.getByTestId('sider-collapse-toggle');
@@ -157,7 +160,7 @@ describe('SideMenu (GeoMix 2.0 flat 4+1 sidebar)', () => {
       />,
     );
 
-    expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+    expect(screen.getAllByRole('menuitem')).toHaveLength(5);
     const adminLink = screen.getByRole('link', { name: '运营后台' });
     expect(adminLink.getAttribute('href')).toBe('/admin/tenants');
     expect(adminLink.closest('.ant-menu')).toBeNull();

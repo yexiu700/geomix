@@ -834,9 +834,9 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
         merchantPage.locator('header.gm-header').getByRole('button', { name: /收起菜单|展开菜单/ }),
       ).toHaveCount(0);
 
-      // Sidebar: strictly 4 .ant-menu-item, bottom-left sider-account-entry, 0 admin links for MERCHANT
+      // Sidebar: strictly 5 .ant-menu-item, bottom-left sider-account-entry, 0 admin links for MERCHANT
       const sider = merchantPage.locator('aside.ant-layout-sider');
-      await expect(sider.locator('.ant-menu-item')).toHaveCount(4);
+      await expect(sider.locator('.ant-menu-item')).toHaveCount(5);
       await expect(sider.getByTestId('sider-account-entry')).toBeVisible();
       await expect(sider.getByRole('link', { name: '运营后台' })).toHaveCount(0);
 
@@ -883,7 +883,7 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
       await merchantCtx.close();
     }
 
-    // 2. Admin Context: still strictly 4 .ant-menu-item + quiet 运营后台 link outside .ant-menu above account
+    // 2. Admin Context: still strictly 5 .ant-menu-item + quiet 运营后台 link outside .ant-menu above account
     const adminSession = getAdminSession();
     const { context: adminCtx, page: adminPage } = await createAuthenticatedContext(
       browser,
@@ -896,7 +896,7 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
       await adminPage.goto('/home', { waitUntil: 'domcontentloaded' });
       const adminSider = adminPage.locator('aside.ant-layout-sider');
       await expect(adminSider).toBeVisible({ timeout: 20_000 });
-      await expect(adminSider.locator('.ant-menu-item')).toHaveCount(4);
+      await expect(adminSider.locator('.ant-menu-item')).toHaveCount(5);
 
       const adminLink = adminSider.getByRole('link', { name: '运营后台' }).first();
       await expect(adminLink).toBeVisible({ timeout: 10_000 });
@@ -958,8 +958,8 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
       expect(collapsedBox!.width).toBeGreaterThanOrEqual(64);
       expect(collapsedBox!.width).toBeLessThanOrEqual(84);
 
-      // 2. Visible 2-char short labels >= 12px (首页 / 品牌 / 诊断 / 写作)
-      for (const shortLabel of ['首页', '品牌', '诊断', '写作']) {
+      // 2. Visible 2-char short labels >= 12px (首页 / 品牌 / 诊断 / 写作 / 发布)
+      for (const shortLabel of ['首页', '品牌', '诊断', '写作', '发布']) {
         const labelEl = sider.getByText(shortLabel, { exact: true }).first();
         await expect(
           labelEl,
@@ -975,7 +975,7 @@ test.describe('Tier 1 — Sonar Ink 2.0 Tokens, Fonts, Shell & Studio Rail', () 
       }
 
       // 3. Full accessible names preserved while collapsed at 72px
-      for (const fullName of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台']) {
+      for (const fullName of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']) {
         const item = sider
           .getByRole('menuitem', { name: fullName, exact: true })
           .or(sider.getByRole('link', { name: fullName, exact: true }))
@@ -1137,6 +1137,13 @@ test.describe('Tier 2 — Multi-Viewport Overflow, Typography, Bounds & P2', () 
       });
       await expect(page.getByTestId('studio-workspace')).toBeVisible({ timeout: 20_000 });
       await auditRoute('/studio');
+
+      // 4b. /publish
+      await page.goto(`/publish?brandId=${brand.id}&market=CN&articleId=${article.id}`, {
+        waitUntil: 'domcontentloaded',
+      });
+      await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
+      await auditRoute('/publish');
 
       // 5. /account (all 3 tabs: 点数明细, 账号权益, 实名认证)
       await page.goto('/account', { waitUntil: 'domcontentloaded' });

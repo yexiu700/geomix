@@ -206,6 +206,7 @@ export type GeoArticleRowWithMarket = {
   createdAt: Date;
   updatedAt: Date;
   brandMarket?: { market: string } | null;
+  publishRecords?: Array<{ crawlStatus: string }> | null;
 };
 
 export function presentGeoArticle(
@@ -214,6 +215,14 @@ export function presentGeoArticle(
 ): GeoArticleRecord {
   const market: GeoMarket =
     row.brandMarket?.market === 'GLOBAL' || fallbackMarket === 'GLOBAL' ? 'GLOBAL' : 'CN';
+  const publishSummary = Array.isArray(row.publishRecords)
+    ? {
+        publishRecordCount: row.publishRecords.length,
+        hasCrawlAlert: row.publishRecords.some(
+          (rec) => rec.crawlStatus === 'BLOCKED' || rec.crawlStatus === 'FAILED',
+        ),
+      }
+    : {};
   return {
     id: row.id,
     brandId: row.brandId,
@@ -242,6 +251,7 @@ export function presentGeoArticle(
     tokensIn: row.tokensIn,
     tokensOut: row.tokensOut,
     complianceFlags: normalizeComplianceFlags(row.complianceFlags),
+    ...publishSummary,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

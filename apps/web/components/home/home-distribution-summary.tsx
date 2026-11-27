@@ -346,7 +346,7 @@ export function HomeDistributionSummary({
         ) : null}
         {onOpenStudio ? (
           <Button size="small" type="link" className="gm-home-nowrap-btn" onClick={onOpenStudio}>
-            进入写作与分发台
+            前往发布中心
           </Button>
         ) : null}
       </div>
@@ -365,7 +365,7 @@ export function HomeDistributionSummary({
         <EmptyState
           size="compact"
           title="暂无分发追踪与渠道归因数据"
-          description="在 GEO 写作台完成推送或登记已发布文章链接后，这里将自动汇总抓取异常告警、T+7/T+14/T+30 自动复测提醒与各渠道表现。"
+          description="在发布中心完成推送或登记已发布文章链接后，这里将自动汇总抓取异常告警、T+7/T+14/T+30 自动复测提醒与各渠道表现。"
         />
       ) : (
         <div className="gm-home-dist-stack">

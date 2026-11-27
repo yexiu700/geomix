@@ -2283,4 +2283,34 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(sentPayload.variantTitle).toBe('Edited Title While Paused');
     expect(sentPayload).not.toHaveProperty('connectionId');
   });
+
+  it('renders DistributionWorkbench inline without Drawer wrapper when variant="inline"', async () => {
+    const { DistributionWorkbench } = await import('./studio-distribution-drawer');
+    listChannelConnectionsMock.mockResolvedValueOnce({ items: [SHOPIFY_CONN] });
+    listArticleDistributionsMock.mockResolvedValueOnce({ items: [] });
+
+    render(
+      <DistributionWorkbench
+        open={true}
+        brandId="brand_1"
+        brandMarketId="bm_gl_1"
+        market="GLOBAL"
+        contextEpoch={1}
+        article={GLOBAL_ARTICLE}
+        draftTitle={GLOBAL_ARTICLE.title}
+        draftMarkdown={GLOBAL_ARTICLE.contentMarkdown}
+        readOnly={false}
+        walletAvailable={500}
+        onReturnToEditor={vi.fn()}
+        onNavigateBrands={vi.fn()}
+      />,
+    );
+
+    const workbench = await screen.findByTestId('publish-distribution-workbench');
+    expect(workbench).toBeTruthy();
+    expect(screen.queryByTestId('studio-distribution-drawer')).toBeNull();
+    expect(document.querySelector('.ant-drawer')).toBeNull();
+    expect(await screen.findByTestId('distribution-preflight-card')).toBeTruthy();
+    expect(await screen.findByTestId(`distribution-target-l1:${SHOPIFY_CONN.id}`)).toBeTruthy();
+  });
 });

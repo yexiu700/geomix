@@ -6,7 +6,6 @@ import {
   GEO_MARKET_LABELS,
   GEO_WRITE_DEFAULT_UNIT_POINTS,
   GLOBAL_SUPPORTED_LOCALES,
-  VISIBILITY_DEFAULT_UNIT_POINTS,
   defaultTargetFormatForMarket,
   resolveEffectiveLocale,
   targetFormatsForMarket,
@@ -20,19 +19,15 @@ import {
   type GeoBriefRecord,
   type GeoEvaluationResult,
   type GeoOutlineHeading,
-  type GeoPublishRecordDto,
   type GeoRecipe,
   type GeoRewriteAction,
   type GeoTargetFormat,
   type MissingFactSlot,
   type PreflightItemCode,
   type PromptPreferenceRecord,
-  type PublishRecordCreateInput,
   type SupportedLocale,
-  type VisibilityEngineAvailabilityItem,
-  type VisibilityEngineKey,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Drawer, Modal, Skeleton, Space, Tooltip } from 'antd';
+import { Button, Drawer, Skeleton } from 'antd';
 import type { JSX, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts, listBrandMedia, saveBrandFacts } from '../../lib/brands';
@@ -42,13 +37,11 @@ import {
   buildMarkdownImageToken,
   copyTextToClipboard,
   createBatchJob,
-  createPublishRecord,
   createStudioIdempotencyKey,
   deleteArticle,
   evaluateArticleGeo,
   fetchArticles,
   fetchBatchJobs,
-  fetchPublishRecords,
   getArticle,
   getBatchJob,
   getPromptPreferences,
@@ -58,20 +51,10 @@ import {
   rewriteArticleSection,
   savePromptPreferences,
   streamGenerateArticle,
-  triggerPublishRetest,
   updateArticle,
 } from '../../lib/studio';
-import {
-  invalidateFreshness,
-  useTabFreshness,
-  type FreshnessDomain,
-} from '../../lib/tab-freshness';
+import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
-import {
-  fetchVisibilityEngines,
-  fetchVisibilityRunDetail,
-  filterEnginesForMarket,
-} from '../../lib/visibility';
 import {
   selectActiveBrand,
   selectActiveBrandMarket,
@@ -86,22 +69,17 @@ import { SignalEmpty, SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
 import { StudioBatchTbdDrawer, type BatchTbdSubmitEntry } from './studio-batch-tbd-drawer';
 import { batchReplaceMissingFactSlots, groupMissingFactSlots } from './studio-batch-tbd-helpers';
-import { StudioDeliveryPack } from './studio-delivery-pack';
-import { StudioDistributionDrawer } from './studio-distribution-drawer';
 import { StudioEditorCanvas, type PartialStreamDraft } from './studio-editor-canvas';
 import { StudioGeoEvaluator } from './studio-geo-evaluator';
 import { StudioLeftPane } from './studio-left-pane';
 import { StudioMediaPopover } from './studio-media-popover';
 import { StudioPrewriteBar } from './studio-prewrite-bar';
-import { StudioPublishRetest } from './studio-publish-retest';
 import { StudioRightPane } from './studio-right-pane';
 
 export type StudioWorkspaceExtensionSlots = {
   counterEntrySlot?: ReactNode;
   mediaToolbarSlot?: ReactNode;
   evaluatorSlot?: ReactNode;
-  deliveryPackSlot?: ReactNode;
-  publishRetestSlot?: ReactNode;
 };
 
 const EMPTY_PREF: PromptPreferenceRecord = {
@@ -118,6 +96,8 @@ function readStudioUrlParams(): {
   briefId: string | null;
   articleId: string | null;
   batchJobId: string | null;
+  fixCode: string | null;
+  locateTerm: string | null;
 } {
   if (typeof window === 'undefined') {
     return {
@@ -127,6 +107,8 @@ function readStudioUrlParams(): {
       briefId: null,
       articleId: null,
       batchJobId: null,
+      fixCode: null,
+      locateTerm: null,
     };
   }
   const sp = new URLSearchParams(window.location.search);
@@ -138,11 +120,13 @@ function readStudioUrlParams(): {
     briefId: sp.get('briefId')?.trim() || null,
     articleId: sp.get('articleId')?.trim() || null,
     batchJobId: sp.get('batchJobId')?.trim() || null,
+    fixCode: sp.get('fixCode')?.trim() || null,
+    locateTerm: sp.get('locateTerm')?.trim() || null,
   };
 }
 
 function replaceStudioUrlParam(
-  key: 'briefId' | 'articleId' | 'batchJobId',
+  key: 'briefId' | 'articleId' | 'batchJobId' | 'fixCode' | 'locateTerm',
   value: string | null,
 ): void {
   if (typeof window === 'undefined') return;
@@ -283,29 +267,21 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const [partialDraft, setPartialDraft] = useState<PartialStreamDraft | null>(null);
   const [matchedFactIds, setMatchedFactIds] = useState<string[]>([]);
 
-  // M5 Delivery, Evaluator & Publish/Retest State
+  // M5 Evaluator & Cross-Page Publish Handoff State
   const [evaluation, setEvaluation] = useState<GeoEvaluationResult | null>(null);
   const [evaluating, setEvaluating] = useState(false);
   const [supplementingTerm, setSupplementingTerm] = useState<string | null>(null);
-  const [publishRecords, setPublishRecords] = useState<GeoPublishRecordDto[]>([]);
-  const [publishRecordsLoading, setPublishRecordsLoading] = useState(false);
-  const [retestingRecordId, setRetestingRecordId] = useState<string | null>(null);
-  const [pendingRetest, setPendingRetest] = useState<{
-    recordId: string;
-    runId: string;
-    articleId: string;
-  } | null>(null);
-  const [retestModalRecord, setRetestModalRecord] = useState<GeoPublishRecordDto | null>(null);
-  const [retestEngines, setRetestEngines] = useState<VisibilityEngineAvailabilityItem[]>([]);
-  const [retestEnginesLoading, setRetestEnginesLoading] = useState(false);
-  const [retestEnginesError, setRetestEnginesError] = useState<string | null>(null);
-  const [retestCheckedEngines, setRetestCheckedEngines] = useState<VisibilityEngineKey[]>([]);
-  const [distributionDrawerOpen, setDistributionDrawerOpen] = useState(false);
+  const [navigatingPublish, setNavigatingPublish] = useState(false);
 
   // Anti-race AbortControllers & monotonic context/article sequences
   const centerPaneRef = useRef<HTMLElement | null>(null);
   const returnFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingFixLocatorRef = useRef<{
+    articleId: string;
+    code?: PreflightItemCode;
+    locateTerm?: string;
+  } | null>(null);
   const contextSeqRef = useRef(0);
   const urlHydratedSeqRef = useRef(0);
   const articleSeqRef = useRef(0);
@@ -313,15 +289,10 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   const loadCtrlRef = useRef<AbortController | null>(null);
   const streamCtrlRef = useRef<AbortController | null>(null);
   const mediaRefreshCtrlRef = useRef<AbortController | null>(null);
-  const pubRecordsCtrlRef = useRef<AbortController | null>(null);
   const evalCtrlRef = useRef<AbortController | null>(null);
   const supplementCtrlRef = useRef<AbortController | null>(null);
-  const publishCtrlRef = useRef<AbortController | null>(null);
-  const retestCtrlRef = useRef<AbortController | null>(null);
-  const retestEnginesCtrlRef = useRef<AbortController | null>(null);
   const evaluatingRef = useRef(false);
   const supplementingTermRef = useRef<string | null>(null);
-  const retestingRecordsRef = useRef<Set<string>>(new Set());
   const insertingMediaRef = useRef(false);
   const hadActiveBatchRef = useRef(false);
   const editorCursorRef = useRef<number | null>(null);
@@ -375,15 +346,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     evalCtrlRef.current = null;
     supplementCtrlRef.current?.abort();
     supplementCtrlRef.current = null;
-    publishCtrlRef.current?.abort();
-    publishCtrlRef.current = null;
-    retestCtrlRef.current?.abort();
-    retestCtrlRef.current = null;
-    retestEnginesCtrlRef.current?.abort();
-    retestEnginesCtrlRef.current = null;
     evaluatingRef.current = false;
     supplementingTermRef.current = null;
-    retestingRecordsRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -427,16 +391,12 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       insertingMediaRef.current = false;
       pendingUsedMediaIdsRef.current = [];
       setSavingArticle(false);
+      setNavigatingPublish(false);
       setEvaluating(false);
       setEvaluation(null);
-      setPublishRecords([]);
       setSupplementingTerm(null);
-      setRetestingRecordId(null);
-      setRetestModalRecord(null);
       setBatchTbdDrawerOpen(false);
-      if (nextArticleId === null) {
-        setDistributionDrawerOpen(false);
-      } else {
+      if (nextArticleId !== null) {
         setPrewriteExpanded(false);
       }
     },
@@ -593,6 +553,15 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
 
       // Hydrate ?articleId= (single source of truth for article selection across refresh & shared links)
       if (urlParams.articleId) {
+        if (urlParams.fixCode || urlParams.locateTerm) {
+          pendingFixLocatorRef.current = {
+            articleId: urlParams.articleId,
+            code: (urlParams.fixCode as PreflightItemCode) || undefined,
+            locateTerm: urlParams.locateTerm || undefined,
+          };
+          replaceStudioUrlParam('fixCode', null);
+          replaceStudioUrlParam('locateTerm', null);
+        }
         const localArt = loadedArticles.find((a) => a.id === urlParams.articleId);
         if (localArt) {
           lastNotifiedInvalidArticleIdRef.current = null;
@@ -699,9 +668,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     streamCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current?.abort();
     mediaRefreshCtrlRef.current = null;
-    pubRecordsCtrlRef.current?.abort();
-    pubRecordsCtrlRef.current = null;
     clearArticleActionControllers();
+    pendingFixLocatorRef.current = null;
+    setNavigatingPublish(false);
     if (abortWalletTimerRef.current) {
       clearTimeout(abortWalletTimerRef.current);
       abortWalletTimerRef.current = null;
@@ -784,18 +753,9 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     setEvaluation(null);
     setEvaluating(false);
     setSupplementingTerm(null);
-    setPublishRecords([]);
-    setPublishRecordsLoading(false);
-    setRetestingRecordId(null);
-    setPendingRetest(null);
-    setRetestModalRecord(null);
-    setRetestEngines([]);
-    setRetestCheckedEngines([]);
-    setRetestEnginesError(null);
     setCounterModalOpen(false);
     setQuickExtractModalOpen(false);
     setBatchTbdDrawerOpen(false);
-    setDistributionDrawerOpen(false);
     checkingFactsRef.current = false;
     streamingRef.current = false;
     brandFactsPromiseRef.current = null;
@@ -841,8 +801,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       streamCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current?.abort();
       mediaRefreshCtrlRef.current = null;
-      pubRecordsCtrlRef.current?.abort();
-      pubRecordsCtrlRef.current = null;
       if (abortWalletTimerRef.current) {
         clearTimeout(abortWalletTimerRef.current);
         abortWalletTimerRef.current = null;
@@ -883,6 +841,16 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         setDraftMarkdown('');
       }
       return;
+    }
+
+    if (urlParams.fixCode || urlParams.locateTerm) {
+      pendingFixLocatorRef.current = {
+        articleId: urlParams.articleId,
+        code: (urlParams.fixCode as PreflightItemCode) || undefined,
+        locateTerm: urlParams.locateTerm || undefined,
+      };
+      replaceStudioUrlParam('fixCode', null);
+      replaceStudioUrlParam('locateTerm', null);
     }
 
     if (urlParams.articleId === activeArticleIdRef.current) {
@@ -1096,155 +1064,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   }, [hasActiveBatchJob]);
 
-  // Reusable publish records loader (also called by StudioDistributionDrawer after L1 publish / L3 register)
-  const reloadPublishRecords = useCallback(async (articleId: string) => {
-    pubRecordsCtrlRef.current?.abort();
-    const ctrl = new AbortController();
-    pubRecordsCtrlRef.current = ctrl;
-    const seq = contextSeqRef.current;
-    const artSeq = articleSeqRef.current;
-    setPublishRecordsLoading(true);
-    try {
-      const res = await fetchPublishRecords(articleId, { signal: ctrl.signal });
-      if (
-        ctrl.signal.aborted ||
-        seq !== contextSeqRef.current ||
-        artSeq !== articleSeqRef.current
-      ) {
-        return;
-      }
-      setPublishRecords(res.items);
-    } catch {
-      // Silent fallback on empty/aborted fetch
-    } finally {
-      if (
-        pubRecordsCtrlRef.current === ctrl &&
-        !ctrl.signal.aborted &&
-        seq === contextSeqRef.current &&
-        artSeq === articleSeqRef.current
-      ) {
-        setPublishRecordsLoading(false);
-      }
-    }
-  }, []);
-
-  // Load publish records whenever active article changes
   const activeArticleId = activeArticle?.id ?? null;
-  const activeArticleMatchesContext = Boolean(
-    activeArticle &&
-    activeArticle.market === activeMarket &&
-    activeArticle.brandId === activeBrandId,
-  );
-  useEffect(() => {
-    pubRecordsCtrlRef.current?.abort();
-    pubRecordsCtrlRef.current = null;
-    setEvaluation(null);
-    setPublishRecords([]);
-    setPendingRetest((prev) => (prev && prev.articleId === activeArticleId ? prev : null));
-
-    if (
-      !activeArticleId ||
-      !activeBrandId ||
-      !activeBrandMarketId ||
-      !activeArticleMatchesContext
-    ) {
-      setPublishRecordsLoading(false);
-      return;
-    }
-
-    void reloadPublishRecords(activeArticleId);
-
-    return () => {
-      pubRecordsCtrlRef.current?.abort();
-    };
-  }, [
-    activeArticleId,
-    activeArticleMatchesContext,
-    activeBrandId,
-    activeBrandMarketId,
-    reloadPublishRecords,
-  ]);
-
-  const skipNextSelfPublishRecordsRefreshRef = useRef(false);
-
-  const broadcastSelfPublishRecordsFreshness = useCallback((...domains: FreshnessDomain[]) => {
-    skipNextSelfPublishRecordsRefreshRef.current = true;
-    try {
-      invalidateFreshness(...domains);
-    } finally {
-      skipNextSelfPublishRecordsRefreshRef.current = false;
-    }
-  }, []);
-
-  const handlePublishRecordUpdated = useCallback((updated: GeoPublishRecordDto) => {
-    setPublishRecords((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
-    // StudioPublishRetest broadcasts invalidateFreshness('publish-records') right after this callback
-    // so other tabs (e.g. /home) refresh; skip redundant self-reload within the same tick.
-    skipNextSelfPublishRecordsRefreshRef.current = true;
-    queueMicrotask(() => {
-      skipNextSelfPublishRecordsRefreshRef.current = false;
-    });
-  }, []);
-
-  // Poll pending retest run until afterMetrics writeback or terminal status
-  useTaskPolling({
-    enabled: Boolean(activeBrandId && activeBrandMarket && pendingRetest),
-    active: Boolean(pendingRetest),
-    intervalMs: 2_500,
-    onPoll: async () => {
-      if (!activeBrandId || !activeBrandMarket || !pendingRetest) return;
-      const seq = contextSeqRef.current;
-      const articleSeq = articleSeqRef.current;
-      const currentPending = pendingRetest;
-      try {
-        const res = await fetchPublishRecords(currentPending.articleId);
-        if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
-        setPublishRecords(res.items);
-        const matched = res.items.find((r) => r.id === currentPending.recordId);
-        if (matched?.afterMetrics && matched.latestRetestRunId === currentPending.runId) {
-          setPendingRetest(null);
-          void consoleCtx?.refreshWallet();
-          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
-          feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
-          return;
-        }
-        const detail = await fetchVisibilityRunDetail(
-          activeBrandId,
-          currentPending.runId,
-          activeMarket,
-        );
-        if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
-        if (detail.status === 'FAILED' || detail.status === 'CANCELLED') {
-          setPendingRetest(null);
-          void consoleCtx?.refreshWallet();
-          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
-          feedback.notifyWarning('本次复测未成功完成，已按规则退还异常引擎点数');
-          return;
-        }
-        if (detail.status === 'COMPLETED' || detail.status === 'PARTIAL') {
-          const recheck = await fetchPublishRecords(currentPending.articleId);
-          if (seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current) return;
-          setPublishRecords(recheck.items);
-          const recheckMatched = recheck.items.find((r) => r.id === currentPending.recordId);
-          setPendingRetest(null);
-          void consoleCtx?.refreshWallet();
-          broadcastSelfPublishRecordsFreshness('publish-records', 'visibility-runs', 'points');
-          if (
-            recheckMatched?.afterMetrics &&
-            recheckMatched.latestRetestRunId === currentPending.runId
-          ) {
-            feedback.notifySuccess('复测完成，已生成发布前 / 发布后排名对比');
-          } else if (detail.doneCount === 0) {
-            feedback.notifyWarning('复测已结束，本次无引擎返回有效观测结果');
-          } else {
-            feedback.notifyWarning('复测已结束，暂未生成对比指标');
-          }
-        }
-      } catch {
-        // Silent retry on next poll tick
-      }
-    },
-  });
 
   // Cross-tab freshness sync (briefs/articles/brand-facts/brand-media/product-lines)
   useTabFreshness({
@@ -1261,24 +1081,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         preserveSelection: true,
         productLineId: activeProductLineId,
       });
-    },
-  });
-
-  // Dedicated 'publish-records' freshness sync: reload active article's publish records on external changes
-  useTabFreshness({
-    domains: ['publish-records'],
-    active: Boolean(activeBrandId && activeBrandMarket && !streaming),
-    refreshOnActivate: false,
-    onRefresh: () => {
-      if (skipNextSelfPublishRecordsRefreshRef.current) {
-        skipNextSelfPublishRecordsRefreshRef.current = false;
-        return;
-      }
-      if (!activeBrandId || !activeBrandMarket || streaming) return;
-      const openArticleId = activeArticleIdRef.current;
-      if (openArticleId) {
-        void reloadPublishRecords(openArticleId);
-      }
     },
   });
 
@@ -1532,8 +1334,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     streamCtrlRef.current?.abort();
   };
 
-  const handleSaveArticle = async () => {
-    if (!activeArticle || readOnly || savingArticle) return;
+  const persistDraftChanges = async (): Promise<boolean> => {
+    if (!activeArticle || readOnly || savingArticle) return false;
     const targetArticle = activeArticle;
     const seq = contextSeqRef.current;
     const artSeq = articleSeqRef.current;
@@ -1550,7 +1352,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       } else {
         invalidateFreshness('articles');
       }
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return false;
       pendingUsedMediaIdsRef.current = pendingUsedMediaIdsRef.current.filter(
         (id) => !queuedMediaIds.includes(id),
       );
@@ -1564,14 +1366,20 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           ),
         );
       }
+      return true;
     } catch (err) {
-      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return;
+      if (seq !== contextSeqRef.current || artSeq !== articleSeqRef.current) return false;
       feedback.notifyError(formatStudioError(err, '保存文章失败'));
+      return false;
     } finally {
       if (seq === contextSeqRef.current && artSeq === articleSeqRef.current) {
         setSavingArticle(false);
       }
     }
+  };
+
+  const handleSaveArticle = async (): Promise<void> => {
+    await persistDraftChanges();
   };
 
   const handleRefreshBrandMedia = useCallback(async () => {
@@ -2147,58 +1955,8 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
     }
   };
 
-  const handleCreatePublishRecord = async (input: PublishRecordCreateInput): Promise<boolean> => {
-    if (!activeArticle || readOnly) return false;
-    publishCtrlRef.current?.abort();
-    const ctrl = new AbortController();
-    publishCtrlRef.current = ctrl;
-    const seq = contextSeqRef.current;
-    const articleSeq = articleSeqRef.current;
-    const targetArticle = activeArticle;
-    const isStale = () =>
-      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
-    try {
-      const created = await createPublishRecord(targetArticle.id, input, { signal: ctrl.signal });
-      if (isStale()) return false;
-      setPublishRecords((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
-      const nextArticle: GeoArticleRecord = { ...targetArticle, status: 'PUBLISHED' };
-      setActiveArticle((prev) =>
-        prev && prev.id === nextArticle.id ? { ...prev, status: 'PUBLISHED' } : prev,
-      );
-      setArticles((prev) => prev.map((a) => (a.id === nextArticle.id ? nextArticle : a)));
-      feedback.notifySuccess('已登记发布链接并标记文章为「已发布」');
-      broadcastSelfPublishRecordsFreshness('publish-records', 'articles');
-      return true;
-    } catch (err) {
-      if (isStale()) return false;
-      feedback.notifyError(formatStudioError(err, '登记发布记录失败'));
-      return false;
-    } finally {
-      if (publishCtrlRef.current === ctrl) {
-        publishCtrlRef.current = null;
-      }
-    }
-  };
-
-  const handleDistributionPublishRecordsSynced = useCallback(
-    async (articleId: string) => {
-      if (activeArticleIdRef.current !== articleId) return;
-      await reloadPublishRecords(articleId);
-      setActiveArticle((prev) =>
-        prev && prev.id === articleId ? { ...prev, status: 'PUBLISHED' } : prev,
-      );
-      setArticles((prev) =>
-        prev.map((a) => (a.id === articleId ? { ...a, status: 'PUBLISHED' } : a)),
-      );
-      broadcastSelfPublishRecordsFreshness('publish-records', 'articles', 'distributions');
-      void consoleCtx?.refreshWallet();
-    },
-    [broadcastSelfPublishRecordsFreshness, consoleCtx, reloadPublishRecords],
-  );
-
-  const handleReturnToEditorForFix = useCallback(
+  const focusEditorForFix = useCallback(
     (code?: PreflightItemCode, locateTerm?: string) => {
-      setDistributionDrawerOpen(false);
       if (returnFocusTimerRef.current) {
         clearTimeout(returnFocusTimerRef.current);
       }
@@ -2283,110 +2041,21 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         }
         feedback.notifyWarning(
           trimmedTerm
-            ? `已返回编辑器并定位到「${trimmedTerm}」，请修改后重新体检`
-            : '已返回编辑器，请修正发布前体检阻断项后再推送',
+            ? `已定位到「${trimmedTerm}」，请修改后重新体检`
+            : '请修正发布前体检阻断项后再前往发布',
         );
       }, 50);
     },
     [feedback],
   );
 
-  const brandNames = useMemo(() => {
-    const names = [
-      activeBrand?.name,
-      activeBrandMarket?.localBrandName,
-      ...(activeBrandMarket?.aliases ?? []),
-    ].filter((v): v is string => Boolean(v && v.trim()));
-    return [...new Set(names)];
-  }, [activeBrand?.name, activeBrandMarket?.aliases, activeBrandMarket?.localBrandName]);
-
-  const loadRetestEngines = useCallback(async (brandId: string, market: typeof activeMarket) => {
-    retestEnginesCtrlRef.current?.abort();
-    const ctrl = new AbortController();
-    retestEnginesCtrlRef.current = ctrl;
-    const seq = contextSeqRef.current;
-    setRetestEnginesLoading(true);
-    setRetestEnginesError(null);
-    try {
-      const res = await fetchVisibilityEngines(brandId, market, { signal: ctrl.signal });
-      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
-      const scoped = filterEnginesForMarket(res.engines, market);
-      setRetestEngines(scoped);
-      setRetestCheckedEngines(scoped.filter((eng) => eng.available).map((eng) => eng.key));
-    } catch (err) {
-      if (ctrl.signal.aborted || seq !== contextSeqRef.current) return;
-      setRetestEnginesError(formatStudioError(err, '加载 AI 引擎列表失败'));
-    } finally {
-      if (!ctrl.signal.aborted && seq === contextSeqRef.current) {
-        setRetestEnginesLoading(false);
-      }
-    }
-  }, []);
-
-  const handleOpenRetestModal = async (record: GeoPublishRecordDto) => {
-    if (
-      !activeArticle ||
-      !activeBrandId ||
-      readOnly ||
-      retestingRecordsRef.current.size > 0 ||
-      retestingRecordsRef.current.has(record.id)
-    ) {
-      return;
-    }
-    setRetestModalRecord(record);
-    await loadRetestEngines(activeBrandId, activeMarket);
-  };
-
-  const handleTriggerRetest = async (
-    record: GeoPublishRecordDto,
-    engines?: readonly VisibilityEngineKey[],
-  ) => {
-    if (
-      !activeArticle ||
-      readOnly ||
-      retestingRecordsRef.current.size > 0 ||
-      retestingRecordsRef.current.has(record.id)
-    ) {
-      return;
-    }
-    retestingRecordsRef.current.add(record.id);
-    setRetestingRecordId(record.id);
-    retestCtrlRef.current?.abort();
-    const ctrl = new AbortController();
-    retestCtrlRef.current = ctrl;
-    const seq = contextSeqRef.current;
-    const articleSeq = articleSeqRef.current;
-    const isStale = () =>
-      ctrl.signal.aborted || seq !== contextSeqRef.current || articleSeq !== articleSeqRef.current;
-    try {
-      const payload = engines && engines.length > 0 ? { engines: [...engines] } : undefined;
-      const run = await triggerPublishRetest(record.id, payload, undefined, {
-        signal: ctrl.signal,
-      });
-      if (isStale()) return;
-      setPublishRecords((prev) =>
-        prev.map((r) =>
-          r.id === record.id ? { ...r, latestRetestRunId: run.id, afterMetrics: null } : r,
-        ),
-      );
-      setPendingRetest({ recordId: record.id, runId: run.id, articleId: record.articleId });
-      void consoleCtx?.refreshWallet();
-      invalidateFreshness('visibility-runs', 'points');
-      feedback.notifySuccess('已发起定向复测，完成后将自动展示发布前 / 发布后对比');
-    } catch (err) {
-      if (isStale()) return;
-      feedback.notifyError(formatStudioError(err, '发起排名复测失败'));
-      void consoleCtx?.refreshWallet();
-    } finally {
-      if (retestCtrlRef.current === ctrl) {
-        retestCtrlRef.current = null;
-      }
-      if (seq === contextSeqRef.current && articleSeq === articleSeqRef.current) {
-        retestingRecordsRef.current.delete(record.id);
-        setRetestingRecordId(null);
-      }
-    }
-  };
+  useEffect(() => {
+    if (!activeArticleId || streaming) return;
+    const pending = pendingFixLocatorRef.current;
+    if (!pending || pending.articleId !== activeArticleId) return;
+    pendingFixLocatorRef.current = null;
+    focusEditorForFix(pending.code, pending.locateTerm);
+  }, [activeArticleId, streaming, focusEditorForFix]);
 
   const missingSlotGroups = useMemo(
     () => (streaming || !activeArticle ? [] : groupMissingFactSlots(draftMarkdown)),
@@ -2468,19 +2137,19 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
   );
 
   const isPrewriteCollapsed = Boolean(activeArticle) && !streaming && !prewriteExpanded;
-  const scopedPublishRecords =
-    activeArticleMatchesContext && activeArticle
-      ? publishRecords.filter((rec) => rec.articleId === activeArticle.id)
-      : [];
-  const hasCrawlAlert = scopedPublishRecords.some(
-    (rec) => rec.crawlStatus === 'BLOCKED' || rec.crawlStatus === 'FAILED',
-  );
 
-  const onlineRetestEngineKeys = retestEngines.filter((eng) => eng.available).map((eng) => eng.key);
-  const validRetestCheckedEngines = retestCheckedEngines.filter((key) =>
-    onlineRetestEngineKeys.includes(key),
-  );
-  const retestEstimatedPoints = validRetestCheckedEngines.length * VISIBILITY_DEFAULT_UNIT_POINTS;
+  const handleNavigatePublish = async () => {
+    if (!activeArticle || streaming || navigatingPublish) return;
+    const targetArticleId = activeArticle.id;
+    if (isDirty && !readOnly) {
+      setNavigatingPublish(true);
+      const savedOk = await persistDraftChanges();
+      setNavigatingPublish(false);
+      if (!savedOk) return;
+    }
+    setMobileRightDrawerOpen(false);
+    consoleCtx?.navigateWorkspace(`/publish?articleId=${encodeURIComponent(targetArticleId)}`);
+  };
 
   const counterEntryNode = slots?.counterEntrySlot ?? (
     <Button
@@ -2538,18 +2207,14 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
       brandFacts={brandFacts}
       matchedFactIds={matchedFactIds}
       missingSlotCount={missingSlotCount}
-      publishRecordCount={scopedPublishRecords.length}
-      hasCrawlAlert={hasCrawlAlert}
+      navigatingPublish={navigatingPublish}
       onChangeStatus={handleChangeStatus}
       onChangeTags={handleChangeTags}
       onFocusMissingFacts={() => {
         setMobileRightDrawerOpen(false);
         setBatchTbdDrawerOpen(true);
       }}
-      onOpenDistributionDrawer={() => {
-        setMobileRightDrawerOpen(false);
-        setDistributionDrawerOpen(true);
-      }}
+      onNavigatePublish={() => void handleNavigatePublish()}
       readOnly={readOnly}
       evaluatorSlot={
         slots?.evaluatorSlot ?? (
@@ -2562,44 +2227,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             streaming={streaming}
             onRefreshEvaluate={handleRefreshEvaluate}
             onSupplementFanOut={handleSupplementFanOut}
-          />
-        )
-      }
-      deliveryPackSlot={
-        slots?.deliveryPackSlot ?? (
-          <StudioDeliveryPack
-            activeMarket={activeMarket}
-            localBrandName={activeBrandMarket.localBrandName}
-            category={activeBrand.category}
-            localCategory={activeBrandMarket.localCategory}
-            ownedDomains={activeBrandMarket.ownedDomains}
-            brandNames={brandNames}
-            matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
-            readOnly={readOnly}
-            article={activeArticle}
-            evaluation={evaluation}
-            linkedBriefChannels={linkedBrief?.recommendedChannels}
-            streaming={streaming}
-            onOpenDistributionDrawer={() => {
-              setMobileRightDrawerOpen(false);
-              setDistributionDrawerOpen(true);
-            }}
-          />
-        )
-      }
-      publishRetestSlot={
-        slots?.publishRetestSlot ?? (
-          <StudioPublishRetest
-            activeMarket={activeMarket}
-            article={activeArticleMatchesContext ? activeArticle : null}
-            publishRecords={scopedPublishRecords}
-            recordsLoading={publishRecordsLoading}
-            retestingRecordId={retestingRecordId}
-            pollingRetestRecordId={pendingRetest?.recordId ?? null}
-            readOnly={readOnly}
-            onCreatePublishRecord={handleCreatePublishRecord}
-            onTriggerRetest={handleOpenRetestModal}
-            onPublishRecordUpdated={handlePublishRecordUpdated}
           />
         )
       }
@@ -2725,7 +2352,7 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
           />
         </section>
 
-        {/* Right Pane: Dual-Tab (体检 | 交付) + Sticky Single-CTA Footer */}
+        {/* Right Pane: GEO Checkup & Compliance + Publish Handoff CTA */}
         {!focusMode && !isNarrowDrawerViewport ? renderRightPane() : null}
       </div>
 
@@ -2751,47 +2378,13 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
             keyboard
             destroyOnHidden
             width={340}
-            title="体检与交付"
+            title="GEO 体检与合规"
             classNames={{ body: 'gm-studio-drawer-body' }}
           >
             {renderRightPane()}
           </Drawer>
         </>
       ) : null}
-
-      <StudioDistributionDrawer
-        open={
-          distributionDrawerOpen &&
-          activeArticle !== null &&
-          activeArticle.market === activeMarket &&
-          activeArticle.brandId === activeBrand.id
-        }
-        brandId={activeBrand.id}
-        brandMarketId={activeBrandMarket.id}
-        market={activeMarket}
-        contextEpoch={state.contextEpoch}
-        article={activeArticle}
-        draftTitle={draftTitle}
-        draftMarkdown={draftMarkdown}
-        brandNames={brandNames}
-        matchedFactCount={matchedFactIds.length > 0 ? matchedFactIds.length : brandFacts.length}
-        evaluation={evaluation}
-        linkedBrief={linkedBrief}
-        supportedLocales={availableLocales}
-        defaultTargetLocale={activeArticle?.targetLocale ?? targetLocale}
-        readOnly={readOnly}
-        walletAvailable={consoleCtx?.wallet?.available ?? null}
-        onClose={() => setDistributionDrawerOpen(false)}
-        onReturnToEditor={handleReturnToEditorForFix}
-        onNavigateBrands={() => consoleCtx?.navigateWorkspace('/brands')}
-        onNavigateExtensionPairing={() =>
-          consoleCtx?.navigateWorkspace('/brands?section=extension')
-        }
-        onNavigateAccount={() => consoleCtx?.navigateWorkspace('/account?tab=extension')}
-        onRefreshWallet={() => consoleCtx?.refreshWallet()}
-        onPublishRecordsSynced={handleDistributionPublishRecordsSynced}
-        onCreatePublishRecord={handleCreatePublishRecord}
-      />
 
       <CitationCounterModal
         open={counterModalOpen}
@@ -2803,151 +2396,6 @@ export function StudioWorkspace(slots?: StudioWorkspaceExtensionSlots): JSX.Elem
         onClose={() => setCounterModalOpen(false)}
         onCreated={handleCounterBriefCreated}
       />
-
-      <Modal
-        open={Boolean(retestModalRecord)}
-        title={`确认定向复测 · 选择 AI 引擎（${GEO_MARKET_LABELS[activeMarket]}）`}
-        width={560}
-        destroyOnHidden
-        onCancel={() => {
-          retestEnginesCtrlRef.current?.abort();
-          setRetestModalRecord(null);
-        }}
-        footer={
-          <Space>
-            <Button
-              onClick={() => {
-                retestEnginesCtrlRef.current?.abort();
-                setRetestModalRecord(null);
-              }}
-            >
-              取消
-            </Button>
-            <Button
-              type="primary"
-              data-testid="publish-retest-confirm-btn"
-              disabled={
-                readOnly ||
-                retestEnginesLoading ||
-                validRetestCheckedEngines.length === 0 ||
-                !retestModalRecord
-              }
-              onClick={() => {
-                if (!retestModalRecord || validRetestCheckedEngines.length === 0) return;
-                const targetRecord = retestModalRecord;
-                const chosenEngines = [...validRetestCheckedEngines];
-                setRetestModalRecord(null);
-                void handleTriggerRetest(targetRecord, chosenEngines);
-              }}
-            >
-              确认发起复测（{retestEstimatedPoints} 点）
-            </Button>
-          </Space>
-        }
-      >
-        <div data-testid="publish-retest-modal" className="gm-studio-stack gm-studio-stack--lg">
-          <div className="gm-studio-text-secondary">
-            默认仅勾选当前市场已上线健康引擎，避免盲扣未上线引擎点数；异常项自动全额退还。
-          </div>
-
-          <div className="gm-vis-label-row">
-            <span className="gm-vis-field-label">
-              已选 <span className="gm-num">{validRetestCheckedEngines.length}</span> / 在线{' '}
-              <span className="gm-num">{onlineRetestEngineKeys.length}</span> / 共{' '}
-              <span className="gm-num">{retestEngines.length}</span>
-            </span>
-            <Space size={8}>
-              <Button
-                size="small"
-                type="link"
-                disabled={retestEnginesLoading || onlineRetestEngineKeys.length === 0}
-                onClick={() => setRetestCheckedEngines([...onlineRetestEngineKeys])}
-              >
-                全选在线引擎
-              </Button>
-              <Button
-                size="small"
-                type="link"
-                disabled={retestEnginesLoading || validRetestCheckedEngines.length === 0}
-                onClick={() => setRetestCheckedEngines([])}
-              >
-                清空
-              </Button>
-            </Space>
-          </div>
-
-          {retestEnginesError ? (
-            <Alert
-              type="error"
-              showIcon
-              message={retestEnginesError}
-              action={
-                <Button
-                  size="small"
-                  onClick={() => {
-                    if (activeBrandId) {
-                      void loadRetestEngines(activeBrandId, activeMarket);
-                    }
-                  }}
-                >
-                  重试
-                </Button>
-              }
-            />
-          ) : retestEnginesLoading && retestEngines.length === 0 ? (
-            <SignalSkeleton variant="block" height={92} />
-          ) : (
-            <div className="gm-vis-engine-grid">
-              {retestEngines.map((eng) => {
-                const isChecked = eng.available && validRetestCheckedEngines.includes(eng.key);
-                const cardClass = [
-                  'gm-engine-card',
-                  isChecked ? 'gm-engine-card-checked' : '',
-                  !eng.available ? 'gm-engine-card-offline' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ');
-                const card = (
-                  <label
-                    key={eng.key}
-                    data-testid={`retest-engine-option-${eng.key}`}
-                    data-engine-status={eng.available ? 'online' : 'offline'}
-                    className={cardClass}
-                  >
-                    <Checkbox
-                      checked={isChecked}
-                      disabled={!eng.available || readOnly}
-                      onChange={() => {
-                        if (!eng.available) return;
-                        setRetestCheckedEngines((prev) =>
-                          prev.includes(eng.key)
-                            ? prev.filter((k) => k !== eng.key)
-                            : [...prev, eng.key],
-                        );
-                      }}
-                    />
-                    <span className="gm-vis-engine-label">{eng.label}</span>
-                    {!eng.available ? <span className="gm-vis-offline-badge">暂未上线</span> : null}
-                  </label>
-                );
-                return !eng.available ? (
-                  <Tooltip key={eng.key} title="该引擎暂未上线，不可勾选且不消耗点数">
-                    {card}
-                  </Tooltip>
-                ) : (
-                  card
-                );
-              })}
-            </div>
-          )}
-
-          <div className="gm-studio-text-secondary">
-            预计预冻 <strong className="gm-num">{retestEstimatedPoints}</strong> 点（
-            <span className="gm-num">{validRetestCheckedEngines.length}</span> 引擎 ×{' '}
-            <span className="gm-num">{VISIBILITY_DEFAULT_UNIT_POINTS}</span> 点/次）
-          </div>
-        </div>
-      </Modal>
 
       <QuickFactExtractModal
         open={quickExtractModalOpen}

@@ -189,9 +189,12 @@ v2Describe(
 
         const { context, page } = await createAuthenticatedContext(browser, tenant);
         try {
-          await page.goto(`/studio?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}`, {
-            waitUntil: 'domcontentloaded',
-          });
+          await page.goto(
+            `/publish?brandId=${brand.id}&market=GLOBAL&articleId=${articleId}&tab=delivery`,
+            {
+              waitUntil: 'domcontentloaded',
+            },
+          );
           await expect(
             page
               .getByTestId('delivery-copy-jsonld')
@@ -241,9 +244,12 @@ v2Describe(
 
         const { context, page } = await createAuthenticatedContext(browser, tenant);
         try {
-          await page.goto(`/studio?brandId=${brandId}&market=CN&articleId=${articleId}`, {
-            waitUntil: 'domcontentloaded',
-          });
+          await page.goto(
+            `/publish?brandId=${brandId}&market=CN&articleId=${articleId}&tab=delivery`,
+            {
+              waitUntil: 'domcontentloaded',
+            },
+          );
           await expect(page.locator('body')).toContainText(/知乎|头条|什么值得买|公众号|小红书/);
         } finally {
           await context.close();
@@ -671,9 +677,12 @@ v2Describe(
 
         const { context, page } = await createAuthenticatedContext(browser, tenant);
         try {
-          await page.goto(`/studio?brandId=${brandId}&market=CN&articleId=${articleId}`, {
-            waitUntil: 'domcontentloaded',
-          });
+          await page.goto(
+            `/publish?brandId=${brandId}&market=CN&articleId=${articleId}&tab=tracking`,
+            {
+              waitUntil: 'domcontentloaded',
+            },
+          );
           await expect(page.locator('body')).toContainText(/发布前|发布后|复测|Before|After/);
         } finally {
           await context.close();

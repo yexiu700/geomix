@@ -20,6 +20,7 @@ const DISALLOWED_PRIVATE_PATHS = [
   '/brands',
   '/visibility',
   '/studio',
+  '/publish',
   '/account',
   '/share/',
   '/api/',

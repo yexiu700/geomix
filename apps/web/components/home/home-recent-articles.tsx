@@ -20,6 +20,7 @@ export type HomeRecentArticlesProps = {
   pollingRecordIds: ReadonlySet<string>;
   readOnly: boolean;
   onOpenArticle: (articleId: string) => void;
+  onPublishArticle?: (articleId: string, tab?: 'distribute' | 'tracking') => void;
   onTriggerRetest: (record: GeoPublishRecordDto) => void;
   onOpenStudio: () => void;
 };
@@ -44,6 +45,7 @@ export function HomeRecentArticles({
   pollingRecordIds,
   readOnly,
   onOpenArticle,
+  onPublishArticle,
   onTriggerRetest,
   onOpenStudio,
 }: HomeRecentArticlesProps): JSX.Element {
@@ -148,6 +150,14 @@ export function HomeRecentArticles({
                       }}
                       menuItems={[
                         {
+                          key: 'publish',
+                          label: '在发布中心查看',
+                          onClick: () =>
+                            onPublishArticle
+                              ? onPublishArticle(article.id, 'tracking')
+                              : onOpenArticle(article.id),
+                        },
+                        {
                           key: 'open',
                           label: '在写作台打开',
                           onClick: () => onOpenArticle(article.id),
@@ -167,7 +177,10 @@ export function HomeRecentArticles({
                         {
                           key: 'publish',
                           label: '去登记发布',
-                          onClick: () => onOpenArticle(article.id),
+                          onClick: () =>
+                            onPublishArticle
+                              ? onPublishArticle(article.id, 'distribute')
+                              : onOpenArticle(article.id),
                         },
                       ]}
                     />

@@ -916,8 +916,8 @@ v2Describe(
           await expect(sider.locator('.ant-menu-submenu')).toHaveCount(0);
 
           const navItems = sider.locator('.ant-menu-item');
-          await expect(navItems).toHaveCount(4);
-          for (const label of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台']) {
+          await expect(navItems).toHaveCount(5);
+          for (const label of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']) {
             await expect(sider.getByText(label, { exact: true }).first()).toBeVisible();
           }
           await expect(page.getByTestId('sider-account-entry')).toBeVisible();
@@ -942,11 +942,12 @@ v2Describe(
           await navigateWorkspace(page, '品牌资产', /\/brands(?:[?#]|$)/);
           await navigateWorkspace(page, '可见度诊断', /\/visibility(?:[?#]|$)/);
           await navigateWorkspace(page, 'GEO 写作台', /\/studio(?:[?#]|$)/);
+          await navigateWorkspace(page, '发布中心', /\/publish(?:[?#]|$)/);
           await openAccountWorkspace(page);
           await expect(page).toHaveURL(/\/account(?:[?#]|$)/);
 
           await page.goBack();
-          await expect(page).toHaveURL(/\/studio(?:[?#]|$)/);
+          await expect(page).toHaveURL(/\/publish(?:[?#]|$)/);
           await page.goForward();
           await expect(page).toHaveURL(/\/account(?:[?#]|$)/);
           expect(collector.errors).toEqual([]);
@@ -1245,6 +1246,8 @@ v2Describe(
           await navigateWorkspace(page, '可见度诊断', /\/visibility/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
           await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
+          await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
+          await navigateWorkspace(page, '发布中心', /\/publish/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
 
           await page.reload({ waitUntil: 'domcontentloaded' });

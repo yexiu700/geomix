@@ -203,7 +203,7 @@ export function writeWorkspaceStorage(
   }
 }
 
-const WORKSPACE_QUERY_PATHS = new Set(['/home', '/brands', '/visibility', '/studio']);
+const WORKSPACE_QUERY_PATHS = new Set(['/home', '/brands', '/visibility', '/studio', '/publish']);
 
 export function syncProductLineQueryInUrl(
   productLineId: string | null,
@@ -219,10 +219,14 @@ export function syncProductLineQueryInUrl(
   } else {
     params.delete('productLineId');
   }
-  if (options?.clearItemParams && pathname === '/studio') {
-    params.delete('articleId');
-    params.delete('briefId');
-    params.delete('batchJobId');
+  if (options?.clearItemParams) {
+    if (pathname === '/studio') {
+      params.delete('articleId');
+      params.delete('briefId');
+      params.delete('batchJobId');
+    } else if (pathname === '/publish') {
+      params.delete('articleId');
+    }
   }
   const query = params.toString();
   const nextUrl = query ? `${pathname}?${query}` : pathname;
@@ -257,10 +261,14 @@ export function syncWorkspaceQueryInUrl(
       params.delete('productLineId');
     }
   }
-  if (options?.clearItemParams && pathname === '/studio') {
-    params.delete('articleId');
-    params.delete('briefId');
-    params.delete('batchJobId');
+  if (options?.clearItemParams) {
+    if (pathname === '/studio') {
+      params.delete('articleId');
+      params.delete('briefId');
+      params.delete('batchJobId');
+    } else if (pathname === '/publish') {
+      params.delete('articleId');
+    }
   }
   const query = params.toString();
   const nextUrl = query ? `${pathname}?${query}` : pathname;

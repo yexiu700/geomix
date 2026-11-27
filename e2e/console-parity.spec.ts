@@ -69,6 +69,10 @@ test.describe('GeoMix 2.0 Minimalist Shell Parity & Admin Baseline', () => {
       expectedUrl: /\/studio(?:[?#]|$)/,
     });
     await openWorkspaceNav(page, {
+      itemTitle: '发布中心',
+      expectedUrl: /\/publish(?:[?#]|$)/,
+    });
+    await openWorkspaceNav(page, {
       itemTitle: '行动首页',
       expectedUrl: /\/home(?:[?#]|$)/,
     });
@@ -80,7 +84,14 @@ test.describe('GeoMix 2.0 Minimalist Shell Parity & Admin Baseline', () => {
     const listbox = page.getByRole('listbox', { name: '指令列表' });
     await expect(listbox).toBeVisible();
 
-    for (const routePath of ['/home', '/brands', '/visibility', '/studio', '/account']) {
+    for (const routePath of [
+      '/home',
+      '/brands',
+      '/visibility',
+      '/studio',
+      '/publish',
+      '/account',
+    ]) {
       await expect(listbox.getByRole('option', { name: new RegExp(routePath) })).toHaveCount(1);
     }
     for (const removedPath of [

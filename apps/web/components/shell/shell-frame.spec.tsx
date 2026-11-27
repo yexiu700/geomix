@@ -596,6 +596,35 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     );
     expect(commit1Classes[0]).toContain('gm-sider-rail');
     expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/publish"
+        brands={[dual]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId="b-1"
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={vi.fn()}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={onToggleMenu}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>发布中心</div>
+      </ShellFrame>,
+    );
+    expect(document.querySelector('.gm-workspace-main--studio')).toBeTruthy();
+    expect(document.querySelector('.gm-content--studio')).toBeTruthy();
+    expect(document.querySelector('aside.gm-sider-rail')).toBeTruthy();
   });
 
   it('Tier 5 #5: resets enableAllowCjkGlobal checkbox in Enable-Market modal when CJK is cleared and later re-entered', async () => {

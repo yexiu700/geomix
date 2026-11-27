@@ -60,6 +60,14 @@ export const GEO_ARTICLE_STATUS_LABELS: Record<GeoArticleStatus, string> = {
   PUBLISHED: '已发布',
 };
 
+export const GEO_ARTICLE_PUBLISH_FILTERS = [
+  'ALL',
+  'UNPUBLISHED',
+  'PUBLISHED',
+  'CRAWL_ALERT',
+] as const;
+export type GeoArticlePublishFilter = (typeof GEO_ARTICLE_PUBLISH_FILTERS)[number];
+
 export const GEO_REWRITE_ACTIONS = ['DE_AD', 'TO_TABLE', 'ADD_EVIDENCE', 'CONCISE_ANSWER'] as const;
 export type GeoRewriteAction = (typeof GEO_REWRITE_ACTIONS)[number];
 
@@ -1107,6 +1115,7 @@ export const geoArticleListQuerySchema = z.object({
   market: z.enum(GEO_MARKETS).optional(),
   productLineId: optionalStudioProductLineQuerySchema,
   status: z.enum(GEO_ARTICLE_STATUSES).optional(),
+  publishFilter: z.enum(GEO_ARTICLE_PUBLISH_FILTERS).optional(),
   tag: z.string().trim().min(1).max(40).optional(),
   briefId: z.string().trim().min(1).max(64).optional(),
   batchJobId: z.string().trim().min(1).max(64).optional(),
@@ -1190,6 +1199,8 @@ export type GeoArticleRecord = {
   tokensIn: number | null;
   tokensOut: number | null;
   complianceFlags: GeoComplianceFlag[];
+  publishRecordCount?: number;
+  hasCrawlAlert?: boolean;
   createdAt: string;
   updatedAt: string;
 };
