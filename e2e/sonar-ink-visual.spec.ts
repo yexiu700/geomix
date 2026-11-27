@@ -1145,11 +1145,11 @@ test.describe('Tier 2 — Multi-Viewport Overflow, Typography, Bounds & P2', () 
       await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
       await auditRoute('/publish');
 
-      // 5. /account (all 3 tabs: 点数明细, 账号权益, 实名认证)
+      // 5. /account (all 3 tabs: 点数明细, 账号权益, 扩展配对)
       await page.goto('/account', { waitUntil: 'domcontentloaded' });
       await expect(page.locator('.gm-workspace-main')).toBeVisible({ timeout: 20_000 });
       await waitForSettledContent(page);
-      for (const tabName of ['点数明细', '账号权益', '实名认证']) {
+      for (const tabName of ['点数明细', '账号权益', '扩展配对']) {
         const tabBtn = page.getByRole('tab', { name: tabName }).first();
         await expect(tabBtn).toBeVisible({ timeout: 10_000 });
         await tabBtn.click();

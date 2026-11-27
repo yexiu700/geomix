@@ -61,6 +61,25 @@ import { ShellFrame } from './shell-frame';
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
+function ShellBootFallback({
+  message,
+  actionLabel,
+  onAction,
+}: {
+  message: string;
+  actionLabel: string;
+  onAction: () => void;
+}) {
+  return (
+    <main className="gm-boot">
+      <p>{message}</p>
+      <Button type="primary" autoInsertSpace={false} onClick={onAction}>
+        {actionLabel}
+      </Button>
+    </main>
+  );
+}
+
 export function ConsoleShell({ children }: { children?: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() || HOME_ROUTE;
@@ -372,29 +391,25 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
 
   if (offline) {
     return (
-      <main className="gm-boot">
-        <p>无法连接接口</p>
-        <Button
-          type="primary"
-          onClick={() => {
-            setOffline(false);
-            setBooting(true);
-            void loadAccount(window.sessionStorage).then((result) => {
-              if (result.status === 'ok') {
-                writeCachedAccount(window.sessionStorage, result.account);
-                applyLoadedAccount(result.account);
-                return;
-              }
-              if (result.status === 'offline') {
-                setOffline(true);
-                setBooting(false);
-              }
-            });
-          }}
-        >
-          重试
-        </Button>
-      </main>
+      <ShellBootFallback
+        message="无法连接接口"
+        actionLabel="重试"
+        onAction={() => {
+          setOffline(false);
+          setBooting(true);
+          void loadAccount(window.sessionStorage).then((result) => {
+            if (result.status === 'ok') {
+              writeCachedAccount(window.sessionStorage, result.account);
+              applyLoadedAccount(result.account);
+              return;
+            }
+            if (result.status === 'offline') {
+              setOffline(true);
+              setBooting(false);
+            }
+          });
+        }}
+      />
     );
   }
 
@@ -404,12 +419,11 @@ export function ConsoleShell({ children }: { children?: ReactNode }) {
 
   if (!isConsoleRouteAccessible(href)) {
     return (
-      <main className="gm-boot">
-        <p>没有这个页面</p>
-        <Button type="primary" onClick={() => router.push(HOME_ROUTE)}>
-          回首页
-        </Button>
-      </main>
+      <ShellBootFallback
+        message="没有这个页面"
+        actionLabel="回首页"
+        onAction={() => router.push(HOME_ROUTE)}
+      />
     );
   }
 

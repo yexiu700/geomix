@@ -243,7 +243,7 @@ v2Describe(
 
           await openAccountWorkspace(page);
           await assertZeroHorizontalOverflow(page, REQUIRED_VIEWPORTS);
-          for (const tabLabel of [/点数明细|点数/, /账号权益|权益/, /实名认证|认证/]) {
+          for (const tabLabel of [/点数明细|点数/, /账号权益|权益/, /扩展配对|扩展/]) {
             const tab = page.getByRole('tab', { name: tabLabel }).first();
             await expect(tab).toBeVisible({ timeout: 15_000 });
             await tab.click();

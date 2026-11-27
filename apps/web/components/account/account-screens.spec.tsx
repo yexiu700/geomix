@@ -7,7 +7,6 @@ import type { LedgerPage, PointItem, RightsView } from '../../lib/account-client
 import { AccountScreen, resolveAccountTab } from './account-screen';
 import { PointsScreen } from './points-screen';
 import { RightsScreen } from './rights-screen';
-import { VerifyScreen } from './verify-screen';
 
 const replaceMock = vi.fn();
 let mockSearchParams = new URLSearchParams();
@@ -84,11 +83,12 @@ function rightsViewStub(): RightsView {
   };
 }
 
-describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
-  it('resolves tab keys safely and syncs ?tab= while preserving brandId and market', async () => {
+describe('GeoMix /account 3-tab screens & cold-load zero-flicker (PR8 Y36-Y39)', () => {
+  it('resolves tab keys safely and syncs ?tab= while preserving brandId and market (Y36)', async () => {
     expect(resolveAccountTab('points')).toBe('points');
     expect(resolveAccountTab('rights')).toBe('rights');
-    expect(resolveAccountTab('verify')).toBe('verify');
+    expect(resolveAccountTab('extension')).toBe('extension');
+    expect(resolveAccountTab('verify')).toBe('points');
     expect(resolveAccountTab('money')).toBe('points');
     expect(resolveAccountTab(null)).toBe('points');
 
@@ -98,25 +98,25 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
         loadPoints={async () => pointPage([])}
         loadSummary={async () => summaryStub()}
         loadRights={async () => rightsViewStub()}
-        loadVerification={async () => null}
       />,
     );
 
     expect(screen.getByRole('tab', { name: '点数明细' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '账号权益' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: '实名认证' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '扩展配对' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: '实名认证' })).toBeNull();
     expect(screen.queryByRole('tab', { name: '余额明细' })).toBeNull();
     expect(screen.queryByText(/¥0\.00/)).toBeNull();
 
     // Initially opens rights tab from ?tab=rights
     expect(await screen.findByText('2 KB / 100 MB')).toBeTruthy();
 
-    // Switch to verify tab -> preserves brandId & market
-    fireEvent.click(screen.getByRole('tab', { name: '实名认证' }));
-    expect(replaceMock).toHaveBeenCalledWith('/account?brandId=b1&market=GLOBAL&tab=verify', {
+    // Switch to extension tab -> preserves brandId & market
+    fireEvent.click(screen.getByRole('tab', { name: '扩展配对' }));
+    expect(replaceMock).toHaveBeenCalledWith('/account?brandId=b1&market=GLOBAL&tab=extension', {
       scroll: false,
     });
-    expect(await screen.findByText(/尚未开通核验/)).toBeTruthy();
+    expect(await screen.findByTestId('extension-pairing-panel')).toBeTruthy();
   });
 
   it('shows cold-load skeletons with zero 0 点 / 0 条 / 免费体验期 / STRICT caption flash while pending', () => {
@@ -140,19 +140,12 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(document.body.textContent).not.toContain('¥0.00');
     unmountPoints();
 
-    const { unmount: unmountRights } = render(
-      <RightsScreen title="账号权益" load={() => new Promise<RightsView>(() => undefined)} />,
-    );
+    render(<RightsScreen title="账号权益" load={() => new Promise<RightsView>(() => undefined)} />);
     expect(screen.getByTestId('rights-loading')).toBeTruthy();
     expect(document.querySelectorAll('[aria-busy="true"]').length).toBeGreaterThan(0);
-    unmountRights();
-
-    render(<VerifyScreen title="实名认证" load={() => new Promise(() => undefined)} />);
-    expect(screen.getByTestId('verify-loading')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '提交资料' })).toBeNull();
   });
 
-  it('shows points summary, filters without checkboxes, and avoids duplicate phrase concatenation (#201)', async () => {
+  it('shows points summary, auto-filters without query button, keeps CSV-only export, and avoids duplicate phrase concatenation (Y38/Y39)', async () => {
     const load = vi.fn(async () =>
       pointPage([
         {
@@ -185,6 +178,10 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(screen.getByText('免费体验期')).toBeTruthy();
     expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
 
+    expect(screen.queryByRole('button', { name: '查询' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '导出 XLSX' })).toBeNull();
+    expect(screen.getByRole('button', { name: '导出 CSV' })).toBeTruthy();
+
     expect(screen.queryByText('+500 管理员充值')).toBeNull();
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     expect(document.querySelector('.ant-table-selection')).toBeNull();
@@ -204,10 +201,11 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '点数变动' }), {
       target: { value: '500' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '查询' }));
-    expect(load).toHaveBeenLastCalledWith(
-      expect.objectContaining({ title: '管理员充值', delta: 500, page: 1 }),
-    );
+    await waitFor(() => {
+      expect(load).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: '管理员充值', delta: 500, page: 1 }),
+      );
+    });
   });
 
   it('sanitizes CoT reasoning leakage, truncates long titles, and warns on empty points export (#201)', async () => {
@@ -252,7 +250,6 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '项目名称' }), {
       target: { value: '不存在' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '查询' }));
     expect(await screen.findByText('没有找到匹配的记录')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '导出 CSV' }));
@@ -261,14 +258,14 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(exportFile).not.toHaveBeenCalled();
   });
 
-  it('shows 9 v2 quota/rights cards (no MONEY card) and four active CN model cards (#411)', async () => {
+  it('shows 9 v2 quota/rights cards and omits duplicate 模型收录 block (Y37)', async () => {
     render(<RightsScreen title="账号权益" load={async () => rightsViewStub()} />);
     expect(await screen.findByText('2 KB / 100 MB')).toBeTruthy();
     expect(screen.getByText('1500')).toBeTruthy();
-    expect(screen.getAllByText('0')).toHaveLength(4);
     expect(screen.getByRole('article', { name: '品牌数量' }).textContent).toContain('1 / 100');
     expect(screen.queryByRole('article', { name: '余额' })).toBeNull();
-    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(13);
+    expect(screen.queryByText('模型收录')).toBeNull();
+    expect(document.querySelectorAll('.gm-right-card')).toHaveLength(9);
   });
 
   it('refreshes /me/rights usage when returning to the active tab (#195)', async () => {
@@ -319,57 +316,7 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it('submits the placeholder verification form and blocks writes when read only', async () => {
-    const submit = vi.fn(async (input) => ({
-      ...input,
-      status: 'SUBMITTED',
-      placeholder: true,
-      updatedAt: '2026-11-16T00:00:00.000Z',
-    }));
-    const load = vi.fn(async () => null);
-    const view = render(<VerifyScreen title="实名认证" load={load} submit={submit} />);
-    expect(await screen.findByRole('button', { name: '提交资料' })).toBeTruthy();
-    expect(screen.queryByText(/https?:\/\//)).toBeNull();
-    fireEvent.change(screen.getByRole('textbox', { name: '主体名称' }), {
-      target: { value: '示例主体' },
-    });
-    fireEvent.change(screen.getByRole('textbox', { name: '统一社会信用代码' }), {
-      target: { value: '91310000abcd1234' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '提交资料' }));
-    await waitFor(() => {
-      expect(submit).toHaveBeenCalledWith({
-        companyName: '示例主体',
-        creditCode: '91310000ABCD1234',
-        contact: '',
-        phone: '',
-      });
-    });
-    view.rerender(<VerifyScreen title="实名认证" readOnly load={load} submit={submit} />);
-    expect(screen.getByRole('button', { name: '提交资料' })).toHaveProperty('disabled', true);
-  });
-
-  it('blocks empty verify submission with inline required validation and asterisks (#197)', async () => {
-    const submit = vi.fn();
-    render(<VerifyScreen title="实名认证" load={async () => null} submit={submit} />);
-    await screen.findByRole('button', { name: '提交资料' });
-
-    expect(document.querySelectorAll('.ant-form-item-required')).toHaveLength(2);
-    expect(
-      screen.getByRole('textbox', { name: '主体名称' }).getAttribute('placeholder'),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole('textbox', { name: '统一社会信用代码' }).getAttribute('placeholder'),
-    ).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: '提交资料' }));
-    expect(await screen.findByText('请填写主体名称', {}, { timeout: 5000 })).toBeTruthy();
-    expect(await screen.findByText('请填写统一社会信用代码', {}, { timeout: 5000 })).toBeTruthy();
-    expect(submit).not.toHaveBeenCalled();
-    expect(document.querySelector('.ant-form-item-has-error')).not.toBeNull();
-  });
-
-  it('supports Chrome extension pairing tab via ?tab=extension preserving brandId/market and readOnly', async () => {
+  it('supports extension pairing tab via ?tab=extension preserving brandId/market and readOnly', async () => {
     expect(resolveAccountTab('extension')).toBe('extension');
     mockSearchParams = new URLSearchParams('brandId=b1&market=CN&tab=points');
 
@@ -379,11 +326,10 @@ describe('GeoMix 2.0 /account 3-tab screens & cold-load zero-flicker', () => {
         loadPoints={async () => pointPage([])}
         loadSummary={async () => summaryStub()}
         loadRights={async () => rightsViewStub()}
-        loadVerification={async () => null}
       />,
     );
 
-    const extTab = screen.getByRole('tab', { name: 'Chrome 扩展配对' });
+    const extTab = screen.getByRole('tab', { name: '扩展配对' });
     expect(extTab).toBeTruthy();
 
     fireEvent.click(extTab);

@@ -778,7 +778,7 @@ export function ShellFrame({
         keyboard
         maskClosable
         footer={[
-          <Button key="close" type="primary" onClick={() => setAnnouncementOpen(false)}>
+          <Button key="close" autoInsertSpace={false} onClick={() => setAnnouncementOpen(false)}>
             知道了
           </Button>,
         ]}

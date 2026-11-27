@@ -991,18 +991,14 @@ v2Describe(
           await page.goto('/account', { waitUntil: 'domcontentloaded' });
           await expect(page.getByRole('tab', { name: '点数明细' })).toBeVisible();
           await expect(page.getByRole('tab', { name: '账号权益' })).toBeVisible();
-          await expect(page.getByRole('tab', { name: '实名认证' })).toBeVisible();
+          await expect(page.getByRole('tab', { name: '扩展配对' })).toBeVisible();
+          await expect(page.getByRole('tab', { name: '实名认证' })).toHaveCount(0);
 
           await page.getByRole('tab', { name: '账号权益' }).click();
           await expect(page.locator('.gm-right-card[aria-label="点数"]')).toBeVisible();
 
-          await page.getByRole('tab', { name: '实名认证' }).click();
-          await page.getByRole('textbox', { name: '主体名称' }).fill(`星曜科技${tag}`);
-          await page.getByRole('textbox', { name: '统一社会信用代码' }).fill('91310115MA1K3TESTX');
-          await page.getByRole('textbox', { name: '联系人' }).fill('测试联系人');
-          await page.getByRole('textbox', { name: '电话' }).fill('13800138000');
-          await page.getByRole('button', { name: '提交资料' }).click();
-          await expect(page.locator('body')).toContainText('当前状态：已提交');
+          await page.getByRole('tab', { name: '扩展配对' }).click();
+          await expect(page.getByTestId('extension-pairing-panel')).toBeVisible();
           expect(collector.errors).toEqual([]);
         } finally {
           await context.close();
