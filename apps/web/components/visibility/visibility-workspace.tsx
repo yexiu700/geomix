@@ -1694,6 +1694,8 @@ export function VisibilityWorkspace(): JSX.Element {
     />
   );
 
+  const activeMarketEngines = filterEnginesForMarket(engines, activeMarket);
+
   const tabItems = [
     {
       key: 'overview',
@@ -1707,7 +1709,22 @@ export function VisibilityWorkspace(): JSX.Element {
           loading={overviewLoading}
           error={overviewError}
           selectedEngine={selectedEngine}
+          marketEngines={activeMarketEngines}
           onSelectEngine={handleSelectEngine}
+          onInspectRuns={(engine) => {
+            setObsEngineFilter(engine ?? '');
+            setActiveTab('runs');
+            const targetRun =
+              runs.find((r) => r.status === 'COMPLETED') ??
+              runs.find((r) => r.status === 'PARTIAL') ??
+              runs[0];
+            if (targetRun) {
+              setActiveRunState({ id: targetRun.id, contextKey: currentContextKey });
+              syncUrlParams({ tab: 'runs', runId: targetRun.id });
+            } else {
+              syncUrlParams({ tab: 'runs' });
+            }
+          }}
           onRetry={() => {
             if (!activeBrandId) return;
             void loadOverview(

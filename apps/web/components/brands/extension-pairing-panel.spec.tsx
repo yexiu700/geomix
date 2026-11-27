@@ -85,6 +85,8 @@ describe('ExtensionPairingPanel (CN Chrome Extension Pairing)', () => {
     expect(screen.getByText('生效中')).toBeTruthy();
     expect(screen.getAllByText('已吊销').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/尚未使用/)).toBeTruthy();
+    expect(screen.getAllByText(/分发队列桥接/).length).toBeGreaterThanOrEqual(1);
+    expect(document.body.textContent).not.toContain('extension:distribution');
     // Single-checkbox invariant on /brands: panel must NEVER render a checkbox in default view
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });

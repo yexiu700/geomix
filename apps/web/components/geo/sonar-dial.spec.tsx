@@ -189,6 +189,14 @@ describe('SonarDial', () => {
 
     // Ring scale labels (25%, 50%, 75%) must sit clearly above the center value (100.0%)
     const centerVal = svgScope.getByText('100.0%');
+    const centerHub = svg.querySelector('.gm-sonar-center-hub');
+    expect(centerHub).toBeTruthy();
+    expect(
+      Boolean(
+        centerHub &&
+        centerHub.compareDocumentPosition(centerVal) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
     const centerY = Number(centerVal.getAttribute('y'));
     // With 24px font centered near baseline centerY, top of glyphs is around centerY - 20
     const centerTopEdge = centerY - 20;

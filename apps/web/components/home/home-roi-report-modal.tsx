@@ -631,6 +631,13 @@ export function HomeRoiReportModal({
                         {formatUtcCalendarDate(selectedReport.periodEnd)} · 语言：
                         {selectedReport.locale}
                       </div>
+                      {selectedReport.summary.overview.hasSimulatedObservations ? (
+                        <StatusBadge
+                          tone="warning"
+                          data-testid="roi-simulated-badge"
+                          label="含模拟采集数据"
+                        />
+                      ) : null}
                     </div>
 
                     <div className="gm-roi-detail-actions">

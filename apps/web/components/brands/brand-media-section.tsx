@@ -274,7 +274,7 @@ export function BrandMediaSection({
           <EmptyState
             size="compact"
             title="还没有产品实拍图"
-            description="拖入真实产品实拍图并维护图片说明，在 GEO 写作台编辑器内按需免费插入。"
+            description="当前品牌尚未上传产品实拍图（上方存储配额为租户下所有品牌共享）。拖入真实产品实拍图并维护图片说明，在 GEO 写作台编辑器内按需免费插入。"
           />
         ) : (
           <div className="gm-brand-media-grid">

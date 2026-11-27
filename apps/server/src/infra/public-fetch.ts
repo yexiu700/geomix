@@ -176,11 +176,13 @@ function readDocument(response: GuardedResponse): PublicPage {
       `status_${response.status}`,
     );
   }
-  const contentType = mediaType(header(response, 'content-type'));
+  const contentTypeHeader = header(response, 'content-type');
+  const contentType = mediaType(contentTypeHeader);
   if (contentType !== 'text/html') {
     throw new ProviderError(PROVIDER_KIND.CONTRACT, '只接受公开 HTML 页面', 'content_type');
   }
-  const sample = response.body.subarray(0, 2048).toString('utf8');
+  const body = decodeHtmlBuffer(response.body, contentTypeHeader);
+  const sample = body.slice(0, 2048);
   if (response.body.length < 1500 && LOGIN_MARKERS.some((marker) => sample.includes(marker))) {
     throw new ProviderError(PROVIDER_KIND.NOT_PUBLIC, '无法公开访问', 'login_wall');
   }
@@ -188,9 +190,97 @@ function readDocument(response: GuardedResponse): PublicPage {
     url: response.url.toString(),
     status: response.status,
     contentType,
-    body: response.body.toString('utf8'),
+    body,
     bytes: response.body.length,
   };
+}
+
+const CHARSET_ALIASES: Readonly<Record<string, string>> = {
+  utf8: 'utf-8',
+  'utf-8': 'utf-8',
+  'unicode-1-1-utf-8': 'utf-8',
+  gb2312: 'gb18030',
+  gbk: 'gb18030',
+  'x-gbk': 'gb18030',
+  cp936: 'gb18030',
+  ms936: 'gb18030',
+  gb_2312: 'gb18030',
+  'gb_2312-80': 'gb18030',
+  csgb2312: 'gb18030',
+  'iso-ir-58': 'gb18030',
+  chinese: 'gb18030',
+};
+
+function normalizeCharsetLabel(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .toLowerCase();
+  if (!cleaned) return null;
+  return CHARSET_ALIASES[cleaned] ?? cleaned;
+}
+
+function extractHeaderCharset(contentTypeHeader: string | undefined): string | null {
+  if (!contentTypeHeader) return null;
+  const match = /;\s*charset\s*=\s*["']?([^"';\s]+)/i.exec(contentTypeHeader);
+  return normalizeCharsetLabel(match?.[1]);
+}
+
+function extractMetaCharset(body: Buffer): string | null {
+  const head = body.subarray(0, 4096).toString('latin1');
+  const directMatch = /<meta\b[^>]*\bcharset\s*=\s*["']?\s*([A-Za-z0-9._-]+)/i.exec(head);
+  if (directMatch?.[1]) {
+    return normalizeCharsetLabel(directMatch[1]);
+  }
+  const httpEquivFirst =
+    /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?content-type["']?[^>]*\bcontent\s*=\s*["'][^"']*charset\s*=\s*([A-Za-z0-9._-]+)/i.exec(
+      head,
+    );
+  if (httpEquivFirst?.[1]) {
+    return normalizeCharsetLabel(httpEquivFirst[1]);
+  }
+  const contentFirst =
+    /<meta\b[^>]*\bcontent\s*=\s*["'][^"']*charset\s*=\s*([A-Za-z0-9._-]+)[^>]*\bhttp-equiv\s*=\s*["']?content-type["']?/i.exec(
+      head,
+    );
+  return normalizeCharsetLabel(contentFirst?.[1]);
+}
+
+function countReplacementChars(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    if (text.charCodeAt(i) === 0xfffd) count += 1;
+  }
+  return count;
+}
+
+export function decodeHtmlBuffer(body: Buffer, contentTypeHeader?: string): string {
+  if (body.length === 0) return '';
+
+  const declaredCharset = extractHeaderCharset(contentTypeHeader) ?? extractMetaCharset(body);
+  if (declaredCharset) {
+    try {
+      return new TextDecoder(declaredCharset, { fatal: false }).decode(body);
+    } catch {
+      // Unknown or unsupported charset label: fall through to UTF-8 / GB18030 detection.
+    }
+  }
+
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(body);
+  } catch {
+    const utf8Text = new TextDecoder('utf-8', { fatal: false }).decode(body);
+    try {
+      const gbText = new TextDecoder('gb18030', { fatal: false }).decode(body);
+      if (countReplacementChars(gbText) < countReplacementChars(utf8Text)) {
+        return gbText;
+      }
+    } catch {
+      // Ignore if gb18030 decoder is unavailable in runtime ICU.
+    }
+    return utf8Text;
+  }
 }
 
 async function assertRobots(target: URL, deps: FetchDeps): Promise<void> {

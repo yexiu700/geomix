@@ -103,6 +103,22 @@ function statusBadgeClass(status: 'CITED' | 'MENTIONED' | 'COMPETITOR' | 'ABSENT
   }
 }
 
+function computeLargestRemainderPcts(values: readonly number[], total: number): number[] {
+  if (total <= 0 || values.length === 0) return values.map(() => 0);
+  const exact = values.map((v) => (Math.max(0, v) / total) * 100);
+  const floors = exact.map((e) => Math.floor(e));
+  let remainder = 100 - floors.reduce((sum, f) => sum + f, 0);
+  const order = exact
+    .map((e, idx) => ({ idx, frac: e - floors[idx]! }))
+    .sort((a, b) => b.frac - a.frac || a.idx - b.idx);
+  const result = [...floors];
+  for (let i = 0; i < order.length && remainder > 0; i += 1) {
+    result[order[i]!.idx]! += 1;
+    remainder -= 1;
+  }
+  return result;
+}
+
 function formatPreflightDetails(
   item: DistributionPreflightItem,
   isZh: boolean,
@@ -143,6 +159,14 @@ function formatPreflightDetails(
       });
     }
     return [];
+  }
+
+  if (item.code === 'CN_AD_LAW_WARNING') {
+    return (item.details ?? [])
+      .slice(0, 6)
+      .map((term) =>
+        isZh ? `广告法极限词提示：「${term}」` : `CN superlative flagged: "${term}"`,
+      );
   }
 
   if (item.matches && item.matches.length > 0) {
@@ -562,49 +586,58 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
               </div>
             </div>
 
-            <div className="gm-mkt-sb-kpi-row">
-              {(
-                [
-                  {
-                    key: 'CITED',
-                    value: diagnosis.breakdown.CITED,
-                    cls: 'gm-mkt-kpi-cited',
-                    label: isZh ? '官方引用 (CITED)' : 'CITED',
-                  },
-                  {
-                    key: 'MENTIONED',
-                    value: diagnosis.breakdown.MENTIONED,
-                    cls: 'gm-mkt-kpi-mention',
-                    label: isZh ? '仅提及 (MENTIONED)' : 'MENTIONED',
-                  },
-                  {
-                    key: 'COMPETITOR',
-                    value: diagnosis.breakdown.COMPETITOR,
-                    cls: 'gm-mkt-kpi-competitor',
-                    label: isZh ? '竞品占位 (COMPETITOR)' : 'COMPETITOR',
-                  },
-                  {
-                    key: 'ABSENT',
-                    value: diagnosis.breakdown.ABSENT,
-                    cls: 'gm-mkt-kpi-absent',
-                    label: isZh ? '缺席 (ABSENT)' : 'ABSENT',
-                  },
-                ] as const
-              ).map((kpi) => {
-                const pct = Math.round((kpi.value / diagnosisTotal) * 100);
-                return (
-                  <div key={kpi.key} className={`gm-mkt-sb-kpi ${kpi.cls}`}>
-                    <span className="gm-mkt-sb-kpi-label">{kpi.label}</span>
-                    <div className="gm-mkt-sb-kpi-val-row">
-                      <strong className="gm-mkt-sb-kpi-val gm-num">{pct}%</strong>
-                      <span className="gm-mkt-sb-kpi-sub gm-num">
-                        {kpi.value}/{diagnosis.totalChecks}
-                      </span>
+            {(() => {
+              const kpiDefs = [
+                {
+                  key: 'CITED',
+                  value: diagnosis.breakdown.CITED,
+                  cls: 'gm-mkt-kpi-cited',
+                  label: isZh ? '官方引用 (CITED)' : 'CITED',
+                },
+                {
+                  key: 'MENTIONED',
+                  value: diagnosis.breakdown.MENTIONED,
+                  cls: 'gm-mkt-kpi-mention',
+                  label: isZh ? '仅提及 (MENTIONED)' : 'MENTIONED',
+                },
+                {
+                  key: 'COMPETITOR',
+                  value: diagnosis.breakdown.COMPETITOR,
+                  cls: 'gm-mkt-kpi-competitor',
+                  label: isZh ? '竞品占位 (COMPETITOR)' : 'COMPETITOR',
+                },
+                {
+                  key: 'ABSENT',
+                  value: diagnosis.breakdown.ABSENT,
+                  cls: 'gm-mkt-kpi-absent',
+                  label: isZh ? '缺席 (ABSENT)' : 'ABSENT',
+                },
+              ] as const;
+              const pcts = computeLargestRemainderPcts(
+                kpiDefs.map((k) => k.value),
+                diagnosisTotal,
+              );
+              return (
+                <div className="gm-mkt-sb-kpi-row">
+                  {kpiDefs.map((kpi, idx) => (
+                    <div key={kpi.key} className={`gm-mkt-sb-kpi ${kpi.cls}`}>
+                      <span className="gm-mkt-sb-kpi-label">{kpi.label}</span>
+                      <div className="gm-mkt-sb-kpi-val-row">
+                        <strong
+                          className="gm-mkt-sb-kpi-val gm-num"
+                          data-testid={`sandbox-kpi-pct-${kpi.key}`}
+                        >
+                          {pcts[idx]}%
+                        </strong>
+                        <span className="gm-mkt-sb-kpi-sub gm-num">
+                          {kpi.value}/{diagnosis.totalChecks}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             <div className="gm-mkt-sb-bars">
               <div className="gm-mkt-bar-header">
@@ -764,8 +797,8 @@ export function InteractiveProductSandbox({ locale }: { locale: MarketingLocale 
                             ? '同时触发 COMPLIANCE_BLOCKED + GLOBAL_CLAIM_WARNING'
                             : 'Triggers COMPLIANCE_BLOCKED + GLOBAL_CLAIM_WARNING'
                           : isZh
-                            ? '触发广告法禁做词硬拦截并扣减合规分'
-                            : 'Triggers CN prohibited claim blocker & score penalty'}
+                            ? '同时触发 COMPLIANCE_BLOCKED + CN_AD_LAW_WARNING 并扣减合规分'
+                            : 'Triggers COMPLIANCE_BLOCKED + CN_AD_LAW_WARNING & score penalty'}
                       </span>
                     </span>
                   </button>

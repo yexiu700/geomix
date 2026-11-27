@@ -2479,13 +2479,13 @@ export function StudioDistributionDrawer({
                   <div key={w.code} className="gm-dist-min0">
                     <div className="gm-dist-row gm-dist-row--between">
                       <div className="gm-dist-preflight-warning-msg">• {w.message}</div>
-                      {w.code === 'GLOBAL_CLAIM_WARNING' ? (
+                      {w.code === 'GLOBAL_CLAIM_WARNING' || w.code === 'CN_AD_LAW_WARNING' ? (
                         <Button
                           size="small"
                           data-testid="distribution-warning-locate-btn"
                           className="gm-dist-nowrap"
                           onClick={() =>
-                            onReturnToEditor('GLOBAL_CLAIM_WARNING', w.matches?.[0]?.matchedText)
+                            onReturnToEditor(w.code, w.matches?.[0]?.matchedText ?? w.details?.[0])
                           }
                         >
                           返回编辑器定位修改

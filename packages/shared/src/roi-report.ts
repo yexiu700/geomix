@@ -192,6 +192,8 @@ export type GeoRoiReportSummaryDto = {
     ownedCitationRate: number;
     confidenceLevel: ConfidenceLevel;
     did: DifferenceInDifferencesResult | null;
+    simulatedObservations?: number;
+    hasSimulatedObservations?: boolean;
   };
   byEngine: GeoRoiReportEngineMetric[];
   nearMiss: GeoRoiReportNearMissSummary;

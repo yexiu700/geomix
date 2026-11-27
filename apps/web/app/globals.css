@@ -11812,3 +11812,26 @@ input:not([class*='ant-']):hover {
     padding: 10px 14px 20px;
   }
 }
+
+.gm-home-simulated-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 12px;
+  border-radius: var(--gm-radius-sm);
+  background: var(--gm-bg-surface);
+}
+
+.gm-home-simulated-copy {
+  font-size: var(--gm-fs-xs);
+  color: var(--gm-fg-2);
+}
+
+.gm-vis-dial-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
