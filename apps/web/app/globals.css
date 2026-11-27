@@ -9139,6 +9139,11 @@ input:not([class*='ant-']):hover {
   min-width: 0;
 }
 
+.gm-vis-chart-span-12 {
+  grid-column: span 12;
+  min-width: 0;
+}
+
 .gm-vis-chart-card {
   height: 100%;
 }
@@ -9310,7 +9315,8 @@ input:not([class*='ant-']):hover {
 @media (max-width: 1024px) {
   .gm-vis-chart-span-5,
   .gm-vis-chart-span-7,
-  .gm-vis-chart-span-6 {
+  .gm-vis-chart-span-6,
+  .gm-vis-chart-span-12 {
     grid-column: span 12;
   }
 }
