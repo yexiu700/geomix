@@ -745,6 +745,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
 
       // Verify PRD D3 form budget ceiling & auto-retest checkbox
       await expect(page.getByTestId('publish-auto-retest-checkbox')).toBeChecked();
+      await page.getByTestId('publish-form-advanced-toggle').click();
       await expect(page.getByTestId('publish-form-budget-ceiling')).toContainText('预计预算上限');
 
       // Fetch synced GeoPublishRecords (should include both Webhook live publish & PR submit)
@@ -761,10 +762,10 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       ).toBeTruthy();
       expect(webhookRec!.indexNowSubmitted).toBe(true);
 
-      // Trigger 0-pt manual CrawlProbe via UI -> assert badges (200, GPTBot, JSON-LD, IndexNow)
-      const badges = page.getByTestId(`publish-crawl-badges-${webhookRec!.id}`);
-      await expect(badges).toBeVisible();
+      // Trigger 0-pt manual CrawlProbe via UI -> auto-expands & asserts badges (200, GPTBot, JSON-LD, IndexNow)
       await page.getByTestId(`publish-crawl-recheck-btn-${webhookRec!.id}`).click();
+      const badges = page.getByTestId(`publish-crawl-badges-${webhookRec!.id}`);
+      await expect(badges).toBeVisible({ timeout: 15_000 });
       await expect(badges).toContainText('可抓取', { timeout: 15_000 });
       await expect(badges).toContainText('HTTP 200');
       await expect(badges).toContainText('GPTBot 允许');
@@ -780,11 +781,12 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await expect(page.getByTestId(`publish-retest-node-${webhookRec!.id}-T14`)).toBeVisible();
       await expect(page.getByTestId(`publish-retest-node-${webhookRec!.id}-T30`)).toBeVisible();
 
+      await page.getByTestId(`publish-retest-advanced-toggle-${webhookRec!.id}`).click();
       const budgetBox = page.getByTestId(`publish-retest-budget-${webhookRec!.id}`);
       await expect(budgetBox).toContainText('1 次采样');
       await page
         .getByTestId(`publish-retest-sample-toggle-${webhookRec!.id}`)
-        .getByRole('button', { name: '3 次高置信' })
+        .getByRole('button', { name: '3次采样' })
         .click();
       await expect(budgetBox).toContainText('3 次采样', { timeout: 15_000 });
 

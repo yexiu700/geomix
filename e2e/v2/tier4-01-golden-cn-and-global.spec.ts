@@ -309,9 +309,11 @@ v2Describe(
           await expect(page).toHaveURL(/\/publish/, { timeout: 15_000 });
           await expect(page.getByTestId('publish-workspace')).toBeVisible({ timeout: 20_000 });
 
-          await page.getByTestId('publish-tab-delivery').click();
+          await page.getByTestId('publish-export-btn').click();
           await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible({ timeout: 15_000 });
           assertValidJsonLd(article.schemaJsonLd, ['Article', 'FAQPage']);
+          await page.locator('.ant-modal-close:visible').last().click();
+          await expect(page.getByTestId('publish-export-modal')).toBeHidden({ timeout: 10_000 });
 
           await page.getByTestId('publish-tab-tracking').click();
           const publishForm = page.getByTestId('publish-record-form');

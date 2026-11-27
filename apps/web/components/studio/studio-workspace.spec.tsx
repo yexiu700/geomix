@@ -1426,7 +1426,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
     expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
     expect(screen.queryByTestId('delivery-jsonld-preview')).toBeNull();
     expect(screen.queryByTestId('delivery-copy-llmstxt')).toBeNull();
-    expect(screen.getByTestId('delivery-channel-guidance').textContent).toContain('知乎');
+    expect(screen.queryByTestId('delivery-channel-guidance')).toBeNull();
     expect(document.body.textContent ?? '').not.toMatch(/(?:^|[^\d])0\s*点/);
 
     fireEvent.click(screen.getByTestId('delivery-download-docx'));
@@ -2417,7 +2417,7 @@ describe('StudioWorkspace 3-Pane UI (M4-A #331)', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /复制.*Markdown/ }));
+    fireEvent.click(screen.getByRole('button', { name: '复制 MD' }));
     await waitFor(() => {
       expect(copySpy).toHaveBeenCalledTimes(1);
     });

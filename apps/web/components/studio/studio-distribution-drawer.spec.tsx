@@ -11,6 +11,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as apiLib from '../../lib/api';
 import * as briefsApi from '../../lib/briefs';
+import * as extensionApi from '../../lib/extension';
 import {
   PreflightBlockedError,
   type ArticleDistributionTaskItem,
@@ -260,6 +261,7 @@ beforeEach(() => {
   listDistributionVariantJobsMock.mockResolvedValue({ items: [] });
   listChannelConnectionsMock.mockResolvedValue({ items: [SHOPIFY_CONN] });
   vi.spyOn(briefsApi, 'getBrief').mockResolvedValue(BRIEF_WITH_CITATIONS);
+  vi.spyOn(extensionApi, 'listExtensionTokens').mockResolvedValue({ items: [] });
   mockPricingUnitPoints(2);
 });
 
@@ -339,7 +341,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
         expect.objectContaining({ publishAsDraft: true, acknowledgePreflightWarnings: false }),
         expect.anything(),
       );
-      expect(screen.getByText('推送被发布前体检门禁拦截')).toBeTruthy();
+      expect(screen.getByText(/推送被拦截|推送被发布前体检门禁拦截/)).toBeTruthy();
     });
 
     // Check risk ack checkbox & retry -> sends acknowledgePreflightWarnings: true
@@ -404,10 +406,11 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
-    // Citation-driven recommendation hydrated from getBrief(article.briefId)
+    // Citation-driven recommendation hydrated on target channel row (Y22 removed duplicate rec box)
     await waitFor(() => {
-      expect(screen.getByText('Reddit r/DataHoarder')).toBeTruthy();
-      expect(screen.getByText(/高频被引原帖 #1/)).toBeTruthy();
+      const redditBtn = screen.getByTestId('distribution-target-REDDIT_ASSIST');
+      expect(redditBtn.textContent).toContain('Reddit');
+      expect(redditBtn.textContent).toContain('高频被引');
     });
 
     // Select 1 L1 site + 1 L3 community channel
@@ -754,7 +757,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
 
     // PR button displays regenerate label when shareLinkActive is true
     const prShareBtn = await screen.findByTestId('distribution-pr-share-btn');
-    expect(prShareBtn.textContent).toContain('重新生成 30 天免登录供稿链接');
+    expect(prShareBtn.textContent).toContain('重签链接');
 
     // Open revoke confirm modal on Brand A (do not resolve yet)
     fireEvent.click(screen.getByTestId('distribution-pr-revoke-btn'));
@@ -1747,8 +1750,9 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(prLink.textContent).toContain('pr#42');
     expect(screen.getByTestId('distribution-task-locale-tag').textContent).toContain('ja-JP');
 
-    // 4. Switch to DEVTO tab -> shows canonical URL & tags preview
+    // 4. Switch to DEVTO tab -> expand parameter details -> shows canonical URL & tags preview
     fireEvent.click(await screen.findByRole('tab', { name: /Dev\.to Official/ }));
+    fireEvent.click(await screen.findByTestId('distribution-eng-details-toggle'));
     const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
     expect(canonicalBox.textContent).toContain('https://astravault.example.com/guides/nas-2026');
     expect(canonicalBox.textContent).toContain('#homelab');
@@ -1834,14 +1838,20 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
       />,
     );
 
-    // 1. CN Step 2 shows all 3 L2 Extension targets
+    // 1. CN Step 2 collapses L2 Extension targets when unpaired (Y26), then expands on click
+    const collapsedL2 = await screen.findByTestId('distribution-l2-extension-collapsed');
+    expect(collapsedL2).toBeTruthy();
+    fireEvent.click(screen.getByTestId('distribution-l2-expand-btn'));
+
     const l2Group = await screen.findByTestId('distribution-l2-extension-group');
     expect(within(l2Group).getByTestId('distribution-target-ZHIHU_EXT')).toBeTruthy();
     expect(within(l2Group).getByTestId('distribution-target-TOUTIAO_EXT')).toBeTruthy();
     expect(within(l2Group).getByTestId('distribution-target-SMZDM_EXT')).toBeTruthy();
 
-    // 2. WECHAT_OFFICIAL Step 3 tab: draft-only notice, media_id, 40164 hint, NO live publish button, NO URL Slug
+    // 2. WECHAT_OFFICIAL Step 3 tab: draft-only notice, expandable media_id (Y27), 40164 hint, NO live publish button, NO URL Slug
     expect(await screen.findByTestId('distribution-wechat-draft-only-notice')).toBeTruthy();
+    expect(screen.queryByTestId('distribution-wechat-media-id')).toBeNull();
+    fireEvent.click(screen.getByTestId('distribution-eng-details-toggle'));
     expect(screen.getByTestId('distribution-wechat-media-id').textContent).toContain(
       'wx_media_id_8899',
     );
@@ -1945,6 +1955,7 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
 
     // Tab 3: DEVTO with hex IPv4 canonicalUrl & ::ffff:127.0.0.1 / localhost -> rendered as plain text only, zero <a> tags
     fireEvent.click(await screen.findByRole('tab', { name: /Unsafe Dev\.to/ }));
+    fireEvent.click(await screen.findByTestId('distribution-eng-details-toggle'));
     const canonicalBox = await screen.findByTestId('distribution-canonical-preview');
     expect(canonicalBox.querySelector('a')).toBeNull();
     expect(screen.queryByRole('link', { name: /打开站点后台草稿/ })).toBeNull();

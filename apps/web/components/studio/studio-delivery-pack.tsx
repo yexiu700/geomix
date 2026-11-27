@@ -4,10 +4,8 @@ import {
   buildCrawlerChecklist,
   buildGeoSchemaJsonLd,
   buildLlmsTxtSnippet,
-  buildRecommendedChannelsForMarket,
   evaluateDistributionPreflight,
   htmlToExportMarkdown,
-  isSafeDistributionHttpUrl,
   markdownToSanitizedHtml,
   sanitizeRichArticleHtml,
   serializeJsonLdSafe,
@@ -16,14 +14,14 @@ import {
   type GeoEvaluationResult,
   type GeoMarket,
 } from '@geomix/shared';
-import { Button, Tag } from 'antd';
+import { Button } from 'antd';
 import type { JSX, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GatewayApiError } from '../../lib/envelope';
 import { copyTextToClipboard, exportArticleFile } from '../../lib/studio';
 import { triggerBlobDownload } from '../../lib/ux-foundation';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { StatusBadge } from '../ui';
+import { Explain, StatusBadge } from '../ui';
 
 export type StudioDeliveryPackProps = {
   activeMarket: GeoMarket;
@@ -87,7 +85,7 @@ export function StudioDeliveryPack({
   matchedFactCount,
   article,
   evaluation,
-  linkedBriefChannels,
+  linkedBriefChannels: _linkedBriefChannels,
   streaming,
 }: StudioDeliveryPackProps): JSX.Element {
   const feedback = useUxFeedback();
@@ -168,14 +166,6 @@ export function StudioDeliveryPack({
     () => evaluation?.crawlerChecklist ?? buildCrawlerChecklist(activeMarket),
     [activeMarket, evaluation?.crawlerChecklist],
   );
-
-  const recommendedChannels = useMemo<readonly GeoBriefChannelRecommendation[]>(() => {
-    if (linkedBriefChannels && linkedBriefChannels.length > 0) return linkedBriefChannels;
-    if (evaluation?.recommendedChannels && evaluation.recommendedChannels.length > 0) {
-      return evaluation.recommendedChannels;
-    }
-    return buildRecommendedChannelsForMarket(activeMarket);
-  }, [activeMarket, evaluation?.recommendedChannels, linkedBriefChannels]);
 
   const preflight = useMemo(
     () =>
@@ -311,58 +301,11 @@ export function StudioDeliveryPack({
     else feedback.notifyError('复制 llms.txt 失败');
   };
 
-  const channelGuidanceBlock = (
-    <div className="gm-studio-delivery-subblock" data-testid="delivery-channel-guidance">
-      <span className="gm-studio-section-label">
-        {activeMarket === 'GLOBAL' ? '海外高权阵地投放建议' : '国内高权平台发布指引'}
-      </span>
-      <div className="gm-studio-channel-list">
-        {recommendedChannels.map((item) => {
-          const safeCitedUrls = (item.citedExampleUrls ?? [])
-            .filter((u) => isSafeDistributionHttpUrl(u))
-            .slice(0, 3);
-          return (
-            <div key={item.channel} className="gm-studio-channel-item">
-              <div className="gm-studio-row gm-studio-row--wrap">
-                <Tag className="gm-studio-tag-wrap">{item.channel}</Tag>
-                {item.priority === 'HIGH' ? (
-                  <StatusBadge tone="warning" className="gm-studio-nowrap">
-                    高频被引
-                  </StatusBadge>
-                ) : null}
-              </div>
-              <span className="gm-studio-channel-reason">{item.reason}</span>
-              {safeCitedUrls.length > 0 ? (
-                <div className="gm-studio-row gm-studio-row--wrap">
-                  {safeCitedUrls.map((url, idx) => (
-                    <a
-                      key={url}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="gm-mono gm-studio-cited-link"
-                    >
-                      被引原帖 #{idx + 1}
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
   const jsonLdBlock = (
     <div className="gm-studio-delivery-subblock" data-testid="delivery-jsonld-block">
       <div className="gm-studio-delivery-subhead">
-        <span className="gm-studio-section-label">
-          {activeMarket === 'GLOBAL'
-            ? 'JSON-LD Schema（Article / FAQPage / Product）'
-            : '官网可选 JSON-LD Schema'}
-        </span>
-        <StatusBadge tone="success">Schema 校验通过</StatusBadge>
+        <span className="gm-studio-section-label">Schema</span>
+        <StatusBadge tone="success">已校验</StatusBadge>
       </div>
 
       <div className="gm-studio-export-actions">
@@ -373,17 +316,18 @@ export function StudioDeliveryPack({
           disabled={!article || streaming || !safeJsonLdText}
           onClick={() => void handleCopyJsonLd()}
         >
-          复制 JSON-LD
+          复制 Schema
         </Button>
         <Button
           size="small"
           type="link"
+          autoInsertSpace={false}
           className="gm-studio-link-compact"
           data-testid="delivery-toggle-jsonld-preview"
           disabled={!article || !safeJsonLdText}
           onClick={() => setShowJsonLdPreview((prev) => !prev)}
         >
-          {showJsonLdPreview ? '收起 JSON-LD 预览' : '展开官网可选 JSON-LD 预览'}
+          {showJsonLdPreview ? '收起预览' : '预览'}
         </Button>
       </div>
 
@@ -400,21 +344,24 @@ export function StudioDeliveryPack({
       <>
         <div className="gm-studio-delivery-subblock" data-testid="delivery-llmstxt-block">
           <div className="gm-studio-delivery-subhead">
-            <span className="gm-studio-section-label">llms.txt 权威索引片段</span>
+            <span className="gm-studio-section-label">llms.txt</span>
             <Button
               size="small"
               data-testid="delivery-copy-llmstxt"
               disabled={!article || streaming || !llmsTxt}
               onClick={() => void handleCopyLlmsTxt()}
             >
-              复制 llms.txt
+              复制切片
             </Button>
           </div>
           {llmsTxt ? <pre className="gm-studio-code-pre">{llmsTxt}</pre> : null}
         </div>
 
         <div className="gm-studio-delivery-subblock" data-testid="delivery-crawler-checklist">
-          <span className="gm-studio-section-label">AI 爬虫放行检查清单（robots.txt）</span>
+          <div className="gm-studio-delivery-subhead">
+            <span className="gm-studio-section-label">爬虫清单</span>
+            <Explain text="AI 爬虫放行检查清单（robots.txt）：确保 GPTBot 与 PerplexityBot 等主流 AI 检索爬虫未被屏蔽。" />
+          </div>
           <div className="gm-studio-crawler-list">
             {crawlerChecklist.map((item) => (
               <div key={item.bot} className="gm-studio-crawler-row">
@@ -423,8 +370,8 @@ export function StudioDeliveryPack({
                   <StatusBadge tone={item.recommended ? 'success' : 'neutral'}>
                     {item.recommended ? '建议放行' : '按需配置'}
                   </StatusBadge>
+                  <Explain text={item.purpose} />
                 </div>
-                <span className="gm-studio-channel-reason">{item.purpose}</span>
               </div>
             ))}
           </div>
@@ -435,16 +382,12 @@ export function StudioDeliveryPack({
   return (
     <div className="gm-studio-delivery-pack" data-testid="studio-delivery-pack">
       <div className="gm-studio-delivery-subhead">
-        <span className="gm-studio-section-label">双轨即发交付包</span>
-        <StatusBadge tone="active">
-          {activeMarket === 'GLOBAL' ? '🌐 海外交付轨' : '🇨🇳 国内交付轨'}
-        </StatusBadge>
+        <span className="gm-studio-section-label">导出交付</span>
+        <Explain text="生成或选择成稿后即可一键导出 MD / HTML / .docx 与 Schema。" />
       </div>
 
       {!article ? (
-        <div className="gm-studio-item-meta">
-          生成或选择成稿后即可一键导出 MD / HTML / .docx 与 Schema。
-        </div>
+        <div className="gm-studio-item-meta">请先选择或生成成稿。</div>
       ) : (
         <>
           <div className="gm-studio-export-actions">
@@ -454,7 +397,7 @@ export function StudioDeliveryPack({
               disabled={streaming}
               onClick={() => void handleCopyMarkdown()}
             >
-              复制 Markdown
+              复制 MD
             </Button>
             <Button
               size="small"
@@ -471,20 +414,16 @@ export function StudioDeliveryPack({
               disabled={streaming}
               onClick={() => void handleDownloadDocx()}
             >
-              下载 .docx
+              下载 Word
             </Button>
           </div>
 
           {activeMarket === 'CN' ? (
-            <>
-              {channelGuidanceBlock}
-              {jsonLdBlock}
-            </>
+            jsonLdBlock
           ) : (
             <>
               {jsonLdBlock}
               {globalLlmsAndCrawlerBlock}
-              {channelGuidanceBlock}
             </>
           )}
         </>

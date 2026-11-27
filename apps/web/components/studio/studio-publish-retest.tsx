@@ -5,7 +5,6 @@ import {
   DEFAULT_RETEST_MILESTONE_DAYS,
   RETEST_SCHEDULE_STATUS_LABELS,
   UX_GLOSSARY_TOOLTIPS,
-  UX_TERMS,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   VISIBILITY_SENTIMENT_LABELS,
   enginesForMarket,
@@ -27,7 +26,7 @@ import {
   type VisibilitySentiment,
   type WilsonInterval,
 } from '@geomix/shared';
-import { Button, Checkbox, Input, Spin, Tag, Tooltip } from 'antd';
+import { Button, Checkbox, Input, Spin, Tag } from 'antd';
 import type { FormEvent, JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authorizedRequest } from '../../lib/api';
@@ -44,7 +43,7 @@ import { invalidateFreshness } from '../../lib/tab-freshness';
 import { fetchVisibilityEngines, filterEnginesForMarket } from '../../lib/visibility';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalPill, type SignalTone } from '../geo/primitives';
-import { StatusBadge, type StatusTone } from '../ui';
+import { Explain, StatusBadge, type StatusTone } from '../ui';
 
 export type StudioPublishRetestProps = {
   activeMarket: GeoMarket;
@@ -341,6 +340,7 @@ export function StudioPublishRetest({
   // Form auto-retest toggle & sampling config (default: enabled=true, sampleCount=1)
   const [autoRetestEnabled, setAutoRetestEnabled] = useState(true);
   const [formSampleCount, setFormSampleCount] = useState<RetestSampleCount>(1);
+  const [formAdvancedOpen, setFormAdvancedOpen] = useState(false);
 
   // Live pricing & online engine count for PRD D3 budget ceiling disclosure
   const [visibilityUnitPrice, setVisibilityUnitPrice] = useState<number>(
@@ -359,6 +359,7 @@ export function StudioPublishRetest({
   const [probingRecordId, setProbingRecordId] = useState<string | null>(null);
   const [updatingScheduleRecordId, setUpdatingScheduleRecordId] = useState<string | null>(null);
   const [expandedCrawlIds, setExpandedCrawlIds] = useState<Record<string, boolean>>({});
+  const [expandedAdvancedIds, setExpandedAdvancedIds] = useState<Record<string, boolean>>({});
   const [liveBudgets, setLiveBudgets] = useState<Record<string, RetestBudgetEstimateDto>>({});
 
   const submittingRef = useRef(false);
@@ -383,11 +384,13 @@ export function StudioPublishRetest({
     setUrlError(null);
     setAutoRetestEnabled(true);
     setFormSampleCount(1);
+    setFormAdvancedOpen(false);
     setCrawlOverrides({});
     setScheduleOverrides({});
     setProbingRecordId(null);
     setUpdatingScheduleRecordId(null);
     setExpandedCrawlIds({});
+    setExpandedAdvancedIds({});
     setLiveBudgets({});
     return () => {
       submittingRef.current = false;
@@ -600,13 +603,7 @@ export function StudioPublishRetest({
             },
           }));
         }
-        if (
-          updated.crawlStatus === 'BLOCKED' ||
-          updated.crawlStatus === 'FAILED' ||
-          updated.crawlStatus === 'WARNING'
-        ) {
-          setExpandedCrawlIds((prev) => ({ ...prev, [rawRecord.id]: true }));
-        }
+        setExpandedCrawlIds((prev) => ({ ...prev, [rawRecord.id]: true }));
         onPublishRecordUpdated?.(updated);
         invalidateFreshness('publish-records');
         feedback.notifySuccess(
@@ -689,7 +686,7 @@ export function StudioPublishRetest({
   return (
     <div className="gm-studio-publish-box" data-testid="studio-publish-retest">
       <div className="gm-studio-delivery-subhead">
-        <span className="gm-studio-section-label">发布登记与效果追踪</span>
+        <span className="gm-studio-section-label">发布登记</span>
         {effectiveEntries.length > 0 ? (
           <StatusBadge tone="success" className="gm-studio-nowrap">
             已登记 {effectiveEntries.length} 条
@@ -698,7 +695,7 @@ export function StudioPublishRetest({
       </div>
 
       {!article ? (
-        <div className="gm-studio-item-meta">生成或选择成稿后可登记发布链接并发起排名复测。</div>
+        <div className="gm-studio-item-meta">选择成稿后可登记发布链接并追踪复测。</div>
       ) : (
         <>
           <form
@@ -741,7 +738,7 @@ export function StudioPublishRetest({
               </select>
               <Button
                 size="small"
-                type="default"
+                type={effectiveEntries.length === 0 ? 'primary' : 'default'}
                 htmlType="submit"
                 loading={submitting}
                 disabled={readOnly || !urlInput.trim()}
@@ -751,24 +748,48 @@ export function StudioPublishRetest({
               </Button>
             </div>
 
-            {/* Auto-retest checkbox & PRD D3 explicit budget ceiling disclosure */}
+            {/* Y24: Auto-retest checkbox + collapsible 高级 sampling & budget disclosure */}
             <div className="gm-studio-publish-subcard">
               <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
-                <Checkbox
-                  data-testid="publish-auto-retest-checkbox"
-                  checked={autoRetestEnabled}
-                  disabled={readOnly || submitting}
-                  onChange={(e) => setAutoRetestEnabled(e.target.checked)}
-                  className="gm-studio-publish-checkbox"
-                >
-                  开启 T+7/T+14/T+30 自动追踪
-                </Checkbox>
+                <div className="gm-studio-row">
+                  <Checkbox
+                    data-testid="publish-auto-retest-checkbox"
+                    checked={autoRetestEnabled}
+                    disabled={readOnly || submitting}
+                    onChange={(e) => setAutoRetestEnabled(e.target.checked)}
+                    className="gm-studio-publish-checkbox"
+                  >
+                    自动追踪
+                  </Checkbox>
+                  <Explain
+                    text={
+                      autoRetestEnabled
+                        ? formBudgetText
+                        : '已关闭自动追踪，登记后不创建定时复测计划，后续可随时在下方重新开启。'
+                    }
+                  />
+                </div>
 
                 {autoRetestEnabled ? (
+                  <Button
+                    size="small"
+                    type="text"
+                    autoInsertSpace={false}
+                    data-testid="publish-form-advanced-toggle"
+                    aria-expanded={formAdvancedOpen}
+                    onClick={() => setFormAdvancedOpen((v) => !v)}
+                  >
+                    {formAdvancedOpen ? '收起高级' : '高级'}
+                  </Button>
+                ) : null}
+              </div>
+
+              {autoRetestEnabled && formAdvancedOpen ? (
+                <>
                   <div className="gm-studio-sample-toggle-group">
                     {([1, 3] as const).map((cnt) => {
                       const selected = formSampleCount === cnt;
-                      const btn = (
+                      return (
                         <Button
                           key={cnt}
                           size="small"
@@ -778,31 +799,17 @@ export function StudioPublishRetest({
                           onClick={() => setFormSampleCount(cnt)}
                           className={`gm-studio-sample-btn${selected ? ' gm-studio-sample-btn--selected' : ''}`}
                         >
-                          {cnt === 1 ? '1 次' : '3 次高置信'}
+                          {cnt === 1 ? '1 次' : '3次采样'}
                         </Button>
                       );
-                      return cnt === 3 ? (
-                        <Tooltip
-                          key={cnt}
-                          placement="topRight"
-                          destroyOnHidden
-                          title={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling}
-                        >
-                          {btn}
-                        </Tooltip>
-                      ) : (
-                        btn
-                      );
                     })}
+                    <Explain text={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling} />
                   </div>
-                ) : null}
-              </div>
-
-              <div data-testid="publish-form-budget-ceiling" className="gm-studio-text-muted">
-                {autoRetestEnabled
-                  ? formBudgetText
-                  : '已关闭自动追踪，登记后不创建定时复测计划，后续可随时在下方重新开启。'}
-              </div>
+                  <div data-testid="publish-form-budget-ceiling" className="gm-studio-text-muted">
+                    {formBudgetText}
+                  </div>
+                </>
+              ) : null}
             </div>
           </form>
 
@@ -829,7 +836,10 @@ export function StudioPublishRetest({
                 const gptBot = report?.robotsMatrix.find((r) => r.bot === 'GPTBot');
                 const perplexityBot = report?.robotsMatrix.find((r) => r.bot === 'PerplexityBot');
                 const hasDiag = hasCrawlDiagnostics(crawlStatus, report);
-                const isDiagExpanded = Boolean(expandedCrawlIds[rec.id]);
+                const defaultCrawlExpanded =
+                  crawlStatus === 'BLOCKED' || crawlStatus === 'FAILED' || hasDiag;
+                const isDiagExpanded = expandedCrawlIds[rec.id] ?? defaultCrawlExpanded;
+                const isAdvExpanded = Boolean(expandedAdvancedIds[rec.id]);
 
                 const schedules = rec.retestSchedules ?? [];
                 const scheduleByDay = new Map<number, GeoRetestScheduleDto>();
@@ -889,35 +899,42 @@ export function StudioPublishRetest({
                       </span>
                     )}
 
-                    {/* T+1 Crawl & Schema Probe Badges */}
+                    {/* Y25: T+1 Crawl & Schema Probe Badges (collapsed by default, auto-expanded on anomaly/recheck) */}
                     <div
                       data-testid={`publish-crawl-badges-${rec.id}`}
                       className="gm-studio-publish-subcard"
                     >
                       <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
-                        <Tooltip
-                          placement="topRight"
-                          destroyOnHidden
-                          title={UX_GLOSSARY_TOOLTIPS.crawlSchemaProbe}
-                        >
-                          <span className="gm-studio-publish-subcard-title gm-studio-glossary-trigger">
-                            {UX_TERMS.crawlSchemaProbe}
-                          </span>
-                        </Tooltip>
+                        <div className="gm-studio-row">
+                          <span className="gm-studio-publish-subcard-title">抓取体检</span>
+                          <StatusBadge tone={crawlStatusTone(crawlStatus)}>
+                            {CRAWL_PROBE_STATUS_LABELS[crawlStatus]}
+                          </StatusBadge>
+                          <Explain
+                            text={
+                              rec.crawlCheckedAt
+                                ? `${UX_GLOSSARY_TOOLTIPS.crawlSchemaProbe} 最近体检：${formatShanghaiDateTime(rec.crawlCheckedAt)}（免费体检）`
+                                : `${UX_GLOSSARY_TOOLTIPS.crawlSchemaProbe} 尚未完成体检，可点击右侧「重新检测」（免费体检）。`
+                            }
+                          />
+                        </div>
                         <div className="gm-studio-row gm-studio-row--wrap">
                           {report ? (
                             <Button
                               size="small"
                               type="link"
+                              autoInsertSpace={false}
+                              data-testid={`publish-crawl-detail-toggle-${rec.id}`}
+                              aria-expanded={isDiagExpanded}
                               className="gm-studio-link-compact"
                               onClick={() =>
                                 setExpandedCrawlIds((prev) => ({
                                   ...prev,
-                                  [rec.id]: !prev[rec.id],
+                                  [rec.id]: !isDiagExpanded,
                                 }))
                               }
                             >
-                              {isDiagExpanded ? '收起诊断' : hasDiag ? '查看告警' : '诊断详情'}
+                              {isDiagExpanded ? '收起' : '详情'}
                             </Button>
                           ) : null}
                           <Button
@@ -928,257 +945,265 @@ export function StudioPublishRetest({
                             onClick={() => void handleCrawlRecheck(raw)}
                             className="gm-studio-sample-btn"
                           >
-                            立即重新检测
+                            重新检测
                           </Button>
                         </div>
                       </div>
 
-                      <div className="gm-studio-row gm-studio-row--wrap">
-                        <StatusBadge tone={crawlStatusTone(crawlStatus)}>
-                          {CRAWL_PROBE_STATUS_LABELS[crawlStatus]}
-                        </StatusBadge>
-
-                        {report ? (
-                          <StatusBadge
-                            tone={
-                              report.httpStatus !== null &&
-                              report.httpStatus >= 200 &&
-                              report.httpStatus < 300
-                                ? 'success'
-                                : report.httpStatus !== null && report.httpStatus < 400
-                                  ? 'warning'
-                                  : 'danger'
-                            }
-                          >
-                            {report.httpStatus !== null ? `HTTP ${report.httpStatus}` : 'HTTP 异常'}
-                          </StatusBadge>
-                        ) : null}
-
-                        {gptBot ? (
-                          <StatusBadge tone={gptBot.allowed ? 'success' : 'danger'}>
-                            {gptBot.allowed ? 'GPTBot 允许' : 'GPTBot 拦截'}
-                          </StatusBadge>
-                        ) : null}
-
-                        {perplexityBot ? (
-                          <StatusBadge tone={perplexityBot.allowed ? 'success' : 'danger'}>
-                            {perplexityBot.allowed ? 'PerplexityBot 允许' : 'PerplexityBot 拦截'}
-                          </StatusBadge>
-                        ) : null}
-
-                        {report && report.metaNoindex ? (
-                          <StatusBadge tone="danger">meta noindex</StatusBadge>
-                        ) : null}
-
-                        {report ? (
-                          report.jsonLdParseErrors.length > 0 ? (
-                            <StatusBadge tone="danger">JSON-LD 解析异常</StatusBadge>
-                          ) : report.jsonLdTypes.length > 0 ? (
-                            report.jsonLdTypes.slice(0, 3).map((schemaType) => (
-                              <StatusBadge
-                                key={schemaType}
-                                tone="active"
-                                className="gm-studio-tag-wrap"
-                              >
-                                JSON-LD: {schemaType}
-                              </StatusBadge>
-                            ))
-                          ) : (
-                            <StatusBadge tone="danger">缺少 JSON-LD</StatusBadge>
-                          )
-                        ) : null}
-
-                        {rec.indexNowSubmitted ? (
-                          <StatusBadge tone="active">IndexNow 已提交</StatusBadge>
-                        ) : null}
-                      </div>
-
-                      {rec.crawlCheckedAt ? (
-                        <div className="gm-studio-text-muted">
-                          最近体检：{formatShanghaiDateTime(rec.crawlCheckedAt)}（免费体检）
-                        </div>
-                      ) : (
-                        <div className="gm-studio-text-muted">
-                          尚未完成体检，可点击上方「立即重新检测」（免费体检）。
-                        </div>
-                      )}
-
                       {isDiagExpanded && report ? (
-                        <div
-                          data-testid={`publish-crawl-diagnostics-${rec.id}`}
-                          className="gm-studio-crawl-diag"
-                        >
-                          {report.errorMessage ? (
-                            <div className="gm-studio-text-danger">
-                              请求异常：{report.errorMessage}
-                            </div>
-                          ) : null}
+                        <>
+                          <div className="gm-studio-row gm-studio-row--wrap">
+                            <StatusBadge
+                              tone={
+                                report.httpStatus !== null &&
+                                report.httpStatus >= 200 &&
+                                report.httpStatus < 300
+                                  ? 'success'
+                                  : report.httpStatus !== null && report.httpStatus < 400
+                                    ? 'warning'
+                                    : 'danger'
+                              }
+                            >
+                              {report.httpStatus !== null
+                                ? `HTTP ${report.httpStatus}`
+                                : 'HTTP 异常'}
+                            </StatusBadge>
 
-                          {report.issues.length > 0 ? (
-                            <ul className="gm-studio-crawl-issues">
-                              {report.issues.map((issue, issueIdx) => (
-                                <li key={`${issue}-${issueIdx}`} className="gm-studio-text-danger">
-                                  {issue}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
+                            {gptBot ? (
+                              <StatusBadge tone={gptBot.allowed ? 'success' : 'danger'}>
+                                {gptBot.allowed ? 'GPTBot 允许' : 'GPTBot 拦截'}
+                              </StatusBadge>
+                            ) : null}
 
-                          {report.jsonLdParseErrors.length > 0 ? (
-                            <div className="gm-studio-text-danger">
-                              JSON-LD 错误：{report.jsonLdParseErrors.join('；')}
-                            </div>
-                          ) : null}
+                            {perplexityBot ? (
+                              <StatusBadge tone={perplexityBot.allowed ? 'success' : 'danger'}>
+                                {perplexityBot.allowed
+                                  ? 'PerplexityBot 允许'
+                                  : 'PerplexityBot 拦截'}
+                              </StatusBadge>
+                            ) : null}
 
-                          {report.canonicalMatches === false ? (
-                            <div className="gm-studio-text-danger">
-                              Canonical 不一致：{report.canonicalUrl || '未声明'}
-                            </div>
-                          ) : null}
+                            {report.metaNoindex ? (
+                              <StatusBadge tone="danger">meta noindex</StatusBadge>
+                            ) : null}
 
-                          {report.robotsMatrix.length > 0 ? (
-                            <div className="gm-studio-row gm-studio-row--wrap">
-                              {report.robotsMatrix.map((botRow) => (
-                                <span
-                                  key={botRow.bot}
-                                  className={`gm-studio-bot-chip ${
-                                    botRow.allowed
-                                      ? 'gm-studio-bot-chip--allowed'
-                                      : 'gm-studio-bot-chip--blocked'
-                                  }`}
+                            {report.jsonLdParseErrors.length > 0 ? (
+                              <StatusBadge tone="danger">JSON-LD 解析异常</StatusBadge>
+                            ) : report.jsonLdTypes.length > 0 ? (
+                              report.jsonLdTypes.slice(0, 3).map((schemaType) => (
+                                <StatusBadge
+                                  key={schemaType}
+                                  tone="active"
+                                  className="gm-studio-tag-wrap"
                                 >
-                                  {botRow.bot}: {botRow.allowed ? '允许' : '拦截'}
-                                  {!botRow.allowed && botRow.matchedRule
-                                    ? ` (${botRow.matchedRule})`
-                                    : ''}
-                                </span>
-                              ))}
+                                  JSON-LD: {schemaType}
+                                </StatusBadge>
+                              ))
+                            ) : (
+                              <StatusBadge tone="danger">缺少 JSON-LD</StatusBadge>
+                            )}
+
+                            {rec.indexNowSubmitted ? (
+                              <StatusBadge tone="active">IndexNow 已提交</StatusBadge>
+                            ) : null}
+                          </div>
+
+                          {hasDiag ? (
+                            <div
+                              data-testid={`publish-crawl-diagnostics-${rec.id}`}
+                              className="gm-studio-crawl-diag"
+                            >
+                              {report.errorMessage ? (
+                                <div className="gm-studio-text-danger">
+                                  请求异常：{report.errorMessage}
+                                </div>
+                              ) : null}
+
+                              {report.issues.length > 0 ? (
+                                <ul className="gm-studio-crawl-issues">
+                                  {report.issues.map((issue, issueIdx) => (
+                                    <li
+                                      key={`${issue}-${issueIdx}`}
+                                      className="gm-studio-text-danger"
+                                    >
+                                      {issue}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+
+                              {report.jsonLdParseErrors.length > 0 ? (
+                                <div className="gm-studio-text-danger">
+                                  JSON-LD 错误：{report.jsonLdParseErrors.join('；')}
+                                </div>
+                              ) : null}
+
+                              {report.canonicalMatches === false ? (
+                                <div className="gm-studio-text-danger">
+                                  Canonical 不一致：{report.canonicalUrl || '未声明'}
+                                </div>
+                              ) : null}
+
+                              {report.robotsMatrix.length > 0 ? (
+                                <div className="gm-studio-row gm-studio-row--wrap">
+                                  {report.robotsMatrix.map((botRow) => (
+                                    <span
+                                      key={botRow.bot}
+                                      className={`gm-studio-bot-chip ${
+                                        botRow.allowed
+                                          ? 'gm-studio-bot-chip--allowed'
+                                          : 'gm-studio-bot-chip--blocked'
+                                      }`}
+                                    >
+                                      {botRow.bot}: {botRow.allowed ? '允许' : '拦截'}
+                                      {!botRow.allowed && botRow.matchedRule
+                                        ? ` (${botRow.matchedRule})`
+                                        : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
-                        </div>
+                        </>
                       ) : null}
                     </div>
 
-                    {/* Stepped Auto-Retest Timeline: T+0 Baseline -> T+7 -> T+14 -> T+30 */}
+                    {/* Y24: Stepped Auto-Retest Timeline with collapsible 高级 controls */}
                     <div
                       data-testid={`publish-retest-timeline-${rec.id}`}
                       className="gm-studio-publish-subcard"
                     >
                       <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
-                        <span className="gm-studio-publish-subcard-title">阶梯自动复测时间线</span>
-                        <div
-                          data-testid={`publish-retest-sample-toggle-${rec.id}`}
-                          className="gm-studio-sample-toggle-group"
-                        >
-                          {([1, 3] as const).map((cnt) => {
-                            const selected = currentSampleCount === cnt;
-                            const btn = (
-                              <Button
-                                key={cnt}
-                                size="small"
-                                type="default"
-                                aria-pressed={selected}
-                                loading={isUpdatingSchedThis && currentSampleCount !== cnt}
-                                disabled={
-                                  readOnly ||
-                                  Boolean(updatingScheduleRecordId) ||
-                                  !hasPendingSchedules
-                                }
-                                title={
-                                  !hasPendingSchedules
-                                    ? '当前无待执行复测节点，请先开启至少一个节点后再切换采样模式'
-                                    : undefined
-                                }
-                                onClick={() => {
-                                  if (!hasPendingSchedules || cnt === currentSampleCount) return;
-                                  void handleUpdateSchedules(
-                                    raw,
-                                    rec,
-                                    { sampleCount: cnt },
-                                    `已切换为 ${cnt === 1 ? '1 次标准采样' : '3 次高置信采样'}`,
-                                  );
-                                }}
-                                className={`gm-studio-sample-btn${selected ? ' gm-studio-sample-btn--selected' : ''}`}
-                              >
-                                {cnt === 1 ? '1 次' : '3 次高置信'}
-                              </Button>
-                            );
-                            return cnt === 3 && hasPendingSchedules ? (
-                              <Tooltip
-                                key={cnt}
-                                placement="topRight"
-                                destroyOnHidden
-                                title={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling}
-                              >
-                                {btn}
-                              </Tooltip>
-                            ) : (
-                              btn
-                            );
-                          })}
+                        <div className="gm-studio-row">
+                          <span className="gm-studio-publish-subcard-title">复测计划</span>
+                          <Explain text={cardBudgetText} />
                         </div>
-                      </div>
-
-                      <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
-                        <Checkbox
-                          data-testid={`publish-retest-control-toggle-${rec.id}`}
-                          checked={currentIncludeControlPrompts}
-                          disabled={
-                            readOnly || Boolean(updatingScheduleRecordId) || !hasPendingSchedules
+                        <Button
+                          size="small"
+                          type="text"
+                          autoInsertSpace={false}
+                          data-testid={`publish-retest-advanced-toggle-${rec.id}`}
+                          aria-expanded={isAdvExpanded}
+                          onClick={() =>
+                            setExpandedAdvancedIds((prev) => ({
+                              ...prev,
+                              [rec.id]: !isAdvExpanded,
+                            }))
                           }
-                          onChange={(e) => {
-                            if (!hasPendingSchedules) return;
-                            const nextChecked = e.target.checked;
-                            void handleUpdateSchedules(
-                              raw,
-                              rec,
-                              { includeControlPrompts: nextChecked },
-                              nextChecked
-                                ? '已开启对照组 DiD 归因复测'
-                                : '已关闭对照组 DiD 归因复测',
-                            );
-                          }}
-                          className="gm-studio-publish-checkbox gm-studio-publish-checkbox--muted"
                         >
-                          开启对照组 DiD 归因
-                        </Checkbox>
-                        {liveBudget?.includeControlPrompts &&
-                        liveBudget.effectiveControlPromptCount > 0 ? (
-                          <StatusBadge tone="active">
-                            含 {liveBudget.effectiveControlPromptCount} 条对照
-                          </StatusBadge>
-                        ) : null}
+                          {isAdvExpanded ? '收起高级' : '高级'}
+                        </Button>
                       </div>
 
-                      <div
-                        data-testid={`publish-retest-budget-${rec.id}`}
-                        className="gm-studio-text-muted"
-                      >
-                        {cardBudgetText}
-                      </div>
+                      {isAdvExpanded ? (
+                        <>
+                          <div className="gm-studio-row gm-studio-row--wrap gm-studio-row--between">
+                            <div
+                              data-testid={`publish-retest-sample-toggle-${rec.id}`}
+                              className="gm-studio-sample-toggle-group"
+                            >
+                              {([1, 3] as const).map((cnt) => {
+                                const selected = currentSampleCount === cnt;
+                                return (
+                                  <Button
+                                    key={cnt}
+                                    size="small"
+                                    type="default"
+                                    aria-pressed={selected}
+                                    loading={isUpdatingSchedThis && currentSampleCount !== cnt}
+                                    disabled={
+                                      readOnly ||
+                                      Boolean(updatingScheduleRecordId) ||
+                                      !hasPendingSchedules
+                                    }
+                                    title={
+                                      !hasPendingSchedules
+                                        ? '当前无待执行复测节点，请先开启至少一个节点后再切换采样模式'
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      if (!hasPendingSchedules || cnt === currentSampleCount)
+                                        return;
+                                      void handleUpdateSchedules(
+                                        raw,
+                                        rec,
+                                        { sampleCount: cnt },
+                                        `已切换为 ${cnt === 1 ? '1 次标准采样' : '3 次高置信采样'}`,
+                                      );
+                                    }}
+                                    className={`gm-studio-sample-btn${selected ? ' gm-studio-sample-btn--selected' : ''}`}
+                                  >
+                                    {cnt === 1 ? '1 次' : '3次采样'}
+                                  </Button>
+                                );
+                              })}
+                              <Explain text={UX_GLOSSARY_TOOLTIPS.highConfidenceSampling} />
+                            </div>
 
-                      {liveBudget?.includeControlPrompts &&
-                      liveBudget.configuredControlPromptCount === 0 ? (
-                        <div
-                          data-testid={`publish-retest-zero-controls-hint-${rec.id}`}
-                          className="gm-studio-text-warning"
-                        >
-                          当前品牌市场尚未配置对照组问句，本次将仅监测目标问句；可前往品牌设置添加最多
-                          5 条对照组问句以计算 DiD 净增益。
-                        </div>
-                      ) : null}
+                            <Checkbox
+                              data-testid={`publish-retest-control-toggle-${rec.id}`}
+                              checked={currentIncludeControlPrompts}
+                              disabled={
+                                readOnly ||
+                                Boolean(updatingScheduleRecordId) ||
+                                !hasPendingSchedules
+                              }
+                              onChange={(e) => {
+                                if (!hasPendingSchedules) return;
+                                const nextChecked = e.target.checked;
+                                void handleUpdateSchedules(
+                                  raw,
+                                  rec,
+                                  { includeControlPrompts: nextChecked },
+                                  nextChecked
+                                    ? '已开启对照组 DiD 归因复测'
+                                    : '已关闭对照组 DiD 归因复测',
+                                );
+                              }}
+                              className="gm-studio-publish-checkbox gm-studio-publish-checkbox--muted"
+                            >
+                              对照组 DiD
+                            </Checkbox>
+                            {liveBudget?.includeControlPrompts &&
+                            liveBudget.effectiveControlPromptCount > 0 ? (
+                              <StatusBadge tone="active">
+                                含 {liveBudget.effectiveControlPromptCount} 条对照
+                              </StatusBadge>
+                            ) : null}
+                          </div>
 
-                      {liveBudget &&
-                      liveBudget.billingMode === 'STRICT' &&
-                      liveBudget.perRunPoints > 0 &&
-                      !liveBudget.sufficientForNextRun ? (
-                        <div
-                          data-testid={`publish-retest-insufficient-hint-${rec.id}`}
-                          className="gm-studio-text-warning"
-                        >
-                          当前可用余额低于下次复测上限（{liveBudget.perRunPoints}{' '}
-                          点），到期时将自动温和跳过且不产生扣费。
-                        </div>
+                          <div
+                            data-testid={`publish-retest-budget-${rec.id}`}
+                            className="gm-studio-text-muted"
+                          >
+                            {cardBudgetText}
+                          </div>
+
+                          {liveBudget?.includeControlPrompts &&
+                          liveBudget.configuredControlPromptCount === 0 ? (
+                            <div
+                              data-testid={`publish-retest-zero-controls-hint-${rec.id}`}
+                              className="gm-studio-text-warning"
+                            >
+                              当前品牌市场尚未配置对照组问句，本次将仅监测目标问句；可前往品牌设置添加最多
+                              5 条对照组问句以计算 DiD 净增益。
+                            </div>
+                          ) : null}
+
+                          {liveBudget &&
+                          liveBudget.billingMode === 'STRICT' &&
+                          liveBudget.perRunPoints > 0 &&
+                          !liveBudget.sufficientForNextRun ? (
+                            <div
+                              data-testid={`publish-retest-insufficient-hint-${rec.id}`}
+                              className="gm-studio-text-warning"
+                            >
+                              当前可用余额低于下次复测上限（{liveBudget.perRunPoints}{' '}
+                              点），到期时将自动温和跳过且不产生扣费。
+                            </div>
+                          ) : null}
+                        </>
                       ) : null}
 
                       <div className="gm-studio-stack">
@@ -1404,11 +1429,11 @@ export function StudioPublishRetest({
                       </div>
                     </div>
 
-                    {/* Demoted Instant Retest Secondary Button + Gentle Hint */}
-                    <div className="gm-studio-stack gm-studio-stack--sm">
+                    {/* Single-Primary CTA on idx===0 */}
+                    <div className="gm-studio-row">
                       <Button
                         size="small"
-                        type="default"
+                        type={idx === 0 ? 'primary' : 'default'}
                         block
                         data-testid={
                           idx === 0 ? 'publish-retest-btn' : `publish-retest-btn-${rec.id}`
@@ -1420,11 +1445,9 @@ export function StudioPublishRetest({
                         onClick={() => void onTriggerRetest(rec)}
                         className="gm-studio-nowrap"
                       >
-                        {isPollingThis ? '复测进行中…' : '一键立刻复测'}
+                        {isPollingThis ? '复测中…' : '立即复测'}
                       </Button>
-                      <div className="gm-studio-text-muted">
-                        新发内容通常需 7–14 天进入 AI 检索，建议启用上方自动追踪。
-                      </div>
+                      <Explain text="新发内容通常需 7–14 天进入 AI 检索，建议启用上方自动追踪。" />
                     </div>
 
                     {isPollingThis ? (

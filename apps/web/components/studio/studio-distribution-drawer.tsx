@@ -7,8 +7,6 @@ import {
   L2_EXTENSION_PROVIDERS,
   PRICING_DEFAULTS,
   SUPPORTED_LOCALES,
-  UX_GLOSSARY_TOOLTIPS,
-  UX_TERMS,
   buildRecommendedChannelsForMarket,
   defaultTemplateKeyForProvider,
   evaluateDistributionPreflight,
@@ -28,22 +26,9 @@ import {
   type PublishRecordCreateInput,
   type SupportedLocale,
 } from '@geomix/shared';
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Input,
-  Modal,
-  Progress,
-  Select,
-  Space,
-  Tabs,
-  Tag,
-  Tooltip,
-} from 'antd';
+import { Alert, Button, Checkbox, Input, Modal, Progress, Select, Space, Tabs, Tag } from 'antd';
 import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBadge } from '../ui';
 import { authorizedRequest } from '../../lib/api';
 import { getBrief } from '../../lib/briefs';
 import {
@@ -63,12 +48,14 @@ import {
   type GeoVariantJobDto,
 } from '../../lib/distribution';
 import { GatewayApiError, unwrapEnvelope } from '../../lib/envelope';
+import { listExtensionTokens } from '../../lib/extension';
 import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import { ChannelConnectionCreateModal } from '../brands/channel-connection-create-modal';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalEmpty, SignalPill, SignalSkeleton } from '../geo/primitives';
+import { CostChip, Explain, StatusBadge } from '../ui';
 
 export type StudioDistributionDrawerProps = {
   open: boolean;
@@ -486,6 +473,18 @@ export function StudioDistributionDrawer({
   const [checkedChecklistByTask, setCheckedChecklistByTask] = useState<Record<string, string[]>>(
     {},
   );
+  const [hasPairedExtension, setHasPairedExtension] = useState(false);
+  const [showUnpairedL2, setShowUnpairedL2] = useState(false);
+  const [expandedEngDetailsByTask, setExpandedEngDetailsByTask] = useState<Record<string, boolean>>(
+    {},
+  );
+
+  const hasPreflightBlocker = Boolean(preflight && !preflight.ok && !ackWarnings);
+  const primaryStage: 'preflight' | 'generate' | 'task' = hasPreflightBlocker
+    ? 'preflight'
+    : tasks.length === 0
+      ? 'generate'
+      : 'task';
 
   const sessionSeqRef = useRef(0);
   const pollMutationEpochRef = useRef(0);
@@ -561,6 +560,9 @@ export function StudioDistributionDrawer({
     setGeneratedPrShareByTask({});
     setQuickRegisterUrls({});
     setCheckedChecklistByTask({});
+    setHasPairedExtension(false);
+    setShowUnpairedL2(false);
+    setExpandedEngDetailsByTask({});
   }, [abortAllTaskActions, bumpPollEpoch]);
 
   const syncTasksState = useCallback((nextTasks: ArticleDistributionTaskItem[]) => {
@@ -749,6 +751,11 @@ export function StudioDistributionDrawer({
       ? Promise.resolve(DEFAULT_GEO_VARIANT_UNIT_PRICE)
       : fetchLiveGeoVariantUnitPrice();
 
+    const extTokensPromise =
+      market === 'CN'
+        ? listExtensionTokens(reqOpts).catch(() => ({ items: [] }))
+        : Promise.resolve({ items: [] });
+
     void Promise.allSettled([
       preflightPromise,
       distributionsPromise,
@@ -756,7 +763,8 @@ export function StudioDistributionDrawer({
       briefPromise,
       pricingPromise,
       variantJobsPromise,
-    ]).then(([preflightRes, distRes, connRes, briefRes, priceRes, jobsRes]) => {
+      extTokensPromise,
+    ]).then(([preflightRes, distRes, connRes, briefRes, priceRes, jobsRes, extRes]) => {
       if (ctrl.signal.aborted || seq !== sessionSeqRef.current) return;
 
       if (preflightRes.status === 'fulfilled' && preflightRes.value) {
@@ -796,6 +804,10 @@ export function StudioDistributionDrawer({
           lastVariantJobDoneCountRef.current = runningJob.doneCount;
           setActiveVariantJob(runningJob);
         }
+      }
+
+      if (extRes.status === 'fulfilled') {
+        setHasPairedExtension(extRes.value.items.some((t) => !t.revokedAt));
       }
 
       setHydrating(false);
@@ -1641,6 +1653,11 @@ export function StudioDistributionDrawer({
       }));
     };
 
+    const hasEngDetails =
+      (isWechatTask && task.status === 'DRAFT_PUSHED' && Boolean(task.remotePostId)) ||
+      (isDevtoOrHashnode && Boolean(canonicalUrlRaw || extraTags.length > 0));
+    const showEngDetails = Boolean(expandedEngDetailsByTask[task.id]);
+
     return (
       <div className="gm-dist-task-body">
         {/* Task Header Status Bar */}
@@ -1662,9 +1679,24 @@ export function StudioDistributionDrawer({
               </StatusBadge>
             ) : null}
             {task.indexNowStatus ? (
-              <StatusBadge tone="active" className="gm-studio-nowrap">
-                IndexNow: {task.indexNowStatus}
-              </StatusBadge>
+              <Explain text={`IndexNow: ${task.indexNowStatus}`} label="索引状态" />
+            ) : null}
+            {hasEngDetails ? (
+              <Button
+                size="small"
+                type="text"
+                autoInsertSpace={false}
+                data-testid="distribution-eng-details-toggle"
+                aria-expanded={showEngDetails}
+                onClick={() =>
+                  setExpandedEngDetailsByTask((prev) => ({
+                    ...prev,
+                    [task.id]: !showEngDetails,
+                  }))
+                }
+              >
+                {showEngDetails ? '收起' : '参数'}
+              </Button>
             ) : null}
           </div>
           {task.publishedAt ? (
@@ -1677,8 +1709,12 @@ export function StudioDistributionDrawer({
             type="info"
             showIcon
             data-testid="distribution-wechat-draft-only-notice"
-            message="仅推送至微信公众号草稿箱，绝不自动群发"
-            description="推送后请前往微信公众平台后台人工复核排版并手动群发；如遇错误码 40164，请将服务器出口 IP 加入公众号 IP 白名单。"
+            message={
+              <span className="gm-vis-alert-row">
+                <span>仅推草稿</span>
+                <Explain text="仅推送至微信公众号草稿箱，绝不自动群发。推送后请前往微信公众平台后台人工复核排版并手动群发；如遇错误码 40164，请将服务器出口 IP 加入公众号 IP 白名单。" />
+              </span>
+            }
           />
         ) : null}
 
@@ -1686,7 +1722,12 @@ export function StudioDistributionDrawer({
           <Alert
             type="info"
             showIcon
-            message="正在通过官方 API 推送至目标站点，系统将自动轮询同步最新状态…"
+            message={
+              <span className="gm-vis-alert-row">
+                <span>正在推送</span>
+                <Explain text="正在通过官方 API 推送至目标站点，系统将自动轮询同步最新状态。" />
+              </span>
+            }
           />
         ) : null}
 
@@ -1694,7 +1735,7 @@ export function StudioDistributionDrawer({
           <Alert
             type="error"
             showIcon
-            message="上次推送失败"
+            message="推送失败"
             description={
               hasWechat40164Error
                 ? `${task.lastError}（处理指引：前往微信公众平台「设置与开发 → 基本配置 → IP 白名单」添加服务器出口 IP 后重试）`
@@ -1708,8 +1749,12 @@ export function StudioDistributionDrawer({
           <Alert
             type="error"
             showIcon
-            message="推送被发布前体检门禁拦截"
-            description={taskPublishBlockedNotice}
+            message={
+              <span className="gm-vis-alert-row">
+                <span>推送被拦截</span>
+                <Explain text={taskPublishBlockedNotice} />
+              </span>
+            }
             className="gm-dist-wrap"
             action={
               <Button
@@ -1722,17 +1767,21 @@ export function StudioDistributionDrawer({
                   else onReturnToEditor(first?.code);
                 }}
               >
-                返回编辑器补填
+                去补填
               </Button>
             }
           />
         ) : null}
 
-        {/* WeChat Official Draft media_id Display */}
-        {isWechatTask && task.status === 'DRAFT_PUSHED' && task.remotePostId ? (
+        {/* Y27: Engineering details (WeChat media_id & Dev.to/Hashnode Canonical/Tags) behind 参数 toggle */}
+        {hasEngDetails &&
+        showEngDetails &&
+        isWechatTask &&
+        task.status === 'DRAFT_PUSHED' &&
+        task.remotePostId ? (
           <div data-testid="distribution-wechat-media-id" className="gm-dist-info-bar">
             <div className="gm-dist-min0 gm-dist-wrap">
-              <span className="gm-dist-text-secondary">公众号草稿 media_id：</span>
+              <span className="gm-dist-text-secondary">草稿 ID：</span>
               <code className="gm-mono gm-dist-text-primary">{task.remotePostId}</code>
             </div>
             <Button
@@ -1745,17 +1794,19 @@ export function StudioDistributionDrawer({
                 });
               }}
             >
-              复制 media_id
+              复制 ID
             </Button>
           </div>
         ) : null}
 
-        {/* Dev.to / Hashnode Canonical URL & Tags Preview */}
-        {isDevtoOrHashnode && (canonicalUrlRaw || extraTags.length > 0) ? (
+        {hasEngDetails &&
+        showEngDetails &&
+        isDevtoOrHashnode &&
+        (canonicalUrlRaw || extraTags.length > 0) ? (
           <div data-testid="distribution-canonical-preview" className="gm-dist-info-stack">
             {canonicalUrlRaw ? (
               <div className="gm-dist-wrap">
-                <span className="gm-dist-text-secondary">Canonical URL 回指：</span>
+                <span className="gm-dist-text-secondary">回指：</span>
                 {safeCanonicalUrl ? (
                   <a
                     href={safeCanonicalUrl}
@@ -1772,7 +1823,7 @@ export function StudioDistributionDrawer({
             ) : null}
             {extraTags.length > 0 ? (
               <div className="gm-dist-row gm-dist-row--tight">
-                <span className="gm-dist-text-secondary">规范化标签：</span>
+                <span className="gm-dist-text-secondary">标签：</span>
                 {extraTags.map((tag) => (
                   <Tag key={tag} className="gm-studio-tag-reset">
                     #{tag}
@@ -1906,16 +1957,23 @@ export function StudioDistributionDrawer({
           <div className="gm-dist-col">
             <div className="gm-dist-row">
               <Button
+                autoInsertSpace={false}
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
                 className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
-                保存变体修改
+                保存
               </Button>
               <Button
-                type={isWechatTask ? 'primary' : 'default'}
+                type={
+                  primaryStage === 'task' &&
+                  task.status !== 'DRAFT_PUSHED' &&
+                  task.status !== 'PUBLISHED'
+                    ? 'primary'
+                    : 'default'
+                }
                 data-testid="distribution-publish-draft-btn"
                 loading={publishingTaskId === task.id}
                 disabled={
@@ -1927,15 +1985,11 @@ export function StudioDistributionDrawer({
                 className="gm-dist-nowrap"
                 onClick={() => void handlePublishL1(task, true)}
               >
-                {isWechatTask
-                  ? '推送至公众号草稿箱'
-                  : isGithubMdxTask
-                    ? '创建 GitHub Draft PR（推荐）'
-                    : '推送为草稿（推荐）'}
+                {isWechatTask ? '推草稿箱' : isGithubMdxTask ? '建 PR' : '推草稿'}
               </Button>
               {!isWechatTask ? (
                 <Button
-                  type="primary"
+                  type="default"
                   data-testid="distribution-publish-live-btn"
                   loading={publishingTaskId === task.id}
                   disabled={
@@ -1947,7 +2001,7 @@ export function StudioDistributionDrawer({
                   className="gm-dist-nowrap"
                   onClick={() => void handlePublishL1(task, false)}
                 >
-                  {isGithubMdxTask ? '直接提交至目标分支' : '立即上线发布'}
+                  {isGithubMdxTask ? '直推分支' : '立即发布'}
                 </Button>
               ) : null}
             </div>
@@ -1970,13 +2024,13 @@ export function StudioDistributionDrawer({
                   />
                   <Button
                     size="small"
-                    type="primary"
+                    type={primaryStage === 'task' ? 'primary' : 'default'}
                     loading={quickRegisteringTaskId === task.id}
                     disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
                     className="gm-dist-nowrap"
                     onClick={() => void handleQuickRegisterUrl(task)}
                   >
-                    登记已发链接
+                    登记链接
                   </Button>
                 </div>
               </div>
@@ -1990,37 +2044,40 @@ export function StudioDistributionDrawer({
               type={task.status === 'PUBLISHED' ? 'success' : 'info'}
               showIcon
               message={
-                task.status === 'PUBLISHED'
-                  ? '已由 Chrome 扩展回传公网链接并纳入追踪'
-                  : '已入队等待 Chrome 扩展拉取（写入平台草稿箱，人工审核后手动发布）'
-              }
-              description={
-                task.status === 'PUBLISHED'
-                  ? '该国内平台发布链接已同步至发布记录，并自动创建 T+7 / T+14 / T+30 复测日程。'
-                  : '打开已配对的 GeoMix Chrome 扩展即可拉取此变体并填充到目标平台草稿箱；扩展绝不读取 Cookie，绝不自动点击最终发布。'
+                <span className="gm-vis-alert-row">
+                  <span>{task.status === 'PUBLISHED' ? '已回传链接' : '待扩展拉取'}</span>
+                  <Explain
+                    text={
+                      task.status === 'PUBLISHED'
+                        ? '已由 Chrome 扩展回传公网链接，并自动创建 T+7 / T+14 / T+30 复测日程。'
+                        : '已入队等待 Chrome 扩展拉取（写入平台草稿箱，人工审核后手动发布）；扩展绝不读取 Cookie，绝不自动点击最终发布。'
+                    }
+                  />
+                </span>
               }
             />
 
             <div className="gm-dist-row">
               <Button
+                autoInsertSpace={false}
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
                 className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
-                保存变体修改
+                保存
               </Button>
               {task.status === 'DRAFT_VARIANT' ? (
                 <Button
-                  type="primary"
+                  type={primaryStage === 'task' ? 'primary' : 'default'}
                   data-testid="distribution-l2-mark-ready-btn"
                   loading={savingTaskId === task.id}
                   disabled={readOnly}
                   className="gm-dist-nowrap"
                   onClick={() => void handleMarkExtensionTaskReady(task)}
                 >
-                  标记待扩展拉取
+                  加入扩展
                 </Button>
               ) : null}
               <Button
@@ -2045,7 +2102,7 @@ export function StudioDistributionDrawer({
                     (onNavigateExtensionPairing ?? onNavigateBrands)?.();
                   }}
                 >
-                  前往品牌资产配对 Chrome 扩展
+                  去配对
                 </Button>
               ) : null}
               {onNavigateAccount ? (
@@ -2058,7 +2115,7 @@ export function StudioDistributionDrawer({
                     onNavigateAccount();
                   }}
                 >
-                  前往账户管理扩展令牌
+                  管理令牌
                 </Button>
               ) : null}
             </div>
@@ -2127,14 +2184,18 @@ export function StudioDistributionDrawer({
                     }
                   />
                   <Button
-                    type="primary"
+                    type={
+                      primaryStage === 'task' && task.status !== 'DRAFT_VARIANT'
+                        ? 'primary'
+                        : 'default'
+                    }
                     data-testid="distribution-quick-register-btn"
                     loading={quickRegisteringTaskId === task.id}
                     disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
                     className="gm-dist-nowrap"
                     onClick={() => void handleQuickRegisterUrl(task)}
                   >
-                    登记已发链接
+                    登记链接
                   </Button>
                 </div>
               </div>
@@ -2146,16 +2207,21 @@ export function StudioDistributionDrawer({
           <div className="gm-dist-panel-box">
             <div className="gm-dist-row">
               <Button
+                autoInsertSpace={false}
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
                 className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
-                保存变体修改
+                保存
               </Button>
               <Button
-                type="primary"
+                type={
+                  primaryStage === 'task' && !(quickRegisterUrls[task.id] ?? '').trim()
+                    ? 'primary'
+                    : 'default'
+                }
                 data-testid="distribution-copy-community-btn"
                 className="gm-dist-nowrap"
                 onClick={() => {
@@ -2165,7 +2231,7 @@ export function StudioDistributionDrawer({
                   });
                 }}
               >
-                一键复制去营销讨论稿
+                复制稿件
               </Button>
             </div>
 
@@ -2196,6 +2262,7 @@ export function StudioDistributionDrawer({
                     <div className="gm-dist-thread-text">{post}</div>
                     <Button
                       size="small"
+                      autoInsertSpace={false}
                       className="gm-dist-nowrap"
                       onClick={() => {
                         void copyTextToClipboard(post).then((ok) => {
@@ -2255,14 +2322,18 @@ export function StudioDistributionDrawer({
                   }
                 />
                 <Button
-                  type="primary"
+                  type={
+                    primaryStage === 'task' && Boolean((quickRegisterUrls[task.id] ?? '').trim())
+                      ? 'primary'
+                      : 'default'
+                  }
                   data-testid="distribution-quick-register-btn"
                   loading={quickRegisteringTaskId === task.id}
                   disabled={readOnly || !(quickRegisterUrls[task.id] ?? '').trim()}
                   className="gm-dist-nowrap"
                   onClick={() => void handleQuickRegisterUrl(task)}
                 >
-                  登记已发链接
+                  登记链接
                 </Button>
               </div>
             </div>
@@ -2298,26 +2369,26 @@ export function StudioDistributionDrawer({
 
             <div className="gm-dist-row">
               <Button
+                autoInsertSpace={false}
                 data-testid="distribution-save-variant-btn"
                 loading={savingTaskId === task.id}
                 disabled={isTaskLocked}
                 className="gm-dist-nowrap"
                 onClick={() => void handleSaveVariantDraft(task)}
               >
-                保存变体修改
+                保存
               </Button>
               <Button
-                type="primary"
+                type={primaryStage === 'task' && !generatedShare ? 'primary' : 'default'}
                 data-testid="distribution-pr-share-btn"
                 loading={prActionTaskId === task.id}
                 disabled={readOnly || task.status === 'ARCHIVED'}
                 className="gm-dist-nowrap"
                 onClick={() => void handleCreatePrShare(task)}
               >
-                {task.shareLinkActive || generatedShare
-                  ? '重新生成 30 天免登录供稿链接'
-                  : '生成 30 天免登录供稿链接'}
+                {task.shareLinkActive || generatedShare ? '重签链接' : '生成链接'}
               </Button>
+              <span className="gm-vis-count-muted">30 天</span>
               {task.shareLinkActive || generatedShare ? (
                 <Button
                   danger
@@ -2327,7 +2398,7 @@ export function StudioDistributionDrawer({
                   className="gm-dist-nowrap"
                   onClick={() => handleRevokePrShare(task)}
                 >
-                  撤销链接
+                  撤销
                 </Button>
               ) : null}
             </div>
@@ -2344,7 +2415,7 @@ export function StudioDistributionDrawer({
                   </code>
                   <Button
                     size="small"
-                    type="primary"
+                    type={primaryStage === 'task' ? 'primary' : 'default'}
                     className="gm-dist-nowrap"
                     onClick={() => {
                       void copyTextToClipboard(generatedShare.shareUrl).then((ok) => {
@@ -2361,8 +2432,14 @@ export function StudioDistributionDrawer({
               <Alert
                 type="info"
                 showIcon
-                message={`当前已有生效中的免登录供稿链接（有效期至 ${formatShanghaiDateTime(task.shareExpiresAt)}）`}
-                description="出于安全原因，系统仅保存链接哈希值且不再明文回显。如需重新获取明文链接，请点击「重新生成 30 天免登录供稿链接」签发新链接（旧链接将自动失效）。"
+                message={
+                  <span className="gm-vis-alert-row">
+                    <span>链接生效</span>
+                    <Explain
+                      text={`当前已有生效中的免登录供稿链接（有效期至 ${formatShanghaiDateTime(task.shareExpiresAt)}）。系统仅保存哈希值，如需明文请点击「重签链接」。`}
+                    />
+                  </span>
+                }
               />
             ) : null}
           </div>
@@ -2442,7 +2519,7 @@ export function StudioDistributionDrawer({
                 <div className="gm-dist-preflight-actions">
                   <Button
                     size="small"
-                    type="primary"
+                    type={primaryStage === 'preflight' ? 'primary' : 'default'}
                     danger
                     data-testid="distribution-back-to-editor-btn"
                     className="gm-dist-nowrap"
@@ -2453,7 +2530,7 @@ export function StudioDistributionDrawer({
                       else onReturnToEditor(first?.code);
                     }}
                   >
-                    返回编辑器定位补填
+                    去补填
                   </Button>
                   <Checkbox
                     data-testid="distribution-ack-warnings-checkbox"
@@ -2484,7 +2561,7 @@ export function StudioDistributionDrawer({
                             onReturnToEditor(w.code, w.matches?.[0]?.matchedText ?? w.details?.[0])
                           }
                         >
-                          返回编辑器定位修改
+                          去修改
                         </Button>
                       ) : null}
                     </div>
@@ -2512,26 +2589,30 @@ export function StudioDistributionDrawer({
           {/* Step 2: Citation-Driven Channel Selector */}
           <div className="gm-dist-section-card gm-dist-section-card--spacious">
             <div className="gm-dist-row gm-dist-row--between">
-              <span className="gm-dist-card-title">
-                Step 2 · 引用驱动目标渠道选择（1 → N 变体改写）
-              </span>
-              <Button
-                type="primary"
-                data-testid="distribution-generate-variants-btn"
-                loading={generating || isVariantJobRunning}
-                disabled={
-                  selectedTargets.length === 0 || readOnly || generating || isVariantJobRunning
-                }
-                className="gm-dist-nowrap"
-                onClick={() => {
-                  pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
-                  setPointsConfirmOpen(true);
-                }}
-              >
-                {isVariantJobRunning
-                  ? `并行生成中（${(activeVariantJob?.doneCount ?? 0) + (activeVariantJob?.failCount ?? 0)}/${activeVariantJob?.total ?? 0}）`
-                  : `生成渠道变体${selectedTargets.length > 0 ? `（已选 ${selectedTargets.length}）` : ''}`}
-              </Button>
+              <div className="gm-dist-row">
+                <span className="gm-dist-card-title">选择渠道</span>
+                <Explain text="勾选目标自有站点、社区辅发或 PR 协作包，并行改写为 1 → N 渠道专属变体。" />
+              </div>
+              <div className="gm-dist-row">
+                {selectedTargets.length > 0 ? (
+                  <span className="gm-studio-count-pill gm-num">{selectedTargets.length}</span>
+                ) : null}
+                <Button
+                  type={primaryStage === 'generate' ? 'primary' : 'default'}
+                  data-testid="distribution-generate-variants-btn"
+                  loading={generating || isVariantJobRunning}
+                  disabled={
+                    selectedTargets.length === 0 || readOnly || generating || isVariantJobRunning
+                  }
+                  className="gm-dist-nowrap"
+                  onClick={() => {
+                    pendingVariantIdemKeyRef.current = createDistributionIdempotencyKey('var');
+                    setPointsConfirmOpen(true);
+                  }}
+                >
+                  {isVariantJobRunning ? '生成中…' : '生成变体'}
+                </Button>
+              </div>
             </div>
 
             {showVariantLocaleSelector ? (
@@ -2623,10 +2704,11 @@ export function StudioDistributionDrawer({
                     <Button
                       size="small"
                       type="text"
+                      autoInsertSpace={false}
                       className="gm-dist-nowrap"
                       onClick={() => setActiveVariantJob(null)}
                     >
-                      收起进度
+                      收起
                     </Button>
                   ) : null}
                 </div>
@@ -2677,60 +2759,14 @@ export function StudioDistributionDrawer({
               </div>
             ) : null}
 
-            {/* Citation-Driven Highlights */}
-            {effectiveRecommendedChannels.length > 0 ? (
-              <div className="gm-dist-rec-box">
-                <div className="gm-dist-rec-title">AI 高频被引阵地推荐</div>
-                <div className="gm-dist-grid-rec">
-                  {effectiveRecommendedChannels.map((rec) => {
-                    const safeUrls = (rec.citedExampleUrls ?? [])
-                      .filter((u) => isSafePublicExternalHttpUrl(u))
-                      .slice(0, 3);
-                    return (
-                      <div key={rec.channel} className="gm-dist-rec-item">
-                        <div className="gm-dist-rec-item-head">
-                          <span className="gm-dist-rec-name">{rec.channel}</span>
-                          {rec.priority ? (
-                            <StatusBadge
-                              tone={rec.priority === 'HIGH' ? 'warning' : 'active'}
-                              className="gm-studio-nowrap"
-                            >
-                              {rec.priority === 'HIGH' ? '高优先被引' : '推荐阵地'}
-                            </StatusBadge>
-                          ) : null}
-                        </div>
-                        <div className="gm-studio-text-secondary">{rec.reason}</div>
-                        {safeUrls.length > 0 ? (
-                          <div className="gm-studio-row gm-studio-row--wrap">
-                            {safeUrls.map((url, idx) => (
-                              <a
-                                key={url}
-                                href={url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="gm-mono gm-studio-cited-link"
-                              >
-                                高频被引原帖 #{idx + 1} ↗
-                              </a>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
+            {/* Y22: Removed duplicate AI 高频被引阵地推荐 box; recommendation badges stay on cards */}
 
             {/* Group 1: Connected L1 Official Sites */}
             <div className="gm-dist-l1-section">
               <div className="gm-dist-l1-head-row">
-                <div className="gm-studio-publish-subcard-title">
-                  <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL1}>
-                    <span className="gm-studio-glossary-trigger">
-                      1. {UX_TERMS.channelModeL1}（已连接自有站点 · 支持一键推草稿 / 上线）
-                    </span>
-                  </Tooltip>
+                <div className="gm-studio-publish-subcard-title gm-dist-row">
+                  <span>官方 API</span>
+                  <Explain text="L1 官方 API：已连接自有站点，支持一键推草稿箱或立即上线发布。" />
                 </div>
                 {brandId && brandMarketId ? (
                   <Button
@@ -2770,7 +2806,7 @@ export function StudioDistributionDrawer({
                         onNavigateBrands();
                       }}
                     >
-                      前往品牌资产配置渠道连接
+                      去绑定
                     </Button>
                   ) : null}
                 </div>
@@ -2822,80 +2858,117 @@ export function StudioDistributionDrawer({
               )}
             </div>
 
-            {/* Group 1.5 (CN Only): L2 Chrome Extension Queue */}
+            {/* Group 1.5 (CN Only): Y26 L2 Chrome Extension Queue (expanded only when paired or clicked) */}
             {l2ExtensionOptions.length > 0 ? (
-              <div
-                data-testid="distribution-l2-extension-group"
-                className="gm-dist-col gm-dist-col--md"
-              >
-                <div className="gm-dist-row gm-dist-row--between">
-                  <span className="gm-dist-group-title">
-                    国内平台浏览器扩展队列（L2 Chrome 扩展 · 写入草稿箱人工确认，不自动发布）
-                  </span>
-                  {onNavigateExtensionPairing || onNavigateBrands ? (
+              hasPairedExtension || showUnpairedL2 ? (
+                <div
+                  data-testid="distribution-l2-extension-group"
+                  className="gm-dist-col gm-dist-col--md"
+                >
+                  <div className="gm-dist-row gm-dist-row--between">
+                    <div className="gm-dist-row">
+                      <span className="gm-dist-group-title">扩展渠道</span>
+                      <Explain text="L2 Chrome 扩展：写入知乎 / 头条 / 什么值得买草稿箱，人工审核后手动发布，不自动点击最终发布。" />
+                    </div>
+                    {onNavigateExtensionPairing || onNavigateBrands ? (
+                      <Button
+                        size="small"
+                        type="link"
+                        className="gm-dist-link-btn"
+                        onClick={() => {
+                          onClose();
+                          (onNavigateExtensionPairing ?? onNavigateBrands)?.();
+                        }}
+                      >
+                        管理令牌
+                      </Button>
+                    ) : null}
+                  </div>
+                  <div className="gm-dist-grid-cards">
+                    {l2ExtensionOptions.map((opt) => {
+                      const selected = selectedTargetKeys.includes(opt.key);
+                      return (
+                        <div
+                          key={opt.key}
+                          role="presentation"
+                          data-testid={`distribution-target-${opt.provider}`}
+                          onClick={() => {
+                            if (!readOnly) toggleTargetKey(opt.key);
+                          }}
+                          className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
+                        >
+                          <span
+                            className="gm-dist-target-check"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={selected}
+                              disabled={readOnly}
+                              aria-label={opt.channelLabel}
+                              onChange={() => toggleTargetKey(opt.key)}
+                            />
+                          </span>
+                          <div className="gm-dist-target-content">
+                            <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
+                              <span className="gm-dist-target-name">{opt.channelLabel}</span>
+                              <StatusBadge tone="active" className="gm-studio-nowrap">
+                                Chrome 扩展
+                              </StatusBadge>
+                              {opt.recommendedPriority === 'HIGH' ? (
+                                <StatusBadge tone="warning" className="gm-studio-nowrap">
+                                  高频被引
+                                </StatusBadge>
+                              ) : null}
+                            </div>
+                            <div className="gm-studio-text-muted">{opt.description}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  data-testid="distribution-l2-extension-collapsed"
+                  className="gm-dist-row gm-dist-row--between"
+                >
+                  <div className="gm-dist-row">
+                    <span className="gm-dist-group-title">扩展渠道</span>
+                    <Explain text="尚未配对 Chrome 扩展。前往「账户 → 扩展配对」生成令牌后，可将稿件写入知乎、头条、什么值得买草稿箱。" />
+                  </div>
+                  <div className="gm-dist-row">
+                    {onNavigateExtensionPairing || onNavigateBrands ? (
+                      <Button
+                        size="small"
+                        type="link"
+                        data-testid="distribution-l2-pair-link-btn"
+                        onClick={() => {
+                          onClose();
+                          (onNavigateExtensionPairing ?? onNavigateBrands)?.();
+                        }}
+                      >
+                        去配对
+                      </Button>
+                    ) : null}
                     <Button
                       size="small"
-                      type="link"
-                      className="gm-dist-link-btn"
-                      onClick={() => {
-                        onClose();
-                        (onNavigateExtensionPairing ?? onNavigateBrands)?.();
-                      }}
+                      type="text"
+                      autoInsertSpace={false}
+                      data-testid="distribution-l2-expand-btn"
+                      onClick={() => setShowUnpairedL2(true)}
                     >
-                      管理扩展配对令牌 →
+                      展开
                     </Button>
-                  ) : null}
+                  </div>
                 </div>
-                <div className="gm-dist-grid-cards">
-                  {l2ExtensionOptions.map((opt) => {
-                    const selected = selectedTargetKeys.includes(opt.key);
-                    return (
-                      <div
-                        key={opt.key}
-                        role="presentation"
-                        data-testid={`distribution-target-${opt.provider}`}
-                        onClick={() => {
-                          if (!readOnly) toggleTargetKey(opt.key);
-                        }}
-                        className={`gm-dist-target-card${selected ? ' gm-dist-target-card--selected' : ''}${readOnly ? ' gm-dist-target-card--readonly' : ''}`}
-                      >
-                        <span className="gm-dist-target-check" onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            checked={selected}
-                            disabled={readOnly}
-                            aria-label={opt.channelLabel}
-                            onChange={() => toggleTargetKey(opt.key)}
-                          />
-                        </span>
-                        <div className="gm-dist-target-content">
-                          <div className="gm-dist-row gm-dist-row--tight gm-dist-min0">
-                            <span className="gm-dist-target-name">{opt.channelLabel}</span>
-                            <StatusBadge tone="active" className="gm-studio-nowrap">
-                              Chrome 扩展
-                            </StatusBadge>
-                            {opt.recommendedPriority === 'HIGH' ? (
-                              <StatusBadge tone="warning" className="gm-studio-nowrap">
-                                高频被引
-                              </StatusBadge>
-                            ) : null}
-                          </div>
-                          <div className="gm-studio-text-muted">{opt.description}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              )
             ) : null}
 
             {/* Group 2: L3 Community Assist */}
             <div className="gm-dist-col gm-dist-col--md">
-              <div className="gm-studio-publish-subcard-title">
-                <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Community}>
-                  <span className="gm-studio-glossary-trigger">
-                    2. {UX_TERMS.channelModeL3Community}（人工辅发 · 不自动发帖）
-                  </span>
-                </Tooltip>
+              <div className="gm-studio-publish-subcard-title gm-dist-row">
+                <span>社区辅发</span>
+                <Explain text="L3 社区辅发：生成去营销高价值讨论稿与防封自检清单，人工合规参与讨论，绝不自动发帖。" />
               </div>
               <div className="gm-dist-grid-cards">
                 {communityOptions.map((opt) => {
@@ -2937,12 +3010,9 @@ export function StudioDistributionDrawer({
 
             {/* Group 3: L3 PR Packet */}
             <div className="gm-dist-col gm-dist-col--md">
-              <div className="gm-studio-publish-subcard-title">
-                <Tooltip title={UX_GLOSSARY_TOOLTIPS.channelModeL3Pr}>
-                  <span className="gm-studio-glossary-trigger">
-                    3. {UX_TERMS.channelModeL3Pr}（外部媒体协作包 · 免登录链接）
-                  </span>
-                </Tooltip>
+              <div className="gm-studio-publish-subcard-title gm-dist-row">
+                <span>媒体供稿</span>
+                <Explain text="L3 外部媒体协作包：生成结构化 Fact Sheet 与 30 天免登录供稿页，支持媒体/KOL 回传上线链接。" />
               </div>
               {prOptions.map((opt) => {
                 const selected = selectedTargetKeys.includes(opt.key);
@@ -2976,7 +3046,7 @@ export function StudioDistributionDrawer({
 
           {/* Step 3: Multi-Channel Variant Tab Editor */}
           <div data-testid="distribution-variant-tabs" className="gm-dist-section-card">
-            <div className="gm-dist-card-title">Step 3 · 多渠道变体编辑与一键分发</div>
+            <div className="gm-dist-card-title">变体分发</div>
 
             {tasks.length === 0 ? (
               <SignalEmpty
@@ -3058,7 +3128,7 @@ export function StudioDistributionDrawer({
       {/* Points Confirmation Modal */}
       <Modal
         open={pointsConfirmOpen}
-        title="确认生成多渠道变体"
+        title="生成变体"
         width="min(520px, calc(100vw - 32px))"
         destroyOnHidden
         keyboard={!generating}
@@ -3070,6 +3140,7 @@ export function StudioDistributionDrawer({
         footer={
           <Space wrap>
             <Button
+              autoInsertSpace={false}
               disabled={generating}
               onClick={() => {
                 pendingVariantIdemKeyRef.current = null;
@@ -3078,6 +3149,7 @@ export function StudioDistributionDrawer({
             >
               取消
             </Button>
+            <CostChip points={totalEstimatedPoints} />
             <Button
               type="primary"
               data-testid="distribution-points-confirm-submit-btn"

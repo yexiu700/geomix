@@ -443,10 +443,11 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                     </p>
                     <Button
                       type="primary"
+                      autoInsertSpace={false}
                       onClick={() => setReloadNonce((n) => n + 1)}
                       className="gm-pr-share-retry-btn"
                     >
-                      Retry / 重新加载
+                      重试
                     </Button>
                   </>
                 ) : (
@@ -463,10 +464,11 @@ export function PrSharePacketView({ token }: PrSharePacketViewProps): JSX.Elemen
                     </p>
                     <Button
                       type="primary"
+                      autoInsertSpace={false}
                       onClick={() => setReloadNonce((n) => n + 1)}
                       className="gm-pr-share-retry-btn"
                     >
-                      Retry / 重新加载
+                      重试
                     </Button>
                   </>
                 )}

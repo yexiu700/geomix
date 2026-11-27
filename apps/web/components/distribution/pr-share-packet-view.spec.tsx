@@ -280,7 +280,7 @@ describe('PrSharePacketView (M6B #355)', () => {
     render(<PrSharePacketView token="tok_rate_123456789" />);
     const rateBox = await screen.findByTestId('pr-share-error-state');
     expect(rateBox.textContent).toContain('Too Many Requests');
-    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    fireEvent.click(screen.getByRole('button', { name: /重试|Retry/ }));
 
     await waitFor(() => {
       expect(screen.getByTestId('pr-share-fact-table')).toBeTruthy();

@@ -3,10 +3,10 @@
 import {
   GEO_ARTICLE_STATUSES,
   GEO_ARTICLE_STATUS_LABELS,
-  GEO_MARKET_LABELS,
   GLOBAL_SUPPORTED_LOCALES,
   VISIBILITY_DEFAULT_UNIT_POINTS,
   resolveEffectiveLocale,
+  type ActionHomeResponse,
   type BrandFactRecord,
   type GeoArticlePublishFilter,
   type GeoArticleRecord,
@@ -26,6 +26,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrandFacts } from '../../lib/brands';
 import { getBrief } from '../../lib/briefs';
 import { GatewayApiError } from '../../lib/envelope';
+import { fetchActionHome } from '../../lib/home';
+import { GEO_MARKET_SHORT } from '../../lib/short-labels';
 import {
   createPublishRecord,
   fetchArticles,
@@ -57,12 +59,14 @@ import { useConsoleContext } from '../shell/console-context';
 import { StudioDeliveryPack } from '../studio/studio-delivery-pack';
 import { DistributionWorkbench } from '../studio/studio-distribution-drawer';
 import { StudioPublishRetest } from '../studio/studio-publish-retest';
-import { StatusBadge } from '../ui';
+import { CostChip, Explain, StatusBadge } from '../ui';
 import { PublishArticleQueue } from './publish-article-queue';
+import { PublishAttributionSummary } from './publish-attribution-summary';
 
-export type PublishTabKey = 'distribute' | 'tracking' | 'delivery';
+export type PublishTabKey = 'distribute' | 'tracking';
+type ParsedPublishTab = PublishTabKey | 'delivery';
 
-function parsePublishTab(raw: string | null | undefined): PublishTabKey | null {
+function parsePublishTab(raw: string | null | undefined): ParsedPublishTab | null {
   if (raw === 'distribute' || raw === 'tracking' || raw === 'delivery') {
     return raw;
   }
@@ -85,7 +89,7 @@ function readPublishUrlParams(): {
   market: string | null;
   productLineId: string | null;
   articleId: string | null;
-  tab: PublishTabKey | null;
+  tab: ParsedPublishTab | null;
 } {
   if (typeof window === 'undefined') {
     return {
@@ -165,6 +169,8 @@ export function PublishWorkspace(): JSX.Element {
   const [activeArticle, setActiveArticle] = useState<GeoArticleRecord | null>(null);
   const [linkedBrief, setLinkedBrief] = useState<GeoBriefRecord | null>(null);
   const [activeTab, setActiveTab] = useState<PublishTabKey>('distribute');
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [homeAttribution, setHomeAttribution] = useState<ActionHomeResponse | null>(null);
 
   const [publishRecords, setPublishRecords] = useState<GeoPublishRecordDto[]>([]);
   const [publishRecordsLoading, setPublishRecordsLoading] = useState(false);
@@ -276,7 +282,7 @@ export function PublishWorkspace(): JSX.Element {
   const selectArticleInWorkspace = useCallback(
     (
       article: GeoArticleRecord,
-      options?: { explicitTab?: PublishTabKey | null; preserveManualTab?: boolean },
+      options?: { explicitTab?: ParsedPublishTab | null; preserveManualTab?: boolean },
     ) => {
       const sameArticle = activeArticleIdRef.current === article.id;
       if (!sameArticle) {
@@ -295,7 +301,12 @@ export function PublishWorkspace(): JSX.Element {
 
       const urlTab = readPublishUrlParams().tab;
       const desiredTab = options?.explicitTab ?? (sameArticle ? urlTab : null);
-      if (desiredTab) {
+      if (desiredTab === 'delivery') {
+        userChoseTabForArticleRef.current = article.id;
+        setActiveTab('distribute');
+        setExportModalOpen(true);
+        replacePublishUrlParam('tab', 'delivery');
+      } else if (desiredTab) {
         userChoseTabForArticleRef.current = article.id;
         setActiveTab(desiredTab);
         replacePublishUrlParam('tab', desiredTab);
@@ -325,7 +336,7 @@ export function PublishWorkspace(): JSX.Element {
       const { publishFilter: curFilter, keyword: curKeyword } = articleFiltersRef.current;
       const productLineId = options?.productLineId ?? null;
 
-      const [articlesRes, factsRes] = await Promise.allSettled([
+      const [articlesRes, factsRes, homeRes] = await Promise.allSettled([
         fetchArticles(
           brandId,
           market,
@@ -341,6 +352,10 @@ export function PublishWorkspace(): JSX.Element {
           signal: ctrl.signal,
           ...(productLineId ? { productLineId } : {}),
         }),
+        fetchActionHome(brandId, market, {
+          signal: ctrl.signal,
+          productLineId,
+        }),
       ]);
 
       if (seq !== contextSeqRef.current || ctrl.signal.aborted) return;
@@ -349,6 +364,9 @@ export function PublishWorkspace(): JSX.Element {
       setArticles(loadedArticles);
       if (factsRes.status === 'fulfilled') {
         setBrandFacts(factsRes.value.items);
+      }
+      if (homeRes.status === 'fulfilled') {
+        setHomeAttribution(homeRes.value);
       }
       setArticlesLoading(false);
 
@@ -495,9 +513,11 @@ export function PublishWorkspace(): JSX.Element {
     setKeywordFilter('');
     setArticles([]);
     setBrandFacts([]);
+    setHomeAttribution(null);
     setActiveArticle(null);
     setLinkedBrief(null);
     setActiveTab('distribute');
+    setExportModalOpen(false);
     setPublishRecords([]);
     setPublishRecordsLoading(false);
     setRetestingRecordId(null);
@@ -600,7 +620,11 @@ export function PublishWorkspace(): JSX.Element {
 
     const urlParams = readPublishUrlParams();
     if (urlParams.articleId && urlParams.articleId === activeArticleIdRef.current) {
-      if (urlParams.tab) {
+      if (urlParams.tab === 'delivery') {
+        userChoseTabForArticleRef.current = urlParams.articleId;
+        setActiveTab('distribute');
+        setExportModalOpen(true);
+      } else if (urlParams.tab) {
         userChoseTabForArticleRef.current = urlParams.articleId;
         setActiveTab(urlParams.tab);
       }
@@ -608,7 +632,14 @@ export function PublishWorkspace(): JSX.Element {
     }
 
     if (!urlParams.articleId) {
-      if (urlParams.tab && activeArticleIdRef.current) {
+      if (urlParams.tab === 'delivery' && activeArticleIdRef.current) {
+        userChoseTabForArticleRef.current = activeArticleIdRef.current;
+        setActiveTab('distribute');
+        setExportModalOpen(true);
+      } else if (
+        (urlParams.tab === 'distribute' || urlParams.tab === 'tracking') &&
+        activeArticleIdRef.current
+      ) {
         userChoseTabForArticleRef.current = activeArticleIdRef.current;
         setActiveTab(urlParams.tab);
       }
@@ -885,6 +916,10 @@ export function PublishWorkspace(): JSX.Element {
   const handleSelectTab = (next: string) => {
     const parsed = parsePublishTab(next);
     if (!parsed) return;
+    if (parsed === 'delivery') {
+      setExportModalOpen(true);
+      return;
+    }
     userChoseTabForArticleRef.current = activeArticle?.id ?? '__none__';
     setActiveTab(parsed);
     replacePublishUrlParam('tab', parsed);
@@ -1175,9 +1210,9 @@ export function PublishWorkspace(): JSX.Element {
       <section className="gm-studio-page gm-studio-page--empty" aria-label="发布中心">
         <div className="gm-panel">
           <SignalEmpty
-            title="尚未创建品牌资产"
-            description="先用 60 秒完成品牌与事实卡建档，并在 GEO 写作台完成创作后，即可在这里多渠道分发与追踪复测。"
-            actionText={readOnly ? undefined : '立即创建首个品牌'}
+            title="暂无品牌"
+            description="先用 60 秒完成品牌与事实卡建档，并在创作台完成创作后，即可在这里多渠道分发与追踪复测。"
+            actionText={readOnly ? undefined : '新建品牌'}
             onAction={readOnly ? undefined : () => consoleCtx?.openCreateBrandModal()}
           />
         </div>
@@ -1233,8 +1268,9 @@ export function PublishWorkspace(): JSX.Element {
           {isNarrowDrawerViewport ? (
             <div className="gm-publish-mobile-bar">
               <Button size="small" onClick={() => setMobileLeftDrawerOpen(true)}>
-                成稿发布队列 ({articles.length})
+                成稿队列
               </Button>
+              <span className="gm-studio-count-pill gm-num">{articles.length}</span>
             </div>
           ) : null}
 
@@ -1245,9 +1281,9 @@ export function PublishWorkspace(): JSX.Element {
           ) : !activeArticle ? (
             <div className="gm-publish-empty-wrap">
               <SignalEmpty
-                title="请选择一篇成稿开始发布"
-                description="在左侧成稿队列选择已有文章，或前往 GEO 写作台撰写新文章后再回到发布中心。"
-                actionText="前往 GEO 写作台"
+                title="暂无成稿"
+                description="在左侧成稿队列选择已有文章，或前往创作台撰写新文章后再回到发布中心。"
+                actionText="去写作"
                 onAction={() => consoleCtx?.navigateWorkspace('/studio')}
               />
             </div>
@@ -1260,7 +1296,7 @@ export function PublishWorkspace(): JSX.Element {
                   </h2>
                   <div className="gm-publish-header-meta">
                     <StatusBadge tone="active">
-                      {activeMarket === 'CN' ? '🇨🇳' : '🌐'} {GEO_MARKET_LABELS[activeMarket]}
+                      {GEO_MARKET_SHORT[activeMarket]}
                       {activeArticle.targetLocale ? ` · ${activeArticle.targetLocale}` : ''}
                     </StatusBadge>
                     <StatusBadge
@@ -1293,6 +1329,14 @@ export function PublishWorkspace(): JSX.Element {
                 <div className="gm-publish-header-actions">
                   <Button
                     size="small"
+                    autoInsertSpace={false}
+                    data-testid="publish-export-btn"
+                    onClick={() => setExportModalOpen(true)}
+                  >
+                    导出
+                  </Button>
+                  <Button
+                    size="small"
                     data-testid="publish-back-to-studio-btn"
                     onClick={() =>
                       consoleCtx?.navigateWorkspace(
@@ -1300,7 +1344,7 @@ export function PublishWorkspace(): JSX.Element {
                       )
                     }
                   >
-                    返回写作台编辑
+                    去编辑
                   </Button>
                 </div>
               </div>
@@ -1314,7 +1358,7 @@ export function PublishWorkspace(): JSX.Element {
                   items={[
                     {
                       key: 'distribute',
-                      label: <span data-testid="publish-tab-distribute">多渠道分发</span>,
+                      label: <span data-testid="publish-tab-distribute">分发</span>,
                       children: (
                         <DistributionWorkbench
                           open={activeArticleMatchesContext}
@@ -1352,8 +1396,8 @@ export function PublishWorkspace(): JSX.Element {
                         <span className="gm-publish-tab-label" data-testid="publish-tab-tracking">
                           <span>
                             {scopedPublishRecords.length > 0
-                              ? `发布追踪与复测 (${scopedPublishRecords.length})`
-                              : '发布追踪与复测'}
+                              ? `追踪 (${scopedPublishRecords.length})`
+                              : '追踪'}
                           </span>
                           {hasCrawlAlert ? (
                             <span
@@ -1365,38 +1409,32 @@ export function PublishWorkspace(): JSX.Element {
                         </span>
                       ),
                       children: (
-                        <StudioPublishRetest
-                          activeMarket={activeMarket}
-                          article={activeArticleMatchesContext ? activeArticle : null}
-                          publishRecords={scopedPublishRecords}
-                          recordsLoading={publishRecordsLoading}
-                          retestingRecordId={retestingRecordId}
-                          pollingRetestRecordId={pendingRetest?.recordId ?? null}
-                          readOnly={readOnly}
-                          onCreatePublishRecord={handleCreatePublishRecord}
-                          onTriggerRetest={handleOpenRetestModal}
-                          onPublishRecordUpdated={handlePublishRecordUpdated}
-                        />
-                      ),
-                    },
-                    {
-                      key: 'delivery',
-                      label: <span data-testid="publish-tab-delivery">手动交付包</span>,
-                      children: (
-                        <StudioDeliveryPack
-                          activeMarket={activeMarket}
-                          localBrandName={activeBrandMarket.localBrandName}
-                          category={activeBrand.category}
-                          localCategory={activeBrandMarket.localCategory}
-                          ownedDomains={activeBrandMarket.ownedDomains}
-                          brandNames={brandNames}
-                          matchedFactCount={matchedFactCount}
-                          readOnly={readOnly}
-                          article={activeArticle}
-                          evaluation={null}
-                          linkedBriefChannels={linkedBrief?.recommendedChannels}
-                          streaming={false}
-                        />
+                        <div className="gm-studio-stack gm-studio-stack--lg">
+                          <StudioPublishRetest
+                            activeMarket={activeMarket}
+                            article={activeArticleMatchesContext ? activeArticle : null}
+                            publishRecords={scopedPublishRecords}
+                            recordsLoading={publishRecordsLoading}
+                            retestingRecordId={retestingRecordId}
+                            pollingRetestRecordId={pendingRetest?.recordId ?? null}
+                            readOnly={readOnly}
+                            onCreatePublishRecord={handleCreatePublishRecord}
+                            onTriggerRetest={handleOpenRetestModal}
+                            onPublishRecordUpdated={handlePublishRecordUpdated}
+                          />
+                          <PublishAttributionSummary
+                            summary={homeAttribution?.distributionSummary}
+                            retestBudget={homeAttribution?.retestBudget}
+                            recentArticles={homeAttribution?.recentArticles}
+                            onSelectArticle={(targetArticleId) => {
+                              const found = articles.find((a) => a.id === targetArticleId);
+                              if (found)
+                                selectArticleInWorkspace(found, { explicitTab: 'tracking' });
+                            }}
+                            onOpenPoints={() => consoleCtx?.navigateWorkspace('/account')}
+                            onOpenBudgetSettings={() => consoleCtx?.navigateWorkspace('/brands')}
+                          />
+                        </div>
                       ),
                     },
                   ]}
@@ -1407,6 +1445,37 @@ export function PublishWorkspace(): JSX.Element {
         </main>
       </div>
 
+      <Modal
+        open={exportModalOpen}
+        title="导出交付"
+        footer={null}
+        width={640}
+        destroyOnHidden
+        onCancel={() => {
+          setExportModalOpen(false);
+          if (readPublishUrlParams().tab === 'delivery') {
+            replacePublishUrlParam('tab', activeTab);
+          }
+        }}
+      >
+        <div data-testid="publish-export-modal">
+          <StudioDeliveryPack
+            activeMarket={activeMarket}
+            localBrandName={activeBrandMarket.localBrandName}
+            category={activeBrand.category}
+            localCategory={activeBrandMarket.localCategory}
+            ownedDomains={activeBrandMarket.ownedDomains}
+            brandNames={brandNames}
+            matchedFactCount={matchedFactCount}
+            readOnly={readOnly}
+            article={activeArticle}
+            evaluation={null}
+            linkedBriefChannels={linkedBrief?.recommendedChannels}
+            streaming={false}
+          />
+        </div>
+      </Modal>
+
       {isNarrowDrawerViewport ? (
         <Drawer
           placement="left"
@@ -1415,7 +1484,7 @@ export function PublishWorkspace(): JSX.Element {
           keyboard
           destroyOnHidden
           width={320}
-          title="成稿发布队列"
+          title="成稿队列"
           classNames={{ body: 'gm-studio-drawer-body' }}
         >
           {renderQueue(true)}
@@ -1424,7 +1493,7 @@ export function PublishWorkspace(): JSX.Element {
 
       <Modal
         open={Boolean(retestModalRecord)}
-        title={`确认定向复测 · 选择 AI 引擎（${GEO_MARKET_LABELS[activeMarket]}）`}
+        title="定向复测"
         width={560}
         destroyOnHidden
         onCancel={() => {
@@ -1434,6 +1503,7 @@ export function PublishWorkspace(): JSX.Element {
         footer={
           <Space>
             <Button
+              autoInsertSpace={false}
               onClick={() => {
                 retestEnginesCtrlRef.current?.abort();
                 setRetestModalRecord(null);
@@ -1441,6 +1511,7 @@ export function PublishWorkspace(): JSX.Element {
             >
               取消
             </Button>
+            <CostChip points={retestEstimatedPoints} data-testid="publish-retest-cost-chip" />
             <Button
               type="primary"
               data-testid="publish-retest-confirm-btn"
@@ -1458,34 +1529,33 @@ export function PublishWorkspace(): JSX.Element {
                 void handleTriggerRetest(targetRecord, chosenEngines);
               }}
             >
-              确认发起复测（{retestEstimatedPoints} 点）
+              发起复测
             </Button>
           </Space>
         }
       >
         <div data-testid="publish-retest-modal" className="gm-studio-stack gm-studio-stack--lg">
-          <div className="gm-studio-text-secondary">
-            默认仅勾选当前市场已上线健康引擎，避免盲扣未上线引擎点数；异常项自动全额退还。
-          </div>
-
           <div className="gm-vis-label-row">
             <span className="gm-vis-field-label">
-              已选 <span className="gm-num">{validRetestCheckedEngines.length}</span> / 在线{' '}
+              选择 AI 引擎（{GEO_MARKET_SHORT[activeMarket]} · 已选{' '}
+              <span className="gm-num">{validRetestCheckedEngines.length}</span> / 在线{' '}
               <span className="gm-num">{onlineRetestEngineKeys.length}</span> / 共{' '}
-              <span className="gm-num">{retestEngines.length}</span>
+              <span className="gm-num">{retestEngines.length}</span>）
             </span>
             <Space size={8}>
+              <Explain text="默认仅勾选当前市场已上线健康引擎，避免盲扣未上线引擎点数；异常项自动全额退还。" />
               <Button
                 size="small"
                 type="link"
                 disabled={retestEnginesLoading || onlineRetestEngineKeys.length === 0}
                 onClick={() => setRetestCheckedEngines([...onlineRetestEngineKeys])}
               >
-                全选在线引擎
+                全选在线
               </Button>
               <Button
                 size="small"
                 type="link"
+                autoInsertSpace={false}
                 disabled={retestEnginesLoading || validRetestCheckedEngines.length === 0}
                 onClick={() => setRetestCheckedEngines([])}
               >

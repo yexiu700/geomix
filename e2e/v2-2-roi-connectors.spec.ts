@@ -3822,6 +3822,7 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
 
       const timeline = page.getByTestId(`publish-retest-timeline-${pubRecord.id}`);
       await expect(timeline).toBeVisible({ timeout: 20_000 });
+      await page.getByTestId(`publish-retest-advanced-toggle-${pubRecord.id}`).click();
       const budgetEl = page.getByTestId(`publish-retest-budget-${pubRecord.id}`);
       await expect(budgetEl).toBeVisible();
       const budgetBefore = await budgetEl.innerText();
@@ -3861,6 +3862,10 @@ test.describe('Tier 4 — GeoMix v2.2 Real-World End-to-End User Journeys & Ergo
       await expect(workbench).toBeVisible({ timeout: 20_000 });
 
       // Select ZHIHU_EXT L2 target & generate variant via async GeoVariantJob
+      const expandL2Btn = page.getByTestId('distribution-l2-expand-btn');
+      if (await expandL2Btn.isVisible().catch(() => false)) {
+        await expandL2Btn.click();
+      }
       const zhihuTarget = page.getByTestId('distribution-target-ZHIHU_EXT');
       await expect(zhihuTarget).toBeVisible({ timeout: 15_000 });
       await zhihuTarget.click();
