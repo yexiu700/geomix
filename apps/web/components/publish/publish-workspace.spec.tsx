@@ -373,8 +373,8 @@ describe('PublishWorkspace (/publish)', () => {
     fireEvent.click(screen.getByTestId('publish-tab-tracking'));
     expect(await screen.findByTestId('studio-publish-retest')).toBeTruthy();
 
-    // Switch to 手动交付包 tab and verify StudioDeliveryPack mounts inline
-    fireEvent.click(screen.getByTestId('publish-tab-delivery'));
+    // Open Export Modal via header button and verify StudioDeliveryPack mounts inside
+    fireEvent.click(screen.getByTestId('publish-export-btn'));
     expect(await screen.findByTestId('delivery-copy-jsonld')).toBeTruthy();
 
     // Header "返回写作台编辑" navigates to /studio?articleId=...

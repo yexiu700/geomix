@@ -87,10 +87,18 @@ export function PublishArticleQueue({
       data-testid="publish-left-pane"
     >
       <div className="gm-studio-pane-head">
-        <span className="gm-studio-pane-title">成稿发布队列 ({articles.length})</span>
+        <span className="gm-studio-pane-title">
+          成稿队列 <span className="gm-studio-count-pill gm-num">{articles.length}</span>
+        </span>
         {!hideCollapseToggle ? (
-          <Button size="small" type="text" aria-expanded={true} onClick={onToggleCollapse}>
-            收起队列
+          <Button
+            size="small"
+            type="text"
+            autoInsertSpace={false}
+            aria-expanded={true}
+            onClick={onToggleCollapse}
+          >
+            收起
           </Button>
         ) : null}
       </div>
@@ -176,7 +184,7 @@ export function PublishArticleQueue({
           </div>
         ) : hasActiveFilters ? (
           <SignalEmpty
-            title="没有符合筛选条件的成稿"
+            title="暂无匹配"
             description="可切换筛选标签或清空搜索关键词后重试。"
             actionText="重置筛选"
             onAction={() => {
@@ -186,9 +194,9 @@ export function PublishArticleQueue({
           />
         ) : (
           <SignalEmpty
-            title="当前市场暂无可发布成稿"
-            description="先在 GEO 写作台完成选题生成与体检，再来到发布中心多渠道推送。"
-            actionText="前往 GEO 写作台"
+            title="暂无成稿"
+            description="先在创作台完成选题生成与体检，再来到发布中心多渠道推送。"
+            actionText="去写作"
             onAction={onNavigateStudio}
           />
         )}

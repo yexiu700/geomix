@@ -182,6 +182,9 @@ describe('StudioPublishRetest (M6B #355)', () => {
     const firstInput = form.querySelector('input');
     expect(firstInput?.getAttribute('aria-label')).toBe('已发布文章 URL');
 
+    // Expand form advanced controls for budget & 3x sampling (Y24)
+    fireEvent.click(screen.getByTestId('publish-form-advanced-toggle'));
+
     // Wait for live online engine count (2 available GLOBAL engines) -> 3 * 2 * 1 * 2 = 12 pts
     await waitFor(() => {
       expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain(
@@ -202,7 +205,7 @@ describe('StudioPublishRetest (M6B #355)', () => {
     });
 
     // Switch to 3x high-confidence -> budget updates to 36 pts and sends autoRetest payload
-    fireEvent.click(within(form).getByRole('button', { name: '3 次高置信' }));
+    fireEvent.click(within(form).getByRole('button', { name: '3次采样' }));
     expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain('上限 36 点');
     fireEvent.change(screen.getByLabelText('已发布文章 URL'), {
       target: { value: 'https://astravault.example.com/blog/post-2' },
@@ -257,6 +260,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
       />,
     );
 
+    fireEvent.click(screen.getByTestId('publish-form-advanced-toggle'));
+
     await waitFor(() => {
       const budgetText = screen.getByTestId('publish-form-budget-ceiling').textContent ?? '';
       expect(budgetText).toContain('当前市场暂无在线引擎');
@@ -302,6 +307,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
         onTriggerRetest={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByTestId('publish-crawl-detail-toggle-pub_1'));
 
     const badgeBox = screen.getByTestId('publish-crawl-badges-pub_1');
     expect(badgeBox.textContent).toContain('可抓取');
@@ -382,9 +389,10 @@ describe('StudioPublishRetest (M6B #355)', () => {
     expect(t30.textContent).toContain('点数不足已跳过');
     expect(t30.textContent).toContain('点数不足');
 
-    // Switch sample count to 3x
+    // Switch sample count to 3x (inside per-record advanced panel per Y24)
+    fireEvent.click(screen.getByTestId('publish-retest-advanced-toggle-pub_1'));
     const toggle = screen.getByTestId('publish-retest-sample-toggle-pub_1');
-    fireEvent.click(within(toggle).getByRole('button', { name: '3 次高置信' }));
+    fireEvent.click(within(toggle).getByRole('button', { name: '3次采样' }));
     await waitFor(() => {
       expect(updateSchedSpy).toHaveBeenCalledWith(
         'pub_1',
@@ -407,7 +415,7 @@ describe('StudioPublishRetest (M6B #355)', () => {
 
     // Demoted instant retest button still works & shows gentle hint
     const instantBtn = screen.getByTestId('publish-retest-btn');
-    expect(instantBtn.textContent).toContain('一键立刻复测');
+    expect(instantBtn.textContent).toContain('立即复测');
     expect(screen.getByText(/新发内容通常需 7–14 天进入 AI 检索/)).toBeTruthy();
     fireEvent.click(instantBtn);
     expect(onTriggerRetest).toHaveBeenCalledWith(expect.objectContaining({ id: 'pub_1' }));
@@ -476,6 +484,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
       ],
     } as unknown as Awaited<ReturnType<typeof visibilityApi.fetchVisibilityEngines>>);
 
+    fireEvent.click(screen.getByTestId('publish-form-advanced-toggle'));
+
     await waitFor(() => {
       expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain(
         '3 节点 × 1 活跃引擎 × 1 次采样 × 2 点 = 上限 6 点',
@@ -497,6 +507,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
         onTriggerRetest={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByTestId('publish-form-advanced-toggle'));
 
     expect(screen.getByTestId('publish-form-budget-ceiling').textContent).toContain(
       '3 节点 × 1 活跃引擎 × 1 次采样 × 2 点 = 上限 6 点',
@@ -643,9 +655,10 @@ describe('StudioPublishRetest (M6B #355)', () => {
       />,
     );
 
+    fireEvent.click(screen.getByTestId('publish-retest-advanced-toggle-pub_1'));
     const toggle = screen.getByTestId('publish-retest-sample-toggle-pub_1');
     const btn1 = within(toggle).getByRole('button', { name: '1 次' }) as HTMLButtonElement;
-    const btn3 = within(toggle).getByRole('button', { name: '3 次高置信' }) as HTMLButtonElement;
+    const btn3 = within(toggle).getByRole('button', { name: '3次采样' }) as HTMLButtonElement;
     expect(btn1.disabled).toBe(true);
     expect(btn3.disabled).toBe(true);
     expect(btn1.title).toBe('当前无待执行复测节点，请先开启至少一个节点后再切换采样模式');
@@ -1026,6 +1039,7 @@ describe('StudioPublishRetest (M6B #355)', () => {
     expect(skippedNode.textContent).toContain('余额不足，已自动温和跳过');
 
     // 4. Toggle includeControlPrompts -> PATCH + re-query live budget -> shows 0-controls hint & STRICT insufficient hint
+    fireEvent.click(screen.getByTestId('publish-retest-advanced-toggle-pub_v22_1'));
     const controlToggle = screen.getByTestId('publish-retest-control-toggle-pub_v22_1');
     fireEvent.click(controlToggle);
     await waitFor(() => {
@@ -1108,6 +1122,8 @@ describe('StudioPublishRetest (M6B #355)', () => {
         onTriggerRetest={vi.fn()}
       />,
     );
+
+    fireEvent.click(screen.getByTestId('publish-retest-advanced-toggle-pub_stale_1'));
 
     await waitFor(() => {
       expect(screen.getByTestId('publish-retest-budget-pub_stale_1').textContent).toContain(
@@ -1367,6 +1383,7 @@ describe('StudioPublishRetest (M6B #355)', () => {
     );
 
     // Control checkbox reflects CANCELLED fallback (true), not stale COMPLETED T+7 (false)
+    fireEvent.click(screen.getByTestId('publish-retest-advanced-toggle-pub_mixed_reopen_ui'));
     const controlCheckbox = screen.getByTestId(
       'publish-retest-control-toggle-pub_mixed_reopen_ui',
     ) as HTMLInputElement;
