@@ -917,7 +917,7 @@ v2Describe(
 
           const navItems = sider.locator('.ant-menu-item');
           await expect(navItems).toHaveCount(5);
-          for (const label of ['行动首页', '品牌资产', '可见度诊断', 'GEO 写作台', '发布中心']) {
+          for (const label of ['首页', '品牌', '诊断', '写作', '发布']) {
             await expect(sider.getByText(label, { exact: true }).first()).toBeVisible();
           }
           await expect(page.getByTestId('sider-account-entry')).toBeVisible();
@@ -939,10 +939,10 @@ v2Describe(
         const collector = attachErrorCollector(page);
         try {
           await page.goto('/home', { waitUntil: 'domcontentloaded' });
-          await navigateWorkspace(page, '品牌资产', /\/brands(?:[?#]|$)/);
-          await navigateWorkspace(page, '可见度诊断', /\/visibility(?:[?#]|$)/);
-          await navigateWorkspace(page, 'GEO 写作台', /\/studio(?:[?#]|$)/);
-          await navigateWorkspace(page, '发布中心', /\/publish(?:[?#]|$)/);
+          await navigateWorkspace(page, '品牌', /\/brands(?:[?#]|$)/);
+          await navigateWorkspace(page, '诊断', /\/visibility(?:[?#]|$)/);
+          await navigateWorkspace(page, '写作', /\/studio(?:[?#]|$)/);
+          await navigateWorkspace(page, '发布', /\/publish(?:[?#]|$)/);
           await openAccountWorkspace(page);
           await expect(page).toHaveURL(/\/account(?:[?#]|$)/);
 
@@ -1241,13 +1241,13 @@ v2Describe(
           expect(stored).toContain(brandB.id);
           expect(stored).toContain('GLOBAL');
 
-          await navigateWorkspace(page, '品牌资产', /\/brands/);
+          await navigateWorkspace(page, '品牌', /\/brands/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
-          await navigateWorkspace(page, '可见度诊断', /\/visibility/);
+          await navigateWorkspace(page, '诊断', /\/visibility/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
-          await navigateWorkspace(page, 'GEO 写作台', /\/studio/);
+          await navigateWorkspace(page, '写作', /\/studio/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
-          await navigateWorkspace(page, '发布中心', /\/publish/);
+          await navigateWorkspace(page, '发布', /\/publish/);
           await expectUrlContext(page, { brandId: brandB.id, market: 'GLOBAL' });
 
           await page.reload({ waitUntil: 'domcontentloaded' });
@@ -1276,10 +1276,12 @@ v2Describe(
           await expect(enableBtn).toBeVisible();
           await enableBtn.click();
 
-          const dialog = page.getByRole('dialog', { name: /开启海外市场|开启另一市场/ });
+          const dialog = page.getByRole('dialog', {
+            name: /开启海外|开启国内|开启海外市场|开启另一市场/,
+          });
           await expect(dialog).toBeVisible();
           await dialog.getByLabel('当地品牌名称').fill(`AstraVault ${tag}`);
-          await dialog.getByRole('button', { name: '确认开启' }).click();
+          await dialog.getByRole('button', { name: /^(?:开启|确认开启)$/ }).click();
 
           await expectUrlContext(page, { brandId: brand.id, market: 'GLOBAL' });
           await expect(enableBtn).toHaveCount(0);
@@ -1361,7 +1363,11 @@ v2Describe(
           for (const route of ['/visibility', '/studio']) {
             await page.goto(route, { waitUntil: 'domcontentloaded' });
             await expect(
-              page.getByRole('button', { name: /60 秒创建首个品牌|创建首个品牌/ }).first(),
+              page
+                .getByRole('button', {
+                  name: /60 秒创建首个品牌|创建首个品牌|立即创建首个品牌|建品牌/,
+                })
+                .first(),
             ).toBeVisible();
           }
           expect(apiFailures).toEqual([]);

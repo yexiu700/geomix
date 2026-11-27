@@ -152,14 +152,14 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
 
   // Step 6: CN <-> GLOBAL synchronization across workspaces + reload persistence
   const navTargets: Array<{
-    title: '品牌资产' | '可见度诊断' | 'GEO 写作台' | '发布中心' | '行动首页';
+    title: '品牌' | '诊断' | '写作' | '发布' | '首页';
     path: string;
   }> = [
-    { title: '品牌资产', path: '/brands' },
-    { title: '可见度诊断', path: '/visibility' },
-    { title: 'GEO 写作台', path: '/studio' },
-    { title: '发布中心', path: '/publish' },
-    { title: '行动首页', path: '/home' },
+    { title: '品牌', path: '/brands' },
+    { title: '诊断', path: '/visibility' },
+    { title: '写作', path: '/studio' },
+    { title: '发布', path: '/publish' },
+    { title: '首页', path: '/home' },
   ];
   for (const target of navTargets) {
     await openWorkspaceNav(page, {

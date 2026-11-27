@@ -31,8 +31,8 @@ const CONTROLLED_DIRS = [
  * 只允许在 PR2–PR8 中单调递减，最终在 PR8 全部清零。
  */
 export const COPY_DEBT_BASELINE = {
-  over4Controls: 158,
-  over8Alerts: 21,
+  over4Controls: 151,
+  over8Alerts: 20,
   multiPrimaryFiles: 7,
 } as const;
 

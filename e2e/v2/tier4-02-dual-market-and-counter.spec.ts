@@ -221,7 +221,7 @@ v2Describe(
             );
             await expect(page.locator('body')).toContainText(photoTitle);
 
-            await navigateWorkspace(page, '行动首页', /\/home/);
+            await navigateWorkspace(page, '首页', /\/home/);
             await expectUrlContext(page, {
               brandId: brand.id,
               market: 'GLOBAL',

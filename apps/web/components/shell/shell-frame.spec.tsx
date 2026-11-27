@@ -104,11 +104,11 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     expect(screen.queryByRole('button', { name: '布局' })).toBeNull();
   });
 
-  it('shows 0-brand 60s onboarding banner and submits quick-create modal', async () => {
+  it('shows 0-brand banner only on split workspaces (/studio, /publish) and submits quick-create modal', async () => {
     const createdBrand = makeBrand('b-new', '智造激光', ['CN']);
     const onCreateBrand = vi.fn(async () => createdBrand);
 
-    render(
+    const { rerender } = render(
       <ShellFrame
         account={merchantAccount}
         activePath="/home"
@@ -130,12 +130,42 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
         onLogout={vi.fn()}
         onChangePassword={vi.fn()}
       >
-        <div>行动首页占位</div>
+        <div>首页占位</div>
+      </ShellFrame>,
+    );
+
+    // /home has its own EmptyState CTA so shell onboarding banner must stay hidden
+    expect(screen.queryByRole('region', { name: '首次建档引导' })).toBeNull();
+
+    rerender(
+      <ShellFrame
+        account={merchantAccount}
+        activePath="/studio"
+        brands={[]}
+        brandsLoading={false}
+        brandsLoaded={true}
+        brandsError={null}
+        activeBrandId={null}
+        activeMarket="CN"
+        menuCollapsed={false}
+        wallet={walletStub}
+        walletLoading={false}
+        onNavigate={vi.fn()}
+        onSelectBrand={vi.fn()}
+        onSelectMarket={vi.fn()}
+        onCreateBrand={onCreateBrand}
+        onEnableMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onLogout={vi.fn()}
+        onChangePassword={vi.fn()}
+      >
+        <div>写作占位</div>
       </ShellFrame>,
     );
 
     expect(screen.getByTestId('header-points-pill').textContent).toContain('1000');
-    fireEvent.click(screen.getByRole('button', { name: '60 秒创建首个品牌' }));
+    const banner = screen.getByRole('region', { name: '首次建档引导' });
+    fireEvent.click(within(banner).getByRole('button', { name: '建品牌' }));
 
     const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
     expect(within(dialog).getByTestId('brand-quick-create')).toBeTruthy();
@@ -197,11 +227,11 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     expect(screen.getByTestId('global-market-switcher')).toBeTruthy();
     fireEvent.click(screen.getByTestId('enable-other-market-btn'));
 
-    const dialog = await screen.findByRole('dialog', { name: '开启海外市场' });
+    const dialog = await screen.findByRole('dialog', { name: '开启海外' });
     fireEvent.change(within(dialog).getByLabelText('当地品牌名称'), {
       target: { value: 'UGREEN' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '确认开启' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /开\s*启/ }));
 
     await waitFor(() => {
       expect(onEnableMarket).toHaveBeenCalledWith('b-1', 'GLOBAL', {
@@ -337,8 +367,8 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     );
 
     const retryBtn = screen.getByTestId('global-brand-switcher-retry');
-    expect(retryBtn.textContent).toContain('重新加载品牌');
-    expect(screen.queryByText('+ 创建首个品牌')).toBeNull();
+    expect(retryBtn.textContent?.replace(/\s+/g, '')).toContain('重试');
+    expect(screen.queryByRole('button', { name: '建品牌' })).toBeNull();
     fireEvent.click(retryBtn);
     expect(onRetryBrands).toHaveBeenCalledTimes(1);
   });
@@ -427,12 +457,7 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
       </ShellFrame>,
     );
 
-    expect(
-      screen.getByTestId('header-announcement-bell').querySelector('.gm-announce-bell-dot'),
-    ).toBeNull();
-    fireEvent.click(screen.getByTestId('header-announcement-bell'));
-    const emptyDialog = await screen.findByRole('dialog', { name: '系统公告' });
-    expect(emptyDialog.textContent).toContain('当前暂无系统公告');
+    expect(screen.queryByTestId('header-announcement-bell')).toBeNull();
   });
 
   it('auto-collapses /studio to 72px rail, expands locally without calling onToggleMenu, and applies route-typed containers', () => {

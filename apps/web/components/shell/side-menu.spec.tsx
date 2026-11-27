@@ -42,11 +42,11 @@ describe('SideMenu (GeoMix flat 5+1 sidebar)', () => {
 
     const items = screen.getAllByRole('menuitem');
     expect(items.map((item) => item.textContent?.trim())).toEqual([
-      '行动首页',
-      '品牌资产',
-      '可见度诊断',
-      'GEO 写作台',
-      '发布中心',
+      '首页',
+      '品牌',
+      '诊断',
+      '写作',
+      '发布',
     ]);
     const navIcons = Array.from(document.querySelectorAll('.ant-menu-item svg'));
     expect(navIcons).toHaveLength(5);
@@ -57,14 +57,19 @@ describe('SideMenu (GeoMix flat 5+1 sidebar)', () => {
     expect(document.querySelectorAll('.ant-menu-submenu')).toHaveLength(0);
     expect(screen.queryByText(/敬请期待|更多规划功能|余额明细/)).toBeNull();
 
-    fireEvent.click(screen.getByRole('menuitem', { name: '品牌资产' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '品牌' }));
     expect(onNavigate).toHaveBeenCalledWith('/brands');
 
     const accountEntry = screen.getByTestId('sider-account-entry');
     expect(accountEntry.textContent).toContain('演示品牌主');
-    expect(accountEntry.textContent).toContain('点数与权益');
+    expect(accountEntry.textContent).toContain('账户');
     fireEvent.click(accountEntry);
     expect(onNavigate).toHaveBeenCalledWith('/account');
+
+    // Y2: duplicate account item removed from ⋯ dropdown menu
+    fireEvent.click(screen.getByRole('button', { name: '账号菜单' }));
+    expect(screen.queryByRole('menuitem', { name: '点数与权益' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: '修改密码' })).toBeTruthy();
   });
 
   it('hides /visibility when visibilityEnabled=false and returns null only when mobileClosed=true', () => {
@@ -80,7 +85,7 @@ describe('SideMenu (GeoMix flat 5+1 sidebar)', () => {
       />,
     );
 
-    expect(screen.queryByRole('menuitem', { name: '可见度诊断' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '诊断' })).toBeNull();
     expect(screen.getAllByRole('menuitem')).toHaveLength(4);
 
     rerender(
@@ -119,17 +124,17 @@ describe('SideMenu (GeoMix flat 5+1 sidebar)', () => {
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(5);
     expect(items.map((item) => item.textContent?.trim())).toEqual([
-      '行动首页',
-      '品牌资产',
-      '可见度诊断',
-      'GEO 写作台',
-      '发布中心',
+      '首页',
+      '品牌',
+      '诊断',
+      '写作',
+      '发布',
     ]);
-    expect(screen.getByRole('menuitem', { name: '行动首页' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: '品牌资产' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: '可见度诊断' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'GEO 写作台' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: '发布中心' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '首页' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '品牌' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '诊断' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '写作' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: '发布' })).toBeTruthy();
 
     const shortLabels = Array.from(document.querySelectorAll('.gm-sider-rail-short')).map((el) =>
       el.textContent?.trim(),

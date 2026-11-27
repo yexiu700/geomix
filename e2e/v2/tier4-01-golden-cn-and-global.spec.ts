@@ -144,7 +144,7 @@ v2Describe(
 
           // 2. Step A (Transition 1 -> /brands if onboarding landed on /home): AI URL extract 4 facts + single compliance checkbox
           if (new URL(page.url()).pathname !== '/brands') {
-            await navigateWorkspace(page, '品牌资产', /\/brands/);
+            await navigateWorkspace(page, '品牌', /\/brands/);
           }
 
           const openExtractBtn = page.getByTestId('fact-ai-extract-btn');
@@ -203,7 +203,7 @@ v2Describe(
           expect(savedFacts.length).toBeGreaterThanOrEqual(4);
 
           // 3. Step B (Transition 2 -> /visibility): launch CN monitor with [E2E_GAP]
-          await navigateWorkspace(page, '可见度诊断', /\/visibility/);
+          await navigateWorkspace(page, '诊断', /\/visibility/);
           await openVisibilityTab(page, 'runs');
 
           const cnEngines = await listMarketEnginesApi(tenant.session, brand.id, 'CN');
@@ -400,7 +400,7 @@ v2Describe(
           // Click + 开启另一市场 to enable GLOBAL market
           const enableBtn = page
             .getByTestId('enable-other-market-btn')
-            .or(page.getByRole('button', { name: /开启另一市场|开启海外市场/ }))
+            .or(page.getByRole('button', { name: /加市场|开启另一市场|开启海外/ }))
             .first();
           await expect(enableBtn).toBeVisible({ timeout: 15_000 });
           await enableBtn.click();

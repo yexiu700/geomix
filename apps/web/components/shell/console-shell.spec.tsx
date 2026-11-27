@@ -152,7 +152,7 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
       expect(httpWalletMock).toHaveBeenCalledTimes(1);
     });
     expect(await screen.findByTestId('header-points-pill')).toBeTruthy();
-    expect(document.title).toBe('行动首页 · GeoMix');
+    expect(document.title).toBe('首页 · GeoMix');
 
     fireEvent.click(screen.getByRole('button', { name: '收起菜单' }));
     expect(saveAccountUiPrefsMock).toHaveBeenCalledWith(window.sessionStorage, {
@@ -417,7 +417,7 @@ describe('ConsoleShell (GeoMix 2.0)', () => {
     });
 
     // Click sidebar nav to /visibility -> pushes URL WITH productLineId=pl-1
-    fireEvent.click(screen.getByText('可见度诊断'));
+    fireEvent.click(screen.getByRole('menuitem', { name: '诊断' }));
     expect(pushMock).toHaveBeenCalledWith('/visibility?brandId=b-1&market=CN&productLineId=pl-1');
 
     // Click account entry -> /account omits productLineId via QUERY_KEYS
