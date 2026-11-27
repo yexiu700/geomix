@@ -91,7 +91,7 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
         hasData,
         spokeEnd: polar(R, deg),
         point: polar(hasData ? (R * pct) / 100 : 0, deg),
-        labelPos: polar(R + 12, deg),
+        labelPos: polar(R + 16, deg),
         anchor: (cos > 0.2 ? 'start' : cos < -0.2 ? 'end' : 'middle') as 'start' | 'end' | 'middle',
         dialLabel: eng.label.length > 6 ? (SHORT_LABELS[eng.key] ?? eng.label) : eng.label,
         hitD: sectorPath(R + 28, deg - step / 2, deg + step / 2),
@@ -249,17 +249,29 @@ export function SonarDial(p: SonarDialProps): JSX.Element {
                 />
               </>
             ) : null}
-            {nodes.map(({ eng, hasData, mentioned, point }) => (
-              <circle
-                key={eng.key}
-                cx={point.x}
-                cy={point.y}
-                r={3}
-                fill={hasData && mentioned > 0 ? GM.sig.cited : 'none'}
-                stroke={hasData && mentioned > 0 ? undefined : GM.sig.absent}
-                strokeDasharray={hasData && mentioned > 0 ? undefined : '2 2'}
-              />
-            ))}
+            {nodes.map(({ eng, hasData, mentioned, point }) =>
+              hasData ? (
+                <circle
+                  key={eng.key}
+                  cx={point.x}
+                  cy={point.y}
+                  r={3}
+                  fill={mentioned > 0 ? GM.sig.cited : 'none'}
+                  stroke={mentioned > 0 ? undefined : GM.sig.absent}
+                  strokeDasharray={mentioned > 0 ? undefined : '2 2'}
+                />
+              ) : null,
+            )}
+            <circle
+              cx={CX}
+              cy={CY}
+              r={34}
+              fill="var(--gm-bg-surface)"
+              fillOpacity={0.94}
+              stroke="var(--gm-line-1)"
+              strokeWidth={1}
+              className="gm-sonar-center-hub"
+            />
             <text x={CX} y={161} textAnchor="middle" className="gm-sonar-center-val gm-num">
               {formatPct(p.overallPct)}
             </text>

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { GEO_MARKETS, containsCjk, type GeoMarket } from './brands';
-import type { GeoComplianceFlag } from './compliance';
+import { scanCnAdLawWarnings, type GeoComplianceFlag } from './compliance';
 import { extractMissingFactSlots } from './geo-studio';
 import {
   SUPPORTED_LOCALE_CODES,
@@ -598,6 +598,7 @@ export const PREFLIGHT_ITEM_CODES = [
   'GLOBAL_CJK_LEAK',
   'COMPLIANCE_BLOCKED',
   'GLOBAL_CLAIM_WARNING',
+  'CN_AD_LAW_WARNING',
   'LOW_GEO_SCORE',
   'MISSING_FACT_CARDS',
   'MISSING_META_DESCRIPTION',
@@ -1424,6 +1425,38 @@ export function evaluateDistributionPreflight(
       details: globalWarningHits.slice(0, 10).map(formatClaimDetail),
       matches: globalWarningHits.slice(0, 10).map((hit) => hit.match),
     });
+  }
+
+  if (input.market === 'CN') {
+    const cnAdLawTerms: string[] = [];
+    const seenCnTerms = new Set<string>();
+    const addCnTerm = (rawTerm: string | undefined) => {
+      const term = rawTerm?.trim();
+      if (!term || seenCnTerms.has(term)) return;
+      seenCnTerms.add(term);
+      cnAdLawTerms.push(term);
+    };
+
+    for (const flag of scanCnAdLawWarnings(combinedText)) {
+      addCnTerm(flag.term);
+    }
+    for (const flag of input.complianceFlags ?? []) {
+      if (
+        flag.severity !== 'replaced' &&
+        (flag.code === 'AD_LAW_SUPERLATIVE' || flag.code === 'AD_LAW_FLAG')
+      ) {
+        addCnTerm(flag.term);
+      }
+    }
+
+    if (cnAdLawTerms.length > 0) {
+      warnings.push({
+        code: 'CN_AD_LAW_WARNING',
+        severity: 'warning',
+        message: `检测到 ${cnAdLawTerms.length} 处中国广告法高风险极限词/绝对化用语，建议改为可验证的客观实测表述`,
+        details: cnAdLawTerms.slice(0, 10),
+      });
+    }
   }
 
   // 4. Soft Warning: Low GEO score

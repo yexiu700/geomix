@@ -2281,6 +2281,8 @@ export type RecomputedRunMetrics = {
   ownedCitationRatePct: number;
   ownedCitationCheckRatePct: number;
   topDomains: DomainMetricItem[];
+  simulatedChecks?: number;
+  hasSimulatedObservations?: boolean;
 };
 
 function parseCompetitorHitsArray(raw: unknown): Array<{

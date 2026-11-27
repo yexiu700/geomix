@@ -2,7 +2,7 @@
 
 import type { ActionHomeResponse, GeoMarket } from '@geomix/shared';
 import type { JSX } from 'react';
-import { KpiStrip, type KpiStripItem } from '../ui';
+import { KpiStrip, StatusBadge, type KpiStripItem } from '../ui';
 
 export type HomeHealthStripProps = {
   activeMarket: GeoMarket;
@@ -79,5 +79,17 @@ export function HomeHealthStrip({ activeMarket, health }: HomeHealthStripProps):
     },
   ];
 
-  return <KpiStrip items={items} aria-label="品牌健康信号条" data-testid="home-health-strip" />;
+  return (
+    <>
+      {health.hasSimulatedObservations ? (
+        <div className="gm-home-simulated-notice" data-testid="home-simulated-badge">
+          <StatusBadge tone="warning" label="含模拟采集数据" />
+          <span className="gm-home-simulated-copy">
+            当前监测统计包含模拟采集观测，仅用于演示参考，不代表真实 AI 引擎线上表现
+          </span>
+        </div>
+      ) : null}
+      <KpiStrip items={items} aria-label="品牌健康信号条" data-testid="home-health-strip" />
+    </>
+  );
 }

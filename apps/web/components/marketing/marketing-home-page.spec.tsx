@@ -30,9 +30,9 @@ describe('MarketingHomePage (EN & ZH)', () => {
       }),
     ).toBeTruthy();
 
-    // Explicit GA vs Upcoming v2.2 boundary
+    // Explicit GA v2.2 boundary
     const roadmap = screen.getByTestId('v22-roadmap-banner');
-    expect(roadmap.textContent).toContain('Upcoming v2.2');
+    expect(roadmap.textContent).toContain('GA v2.2');
     expect(roadmap.textContent).toContain('Near-Miss Citation Mining');
     expect(roadmap.textContent).toContain('Wilson 95% Confidence Intervals');
 
@@ -92,7 +92,7 @@ describe('MarketingHomePage (EN & ZH)', () => {
       }),
     ).toBeTruthy();
 
-    expect(screen.getByTestId('v22-roadmap-banner').textContent).toContain('即将上线 v2.2');
+    expect(screen.getByTestId('v22-roadmap-banner').textContent).toContain('已上线 v2.2');
 
     // Reciprocal hreflang metadata
     const zhMetadata = generateZhMetadata();

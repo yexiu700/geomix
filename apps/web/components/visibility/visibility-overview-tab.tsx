@@ -2,6 +2,7 @@
 
 import type {
   GeoMarket,
+  VisibilityEngineAvailabilityItem,
   VisibilityEngineKey,
   VisibilityOpportunitiesResponse,
   VisibilityOverviewResponse,
@@ -28,7 +29,9 @@ export type VisibilityOverviewTabProps = {
   loading: boolean;
   error: string | null;
   selectedEngine?: VisibilityEngineKey;
+  marketEngines?: readonly VisibilityEngineAvailabilityItem[];
   onSelectEngine: (engine: VisibilityEngineKey | undefined) => void;
+  onInspectRuns?: (engine?: VisibilityEngineKey) => void;
   onRetry: () => void;
   onSwitchToRuns: () => void;
   readOnly: boolean;
@@ -46,7 +49,9 @@ export function VisibilityOverviewTab({
   loading,
   error,
   selectedEngine,
+  marketEngines,
   onSelectEngine,
+  onInspectRuns,
   onRetry,
   onSwitchToRuns,
   readOnly,
@@ -69,6 +74,13 @@ export function VisibilityOverviewTab({
   const sentiment = metrics?.sentimentSummary;
   const sentimentTotal = sentiment?.total ?? 0;
   const gaps = opportunities?.gaps ?? [];
+  const totalMarketEngines = marketEngines?.length ?? 0;
+  const availableMarketEngines = marketEngines
+    ? marketEngines.filter((item) => item.available).length
+    : 0;
+  const showEngineCoverageBadge =
+    totalMarketEngines > 0 && availableMarketEngines < totalMarketEngines;
+  const hasSimulatedObservations = Boolean(metrics?.hasSimulatedObservations);
 
   const kpiItems: KpiStripItem[] = [
     {
@@ -142,6 +154,29 @@ export function VisibilityOverviewTab({
             <div className="gm-vis-chart-meta">
               <span className="gm-vis-chart-unit">单位：%</span>
               <span className="gm-vis-chart-range gm-num">近 {days} 天</span>
+              {showEngineCoverageBadge ? (
+                <StatusBadge
+                  tone="warning"
+                  data-testid="visibility-engine-coverage-badge"
+                  label={`当前在线 ${availableMarketEngines}/${totalMarketEngines} 引擎`}
+                />
+              ) : null}
+              {hasSimulatedObservations ? (
+                <StatusBadge
+                  tone="warning"
+                  data-testid="visibility-simulated-badge"
+                  label="含模拟采集数据"
+                />
+              ) : null}
+              {completedChecks > 0 && onInspectRuns ? (
+                <Button
+                  size="small"
+                  data-testid="visibility-reconcile-btn"
+                  onClick={() => onInspectRuns(selectedEngine)}
+                >
+                  核对原始观测
+                </Button>
+              ) : null}
               {selectedEngine ? (
                 <Tag
                   closable

@@ -3220,6 +3220,7 @@ export type ActionHomeResponse = {
     avgPosition: number | null;
     ownedCitationRatePct: number;
     completedChecks: number;
+    hasSimulatedObservations?: boolean;
   };
   topBriefs: Array<{
     id: string;

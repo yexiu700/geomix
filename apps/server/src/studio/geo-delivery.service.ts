@@ -591,6 +591,7 @@ export class GeoDeliveryService {
         avgPosition: overview.metrics.avgPosition,
         ownedCitationRatePct: overview.metrics.ownedCitationRatePct,
         completedChecks: overview.metrics.completedChecks,
+        hasSimulatedObservations: Boolean(overview.metrics.hasSimulatedObservations),
       };
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 404)) {

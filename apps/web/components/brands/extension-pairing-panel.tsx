@@ -68,7 +68,7 @@ function resolveTokenStatus(token: ExtensionTokenDto): {
 
 function formatScopeLabel(scope: string): string {
   if (scope === 'extension:distribution') {
-    return '分发队列桥接 (extension:distribution)';
+    return '分发队列桥接';
   }
   return scope;
 }

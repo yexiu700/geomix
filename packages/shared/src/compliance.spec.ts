@@ -3,6 +3,7 @@ import {
   ProhibitedContentError,
   assertNoProhibitedContent,
   formatComplianceBlockMessage,
+  scanCnAdLawWarnings,
   scanDualTrackCompliance,
 } from './compliance';
 
@@ -157,5 +158,14 @@ describe('dual-track compliance engine', () => {
     });
     expect(rewriteMsg).toContain('ransomware');
     expect(rewriteMsg).toContain('改写结果');
+  });
+
+  it('scans CN Ad Law superlatives and absolute terms for read-only preflight warnings', () => {
+    const flags = scanCnAdLawWarnings('全网第一音质，绝对顶级降噪体验，100% 实测兼容。');
+    expect(flags.map((f) => f.term)).toEqual(
+      expect.arrayContaining(['全网第一', '顶级', '100%', '绝对']),
+    );
+    expect(flags.every((f) => f.severity === 'warning')).toBe(true);
+    expect(scanCnAdLawWarnings('客观实测续航 42 小时，延迟 18 ms。')).toEqual([]);
   });
 });

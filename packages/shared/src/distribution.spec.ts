@@ -1029,6 +1029,23 @@ describe('evaluateDistributionPreflight()', () => {
     expect(custom.blockers[0]?.matches?.[0]?.matchedText).toBe('indestructible');
   });
 
+  it('emits CN_AD_LAW_WARNING for CN Ad Law superlatives and absolute claims', () => {
+    const cnHype = evaluateDistributionPreflight({
+      market: 'CN',
+      title: '北境声学 Studio Pro 4 实测',
+      contentMarkdown: '全网第一音质，绝对顶级降噪体验，42 小时续航。',
+      geoScore: 88,
+      matchedFactCount: 3,
+      provider: 'WORDPRESS',
+      variantSlug: 'nordicaudio-studio-pro-4',
+      variantMetaDesc: '实验室实测对比摘要。',
+    });
+    expect(cnHype.ok).toBe(true);
+    const warn = cnHype.warnings.find((w) => w.code === 'CN_AD_LAW_WARNING');
+    expect(warn).toBeTruthy();
+    expect(warn?.details).toEqual(expect.arrayContaining(['全网第一', '顶级', '绝对']));
+  });
+
   it('localizes public PR channel labels by market without leaking CJK on GLOBAL pages (#366)', () => {
     expect(localizePublicChannelLabel('PR / KOL 外部媒体协作包', 'GLOBAL', 'PR_PACKET')).toBe(
       'PR / KOL Media Kit',

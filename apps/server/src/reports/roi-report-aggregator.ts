@@ -4,12 +4,14 @@ import {
   CHANNEL_PROVIDER_EN_LABELS,
   CHANNEL_PROVIDER_LABELS,
   DISTRIBUTION_MODES,
+  FAKE_MARK,
   classifyCitationSource,
   computeDifferenceInDifferences,
   computeWilsonInterval,
   defaultDistributionModeForProvider,
   differenceInDifferencesSchema,
   isRetiredVisibilityEngine,
+  isSimulatedCollectorKind,
   localizePublicChannelLabel,
   normalizeVisibilityDomain,
   parseEnv,
@@ -202,6 +204,7 @@ export type RoiReportObservationInput = {
   engine: string;
   promptText: string;
   status?: string;
+  collectorKind?: string | null;
   answerText: string | null;
   brandMentioned: boolean;
   brandPosition: number | null;
@@ -605,8 +608,15 @@ export function buildGeoRoiReportSummary(
   let mentionHits = 0;
   let citationHits = 0;
   let ownedCitationHits = 0;
+  let simulatedObservations = 0;
 
   for (const obs of observations) {
+    if (
+      isSimulatedCollectorKind(obs.collectorKind) ||
+      Boolean(obs.answerText?.trimStart().startsWith(FAKE_MARK))
+    ) {
+      simulatedObservations += 1;
+    }
     const effectiveMention = isEffectiveBrandMention(obs, {
       brandName: input.brandMarket.localBrandName,
       brandAliases: input.brandMarket.aliases,
@@ -1270,6 +1280,9 @@ export function buildGeoRoiReportSummary(
       ownedCitationRate,
       confidenceLevel: mentionWilson.confidenceLevel,
       did: overviewDid,
+      ...(simulatedObservations > 0
+        ? { simulatedObservations, hasSimulatedObservations: true }
+        : {}),
     },
     byEngine,
     nearMiss,
@@ -1330,6 +1343,9 @@ export function parseStoredSummaryJson(raw: unknown): GeoRoiReportSummaryDto {
   );
   const citationHits = safeInt(rawOverview.citationHits);
   const ownedCitationHits = safeInt(rawOverview.ownedCitationHits);
+  const simulatedObservations = safeInt(rawOverview.simulatedObservations);
+  const hasSimulatedObservations =
+    rawOverview.hasSimulatedObservations === true || simulatedObservations > 0;
 
   const byEngine: GeoRoiReportEngineMetric[] = Array.isArray(obj.byEngine)
     ? obj.byEngine
@@ -1453,6 +1469,9 @@ export function parseStoredSummaryJson(raw: unknown): GeoRoiReportSummaryDto {
       ownedCitationRate: safeRate01(rawOverview.ownedCitationRate),
       confidenceLevel: mentionWilson.confidenceLevel,
       did: parseDidOrNull(rawOverview.did),
+      ...(hasSimulatedObservations
+        ? { simulatedObservations, hasSimulatedObservations: true }
+        : {}),
     },
     byEngine,
     nearMiss: {
