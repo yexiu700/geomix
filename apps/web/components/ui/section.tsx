@@ -1,6 +1,8 @@
 'use client';
 
 import { useId, type ReactNode } from 'react';
+import { shouldCollapseToExplain } from '../../lib/copy-length';
+import { Explain } from './explain';
 
 export type SectionVariant = 'plain' | 'card';
 
@@ -33,6 +35,7 @@ export function Section({
   const hasHeader = Boolean(title || description || actions);
   const headingId = title ? autoHeadingId : undefined;
   const resolvedLabelledBy = ariaLabel ? undefined : (ariaLabelledBy ?? headingId);
+  const collapseDesc = typeof description === 'string' && shouldCollapseToExplain(description);
   const classes = ['gm-ui-section', `gm-ui-section--${variant}`, className ?? '']
     .filter(Boolean)
     .join(' ');
@@ -48,12 +51,19 @@ export function Section({
       {hasHeader ? (
         <div className="gm-ui-section-header">
           <div className="gm-ui-section-heading">
-            {title ? (
-              <h2 id={headingId} className="gm-ui-section-title">
-                {title}
-              </h2>
+            {title || collapseDesc ? (
+              <div className="gm-ui-section-title-row">
+                {title ? (
+                  <h2 id={headingId} className="gm-ui-section-title">
+                    {title}
+                  </h2>
+                ) : null}
+                {collapseDesc ? <Explain text={description} /> : null}
+              </div>
             ) : null}
-            {description ? <p className="gm-ui-section-desc">{description}</p> : null}
+            {!collapseDesc && description ? (
+              <p className="gm-ui-section-desc">{description}</p>
+            ) : null}
           </div>
           {actions ? <div className="gm-ui-section-actions">{actions}</div> : null}
         </div>

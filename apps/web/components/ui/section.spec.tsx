@@ -8,8 +8,8 @@ describe('Section', () => {
     cleanup();
   });
 
-  it('defaults to plain variant and links section aria-labelledby to its h2 heading', () => {
-    render(
+  it('defaults to plain variant, links aria-labelledby to pure h2, and collapses >8 char descriptions into ⓘ', () => {
+    const { container, rerender } = render(
       <Section
         id="brand-section-identity"
         title="基础身份"
@@ -28,12 +28,23 @@ describe('Section', () => {
 
     const heading = screen.getByRole('heading', { level: 2, name: '基础身份' });
     expect(heading.id).toBeTruthy();
+    expect(heading.querySelector('button')).toBeNull();
     expect(section.getAttribute('aria-labelledby')).toBe(heading.id);
     expect(section.getAttribute('aria-label')).toBeNull();
 
+    expect(container.querySelector('.gm-ui-section-desc')).toBeNull();
+    expect(screen.getByRole('button', { name: '说明' })).toBeTruthy();
     expect(screen.getByText('维护品牌中英文名称、品类与主域名')).toBeTruthy();
     expect(screen.getByRole('button', { name: '编辑' })).toBeTruthy();
     expect(screen.getByText('身份表单内容')).toBeTruthy();
+
+    rerender(
+      <Section title="基础身份" description="管理品牌域名" data-testid="section-identity">
+        <p>身份表单内容</p>
+      </Section>,
+    );
+    expect(container.querySelector('.gm-ui-section-desc')?.textContent).toBe('管理品牌域名');
+    expect(screen.queryByRole('button', { name: '说明' })).toBeNull();
   });
 
   it('supports card variant and respects explicit aria-label without overriding', () => {

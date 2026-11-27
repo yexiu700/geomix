@@ -8253,6 +8253,86 @@ input:not([class*='ant-']):hover {
   }
 }
 
+/* 8. Explain / CostChip / MoreMenu & collapsed title rows (0 borders) */
+.gm-ui-section-title-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--gm-sp-2);
+}
+
+.gm-ui-form-field-label-row,
+.gm-ui-empty-title-row,
+.gm-ui-kpi-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-sp-1);
+  min-width: 0;
+}
+
+.gm-explain {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.gm-explain-anchor {
+  display: inline-flex;
+  align-items: center;
+}
+
+.gm-explain-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--gm-radius-pill);
+  background: transparent;
+  color: var(--gm-fg-3);
+  cursor: pointer;
+  transition:
+    background var(--gm-dur-fast) var(--gm-ease-out),
+    color var(--gm-dur-fast) var(--gm-ease-out);
+}
+
+.gm-explain-trigger:hover {
+  background: var(--gm-bg-hover);
+  color: var(--gm-fg-1);
+}
+
+.gm-explain-trigger:focus-visible {
+  outline: 2px solid var(--gm-accent);
+  outline-offset: 1px;
+  color: var(--gm-fg-1);
+}
+
+.gm-cost-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--gm-radius-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--gm-fg-2);
+  font-size: var(--gm-fs-xs);
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.gm-cost-chip--free {
+  color: var(--gm-success);
+}
+
+.gm-more-menu-trigger {
+  flex-shrink: 0;
+}
+
 @media (max-width: 560px) {
   .gm-ui-kpi-strip {
     grid-template-columns: minmax(0, 1fr);

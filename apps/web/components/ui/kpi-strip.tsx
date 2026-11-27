@@ -1,6 +1,8 @@
 'use client';
 
 import type { KeyboardEvent, ReactNode } from 'react';
+import { shouldCollapseToExplain } from '../../lib/copy-length';
+import { Explain } from './explain';
 import type { StatusTone } from './status-badge';
 
 export type KpiStripTone = StatusTone | 'accent';
@@ -99,6 +101,7 @@ export function KpiStrip({
         const displayValue = formatKpiDisplayValue(item.value);
         const pct = normalizeKpiProgressPct(item.progressPct);
         const caption = item.caption ?? item.subtext;
+        const collapseCaption = typeof caption === 'string' && shouldCollapseToExplain(caption);
         const interactive = typeof item.onClick === 'function';
         const itemClasses = interactive
           ? 'gm-ui-kpi-item gm-ui-kpi-item--clickable'
@@ -124,7 +127,10 @@ export function KpiStrip({
                 : undefined
             }
           >
-            <span className="gm-ui-kpi-label">{item.label}</span>
+            <div className="gm-ui-kpi-label-row">
+              <span className="gm-ui-kpi-label">{item.label}</span>
+              {collapseCaption ? <Explain text={caption} /> : null}
+            </div>
             <span className={valueClasses}>{displayValue}</span>
             {pct !== null ? (
               <div
@@ -148,7 +154,9 @@ export function KpiStrip({
                 </svg>
               </div>
             ) : null}
-            {caption ? <div className="gm-ui-kpi-caption">{caption}</div> : null}
+            {!collapseCaption && caption ? (
+              <div className="gm-ui-kpi-caption">{caption}</div>
+            ) : null}
           </div>
         );
       })}

@@ -8,8 +8,8 @@ describe('FormField', () => {
     cleanup();
   });
 
-  it('links label via htmlFor, renders required marker + sr-only, extra, help, and error alert with merged aria attributes', () => {
-    render(
+  it('collapses >8 char help into ⓘ Explain while keeping aria-describedby valid and <=8 char help inline', () => {
+    const { container, rerender } = render(
       <FormField
         label="品牌英文名"
         htmlFor="brand-en-name"
@@ -32,6 +32,10 @@ describe('FormField', () => {
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toBe('GLOBAL 市场品牌名不能包含中文字符');
+    expect(container.querySelector('.gm-ui-form-field-help')).toBeNull();
+
+    const explainBtn = screen.getByRole('button', { name: '说明' });
+    expect(explainBtn).toBeTruthy();
     const help = screen.getByText('请填写面向海外 AI 引擎的正式英文品牌名');
 
     const describedBy = input.getAttribute('aria-describedby') ?? '';
@@ -41,6 +45,14 @@ describe('FormField', () => {
 
     expect(screen.getByText('GLOBAL 市场必填')).toBeTruthy();
     expect(screen.getByText('（必填）')).toBeTruthy();
+
+    rerender(
+      <FormField label="竞品域名" htmlFor="comp-domain" help="留空自动忽略">
+        <input id="comp-domain" />
+      </FormField>,
+    );
+    expect(container.querySelector('.gm-ui-form-field-help')?.textContent).toBe('留空自动忽略');
+    expect(screen.queryByRole('button', { name: '说明' })).toBeNull();
   });
 
   it('renders cleanly when given a Fragment or multiple children without throwing', () => {

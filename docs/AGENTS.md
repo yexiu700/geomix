@@ -143,7 +143,7 @@ pnpm test       # turbo run test（各包 Vitest 单元测试）
 
 - **不随意加依赖**：前端仅使用 Next.js 15 + React 19 + Ant Design 5 + Zustand + 原生 CSS（`apps/web/app/globals.css`）+ 手写 SVG。**严禁引入** Tailwind CSS、`@ant-design/pro-components`、`@tanstack/react-query`、ECharts、wangEditor 等未批准依赖。
 - **视觉令牌**：所有颜色、圆角、阴影必须引用 `var(--gm-*)`（`globals.css`）或 `GM.*`（`lib/design-tokens.ts`）；关键数字加 `.gm-num`；禁止硬编码亮色背景或靛紫色（`#5E6AD2` / `#8B5CF6` / `#6366F1`）；动效尊重 `prefers-reduced-motion`。
-- **DOM 契约保护**：修改既有页面布局或重构拆解组件时，保留已有 `aria-label`、`data-testid`、表头文案、核心按钮文案与 Modal 标题，避免破坏组件单测与 `e2e/` 断言。
+- **DOM 契约与极简文案规范**：修改既有页面布局或重构拆解组件时，保留已有 `aria-label` 与 `data-testid`（自动化测试优先定位 `data-testid`）；可见标题、表头、按钮与说明文案按 [极简交互规范](./极简交互规范.md) 收敛（控件 2–4 字、`> 8` 字说明收进 `<Explain>` ⓘ、单视图最多 1 个主按钮），更新文案时同步将关联测试迁至 `data-testid` 或更新断言。
 
 ### 2.5 与文档强耦合的单测
 
