@@ -3,6 +3,7 @@ import type { HttpTransport, TransportRequest } from './guarded-request';
 import { requestOnce } from './guarded-request';
 import { ProviderError } from './provider-error';
 import {
+  decodeHtmlBuffer,
   fetchBinary,
   fetchPublicPage,
   resetRobotsCache,
@@ -15,7 +16,7 @@ import type { ResolvedAddress } from './ssrf';
 type Script = {
   status: number;
   headers?: Record<string, string>;
-  body?: string;
+  body?: string | Buffer;
 };
 
 afterEach(() => {
@@ -421,6 +422,76 @@ describe('robots and lookup pin', () => {
   });
 });
 
+describe('public fetch charset decoding', () => {
+  // GBK bytes for "中关村在线评测"
+  const GBK_TITLE_BYTES = Buffer.from([
+    0xd6, 0xd0, 0xb9, 0xd8, 0xb4, 0xe5, 0xd4, 0xda, 0xcf, 0xdf, 0xc6, 0xc0, 0xb2, 0xe2,
+  ]);
+
+  it('decodes GBK/GB2312 HTML pages via HTTP header, meta charset, meta http-equiv, and undeclared fallback', async () => {
+    const headerGbkBody = Buffer.concat([
+      Buffer.from('<html><head><title>', 'ascii'),
+      GBK_TITLE_BYTES,
+      Buffer.from('</title></head><body>ok</body></html>', 'ascii'),
+    ]);
+    const metaCharsetBody = Buffer.concat([
+      Buffer.from('<html><head><meta charset="gb2312"><title>', 'ascii'),
+      GBK_TITLE_BYTES,
+      Buffer.from('</title></head></html>', 'ascii'),
+    ]);
+    const metaHttpEquivBody = Buffer.concat([
+      Buffer.from(
+        '<html><head><meta http-equiv="Content-Type" content="text/html; charset=gbk"><title>',
+        'ascii',
+      ),
+      GBK_TITLE_BYTES,
+      Buffer.from('</title></head></html>', 'ascii'),
+    ]);
+
+    const deps = mockDeps(
+      { 'cn-site.example': [{ address: '192.0.2.50', family: 4 }] },
+      () => undefined,
+      {
+        'https://cn-site.example/robots.txt': { status: 404 },
+        'https://cn-site.example/header-gbk': {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=gbk' },
+          body: headerGbkBody,
+        },
+        'https://cn-site.example/meta-gb2312': {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+          body: metaCharsetBody,
+        },
+        'https://cn-site.example/http-equiv-gbk': {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+          body: metaHttpEquivBody,
+        },
+        'https://cn-site.example/undeclared-gbk': {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+          body: headerGbkBody,
+        },
+      },
+    );
+
+    for (const path of ['/header-gbk', '/meta-gb2312', '/http-equiv-gbk', '/undeclared-gbk']) {
+      const page = await fetchPublicPage(`https://cn-site.example${path}`, deps);
+      expect(page.body).toContain('中关村在线评测');
+      expect(page.body).not.toContain('\uFFFD');
+    }
+
+    // Unknown charset label gracefully falls back to valid UTF-8 or GB18030 detection
+    expect(decodeHtmlBuffer(headerGbkBody, 'text/html; charset=x-unknown-legacy')).toContain(
+      '中关村在线评测',
+    );
+    expect(
+      decodeHtmlBuffer(Buffer.from('<html>中文 UTF-8 内容</html>', 'utf8'), 'text/html'),
+    ).toContain('中文 UTF-8 内容');
+  });
+});
+
 function mockDeps(
   dns: Record<string, ResolvedAddress[]>,
   onRequest: (request: TransportRequest) => void,
@@ -433,7 +504,7 @@ function mockDeps(
     return {
       status: script.status,
       headers: script.headers ?? {},
-      body: Buffer.from(script.body ?? ''),
+      body: Buffer.isBuffer(script.body) ? script.body : Buffer.from(script.body ?? ''),
     };
   };
   return {

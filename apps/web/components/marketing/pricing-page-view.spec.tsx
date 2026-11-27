@@ -29,8 +29,13 @@ function parseJsonLdScripts(container: HTMLElement): Array<Record<string, unknow
 }
 
 describe('PricingPageView & /pricing routes (EN & ZH)', () => {
-  it('renders 3 plans, 4 paid actions, 7 free actions, bundled JSON-LD/llms.txt highlight, verbatim FAQ JSON-LD, and ZERO fiat currency on EN', () => {
+  it('renders 3 plans, 4 paid actions, dynamic free actions count, bundled JSON-LD/llms.txt highlight, verbatim FAQ JSON-LD, and ZERO fiat currency on EN', () => {
     const { container } = render(<PricingPageView locale="en" pricing={PUBLIC_PRICING_FALLBACK} />);
+
+    const freeCount = String(FREE_RATE_LIMITED_ACTIONS.length);
+    expect(container.textContent).toContain(`${freeCount} Included 0-Point Utilities`);
+    expect(container.textContent).toContain(`${freeCount} Included 0-Point Workflow Utilities`);
+    expect(container.textContent).toContain(`All ${freeCount} zero-point workflow tools`);
 
     const plans = screen.getByTestId('pricing-plans');
     expect(plans.textContent).toContain('Trial Demo');

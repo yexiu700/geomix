@@ -86,6 +86,10 @@ describe('InteractiveProductSandbox', () => {
     fireEvent.click(screen.getByRole('button', { name: 'CN · 北境声学' }));
     expect(screen.getByText('北境声学')).toBeTruthy();
     expect(screen.getByText(/Owned-Domain Citation Share: 41%/)).toBeTruthy();
+    const cnPcts = ['CITED', 'MENTIONED', 'COMPETITOR', 'ABSENT'].map((key) =>
+      Number.parseInt(screen.getByTestId(`sandbox-kpi-pct-${key}`).textContent ?? '0', 10),
+    );
+    expect(cnPcts.reduce((sum, v) => sum + v, 0)).toBe(100);
   });
 
   it('runs real @geomix/shared preflight & 0-100 GEO audit across all 3 toggles in GLOBAL and CN modes', () => {
@@ -135,6 +139,7 @@ describe('InteractiveProductSandbox', () => {
     const cnFindings = screen.getByTestId('sandbox-preflight-findings').textContent ?? '';
     expect(cnFindings).toContain('MISSING_FACT_SLOTS');
     expect(cnFindings).toContain('COMPLIANCE_BLOCKED');
+    expect(cnFindings).toContain('CN_AD_LAW_WARNING');
     expect(cnFindings).not.toContain('GLOBAL_CJK_LEAK');
 
     // Fix TBD & hype claim -> back to 100 PASS
@@ -159,7 +164,9 @@ describe('InteractiveProductSandbox', () => {
     fireEvent.click(screen.getByTestId('sandbox-toggle-hype'));
     const findingsText = screen.getByTestId('sandbox-preflight-findings').textContent ?? '';
     expect(findingsText).toContain('COMPLIANCE_BLOCKED');
+    expect(findingsText).toContain('CN_AD_LAW_WARNING');
     expect(findingsText).toContain('Prohibited claim blocked:');
+    expect(findingsText).toContain('全网第一');
     expect(findingsText).not.toContain('命中禁做行业词');
     expect(findingsText).not.toMatch(/命中|禁做|广告法/);
   });

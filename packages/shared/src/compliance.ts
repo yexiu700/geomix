@@ -515,6 +515,55 @@ export function scanDualTrackCompliance(
   };
 }
 
+/**
+ * 扫描 CN 广告法极限词与绝对化用语（只读提示，不改写原文）。
+ * 供发布前 Preflight 门禁输出 `CN_AD_LAW_WARNING` 软告警使用。
+ */
+export function scanCnAdLawWarnings(input: string): GeoComplianceFlag[] {
+  if (typeof input !== 'string' || !input) return [];
+  const flags: GeoComplianceFlag[] = [];
+  const seenTerms = new Set<string>();
+
+  for (const rule of CN_AD_LAW_REPLACEMENTS) {
+    const globalFlags = rule.pattern.flags.includes('g')
+      ? rule.pattern.flags
+      : `${rule.pattern.flags}g`;
+    const re = new RegExp(rule.pattern.source, globalFlags);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(input)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex += 1;
+        continue;
+      }
+      const matched = m[0];
+      if (seenTerms.has(matched)) continue;
+      seenTerms.add(matched);
+      flags.push({
+        code: 'AD_LAW_SUPERLATIVE',
+        market: 'CN',
+        term: matched,
+        replacement: rule.to,
+        severity: 'warning',
+        message: `检测到广告法极限词「${matched}」，建议替换为「${rule.to}」`,
+      });
+    }
+  }
+
+  for (const rule of CN_AD_LAW_FLAGS) {
+    if (!rule.pattern.test(input) || seenTerms.has(rule.label)) continue;
+    seenTerms.add(rule.label);
+    flags.push({
+      code: 'AD_LAW_FLAG',
+      market: 'CN',
+      term: rule.label,
+      severity: 'warning',
+      message: `包含需谨慎核验的绝对化用语「${rule.label}」`,
+    });
+  }
+
+  return flags;
+}
+
 export function assertNoProhibitedContent(
   input: string,
   options?: DualTrackComplianceOptions,

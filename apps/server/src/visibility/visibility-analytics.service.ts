@@ -2,10 +2,12 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
   API_ERROR,
   AUTH_ERROR,
+  FAKE_MARK,
   VISIBILITY_ENGINE_LABELS,
   classifyCitationSource,
   computeVisibilityPct,
   isEngineAllowedForMarket,
+  isSimulatedCollectorKind,
   isVisibilityEngine,
   normalizeFanOutQueries,
   normalizeVisibilityDomain,
@@ -207,6 +209,13 @@ export class VisibilityAnalyticsService {
     });
 
     const { metrics, brandGroups } = computeOverviewMetricsAndGroups(observations, overviewCtx);
+    const simulatedChecks = observations.filter(
+      (obs) =>
+        isSimulatedCollectorKind(obs.collectorKind) ||
+        Boolean(obs.answerText?.trimStart().startsWith(FAKE_MARK)),
+    ).length;
+    metrics.simulatedChecks = simulatedChecks;
+    metrics.hasSimulatedObservations = simulatedChecks > 0;
     const trend = buildDailyTrend(observations, window.keys, overviewCtx, query.engine);
     const byEngine = buildEngineBreakdown(observations, overviewCtx);
 

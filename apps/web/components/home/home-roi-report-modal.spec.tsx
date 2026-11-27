@@ -527,4 +527,35 @@ describe('HomeRoiReportModal (#372)', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('shows simulated collector badge when summary.overview.hasSimulatedObservations is true (#418)', async () => {
+    const base = makeReport();
+    const simulatedReport = makeReport({
+      summary: {
+        ...base.summary,
+        overview: {
+          ...base.summary.overview,
+          simulatedObservations: 8,
+          hasSimulatedObservations: true,
+        },
+      },
+    });
+    vi.spyOn(reportsApi, 'fetchGeoRoiReports').mockResolvedValueOnce({
+      items: [simulatedReport],
+    });
+
+    render(
+      <HomeRoiReportModal
+        open
+        brandId="brand_1"
+        brandName="AstraVault"
+        market="GLOBAL"
+        readOnly={false}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const badge = await screen.findByTestId('roi-simulated-badge');
+    expect(badge.textContent).toContain('含模拟采集数据');
+  });
 });

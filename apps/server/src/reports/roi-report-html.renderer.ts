@@ -165,6 +165,7 @@ type Dict = {
   pointsPerArticle: string;
   pointsPerCitation: string;
   footerGeneratedPrefix: string;
+  simulatedBanner: string;
   na: string;
   unitPoints: string;
 };
@@ -231,6 +232,8 @@ const DICTIONARIES: Record<ReportLang, Dict> = {
     pointsPerArticle: '单篇发布成本',
     pointsPerCitation: '单次引用命中成本',
     footerGeneratedPrefix: '报告生成于',
+    simulatedBanner:
+      '数据口径提示：本报告统计周期内包含模拟采集观测，仅供功能演示或沙盒对比参考，不代表真实 AI 引擎线上表现。',
     na: '—',
     unitPoints: '点',
   },
@@ -297,6 +300,8 @@ const DICTIONARIES: Record<ReportLang, Dict> = {
     pointsPerArticle: 'Points / Published Article',
     pointsPerCitation: 'Points / Citation Hit',
     footerGeneratedPrefix: 'Generated at',
+    simulatedBanner:
+      'Notice: This reporting period includes simulated collector observations for demonstration/preview reference only and does not represent live AI engine answers.',
     na: 'N/A',
     unitPoints: 'pts',
   },
@@ -772,6 +777,16 @@ export function renderRoiReportHtml(input: RoiReportHtmlRenderInput): string {
       background: #f1f5f9;
       color: #0f172a;
     }
+    .simulated-banner {
+      margin-bottom: 18px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #f59e0b;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: 12.5px;
+      font-weight: 500;
+    }
     .kpi-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -909,6 +924,8 @@ export function renderRoiReportHtml(input: RoiReportHtmlRenderInput): string {
         <span class="meta-pill">${escapeHtml(confLabel)}</span>
       </div>
     </header>
+
+    ${ov.hasSimulatedObservations ? `<div class="simulated-banner" role="note">${escapeHtml(dict.simulatedBanner)}</div>` : ''}
 
     <section class="kpi-grid">
       <div class="kpi-card">

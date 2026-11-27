@@ -626,4 +626,32 @@ describe('RoiReportHtmlRenderer (#369)', () => {
     expect(enHtml).toContain('Nami AI');
     expect(enHtml).not.toMatch(/[\u4E00-\u9FFF]/);
   });
+
+  it('renders simulated observation notice banner in ZH and EN when hasSimulatedObservations is true', () => {
+    const cleanHtml = renderRoiReportHtml(makeInput());
+    expect(cleanHtml).not.toContain('class="simulated-banner"');
+
+    const base = buildRichSummary();
+    const simulatedSummary: GeoRoiReportSummaryDto = {
+      ...base,
+      overview: {
+        ...base.overview,
+        simulatedObservations: 12,
+        hasSimulatedObservations: true,
+      },
+    };
+
+    const zhHtml = renderRoiReportHtml(
+      makeInput({ locale: 'zh-CN', market: 'CN', summary: simulatedSummary }),
+    );
+    expect(zhHtml).toContain('class="simulated-banner"');
+    expect(zhHtml).toContain('包含模拟采集观测');
+
+    const enHtml = renderRoiReportHtml(
+      makeInput({ locale: 'en-US', market: 'GLOBAL', summary: simulatedSummary }),
+    );
+    expect(enHtml).toContain('class="simulated-banner"');
+    expect(enHtml).toContain('simulated collector observations');
+    expect(enHtml).not.toMatch(/[\u4E00-\u9FFF]/);
+  });
 });

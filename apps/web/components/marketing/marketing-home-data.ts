@@ -325,6 +325,11 @@ export const PREFLIGHT_CODE_LABELS: Record<
       title: 'FTC / Global Superlative Warning',
       summary: 'Unsubstantiated superlatives or guarantee terms flagged with line-level excerpts.',
     },
+    CN_AD_LAW_WARNING: {
+      title: 'CN Ad-Law Superlative Warning',
+      summary:
+        'Detected superlative or absolute claim terms; replace with verifiable benchmark facts.',
+    },
     LOW_GEO_SCORE: {
       title: 'Low GEO Extractability Score',
       summary:
@@ -359,6 +364,10 @@ export const PREFLIGHT_CODE_LABELS: Record<
     GLOBAL_CLAIM_WARNING: {
       title: '海外极限词与合规风险提示',
       summary: '检测到未经实证的极限词或担保表述，并定位至具体行号与上下文片段。',
+    },
+    CN_AD_LAW_WARNING: {
+      title: '中国广告法极限词与绝对化提示',
+      summary: '检测到广告法高风险极限词或绝对化用语，建议替换为可验证的客观实测表述。',
     },
     LOW_GEO_SCORE: {
       title: 'GEO 结构体检分偏低',
@@ -525,6 +534,7 @@ const GEO_WRITE_PTS = pricingUnitPoints('geo_write');
 const VISIBILITY_CHECK_PTS = pricingUnitPoints('visibility_check');
 const INLINE_IMAGE_PTS = pricingUnitPoints('inline_image_gen');
 const GEO_VARIANT_PTS = pricingUnitPoints('geo_variant');
+const FREE_ACTION_COUNT = PUBLIC_PRICING_FALLBACK.freeActions.length;
 
 export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]> = {
   en: [
@@ -537,7 +547,7 @@ export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]
     {
       id: 'points-billing',
       question: 'How does transparent points billing work, and what actions cost 0 points?',
-      answer: `GeoMix uses a transparent action-based points ledger with automatic refund on task failure: GEO Targeted Writing costs ${GEO_WRITE_PTS} pts/article, AI Visibility Check costs ${VISIBILITY_CHECK_PTS} pts/engine run, Inline AI Image costs ${INLINE_IMAGE_PTS} pts/image, and Channel Variant Adaptation costs ${GEO_VARIANT_PTS} pts/channel. All 7 core workflow utilities (GEO Topic Brief, Brand Fact Card Extraction, Real-Time 0–100 GEO Audit, Targeted Section Rewrite, Pre-Publish Preflight Gate, T+1 Crawl & Schema Probe, and Login-Free PR/KOL Media Kit) plus JSON-LD & llms.txt export cost 0 points. Qualified teams start with a ${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')}-point Demo trial valid for ${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} days, and production plans are tailored via Contact Sales.`,
+      answer: `GeoMix uses a transparent action-based points ledger with automatic refund on task failure: GEO Targeted Writing costs ${GEO_WRITE_PTS} pts/article, AI Visibility Check costs ${VISIBILITY_CHECK_PTS} pts/engine run, Inline AI Image costs ${INLINE_IMAGE_PTS} pts/image, and Channel Variant Adaptation costs ${GEO_VARIANT_PTS} pts/channel. All ${FREE_ACTION_COUNT} core workflow utilities (including GEO Topic Brief, Brand Fact Card Extraction, Real-Time 0–100 GEO Audit, Targeted Section Rewrite, Pre-Publish Preflight Gate, T+1 Crawl & Schema Probe, Near-Miss Boost, ROI Report Export/Share, Chrome Extension Pairing, and Login-Free PR/KOL Media Kit) plus JSON-LD & llms.txt export cost 0 points. Qualified teams start with a ${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')}-point Demo trial valid for ${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} days, and production plans are tailored via Contact Sales.`,
     },
     {
       id: 'anti-hallucination',
@@ -549,7 +559,7 @@ export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]
       id: 'connectors-roadmap',
       question: 'Which storefronts, community channels, and v2.2 integrations are supported?',
       answer:
-        'In GA v2.1, GeoMix supports L1 direct publishing to Shopify, WordPress, Webflow, and signed HMAC Webhook + IndexNow, plus L3 human-reviewed checklists for Reddit, Quora, and Zhihu alongside 30-day login-free PR/KOL media kits. Upcoming v2.2 roadmap features — clearly separated from GA — include Near-Miss citation mining, Wilson 95% confidence intervals, and Ghost, Dev.to, Hashnode, GitHub MDX, WeChat Draft Box, and Chrome Extension L2 bridges.',
+        'GeoMix supports GA v2.1 L1 direct publishing (Shopify, WordPress, Webflow, signed HMAC Webhook + IndexNow), L3 human-reviewed checklists (Reddit, Quora, Zhihu), and 30-day login-free PR/KOL media kits — alongside live GA v2.2 capabilities including Near-Miss citation mining, Wilson 95% confidence intervals, Ghost, Dev.to, Hashnode, GitHub MDX, WeChat Draft Box, and Chrome Extension L2 bridges.',
     },
     {
       id: 'demo-trial',
@@ -568,7 +578,7 @@ export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]
     {
       id: 'points-billing',
       question: '点数计费如何透明核算？哪些核心动作 0 点数免费？',
-      answer: `GeoMix 采用透明按动作扣点、任务失败自动退点的可审计账本：GEO 靶向写作 ${GEO_WRITE_PTS} 点/篇，AI 可见性监测 ${VISIBILITY_CHECK_PTS} 点/引擎/次，行内 AI 配图 ${INLINE_IMAGE_PTS} 点/张，渠道变体改写 ${GEO_VARIANT_PTS} 点/渠道。全部 7 项核心辅助动作（GEO 选题简报、品牌事实卡提取、GEO 0–100 实时体检、局部分段重写、发布前合规门禁校验、T+1 线上抓取与 Schema 体检、免登录 PR/KOL 供稿单）以及 JSON-LD / llms.txt 导出均为 0 点数。团队可通过预约演示申请含 ${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')} 点 / ${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} 天有效期的 Demo 试用，正式套餐按需由商务顾问定制。`,
+      answer: `GeoMix 采用透明按动作扣点、任务失败自动退点的可审计账本：GEO 靶向写作 ${GEO_WRITE_PTS} 点/篇，AI 可见性监测 ${VISIBILITY_CHECK_PTS} 点/引擎/次，行内 AI 配图 ${INLINE_IMAGE_PTS} 点/张，渠道变体改写 ${GEO_VARIANT_PTS} 点/渠道。全部 ${FREE_ACTION_COUNT} 项核心辅助动作（GEO 选题简报、品牌事实卡提取、GEO 0–100 实时体检、局部分段重写、发布前合规门禁校验、T+1 线上抓取与 Schema 体检、Near-Miss 补强、ROI 报告导出分享、Chrome 扩展配对与免登录 PR/KOL 供稿单等）以及 JSON-LD / llms.txt 导出均为 0 点数。团队可通过预约演示申请含 ${PUBLIC_PRICING_FALLBACK.demoTrial.points.toLocaleString('en-US')} 点 / ${PUBLIC_PRICING_FALLBACK.demoTrial.validDays} 天有效期的 Demo 试用，正式套餐按需由商务顾问定制。`,
     },
     {
       id: 'anti-hallucination',
@@ -578,9 +588,9 @@ export const HOME_FAQ_ITEMS: Record<MarketingLocale, readonly FaqAccordionItem[]
     },
     {
       id: 'connectors-roadmap',
-      question: '当前支持哪些官网直发连接器、社区协作渠道与 v2.2 规划能力？',
+      question: '当前支持哪些官网直发连接器、社区协作渠道与 v2.2 能力？',
       answer:
-        '已上线的 v2.1 正式版包含 L1 官方连接器（Shopify、WordPress、Webflow、签名 HMAC Webhook + IndexNow）以及 L3 合规社区防封自检清单（Reddit、Quora、知乎，人工复核严禁刷屏）与 30 天免登录 PR/KOL 供稿包。即将上线的 v2.2 路线图（与已上线能力明确区分）将扩展 Near-Miss 差一步引用挖掘、Wilson 95% 置信区间以及 Ghost / Dev.to / Hashnode / GitHub MDX / 微信公众号草稿箱 / Chrome 扩展 L2 桥接。',
+        '已上线的 v2.1 与 v2.2 正式能力包含 L1 官方连接器（Shopify、WordPress、Webflow、Ghost、Dev.to、Hashnode、GitHub MDX、微信公众号草稿箱、签名 HMAC Webhook + IndexNow）、L2 Chrome 扩展桥接、L3 合规社区防封自检清单（Reddit、Quora、知乎，人工复核严禁刷屏）、30 天免登录 PR/KOL 供稿包，以及 Near-Miss 差一步引用挖掘与 Wilson 95% 置信区间统计归因。',
     },
     {
       id: 'demo-trial',
@@ -640,7 +650,7 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
     workflowEyebrow: '4-STEP CLOSED LOOP',
     workflowTitle: 'From Verified Facts to Auditable Citation Lift',
     workflowSubtitle:
-      'Every stage is deterministic, grounded in your source-of-truth specs, and separated cleanly between GA v2.1 capabilities and the upcoming v2.2 roadmap.',
+      'Every stage is deterministic, grounded in your source-of-truth specs, and built across our GA v2.1 core loop and live v2.2 growth & connector capabilities.',
     workflowSteps: [
       {
         step: '01',
@@ -671,7 +681,7 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
         highlights: ['T+1 CrawlProbe (HTTP 200 / Schema)', 'T+7 → T+14 → T+30 retest curve'],
       },
     ],
-    connectorsTitle: 'Connector Ecosystem (GA v2.1)',
+    connectorsTitle: 'Connector Ecosystem (GA v2.1 + GA v2.2)',
     connectors: [
       {
         tier: 'GA v2.1 · L1 Official',
@@ -693,10 +703,10 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
         ],
       },
     ],
-    roadmapBadge: 'Upcoming v2.2',
-    roadmapTitle: 'Roadmap Preview (Clearly Separated from GA v2.1)',
+    roadmapBadge: 'GA v2.2 · Live',
+    roadmapTitle: 'v2.2 Growth & Connector Capabilities (Now Live)',
     roadmapDescription:
-      'In active architecture for v2.2 — transparently marked so your team plans around GA capabilities today.',
+      'All v2.2 attribution, Near-Miss mining, and L1/L2 connector bridges below are now live in the console.',
     roadmapItems: [
       'Near-Miss Citation Mining',
       'Wilson 95% Confidence Intervals',
@@ -758,7 +768,7 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
     workflowEyebrow: '四步闭环工作流',
     workflowTitle: '从品牌事实库到可审计的 AI 引用归因',
     workflowSubtitle:
-      '每个环节均有明确工程门禁与透明点数核算，并清晰界定已上线 v2.1 能力与即将上线的 v2.2 规划边界。',
+      '每个环节均有明确工程门禁与透明点数核算，全面覆盖已上线的 v2.1 核心闭环与 v2.2 归因/连接器能力。',
     workflowSteps: [
       {
         step: '01',
@@ -789,7 +799,7 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
         highlights: ['T+1 CrawlProbe 抓取验收', 'T+7 → T+14 → T+30 归因曲线'],
       },
     ],
-    connectorsTitle: '已上线连接器生态（GA v2.1）',
+    connectorsTitle: '已上线连接器生态（GA v2.1 + GA v2.2）',
     connectors: [
       {
         tier: 'GA v2.1 · L1 官方连接器',
@@ -815,10 +825,10 @@ export const HOME_PAGE_COPY: Record<MarketingLocale, HomePageCopy> = {
         ],
       },
     ],
-    roadmapBadge: '即将上线 v2.2',
-    roadmapTitle: 'v2.2 路线图预告（与已上线 v2.1 能力明确区分）',
+    roadmapBadge: '已上线 v2.2',
+    roadmapTitle: 'v2.2 归因与多渠道连接器能力（已正式上线）',
     roadmapDescription:
-      '以下能力处于 v2.2 架构规划阶段，公开标注边界，确保团队基于当前 GA 能力做出清晰选型。',
+      '以下 Near-Miss 差一步机会挖掘、Wilson 95% 置信区间统计归因与扩展连接器均已在控制台正式上线可用。',
     roadmapItems: [
       'Near-Miss 差一步引用机会挖掘',
       'Wilson 95% 置信区间统计归因',

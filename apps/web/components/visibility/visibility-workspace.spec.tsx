@@ -1648,4 +1648,51 @@ describe('VisibilityWorkspace 3-Tab dual-market UI', () => {
     const briefBtn = (await screen.findByTestId('answer-brief-btn')) as HTMLButtonElement;
     expect(briefBtn.disabled).toBe(true);
   });
+
+  it('shows online engine coverage ratio, simulated badge, and reconciliation drill-down button on overview (#418)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brandsError: null,
+      brands: [DUAL_BRAND],
+      activeBrandId: 'brand_dual_1',
+      activeMarket: 'CN',
+      activeProductLineId: null,
+      contextEpoch: 1,
+    });
+
+    vi.spyOn(visibilityApi, 'fetchVisibilityOverview').mockResolvedValue({
+      ...CN_OVERVIEW_RES,
+      metrics: {
+        ...CN_OVERVIEW_RES.metrics,
+        simulatedChecks: 4,
+        hasSimulatedObservations: true,
+      },
+    });
+    vi.spyOn(visibilityApi, 'fetchVisibilityEngines').mockResolvedValue(CN_ENGINES_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRuns').mockResolvedValue(SAMPLE_RUNS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityRunDetail').mockResolvedValue(SAMPLE_RUN_DETAIL);
+    vi.spyOn(visibilityApi, 'fetchVisibilityCitations').mockResolvedValue(SAMPLE_CITATIONS_RES);
+    vi.spyOn(visibilityApi, 'fetchVisibilityOpportunities').mockResolvedValue(SAMPLE_OPPS_RES);
+    vi.spyOn(briefsApi, 'fetchBriefs').mockResolvedValue({ total: 0, items: [] });
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <VisibilityWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const coverageBadge = await screen.findByTestId('visibility-engine-coverage-badge');
+    expect(coverageBadge.textContent).toContain('当前在线 2/4 引擎');
+    const simBadge = screen.getByTestId('visibility-simulated-badge');
+    expect(simBadge.textContent).toContain('含模拟采集数据');
+
+    const reconcileBtn = screen.getByTestId('visibility-reconcile-btn');
+    fireEvent.click(reconcileBtn);
+
+    await waitFor(() => {
+      expect(window.location.search).toContain('tab=runs');
+      expect(window.location.search).toContain(`runId=${SAMPLE_RUNS_RES.items[0]!.id}`);
+    });
+  });
 });

@@ -35,8 +35,7 @@ export function buildPricingFaqItems(
       {
         id: 'free-capabilities',
         question: '哪些核心能力固定 0 点不消耗额度？',
-        answer:
-          '所有 7 项高频基础能力（GEO 选题简报、品牌事实卡提取、GEO 0–100 实时体检、局部分段重写、发布前合规门禁校验、T+1 线上抓取与 Schema 体检、免登录 PR/KOL 供稿单）以及 JSON-LD 与 /llms.txt 结构化导出均固定 0 点免费标配，并受合理防刷限流保护。',
+        answer: `所有 ${pricing.freeActions.length} 项高频基础能力（GEO 选题简报、品牌事实卡提取、GEO 0–100 实时体检、局部分段重写、发布前合规门禁校验、T+1 线上抓取与 Schema 体检、免登录 PR/KOL 供稿单等）以及 JSON-LD 与 /llms.txt 结构化导出均固定 0 点免费标配，并受合理防刷限流保护。`,
       },
       {
         id: 'variant-pricing',
@@ -68,8 +67,7 @@ export function buildPricingFaqItems(
     {
       id: 'free-capabilities',
       question: 'Which core capabilities are permanently included at 0 points?',
-      answer:
-        'All 7 high-frequency workflow utilities (GEO Topic Brief, Brand Fact Card Extraction, Real-Time GEO 0–100 Audit, Targeted Section Rewrite, Pre-Publish Preflight Gate, T+1 Crawl & Schema Probe, and Login-Free PR/KOL Media Kits) plus JSON-LD and /llms.txt export are bundled at 0 points under fair rate limits.',
+      answer: `All ${pricing.freeActions.length} high-frequency workflow utilities (including GEO Topic Brief, Brand Fact Card Extraction, Real-Time GEO 0–100 Audit, Targeted Section Rewrite, Pre-Publish Preflight Gate, T+1 Crawl & Schema Probe, Near-Miss Boost, ROI Report Export/Share, Chrome Extension Pairing, and Login-Free PR/KOL Media Kits) plus JSON-LD and /llms.txt export are bundled at 0 points under fair rate limits.`,
     },
     {
       id: 'variant-pricing',
@@ -185,7 +183,7 @@ export function PricingPageView({ locale, pricing }: PricingPageViewProps) {
           highlights: [
             `内置 ${demoPointsText} 点全功能体验额度，${pricing.demoTrial.validDays} 天有效`,
             '完整体验 Global + CN 双市场 AI 引用拓扑诊断',
-            '标配 7 项 0 点核心能力 + JSON-LD 与 /llms.txt 导出',
+            `标配 ${pricing.freeActions.length} 项 0 点核心能力 + JSON-LD 与 /llms.txt 导出`,
             '任务失败或超时自动全额退还点数，流水全程可审计',
           ],
         },
@@ -238,7 +236,7 @@ export function PricingPageView({ locale, pricing }: PricingPageViewProps) {
           highlights: [
             `${demoPointsText} complimentary points valid for ${pricing.demoTrial.validDays} days`,
             'Full Global + China AI citation topology diagnostics',
-            'All 7 zero-point workflow tools + JSON-LD & /llms.txt export',
+            `All ${pricing.freeActions.length} zero-point workflow tools + JSON-LD & /llms.txt export`,
             'Automatic full point refunds on failure with auditable ledger',
           ],
         },
@@ -354,8 +352,8 @@ export function PricingPageView({ locale, pricing }: PricingPageViewProps) {
             </span>
             <h2 className="gm-mkt-h2">
               {isZh
-                ? '4 项按次计费动作 + 7 项 0 点免费标配'
-                : '4 Metered Actions + 7 Included 0-Point Utilities'}
+                ? `${pricing.items.length} 项按次计费动作 + ${pricing.freeActions.length} 项 0 点免费标配`
+                : `${pricing.items.length} Metered Actions + ${pricing.freeActions.length} Included 0-Point Utilities`}
             </h2>
             <p className="gm-mkt-lead">
               {isZh
@@ -410,8 +408,8 @@ export function PricingPageView({ locale, pricing }: PricingPageViewProps) {
             <div className="gm-mkt-free-head">
               <h3 className="gm-mkt-subhead">
                 {isZh
-                  ? '7 项 0 点标配工作流能力（受合理防刷限流保护）'
-                  : '7 Included 0-Point Workflow Utilities (Fair Rate Limits)'}
+                  ? `${pricing.freeActions.length} 项 0 点标配工作流能力（受合理防刷限流保护）`
+                  : `${pricing.freeActions.length} Included 0-Point Workflow Utilities (Fair Rate Limits)`}
               </h3>
               <span className="gm-mkt-badge gm-mkt-badge-cited gm-num">
                 {isZh ? '全部 0 点' : '0 pts included'}

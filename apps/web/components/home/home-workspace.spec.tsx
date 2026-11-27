@@ -839,4 +839,34 @@ describe('HomeWorkspace 3-Block Action Home (M5 #333)', () => {
       );
     });
   });
+
+  it('displays simulated-data notice badge on /home when health.hasSimulatedObservations is true (#418)', async () => {
+    useWorkspaceStore.setState({
+      brandsLoading: false,
+      brandsLoaded: true,
+      brands: [BRAND_A],
+      activeBrandId: BRAND_A.id,
+      activeMarket: 'CN',
+    });
+
+    const base = makeHomeData(BRAND_A.id, 'CN', 1);
+    const simulatedData: ActionHomeResponse = {
+      ...base,
+      health: {
+        ...base.health,
+        hasSimulatedObservations: true,
+      },
+    };
+
+    vi.spyOn(homeApi, 'fetchActionHome').mockResolvedValueOnce(simulatedData);
+
+    render(
+      <ConsoleProvider value={makeConsoleContext()}>
+        <HomeWorkspace />
+      </ConsoleProvider>,
+    );
+
+    const badge = await screen.findByTestId('home-simulated-badge');
+    expect(badge.textContent).toContain('含模拟采集数据');
+  });
 });
