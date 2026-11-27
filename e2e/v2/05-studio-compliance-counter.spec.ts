@@ -1013,9 +1013,8 @@ v2Describe(
             waitUntil: 'domcontentloaded',
           });
           const batchModeBtn = page.getByTestId('studio-batch-mode-btn');
-          if ((await batchModeBtn.count()) > 0 && (await batchModeBtn.isVisible())) {
-            await batchModeBtn.click();
-          }
+          await expect(batchModeBtn).toBeVisible({ timeout: 15_000 });
+          await batchModeBtn.click();
           const checkboxes = page.locator('input[type="checkbox"]');
           await expect(checkboxes.nth(1)).toBeVisible();
           await checkboxes.nth(0).check();
