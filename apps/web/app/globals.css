@@ -202,6 +202,7 @@ input:not([class*='ant-']):hover {
 }
 
 .gm-num {
+  font-family: var(--gm-font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
 }

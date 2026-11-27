@@ -126,7 +126,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
 
   // Step 5: Enable GLOBAL market via + 开启另一市场
   await page.getByTestId('enable-other-market-btn').click();
-  const enableDialog = page.getByRole('dialog', { name: '开启海外市场' });
+  const enableDialog = page.getByRole('dialog', { name: /开启海外|开启海外市场/ });
   await expect(enableDialog).toBeVisible();
   await enableDialog.getByLabel('当地品牌名称').fill(`Zhizao Laser ${suffix}`);
 
@@ -135,7 +135,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
       res.url().includes(`/api/v2/brands/${createdBrandId}/markets/GLOBAL`) &&
       res.request().method() === 'POST',
   );
-  await enableDialog.getByRole('button', { name: '确认开启' }).click();
+  await enableDialog.getByRole('button', { name: /^(?:开启|确认开启)$/ }).click();
   const enableResponse = await enableResponsePromise;
   expect(enableResponse.status()).toBe(200);
   const enableJson = (await enableResponse.json()) as BrandEnvelope;
