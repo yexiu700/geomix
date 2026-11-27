@@ -312,7 +312,7 @@ v2Describe(
           await page.getByTestId('publish-export-btn').click();
           await expect(page.getByTestId('delivery-copy-jsonld')).toBeVisible({ timeout: 15_000 });
           assertValidJsonLd(article.schemaJsonLd, ['Article', 'FAQPage']);
-          await page.keyboard.press('Escape');
+          await page.locator('.ant-modal-close:visible').last().click();
           await expect(page.getByTestId('publish-export-modal')).toBeHidden({ timeout: 10_000 });
 
           await page.getByTestId('publish-tab-tracking').click();
