@@ -8,6 +8,8 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
+import { shouldCollapseToExplain } from '../../lib/copy-length';
+import { Explain } from './explain';
 
 export type FormFieldProps = {
   label: ReactNode;
@@ -64,21 +66,25 @@ export function FormField({
   }
 
   const classes = className ? `gm-ui-form-field ${className}` : 'gm-ui-form-field';
+  const collapseHelp = typeof help === 'string' && shouldCollapseToExplain(help);
 
   return (
     <div className={classes} data-testid={testId}>
       <div className="gm-ui-form-field-header">
-        <label htmlFor={htmlFor} className="gm-ui-form-field-label">
-          <span>{label}</span>
-          {required ? (
-            <>
-              <span className="gm-ui-form-field-required" aria-hidden="true">
-                *
-              </span>
-              <span className="gm-sr-only">（必填）</span>
-            </>
-          ) : null}
-        </label>
+        <div className="gm-ui-form-field-label-row">
+          <label htmlFor={htmlFor} className="gm-ui-form-field-label">
+            <span>{label}</span>
+            {required ? (
+              <>
+                <span className="gm-ui-form-field-required" aria-hidden="true">
+                  *
+                </span>
+                <span className="gm-sr-only">（必填）</span>
+              </>
+            ) : null}
+          </label>
+          {collapseHelp ? <Explain text={help} descriptionId={helpId} /> : null}
+        </div>
         {extra ? <div className="gm-ui-form-field-extra">{extra}</div> : null}
       </div>
       <div className="gm-ui-form-field-control">{renderedControl}</div>
@@ -87,7 +93,7 @@ export function FormField({
           {error}
         </p>
       ) : null}
-      {help ? (
+      {!collapseHelp && help ? (
         <p id={helpId} className="gm-ui-form-field-help">
           {help}
         </p>

@@ -110,10 +110,13 @@ describe('KpiStrip', () => {
     expect(ownedBar?.getAttribute('aria-valuenow')).toBe('100');
     expect(ownedBar?.querySelector('rect')?.getAttribute('width')).toBe('100');
 
-    // Undefined progressPct: no progressbar rendered
+    // Undefined progressPct & >8 char caption: collapses caption into ⓘ while preserving inline <=8 char captions
     const positionItem = screen.getByTestId('home-kpi-position');
     expect(positionItem.querySelector('[role="progressbar"]')).toBeNull();
+    expect(positionItem.querySelector('.gm-ui-kpi-caption')).toBeNull();
+    expect(positionItem.querySelector('.gm-explain-trigger')).toBeTruthy();
     expect(positionItem.textContent).toContain('多数回答将品牌排在第 1 位');
+    expect(mentionItem.querySelector('.gm-ui-kpi-caption')?.textContent).toBe('暂无提及');
 
     // NaN value + null progressPct -> '—' + empty 0% track
     const invalidItem = screen.getByTestId('home-kpi-invalid');

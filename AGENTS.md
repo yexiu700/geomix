@@ -16,6 +16,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engin
 - [品牌官网需求与架构设计（docs/GeoMix品牌官网需求与架构设计.md）](./docs/GeoMix品牌官网需求与架构设计.md)：Global-First 中英双语品牌官网 PRD、交互沙盒、点数计算器、试用线索闭环与 Batch 0–3 拆分规范（对应 Epic #382 / Issues #378–#381）。
 - [产品体验与多产品线轻量改造方案（docs/GeoMix产品体验与多产品线轻量改造方案.md）](./docs/GeoMix产品体验与多产品线轻量改造方案.md)：`/studio` 宽屏专注布局、冷启动抽事实与 `[TBD]` 批量回填、渠道启停与 `GLOBAL` 强校验、可选多产品线（`BrandProductLine`）与月度复测预算上限（对应 Epic #388 / Issues #384–#387）。
 - [Sonar Ink 2.0 视觉精修方案（docs/SonarInk2视觉精修方案.md）](./docs/SonarInk2视觉精修方案.md)：深色「沉静精确」视觉令牌 2.0、7 大基础 UI 原语、全站去框化外壳、`/home` & `/visibility` & `/brands` & `/studio` 重排与静态防回潮守卫棘轮（对应 Epic #395 / Issues #390–#394，与 #384 合并交付 `/studio`）。
+- [极简交互规范（docs/极简交互规范.md）](./docs/极简交互规范.md)：控制台降认知负载规范（YAGNI、单一主操作、2–4 字标题/表头/按钮、`> 8` 字说明收进 ⓘ、`copy-guard` 棘轮守卫与短标签映射）。
 - [运维与部署手册（docs/运维与部署手册.md）](./docs/运维与部署手册.md) & [CD 部署指南（docs/CD部署指南.md）](./docs/CD部署指南.md)：生产/预发 Compose、备份恢复、LLM 成本日报与 Runner 部署。
 
 ### 基线与归档文档（按需查阅，日常开发无需通读）
@@ -44,7 +45,7 @@ GeoMix 是一个基于 TypeScript Monorepo 的多租户 **GEO（Generative Engin
   - 列表页工具栏必须复用 `<CrudTable>` / `<CrudToolbar>` 创建前置顺序，禁止手写 `gm-crud-toolbar` 或 `toolbarOrder="default"`。
   - 禁止在 `apps/web/lib/*` 重复定义 `function unwrap` → 复用 `apps/web/lib/envelope.ts`。
   - 轮询用 `useTaskPolling`（防重叠、按 `active` 启停），跨区刷新同步用 `useTabFreshness` / `invalidateFreshness`。
-- **`@geomix/web` 路由与样式**：控制台为极简 6 工作区路由（`/home`、`/brands`、`/visibility`、`/studio`、`/publish`、`/account`），`app/(console)/**/page.tsx` 导出 `metadata` 并直接渲染各自工作区组件作为 `ConsoleLayout` → `ConsoleShell` → `ShellFrame` 的 `children`；全局品牌与双市场（`CN` / `GLOBAL`）上下文由 `lib/workspace-store.ts` 管理并与 `?brandId=&market=` 同步；不引入 Tailwind / ProComponents / React Query / ECharts；使用 `var(--gm-*)` / `GM.*` 令牌并保持既有 `aria-label` / `data-testid` / 表头文案不变。
+- **`@geomix/web` 路由与样式**：控制台为极简 6 工作区路由（`/home`、`/brands`、`/visibility`、`/studio`、`/publish`、`/account`），`app/(console)/**/page.tsx` 导出 `metadata` 并直接渲染各自工作区组件作为 `ConsoleLayout` → `ConsoleShell` → `ShellFrame` 的 `children`；全局品牌与双市场（`CN` / `GLOBAL`）上下文由 `lib/workspace-store.ts` 管理并与 `?brandId=&market=` 同步；不引入 Tailwind / ProComponents / React Query / ECharts；使用 `var(--gm-*)` / `GM.*` 令牌，锁定既有 `aria-label` 与 `data-testid` 不变；页面可见文案、主按钮与 `> 8` 字说明遵循 [极简交互规范（docs/极简交互规范.md）](./docs/极简交互规范.md)。
 - **`@geomix/server` 隔离与权限**：全局前缀 `/api` + URI 版本控制（默认 `/api/v1`，v2 核心业务域用 `@Controller({ path: '...', version: '2' })` 暴露 `/api/v2`）；业务查询默认走 `prisma.scoped`，`prisma.base` 受 `prisma-base-allowlist.ts` 与 `prisma-base-usage.spec.ts` AST 棘轮白名单精确约束；管理接口挂 `AdminGuard`（对非管理员返 `404`）；写接口挂 `TenantActiveGuard`（到期返 `403` / `40301`）。
 - **文档测试耦合**：勿重命名或破坏 `docs/页面对照验收清单.md`（`qa.spec.ts`）与 `docs/运维与部署手册.md`（`llm-cost-report.spec.ts`）。
 

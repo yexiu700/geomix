@@ -1,4 +1,6 @@
+export { CostChip, type CostChipProps } from './cost-chip';
 export { EmptyState, type EmptyStateProps, type EmptyStateSize } from './empty-state';
+export { Explain, ExplainOrInline, type ExplainOrInlineProps, type ExplainProps } from './explain';
 export { FormField, type FormFieldProps } from './form-field';
 export {
   KpiStrip,
@@ -8,6 +10,7 @@ export {
   type KpiStripProps,
   type KpiStripTone,
 } from './kpi-strip';
+export { MoreMenu, type MoreMenuProps } from './more-menu';
 export { PageHeader, type PageHeaderProps } from './page-header';
 export {
   RowActions,

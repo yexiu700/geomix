@@ -8,8 +8,8 @@ describe('EmptyState', () => {
     cleanup();
   });
 
-  it('defaults to full size and renders icon, title, description, and action', () => {
-    const { container } = render(
+  it('defaults to full size, collapses >8 char description into ⓘ, and preserves inline <=8 char description', () => {
+    const { container, rerender } = render(
       <EmptyState
         icon={<svg data-testid="empty-icon" />}
         title="尚未生成诊断建议"
@@ -25,8 +25,14 @@ describe('EmptyState', () => {
     expect(screen.getByTestId('empty-icon')).toBeTruthy();
     expect(container.querySelector('.gm-ui-empty-icon')?.getAttribute('aria-hidden')).toBe('true');
     expect(screen.getByText('尚未生成诊断建议')).toBeTruthy();
+    expect(container.querySelector('.gm-ui-empty-desc')).toBeNull();
+    expect(screen.getByRole('button', { name: '说明' })).toBeTruthy();
     expect(screen.getByText('发起一轮可见度诊断后，系统会自动汇总优先写作选题')).toBeTruthy();
     expect(screen.getByRole('button', { name: '去写作台自由选题 →' })).toBeTruthy();
+
+    rerender(<EmptyState title="暂无数据" description="请先创建品牌" data-testid="empty-full" />);
+    expect(container.querySelector('.gm-ui-empty-desc')?.textContent).toBe('请先创建品牌');
+    expect(screen.queryByRole('button', { name: '说明' })).toBeNull();
   });
 
   it('supports compact inline size and omits optional slots when absent', () => {

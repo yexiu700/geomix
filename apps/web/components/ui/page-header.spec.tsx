@@ -8,8 +8,8 @@ describe('PageHeader', () => {
     cleanup();
   });
 
-  it('renders h1 title, clamped description, tags, meta, extra, and right-hand action', () => {
-    const { container } = render(
+  it('collapses description > 8 chars into ⓘ Explain next to pure h1 while keeping inline description <= 8 chars', () => {
+    const { container, rerender } = render(
       <PageHeader
         title="行动首页"
         description="追踪品牌在主流 AI 引擎中的可见度变化与高优内容机会"
@@ -29,16 +29,27 @@ describe('PageHeader', () => {
 
     const heading = screen.getByRole('heading', { level: 1, name: '行动首页' });
     expect(heading.className).toContain('gm-ui-page-header-title');
+    expect(heading.querySelector('button')).toBeNull();
 
-    const desc = screen.getByText('追踪品牌在主流 AI 引擎中的可见度变化与高优内容机会');
-    expect(desc.className).toContain('gm-ui-page-header-desc');
-    expect(desc.className).toContain('gm-clamp-1');
+    // > 8 chars collapsed into ⓘ Explain trigger (not visible paragraph)
+    expect(container.querySelector('.gm-ui-page-header-desc')).toBeNull();
+    const explainBtn = screen.getByRole('button', { name: '说明' });
+    expect(explainBtn).toBeTruthy();
+    expect(screen.getByText('追踪品牌在主流 AI 引擎中的可见度变化与高优内容机会')).toBeTruthy();
 
     expect(screen.getByText('CN 市场')).toBeTruthy();
     expect(screen.getByText('最近更新：2 分钟前')).toBeTruthy();
     expect(screen.getByRole('button', { name: '导出报告' })).toBeTruthy();
     expect(screen.getByRole('button', { name: '发起新一轮监测' })).toBeTruthy();
     expect(container.querySelector('.gm-ui-page-header-actions')).toBeTruthy();
+
+    // <= 8 chars remains inline paragraph
+    rerender(
+      <PageHeader title="行动首页" description="近 7 天汇总" data-testid="home-page-header" />,
+    );
+    const inlineDesc = screen.getByText('近 7 天汇总');
+    expect(inlineDesc.className).toContain('gm-ui-page-header-desc');
+    expect(screen.queryByRole('button', { name: '说明' })).toBeNull();
   });
 
   it('omits optional wrapper nodes when optional props are omitted', () => {
