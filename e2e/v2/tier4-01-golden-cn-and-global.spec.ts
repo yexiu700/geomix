@@ -108,7 +108,7 @@ v2Describe(
           await wizard.getByRole('textbox', { name: '竞品官网域名 1' }).fill('jikong.example');
 
           await wizard
-            .getByRole('button', { name: /创建并进入工作区|立即创建|保存/ })
+            .getByRole('button', { name: /^(?:创建|创建并进入工作区|立即创建|保存)$/ })
             .first()
             .click();
 
@@ -132,8 +132,8 @@ v2Describe(
           const brand: BrandDto = polledBrand;
           await expect(page.getByText(/请阅读并滚动至底部/)).toHaveCount(0);
 
-          // Step 1 transitions BrandQuickCreateModal to Step 2 ("跳过，直接进入"); dismiss cleanly before sidebar navigation
-          const skipBtn = wizard.getByRole('button', { name: '跳过，直接进入' });
+          // Step 1 transitions BrandQuickCreateModal to Step 2 ("跳过"); dismiss cleanly before sidebar navigation
+          const skipBtn = wizard.getByRole('button', { name: /^(?:跳过|跳过，直接进入)$/ });
           await expect(skipBtn).toBeVisible({ timeout: 10_000 });
           await skipBtn.click();
           await expect(wizard).toBeHidden({ timeout: 10_000 });
@@ -151,16 +151,18 @@ v2Describe(
           await expect(openExtractBtn).toBeVisible({ timeout: 15_000 });
           await openExtractBtn.click();
 
-          const extractModal = page.getByRole('dialog', { name: /AI 自动提炼/ });
+          const extractModal = page.getByRole('dialog', { name: /AI 提炼|AI 自动提炼/ });
           await expect(extractModal).toBeVisible({ timeout: 10_000 });
 
           const urlInput = extractModal.getByRole('textbox', { name: '官网链接' });
           await expect(urlInput).toBeVisible();
           await urlInput.fill(FIXTURE_URLS.cnProduct);
 
-          await extractModal.getByRole('button', { name: /开始 AI 提炼/ }).click();
+          await extractModal.getByRole('button', { name: /开始提炼|开始 AI 提炼/ }).click();
 
-          const applyExtractBtn = extractModal.getByRole('button', { name: '应用到事实卡' });
+          const applyExtractBtn = extractModal.getByRole('button', {
+            name: /^(?:应用|应用到事实卡)$/,
+          });
           await expect(applyExtractBtn).toBeVisible({ timeout: 20_000 });
           await applyExtractBtn.click();
           await expect(extractModal).toBeHidden({ timeout: 10_000 });
@@ -178,14 +180,15 @@ v2Describe(
           }
 
           const complianceCheckbox = page
-            .getByRole('checkbox', { name: /我确认所填品牌参数|真实客观/ })
+            .getByTestId('brand-facts-truth-checkbox')
+            .or(page.getByRole('checkbox', { name: /确认属实|我确认所填品牌参数|真实客观/ }))
             .first();
           await expect(complianceCheckbox).toBeVisible();
           if (!(await complianceCheckbox.isChecked())) {
             await complianceCheckbox.check();
           }
 
-          await page.getByRole('button', { name: '保存品牌事实卡' }).click();
+          await page.getByTestId('brand-facts-save-btn').click();
 
           await pollUntil(
             async () =>

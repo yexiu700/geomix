@@ -167,7 +167,7 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     const banner = screen.getByRole('region', { name: '首次建档引导' });
     fireEvent.click(within(banner).getByRole('button', { name: '建品牌' }));
 
-    const dialog = await screen.findByRole('dialog', { name: '60 秒创建品牌' });
+    const dialog = await screen.findByRole('dialog', { name: '新建品牌' });
     expect(within(dialog).getByTestId('brand-quick-create')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('品牌名称'), {
       target: { value: '智造激光' },
@@ -178,7 +178,7 @@ describe('ShellFrame (GeoMix 2.0 minimalist 5-workspace shell)', () => {
     fireEvent.change(within(dialog).getByLabelText('官网域名'), {
       target: { value: 'https://zhizao.example.com' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: '创建并进入工作区' }));
+    fireEvent.click(within(dialog).getByTestId('brand-quick-create-submit-btn'));
 
     await waitFor(() => {
       expect(onCreateBrand).toHaveBeenCalledWith({

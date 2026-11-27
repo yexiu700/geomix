@@ -727,7 +727,7 @@ v2Describe(
           await modal2.getByRole('button', { name: '确认删除' }).click();
 
           await expect(
-            page.getByRole('button', { name: /60 秒创建首个品牌|创建首个品牌/ }).first(),
+            page.getByRole('button', { name: /新建品牌|60 秒创建首个品牌|创建首个品牌/ }).first(),
           ).toBeVisible({ timeout: 15_000 });
           await expect
             .poll(

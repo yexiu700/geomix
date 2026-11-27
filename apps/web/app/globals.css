@@ -3509,6 +3509,32 @@ input:not([class*='ant-']):hover {
   gap: var(--gm-sp-2);
 }
 
+.gm-brand-alert-title-row,
+.gm-brand-switch-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-sp-1);
+}
+
+.gm-brand-conn-notice-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-sp-2);
+}
+
+.gm-brand-extra-doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gm-sp-2);
+}
+
+.gm-brand-advanced-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gm-sp-2);
+}
+
 .gm-brand-section-desc {
   margin: var(--gm-sp-1) 0 0;
   font-size: var(--gm-fs-sm);

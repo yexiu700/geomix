@@ -1335,7 +1335,7 @@ export function PublishWorkspace(): JSX.Element {
                           onReturnToEditor={handleReturnToEditorForFix}
                           onNavigateBrands={() => consoleCtx?.navigateWorkspace('/brands')}
                           onNavigateExtensionPairing={() =>
-                            consoleCtx?.navigateWorkspace('/brands?section=extension')
+                            consoleCtx?.navigateWorkspace('/account?tab=extension')
                           }
                           onNavigateAccount={() =>
                             consoleCtx?.navigateWorkspace('/account?tab=extension')

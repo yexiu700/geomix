@@ -112,7 +112,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
 
     // Heading has no numbered prefix
     const heading = container.querySelector('#brand-section-identity h2');
-    expect(heading?.textContent?.trim()).toBe('基础身份与竞品雷达');
+    expect(heading?.textContent?.trim()).toBe('品牌身份');
 
     // Hover-reveal icon remove buttons exist with SVG & aria-label
     const compRemoveBtn = screen.getByRole('button', { name: '移除竞品 群晖' });
@@ -121,6 +121,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
       name: '移除问句 2026年家用 NAS哪个品牌好？',
     });
     expect(seedRemoveBtn.querySelector('svg')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     const controlRemoveBtn = screen.getByRole('button', {
       name: '移除对照组问句 2026年家用路由器推荐',
     });
@@ -150,7 +151,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     fireEvent.change(nameInput, { target: { value: '青松存储-临时改动' } });
 
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
-    expect(screen.getByText('有未保存更改')).toBeTruthy();
+    expect(screen.getByText('未保存')).toBeTruthy();
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 
     // Discard reverts value and hides bar
@@ -202,6 +203,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.queryByTestId('brand-dirty-save-bar')).toBeNull();
 
     // Add a control prompt and save market-only
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     fireEvent.change(screen.getByTestId('control-prompt-input'), {
       target: { value: 'Best NVMe enclosure 2026' },
     });
@@ -450,7 +452,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
 
     const localInput = screen.getByLabelText('当地品牌名') as HTMLInputElement;
     fireEvent.change(localInput, { target: { value: '  青松存储  ' } });
-    fireEvent.click(screen.getByRole('button', { name: '+ 添加竞品' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加竞品' }));
     expect(screen.getByLabelText('市场竞品名称 2')).toBeTruthy();
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
 
@@ -544,6 +546,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
       />,
     );
 
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('2026-11');
     expect(screen.getByTestId('brand-retest-cap-field').textContent).toContain('已消耗 40 点');
 
@@ -602,6 +605,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     // Override checkbox should not block or appear when unchanged CJK identity is untouched
     expect(screen.queryByTestId('allow-cjk-global-identity-checkbox')).toBeNull();
 
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     const capInput = screen.getByLabelText('本月自动复测点数上限') as HTMLInputElement;
     fireEvent.change(capInput, { target: { value: '120' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
@@ -656,7 +660,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
 
     // Manually add a custom alias before opening AI prefill to verify zero overwrite
     fireEvent.change(screen.getByLabelText('添加市场别名'), { target: { value: '手工保留词' } });
-    fireEvent.click(screen.getAllByRole('button', { name: '+ 添加' })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: /添\s*加/ })[0]!);
     expect(screen.getByText('手工保留词')).toBeTruthy();
 
     fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
@@ -698,6 +702,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.getByDisplayValue('群晖')).toBeTruthy();
     expect(screen.getByText('四盘位静音家用 NAS 避坑指南')).toBeTruthy();
     expect(screen.getByText('青松存储 PV-600 功耗与噪音实测')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     expect(screen.getByText('NAS 硬盘 RAID1 与 RAID5 差异')).toBeTruthy();
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
 
@@ -715,7 +720,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
       controlPrompts: [],
       fallbackUsed: false,
     });
-    fireEvent.click(screen.getByRole('button', { name: '结合链接重新生成' }));
+    fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
     await waitFor(() => {
       expect(suggestBrandMarketConfigMock).toHaveBeenLastCalledWith(
         'b-id-1',
@@ -754,12 +759,13 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     fireEvent.click(screen.getByTestId('brand-ai-suggest-confirm-btn'));
 
     // Only 1 slot remaining out of 5 -> 2 truncated with warning
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
     expect(screen.getByText('新增对照 A')).toBeTruthy();
     expect(screen.queryByText('新增对照 B')).toBeNull();
     expect(notifyWarningMock).toHaveBeenCalledWith(expect.stringContaining('对照组截断 2 条'));
   });
 
-  it('upgrades 按当前品类重新生成种子问句 to AI suggest and falls back to static templates on error without overwriting existing seeds', async () => {
+  it('falls back to static seed templates via unified AI 补全 on error without overwriting existing seeds (Y6)', async () => {
     const brand = makeDualMarketBrand();
     suggestBrandMarketConfigMock.mockRejectedValueOnce(new Error('网络超时'));
 
@@ -774,13 +780,13 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '按当前品类重新生成种子问句' }));
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
 
     await waitFor(() => {
       expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
         'b-id-1',
         'CN',
-        { fields: ['seedPrompts'] },
+        {},
         expect.anything(),
       );
     });
@@ -796,7 +802,7 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(screen.getByTestId('brand-dirty-save-bar')).toBeTruthy();
   });
 
-  it('provides AI 一键英文本地化 inside GLOBAL localization warning banner and updates English identity on adopt', async () => {
+  it('uses unified AI 补全 when GLOBAL localization warning banner is shown and updates English identity on adopt (Y6)', async () => {
     const brand = makeDualMarketBrand();
     // Simulate CJK localBrandName & empty localCategory on GLOBAL market
     brand.markets[1]!.localBrandName = '青松存储';
@@ -825,13 +831,13 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     );
 
     expect(screen.getByTestId('global-localization-guide')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('global-ai-localize-btn'));
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
 
     await waitFor(() => {
       expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
         'b-id-1',
         'GLOBAL',
-        { fields: ['localIdentity'] },
+        {},
         expect.anything(),
       );
     });
@@ -945,12 +951,12 @@ describe('BrandIdentitySection (Sonar Ink 2.0 dirty bar & hover-delete)', () => 
     expect(guide.textContent).toContain('竞品名称/别名');
     expect(guide.textContent).toContain('种子监控问句');
 
-    fireEvent.click(screen.getByTestId('global-ai-localize-btn'));
+    fireEvent.click(screen.getByTestId('brand-ai-prefill-btn'));
     await waitFor(() => {
       expect(suggestBrandMarketConfigMock).toHaveBeenCalledWith(
         brand.id,
         'GLOBAL',
-        { fields: ['aliases', 'competitors', 'seedPrompts'] },
+        {},
         expect.anything(),
       );
     });

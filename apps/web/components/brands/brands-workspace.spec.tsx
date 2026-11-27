@@ -309,20 +309,20 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     // AI extract modal: switch to 粘贴资料, run extract, apply to cards
     fireEvent.click(screen.getByTestId('fact-ai-extract-btn'));
     const extractDialog = await screen.findByRole('dialog', {
-      name: 'AI 自动提炼 4 块品牌事实卡（免费）',
+      name: 'AI 提炼',
     });
     fireEvent.click(within(extractDialog).getByRole('tab', { name: '粘贴资料' }));
     fireEvent.change(within(extractDialog).getByLabelText('粘贴产品资料'), {
       target: { value: '这是一段超过十个字的真实产品参数和资质背书说明文档。' },
     });
-    fireEvent.click(within(extractDialog).getByRole('button', { name: '开始 AI 提炼（免费）' }));
+    fireEvent.click(within(extractDialog).getByTestId('fact-extract-run-btn'));
 
-    const applyBtn = await within(extractDialog).findByRole('button', { name: '应用到事实卡' });
+    const applyBtn = await within(extractDialog).findByTestId('fact-extract-apply-btn');
     fireEvent.click(applyBtn);
 
     // Check single lightweight compliance checkbox & save facts
-    fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: '保存品牌事实卡' }));
+    fireEvent.click(screen.getByTestId('brand-facts-truth-checkbox'));
+    fireEvent.click(screen.getByTestId('brand-facts-save-btn'));
     await waitFor(() => {
       expect(saveBrandFactsMock).toHaveBeenCalledTimes(1);
     });
@@ -331,7 +331,8 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     fireEvent.click(screen.getByRole('button', { name: '编辑说明' }));
     const altInput = screen.getByLabelText('图片说明');
     fireEvent.change(altInput, { target: { value: 'DXP4800 前面板细节图' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    const mediaSection = screen.getByLabelText('真实产品实拍图库');
+    fireEvent.click(within(mediaSection).getByRole('button', { name: '保存' }));
     await waitFor(() => {
       expect(updateBrandMediaAltMock).toHaveBeenCalledWith(
         'b-1',
@@ -342,7 +343,6 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     });
 
     // Confirm delete via useUxFeedback().confirm (never Modal.confirm)
-    const mediaSection = screen.getByLabelText('真实产品实拍图库');
     fireEvent.click(within(mediaSection).getByRole('button', { name: '删除' }));
     expect(confirmMock).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -382,9 +382,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     const deleteMenuItem = await screen.findByText('删除品牌');
     fireEvent.click(deleteMenuItem);
     expect(confirmMock).not.toHaveBeenCalled();
-    expect(
-      (screen.getByRole('button', { name: '保存品牌事实卡' }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByTestId('brand-facts-save-btn') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId('fact-ai-extract-btn') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId('add-channel-connection-btn') as HTMLButtonElement).disabled).toBe(
       true,
@@ -557,21 +555,22 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     });
 
     renderWorkspace();
-    expect(await screen.findByTestId('extension-pairing-panel')).toBeTruthy();
-    expect(screen.getByRole('link', { name: '扩展配对' }).getAttribute('href')).toBe(
-      '#brand-section-extension',
-    );
+    expect(await screen.findByTestId('brand-channel-connections')).toBeTruthy();
+    expect(screen.queryByTestId('extension-pairing-panel')).toBeNull();
+    expect(screen.queryByRole('link', { name: '扩展配对' })).toBeNull();
     expect(screen.queryByTestId('brand-supported-locales-field')).toBeNull();
 
-    // Switch to GLOBAL: ExtensionPairingPanel hides, supportedLocales & controlPrompts appear
+    // Switch to GLOBAL: ExtensionPairingPanel stays absent (Y5), supportedLocales & collapsible controlPrompts appear (Y8)
     act(() => {
       useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage);
     });
     await waitFor(() => {
       expect(screen.queryByTestId('extension-pairing-panel')).toBeNull();
       expect(screen.getByTestId('brand-supported-locales-field')).toBeTruthy();
-      expect(screen.getByTestId('brand-control-prompts-field')).toBeTruthy();
     });
+
+    fireEvent.click(screen.getByTestId('brand-advanced-control-toggle'));
+    expect(screen.getByTestId('brand-control-prompts-field')).toBeTruthy();
 
     // Reject control prompt overlapping seedPrompts
     fireEvent.change(screen.getByTestId('control-prompt-input'), {
@@ -623,7 +622,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     });
 
     const banner = await screen.findByTestId('shopify-oauth-callback-banner');
-    expect(banner.textContent).toContain('Shopify OAuth 2.0 授权未完成');
+    expect(banner.textContent).toContain('授权未完成');
     expect(banner.querySelector('img')).toBeNull();
     expect(replaceStateSpy).toHaveBeenCalled();
     const cleanedUrl = String(replaceStateSpy.mock.calls.at(-1)?.[2] ?? '');
@@ -683,7 +682,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       useWorkspaceStore.getState().setActiveMarket('CN', window.localStorage);
     });
     await waitFor(() => {
-      expect(screen.getByTestId('extension-pairing-panel')).toBeTruthy();
+      expect(screen.getByRole('heading', { name: '国内身份' })).toBeTruthy();
     });
     expect(screen.queryByTestId('shopify-oauth-callback-banner')).toBeNull();
   });
@@ -776,7 +775,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
     expect(screen.queryByText('STALE GLOBAL SAVE ERROR')).toBeNull();
   });
 
-  it('0-brand empty state renders non-primary 60 秒创建首个品牌 button so ShellFrame banner remains the sole primary CTA', () => {
+  it('0-brand empty state renders 新建品牌 as the sole primary CTA on /brands', () => {
     const openCreateBrandModal = vi.fn();
     useWorkspaceStore.setState({
       brands: [],
@@ -788,9 +787,9 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
 
     const { container } = renderWorkspace({ openCreateBrandModal });
 
-    const cta = screen.getByRole('button', { name: '60 秒创建首个品牌' });
-    expect(cta.classList.contains('ant-btn-primary')).toBe(false);
-    expect(container.querySelectorAll('.ant-btn-primary')).toHaveLength(0);
+    const cta = screen.getByTestId('brands-empty-create-btn');
+    expect(cta.classList.contains('ant-btn-primary')).toBe(true);
+    expect(container.querySelectorAll('.ant-btn-primary')).toHaveLength(1);
 
     fireEvent.click(cta);
     expect(openCreateBrandModal).toHaveBeenCalledTimes(1);
@@ -1034,7 +1033,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       expect(deleteBrandMock).toHaveBeenCalledWith('b-1', expect.anything());
       expect(useWorkspaceStore.getState().brands).toEqual([]);
       expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
-      expect(screen.getByText('还没有创建任何品牌')).toBeTruthy();
+      expect(screen.getByText('暂无品牌')).toBeTruthy();
     });
 
     // Late resolution of updateBrand('b-1') MUST NOT resurrect b-1 or exit empty state
@@ -1045,8 +1044,8 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
 
     expect(useWorkspaceStore.getState().brands).toEqual([]);
     expect(useWorkspaceStore.getState().activeBrandId).toBeNull();
-    expect(screen.getByText('还没有创建任何品牌')).toBeTruthy();
-    expect(screen.getByRole('button', { name: '60 秒创建首个品牌' })).toBeTruthy();
+    expect(screen.getByText('暂无品牌')).toBeTruthy();
+    expect(screen.getByTestId('brands-empty-create-btn')).toBeTruthy();
   });
 
   it('shows zero product-line scope UI when brand has 0 lines, and renders scoped fact tabs when >= 1 line (#387)', async () => {
@@ -1162,7 +1161,7 @@ describe('BrandsWorkspace (/brands full 3-section UI)', () => {
       vectorIndexed: false,
       items: [],
     });
-    fireEvent.click(within(factsSection).getByRole('button', { name: '保存品牌事实卡' }));
+    fireEvent.click(within(factsSection).getByTestId('brand-facts-save-btn'));
     await waitFor(() => {
       expect(saveBrandFactsMock).toHaveBeenCalledWith(
         'b-scope-1',

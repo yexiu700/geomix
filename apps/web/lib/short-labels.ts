@@ -1,10 +1,12 @@
 import type {
   BrandFactSlot,
+  FactIndexStatus,
   GeoBriefSource,
   GeoMarket,
   GeoRecipe,
   GeoRewriteAction,
   GeoTargetFormat,
+  L1ChannelProvider,
   NearMissTier,
 } from '@geomix/shared';
 
@@ -18,6 +20,25 @@ export const BRAND_FACT_SLOT_SHORT: Record<BrandFactSlot, string> = {
   CREDENTIALS: '资质背书',
   CASE_STUDIES: '客户案例',
   EXTRA_DOC: '长文档',
+};
+
+export const FACT_INDEX_STATUS_SHORT: Record<FactIndexStatus, string> = {
+  NONE: '直注',
+  INDEXING: '索引中',
+  READY: '已索引',
+  FAILED: '失败',
+};
+
+export const CHANNEL_PROVIDER_SHORT: Record<L1ChannelProvider, string> = {
+  SHOPIFY: 'Shopify',
+  WORDPRESS: 'WordPress',
+  WEBFLOW: 'Webflow',
+  WEBHOOK: 'Webhook',
+  GHOST: 'Ghost',
+  DEVTO: 'Dev.to',
+  HASHNODE: 'Hashnode',
+  GITHUB_MDX: 'GitHub',
+  WECHAT_OFFICIAL: '公众号',
 };
 
 export const GEO_RECIPE_SHORT: Record<GeoRecipe, string> = {

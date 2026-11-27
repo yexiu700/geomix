@@ -2167,8 +2167,8 @@ describe('StudioDistributionDrawer (M6A #354)', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(onNavigateBrands).not.toHaveBeenCalled();
 
-    // Switch to Shopify Custom App Token tab and submit
-    fireEvent.click(within(modal).getByRole('tab', { name: 'Custom App Token' }));
+    // Switch to Shopify 手动配置 (Custom App Token) tab and submit
+    fireEvent.click(within(modal).getByRole('tab', { name: '手动配置' }));
     fireEvent.change(within(modal).getByLabelText('连接名称'), {
       target: { value: 'Studio Inline WP' },
     });

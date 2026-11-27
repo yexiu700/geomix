@@ -1,8 +1,6 @@
 'use client';
 
 import {
-  CHANNEL_PROVIDER_LABELS,
-  GEO_MARKET_LABELS,
   L1_CHANNEL_PROVIDERS,
   SUPPORTED_LOCALES,
   isSafeDistributionHttpUrl,
@@ -26,9 +24,10 @@ import {
   updateChannelConnection,
 } from '../../lib/distribution';
 import { GatewayApiError } from '../../lib/envelope';
+import { CHANNEL_PROVIDER_SHORT, GEO_MARKET_SHORT } from '../../lib/short-labels';
 import { copyTextToClipboard } from '../../lib/studio';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { FormField } from '../ui';
+import { Explain, FormField } from '../ui';
 
 export type ChannelConnectionCreateModalProps = {
   open: boolean;
@@ -979,6 +978,8 @@ export function ChannelConnectionCreateModal({
   const renderWebflowFieldControl = (
     fieldKey: keyof WebflowFieldMapDraft,
     label: string,
+    ariaLabel: string,
+    help: string,
     defaultHint: string,
   ) => {
     const value = fieldMap[fieldKey];
@@ -991,12 +992,12 @@ export function ChannelConnectionCreateModal({
         options.unshift({ value, label: `${value}（当前配置）` });
       }
       return (
-        <FormField key={fieldKey} label={label}>
+        <FormField key={fieldKey} label={label} help={help}>
           <Select
             allowClear
             showSearch
             className="gm-brand-w-full"
-            aria-label={label}
+            aria-label={ariaLabel}
             placeholder={`默认：${defaultHint}`}
             value={value || undefined}
             options={options}
@@ -1011,9 +1012,9 @@ export function ChannelConnectionCreateModal({
       );
     }
     return (
-      <FormField key={fieldKey} label={label}>
+      <FormField key={fieldKey} label={label} help={help}>
         <Input
-          aria-label={label}
+          aria-label={ariaLabel}
           placeholder={`默认：${defaultHint}`}
           value={value}
           onChange={(e) => setFieldMap((prev) => ({ ...prev, [fieldKey]: e.target.value }))}
@@ -1055,7 +1056,7 @@ export function ChannelConnectionCreateModal({
   return (
     <Modal
       open={open}
-      title={editingConn ? `编辑发布渠道连接 · ${editingConn.displayName}` : '添加发布渠道连接'}
+      title={editingConn ? '编辑渠道' : '添加渠道'}
       width="min(640px, calc(100vw - 32px))"
       destroyOnHidden
       keyboard={!submitting && !modalTesting && !shopifyOAuthStarting}
@@ -1064,6 +1065,7 @@ export function ChannelConnectionCreateModal({
       footer={
         <div className="gm-brand-modal-footer-wrap">
           <Button
+            autoInsertSpace={false}
             disabled={submitting || modalTesting || shopifyOAuthStarting}
             className="gm-brand-btn-nowrap"
             onClick={handleClose}
@@ -1072,13 +1074,14 @@ export function ChannelConnectionCreateModal({
           </Button>
           {isShopifyCreateOAuthTab ? null : editingConn ? (
             <Button
+              autoInsertSpace={false}
               data-testid="channel-connection-modal-test-btn"
               loading={modalTesting}
               disabled={readOnly || submitting}
               className="gm-brand-btn-nowrap"
               onClick={() => void runModalTest(editingConn.id, provider)}
             >
-              测试连接并拉取目标
+              测试
             </Button>
           ) : (
             <Button
@@ -1088,19 +1091,20 @@ export function ChannelConnectionCreateModal({
               className="gm-brand-btn-nowrap"
               onClick={() => void handleModalSubmit({ testAfterCreate: true })}
             >
-              保存并测试连接
+              保存测试
             </Button>
           )}
           {isShopifyCreateOAuthTab ? null : (
             <Button
               type="primary"
+              autoInsertSpace={false}
               data-testid="channel-connection-submit-btn"
               loading={submitting}
               disabled={readOnly || modalTesting}
               className="gm-brand-btn-nowrap"
               onClick={() => void handleModalSubmit()}
             >
-              保存连接
+              保存
             </Button>
           )}
         </div>
@@ -1115,19 +1119,23 @@ export function ChannelConnectionCreateModal({
           <Alert
             type={modalTestResult.ok ? 'success' : 'warning'}
             showIcon
-            message={modalTestResult.message}
-            description={
+            message={
               provider === 'WECHAT_OFFICIAL' &&
               !modalTestResult.ok &&
-              hasWechatIpWhitelistError(modalTestResult.message)
-                ? '处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」添加出口 IP 后再试。'
-                : undefined
+              hasWechatIpWhitelistError(modalTestResult.message) ? (
+                <span className="gm-brand-alert-title-row">
+                  <span>{modalTestResult.message}</span>
+                  <Explain text="处理指引：请登录微信公众平台 →「设置与开发」→「基本配置」→「IP 白名单」添加出口 IP 后再试。" />
+                </span>
+              ) : (
+                modalTestResult.message
+              )
             }
             className="gm-brand-alert-wrap"
           />
         ) : null}
 
-        <FormField label={`渠道类型（所属市场：${GEO_MARKET_LABELS[activeMarket]}）`}>
+        <FormField label="渠道类型" help={`所属市场：${GEO_MARKET_SHORT[activeMarket]}`}>
           <Select<L1ChannelProvider>
             data-testid="channel-provider-select"
             aria-label="渠道类型"
@@ -1137,7 +1145,7 @@ export function ChannelConnectionCreateModal({
             value={provider}
             options={availableProviders.map((p) => ({
               value: p,
-              label: CHANNEL_PROVIDER_LABELS[p],
+              label: CHANNEL_PROVIDER_SHORT[p],
             }))}
             onChange={(next) => {
               setProvider(next);
@@ -1195,23 +1203,20 @@ export function ChannelConnectionCreateModal({
             items={[
               {
                 key: 'oauth',
-                label: 'Shopify OAuth 2.0 一键授权',
+                label: 'OAuth',
                 children: (
                   <div data-testid="shopify-oauth-tab-panel" className="gm-brand-conn-oauth-panel">
-                    <Alert
-                      type="info"
-                      showIcon
-                      message="官方 OAuth 2.0 一键授权（推荐）"
-                      description="输入您的 *.myshopify.com 店铺域名后跳转 Shopify 官方确认授权；系统将自动加密保存令牌并注册应用卸载同步 Webhook。"
-                    />
-
                     {shopifyOAuthUnconfiguredMsg ? (
                       <Alert
                         type="warning"
                         showIcon
                         data-testid="shopify-oauth-503-fallback"
-                        message="当前环境尚未开启 Shopify OAuth 2.0"
-                        description={shopifyOAuthUnconfiguredMsg}
+                        message={
+                          <span className="gm-brand-alert-title-row">
+                            <span>未开 OAuth</span>
+                            <Explain text={shopifyOAuthUnconfiguredMsg} />
+                          </span>
+                        }
                         action={
                           <Button
                             size="small"
@@ -1224,13 +1229,16 @@ export function ChannelConnectionCreateModal({
                               setModalError(null);
                             }}
                           >
-                            改用 Custom App Token
+                            用 Token
                           </Button>
                         }
                       />
                     ) : null}
 
-                    <FormField label="Shopify 店铺域名（*.myshopify.com）">
+                    <FormField
+                      label="店铺域名"
+                      help="官方 OAuth 2.0 一键授权（推荐）：输入 *.myshopify.com 店铺域名后跳转 Shopify 官方授权，系统将自动加密保存令牌并注册应用卸载同步 Webhook。"
+                    >
                       <Input
                         aria-label="Shopify 店铺域名"
                         data-testid="shopify-oauth-shop-input"
@@ -1243,7 +1251,7 @@ export function ChannelConnectionCreateModal({
 
                     {!editingConn ? (
                       <>
-                        <FormField label="连接名称（可选，默认使用店铺域名）">
+                        <FormField label="名称" help="可选，默认使用店铺域名">
                           <Input
                             aria-label="OAuth 连接名称"
                             maxLength={80}
@@ -1254,7 +1262,7 @@ export function ChannelConnectionCreateModal({
                           />
                         </FormField>
 
-                        <FormField label="目标语种（可选）">
+                        <FormField label="语种" help="可选，留空表示通用连接">
                           <Select<SupportedLocale>
                             allowClear
                             aria-label="OAuth 目标语种"
@@ -1278,7 +1286,7 @@ export function ChannelConnectionCreateModal({
                         className="gm-brand-btn-nowrap"
                         onClick={() => void handleStartShopifyOAuth()}
                       >
-                        {editingConn ? '重新发起 Shopify OAuth 授权' : '前往 Shopify 一键授权'}
+                        {editingConn ? '重新授权' : '去授权'}
                       </Button>
                     </div>
                   </div>
@@ -1286,11 +1294,10 @@ export function ChannelConnectionCreateModal({
               },
               {
                 key: 'custom',
-                label: 'Custom App Token',
+                label: '手动配置',
                 children: (
                   <div data-testid="shopify-custom-tab-panel" className="gm-brand-conn-custom-note">
-                    使用 Shopify Admin Custom App 手动填入 Access Token 接入；适合自托管或尚未配置
-                    OAuth Client 的环境。
+                    Custom App Token
                   </div>
                 ),
               },
@@ -1323,7 +1330,7 @@ export function ChannelConnectionCreateModal({
               />
             </FormField>
 
-            <FormField label="目标语种（可选，留空表示通用连接）">
+            <FormField label="目标语种" help="可选，留空表示通用连接">
               <Select<SupportedLocale>
                 allowClear
                 aria-label="目标语种"
@@ -1342,7 +1349,10 @@ export function ChannelConnectionCreateModal({
         {provider === 'SHOPIFY' && !isShopifyCreateOAuthTab ? (
           <>
             {shopifyAuthMode === 'custom' ? (
-              <FormField label="Shopify Admin API Access Token">
+              <FormField
+                label="Token"
+                help="使用 Shopify Admin Custom App 手动填入 Access Token 接入，适合自托管或尚未配置 OAuth Client 的环境。"
+              >
                 <Input.Password
                   aria-label="Shopify Access Token"
                   autoComplete="off"
@@ -1355,7 +1365,7 @@ export function ChannelConnectionCreateModal({
               </FormField>
             ) : null}
 
-            <FormField label="目标 Blog（测试连接后自动拉取列表，也可手动填写 Blog ID）">
+            <FormField label="目标博客" help="测试连接后自动拉取列表，也可手动填写 Blog ID">
               <div className="gm-brand-field-stack">
                 {remoteTargets.length > 0 ? (
                   <Select
@@ -1395,7 +1405,7 @@ export function ChannelConnectionCreateModal({
         {provider === 'WORDPRESS' ? (
           <>
             <div className="gm-brand-form-grid-2">
-              <FormField label="WordPress 用户名">
+              <FormField label="用户名">
                 <Input
                   aria-label="WordPress 用户名"
                   autoComplete="off"
@@ -1404,7 +1414,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setWpUsername(e.target.value)}
                 />
               </FormField>
-              <FormField label="Application Password">
+              <FormField label="应用密码">
                 <Input.Password
                   aria-label="WordPress Application Password"
                   autoComplete="off"
@@ -1415,7 +1425,7 @@ export function ChannelConnectionCreateModal({
               </FormField>
             </div>
 
-            <FormField label="默认文章分类（测试连接后自动拉取 WordPress 分类）">
+            <FormField label="默认分类" help="测试连接后自动拉取 WordPress 分类">
               <Select
                 mode="multiple"
                 allowClear
@@ -1445,7 +1455,7 @@ export function ChannelConnectionCreateModal({
 
         {provider === 'WEBFLOW' ? (
           <>
-            <FormField label="Webflow Data API v2 Token">
+            <FormField label="Token" help="Webflow Data API v2 Token">
               <Input.Password
                 aria-label="Webflow API Token"
                 autoComplete="off"
@@ -1456,7 +1466,7 @@ export function ChannelConnectionCreateModal({
             </FormField>
 
             <div className="gm-brand-form-grid-2">
-              <FormField label="Webflow Site ID">
+              <FormField label="Site ID">
                 <div className="gm-brand-field-stack">
                   {webflowSiteTargets.length > 0 ? (
                     <Select
@@ -1492,7 +1502,7 @@ export function ChannelConnectionCreateModal({
                 </div>
               </FormField>
 
-              <FormField label="Webflow Collection ID">
+              <FormField label="集合 ID" help="Webflow Collection ID，发布时必填">
                 <div className="gm-brand-field-stack">
                   {webflowCollectionTargets.length > 0 ? (
                     <Select
@@ -1534,20 +1544,53 @@ export function ChannelConnectionCreateModal({
             </div>
 
             <div className="gm-brand-conn-group-box">
-              <div className="gm-brand-conn-group-title">CMS 字段映射（fieldMap）</div>
+              <div className="gm-brand-alert-title-row">
+                <div className="gm-brand-conn-group-title">字段映射</div>
+                <Explain text="将 GeoMix 文章字段映射到 Webflow CMS Collection fieldMap。" />
+              </div>
               <div className="gm-brand-form-grid-compact">
-                {renderWebflowFieldControl('title', '标题字段（title）', 'name')}
-                {renderWebflowFieldControl('slug', '短链字段（slug）', 'slug')}
-                {renderWebflowFieldControl('bodyHtml', '正文字段（bodyHtml）', 'post-body')}
-                {renderWebflowFieldControl('metaDesc', '摘要字段（metaDesc）', 'meta-description')}
-                {renderWebflowFieldControl('jsonLd', 'JSON-LD 字段（可选）', '留空则内联正文')}
+                {renderWebflowFieldControl(
+                  'title',
+                  '标题',
+                  '标题字段（title）',
+                  'fieldMap.title',
+                  'name',
+                )}
+                {renderWebflowFieldControl(
+                  'slug',
+                  '短链',
+                  '短链字段（slug）',
+                  'fieldMap.slug',
+                  'slug',
+                )}
+                {renderWebflowFieldControl(
+                  'bodyHtml',
+                  '正文',
+                  '正文字段（bodyHtml）',
+                  'fieldMap.bodyHtml',
+                  'post-body',
+                )}
+                {renderWebflowFieldControl(
+                  'metaDesc',
+                  '摘要',
+                  '摘要字段（metaDesc）',
+                  'fieldMap.metaDesc',
+                  'meta-description',
+                )}
+                {renderWebflowFieldControl(
+                  'jsonLd',
+                  'JSON-LD',
+                  'JSON-LD 字段（可选）',
+                  '可选，留空则内联正文',
+                  '留空则内联正文',
+                )}
               </div>
             </div>
           </>
         ) : null}
 
         {provider === 'WEBHOOK' ? (
-          <FormField label="Webhook 签名密钥（HMAC-SHA256，至少 8 位）">
+          <FormField label="签名密钥" help="HMAC-SHA256，至少 8 位">
             <div className="gm-brand-field-stack">
               <Input.Password
                 aria-label="Webhook 签名密钥"
@@ -1567,7 +1610,7 @@ export function ChannelConnectionCreateModal({
                     feedback.notifySuccess('已生成 32 位随机签名密钥，请在保存前复制妥善保管');
                   }}
                 >
-                  随机生成密钥
+                  随机生成
                 </Button>
                 <Button
                   size="small"
@@ -1590,7 +1633,7 @@ export function ChannelConnectionCreateModal({
 
         {provider === 'GHOST' ? (
           <>
-            <FormField label="Ghost Admin API Key（格式 id:hex_secret，偶数长度十六进制）">
+            <FormField label="API Key" help="格式 id:hex_secret，偶数长度十六进制">
               <Input.Password
                 aria-label="Ghost Admin API Key"
                 autoComplete="off"
@@ -1601,7 +1644,7 @@ export function ChannelConnectionCreateModal({
                 onChange={(e) => setGhostAdminApiKey(e.target.value)}
               />
             </FormField>
-            <FormField label="默认标签（逗号分隔，可选）">
+            <FormField label="默认标签" help="逗号分隔，可选">
               <Input
                 aria-label="Ghost 默认标签"
                 placeholder="例如：geo, product-guide"
@@ -1614,7 +1657,7 @@ export function ChannelConnectionCreateModal({
 
         {provider === 'DEVTO' ? (
           <>
-            <FormField label="Dev.to API Key">
+            <FormField label="API Key" help="Dev.to Forem API Key">
               <Input.Password
                 aria-label="Dev.to API Key"
                 autoComplete="off"
@@ -1623,7 +1666,7 @@ export function ChannelConnectionCreateModal({
                 onChange={(e) => setDevtoApiKey(e.target.value)}
               />
             </FormField>
-            <FormField label="默认标签（最多 4 个小写英文标签，逗号分隔，可选）">
+            <FormField label="默认标签" help="最多 4 个小写英文标签，逗号分隔，可选">
               <Input
                 aria-label="Dev.to 默认标签"
                 placeholder="例如：devops, selfhosted, homelab"
@@ -1636,7 +1679,7 @@ export function ChannelConnectionCreateModal({
 
         {provider === 'HASHNODE' ? (
           <>
-            <FormField label="Hashnode Personal Access Token">
+            <FormField label="Token" help="Hashnode Personal Access Token">
               <Input.Password
                 aria-label="Hashnode Personal Access Token"
                 autoComplete="off"
@@ -1647,7 +1690,7 @@ export function ChannelConnectionCreateModal({
                 onChange={(e) => setHashnodeApiToken(e.target.value)}
               />
             </FormField>
-            <FormField label="Hashnode Publication ID（可选，测试连接时自动发现并回填）">
+            <FormField label="发布 ID" help="可选，测试连接时自动发现并回填">
               <div className="gm-brand-field-stack">
                 {remoteTargets.length > 0 ? (
                   <Select
@@ -1676,7 +1719,10 @@ export function ChannelConnectionCreateModal({
 
         {provider === 'GITHUB_MDX' ? (
           <>
-            <FormField label="GitHub Personal Access Token（需具备 repo contents & pull requests 权限）">
+            <FormField
+              label="Token"
+              help="GitHub Personal Access Token，需具备 repo contents 与 pull requests 权限"
+            >
               <Input.Password
                 aria-label="GitHub Personal Access Token"
                 autoComplete="off"
@@ -1687,7 +1733,7 @@ export function ChannelConnectionCreateModal({
             </FormField>
 
             {remoteTargets.length > 0 ? (
-              <FormField label="已发现仓库（点击自动填充 Owner / Repo / Branch）">
+              <FormField label="已选仓库" help="点击自动填充 Owner / Repo / Branch">
                 <Select
                   allowClear
                   aria-label="GitHub 仓库选择"
@@ -1713,7 +1759,7 @@ export function ChannelConnectionCreateModal({
             ) : null}
 
             <div className="gm-brand-form-grid-2">
-              <FormField label="仓库所有者（repoOwner）">
+              <FormField label="所有者" help="GitHub repoOwner">
                 <Input
                   aria-label="GitHub 仓库所有者"
                   placeholder="例如：acme-org"
@@ -1721,7 +1767,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setRepoOwner(e.target.value)}
                 />
               </FormField>
-              <FormField label="仓库名称（repoName）">
+              <FormField label="仓库名" help="GitHub repoName">
                 <Input
                   aria-label="GitHub 仓库名称"
                   placeholder="例如：docs-site"
@@ -1732,7 +1778,7 @@ export function ChannelConnectionCreateModal({
             </div>
 
             <div className="gm-brand-form-grid-3">
-              <FormField label="目标分支（branch）">
+              <FormField label="目标分支">
                 <Input
                   aria-label="GitHub 目标分支"
                   placeholder="默认 main"
@@ -1740,7 +1786,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setRepoBranch(e.target.value)}
                 />
               </FormField>
-              <FormField label="内容目录（contentDir）">
+              <FormField label="内容目录">
                 <Input
                   aria-label="GitHub 内容目录"
                   placeholder="默认 content/blog"
@@ -1748,7 +1794,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setContentDir(e.target.value)}
                 />
               </FormField>
-              <FormField label="文件后缀（fileExtension）">
+              <FormField label="文件后缀">
                 <Select<'mdx' | 'md'>
                   aria-label="GitHub 文件后缀"
                   className="gm-brand-w-full"
@@ -1763,7 +1809,7 @@ export function ChannelConnectionCreateModal({
             </div>
 
             <div className="gm-brand-form-grid-2">
-              <FormField label="公网链接模板（publicUrlTemplate，可选）">
+              <FormField label="链接模板" help="publicUrlTemplate，可选">
                 <Input
                   aria-label="公网链接模板"
                   placeholder="例如：https://docs.example.com/blog/{{slug}}"
@@ -1771,7 +1817,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setPublicUrlTemplate(e.target.value)}
                 />
               </FormField>
-              <FormField label="主站域名（primaryDomain，可选）">
+              <FormField label="主站域名" help="primaryDomain，可选">
                 <Input
                   aria-label="主站域名"
                   placeholder="例如：docs.example.com"
@@ -1789,11 +1835,15 @@ export function ChannelConnectionCreateModal({
               type="info"
               showIcon
               data-testid="wechat-modal-draft-notice"
-              message={WECHAT_DRAFT_ONLY_NOTICE}
-              description={WECHAT_IP_WHITELIST_NOTICE}
+              message={
+                <span className="gm-brand-alert-title-row">
+                  <span>仅草稿 · IP 白名单</span>
+                  <Explain text={`${WECHAT_DRAFT_ONLY_NOTICE} ${WECHAT_IP_WHITELIST_NOTICE}`} />
+                </span>
+              }
             />
             <div className="gm-brand-form-grid-2">
-              <FormField label="微信公众号 AppID">
+              <FormField label="AppID">
                 <Input
                   aria-label="微信公众号 AppID"
                   autoComplete="off"
@@ -1802,7 +1852,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setWechatAppId(e.target.value)}
                 />
               </FormField>
-              <FormField label="微信公众号 AppSecret">
+              <FormField label="密钥" help="微信公众号开发者 AppSecret">
                 <Input.Password
                   aria-label="微信公众号 AppSecret"
                   autoComplete="off"
@@ -1813,7 +1863,7 @@ export function ChannelConnectionCreateModal({
               </FormField>
             </div>
             <div className="gm-brand-form-grid-2">
-              <FormField label="默认作者名（可选，最多 16 字符）">
+              <FormField label="默认作者" help="可选，最多 16 字符">
                 <Input
                   aria-label="公众号默认作者名"
                   maxLength={16}
@@ -1822,7 +1872,7 @@ export function ChannelConnectionCreateModal({
                   onChange={(e) => setWechatAuthor(e.target.value)}
                 />
               </FormField>
-              <FormField label="默认封面素材 media_id（可选）">
+              <FormField label="封面 ID" help="可选，默认封面素材 media_id">
                 <Input
                   aria-label="公众号默认封面 media_id"
                   placeholder="留空则使用正文首图或默认封面"
@@ -1833,11 +1883,9 @@ export function ChannelConnectionCreateModal({
             </div>
             <div className="gm-brand-conn-group-box">
               <div className="gm-brand-switch-row">
-                <div>
-                  <div className="gm-brand-switch-title">草稿默认开启留言</div>
-                  <div className="gm-brand-switch-desc">
-                    对应微信公众号草稿接口 need_open_comment 字段。
-                  </div>
+                <div className="gm-brand-switch-title-row">
+                  <div className="gm-brand-switch-title">开启留言</div>
+                  <Explain text="对应微信公众号草稿接口 need_open_comment 字段。" />
                 </div>
                 <Switch
                   aria-label="公众号草稿开启留言"
@@ -1853,17 +1901,17 @@ export function ChannelConnectionCreateModal({
         {!isShopifyCreateOAuthTab && provider !== 'WECHAT_OFFICIAL' ? (
           <div className="gm-brand-conn-group-box">
             <div className="gm-brand-switch-row">
-              <div>
+              <div className="gm-brand-switch-title-row">
                 <div className="gm-brand-switch-title">
-                  {provider === 'GITHUB_MDX'
-                    ? '默认创建 Draft PR（推荐）'
-                    : '默认推送为草稿（推荐）'}
+                  {provider === 'GITHUB_MDX' ? '草稿 PR' : '存草稿'}
                 </div>
-                <div className="gm-brand-switch-desc">
-                  {provider === 'GITHUB_MDX'
-                    ? '开启后新建分支提交 MDX 并生成 Draft PR 审阅；关闭则直接提交至目标分支。'
-                    : '开启后在写作台默认以草稿态推送至后台，审核无误后再正式上线。'}
-                </div>
+                <Explain
+                  text={
+                    provider === 'GITHUB_MDX'
+                      ? '开启后新建分支提交 MDX 并生成 Draft PR 审阅；关闭则直接提交至目标分支。'
+                      : '开启后在写作台默认以草稿态推送至后台，审核无误后再正式上线。'
+                  }
+                />
               </div>
               <Switch
                 aria-label="默认推送为草稿"
@@ -1873,15 +1921,15 @@ export function ChannelConnectionCreateModal({
             </div>
 
             <div className="gm-brand-switch-row">
-              <div>
-                <div className="gm-brand-switch-title">
-                  {provider === 'WORDPRESS'
-                    ? '内联注入 Gutenberg JSON-LD 区块'
-                    : '内联注入 JSON-LD 结构化数据'}
-                </div>
-                <div className="gm-brand-switch-desc">
-                  自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。
-                </div>
+              <div className="gm-brand-switch-title-row">
+                <div className="gm-brand-switch-title">JSON-LD</div>
+                <Explain
+                  text={
+                    provider === 'WORDPRESS'
+                      ? '内联注入 Gutenberg JSON-LD 区块，自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。'
+                      : '内联注入 JSON-LD 结构化数据，自动附带 Article / FAQPage / Product Schema，提升 AI 搜索引擎解析率。'
+                  }
+                />
               </div>
               <Switch
                 aria-label="内联注入 JSON-LD"
@@ -1890,7 +1938,10 @@ export function ChannelConnectionCreateModal({
               />
             </div>
 
-            <FormField label="IndexNow Key（可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录）">
+            <FormField
+              label="IndexNow"
+              help="可选，8–128 位；正式上线后自动通知 Bing / Yandex 收录"
+            >
               <Input
                 aria-label="IndexNow Key"
                 maxLength={128}

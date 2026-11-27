@@ -27,9 +27,8 @@ import { Alert, Button, Checkbox, Input, InputNumber, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { suggestBrandMarketConfig, updateBrand, updateBrandMarket } from '../../lib/brands';
 import { invalidateFreshness } from '../../lib/tab-freshness';
-import { useWorkspaceStore } from '../../lib/workspace-store';
 import { useUxFeedback } from '../crud/ux-feedback';
-import { FormField, Section, StatusBadge } from '../ui';
+import { CostChip, EmptyState, Explain, FormField, Section, StatusBadge } from '../ui';
 import {
   buildFallbackSeedPromptSuggestionResponse,
   hydrateCompetitorRows,
@@ -52,7 +51,7 @@ export type BrandIdentitySectionProps = {
   retestBudget?: RetestBudgetSummaryDto | null;
   readOnly: boolean;
   onBrandUpdated: (brand: BrandRecord, market?: GeoMarket) => void;
-  onOpenEnableMarket: (market: GeoMarket) => void;
+  onOpenEnableMarket?: (market: GeoMarket) => void;
   onDirtyChange?: (dirty: boolean) => void;
 };
 
@@ -180,7 +179,6 @@ export function BrandIdentitySection({
   retestBudget = null,
   readOnly,
   onBrandUpdated,
-  onOpenEnableMarket,
   onDirtyChange,
 }: BrandIdentitySectionProps) {
   const feedback = useUxFeedback();
@@ -225,6 +223,9 @@ export function BrandIdentitySection({
   const [allowCjkGlobalIdentity, setAllowCjkGlobalIdentity] = useState(false);
   const [savingMarket, setSavingMarket] = useState(false);
   const [marketError, setMarketError] = useState<string | null>(null);
+
+  // Advanced control prompts & monthly budget cap panel (Y8)
+  const [controlPanelOpen, setControlPanelOpen] = useState(false);
 
   // AI market prefill modal state
   const [aiModalOpen, setAiModalOpen] = useState(false);
@@ -380,9 +381,6 @@ export function BrandIdentitySection({
       setAllowCjkGlobalIdentity(false);
     }
   }, [needsGlobalCjkOverride]);
-
-  const hasCN = brand.markets.some((m) => m.market === 'CN');
-  const hasGlobal = brand.markets.some((m) => m.market === 'GLOBAL');
 
   const handleAddAlias = () => {
     const trimmed = aliasInput.trim();
@@ -706,26 +704,18 @@ export function BrandIdentitySection({
       if (ctrl.signal.aborted || seq !== aiSuggestSeqRef.current || !mountedRef.current) return;
       setAiSuggestion(response);
       setAiSuggestError(null);
-    } catch (reason: unknown) {
+    } catch {
       if (ctrl.signal.aborted || seq !== aiSuggestSeqRef.current || !mountedRef.current) return;
-      if (mode === 'seedPrompts') {
-        const fallback = buildFallbackSeedPromptSuggestionResponse({
-          market: activeMarket,
-          brandName: localBrandName.trim() || brand.name,
-          category: brand.category,
-          localCategory: localCategory.trim() || null,
-          competitors: serializeCompetitorRows(competitorRows).competitors,
-          existingSeedPrompts: seedPrompts,
-        });
-        setAiSuggestion(fallback);
-        setAiSuggestError(null);
-      } else {
-        setAiSuggestError(
-          reason instanceof Error && reason.message
-            ? reason.message
-            : 'AI 市场配置建议生成失败，请稍后重试',
-        );
-      }
+      const fallback = buildFallbackSeedPromptSuggestionResponse({
+        market: activeMarket,
+        brandName: localBrandName.trim() || brand.name,
+        category: brand.category,
+        localCategory: localCategory.trim() || null,
+        competitors: serializeCompetitorRows(competitorRows).competitors,
+        existingSeedPrompts: seedPrompts,
+      });
+      setAiSuggestion(fallback);
+      setAiSuggestError(null);
     } finally {
       if (aiSuggestCtrlRef.current === ctrl) {
         aiSuggestCtrlRef.current = null;
@@ -745,7 +735,17 @@ export function BrandIdentitySection({
   };
 
   const handleApplyAiSelection = (selection: BrandMarketAiSuggestSelection) => {
-    const cleanGlobalCjkOnLocalize = activeMarket === 'GLOBAL' && aiModalMode === 'localIdentity';
+    const cleanGlobalCjkOnLocalize =
+      activeMarket === 'GLOBAL' &&
+      !allowCjkGlobalIdentity &&
+      (aiModalMode === 'localIdentity' ||
+        Boolean(
+          selection.localBrandName ||
+          selection.localCategory ||
+          selection.aliases.length > 0 ||
+          selection.competitors.length > 0 ||
+          selection.seedPrompts.length > 0,
+        ));
     const baseAliases = cleanGlobalCjkOnLocalize
       ? aliases.filter((item) => !containsCjk(item))
       : aliases;
@@ -860,15 +860,14 @@ export function BrandIdentitySection({
       id="brand-section-identity"
       variant="plain"
       aria-label="基础身份与竞品雷达"
-      title="基础身份与竞品雷达"
+      title="品牌身份"
       description="维护品牌主档与当前市场（CN / GLOBAL）独立的官网域名、竞品域名与监控种子问句。"
     >
       <div className="gm-brand-identity-stack">
         {/* Shared Brand Profile */}
         <div className="gm-brand-subcard">
           <div className="gm-brand-subcard-head">
-            <h3>品牌主档案</h3>
-            <StatusBadge tone="neutral" label="双市场共享" />
+            <h3>基本信息</h3>
           </div>
 
           <div className="gm-brand-form-grid-2">
@@ -895,62 +894,6 @@ export function BrandIdentitySection({
             </FormField>
           </div>
 
-          <FormField label="已开启目标市场" className="gm-brand-mt-sm">
-            <div className="gm-brand-market-pills">
-              {hasCN ? (
-                <Button
-                  size="small"
-                  type="default"
-                  className={
-                    activeMarket === 'CN'
-                      ? 'gm-brand-market-pill is-active'
-                      : 'gm-brand-market-pill'
-                  }
-                  onClick={() =>
-                    useWorkspaceStore.getState().setActiveMarket('CN', window.localStorage)
-                  }
-                >
-                  🇨🇳 国内 (CN)
-                </Button>
-              ) : (
-                <Button
-                  size="small"
-                  type="dashed"
-                  disabled={readOnly}
-                  onClick={() => onOpenEnableMarket('CN')}
-                >
-                  + 开启国内市场
-                </Button>
-              )}
-
-              {hasGlobal ? (
-                <Button
-                  size="small"
-                  type="default"
-                  className={
-                    activeMarket === 'GLOBAL'
-                      ? 'gm-brand-market-pill is-active'
-                      : 'gm-brand-market-pill'
-                  }
-                  onClick={() =>
-                    useWorkspaceStore.getState().setActiveMarket('GLOBAL', window.localStorage)
-                  }
-                >
-                  🌐 海外 (GLOBAL)
-                </Button>
-              ) : (
-                <Button
-                  size="small"
-                  type="dashed"
-                  disabled={readOnly}
-                  onClick={() => onOpenEnableMarket('GLOBAL')}
-                >
-                  + 开启海外市场
-                </Button>
-              )}
-            </div>
-          </FormField>
-
           {brandError ? (
             <Alert
               type="error"
@@ -964,9 +907,7 @@ export function BrandIdentitySection({
         {/* Active Market Identity & Competitor Radar */}
         <div className="gm-brand-subcard">
           <div className="gm-brand-subcard-head">
-            <h3>
-              {activeMarket === 'CN' ? '🇨🇳 国内市场身份与竞品雷达' : '🌐 海外市场身份与竞品雷达'}
-            </h3>
+            <h3>{activeMarket === 'CN' ? '国内身份' : '海外身份'}</h3>
             {activeBrandMarket ? (
               <div className="gm-brand-subcard-head-actions">
                 <StatusBadge
@@ -974,17 +915,20 @@ export function BrandIdentitySection({
                   label={`${activeBrandMarket.locale} / ${activeBrandMarket.region}`}
                 />
                 {!readOnly ? (
-                  <Button
-                    type="default"
-                    size="small"
-                    data-testid="brand-ai-prefill-btn"
-                    aria-label="AI 一键补全（免费）"
-                    disabled={saving}
-                    className="gm-brand-btn-nowrap"
-                    onClick={() => void openAiSuggest('full')}
-                  >
-                    AI 一键补全（免费）
-                  </Button>
+                  <>
+                    <CostChip points={0} />
+                    <Button
+                      type="default"
+                      size="small"
+                      data-testid="brand-ai-prefill-btn"
+                      aria-label="AI 补全"
+                      disabled={saving}
+                      className="gm-brand-btn-nowrap"
+                      onClick={() => void openAiSuggest('full')}
+                    >
+                      AI 补全
+                    </Button>
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -1017,47 +961,26 @@ export function BrandIdentitySection({
                 if (hasSeedCjk) issueParts.push('种子监控问句');
                 if (hasControlCjk) issueParts.push('对照组问句');
 
-                const localizeFields: BrandMarketAiSuggestField[] = [];
-                if (hasIdentityCjkOrCn || !hasExtraCjk) localizeFields.push('localIdentity');
-                if (hasAliasCjk) localizeFields.push('aliases');
-                if (hasCompetitorCjk) localizeFields.push('competitors');
-                if (hasSeedCjk) localizeFields.push('seedPrompts');
-                if (hasControlCjk) localizeFields.push('controlPrompts');
-
                 return (
                   <Alert
                     type="warning"
                     showIcon
                     data-testid="global-localization-guide"
                     className="gm-brand-inline-alert"
-                    message="建议完善海外市场英文身份"
-                    description={`检测到海外市场（GLOBAL）的${issueParts.join('、')}包含中文或国内域名，建议点击右侧「AI 一键英文本地化」清理并替换为纯英文配置，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。`}
-                    action={
-                      !readOnly ? (
-                        <Button
-                          size="small"
-                          data-testid="global-ai-localize-btn"
-                          aria-label="AI 一键英文本地化"
-                          disabled={saving}
-                          className="gm-brand-btn-nowrap"
-                          onClick={() =>
-                            void openAiSuggest(
-                              'localIdentity',
-                              undefined,
-                              hasExtraCjk ? localizeFields : ['localIdentity'],
-                            )
-                          }
-                        >
-                          AI 一键英文本地化
-                        </Button>
-                      ) : undefined
+                    message={
+                      <span className="gm-brand-alert-title-row">
+                        <span>英文待补</span>
+                        <Explain
+                          text={`检测到海外市场（GLOBAL）的${issueParts.join('、')}包含中文或国内域名，建议点击右上「AI 补全」清理并替换为纯英文配置，以保障英文种子问句、JSON-LD 与 llms.txt 的专业输出。`}
+                        />
+                      </span>
                     }
                   />
                 );
               })()}
 
               <div className="gm-brand-form-grid-2">
-                <FormField label="当地品牌名" htmlFor="gm-market-local-name">
+                <FormField label="本地名" htmlFor="gm-market-local-name">
                   <Input
                     id="gm-market-local-name"
                     aria-label="当地品牌名"
@@ -1077,7 +1000,8 @@ export function BrandIdentitySection({
                 </FormField>
 
                 <FormField
-                  label="当地品类名称（用于该市场种子问句、Schema 与 llms.txt）"
+                  label="本地品类"
+                  help="用于该市场种子问句、Schema 与 llms.txt"
                   htmlFor="gm-market-local-category"
                 >
                   <Input
@@ -1107,7 +1031,7 @@ export function BrandIdentitySection({
                 <div className="gm-brand-global-guard-slot">
                   {needsGlobalCjkOverride ? (
                     <div
-                      className="gm-brand-global-cjk-guard"
+                      className="gm-brand-global-cjk-guard gm-brand-alert-title-row"
                       data-testid="global-cjk-identity-guard"
                     >
                       <Checkbox
@@ -1121,14 +1045,17 @@ export function BrandIdentitySection({
                           }
                         }}
                       >
-                        {GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）
+                        保留中文
                       </Checkbox>
+                      <Explain
+                        text={`${GLOBAL_CJK_IDENTITY_OVERRIDE_LABEL}（确认保留中文用于海外市场）`}
+                      />
                     </div>
                   ) : null}
                 </div>
               ) : null}
 
-              <FormField label="当地品牌别名 / SKU 词（最多 20 个）">
+              <FormField label="品牌别名" help="本地品牌别名或 SKU 词，最多 20 个">
                 <div className="gm-brand-field-stack">
                   <div className="gm-brand-chip-input-row">
                     <Input
@@ -1148,7 +1075,7 @@ export function BrandIdentitySection({
                       className="gm-brand-btn-nowrap"
                       onClick={handleAddAlias}
                     >
-                      + 添加
+                      添加
                     </Button>
                   </div>
                   {aliases.length > 0 ? (
@@ -1167,7 +1094,7 @@ export function BrandIdentitySection({
                 </div>
               </FormField>
 
-              <FormField label="当地自有官网 / 文档域名（驱动自有信源归类）">
+              <FormField label="官网域名" help="本地自有官网或文档域名，驱动自有信源归类">
                 <div className="gm-brand-field-stack">
                   <div className="gm-brand-chip-input-row">
                     <Input
@@ -1188,7 +1115,7 @@ export function BrandIdentitySection({
                       className="gm-brand-btn-nowrap"
                       onClick={handleAddDomain}
                     >
-                      + 添加
+                      添加
                     </Button>
                   </div>
                   {ownedDomains.length > 0 ? (
@@ -1210,9 +1137,7 @@ export function BrandIdentitySection({
                 </div>
               </FormField>
 
-              <FormField
-                label={`主要竞品与竞品域名（${competitorRows.length} / ${BRAND_MAX_COMPETITORS}）`}
-              >
+              <FormField label={`竞品 ${competitorRows.length}/${BRAND_MAX_COMPETITORS}`}>
                 <div className="gm-brand-competitor-list">
                   {competitorRows.map((row, idx) => {
                     const trimmedName = row.name.trim();
@@ -1302,27 +1227,12 @@ export function BrandIdentitySection({
                       )
                     }
                   >
-                    + 添加竞品
+                    添加竞品
                   </Button>
                 </div>
               </FormField>
 
-              <FormField
-                label={`高频监控问句种子（${seedPrompts.length} / 50）`}
-                extra={
-                  !readOnly ? (
-                    <Button
-                      size="small"
-                      aria-label="按当前品类重新生成种子问句"
-                      disabled={saving}
-                      className="gm-brand-btn-nowrap"
-                      onClick={() => void openAiSuggest('seedPrompts')}
-                    >
-                      按当前品类重新生成种子问句
-                    </Button>
-                  ) : null
-                }
-              >
+              <FormField label={`监控问句 ${seedPrompts.length}/50`}>
                 <div className="gm-brand-field-stack">
                   <div className="gm-brand-chip-input-row">
                     <Input
@@ -1351,7 +1261,7 @@ export function BrandIdentitySection({
                       className="gm-brand-btn-nowrap"
                       onClick={handleAddSeedPrompt}
                     >
-                      + 添加
+                      添加
                     </Button>
                   </div>
                   {seedPrompts.length > 0 ? (
@@ -1383,8 +1293,8 @@ export function BrandIdentitySection({
               {activeMarket === 'GLOBAL' ? (
                 <FormField
                   data-testid="brand-supported-locales-field"
-                  label="海外支持写作语种（至少 1 个；开启多语种后写作台自动出现语种切换）"
-                  help="支持英语（美/英）、德语、日语、西语、法语；日语内容自动采用防误判双信号校验。"
+                  label="多语种"
+                  help="海外支持写作语种（至少 1 个）；开启多语种后写作台自动出现语种切换；支持英语（美/英）、德语、日语、西语、法语，日语内容自动采用防误判双信号校验。"
                 >
                   <Select<SupportedLocale[]>
                     mode="multiple"
@@ -1411,114 +1321,139 @@ export function BrandIdentitySection({
                 </FormField>
               ) : null}
 
-              <FormField
-                data-testid="brand-control-prompts-field"
-                label={`对照组问句（DiD 归因基线，${controlPrompts.length} / ${BRAND_MAX_CONTROL_PROMPTS}）`}
-                help={`开启对照组自动复测时默认取前 ${BRAND_DEFAULT_RETEST_CONTROL_PROMPTS} 条问句作为未发稿基线（最多 ${BRAND_MAX_CONTROL_PROMPTS} 条），且不可与上方种子监控问句重复。`}
-              >
-                <div className="gm-brand-field-stack">
-                  <div className="gm-brand-chip-input-row">
-                    <Input
-                      aria-label="添加对照组问句"
-                      data-testid="control-prompt-input"
-                      value={controlPromptInput}
-                      maxLength={300}
-                      disabled={
-                        readOnly || saving || controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
-                      }
-                      placeholder={
-                        activeMarket === 'CN'
-                          ? '输入未发稿对照组问句后回车（用于 DiD 净增益归因）'
-                          : 'Add a control prompt not targeted by published articles'
-                      }
-                      onChange={(event) => {
-                        setControlPromptInput(event.target.value);
-                        if (marketError) setMarketError(null);
-                      }}
-                      onPressEnter={(event) => {
-                        event.preventDefault();
-                        handleAddControlPrompt();
-                      }}
-                    />
-                    <Button
-                      data-testid="add-control-prompt-btn"
-                      disabled={
-                        readOnly ||
-                        saving ||
-                        controlPromptInput.trim().length < 2 ||
-                        controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
-                      }
-                      className="gm-brand-btn-nowrap"
-                      onClick={handleAddControlPrompt}
-                    >
-                      + 添加
-                    </Button>
-                  </div>
-                  {controlPrompts.length > 0 ? (
-                    <div className="gm-brand-seed-list" data-testid="control-prompts-list">
-                      {controlPrompts.map((prompt, index) => (
-                        <div key={prompt} className="gm-brand-seed-item">
-                          <span className="gm-brand-seed-text">
-                            <span>{prompt}</span>
-                            {index < BRAND_DEFAULT_RETEST_CONTROL_PROMPTS ? (
-                              <StatusBadge
-                                tone="active"
-                                size="sm"
-                                label="默认 DiD 对照"
-                                className="gm-brand-did-badge"
-                              />
-                            ) : null}
-                          </span>
-                          {!readOnly ? (
-                            <button
-                              type="button"
-                              className="gm-brand-row-remove-btn"
-                              aria-label={`移除对照组问句 ${prompt}`}
-                              title="移除对照组问句"
-                              disabled={saving}
-                              onClick={() =>
-                                setControlPrompts((prev) => prev.filter((item) => item !== prompt))
-                              }
-                            >
-                              <RemoveRowIcon />
-                            </button>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
+              <div className="gm-brand-extra-doc">
+                <div className="gm-brand-advanced-toggle-row">
+                  <button
+                    type="button"
+                    className="gm-brand-extra-doc-toggle"
+                    data-testid="brand-advanced-control-toggle"
+                    aria-expanded={controlPanelOpen}
+                    onClick={() => setControlPanelOpen((prev) => !prev)}
+                  >
+                    <span>{controlPanelOpen ? '▾' : '▸'} 对照组</span>
+                  </button>
+                  <Explain text="配置 DiD 对照组基准问句与本月自动复测点数上限。" />
                 </div>
-              </FormField>
 
-              <FormField
-                data-testid="brand-retest-cap-field"
-                label="本月自动复测点数上限（选填，留空不限）"
-                htmlFor="market-retest-cap-input"
-                help={
-                  retestBudget
-                    ? `仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。本月（${retestBudget.monthKey}）已消耗 ${retestBudget.usedPoints} 点${retestBudget.capPoints !== null ? ` / 上限 ${retestBudget.capPoints} 点` : ''}。`
-                    : '仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。'
-                }
-              >
-                <InputNumber
-                  id="market-retest-cap-input"
-                  data-testid="market-retest-cap-input"
-                  aria-label="本月自动复测点数上限"
-                  min={1}
-                  max={1_000_000}
-                  precision={0}
-                  placeholder="留空不限"
-                  value={monthlyRetestPointCap}
-                  disabled={readOnly || saving}
-                  className="gm-brand-w-full"
-                  onChange={(val) => {
-                    setMonthlyRetestPointCap(
-                      typeof val === 'number' && Number.isFinite(val) ? Math.trunc(val) : null,
-                    );
-                    if (marketError) setMarketError(null);
-                  }}
-                />
-              </FormField>
+                {controlPanelOpen ? (
+                  <div className="gm-brand-extra-doc-body">
+                    <FormField
+                      data-testid="brand-control-prompts-field"
+                      label={`对照组 ${controlPrompts.length}/${BRAND_MAX_CONTROL_PROMPTS}`}
+                      help={`开启对照组自动复测时默认取前 ${BRAND_DEFAULT_RETEST_CONTROL_PROMPTS} 条问句作为未发稿基线（最多 ${BRAND_MAX_CONTROL_PROMPTS} 条），且不可与上方种子监控问句重复。`}
+                    >
+                      <div className="gm-brand-field-stack">
+                        <div className="gm-brand-chip-input-row">
+                          <Input
+                            aria-label="添加对照组问句"
+                            data-testid="control-prompt-input"
+                            value={controlPromptInput}
+                            maxLength={300}
+                            disabled={
+                              readOnly ||
+                              saving ||
+                              controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
+                            }
+                            placeholder={
+                              activeMarket === 'CN'
+                                ? '输入未发稿对照组问句后回车（用于 DiD 净增益归因）'
+                                : 'Add a control prompt not targeted by published articles'
+                            }
+                            onChange={(event) => {
+                              setControlPromptInput(event.target.value);
+                              if (marketError) setMarketError(null);
+                            }}
+                            onPressEnter={(event) => {
+                              event.preventDefault();
+                              handleAddControlPrompt();
+                            }}
+                          />
+                          <Button
+                            data-testid="add-control-prompt-btn"
+                            disabled={
+                              readOnly ||
+                              saving ||
+                              controlPromptInput.trim().length < 2 ||
+                              controlPrompts.length >= BRAND_MAX_CONTROL_PROMPTS
+                            }
+                            className="gm-brand-btn-nowrap"
+                            onClick={handleAddControlPrompt}
+                          >
+                            添加
+                          </Button>
+                        </div>
+                        {controlPrompts.length > 0 ? (
+                          <div className="gm-brand-seed-list" data-testid="control-prompts-list">
+                            {controlPrompts.map((prompt, index) => (
+                              <div key={prompt} className="gm-brand-seed-item">
+                                <span className="gm-brand-seed-text">
+                                  <span>{prompt}</span>
+                                  {index < BRAND_DEFAULT_RETEST_CONTROL_PROMPTS ? (
+                                    <StatusBadge
+                                      tone="active"
+                                      size="sm"
+                                      label="默认"
+                                      className="gm-brand-did-badge"
+                                    />
+                                  ) : null}
+                                </span>
+                                {!readOnly ? (
+                                  <button
+                                    type="button"
+                                    className="gm-brand-row-remove-btn"
+                                    aria-label={`移除对照组问句 ${prompt}`}
+                                    title="移除对照组问句"
+                                    disabled={saving}
+                                    onClick={() =>
+                                      setControlPrompts((prev) =>
+                                        prev.filter((item) => item !== prompt),
+                                      )
+                                    }
+                                  >
+                                    <RemoveRowIcon />
+                                  </button>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </FormField>
+
+                    <FormField
+                      data-testid="brand-retest-cap-field"
+                      label="复测上限"
+                      htmlFor="market-retest-cap-input"
+                      help={
+                        retestBudget
+                          ? `仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。本月（${retestBudget.monthKey}）已消耗 ${retestBudget.usedPoints} 点${retestBudget.capPoints !== null ? ` / 上限 ${retestBudget.capPoints} 点` : ''}。`
+                          : '仅约束定时自动复测，超限时温和跳过并提示，不影响手动写作、监测与复测。'
+                      }
+                    >
+                      <InputNumber
+                        id="market-retest-cap-input"
+                        data-testid="market-retest-cap-input"
+                        aria-label="本月自动复测点数上限"
+                        min={1}
+                        max={1_000_000}
+                        precision={0}
+                        placeholder="留空不限"
+                        value={monthlyRetestPointCap}
+                        disabled={readOnly || saving}
+                        className="gm-brand-w-full"
+                        onChange={(val) => {
+                          setMonthlyRetestPointCap(
+                            typeof val === 'number' && Number.isFinite(val)
+                              ? Math.trunc(val)
+                              : null,
+                          );
+                          if (marketError) setMarketError(null);
+                        }}
+                      />
+                    </FormField>
+                  </div>
+                ) : null}
+              </div>
 
               {marketError ? (
                 <Alert
@@ -1531,21 +1466,10 @@ export function BrandIdentitySection({
               ) : null}
             </div>
           ) : (
-            <Alert
-              type="info"
-              showIcon
-              message="当前市场尚未开启"
-              action={
-                <Button
-                  size="small"
-                  type="default"
-                  disabled={readOnly}
-                  className="gm-brand-btn-nowrap"
-                  onClick={() => onOpenEnableMarket(activeMarket)}
-                >
-                  立即开启
-                </Button>
-              }
+            <EmptyState
+              size="compact"
+              title="市场未开"
+              description="请在顶部或页头开启当前市场后再维护该市场配置。"
             />
           )}
         </div>
@@ -1558,7 +1482,7 @@ export function BrandIdentitySection({
           aria-label="未保存更改操作栏"
           data-testid="brand-dirty-save-bar"
         >
-          <StatusBadge tone="warning" size="sm" label="有未保存更改" />
+          <StatusBadge tone="warning" size="sm" label="未保存" />
           <div className="gm-brand-dirty-bar-actions">
             <Button
               autoInsertSpace={false}

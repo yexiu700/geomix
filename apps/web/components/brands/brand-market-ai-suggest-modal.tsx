@@ -5,7 +5,6 @@ import {
   BRAND_NAME_MAX,
   BRAND_SEED_PROMPT_INTENTS,
   BRAND_SEED_PROMPT_INTENT_LABELS,
-  GEO_MARKET_LABELS,
   containsCjk,
   type BrandCompetitor,
   type BrandMarketAiSuggestResponse,
@@ -14,7 +13,7 @@ import {
 } from '@geomix/shared';
 import { Alert, Button, Checkbox, Input, Modal, Skeleton } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import { EmptyState, StatusBadge } from '../ui';
+import { EmptyState, Explain, StatusBadge } from '../ui';
 import {
   parseCompetitorAliases,
   parseDomainTokens,
@@ -71,15 +70,14 @@ type EditableControlPromptItem = {
   prompt: string;
 };
 
-function resolveModalTitle(mode: BrandMarketAiSuggestMode, market: GeoMarket): string {
-  const marketLabel = GEO_MARKET_LABELS[market];
+function resolveModalTitle(mode: BrandMarketAiSuggestMode): string {
   if (mode === 'seedPrompts') {
-    return `AI 生成高频监控问句（${marketLabel}）`;
+    return '生成问句';
   }
   if (mode === 'localIdentity') {
-    return 'AI 一键英文本地化（海外市场）';
+    return 'AI 英化';
   }
-  return `AI 一键补全市场配置（${marketLabel}）`;
+  return 'AI 补全';
 }
 
 export function BrandMarketAiSuggestModal({
@@ -94,7 +92,7 @@ export function BrandMarketAiSuggestModal({
   currentLocalCategory = '',
   sourceUrl = '',
   allowSourceUrl = false,
-  confirmLabel = '采纳所选项',
+  confirmLabel = '采纳',
   cancelLabel = '取消',
   footerHint = '仅追加去重，不覆盖已有手调内容；采纳后需点击保存落库。',
   onSourceUrlChange,
@@ -248,7 +246,7 @@ export function BrandMarketAiSuggestModal({
   return (
     <Modal
       open={open}
-      title={resolveModalTitle(mode, market)}
+      title={resolveModalTitle(mode)}
       width={740}
       onCancel={() => {
         if (!saving) onCancel();
@@ -279,7 +277,7 @@ export function BrandMarketAiSuggestModal({
               className="gm-brand-btn-nowrap"
               onClick={() => onRegenerate(sourceUrl)}
             >
-              结合链接重新生成
+              重新生成
             </Button>
           </div>
         ) : null}
@@ -319,19 +317,23 @@ export function BrandMarketAiSuggestModal({
                     data-testid="brand-ai-suggest-fallback-notice"
                     className="gm-brand-inline-alert"
                     message={
-                      suggestion.fallbackUsed
-                        ? '已使用品类规则模板生成建议（不影响勾选与采纳）'
-                        : '生成提示'
+                      <span className="gm-brand-alert-title-row">
+                        <span>{suggestion.fallbackUsed ? '已用规则模板' : '生成提示'}</span>
+                        {suggestion.warnings && suggestion.warnings.length > 0 ? (
+                          <Explain text={suggestion.warnings.join('；')} />
+                        ) : suggestion.fallbackUsed ? (
+                          <Explain text="已使用品类规则模板生成建议（不影响勾选与采纳）" />
+                        ) : null}
+                      </span>
                     }
-                    description={suggestion.warnings?.join('；')}
                   />
                 ) : null}
 
                 {!hasAnySuggestions ? (
                   <EmptyState
                     size="compact"
-                    title="当前市场配置已较完善，暂无新增建议"
-                    description="您可粘贴具体产品详情页链接重新生成，或直接手动微调配置。"
+                    title="暂无建议"
+                    description="当前市场配置已较完善，您可粘贴具体产品详情页链接重新生成，或直接手动微调配置。"
                   />
                 ) : null}
 
@@ -344,7 +346,7 @@ export function BrandMarketAiSuggestModal({
                   >
                     <div className="gm-brand-ai-group-head">
                       <div className="gm-brand-ai-group-title">
-                        <h4>海外英文身份与品类</h4>
+                        <h4>英文身份</h4>
                         <StatusBadge
                           tone="neutral"
                           size="sm"
@@ -361,7 +363,7 @@ export function BrandMarketAiSuggestModal({
                             disabled={saving}
                             onChange={(event) => setLocalNameChecked(event.target.checked)}
                           />
-                          <span className="gm-brand-ai-field-label">当地品牌名</span>
+                          <span className="gm-brand-ai-field-label">本地名</span>
                           <Input
                             aria-label="编辑建议海外英文品牌名"
                             value={localNameDraft}
@@ -370,7 +372,7 @@ export function BrandMarketAiSuggestModal({
                             onChange={(event) => setLocalNameDraft(event.target.value)}
                           />
                           {currentLocalBrandName.trim() && !containsCjk(currentLocalBrandName) ? (
-                            <StatusBadge tone="neutral" size="sm" label="已有英文名" />
+                            <StatusBadge tone="neutral" size="sm" label="已有" />
                           ) : null}
                         </div>
                       ) : null}
@@ -382,7 +384,7 @@ export function BrandMarketAiSuggestModal({
                             disabled={saving}
                             onChange={(event) => setLocalCategoryChecked(event.target.checked)}
                           />
-                          <span className="gm-brand-ai-field-label">当地品类</span>
+                          <span className="gm-brand-ai-field-label">本地品类</span>
                           <Input
                             aria-label="编辑建议海外英文品类"
                             value={localCategoryDraft}
@@ -391,7 +393,7 @@ export function BrandMarketAiSuggestModal({
                             onChange={(event) => setLocalCategoryDraft(event.target.value)}
                           />
                           {currentLocalCategory.trim() && !containsCjk(currentLocalCategory) ? (
-                            <StatusBadge tone="neutral" size="sm" label="已有英文品类" />
+                            <StatusBadge tone="neutral" size="sm" label="已有" />
                           ) : null}
                         </div>
                       ) : null}
@@ -408,7 +410,7 @@ export function BrandMarketAiSuggestModal({
                   >
                     <div className="gm-brand-ai-group-head">
                       <div className="gm-brand-ai-group-title">
-                        <h4>SKU 型号与品牌别名</h4>
+                        <h4>品牌别名</h4>
                         <StatusBadge
                           tone="neutral"
                           size="sm"
@@ -474,7 +476,7 @@ export function BrandMarketAiSuggestModal({
                   >
                     <div className="gm-brand-ai-group-head">
                       <div className="gm-brand-ai-group-title">
-                        <h4>主要竞品与官网域名</h4>
+                        <h4>主要竞品</h4>
                         <StatusBadge
                           tone="neutral"
                           size="sm"
@@ -556,7 +558,7 @@ export function BrandMarketAiSuggestModal({
                   >
                     <div className="gm-brand-ai-group-head">
                       <div className="gm-brand-ai-group-title">
-                        <h4>高频监控问句（分意图）</h4>
+                        <h4>监控问句</h4>
                         <StatusBadge
                           tone="neutral"
                           size="sm"
@@ -637,7 +639,7 @@ export function BrandMarketAiSuggestModal({
                   >
                     <div className="gm-brand-ai-group-head">
                       <div className="gm-brand-ai-group-title">
-                        <h4>对照组问句（DiD 归因基线）</h4>
+                        <h4>对照组</h4>
                         <StatusBadge
                           tone="neutral"
                           size="sm"
@@ -700,15 +702,17 @@ export function BrandMarketAiSuggestModal({
         )}
 
         <div className="gm-brand-ai-footer">
-          <span className="gm-brand-ai-footer-hint">
-            {totalSelected > 0 ? `已选 ${totalSelected} 项 · ${footerHint}` : footerHint}
-          </span>
+          <div className="gm-brand-alert-title-row">
+            <span className="gm-brand-ai-footer-hint">已选 {totalSelected} 项</span>
+            <Explain text={footerHint} />
+          </div>
           <div className="gm-brand-ai-footer-actions">
             <Button autoInsertSpace={false} disabled={saving} onClick={onCancel}>
               {cancelLabel}
             </Button>
             <Button
               type="primary"
+              autoInsertSpace={false}
               data-testid="brand-ai-suggest-confirm-btn"
               loading={saving}
               disabled={loading || !suggestion || totalSelected === 0}

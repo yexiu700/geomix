@@ -4,10 +4,7 @@ import {
   BRAND_FACT_CARD_MAX,
   BRAND_FACT_FULL_INJECT_MAX,
   BRAND_FACT_SLOT_LABELS,
-  BRAND_TRUTH_AGREEMENT_PARAGRAPHS,
-  BRAND_TRUTH_AGREEMENT_TITLE,
   BRAND_TRUTH_CHECKBOX_LABEL,
-  FACT_INDEX_STATUS_LABELS,
   formatShanghaiDateTime,
   requiresBrandFactVectorIndex,
   type BrandFactRecord,
@@ -20,20 +17,22 @@ import {
   type FactIndexStatus,
   type FactSourceType,
 } from '@geomix/shared';
-import { Alert, Button, Checkbox, Input, Modal, Radio, Select, Space } from 'antd';
+import { Alert, Button, Checkbox, Input, Select } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { extractBrandFacts, saveBrandFacts, type ExtractBrandFactsRequest } from '../../lib/brands';
+import { BRAND_FACT_SLOT_SHORT, FACT_INDEX_STATUS_SHORT } from '../../lib/short-labels';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { Section, StatusBadge } from '../ui';
+import { CostChip, Explain, Section, StatusBadge } from '../ui';
+import { BrandFactsExtractModal, type ExtractSourceMode } from './brand-facts-extract-modal';
 import {
   CORE_FACT_SLOTS,
-  FACT_EXTRACT_ACCEPT,
   FACT_SLOT_PLACEHOLDERS,
   FACT_SOURCE_LABELS,
   computeTotalFactChars,
   validateFactUploadFile,
 } from './brand-form-helpers';
+import { BrandTruthTermsModal } from './brand-truth-terms-modal';
 
 type SlotDraft = {
   id?: string;
@@ -47,8 +46,6 @@ type SlotDraft = {
   updatedAt: string | null;
 };
 
-type ExtractSourceMode = 'URL_EXTRACT' | 'MANUAL' | 'DOC_UPLOAD';
-
 const GENERAL_SCOPE_VALUE = '__BRAND_GENERAL__';
 
 export type BrandFactsSectionProps = {
@@ -60,6 +57,7 @@ export type BrandFactsSectionProps = {
   error: string | null;
   truthSignedAt: string | null;
   readOnly: boolean;
+  demotePrimary?: boolean;
   onRetry: () => void;
   onFactsSaved: (response: BrandFactsResponse) => void;
 };
@@ -109,6 +107,7 @@ export function BrandFactsSection({
   error,
   truthSignedAt,
   readOnly,
+  demotePrimary = false,
   onRetry,
   onFactsSaved,
 }: BrandFactsSectionProps) {
@@ -381,34 +380,36 @@ export function BrandFactsSection({
       aria-label="品牌事实卡"
       title={
         <span className="gm-brand-section-title-row">
-          <span>品牌事实卡</span>
-          <StatusBadge tone="neutral" label="免费标配 · 双市场共享" />
+          <span>事实卡</span>
           <StatusBadge
             tone={needsVectorIndex ? 'active' : 'neutral'}
             label={`总计 ${totalChars} 字`}
           />
           {anyIndexing ? (
-            <StatusBadge status="INDEXING" label={FACT_INDEX_STATUS_LABELS.INDEXING} />
+            <StatusBadge status="INDEXING" label={FACT_INDEX_STATUS_SHORT.INDEXING} />
           ) : anyFailed ? (
-            <StatusBadge status="FAILED" label={FACT_INDEX_STATUS_LABELS.FAILED} />
+            <StatusBadge status="FAILED" label={FACT_INDEX_STATUS_SHORT.FAILED} />
           ) : needsVectorIndex && anyReady ? (
-            <StatusBadge tone="success" label={FACT_INDEX_STATUS_LABELS.READY} />
+            <StatusBadge tone="success" label={FACT_INDEX_STATUS_SHORT.READY} />
           ) : (
-            <StatusBadge tone="success" label={FACT_INDEX_STATUS_LABELS.NONE} />
+            <StatusBadge tone="success" label={FACT_INDEX_STATUS_SHORT.NONE} />
           )}
         </span>
       }
       description={`维护一份中文核心事实，切至海外市场写作时自动跨语种注入，无需手动翻译；总字数超过 ${BRAND_FACT_FULL_INJECT_MAX.toLocaleString()} 字时系统自动后台建立检索索引。`}
       actions={
-        <Button
-          type="default"
-          data-testid="fact-ai-extract-btn"
-          disabled={readOnly || loading}
-          className="gm-brand-btn-nowrap"
-          onClick={openExtractModal}
-        >
-          AI 自动提炼 4 块事实卡（免费）
-        </Button>
+        <div className="gm-brand-subcard-head-actions">
+          <CostChip points={0} />
+          <Button
+            type="default"
+            data-testid="fact-ai-extract-btn"
+            disabled={readOnly || loading}
+            className="gm-brand-btn-nowrap"
+            onClick={openExtractModal}
+          >
+            AI 提炼
+          </Button>
+        </div>
       }
     >
       {loading ? (
@@ -438,7 +439,7 @@ export function BrandFactsSection({
                   }
                   onClick={() => setSelectedScopeId(null)}
                 >
-                  品牌通用（全部产品线共享）
+                  品牌通用
                 </button>
                 {productLines.map((line) => {
                   const lineFactCount = facts.filter(
@@ -517,7 +518,7 @@ export function BrandFactsSection({
                 <div key={slot} className="gm-brand-fact-card" data-testid={`fact-slot-${slot}`}>
                   <div className="gm-brand-fact-card-head">
                     <div className="gm-brand-fact-title-wrap">
-                      <strong>{BRAND_FACT_SLOT_LABELS[slot]}</strong>
+                      <strong>{BRAND_FACT_SLOT_SHORT[slot]}</strong>
                       <StatusBadge tone="neutral" label={FACT_SOURCE_LABELS[card.sourceType]} />
                       {hasProductLines ? (
                         <StatusBadge
@@ -538,7 +539,7 @@ export function BrandFactsSection({
 
                   {hasProductLines ? (
                     <div className="gm-brand-fact-card-scope-row">
-                      <span className="gm-brand-fact-card-scope-label">事实归属：</span>
+                      <span className="gm-brand-fact-card-scope-label">归属：</span>
                       <Select<string>
                         size="small"
                         aria-label={`${BRAND_FACT_SLOT_LABELS[slot]}归属范围`}
@@ -547,7 +548,7 @@ export function BrandFactsSection({
                         disabled={readOnly || saving}
                         value={card.productLineId ?? GENERAL_SCOPE_VALUE}
                         options={[
-                          { value: GENERAL_SCOPE_VALUE, label: '品牌通用（全部产品线共享）' },
+                          { value: GENERAL_SCOPE_VALUE, label: '品牌通用' },
                           ...productLines.map((line) => ({
                             value: line.id,
                             label: line.name,
@@ -588,31 +589,31 @@ export function BrandFactsSection({
 
           {/* Collapsible Optional EXTRA_DOC */}
           <div className="gm-brand-extra-doc">
-            <button
-              type="button"
-              className="gm-brand-extra-doc-toggle"
-              aria-expanded={extraDocOpen}
-              onClick={() => setExtraDocOpen((open) => !open)}
-            >
-              <span>
-                {extraDocOpen ? '▾' : '▸'} 补充长文档区（可选，最高{' '}
-                {BRAND_FACT_CARD_MAX.toLocaleString()} 字）
-              </span>
+            <div className="gm-brand-extra-doc-head">
+              <div className="gm-brand-advanced-toggle-row">
+                <button
+                  type="button"
+                  className="gm-brand-extra-doc-toggle"
+                  aria-expanded={extraDocOpen}
+                  onClick={() => setExtraDocOpen((open) => !open)}
+                >
+                  <span>{extraDocOpen ? '▾' : '▸'} 长文档</span>
+                </button>
+                <Explain
+                  text={`可选补充长文档（最高 ${BRAND_FACT_CARD_MAX.toLocaleString()} 字），适合粘贴产品规格书、白皮书或长篇 FAQ；总字数超过 6,000 字时系统将在后台自动建立检索索引。`}
+                />
+              </div>
               <span className="gm-brand-extra-doc-meta">
                 <span>{drafts.EXTRA_DOC.content.length} 字</span>
                 <StatusBadge
                   status={drafts.EXTRA_DOC.indexStatus}
-                  label={FACT_INDEX_STATUS_LABELS[drafts.EXTRA_DOC.indexStatus]}
+                  label={FACT_INDEX_STATUS_SHORT[drafts.EXTRA_DOC.indexStatus]}
                 />
               </span>
-            </button>
+            </div>
 
             {extraDocOpen ? (
               <div className="gm-brand-extra-doc-body" data-testid="fact-slot-EXTRA_DOC">
-                <p className="gm-brand-section-desc gm-brand-mb-sm">
-                  适合粘贴完整产品规格书、白皮书或长篇 FAQ；总字数超过 6,000
-                  字时系统将在后台自动建立检索索引，无需手动配置。
-                </p>
                 <Input.TextArea
                   aria-label="补充长文档"
                   value={drafts.EXTRA_DOC.content}
@@ -632,6 +633,7 @@ export function BrandFactsSection({
           <div className="gm-brand-facts-footer">
             <div className="gm-brand-truth-bar">
               <Checkbox
+                data-testid="brand-facts-truth-checkbox"
                 checked={truthAgreed}
                 disabled={readOnly || saving}
                 onChange={(event) => {
@@ -639,10 +641,16 @@ export function BrandFactsSection({
                   if (event.target.checked) setSaveError(null);
                 }}
               >
-                {BRAND_TRUTH_CHECKBOX_LABEL}
+                确认属实
               </Checkbox>
-              <Button type="link" size="small" onClick={() => setTermsOpen(true)}>
-                查看承诺协议全文
+              <Explain text={BRAND_TRUTH_CHECKBOX_LABEL} />
+              <Button
+                type="link"
+                size="small"
+                autoInsertSpace={false}
+                onClick={() => setTermsOpen(true)}
+              >
+                协议
               </Button>
               {truthSignedAt ? (
                 <span className="gm-brand-truth-signed">
@@ -652,13 +660,15 @@ export function BrandFactsSection({
             </div>
 
             <Button
-              type="default"
+              type={demotePrimary ? 'default' : 'primary'}
+              autoInsertSpace={false}
+              data-testid="brand-facts-save-btn"
               loading={saving}
               disabled={readOnly}
               className="gm-brand-btn-nowrap"
               onClick={() => void handleSaveFacts()}
             >
-              保存品牌事实卡
+              保存
             </Button>
           </div>
 
@@ -668,156 +678,33 @@ export function BrandFactsSection({
         </>
       )}
 
-      {/* Terms Preview Modal */}
-      <Modal
-        open={termsOpen}
-        title={BRAND_TRUTH_AGREEMENT_TITLE}
-        onCancel={() => setTermsOpen(false)}
-        footer={[
-          <Button key="ok" type="primary" onClick={() => setTermsOpen(false)}>
-            知道了
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" size={10} className="gm-brand-terms-list">
-          {BRAND_TRUTH_AGREEMENT_PARAGRAPHS.map((para, idx) => (
-            <p key={idx} className="gm-brand-terms-para">
-              {para}
-            </p>
-          ))}
-        </Space>
-      </Modal>
+      <BrandTruthTermsModal open={termsOpen} onClose={() => setTermsOpen(false)} />
 
-      {/* AI Extract Modal */}
-      <Modal
+      <BrandFactsExtractModal
         open={extractModalOpen}
-        title="AI 自动提炼 4 块品牌事实卡（免费）"
-        width={640}
-        onCancel={() => {
-          if (!extracting) setExtractModalOpen(false);
+        extractMode={extractMode}
+        extractUrl={extractUrl}
+        extractText={extractText}
+        extractFile={extractFile}
+        extracting={extracting}
+        extractError={extractError}
+        extractResult={extractResult}
+        applyMode={applyMode}
+        onCancel={() => setExtractModalOpen(false)}
+        onModeChange={(mode) => {
+          setExtractMode(mode);
+          setExtractError(null);
         }}
-        keyboard={!extracting}
-        maskClosable={!extracting}
-        destroyOnHidden
-        footer={null}
-      >
-        <div className="gm-brand-extract-step">
-          <div className="gm-brand-mode-tabs" role="tablist" aria-label="选择事实资料来源">
-            {(
-              [
-                ['URL_EXTRACT', '官网链接'],
-                ['MANUAL', '粘贴资料'],
-                ['DOC_UPLOAD', '上传文档'],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                role="tab"
-                aria-selected={extractMode === mode}
-                className={
-                  extractMode === mode ? 'gm-brand-mode-btn is-active' : 'gm-brand-mode-btn'
-                }
-                onClick={() => {
-                  setExtractMode(mode);
-                  setExtractError(null);
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {extractMode === 'URL_EXTRACT' ? (
-            <Input
-              aria-label="官网链接"
-              value={extractUrl}
-              disabled={extracting}
-              placeholder="https://example.com/product"
-              onChange={(event) => setExtractUrl(event.target.value)}
-            />
-          ) : extractMode === 'MANUAL' ? (
-            <Input.TextArea
-              aria-label="粘贴产品资料"
-              rows={5}
-              value={extractText}
-              disabled={extracting}
-              placeholder="粘贴官网介绍、产品规格书、评测参数或客户案例文本（至少 10 字）"
-              onChange={(event) => setExtractText(event.target.value)}
-            />
-          ) : (
-            <div className="gm-brand-file-picker">
-              <input
-                type="file"
-                accept={FACT_EXTRACT_ACCEPT}
-                aria-label="上传品牌资料文档"
-                disabled={extracting}
-                onChange={(event) => {
-                  const file = event.target.files?.[0] ?? null;
-                  setExtractFile(file);
-                  setExtractError(null);
-                }}
-              />
-              {extractFile ? (
-                <span className="gm-brand-file-name">已选文件：{extractFile.name}</span>
-              ) : null}
-            </div>
-          )}
-
-          {extractError ? (
-            <Alert type="error" showIcon message={extractError} className="gm-brand-mt-sm" />
-          ) : null}
-
-          {extractResult ? (
-            <div className="gm-brand-draft-list">
-              {extractResult.warnings && extractResult.warnings.length > 0 ? (
-                <Alert
-                  type="info"
-                  showIcon
-                  message={extractResult.warnings.join(' ')}
-                  className="gm-brand-mb-sm"
-                />
-              ) : null}
-              <div className="gm-brand-apply-mode">
-                <span>写入方式：</span>
-                <Radio.Group
-                  value={applyMode}
-                  onChange={(event) => setApplyMode(event.target.value as 'replace' | 'append')}
-                >
-                  <Radio value="replace">覆盖对应卡片</Radio>
-                  <Radio value="append">追加到现有内容</Radio>
-                </Radio.Group>
-              </div>
-              {extractResult.facts.map((item) => (
-                <div key={item.slot} className="gm-brand-draft-item">
-                  <div className="gm-brand-draft-head">
-                    <strong>{BRAND_FACT_SLOT_LABELS[item.slot]}</strong>
-                  </div>
-                  <p className="gm-brand-draft-preview">{item.content || '（原文未提及）'}</p>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="gm-brand-modal-footer">
-            <Button disabled={extracting} onClick={() => setExtractModalOpen(false)}>
-              关闭
-            </Button>
-            <Button
-              type={extractResult ? 'default' : 'primary'}
-              loading={extracting}
-              onClick={() => void handleRunExtract()}
-            >
-              开始 AI 提炼（免费）
-            </Button>
-            {extractResult ? (
-              <Button type="primary" onClick={handleApplyExtracted}>
-                应用到事实卡
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </Modal>
+        onUrlChange={setExtractUrl}
+        onTextChange={setExtractText}
+        onFileChange={(file) => {
+          setExtractFile(file);
+          setExtractError(null);
+        }}
+        onApplyModeChange={setApplyMode}
+        onRunExtract={() => void handleRunExtract()}
+        onApplyExtracted={handleApplyExtracted}
+      />
     </Section>
   );
 }

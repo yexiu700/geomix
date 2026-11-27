@@ -20,7 +20,7 @@ import {
 } from '../../lib/brands';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, Section, StatusBadge } from '../ui';
+import { EmptyState, Explain, Section, StatusBadge } from '../ui';
 import { defaultAltFromFilename } from './brand-form-helpers';
 
 export type BrandMediaSectionProps = {
@@ -199,17 +199,13 @@ export function BrandMediaSection({
       aria-label="真实产品实拍图库"
       title={
         <span className="gm-brand-section-title-row">
-          <span>真实产品实拍图库</span>
-          <StatusBadge tone="neutral" label="双市场共享（CN / GLOBAL）" />
+          <span>实拍图</span>
           {storage ? (
-            <StatusBadge
-              tone="neutral"
-              label={`租户共享存储配额：已用 ${storage.usedText} / ${storage.limitText}`}
-            />
+            <StatusBadge tone="neutral" label={`${storage.usedText} / ${storage.limitText}`} />
           ) : null}
         </span>
       }
-      description="单层平铺管理真实产品实拍图与图片说明（Alt 文本），在 GEO 写作台编辑器内可随时免费按需插入。"
+      description="单层平铺管理产品实拍图与图片说明（Alt 文本），双市场及同租户共享存储配额，写作台内免费按需插入。"
     >
       {/* Flat Drag-and-Drop Upload Zone */}
       <div
@@ -239,20 +235,23 @@ export function BrandMediaSection({
           onChange={(event) => void handleFilesSelected(event.target.files)}
         />
         <div className="gm-brand-dropzone-copy">
-          <strong>将真实产品实拍图拖到此处，或点击选择图片</strong>
-          <span>
-            支持 JPG / PNG / WebP，单张 ≤ 100MB，单次最多 {BRAND_MEDIA_UPLOAD_MAX_FILES}{' '}
-            张；自动压缩去隐私信息并生成缩略图
-          </span>
+          <div className="gm-brand-alert-title-row">
+            <strong>拖入图片</strong>
+            <Explain
+              text={`支持 JPG / PNG / WebP，单张 ≤ 100MB，单次最多 ${BRAND_MEDIA_UPLOAD_MAX_FILES} 张；自动压缩去隐私信息并生成缩略图。`}
+            />
+          </div>
         </div>
         <Button
           type="default"
+          autoInsertSpace={false}
+          data-testid="brand-media-upload-btn"
           disabled={readOnly}
           loading={uploading}
           className="gm-brand-btn-nowrap"
           onClick={() => fileInputRef.current?.click()}
         >
-          选择图片上传
+          上传
         </Button>
       </div>
 
@@ -273,7 +272,7 @@ export function BrandMediaSection({
         ) : items.length === 0 ? (
           <EmptyState
             size="compact"
-            title="还没有产品实拍图"
+            title="暂无图片"
             description="当前品牌尚未上传产品实拍图（上方存储配额为租户下所有品牌共享）。拖入真实产品实拍图并维护图片说明，在 GEO 写作台编辑器内按需免费插入。"
           />
         ) : (

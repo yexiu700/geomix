@@ -2060,7 +2060,7 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       // Scope to .ant-modal-content:visible so both .ant-modal-body and .ant-modal-footer are covered
       const modalA = page.locator('.ant-modal-content:visible').last();
       await expect(modalA).toBeVisible({ timeout: 15_000 });
-      await modalA.getByRole('button', { name: /跳过并直接生成/ }).click();
+      await modalA.getByRole('button', { name: /跳过|跳过并直接生成/ }).click();
       await expect(modalA).toBeHidden({ timeout: 15_000 });
 
       await expect
@@ -2297,7 +2297,7 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       await page.getByTestId('channel-provider-select').click();
       await page
         .locator('.ant-select-dropdown:visible .ant-select-item-option', {
-          hasText: '通用签名 Webhook',
+          hasText: /Webhook/,
         })
         .click();
       await page.getByLabel('连接名称').fill('E2E Disable Webhook');
@@ -2376,7 +2376,7 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
       await inlineModal.getByTestId('channel-provider-select').click();
       await page
         .locator('.ant-select-dropdown:visible .ant-select-item-option', {
-          hasText: 'WordPress 站点',
+          hasText: /WordPress/,
         })
         .click();
       await inlineModal.getByLabel('连接名称').fill('Studio Inline WP');
@@ -2450,13 +2450,8 @@ test.describe('Tier 3 — Cross-Feature UI Integration Workflows', () => {
 
       // Check explicit override checkbox and save again
       const overrideCheckbox = page
-        .getByLabel(/我的海外品牌名本身包含中文字符/)
-        .or(
-          page
-            .locator('label')
-            .filter({ hasText: /我的海外品牌名本身包含中文字符/ })
-            .locator('input[type="checkbox"]'),
-        )
+        .getByTestId('allow-cjk-global-identity-checkbox')
+        .or(page.getByLabel(/保留中文|我的海外品牌名本身包含中文字符/))
         .first();
       await expect(overrideCheckbox).toBeVisible({ timeout: 10_000 });
       await overrideCheckbox.check();
@@ -2558,8 +2553,8 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
           `0 product-line switcher pills expected on ${route} for single-category brand`,
         ).toHaveCount(0);
         await expect(
-          page.getByText('全部产品线', { exact: true }),
-          `0 全部产品线 pills expected on ${route}`,
+          page.getByTestId('product-line-option-all'),
+          `0 product-line-option-all pills expected on ${route}`,
         ).toHaveCount(0);
         await assertNoHorizontalOverflow(page, { viewports: MULTI_LINE_VIEWPORTS });
       }
@@ -2576,7 +2571,11 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
 
       const createLineInUi = async (name: string, category: string) => {
         await clickFirstVisible(
-          productLinesSection.getByRole('button', { name: /新增产品线|添加产品线|新建产品线/ }),
+          productLinesSection.getByTestId('brand-add-product-line-btn').or(
+            productLinesSection.getByRole('button', {
+              name: /新增产线|新增产品线|添加产品线|新建产品线/,
+            }),
+          ),
         );
         const openDialog = page
           .locator('.ant-modal-content:visible, .ant-drawer-content:visible')
@@ -2674,7 +2673,14 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
         true,
       );
 
-      // Save & reload monthlyRetestPointCap in /brands UI
+      // Save & reload monthlyRetestPointCap in /brands UI (expand 对照组 collapsible panel if collapsed per Y8)
+      const controlToggle = page.getByTestId('brand-advanced-control-toggle');
+      if (
+        (await controlToggle.count()) > 0 &&
+        (await controlToggle.getAttribute('aria-expanded')) === 'false'
+      ) {
+        await controlToggle.click();
+      }
       const budgetInput = page
         .locator(
           'input[aria-label*="自动复测"], input[aria-label*="预算上限"], [data-testid="market-retest-cap-input"] input, input[data-testid="market-retest-cap-input"]',
@@ -2698,6 +2704,13 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
         .toBe(120);
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      const controlToggleAfterReload = page.getByTestId('brand-advanced-control-toggle');
+      if (
+        (await controlToggleAfterReload.count()) > 0 &&
+        (await controlToggleAfterReload.getAttribute('aria-expanded')) === 'false'
+      ) {
+        await controlToggleAfterReload.click();
+      }
       await expect(
         page
           .locator(
@@ -2714,7 +2727,7 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
       const selectLinePill = async (lineName: string) => {
         const switcher = page
           .getByTestId('product-line-switcher')
-          .or(page.locator('[role="radiogroup"], .ant-segmented').filter({ hasText: '全部产品线' }))
+          .or(page.locator('[role="radiogroup"], .ant-segmented').filter({ hasText: /^全部/ }))
           .first();
         await expect(switcher).toBeVisible({ timeout: 15_000 });
         await expect(switcher).toContainText('Power Station Series');
@@ -2759,7 +2772,7 @@ test.describe('Tier 4 — Real-World Multi-Product-Line & Budget End-to-End Jour
       ).toBeNull();
       await expect(page.locator('.ant-spin-spinning')).toHaveCount(0, { timeout: 15_000 });
       await expect(page.getByTestId('product-line-switcher')).toHaveCount(0, { timeout: 10_000 });
-      await expect(page.getByText('全部产品线', { exact: true })).toHaveCount(0);
+      await expect(page.getByTestId('product-line-option-all')).toHaveCount(0);
       expect(network404s, 'Brand switch must reset activeProductLineId with zero 404s').toEqual([]);
 
       // ── Step 4: Incognito /share/pr/[token] renders Line A effective category & 0 Line B bleed ──

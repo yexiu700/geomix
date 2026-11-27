@@ -294,7 +294,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await page.getByTestId('channel-provider-select').click();
       await page
         .locator('.ant-select-dropdown:visible .ant-select-item-option', {
-          hasText: '通用签名 Webhook',
+          hasText: /Webhook/,
         })
         .click();
       await page.getByLabel('连接名称').fill('E2E Webhook');
@@ -310,7 +310,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await page.getByTestId('channel-provider-select').click();
       await page
         .locator('.ant-select-dropdown:visible .ant-select-item-option', {
-          hasText: 'WordPress 站点',
+          hasText: /WordPress/,
         })
         .click();
       await page.getByLabel('连接名称').fill('E2E WordPress');
@@ -360,7 +360,7 @@ test.describe('GeoMix v2.1 — Global-First Distribution & Writing Closed Loop (
       await page.getByTestId('channel-provider-select').click();
       await page
         .locator('.ant-select-dropdown:visible .ant-select-item-option', {
-          hasText: '通用签名 Webhook',
+          hasText: /Webhook/,
         })
         .click();
       await page.getByLabel('连接名称').fill('SSRF Loopback Test');

@@ -19,7 +19,7 @@ import { copyTextToClipboard } from '../../lib/studio';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
-import { EmptyState, FormField, Section, StatusBadge, type StatusTone } from '../ui';
+import { EmptyState, Explain, FormField, Section, StatusBadge, type StatusTone } from '../ui';
 
 export type ExtensionPairingPanelProps = {
   readOnly: boolean;
@@ -317,8 +317,6 @@ export function ExtensionPairingPanel({
   };
 
   const sectionId = variant === 'brands' ? 'brand-section-extension' : 'account-section-extension';
-  const headingTitle =
-    variant === 'brands' ? '国内 L2 Chrome 扩展配对' : '国内 L2 Chrome 扩展配对令牌';
 
   return (
     <Section
@@ -327,12 +325,7 @@ export function ExtensionPairingPanel({
       aria-label="国内 L2 Chrome 扩展配对"
       data-testid="extension-pairing-panel"
       className="gm-brand-ext-section"
-      title={
-        <span className="gm-brand-section-title-row">
-          <span>{headingTitle}</span>
-          <StatusBadge tone="neutral" label="CN · Bridge v1" />
-        </span>
-      }
+      title={<span>扩展配对</span>}
       description="用于配对 GeoMix Chrome 扩展，将写作台排队的知乎、今日头条、什么值得买变体一键填充到平台草稿箱，并回传已发公网链接开启自动复测；扩展绝不读取平台 Cookie，绝不自动点击最终发布。"
       actions={
         <Button
@@ -348,9 +341,12 @@ export function ExtensionPairingPanel({
     >
       {/* Create Extension Pairing Token Form */}
       <div className="gm-brand-ext-create-bar">
-        <div className="gm-brand-ext-create-title">生成新配对令牌（明文仅展示一次）</div>
+        <div className="gm-brand-alert-title-row">
+          <span className="gm-brand-ext-create-title">新令牌</span>
+          <Explain text="生成新配对令牌，明文仅展示一次。" />
+        </div>
         <div className="gm-brand-ext-create-row">
-          <FormField label="设备或浏览器名称" className="gm-brand-ext-field-label">
+          <FormField label="设备名" className="gm-brand-ext-field-label">
             <Input
               aria-label="设备或浏览器名称"
               data-testid="extension-token-label-input"
@@ -367,7 +363,8 @@ export function ExtensionPairingPanel({
           </FormField>
 
           <FormField
-            label={`有效期（1–${EXTENSION_MAX_TTL_DAYS} 天）`}
+            label="有效期"
+            help={`1–${EXTENSION_MAX_TTL_DAYS} 天`}
             className="gm-brand-ext-field-ttl"
           >
             <Input
@@ -393,7 +390,7 @@ export function ExtensionPairingPanel({
             className="gm-brand-btn-nowrap"
             onClick={() => void handleCreateToken()}
           >
-            生成扩展配对令牌
+            生成配对
           </Button>
         </div>
 
@@ -416,8 +413,8 @@ export function ExtensionPairingPanel({
       ) : tokens.length === 0 ? (
         <EmptyState
           size="compact"
-          title="尚未配对任何 Chrome 扩展设备"
-          description="点击上方「生成扩展配对令牌」获取一次性 gmext_ 令牌，粘贴至 GeoMix Chrome 扩展即可同步国内待发草稿队列。"
+          title="暂无设备"
+          description="点击上方「生成配对」获取一次性 gmext_ 令牌，粘贴至 GeoMix Chrome 扩展即可同步国内待发草稿队列。"
         />
       ) : (
         <div data-testid="extension-token-list" className="gm-brand-ext-list">
@@ -488,7 +485,7 @@ export function ExtensionPairingPanel({
       {/* One-Time Plaintext Token Disclosure Modal */}
       <Modal
         open={Boolean(issuedSecret)}
-        title="扩展配对令牌已生成（仅展示一次）"
+        title="新令牌"
         width="min(560px, calc(100vw - 32px))"
         destroyOnHidden
         maskClosable={false}
@@ -497,19 +494,21 @@ export function ExtensionPairingPanel({
         footer={
           <div className="gm-brand-modal-footer-wrap">
             <Button
+              autoInsertSpace={false}
               data-testid="extension-token-copy-btn"
               className="gm-brand-btn-nowrap"
               onClick={handleCopyPlainToken}
             >
-              {copiedSecret ? '已复制令牌' : '复制令牌'}
+              {copiedSecret ? '已复制' : '复制'}
             </Button>
             <Button
               type="primary"
+              autoInsertSpace={false}
               data-testid="extension-token-modal-close-btn"
               className="gm-brand-btn-nowrap"
               onClick={closeSecretModal}
             >
-              我已复制并关闭
+              完成
             </Button>
           </div>
         }
@@ -519,8 +518,12 @@ export function ExtensionPairingPanel({
             <Alert
               type="warning"
               showIcon
-              message="此配对令牌明文仅展示这一次"
-              description="关闭弹窗后系统将立即清除明文且无法再次查看；如遗失请吊销旧令牌并重新生成。"
+              message={
+                <span className="gm-brand-alert-title-row">
+                  <span>明文仅示一次</span>
+                  <Explain text="关闭弹窗后系统将立即清除明文且无法再次查看；如遗失请吊销旧令牌并重新生成。配对步骤：1. 打开 Chrome GeoMix 扩展设置页；2. 粘贴下方 gmext_ 令牌并点击验证连接；3. 令牌仅限待发草稿队列同步与公网链接回传，绝不读取平台 Cookie、绝不自动点击发布。" />
+                </span>
+              }
             />
 
             <div className="gm-brand-ext-secret-meta">
@@ -536,15 +539,6 @@ export function ExtensionPairingPanel({
               >
                 {issuedSecret.plainToken}
               </code>
-            </div>
-
-            <div className="gm-brand-ext-secret-steps">
-              <div>配对步骤：</div>
-              <div>1. 在 Chrome 中安装并打开 GeoMix 扩展设置页；</div>
-              <div>2. 粘贴上方 `gmext_` 配对令牌并点击验证连接；</div>
-              <div>
-                3. 令牌仅限待发草稿队列同步与公网链接回传，绝不读取平台 Cookie、绝不自动点击发布。
-              </div>
             </div>
           </div>
         ) : null}

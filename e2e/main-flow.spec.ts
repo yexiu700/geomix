@@ -93,7 +93,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
 
   // Step 4: Create first brand (CN) via 60s quick-create modal
   await page.getByRole('button', { name: '60 秒创建首个品牌' }).first().click();
-  const createDialog = page.getByRole('dialog', { name: '60 秒创建品牌' });
+  const createDialog = page.getByRole('dialog', { name: /新建品牌|60 秒创建品牌/ });
   await expect(createDialog).toBeVisible();
   await createDialog.getByLabel('品牌名称').fill(brandName);
   await createDialog.getByLabel('所属品类').fill('工业激光设备');
@@ -102,7 +102,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
   const createResponsePromise = page.waitForResponse(
     (res) => res.url().endsWith('/api/v2/brands') && res.request().method() === 'POST',
   );
-  await createDialog.getByRole('button', { name: '创建并进入工作区' }).click();
+  await createDialog.getByRole('button', { name: /^(?:创建|创建并进入工作区)$/ }).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.status()).toBe(200);
   const createJson = (await createResponse.json()) as BrandEnvelope;
@@ -110,7 +110,7 @@ test('GeoMix 2.0 M1 baseline: 0-brand onboarding, Brand + CN/GLOBAL switcher syn
   const createdBrandId = createJson.data?.id ?? '';
   expect(createdBrandId).not.toBe('');
 
-  await createDialog.getByRole('button', { name: '跳过，直接进入' }).click();
+  await createDialog.getByRole('button', { name: /^(?:跳过|跳过，直接进入)$/ }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByTestId('global-brand-switcher')).toContainText(brandName);
   await expect(page.getByTestId('global-market-switcher')).toContainText('国内');

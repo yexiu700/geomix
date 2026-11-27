@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  GEO_MARKET_LABELS,
   formatShanghaiDateTime,
   type BrandFactRecord,
   type BrandFactsResponse,
@@ -11,9 +10,10 @@ import {
   type RetestBudgetSummaryDto,
 } from '@geomix/shared';
 import { Alert, Button, Skeleton, Tag } from 'antd';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteBrand, getBrandFacts, listBrandMedia } from '../../lib/brands';
 import { fetchActionHome } from '../../lib/home';
+import { GEO_MARKET_SHORT } from '../../lib/short-labels';
 import { invalidateFreshness, useTabFreshness } from '../../lib/tab-freshness';
 import { useTaskPolling } from '../../lib/use-task-polling';
 import {
@@ -24,13 +24,19 @@ import {
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalError, SignalSkeleton } from '../geo/primitives';
 import { useConsoleContext } from '../shell/console-context';
-import { EmptyState, PageHeader, RowActions, StatusBadge, type RowActionItem } from '../ui';
+import {
+  EmptyState,
+  Explain,
+  PageHeader,
+  RowActions,
+  StatusBadge,
+  type RowActionItem,
+} from '../ui';
 import { BrandChannelConnections } from './brand-channel-connections';
 import { BrandFactsSection } from './brand-facts-section';
 import { BrandIdentitySection } from './brand-identity-section';
 import { BrandMediaSection } from './brand-media-section';
 import { BrandProductLinesSection } from './brand-product-lines-section';
-import { ExtensionPairingPanel } from './extension-pairing-panel';
 
 type ShopifyOAuthBannerState = {
   status: 'connected' | 'error';
@@ -41,7 +47,6 @@ type ShopifyOAuthBannerState = {
 type BrandSectionAnchor = {
   id: string;
   label: string;
-  cnOnly?: boolean;
 };
 
 const BRAND_SECTION_ANCHORS: readonly BrandSectionAnchor[] = [
@@ -50,7 +55,6 @@ const BRAND_SECTION_ANCHORS: readonly BrandSectionAnchor[] = [
   { id: 'brand-section-facts', label: '事实卡' },
   { id: 'brand-section-media', label: '实拍图库' },
   { id: 'brand-section-connections', label: '发布渠道' },
-  { id: 'brand-section-extension', label: '扩展配对', cnOnly: true },
 ];
 
 const KNOWN_OAUTH_ERROR_REASONS: Record<string, string> = {
@@ -111,10 +115,7 @@ export function BrandsWorkspace() {
   const activeBrandIdRef = useRef<string | null>(activeBrandId);
   activeBrandIdRef.current = activeBrandId;
 
-  const visibleAnchors = useMemo(
-    () => BRAND_SECTION_ANCHORS.filter((anchor) => !anchor.cnOnly || state.activeMarket === 'CN'),
-    [state.activeMarket],
-  );
+  const visibleAnchors = BRAND_SECTION_ANCHORS;
 
   const fetchBrandAssets = useCallback((brandId: string, options?: { silent?: boolean }) => {
     controllerRef.current?.abort();
@@ -291,26 +292,6 @@ export function BrandsWorkspace() {
   }, [urlSearch]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (state.activeMarket !== 'CN') {
-      setActiveAnchorId((prev) =>
-        prev === 'brand-section-extension' ? 'brand-section-identity' : prev,
-      );
-      return;
-    }
-    const rawSearch = urlSearch || window.location.search;
-    const params = new URLSearchParams(rawSearch.startsWith('?') ? rawSearch.slice(1) : rawSearch);
-    const section = params.get('section');
-    if (section === 'extension' || window.location.hash === '#brand-section-extension') {
-      setActiveAnchorId('brand-section-extension');
-      const target = document.getElementById('brand-section-extension');
-      if (target && typeof target.scrollIntoView === 'function') {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-  }, [urlSearch, state.activeMarket, activeBrandId]);
-
-  useEffect(() => {
     if (
       !activeBrandId ||
       typeof window === 'undefined' ||
@@ -383,12 +364,16 @@ export function BrandsWorkspace() {
       <section className="gm-brands-page" aria-label="品牌资产">
         <EmptyState
           size="full"
-          title="还没有创建任何品牌"
+          title="暂无品牌"
           description="完成 60 秒极速建档，AI 自动提炼 4 块品牌事实卡，立即开启双市场 AI 可见度监测与 GEO 写作闭环。"
           action={
             readOnly ? undefined : (
-              <Button type="default" onClick={() => consoleCtx?.openCreateBrandModal()}>
-                60 秒创建首个品牌
+              <Button
+                type="primary"
+                data-testid="brands-empty-create-btn"
+                onClick={() => consoleCtx?.openCreateBrandModal()}
+              >
+                新建品牌
               </Button>
             )
           }
@@ -407,6 +392,13 @@ export function BrandsWorkspace() {
   const callbackBrandName = activeBrand.name;
 
   const brandOverflowItems: readonly RowActionItem[] = [
+    {
+      key: 'create-brand',
+      label: '新建品牌',
+      testId: 'brand-create-menu-item',
+      disabled: readOnly,
+      onClick: () => consoleCtx?.openCreateBrandModal(),
+    },
     {
       key: 'delete-brand',
       label: '删除品牌',
@@ -454,7 +446,7 @@ export function BrandsWorkspace() {
             <Tag className="gm-brand-header-tag">{activeBrand.category}</Tag>
             <StatusBadge
               tone="neutral"
-              label={`${state.activeMarket === 'CN' ? '🇨🇳' : '🌐'} ${GEO_MARKET_LABELS[state.activeMarket]}${activeBrandMarket ? ` · ${activeBrandMarket.locale}` : ''}`}
+              label={`${GEO_MARKET_SHORT[state.activeMarket]}${activeBrandMarket ? ` · ${activeBrandMarket.locale}` : ''}`}
             />
           </>
         }
@@ -468,7 +460,7 @@ export function BrandsWorkspace() {
                 className="gm-brand-btn-nowrap"
                 onClick={() => consoleCtx?.openEnableMarketModal(missingMarket)}
               >
-                {missingMarket === 'GLOBAL' ? '+ 开启海外市场' : '+ 开启国内市场'}
+                {missingMarket === 'GLOBAL' ? '开启海外' : '开启国内'}
               </Button>
             ) : null}
             <RowActions
@@ -477,17 +469,6 @@ export function BrandsWorkspace() {
               menuItems={brandOverflowItems}
             />
           </div>
-        }
-        action={
-          <Button
-            type={identityDirty ? 'default' : 'primary'}
-            size="small"
-            disabled={readOnly}
-            className="gm-brand-btn-nowrap"
-            onClick={() => consoleCtx?.openCreateBrandModal()}
-          >
-            + 新建品牌
-          </Button>
         }
       />
 
@@ -500,14 +481,16 @@ export function BrandsWorkspace() {
           className="gm-brand-oauth-banner"
           onClose={() => setShopifyOAuthBanner(null)}
           message={
-            shopifyOAuthBanner.status === 'connected'
-              ? 'Shopify OAuth 2.0 授权成功，店铺发布渠道已连接'
-              : 'Shopify OAuth 2.0 授权未完成'
-          }
-          description={
-            shopifyOAuthBanner.status === 'connected'
-              ? '已加密保存店铺访问凭据并自动注册卸载同步 Webhook；可在下方「发布渠道」卡片测试连接或选择目标 Blog。'
-              : shopifyOAuthBanner.reason
+            <span className="gm-brand-alert-title-row">
+              <span>{shopifyOAuthBanner.status === 'connected' ? '已授权' : '授权未完成'}</span>
+              <Explain
+                text={
+                  shopifyOAuthBanner.status === 'connected'
+                    ? 'Shopify OAuth 2.0 授权成功，已保存店铺访问凭据并注册卸载同步 Webhook；可在下方「发布渠道」测试连接或选择目标 Blog。'
+                    : (shopifyOAuthBanner.reason ?? DEFAULT_OAUTH_ERROR_MESSAGE)
+                }
+              />
+            </span>
           }
         />
       ) : null}
@@ -582,6 +565,7 @@ export function BrandsWorkspace() {
             error={factsError}
             truthSignedAt={truthSignedAt ?? activeBrand.truthAgreementSignedAt}
             readOnly={readOnly}
+            demotePrimary={identityDirty}
             onRetry={() => fetchBrandAssets(activeBrand.id)}
             onFactsSaved={handleFactsSaved}
           />
@@ -611,14 +595,6 @@ export function BrandsWorkspace() {
             readOnly={readOnly}
             onEnableMarket={() => consoleCtx?.openEnableMarketModal(state.activeMarket)}
           />
-
-          {state.activeMarket === 'CN' ? (
-            <ExtensionPairingPanel
-              variant="brands"
-              readOnly={readOnly}
-              active={state.activeMarket === 'CN'}
-            />
-          ) : null}
         </div>
       </div>
     </section>

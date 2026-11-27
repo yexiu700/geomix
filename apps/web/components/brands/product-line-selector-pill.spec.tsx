@@ -105,7 +105,7 @@ describe('ProductLineSelectorPill (#387)', () => {
     const line1Btn = screen.getByTestId('product-line-option-pl-1');
     const line2Btn = screen.getByTestId('product-line-option-pl-2');
 
-    expect(allBtn.textContent).toBe('全部产品线');
+    expect(allBtn.textContent).toBe('全部');
     expect(line1Btn.textContent).toBe('Power Station Series');
     expect(line2Btn.textContent).toBe('Home NAS Series');
     expect(allBtn.getAttribute('aria-checked')).toBe('true');
