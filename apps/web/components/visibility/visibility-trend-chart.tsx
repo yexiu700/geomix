@@ -86,7 +86,15 @@ export function VisibilityTrendChart({
       for (let i = 0; i < count; i += 1) xLabelIndices.add(i);
     } else {
       const step = Math.max(1, Math.ceil((count - 1) / 5));
-      for (let i = 0; i < count; i += step) xLabelIndices.add(i);
+      const minLastGap = Math.max(2, Math.ceil(step * 0.6));
+      let lastRegular = 0;
+      for (let i = 0; i < count; i += step) {
+        xLabelIndices.add(i);
+        lastRegular = i;
+      }
+      if (lastRegular !== count - 1 && count - 1 - lastRegular < minLastGap) {
+        xLabelIndices.delete(lastRegular);
+      }
       xLabelIndices.add(count - 1);
     }
 

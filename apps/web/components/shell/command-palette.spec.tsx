@@ -111,4 +111,59 @@ describe('CommandPalette (GeoMix 2.0)', () => {
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
+  it('displays market localBrandName and invokes onSelectBrand on click (#430)', () => {
+    const onSelectBrand = vi.fn();
+    const onClose = vi.fn();
+    const multiBrands: BrandRecord[] = [
+      ...sampleBrands,
+      {
+        id: 'b-2',
+        name: '阿卓帕',
+        category: '便携显示器',
+        truthAgreementSignedAt: null,
+        createdAt: '2026-11-20T00:00:00.000Z',
+        updatedAt: '2026-11-20T00:00:00.000Z',
+        markets: [
+          {
+            id: 'm-2',
+            brandId: 'b-2',
+            market: 'GLOBAL',
+            locale: 'en-US',
+            region: 'US',
+            localBrandName: 'ARZOPA',
+            aliases: [],
+            ownedDomains: ['arzopa.com'],
+            competitors: [],
+            seedPrompts: [],
+            createdAt: '2026-11-20T00:00:00.000Z',
+            updatedAt: '2026-11-20T00:00:00.000Z',
+          },
+        ],
+      },
+    ];
+
+    render(
+      <CommandPalette
+        open={true}
+        onClose={onClose}
+        role="MERCHANT"
+        brands={multiBrands}
+        activeBrandId="b-1"
+        activeMarket="GLOBAL"
+        onNavigate={vi.fn()}
+        onSelectBrand={onSelectBrand}
+        onSelectMarket={vi.fn()}
+        onToggleMenu={vi.fn()}
+        onChangePassword={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    const target = screen.getByRole('option', { name: /切换品牌 · ARZOPA/ });
+    fireEvent.mouseDown(target);
+    fireEvent.click(target);
+    expect(onSelectBrand).toHaveBeenCalledWith('b-2');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

@@ -298,7 +298,10 @@ export class VisibilityAnalyticsService {
         sourceKind: CitationSourceKind;
         citationCount: number;
         questionKeys: Set<string>;
-        urls: Map<string, { url: string; title: string | null; count: number }>;
+        urls: Map<
+          string,
+          { url: string; title: string | null; count: number; questionKeys: Set<string> }
+        >;
       }
     >();
 
@@ -342,6 +345,7 @@ export class VisibilityAnalyticsService {
       const urlEntry = bucket.urls.get(row.url);
       if (urlEntry) {
         urlEntry.count += 1;
+        urlEntry.questionKeys.add(promptKey);
         if (!urlEntry.title && row.title) {
           urlEntry.title = row.title;
         }
@@ -350,6 +354,7 @@ export class VisibilityAnalyticsService {
           url: row.url,
           title: row.title ?? null,
           count: 1,
+          questionKeys: new Set([promptKey]),
         });
       }
     }
@@ -362,7 +367,13 @@ export class VisibilityAnalyticsService {
         questionCount: bucket.questionKeys.size,
         topUrls: [...bucket.urls.values()]
           .sort((a, b) => (b.count !== a.count ? b.count - a.count : a.url.localeCompare(b.url)))
-          .slice(0, 10),
+          .slice(0, 10)
+          .map((u) => ({
+            url: u.url,
+            title: u.title,
+            count: u.count,
+            questionCount: u.questionKeys.size,
+          })),
       }))
       .sort((left, right) => {
         if (right.citationCount !== left.citationCount) {

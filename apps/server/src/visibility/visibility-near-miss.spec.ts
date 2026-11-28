@@ -7,6 +7,7 @@ import {
   VisibilityNearMissService,
   canonicalizeNearMissUrl,
   computeNearMissOpportunityScore,
+  isNonContentNearMissUrl,
 } from './visibility-near-miss.service';
 
 function buildService(overrides: {
@@ -77,6 +78,17 @@ describe('VisibilityNearMissService (#368)', () => {
     expect(canonicalizeNearMissUrl('http://example.com:80/Guide?a=1&b=2&fbclid=xyz')).toBe(
       'example.com/Guide?a=1&b=2',
     );
+  });
+
+  it('filters out non-content API, login, and crawler-metadata URLs from near-miss candidates (#430)', () => {
+    expect(isNonContentNearMissUrl('https://www.reddit.com/dev/api')).toBe(true);
+    expect(isNonContentNearMissUrl('https://example.com/login?next=/home')).toBe(true);
+    expect(isNonContentNearMissUrl('https://example.com/robots.txt')).toBe(true);
+    expect(isNonContentNearMissUrl('https://example.com/sitemap.xml')).toBe(true);
+    expect(isNonContentNearMissUrl('https://www.reddit.com/r/DataHoarder/comments/abc/nas')).toBe(
+      false,
+    );
+    expect(isNonContentNearMissUrl('https://example.com/blog/api-design-guide')).toBe(false);
   });
 
   it('scores owned OPENED_NOT_CITED above non-owned OPENED_NOT_CITED and RETRIEVED_NOT_CITED', () => {

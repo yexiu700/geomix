@@ -168,12 +168,23 @@ describe('GeoMix /account 3-tab screens & cold-load zero-flicker (PR8 Y36-Y39)',
           createdAt: '2026-11-16T03:30:00.000Z',
           status: 'SETTLED',
         },
+        {
+          id: 'p3',
+          title: '退还预扣-UGREEN-可见性监测-2026-11-26',
+          delta: 0,
+          listPrice: 2,
+          phrase: '0 退还预扣-UGREEN-可见性监测-2026-11-26',
+          pointsText: '0（原价 2）',
+          createdAt: '2026-11-16T03:40:00.000Z',
+          status: 'SETTLED',
+        },
       ]),
     );
     render(<PointsScreen title="点数明细" load={load} loadSummary={async () => summaryStub()} />);
     expect(await screen.findByText('管理员充值')).toBeTruthy();
     expect(screen.getByText('+500')).toBeTruthy();
     expect(screen.getByText('0（原价 10）')).toBeTruthy();
+    expect(screen.getByText('解冻 2 点')).toBeTruthy();
     expect(screen.getByText('1,400 点')).toBeTruthy();
     expect(screen.getByText('免费体验期')).toBeTruthy();
     expect(screen.getByText('2026-11-16 10:00:00')).toBeTruthy();
@@ -187,7 +198,7 @@ describe('GeoMix /account 3-tab screens & cold-load zero-flicker (PR8 Y36-Y39)',
     expect(document.querySelector('.ant-table-selection')).toBeNull();
 
     const dataRows = document.querySelectorAll('tbody tr.ant-table-row');
-    expect(dataRows).toHaveLength(2);
+    expect(dataRows).toHaveLength(3);
     expect(dataRows[0]?.getAttribute('aria-hidden')).toBeNull();
 
     expect(screen.getByRole('columnheader', { name: '序号' })).toBeTruthy();

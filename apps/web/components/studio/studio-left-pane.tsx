@@ -367,7 +367,7 @@ export function StudioLeftPane({
           <span>历史成稿 ({articles.length})</span>
         </div>
 
-        <div className="gm-studio-row">
+        <div className="gm-studio-row gm-studio-row--wrap">
           <select
             aria-label="按状态筛选历史成稿"
             className="gm-select gm-studio-filter-select"
@@ -383,6 +383,7 @@ export function StudioLeftPane({
           </select>
           <Input
             size="small"
+            className="gm-studio-filter-input"
             placeholder="按标签筛选"
             aria-label="按标签筛选历史成稿"
             value={articleTagFilter}

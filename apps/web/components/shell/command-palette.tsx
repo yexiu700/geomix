@@ -31,6 +31,7 @@ type CommandItem = {
   id: string;
   group: CommandGroup;
   title: string;
+  keywords?: string;
   href?: string;
   execute: () => void;
 };
@@ -96,11 +97,18 @@ export function CommandPalette({
 
     if (onSelectBrand) {
       for (const brand of brands) {
+        const marketEntry = brand.markets.find((item) => item.market === activeMarket);
+        const displayName = marketEntry?.localBrandName?.trim() || brand.name;
+        const keywordParts = [
+          brand.name,
+          ...brand.markets.map((item) => item.localBrandName?.trim() || ''),
+        ].filter(Boolean);
         brandItems.push({
           id: `brand:${brand.id}`,
           group: '品牌与市场',
           title:
-            brand.id === activeBrandId ? `当前品牌 · ${brand.name}` : `切换品牌 · ${brand.name}`,
+            brand.id === activeBrandId ? `当前品牌 · ${displayName}` : `切换品牌 · ${displayName}`,
+          keywords: keywordParts.join(' '),
           execute: () => onSelectBrand(brand.id),
         });
       }
@@ -189,6 +197,7 @@ export function CommandPalette({
     return allItems.filter(
       (item) =>
         item.title.toLowerCase().includes(needle) ||
+        (item.keywords ? item.keywords.toLowerCase().includes(needle) : false) ||
         (item.href ? item.href.toLowerCase().includes(needle) : false),
     );
   }, [allItems, query]);
@@ -292,6 +301,9 @@ export function CommandPalette({
                       className={isActive ? 'gm-cmd-option is-active' : 'gm-cmd-option'}
                       onMouseMove={() => {
                         if (activeIndex !== flatIndex) setActiveIndex(flatIndex);
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
                       }}
                       onClick={() => {
                         item.execute();

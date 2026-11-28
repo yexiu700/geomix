@@ -136,10 +136,16 @@ export class MeService {
     const reconciledQuotas = QUOTA_DEFAULTS.map((item) => {
       const stored = quotaByKey.get(item.key);
       const storedUsed = stored?.used ?? 0n;
-      const liveUsed = liveUsage[item.key] ?? 0n;
+      const liveUsed = liveUsage[item.key];
+      const used =
+        item.key === 'MAIN_KEYWORD' && liveUsed !== undefined
+          ? liveUsed
+          : (liveUsed ?? 0n) > storedUsed
+            ? (liveUsed ?? 0n)
+            : storedUsed;
       return {
         key: item.key,
-        used: liveUsed > storedUsed ? liveUsed : storedUsed,
+        used,
         limit: stored?.limit ?? BigInt(item.limit),
       };
     });

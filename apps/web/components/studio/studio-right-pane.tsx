@@ -237,7 +237,13 @@ export function StudioRightPane({
             </Button>
             <div className="gm-studio-footer-caption-row">
               <span className="gm-studio-explain-row">
-                <span>{article.status === 'PUBLISHED' ? '已发布' : '可发布'}</span>
+                <span>
+                  {article.status === 'PUBLISHED'
+                    ? '已发布'
+                    : article.status === 'READY'
+                      ? '已就绪'
+                      : '草稿可发'}
+                </span>
                 <Explain
                   text={
                     article.status === 'PUBLISHED'

@@ -17,7 +17,7 @@ import { ExportAction } from '../crud/export-action';
 import { TableClampText } from '../crud/table-clamp-text';
 import { useUxFeedback } from '../crud/ux-feedback';
 import { SignalSkeleton } from '../geo/primitives';
-import { StatusBadge } from '../ui';
+import { Explain, StatusBadge } from '../ui';
 
 const EMPTY: PointListQuery = {
   page: 1,
@@ -221,8 +221,8 @@ export function PointsScreen({
             <div className="gm-kpi-caption gm-num">
               {summary
                 ? reservedPoints > 0
-                  ? `总计 ${formatCountNumber(summary.points)} 点 · 任务占用中 ${formatCountNumber(reservedPoints)} 点`
-                  : `总计 ${formatCountNumber(summary.points)} 点`
+                  ? `账户总计 ${formatCountNumber(summary.points)} 点 · 任务占用中 ${formatCountNumber(reservedPoints)} 点`
+                  : `账户总计 ${formatCountNumber(summary.points)} 点`
                 : '实时点数余额'}
             </div>
           </div>
@@ -279,6 +279,7 @@ export function PointsScreen({
         <Input
           aria-label="点数变动"
           placeholder="点数变动"
+          title="输入整数，如 -10 或 +100"
           className="gm-points-input-delta"
           value={draft.delta}
           onChange={(event) => setDraft((current) => ({ ...current, delta: event.target.value }))}
@@ -377,8 +378,23 @@ export function PointsScreen({
             {
               title: '点数',
               key: 'points',
-              width: 124,
-              render: (_value, row) => <span className="gm-num">{row.pointsText}</span>,
+              width: 136,
+              render: (_value, row) => {
+                const isPreholdRelease =
+                  row.delta === 0 && row.listPrice > 0 && row.title.includes('退还预扣');
+                if (isPreholdRelease) {
+                  return (
+                    <span className="gm-num gm-studio-explain-row">
+                      <span>{`解冻 ${row.listPrice} 点`}</span>
+                      <Explain
+                        text={`原预扣 ${row.listPrice} 点未结算，已自动释放冻结额度，账户总余额不变。`}
+                        label="解冻说明"
+                      />
+                    </span>
+                  );
+                }
+                return <span className="gm-num">{row.pointsText}</span>;
+              },
             },
             {
               title: '消耗时间',

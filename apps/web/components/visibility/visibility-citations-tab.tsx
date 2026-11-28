@@ -104,7 +104,7 @@ export function VisibilityCitationsTab({
             domain: item.domain,
             sourceKind: item.sourceKind,
             count: u.count,
-            questionCount: item.questionCount,
+            questionCount: u.questionCount ?? Math.min(item.questionCount, u.count),
           });
         }
       } else {

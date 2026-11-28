@@ -1264,7 +1264,7 @@ export function PublishWorkspace(): JSX.Element {
       <div className={gridClassName}>
         {!isNarrowDrawerViewport ? renderQueue(false) : null}
 
-        <main className="gm-publish-main" data-testid="publish-main-pane">
+        <div className="gm-publish-main" data-testid="publish-main-pane">
           {isNarrowDrawerViewport ? (
             <div className="gm-publish-mobile-bar">
               <Button size="small" onClick={() => setMobileLeftDrawerOpen(true)}>
@@ -1442,7 +1442,7 @@ export function PublishWorkspace(): JSX.Element {
               </div>
             </>
           )}
-        </main>
+        </div>
       </div>
 
       <Modal
