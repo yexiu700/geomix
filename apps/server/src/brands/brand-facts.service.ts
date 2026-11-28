@@ -379,7 +379,7 @@ export class BrandFactsService {
             content: [
               '你是 GeoMix 品牌事实提炼助手。请从商户提供的品牌官方资料中提取客观、可核验的事实，整理为严格 JSON 对象。',
               'JSON 结构必须为：{"facts":[{"slot":"PRODUCT_SPECS"|"DIFFERENTIATORS"|"CREDENTIALS"|"CASE_STUDIES","title":"标题","content":"提炼后的事实要点"}]}。',
-              '规则：1) 仅提取原文有据可查的参数、差异点、认证资质、真实案例，严禁虚构数字或奖项；2) 保持与输入资料一致的语言（中文资料输出中文，英文资料输出英文）；3) 必须输出 4 个槽位。',
+              '规则：1) 仅提取原文有据可查的参数、差异点、认证资质、真实案例，严禁虚构数字或奖项；2) 保持与输入资料一致的语言（中文资料输出中文，英文资料输出英文）；3) 必须输出 4 个槽位，若原文未提供某槽位的具体事实，该槽位 content 必须输出空字符串 ""，严禁填写“资料未提及/未列出/暂无”或英文免责说明。',
             ].join('\n'),
           },
           {
@@ -667,6 +667,23 @@ function looksLikeBinaryBuffer(buf: Buffer): boolean {
   return false;
 }
 
+const NEGATIVE_FACT_DISCLAIMER_RE =
+  /^(?:(?:(?:所提供|提供的|现有|上述|当前|本)?(?:资料|材料|文档|原文|文本|内容|官网|页面)中?(?:暂)?(?:未|没有|无)(?:提及|列出|提供|包含|披露|说明|展示|涉及|找到|发现|给出|明确)[^。！？\n]*)|(?:暂无(?:相关|具体|公开|实测|产品|客户|品牌|官方)*(?:数据|资料|信息|参数|案例|资质|认证|背书|奖项|记录)?)|(?:无(?:相关|具体|公开|实测|产品|客户|品牌|官方)*(?:数据|资料|信息|参数|案例|资质|认证|背书|奖项|记录))|(?:未(?:提及|列出|提供|披露|说明)(?:任何)?(?:具体|相关|实测|产品|客户|品牌|官方)*(?:数据|资料|信息|参数|案例|资质|认证|背书|奖项)?)|(?:the\s+(?:supplied|provided|given|source)\s+(?:material|text|document|content|information|page)\s+(?:does\s+not|doesn't|did\s+not)\s+(?:identify|mention|list|provide|contain|specify|include|describe|state)[^.\n]*)|(?:no\s+(?:specific|concrete|explicit|named|verified|relevant)?\s*(?:(?:customer|client|product)\s+)?(?:certifications?|credentials?|awards?|patents?|case\s+studies|cases?|stories|examples?|specs?|specifications?|differentiators?|details?|information|data)\s+(?:are|were|is|was)?\s*(?:mentioned|listed|provided|identified|included|found|available|specified|given)[^.\n]*)|(?:not\s+(?:mentioned|listed|provided|specified|identified|available)\s+in\s+(?:the\s+)?(?:supplied|provided|source|given)\s+(?:material|text|document|content|page)[^.\n]*)|(?:n\/a|none(?:\s+(?:provided|mentioned|listed|specified|available))?))[。！？.!\s]*$/i;
+
+export function sanitizeExtractedFactContent(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const nonEmptyLines = trimmed
+    .split(/\n+/)
+    .map((line) => line.replace(/^\s*(?:[-*+•·▪▸]\s+|\d+[.)、）]\s*)/, '').trim())
+    .filter(Boolean);
+  if (nonEmptyLines.length === 0) return '';
+  if (nonEmptyLines.every((line) => NEGATIVE_FACT_DISCLAIMER_RE.test(line))) {
+    return '';
+  }
+  return trimmed;
+}
+
 function parseLlmExtractedFacts(rawText: string): ExtractedBrandFactDraft[] {
   const stripped = rawText
     .trim()
@@ -692,7 +709,7 @@ function parseLlmExtractedFacts(rawText: string): ExtractedBrandFactDraft[] {
     bySlot.set(item.slot, {
       slot: item.slot,
       title: item.title?.trim() || BRAND_FACT_SLOT_LABELS[item.slot],
-      content: item.content.trim(),
+      content: sanitizeExtractedFactContent(item.content),
     });
   }
 

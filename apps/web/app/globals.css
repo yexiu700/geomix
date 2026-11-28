@@ -6020,6 +6020,11 @@ input:not([class*='ant-']):hover {
   white-space: nowrap;
 }
 
+.gm-studio-filter-input {
+  flex: 1 1 110px;
+  min-width: 96px;
+}
+
 .gm-studio-queue-list {
   display: flex;
   flex-direction: column;
@@ -11871,7 +11876,12 @@ input:not([class*='ant-']):hover {
 .gm-studio-alert-title-row {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
+}
+
+.gm-studio-section-label.gm-studio-explain-row {
+  justify-content: flex-start;
 }
 
 .gm-studio-batch-footer-row {

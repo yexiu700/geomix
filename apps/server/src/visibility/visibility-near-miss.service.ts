@@ -75,6 +75,27 @@ function stableNearMissId(tier: NearMissTier, dedupKey: string): string {
   return `nm_${tier.toLowerCase()}_${hash}`;
 }
 
+const NON_CONTENT_PATH_PATTERNS: readonly RegExp[] = [
+  /^\/dev\/api(?:\/|$)/i,
+  /^\/oauth(?:2)?(?:\/|$)/i,
+  /^\/(?:login|signin|sign-in|signup|sign-up|logout|register)(?:\/|$)/i,
+  /^\/robots\.txt$/i,
+  /^\/sitemap(?:[_-][^/]*)?\.xml$/i,
+  /^\/\.well-known(?:\/|$)/i,
+];
+
+export function isNonContentNearMissUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+  try {
+    const parsed = new URL(trimmed);
+    const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return NON_CONTENT_PATH_PATTERNS.some((re) => re.test(pathname));
+  } catch {
+    return false;
+  }
+}
+
 export function canonicalizeNearMissUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '';
@@ -458,6 +479,7 @@ export class VisibilityNearMissService {
     for (const row of uncitedRetrievedRows) {
       if (row.wasCited) continue;
       if (row.observation && row.observation.status !== 'SUCCESS') continue;
+      if (isNonContentNearMissUrl(row.url)) continue;
 
       const canonicalUrl = canonicalizeNearMissUrl(row.url);
       if (!canonicalUrl) continue;

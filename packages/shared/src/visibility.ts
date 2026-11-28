@@ -3474,7 +3474,7 @@ export type VisibilityCitationSummaryItem = {
   sourceKind: CitationSourceKind;
   citationCount: number;
   questionCount: number;
-  topUrls: Array<{ url: string; title: string | null; count: number }>;
+  topUrls: Array<{ url: string; title: string | null; count: number; questionCount?: number }>;
 };
 
 export type VisibilityCitationSourceBreakdown = Record<CitationSourceKind, number>;

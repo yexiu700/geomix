@@ -145,4 +145,23 @@ describe('VisibilityTrendChart', () => {
     rerender(<VisibilityTrendChart points={multiSeriesPoints} selectedEngine="kimi" />);
     expect(screen.getByText('所选时间窗口暂无趋势数据')).toBeTruthy();
   });
+
+  it('omits penultimate X-axis tick when 14-day step lands directly next to the last date (#430)', () => {
+    const fourteenDays = Array.from({ length: 14 }, (_, idx) => ({
+      date: `2026-11-${String(14 + idx).padStart(2, '0')}`,
+      engine: 'all' as const,
+      completedChecks: 4,
+      mentionedChecks: idx % 2 === 0 ? 3 : 4,
+      visibilityPct: idx % 2 === 0 ? 75 : 100,
+    }));
+
+    const { container } = render(<VisibilityTrendChart points={fourteenDays} />);
+    const dateLabels = [...container.querySelectorAll('svg text')]
+      .map((el) => el.textContent ?? '')
+      .filter((text) => /^\d{2}-\d{2}$/.test(text));
+
+    expect(dateLabels).toContain('11-14');
+    expect(dateLabels).toContain('11-27');
+    expect(dateLabels).not.toContain('11-26');
+  });
 });

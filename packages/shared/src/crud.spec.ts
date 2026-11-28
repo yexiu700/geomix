@@ -76,12 +76,22 @@ describe('crud list query', () => {
     expect(escapeLikeLiteral('中文English')).toBe('中文English');
   });
 
-  it('exports safe CSV and XLSX tables escaping spreadsheet formulas', () => {
-    const headers = ['编号', '名称', '备注'];
-    const rows = [['c'.repeat(24), '=示例', '备注,甲']];
+  it('exports safe CSV and XLSX tables escaping spreadsheet formulas while preserving signed numbers', () => {
+    const headers = ['编号', '名称', '点数', '备注'];
+    const rows = [
+      ['c'.repeat(24), '=示例', '-10', '备注,甲'],
+      ['d'.repeat(24), '+1+1', '+999999', '-1+2'],
+      ['e'.repeat(24), '@SUM(A1)', '-12.50', '正常'],
+    ];
     const csv = toCsv(headers, rows);
-    expect(csv.startsWith('\uFEFF编号,名称')).toBe(true);
+    expect(csv.startsWith('\uFEFF编号,名称,点数,备注')).toBe(true);
     expect(csv).toContain("'=示例");
+    expect(csv).toContain("'+1+1");
+    expect(csv).toContain("'-1+2");
+    expect(csv).toContain("'@SUM(A1)");
+    expect(csv).toContain(',-10,');
+    expect(csv).toContain(',+999999,');
+    expect(csv).toContain(',-12.50,');
     expect(csv).toContain('"备注,甲"');
 
     const bytes = toXlsx(headers, rows);

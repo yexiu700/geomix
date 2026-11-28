@@ -184,8 +184,11 @@ function hasControl(value: string): boolean {
   return false;
 }
 
+const SAFE_SIGNED_NUMBER_RE = /^[+-]?\d+(?:\.\d+)?$/;
+
 function csvCell(value: string): string {
-  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  const safe =
+    /^[=+\-@\t\r]/.test(value) && !SAFE_SIGNED_NUMBER_RE.test(value) ? `'${value}` : value;
   if (/[",\r\n]/.test(safe)) return `"${safe.replace(/"/g, '""')}"`;
   return safe;
 }

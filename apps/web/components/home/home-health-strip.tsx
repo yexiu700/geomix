@@ -2,6 +2,7 @@
 
 import type { ActionHomeResponse, GeoMarket } from '@geomix/shared';
 import type { JSX } from 'react';
+import { formatPct } from '../../lib/design-tokens';
 import { Explain, KpiStrip, StatusBadge, type KpiStripItem } from '../ui';
 
 export type HomeHealthStripProps = {
@@ -11,12 +12,6 @@ export type HomeHealthStripProps = {
   onStartMonitor?: () => void;
   onWriteArticle?: () => void;
 };
-
-function formatPct(value: number): string {
-  if (!Number.isFinite(value)) return '0%';
-  const rounded = Math.round(value * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`;
-}
 
 function formatAvgPositionCaption(avgPosition: number | null): string {
   if (avgPosition === null || !Number.isFinite(avgPosition)) {

@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { describe, expect, it, vi } from 'vitest';
 import { parseMoneyListQuery, parsePointListQuery } from '@geomix/shared';
 import type { PrismaService } from '../prisma/prisma.service';
+import { MeController } from './me.controller';
 import { MeService } from './me.service';
 
 describe('MeService.rights quota reconciliation (#195)', () => {
@@ -151,5 +152,82 @@ describe('MeService.rights quota reconciliation (#195)', () => {
     const moneyPage = await service.money('tenant_1', parseMoneyListQuery({}));
     expect(moneyPage.items[0]?.title).toBe('AI生图（免费期）');
     expect(moneyPage.items[0]?.remark).toBe('免费体验期测试备注');
+  });
+
+  it('reconciles MAIN_KEYWORD brand quota strictly to live brand count after deletions (#430)', async () => {
+    const prisma = {
+      base: {
+        tenant: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: 'tenant_3',
+            expiresAt: new Date('2027-11-16T00:00:00.000Z'),
+            billingMode: 'STRICT',
+          }),
+        },
+        wallet: {
+          findUnique: vi.fn().mockResolvedValue({
+            points: 1000,
+            pointsReserved: 0,
+            money: { toString: () => '0.00' },
+          }),
+        },
+        quota: {
+          findMany: vi.fn().mockResolvedValue([
+            { key: 'MAIN_KEYWORD', used: 5n, limit: 100n },
+            { key: 'AI_WRITE', used: 4n, limit: 10_000n },
+          ]),
+        },
+        brand: { count: vi.fn().mockResolvedValue(3) },
+        geoBrief: { count: vi.fn().mockResolvedValue(0) },
+        geoArticle: { count: vi.fn().mockResolvedValue(1) },
+        brandMediaAsset: { aggregate: vi.fn().mockResolvedValue({ _sum: { bytes: 0 } }) },
+        visibilityObservation: {
+          count: vi.fn().mockResolvedValue(0),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+      },
+    } as unknown as PrismaService;
+
+    const service = new MeService(prisma);
+    const rights = await service.rights('tenant_3');
+    expect(rights.cards.find((c) => c.key === 'MAIN_KEYWORD')?.text).toBe('3 / 100');
+    expect(rights.cards.find((c) => c.key === 'AI_WRITE')?.text).toBe('4 / 10000');
+  });
+
+  it('exports points CSV with aligned columns matching headers 项目,点数,消耗时间,对账 (#430)', async () => {
+    const me = {
+      collectPoints: vi.fn().mockResolvedValue([
+        {
+          id: 'p1',
+          title: 'GEO写作-测试',
+          delta: -10,
+          listPrice: 10,
+          phrase: '-10 GEO写作-测试',
+          pointsText: '-10',
+          createdAt: '2026-11-26T09:52:54.000Z',
+          status: 'SETTLED',
+        },
+      ]),
+    } as unknown as MeService;
+    const controller = new MeController(me);
+    let sentBody: string | Buffer = '';
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      setHeader: vi.fn(),
+      json: vi.fn(),
+      send: vi.fn((body: string | Buffer) => {
+        sentBody = body;
+      }),
+    };
+    await controller.points(
+      { auth: { userId: 'u1', tenantId: 't1' } },
+      { export: 'csv' },
+      response,
+    );
+    const lines = String(sentBody)
+      .replace(/^\uFEFF/, '')
+      .split('\r\n');
+    expect(lines[0]).toBe('项目,点数,消耗时间,对账');
+    expect(lines[1]).toBe("GEO写作-测试,-10,2026-11-26 17:52:54,'-10 GEO写作-测试");
   });
 });

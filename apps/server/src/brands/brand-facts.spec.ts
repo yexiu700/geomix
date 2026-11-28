@@ -20,7 +20,10 @@ import { PROVIDER_KIND, ProviderError } from '../infra/provider-error';
 import { PrismaService } from '../prisma/prisma.service';
 import { currentTenantId } from '../tenant/tenant-context';
 import { FACT_INDEX_ENQUEUER } from './brand-fact-index.runner';
-import { extractDeterministicFactsFromSource } from './brand-facts.service';
+import {
+  extractDeterministicFactsFromSource,
+  sanitizeExtractedFactContent,
+} from './brand-facts.service';
 
 type StoredBrand = {
   id: string;
@@ -960,5 +963,21 @@ describe('BrandFactsController & BrandFactsService (F7 HTTP & Unit)', () => {
         expect(lines).not.toContain(bare);
       }
     }
+  });
+
+  it('strips negative AI disclaimer strings into empty fact slots (#430)', () => {
+    expect(
+      sanitizeExtractedFactContent(
+        'The supplied material does not identify any specific certification or named award.',
+      ),
+    ).toBe('');
+    expect(sanitizeExtractedFactContent('资料未列出具体产品认证。')).toBe('');
+    expect(sanitizeExtractedFactContent('暂无相关实测案例')).toBe('');
+    expect(sanitizeExtractedFactContent('No specific customer case studies were mentioned.')).toBe(
+      '',
+    );
+    expect(sanitizeExtractedFactContent('通过 3C、FCC、CE 认证，荣获 2026 红点设计奖')).toBe(
+      '通过 3C、FCC、CE 认证，荣获 2026 红点设计奖',
+    );
   });
 });

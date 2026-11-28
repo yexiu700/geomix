@@ -1,12 +1,13 @@
 'use client';
 
-import { Tooltip } from 'antd';
+import { Tooltip, type TooltipProps } from 'antd';
 import { useId, type ReactNode } from 'react';
 import { shouldCollapseToExplain } from '../../lib/copy-length';
 
 export type ExplainProps = {
   text: ReactNode;
   label?: string;
+  placement?: TooltipProps['placement'];
   descriptionId?: string;
   className?: string;
   'data-testid'?: string;
@@ -21,6 +22,7 @@ export type ExplainProps = {
 export function Explain({
   text,
   label = '说明',
+  placement = 'bottom',
   descriptionId,
   className,
   'data-testid': testId,
@@ -38,7 +40,7 @@ export function Explain({
 
   return (
     <span className={classes} data-testid={testId}>
-      <Tooltip title={text} trigger={['hover', 'focus', 'click']}>
+      <Tooltip title={text} placement={placement} trigger={['hover', 'focus', 'click']}>
         <span className="gm-explain-anchor">
           <button
             type="button"

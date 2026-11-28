@@ -54,7 +54,7 @@ export class MeController {
       response,
       parsed.export,
       [...POINT_LEDGER_COLUMNS, '对账'],
-      rows.map((row) => [row.title, row.pointsText, row.phrase, formatLedgerTime(row.createdAt)]),
+      rows.map((row) => [row.title, row.pointsText, formatLedgerTime(row.createdAt), row.phrase]),
       'geomix-points',
     );
   }
